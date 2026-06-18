@@ -1342,14 +1342,15 @@ class SeaDexArr:
                                 )
 
                                 # Check SeaDex release group matches the episode release group in Sonarr
-                                sonarr_rg = sonarr_ep.get("episodeFile", {}).get(
+                                sonarr_rg: str = sonarr_ep.get("episodeFile", {}).get(
                                     "releaseGroup", None
                                 )
-
+                                sonarr_rg_normalized = sonarr_rg.strip().strip('-').casefold() if sonarr_rg else None
+                                seadex_rg_normalized = seadex_rg.strip().strip('-').casefold() if seadex_rg else None
                                 # If not, flag as should be downloaded if it's not already
                                 # in some overlapping release
                                 if (
-                                    sonarr_rg != seadex_rg
+                                    sonarr_rg_normalized != seadex_rg_normalized
                                     and sonarr_rg
                                     not in all_seadex_rgs_per_episode["all"]
                                 ):
