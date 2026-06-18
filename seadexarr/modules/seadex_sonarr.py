@@ -13,7 +13,7 @@ from .anilist import (
 )
 from .discord import discord_push
 from .log import centred_string, left_aligned_string, kv_string
-from .seadex_arr import SeaDexArr
+from .seadex_arr import SeaDexArr, get_episode_keys
 from .seadex_radarr import SeaDexRadarr
 
 
@@ -85,9 +85,7 @@ def get_overlapping_results(seadex_dict):
     episode_sets = {}
     for rg in seadex_dict:
         all_episodes = seadex_dict[rg].get("all_episodes", [])
-        episode_sets[rg] = {
-            (ep.get("season"), ep.get("episode")) for ep in all_episodes
-        }
+        episode_sets[rg] = get_episode_keys(all_episodes)
 
     release_groups = list(episode_sets.keys())
     for i, rg1 in enumerate(release_groups):

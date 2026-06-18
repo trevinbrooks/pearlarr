@@ -146,6 +146,20 @@ def get_all_seadex_rgs_per_episode(
     return all_seadex_rgs_per_episode
 
 
+def get_episode_keys(all_episodes):
+    """Build the set of (season, episode) keys an episode list covers
+
+    Reduces a release's parsed episode list to the set of (season, episode)
+    pairs it contains, so different SeaDex release groups can be compared by
+    what files they cover.
+
+    Args:
+        all_episodes (iterable): Parsed episode dicts with "season"/"episode"
+    """
+
+    return {(ep.get("season"), ep.get("episode")) for ep in all_episodes}
+
+
 def get_same_files_groups(seadex_dict):
     """Group SeaDex release groups that cover exactly the same files
 
@@ -167,7 +181,6 @@ def get_same_files_groups(seadex_dict):
     """
 
     grouped = {}
-    order = []
     for rg in seadex_dict:
         all_episodes = seadex_dict[rg].get("all_episodes", None)
 
@@ -179,16 +192,12 @@ def get_same_files_groups(seadex_dict):
             # never drop content we couldn't verify
             key = ("__unparsed__", rg)
         else:
-            key = frozenset(
-                (ep.get("season"), ep.get("episode")) for ep in all_episodes
-            )
+            key = frozenset(get_episode_keys(all_episodes))
 
-        if key not in grouped:
-            grouped[key] = []
-            order.append(key)
-        grouped[key].append(rg)
+        # Insertion-ordered dict preserves first-seen group order for us
+        grouped.setdefault(key, []).append(rg)
 
-    return [grouped[key] for key in order]
+    return list(grouped.values())
 
 
 def format_episode_ranges(episode_numbers):
@@ -1342,7 +1351,7 @@ class SeaDexArr:
                                 )
 
                                 # Check SeaDex release group matches the episode release group in Sonarr
-                                sonarr_rg: str = sonarr_ep.get("episodeFile", {}).get(
+                                sonarr_rg = sonarr_ep.get("episodeFile", {}).get(
                                     "releaseGroup", None
                                 )
                                 sonarr_rg_normalized = sonarr_rg.strip().strip('-').casefold() if sonarr_rg else None
