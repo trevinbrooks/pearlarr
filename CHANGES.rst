@@ -1,6 +1,7 @@
 1.0.0 (Unreleased)
 ==================
 
+- Add "ignore_anilist_ids", which allows you to skip specific AniList IDs from being processed
 - Add "torrent_tags", which allows you to tag torrents as added to qBittorrent
 - Add "ignore tags" option, which allows you to filter out various tags
 - Use AniBridge mappings to mop up missed Sonarr/Radarr titles

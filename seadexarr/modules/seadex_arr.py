@@ -12,7 +12,7 @@ import httpx
 import qbittorrentapi
 import yaml
 from ruamel.yaml import YAML
-from seadex import SeaDexEntry, EntryNotFoundError
+from seadex import SeaDexEntry, EntryNotFoundError, EntryRecord
 
 from .. import __version__
 from .anilist import get_anilist_title, get_anilist_thumb
@@ -64,22 +64,28 @@ ALLOWED_ARRS = [
     "sonarr",
 ]
 
-PUBLIC_TRACKERS = [
-    "Nyaa",
-    "AnimeTosho",
-    "AniDex",
-    "RuTracker",
-]
+PUBLIC_TRACKERS = {
+    tracker.casefold()
+    for tracker in [
+        "Nyaa",
+        "AnimeTosho",
+        "AniDex",
+        "RuTracker",
+    ]
+}
 
-PRIVATE_TRACKERS = [
-    "AB",
-    "BeyondHD",
-    "PassThePopcorn",
-    "BroadcastTheNet",
-    "HDBits",
-    "Blutopia",
-    "Aither",
-]
+PRIVATE_TRACKERS = {
+    tracker.casefold()
+    for tracker in [
+        "AB",
+        "BeyondHD",
+        "PassThePopcorn",
+        "BroadcastTheNet",
+        "HDBits",
+        "Blutopia",
+        "Aither"
+    ]
+}
 
 UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -231,16 +237,21 @@ class SeaDexArr:
             ignore_tags = []
         self.ignore_tags = ignore_tags
 
+        # AniList IDs to skip entirely
+        ignore_anilist_ids = self.config.get("ignore_anilist_ids", None)
+        if ignore_anilist_ids is None:
+            ignore_anilist_ids = set()
+        self.ignore_anilist_ids = {int(x) for x in ignore_anilist_ids}
+
         trackers = self.config.get("trackers", None)
 
         # If we don't have any trackers selected, build a list from public
         # and private trackers
+        # Include all even if public_only is True, as these filter out releases before we check if they overlap with what's downloaded in Sonarr
         if trackers is None:
-            trackers = copy.deepcopy(PUBLIC_TRACKERS)
-            if not self.public_only:
-                trackers += copy.deepcopy(PRIVATE_TRACKERS)
+            trackers = PUBLIC_TRACKERS.union(PRIVATE_TRACKERS)
 
-        self.trackers = [t.lower() for t in trackers]
+        self.trackers = {t.casefold() for t in trackers}
 
         # Advanced settings
         self.sleep_time = self.config.get("sleep_time", 2)
@@ -551,6 +562,12 @@ class SeaDexArr:
                 anilist_mappings=anilist_mappings,
             )
 
+        # Drop any AniList IDs the user has chosen to ignore
+        ids_to_drop = [al_id for al_id in anilist_mappings if al_id in self.ignore_anilist_ids]
+        for al_id in ids_to_drop:
+            del anilist_mappings[al_id]
+            self.log_ignored_anilist_id(al_id=al_id)
+
         # Sort by AniList ID
         anilist_mappings = dict(sorted(anilist_mappings.items()))
 
@@ -711,7 +728,7 @@ class SeaDexArr:
 
     def get_seadex_dict(
         self,
-        sd_entry,
+        sd_entry: EntryRecord,
     ):
         """Parse and filter SeaDex request
 
@@ -723,19 +740,13 @@ class SeaDexArr:
 
         # Filter out any tags
         final_torrent_list = [
-            t  for t in final_torrent_list if len(set(self.ignore_tags).intersection(set(t.tags))) == 0
+            t for t in final_torrent_list if len(set(self.ignore_tags).intersection(set(t.tags))) == 0
         ]
 
         # Filter down by allowed trackers
         final_torrent_list = [
-            t for t in final_torrent_list if t.tracker.lower() in self.trackers
+            t for t in final_torrent_list if t.tracker.casefold() in self.trackers
         ]
-
-        # Filtering down to only public torrents
-        if self.public_only:
-            final_torrent_list = [
-                t for t in final_torrent_list if t.tracker.is_public()
-            ]
 
         # Pull out torrents tagged as best, so long as at least one
         # is tagged as best. Keep a copy so we can fallback if audio
@@ -761,6 +772,17 @@ class SeaDexArr:
             if len(non_duals) > 0:
                 candidates = non_duals
 
+        # filter down to just public trackers if the user wants that, so long as we have some left after the previous filtering
+        # this is the last filter we apply, as we want to error if the user prefers dual audio or best releases 
+        # but none of those are on public trackers, rather than just silently ignoring their preference and giving them a public release
+        if self.public_only:
+            public_candidates = [
+                t for t in candidates if t.tracker.is_public() and t.tracker.casefold() not in PRIVATE_TRACKERS
+            ]
+
+            if len(public_candidates) > 0:
+                candidates = public_candidates
+
         # Pull out release groups, URLs, and various other useful info as a
         # dictionary
         seadex_release_groups = {}
@@ -775,6 +797,7 @@ class SeaDexArr:
                 "files": [f.name for f in t.files],
                 "size": [f.size for f in t.files],
                 "tracker": t.tracker,
+                "is_public": t.tracker.is_public() and t.tracker.casefold() not in PRIVATE_TRACKERS,
                 "hash": t.infohash,
                 "download": False,
             }
@@ -1347,9 +1370,12 @@ class SeaDexArr:
                 item_hash = url_item.get("hash", None)
                 tracker = url_item.get("tracker", None)
 
+                if self.public_only and not url_item.get("is_public", True):
+                    raise ValueError(f"Cannot download preferred url {url} as tracker {tracker} is not public")
+
                 # If we don't have a tracker from our list selected, then
                 # get out of here
-                if tracker.lower() not in self.trackers:
+                if tracker.casefold() not in self.trackers:
                     self.logger.info(
                         left_aligned_string(
                             f"   Skipping {url} as tracker {tracker} not in selected list",
@@ -1645,6 +1671,25 @@ class SeaDexArr:
         self.logger.info(
             centred_string(
                 self.log_line_sep * self.log_line_length,
+                total_length=self.log_line_length,
+            )
+        )
+
+        return True
+
+    def log_ignored_anilist_id(
+        self,
+        al_id,
+    ):
+        """Produce a log message when an AniList ID is skipped via the ignore list
+
+        Args:
+            al_id (int): AniList ID
+        """
+
+        self.logger.info(
+            centred_string(
+                f"AniList ID {al_id} is in the ignore list. Skipping",
                 total_length=self.log_line_length,
             )
         )

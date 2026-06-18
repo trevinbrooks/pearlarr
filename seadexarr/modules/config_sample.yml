@@ -39,6 +39,9 @@ want_best: true
 ignore_tags:
 trackers:
 
+# AniList IDs to skip entirely. Provide a list of integer IDs that should never be processed
+ignore_anilist_ids:
+
 # Advanced settings
 sleep_time: 2
 cache_time: 1
