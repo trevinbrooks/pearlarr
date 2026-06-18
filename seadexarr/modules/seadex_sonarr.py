@@ -12,7 +12,7 @@ from .anilist import (
     get_anilist_format,
 )
 from .discord import discord_push
-from .log import centred_string, left_aligned_string
+from .log import centred_string, left_aligned_string, kv_string
 from .seadex_arr import SeaDexArr
 from .seadex_radarr import SeaDexRadarr
 
@@ -533,9 +533,9 @@ class SeaDexSonarr(SeaDexArr):
                     elif not self.public_only_skipped:
 
                         self.logger.info(
-                            centred_string(
-                                f"You already have the recommended release(s) for this title",
-                                total_length=self.log_line_length,
+                            kv_string(
+                                "status",
+                                "already have the recommended release(s)",
                             )
                         )
 
@@ -864,10 +864,7 @@ class SeaDexSonarr(SeaDexArr):
 
         if missing_eps > 0:
             self.logger.info(
-                centred_string(
-                    f"Missing episodes: {missing_eps}/{n_eps}",
-                    total_length=self.log_line_length,
-                )
+                kv_string("missing episodes", f"{missing_eps}/{n_eps}")
             )
 
         return sonarr_release_dict

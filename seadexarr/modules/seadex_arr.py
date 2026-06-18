@@ -16,7 +16,7 @@ from seadex import SeaDexEntry, EntryNotFoundError, EntryRecord
 
 from .. import __version__
 from .anilist import get_anilist_title, get_anilist_thumb
-from .log import setup_logger, centred_string, left_aligned_string
+from .log import setup_logger, centred_string, left_aligned_string, kv_string
 from .torrent import (
     get_nyaa_url,
     get_animetosho_url,
@@ -189,6 +189,39 @@ def get_same_files_groups(seadex_dict):
         grouped[key].append(rg)
 
     return [grouped[key] for key in order]
+
+
+def format_episode_ranges(episode_numbers):
+    """Condense a set of episode numbers into a readable range string
+
+    Contiguous runs are collapsed (e.g. [1, 2, 3] -> "E01-E03"), lone episodes
+    are kept as-is (e.g. [5] -> "E05"), and gaps split into multiple comma-
+    separated ranges (e.g. [1, 2, 3, 7, 8] -> "E01-E03, E07-E08").
+
+    Args:
+        episode_numbers (iterable): Episode numbers within a single season
+    """
+
+    episodes = sorted(set(episode_numbers))
+    if not episodes:
+        return ""
+
+    # Walk the sorted episodes, breaking into runs wherever they aren't
+    # consecutive
+    runs = []
+    run_start = run_end = episodes[0]
+    for episode in episodes[1:]:
+        if episode == run_end + 1:
+            run_end = episode
+        else:
+            runs.append((run_start, run_end))
+            run_start = run_end = episode
+    runs.append((run_start, run_end))
+
+    return ", ".join(
+        f"E{start:02d}" if start == end else f"E{start:02d}-E{end:02d}"
+        for start, end in runs
+    )
 
 
 class SeaDexArr:
@@ -1437,11 +1470,12 @@ class SeaDexArr:
                     # set, but none are available on a public tracker. Don't
                     # grab a private release, just log an error and skip. Flag
                     # the skip so the caller doesn't cache the title as done
+                    plural = len(flagged) > 1
                     self.logger.error(
                         left_aligned_string(
-                            f"{arr.capitalize()} has none of the preferred release "
-                            f"group(s) {', '.join(flagged)}, but none are available on "
-                            f"a public tracker and public_only is set. Skipping",
+                            f"The preferred release {'groups' if plural else 'group'} "
+                            f"{', '.join(flagged)} {'are' if plural else 'is'} not on a "
+                            f"public tracker and public_only is set. Skipping",
                             total_length=self.log_line_length,
                         )
                     )
@@ -1492,6 +1526,74 @@ class SeaDexArr:
 
         return any_to_download
 
+    @staticmethod
+    def format_episode_coverage(episodes):
+        """Summarize the Sonarr season/episode coverage of a torrent, per season
+
+        Returns a list of (season_label, episode_ranges) tuples, one per season
+        the torrent covers, ordered by season. The season label is e.g. "S01"
+        and the episode ranges condense contiguous runs, e.g. "E01-E12" or
+        "E01-E03, E07-E12" for a season with a gap, or "E05" for a lone episode.
+
+        Returns None when there is no parsed episode info (e.g. Radarr movies,
+        or a Sonarr parse failure).
+
+        Args:
+            episodes (list): List of {"season", "episode", ...} dicts,
+                as parsed onto each torrent's url_item
+        """
+
+        if not episodes:
+            return None
+
+        # Collect the episode numbers seen for each season
+        episodes_by_season = {}
+        for ep in episodes:
+            season = ep.get("season")
+            episode = ep.get("episode")
+            if season is None or episode is None:
+                continue
+            episodes_by_season.setdefault(season, set()).add(episode)
+
+        if not episodes_by_season:
+            return None
+
+        return [
+            (f"S{season:02d}", format_episode_ranges(episodes_by_season[season]))
+            for season in sorted(episodes_by_season)
+        ]
+
+    def log_episode_coverage(self, episodes):
+        """Log a torrent's season/episode coverage, one line per season
+
+        A single covered season is logged inline (e.g. "seasons : S01 E01-E12");
+        multiple seasons are logged as a "seasons" header followed by one
+        indented line per season. Nothing is logged when there's no parsed
+        episode info (e.g., Radarr movies).
+
+        Args:
+            episodes (list): List of {"season", "episode", ...} dicts
+        """
+
+        coverage = self.format_episode_coverage(episodes)
+        if not coverage:
+            return
+
+        # A single season reads fine on one line
+        if len(coverage) == 1:
+            season_label, episode_ranges = coverage[0]
+            self.logger.info(
+                kv_string("seasons", f"{season_label}  {episode_ranges}")
+            )
+            return
+
+        # Multiple seasons: a header, then one line each
+        self.logger.info(kv_string("seasons", ""))
+        for season_label, episode_ranges in coverage:
+            self.logger.info(
+                left_aligned_string(f"  {season_label}  {episode_ranges}")
+            )
+
     def add_torrent(
         self,
         torrent_dict,
@@ -1509,13 +1611,6 @@ class SeaDexArr:
 
         for srg, srg_item in torrent_dict.items():
 
-            self.logger.info(
-                left_aligned_string(
-                    f"Adding torrent(s) for group {srg} to {torrent_client}",
-                    total_length=self.log_line_length,
-                )
-            )
-
             seadex_urls = srg_item.get("urls", {})
             for url, url_item in seadex_urls.items():
 
@@ -1529,10 +1624,9 @@ class SeaDexArr:
 
                 if self.public_only and not url_item.get("is_public", True):
                     self.logger.error(
-                        left_aligned_string(
-                            f"   Skipping {url} as tracker {tracker} is not public "
-                            f"and public_only is set",
-                            total_length=self.log_line_length,
+                        kv_string(
+                            "skipped",
+                            f"{url} (tracker {tracker} not public, public_only set)",
                         )
                     )
                     self.public_only_skipped = True
@@ -1542,9 +1636,9 @@ class SeaDexArr:
                 # get out of here
                 if tracker.casefold() not in self.trackers:
                     self.logger.info(
-                        left_aligned_string(
-                            f"   Skipping {url} as tracker {tracker} not in selected list",
-                            total_length=self.log_line_length,
+                        kv_string(
+                            "skipped",
+                            f"{url} (tracker {tracker} not in selected list)",
                         )
                     )
                     continue
@@ -1572,7 +1666,7 @@ class SeaDexArr:
                     raise Exception("Have not managed to parse the torrent URL")
 
                 if torrent_client == "qbit":
-                    success = self.add_torrent_to_qbit(
+                    success, torrent_name = self.add_torrent_to_qbit(
                         url=url,
                         torrent_url=parsed_url,
                         torrent_hash=item_hash,
@@ -1581,13 +1675,16 @@ class SeaDexArr:
                 else:
                     raise ValueError(f"Unsupported torrent client {torrent_client}")
 
+                # Fall back to the parsed URL if we couldn't get a name from the
+                # client
+                if not torrent_name:
+                    torrent_name = parsed_url
+
                 if success == "torrent_added":
                     self.logger.info(
-                        left_aligned_string(
-                            f"   Added {parsed_url} to {torrent_client}",
-                            total_length=self.log_line_length,
-                        )
+                        kv_string(f"added ({torrent_client})", torrent_name)
                     )
+                    self.log_episode_coverage(url_item.get("episodes", []))
 
                     # Increment the number of torrents added, and if we've hit the limit then
                     # jump out
@@ -1599,11 +1696,9 @@ class SeaDexArr:
 
                 elif success == "torrent_already_added":
                     self.logger.info(
-                        left_aligned_string(
-                            f"   Torrent already in {torrent_client}",
-                            total_length=self.log_line_length,
-                        )
+                        kv_string(f"already in {torrent_client}", torrent_name)
                     )
+                    self.log_episode_coverage(url_item.get("episodes", []))
 
                 else:
                     raise ValueError(f"Cannot handle torrent client {torrent_client}")
@@ -1620,8 +1715,14 @@ class SeaDexArr:
 
         Args:
             url (str): SeaDex URL
-            torrent_url (str): Torrent URL to add to client
+            torrent_url (str): Torrent URL to add to a client
             torrent_hash (str): Torrent hash
+
+        Returns:
+            tuple: (status, torrent_name), where status is one of
+                "torrent_added" or "torrent_already_added", and
+                torrent_name is the name reported by qBittorrent (or
+                None if it could not be determined)
         """
 
         # Ensure we don't already have the hash in there
@@ -1629,13 +1730,14 @@ class SeaDexArr:
         torr_hashes = [i.hash for i in torr_info]
 
         if torrent_hash in torr_hashes:
+            torrent_name = torr_info[0].name if torr_info else None
             self.logger.debug(
                 centred_string(
                     f"Torrent {url} already in qBittorrent",
                     total_length=self.log_line_length,
                 )
             )
-            return "torrent_already_added"
+            return "torrent_already_added", torrent_name
 
         # Add the torrent
         result = self.qbit.torrents_add(
@@ -1646,7 +1748,11 @@ class SeaDexArr:
         if result != "Ok.":
             raise Exception("Failed to add torrent")
 
-        return "torrent_added"
+        # Look the torrent back up by hash so we can report its name
+        added_info = self.qbit.torrents_info(torrent_hashes=torrent_hash)
+        torrent_name = added_info[0].name if added_info else None
+
+        return "torrent_added", torrent_name
 
     def update_cache(self, arr, al_id, cache_details=None):
         """Update cache with useful info
@@ -1919,29 +2025,19 @@ class SeaDexArr:
         sd_url = sd_entry.url
         is_incomplete = sd_entry.is_incomplete
 
-        # Get a string, marking if things are incomplete
-        al_str = f"AniList: {anilist_title} ({sd_url})"
+        # Top-level title header (column 0), marking if things are incomplete
+        al_str = f"AniList: {anilist_title} | {sd_url}"
         if is_incomplete:
             al_str += f" [MARKED INCOMPLETE]"
 
-        self.logger.info(
-            centred_string(
-                al_str,
-                total_length=self.log_line_length,
-            )
-        )
+        self.logger.info(al_str)
 
         return True
 
     def log_no_seadex_releases(self):
         """Log if no suitable SeaDex releases are found"""
 
-        self.logger.info(
-            centred_string(
-                f"No suitable releases found on SeaDex",
-                total_length=self.log_line_length,
-            )
-        )
+        self.logger.info(kv_string("status", "no suitable releases on SeaDex"))
         self.logger.info(
             centred_string(
                 "-" * self.log_line_length,
@@ -1972,19 +2068,10 @@ class SeaDexArr:
         }[arr]
 
         self.logger.info(
-            centred_string(
-                f"Mismatch found between SeaDex recommendation and existing {arr.capitalize()} {item_type}!",
-                total_length=self.log_line_length,
-            )
-        )
-        self.logger.info(
-            centred_string(
-                f"SeaDex recommended version(s):",
-                total_length=self.log_line_length,
-            )
+            kv_string("status", f"mismatch with existing {arr.capitalize()} {item_type}")
         )
 
-        # SeaDex options with links
+        # Recommend each release group we're going to grab, with its tags
         for srg, srg_item in seadex_dict.items():
 
             dl = [
@@ -1992,32 +2079,12 @@ class SeaDexArr:
                 for x in srg_item.get("urls", {})
             ]
             if any(dl):
-                self.logger.info(
-                    left_aligned_string(
-                        f"{srg}:",
-                        total_length=self.log_line_length,
-                    )
-                )
                 tags = srg_item.get("tags", [])
                 if len(tags) > 0:
-                    self.logger.info(
-                        left_aligned_string(
-                            f"   Tags: {','.join([t for t in tags])}",
-                            total_length=self.log_line_length,
-                        )
-                    )
-                for url in srg_item.get("urls", {}):
-
-                    download = (
-                        srg_item.get("url", {}).get(url, {}).get("download", False)
-                    )
-                    if download:
-                        self.logger.info(
-                            left_aligned_string(
-                                f"   {url}",
-                                total_length=self.log_line_length,
-                            )
-                        )
+                    recommendation = f"{srg} [{', '.join(tags)}]"
+                else:
+                    recommendation = srg
+                self.logger.info(kv_string("recommend", recommendation))
 
         return True
 

@@ -1,5 +1,4 @@
 import logging
-import math
 import os
 import shutil
 import sys
@@ -112,24 +111,42 @@ def setup_logger(
     return logger
 
 
+# Number of spaces each level of the flat layout is indented by
+INDENT = "  "
+
+
+def _is_rule(s):
+    """Whether a string is a separator rule (only '=', '-', '_' or '*')"""
+
+    stripped = s.strip()
+    return bool(stripped) and set(stripped) <= {"=", "-", "_", "*"}
+
+
 def centred_string(
     str_to_centre,
     total_length=80,
     str_prefix="",
 ):
-    """Centre string for a logger
+    """Format a string for the (flat-style) logger
+
+    Despite the historical name, this no longer draws a bordered box. A
+    separator string (e.g. "=" * 80) becomes a clean full-width rule, and any
+    other text is emitted as a single indented line. Long lines are left to run
+    on rather than being padded to a fixed width, so they can never break the
+    layout.
 
     Args:
-        str_to_centre: String to centre
-        total_length: Total length of the string. Defaults to 80.
+        str_to_centre: String to format
+        total_length: Width of the rule drawn for separator strings.
+            Defaults to 80.
         str_prefix: Will include this at the start of any string. Defaults to ""
     """
 
-    remaining_length = total_length - len(str_to_centre)
-    left_side_length = math.floor(remaining_length / 2)
-    right_side_length = remaining_length - left_side_length
+    if _is_rule(str_to_centre):
+        rule_char = str_to_centre.strip()[0]
+        return f"{str_prefix}{rule_char * total_length}"
 
-    return f"{str_prefix}|{' ' * left_side_length} {str_to_centre} {' ' * right_side_length}|"
+    return f"{str_prefix}{INDENT}{str_to_centre}"
 
 
 def left_aligned_string(
@@ -137,16 +154,39 @@ def left_aligned_string(
     total_length=80,
     str_prefix="",
 ):
-    """Left-align string for a logger
+    """Format an indented detail line for the (flat-style) logger
 
     Args:
-        str_to_align: String to align
-        total_length: Total length of the string
+        str_to_align: String to format
+        total_length: Unused, kept for call-site compatibility
         str_prefix: Will include this at the start of any string. Defaults to ""
     """
 
-    remaining_length = total_length - len(str_to_align)
-    left_side_length = 1
-    right_side_length = remaining_length - left_side_length
+    return f"{str_prefix}{INDENT}{str_to_align}"
 
-    return f"{str_prefix}|{' ' * left_side_length} {str_to_align} {' ' * right_side_length}|"
+
+def kv_string(
+    key,
+    value,
+    key_width=16,
+    indent=1,
+    str_prefix="",
+):
+    """Format an aligned "key : value" detail line for flat-style output
+
+    Args:
+        key: Left-hand label
+        value: Right-hand value
+        key_width: Column width the key is padded to, so the colons line up.
+            Defaults to 16
+        indent: Number of indent levels to prefix. Defaults to 1
+        str_prefix: Will include this at the start of any string. Defaults to ""
+    """
+
+    line = f"{str_prefix}{INDENT * indent}{key.ljust(key_width)} :"
+
+    # Allow an empty value to act as a header for an indented block below it
+    if value == "":
+        return line
+
+    return f"{line} {value}"

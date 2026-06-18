@@ -5,7 +5,7 @@ import arrapi.exceptions
 from arrapi import RadarrAPI
 
 from .discord import discord_push
-from .log import centred_string
+from .log import centred_string, kv_string
 from .seadex_arr import SeaDexArr
 
 
@@ -248,9 +248,9 @@ class SeaDexRadarr(SeaDexArr):
                     elif not self.public_only_skipped:
 
                         self.logger.info(
-                            centred_string(
-                                f"You already have the recommended release(s) for this title",
-                                total_length=self.log_line_length,
+                            kv_string(
+                                "status",
+                                "already have the recommended release(s)",
                             )
                         )
 
