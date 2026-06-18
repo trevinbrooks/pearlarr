@@ -245,7 +245,7 @@ class SeaDexRadarr(SeaDexArr):
                                     self.log_max_torrents_added()
                                     return True
 
-                    else:
+                    elif not self.public_only_skipped:
 
                         self.logger.info(
                             centred_string(
@@ -254,13 +254,17 @@ class SeaDexRadarr(SeaDexArr):
                             )
                         )
 
-                    # Update and save out the cache
-                    cache_details.update({"torrent_hashes": torrent_hashes})
-                    self.update_cache(
-                        arr="radarr",
-                        al_id=al_id,
-                        cache_details=cache_details,
-                    )
+                    # Update and save out the cache, unless we skipped a release
+                    # purely because of public_only - in that case leave the
+                    # title uncached so it's retried (e.g. once a public release
+                    # appears or public_only is relaxed)
+                    if not self.public_only_skipped:
+                        cache_details.update({"torrent_hashes": torrent_hashes})
+                        self.update_cache(
+                            arr="radarr",
+                            al_id=al_id,
+                            cache_details=cache_details,
+                        )
 
                     self.logger.info(
                         centred_string(

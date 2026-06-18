@@ -146,6 +146,51 @@ def get_all_seadex_rgs_per_episode(
     return all_seadex_rgs_per_episode
 
 
+def get_same_files_groups(seadex_dict):
+    """Group SeaDex release groups that cover exactly the same files
+
+    Release groups are grouped by their parsed episode coverage: two groups are
+    only treated as covering the same files when their parsed episode lists are
+    identical. This is deliberately stricter than "episodes overlap" -- groups
+    that overlap without being equal (e.g. a full-season batch and a single
+    cour) cover *different* files and must not be collapsed, or we'd silently
+    drop episodes when keeping only one of them.
+
+    Release groups with no episode parsing at all (e.g. Radarr movies) are
+    treated as covering the same files. Release groups whose files couldn't be
+    parsed (Sonarr parse failure, empty episode list) are each kept on their
+    own: we can't prove what they cover, so we'd rather grab a duplicate than
+    silently drop content. Returns a list of lists of release group names.
+
+    Args:
+        seadex_dict (dict): Dictionary of SeaDex releases
+    """
+
+    grouped = {}
+    order = []
+    for rg in seadex_dict:
+        all_episodes = seadex_dict[rg].get("all_episodes", None)
+
+        if all_episodes is None:
+            # No episode parsing for this Arr (e.g. Radarr): treat as one movie
+            key = "__no_episode_parsing__"
+        elif len(all_episodes) == 0:
+            # Parsing ran but found nothing: keep this group on its own so we
+            # never drop content we couldn't verify
+            key = ("__unparsed__", rg)
+        else:
+            key = frozenset(
+                (ep.get("season"), ep.get("episode")) for ep in all_episodes
+            )
+
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(rg)
+
+    return [grouped[key] for key in order]
+
+
 class SeaDexArr:
 
     def __init__(
@@ -231,6 +276,10 @@ class SeaDexArr:
         self.public_only = self.config.get("public_only", True)
         self.prefer_dual_audio = self.config.get("prefer_dual_audio", True)
         self.want_best = self.config.get("want_best", True)
+
+        # Set per-title when public_only forces us to skip a release that's only
+        # available privately, so the caller knows not to cache the title as done
+        self.public_only_skipped = False
 
         ignore_tags = self.config.get("ignore_tags", None)
         if ignore_tags is None:
@@ -772,17 +821,6 @@ class SeaDexArr:
             if len(non_duals) > 0:
                 candidates = non_duals
 
-        # filter down to just public trackers if the user wants that, so long as we have some left after the previous filtering
-        # this is the last filter we apply, as we want to error if the user prefers dual audio or best releases 
-        # but none of those are on public trackers, rather than just silently ignoring their preference and giving them a public release
-        if self.public_only:
-            public_candidates = [
-                t for t in candidates if t.tracker.is_public() and t.tracker.casefold() not in PRIVATE_TRACKERS
-            ]
-
-            if len(public_candidates) > 0:
-                candidates = public_candidates
-
         # Pull out release groups, URLs, and various other useful info as a
         # dictionary
         seadex_release_groups = {}
@@ -801,6 +839,21 @@ class SeaDexArr:
                 "hash": t.infohash,
                 "download": False,
             }
+
+        # If we only want public releases, then within each release group drop
+        # any private URLs, so long as that group also has a public option. We
+        # deliberately do this per-group rather than across the whole list: a
+        # group that only has a private URL is kept for now, and only filtered
+        # out later if the Arr doesn't already have a matching download (see
+        # reduce_overlapping_downloads)
+        if self.public_only:
+            for release_group_item in seadex_release_groups.values():
+                urls = release_group_item["urls"]
+                has_public = any(u["is_public"] for u in urls.values())
+                if has_public:
+                    release_group_item["urls"] = {
+                        url: u for url, u in urls.items() if u["is_public"]
+                    }
 
         return seadex_release_groups
 
@@ -976,6 +1029,10 @@ class SeaDexArr:
             ep_list: List of episodes. Defaults to None
         """
 
+        # Reset the per-title public_only skip flag before we make any download
+        # decisions for this title
+        self.public_only_skipped = False
+
         if self.use_torrent_hash_to_filter:
             torrent_hashes, seadex_dict = self.filter_by_torrent_hash(
                 al_id=al_id,
@@ -1090,8 +1147,6 @@ class SeaDexArr:
         # Get a simple list of the release groups
         arr_release_groups = list(arr_release_dict.keys())
 
-        torrent_hashes = []
-
         # And also just check if any release group matches
         # any Arr release tag
         overlapping_results = False
@@ -1122,7 +1177,6 @@ class SeaDexArr:
             seadex_urls = seadex_rg_item.get("urls", {})
             for url, url_item in seadex_urls.items():
 
-                url_hash = url_item.get("hash", None)
                 seadex_episodes = url_item.get("episodes", [])
 
                 # Simple case, we have no episode mappings so
@@ -1139,7 +1193,6 @@ class SeaDexArr:
                         )
 
                         url_item.update({"download": True})
-                        torrent_hashes.append(url_hash)
 
                     # Else, if we match then double-check against the size
                     if seadex_rg in arr_release_groups:
@@ -1170,7 +1223,6 @@ class SeaDexArr:
                             )
 
                             url_item.update({"download": True})
-                            torrent_hashes.append(url_hash)
 
                         else:
                             self.logger.debug(
@@ -1262,7 +1314,6 @@ class SeaDexArr:
                                         )
 
                                         url_item.update({"download": True})
-                                        torrent_hashes.append(url_hash)
 
                                 else:
 
@@ -1310,7 +1361,113 @@ class SeaDexArr:
                         )
                         url_item.update({"download": True})
 
+        # Where multiple preferred release groups cover the same files and the
+        # Arr has none of them, only grab one (preferring public if public_only)
+        self.reduce_overlapping_downloads(seadex_dict=seadex_dict, arr=arr)
+
+        # Build the hash list from whatever is still flagged for download, so it
+        # always matches the exact set of torrents we'll add. Private torrents
+        # have no infohash, so skip those
+        torrent_hashes = [
+            url_item["hash"]
+            for rg_item in seadex_dict.values()
+            for url_item in rg_item.get("urls", {}).values()
+            if url_item.get("download", False) and url_item.get("hash") is not None
+        ]
+
         return torrent_hashes, seadex_dict
+
+    def reduce_overlapping_downloads(
+        self,
+        seadex_dict,
+        arr,
+    ):
+        """Reduce overlapping flagged downloads down to a single release group
+
+        Where multiple preferred release groups cover the same files and the
+        Arr doesn't already have any of them, we only want to grab one. If
+        public_only is set, we prefer a public release group and drop the
+        private ones. If the only options are private, we log an error and skip
+        the title (without caching it as done) rather than grabbing a private
+        release.
+
+        Mutates the download flags on seadex_dict in place. Skipped entirely in
+        interactive mode, where the user has already hand-picked what to grab.
+
+        Args:
+            seadex_dict (dict): Dictionary of SeaDex releases
+            arr (str): Type of arr instance
+        """
+
+        # In interactive mode the user has explicitly chosen which releases to
+        # grab, so don't second-guess them by dropping any
+        if self.interactive:
+            return
+
+        def is_flagged(rg_item):
+            return any(
+                u.get("download", False) for u in rg_item.get("urls", {}).values()
+            )
+
+        def is_public_group(rg_item):
+            return any(
+                u.get("is_public", False) for u in rg_item.get("urls", {}).values()
+            )
+
+        def unflag(rg_item):
+            for u in rg_item.get("urls", {}).values():
+                u["download"] = False
+
+        same_files_groups = get_same_files_groups(seadex_dict)
+
+        for same_files in same_files_groups:
+
+            # Only the release groups the Arr doesn't already have are flagged
+            flagged = [rg for rg in same_files if is_flagged(seadex_dict[rg])]
+            if len(flagged) == 0:
+                continue
+
+            if self.public_only:
+                public_flagged = [
+                    rg for rg in flagged if is_public_group(seadex_dict[rg])
+                ]
+
+                if len(public_flagged) == 0:
+                    # The Arr has none of these release groups, public_only is
+                    # set, but none are available on a public tracker. Don't
+                    # grab a private release, just log an error and skip. Flag
+                    # the skip so the caller doesn't cache the title as done
+                    self.logger.error(
+                        left_aligned_string(
+                            f"{arr.capitalize()} has none of the preferred release "
+                            f"group(s) {', '.join(flagged)}, but none are available on "
+                            f"a public tracker and public_only is set. Skipping",
+                            total_length=self.log_line_length,
+                        )
+                    )
+                    self.public_only_skipped = True
+                    for rg in flagged:
+                        unflag(seadex_dict[rg])
+                    continue
+
+                # Keep the first public release group, drop everything else
+                keeper = public_flagged[0]
+            else:
+                # We don't care about public/private, just keep the first one
+                keeper = flagged[0]
+
+            for rg in flagged:
+                if rg == keeper:
+                    continue
+
+                self.logger.info(
+                    left_aligned_string(
+                        f"Not downloading release group {rg} as another preferred "
+                        f"release covers the same files. Keeping {keeper}",
+                        total_length=self.log_line_length,
+                    )
+                )
+                unflag(seadex_dict[rg])
 
     @staticmethod
     def get_any_to_download(seadex_dict):
@@ -1371,7 +1528,15 @@ class SeaDexArr:
                 tracker = url_item.get("tracker", None)
 
                 if self.public_only and not url_item.get("is_public", True):
-                    raise ValueError(f"Cannot download preferred url {url} as tracker {tracker} is not public")
+                    self.logger.error(
+                        left_aligned_string(
+                            f"   Skipping {url} as tracker {tracker} is not public "
+                            f"and public_only is set",
+                            total_length=self.log_line_length,
+                        )
+                    )
+                    self.public_only_skipped = True
+                    continue
 
                 # If we don't have a tracker from our list selected, then
                 # get out of here

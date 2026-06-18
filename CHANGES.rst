@@ -1,6 +1,8 @@
 1.0.0 (Unreleased)
 ==================
 
+- When "public_only" is set, prefer public URLs per release group; if the only option for a release the Arr is missing is private, log an error and skip the title (leaving it uncached so it's retried) instead of grabbing a private release
+- Where multiple preferred release groups cover the exact same files, only download one (preferring a public release), rather than grabbing them all
 - Add "ignore_anilist_ids", which allows you to skip specific AniList IDs from being processed
 - Add "torrent_tags", which allows you to tag torrents as added to qBittorrent
 - Add "ignore tags" option, which allows you to filter out various tags

@@ -64,35 +64,28 @@ def get_overlapping_results(seadex_dict):
         seadex_dict (dict): Dictionary of SeaDex releases
     """
 
-    overlapping_results = False
-    if len(seadex_dict) > 0:
-        for rg1 in seadex_dict:
+    # Build a (season, episode) set per release group
+    episode_sets = {}
+    for rg in seadex_dict:
+        all_episodes = seadex_dict[rg].get("all_episodes", [])
+        episode_sets[rg] = {
+            (ep.get("season"), ep.get("episode")) for ep in all_episodes
+        }
 
-            rg1_all_eps = seadex_dict.get(rg1, {}).get("all_episodes", [])
+    release_groups = list(episode_sets.keys())
+    for i, rg1 in enumerate(release_groups):
+        for rg2 in release_groups[i + 1:]:
 
-            for rg2 in seadex_dict:
+            # If either release hasn't been parsed, then we can't rule out an
+            # overlap, so assume they overlap
+            if len(episode_sets[rg1]) == 0 or len(episode_sets[rg2]) == 0:
+                return True
 
-                if rg1 == rg2:
-                    continue
+            # Otherwise they overlap if they share any episode
+            if episode_sets[rg1] & episode_sets[rg2]:
+                return True
 
-                rg2_all_eps = seadex_dict.get(rg1, {}).get("all_episodes", [])
-
-                if len(rg2_all_eps) == 0 or len(rg2_all_eps) == 0:
-                    overlapping_results = True
-
-                # Also, if we have an instance where one hasn't been parsed
-                # but the other has, then just assume they overlap
-
-                intersect = list(
-                    filter(
-                        lambda x: x in rg1_all_eps,
-                        rg2_all_eps,
-                    )
-                )
-                if len(intersect) > 0:
-                    overlapping_results = True
-
-    return overlapping_results
+    return False
 
 
 def check_ep_by_anime_ids(
@@ -537,7 +530,7 @@ class SeaDexSonarr(SeaDexArr):
                                     self.log_max_torrents_added()
                                     return True
 
-                    else:
+                    elif not self.public_only_skipped:
 
                         self.logger.info(
                             centred_string(
@@ -546,13 +539,17 @@ class SeaDexSonarr(SeaDexArr):
                             )
                         )
 
-                    # Update and save out the cache
-                    cache_details.update({"torrent_hashes": torrent_hashes})
-                    self.update_cache(
-                        arr="sonarr",
-                        al_id=al_id,
-                        cache_details=cache_details,
-                    )
+                    # Update and save out the cache, unless we skipped a release
+                    # purely because of public_only - in that case leave the
+                    # title uncached so it's retried (e.g. once a public release
+                    # appears or public_only is relaxed)
+                    if not self.public_only_skipped:
+                        cache_details.update({"torrent_hashes": torrent_hashes})
+                        self.update_cache(
+                            arr="sonarr",
+                            al_id=al_id,
+                            cache_details=cache_details,
+                        )
 
                     self.logger.info(
                         centred_string(
