@@ -88,6 +88,11 @@ and will run if you just enter ``seadexarr`` into the command line, which will r
 the single run, pass --sonarr or --radarr to run the Sonarr or Radarr modules. Scheduled runs
 automatically for both
 
+To run for just a single title, pass ``--movie-id`` with a movie's TMDB ID (runs Radarr) or
+``--series-id`` with a series' TVDB ID (runs Sonarr), e.g. ``run single --movie-id 12345`` or
+``run single --series-id 67890``. Either flag on its own implies a run of the matching module,
+so you don't also need ``--radarr``/``--sonarr``.
+
 ### ``seadexarr config``
 
 To generate a blank config file, simply enter ``config init``. You can then populate

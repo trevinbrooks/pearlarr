@@ -50,11 +50,30 @@ class SeaDexRadarr(SeaDexArr):
             apikey=self.radarr_api_key,
         )
 
-    def run(self):
-        """Run the SeaDex Radarr syncer"""
+    def run(self, tmdb_id=None):
+        """Run the SeaDex Radarr syncer
+
+        Args:
+            tmdb_id (int, optional): If set, only run for the movie with this
+                TMDB ID. Defaults to None, which runs for all movies.
+        """
 
         # Get all the anime movies
         all_radarr_movies = self.get_all_radarr_movies()
+
+        # If we're targeting a single movie, filter down to that TMDB ID
+        if tmdb_id is not None:
+            all_radarr_movies = [
+                m for m in all_radarr_movies if m.tmdbId == tmdb_id
+            ]
+            if len(all_radarr_movies) == 0:
+                self.logger.warning(
+                    centred_string(
+                        f"No anime movie with TMDB ID {tmdb_id} found in Radarr",
+                        total_length=self.log_line_length,
+                    )
+                )
+
         n_radarr = len(all_radarr_movies)
 
         self.log_arr_start(

@@ -250,11 +250,30 @@ class SeaDexSonarr(SeaDexArr):
             )
             self.all_radarr_movies = self.radarr.get_all_radarr_movies()
 
-    def run(self):
-        """Run the SeaDex Sonarr Syncer"""
+    def run(self, tvdb_id=None):
+        """Run the SeaDex Sonarr Syncer
+
+        Args:
+            tvdb_id (int, optional): If set, only run for the series with this
+                TVDB ID. Defaults to None, which runs for all series.
+        """
 
         # Get all the anime series
         all_sonarr_series = self.get_all_sonarr_series()
+
+        # If we're targeting a single series, filter down to that TVDB ID
+        if tvdb_id is not None:
+            all_sonarr_series = [
+                s for s in all_sonarr_series if s.tvdbId == tvdb_id
+            ]
+            if len(all_sonarr_series) == 0:
+                self.logger.warning(
+                    centred_string(
+                        f"No anime series with TVDB ID {tvdb_id} found in Sonarr",
+                        total_length=self.log_line_length,
+                    )
+                )
+
         n_sonarr = len(all_sonarr_series)
 
         self.log_arr_start(

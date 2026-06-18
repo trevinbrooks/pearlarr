@@ -4,6 +4,7 @@ import shutil
 import time
 import traceback
 from datetime import datetime, timedelta
+from typing import Optional
 
 import typer
 
@@ -99,12 +100,18 @@ def run_scheduled():
 def run_single(
     radarr: bool = False,
     sonarr: bool = False,
+    movie_id: Optional[int] = None,
+    series_id: Optional[int] = None,
 ):
     """Do a single SeaDexArr run
 
     Args:
-        sonarr: Do a Sonarr run? Defaults to False
         radarr: Do a Radarr run? Defaults to False
+        sonarr: Do a Sonarr run? Defaults to False
+        movie_id: If set, only run Radarr for the movie with this TMDB ID.
+            Implies a Radarr run. Defaults to None
+        series_id: If set, only run Sonarr for the series with this TVDB ID.
+            Implies a Sonarr run. Defaults to None
     """
 
     # Set up config file location
@@ -114,27 +121,31 @@ def run_single(
 
     logger = setup_logger(log_level="INFO")
 
-    if radarr:
+    # Passing a movie/series ID implies running that arr
+    run_radarr = radarr or movie_id is not None
+    run_sonarr = sonarr or series_id is not None
+
+    if run_radarr:
         try:
             sdr = SeaDexRadarr(
                 config=config,
                 cache=cache,
                 logger=logger,
             )
-            sdr.run()
+            sdr.run(tmdb_id=movie_id)
         except Exception:
             tb = traceback.format_exc()
             for line in tb.splitlines():
                 logger.warning(line)
 
-    if sonarr:
+    if run_sonarr:
         try:
             sds = SeaDexSonarr(
                 config=config,
                 cache=cache,
                 logger=logger,
             )
-            sds.run()
+            sds.run(tvdb_id=series_id)
         except Exception:
             tb = traceback.format_exc()
             for line in tb.splitlines():
