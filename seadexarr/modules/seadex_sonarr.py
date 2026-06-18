@@ -57,6 +57,23 @@ def get_tvdb_season(mapping):
     return tvdb_season
 
 
+def get_season_label(mapping):
+    """Build a season label (e.g. "S01") for a mapping, or None if unknown
+
+    Args:
+        mapping (dict): Dictionary of SeaDex mappings
+
+    Returns:
+        str | None: Season label, or None when the season is unknown (-1)
+    """
+
+    tvdb_season = get_tvdb_season(mapping)
+    if tvdb_season is None or tvdb_season == -1:
+        return None
+
+    return f"S{tvdb_season:02d}"
+
+
 def get_overlapping_results(seadex_dict):
     """See if SeaDex releases have overlapping episodes
 
@@ -303,17 +320,11 @@ class SeaDexSonarr(SeaDexArr):
                     )
 
                     if al_id_in_cache and not self.ignore_seadex_update_times:
-                        self.logger.info(
-                            centred_string(
-                                f"Cache time for AniList ID {al_id} matches SeaDex updated time",
-                                total_length=self.log_line_length,
-                            )
-                        )
-                        self.logger.info(
-                            centred_string(
-                                "-" * self.log_line_length,
-                                total_length=self.log_line_length,
-                            )
+                        self.log_cached_entry(
+                            arr="sonarr",
+                            al_id=al_id,
+                            sd_entry=sd_entry,
+                            seasons=get_season_label(mapping),
                         )
                         continue
 
@@ -325,18 +336,12 @@ class SeaDexSonarr(SeaDexArr):
                             seadex_entry=sd_entry,
                         )
                         if al_id_in_radarr_cache:
-                            self.logger.info(
-                                centred_string(
-                                    f"Found AniList ID {al_id} in Radarr cache, "
-                                    f"and cache time matches SeaDex updated time",
-                                    total_length=self.log_line_length,
-                                )
-                            )
-                            self.logger.info(
-                                centred_string(
-                                    "-" * self.log_line_length,
-                                    total_length=self.log_line_length,
-                                )
+                            self.log_cached_entry(
+                                arr="radarr",
+                                al_id=al_id,
+                                sd_entry=sd_entry,
+                                status="cached in Radarr (matches SeaDex updated time)",
+                                seasons=get_season_label(mapping),
                             )
                             continue
 

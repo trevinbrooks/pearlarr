@@ -121,17 +121,10 @@ class SeaDexRadarr(SeaDexArr):
                     )
 
                     if al_id_in_cache and not self.ignore_seadex_update_times:
-                        self.logger.info(
-                            centred_string(
-                                f"Cache time for AniList ID {al_id} matches SeaDex updated time",
-                                total_length=self.log_line_length,
-                            )
-                        )
-                        self.logger.info(
-                            centred_string(
-                                "-" * self.log_line_length,
-                                total_length=self.log_line_length,
-                            )
+                        self.log_cached_entry(
+                            arr="radarr",
+                            al_id=al_id,
+                            sd_entry=sd_entry,
                         )
                         continue
 

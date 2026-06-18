@@ -594,6 +594,32 @@ class SeaDexArr:
 
         return sd_time_str == cache_time
 
+    def get_cached_name(
+        self,
+        arr,
+        al_id,
+    ):
+        """Get the AniList title stored in the cache for an entry, if any
+
+        The title is written into the cache alongside the timestamp when an
+        entry is first processed, so it can be reused for cached entries
+        without an additional AniList lookup.
+
+        Args:
+            arr (str): Arr instance the entry is cached under
+            al_id (int): AniList ID
+
+        Returns:
+            str | None: Cached title, or None if not present
+        """
+
+        return (
+            self.cache.get("anilist_entries", {})
+            .get(arr, {})
+            .get(str(al_id), {})
+            .get("name")
+        )
+
     def get_anilist_ids(
         self,
         tvdb_id=None,
@@ -2031,6 +2057,59 @@ class SeaDexArr:
             al_str += f" [MARKED INCOMPLETE]"
 
         self.logger.info(al_str)
+
+        return True
+
+    def log_cached_entry(
+        self,
+        arr,
+        al_id,
+        sd_entry,
+        status="cached (matches SeaDex updated time)",
+        seasons=None,
+    ):
+        """Log a cached AniList entry in the same flat style as a processed item
+
+        Renders the AniList title header followed by aligned key/value detail
+        lines, so cached entries line up with non-cached ones in the log. The
+        title is read from the cache (where it was stored when first
+        processed), falling back to an AniList lookup only if it's missing.
+
+        Args:
+            arr (str): Arr instance the entry is cached under
+            al_id (int): AniList ID
+            sd_entry: SeaDex entry
+            status (str): Value for the "status" line. Defaults to
+                "cached (matches SeaDex updated time)"
+            seasons (str, optional): Season label (e.g. "S01") for a "seasons"
+                line. Defaults to None, which omits the line
+        """
+
+        anilist_title = self.get_cached_name(arr=arr, al_id=al_id)
+
+        if anilist_title is not None:
+            self.log_al_title(
+                anilist_title=anilist_title,
+                sd_entry=sd_entry,
+            )
+        else:
+            # Older cache without a stored name - fall back to a lookup
+            self.get_anilist_title(
+                al_id=al_id,
+                sd_entry=sd_entry,
+            )
+
+        self.logger.info(kv_string("status", status))
+
+        if seasons is not None:
+            self.logger.info(kv_string("seasons", seasons))
+
+        self.logger.info(
+            centred_string(
+                "-" * self.log_line_length,
+                total_length=self.log_line_length,
+            )
+        )
 
         return True
 
