@@ -63,7 +63,13 @@ docs = [
 requires = [
     "setuptools == 80.9.0",
     "wheel == 0.45.1",
-    "setuptools_scm == 9.2.2",
 ]
 
 build-backend = "setuptools.build_meta"
+
+# The version is declared statically in [project] above, so no SCM/dynamic
+# version plugin is needed. Declare the package explicitly so setuptools never
+# tries to auto-discover it (the repo root also holds non-package dirs such as
+# logs/ and *.egg-info that would make flat-layout discovery ambiguous).
+[tool.setuptools.packages.find]
+include = ["seadexarr*"]
