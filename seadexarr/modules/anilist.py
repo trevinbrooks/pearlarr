@@ -1,4 +1,3 @@
-import copy
 import time
 
 import requests
@@ -13,10 +12,14 @@ RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 MAX_RETRIES = 3
 MAX_BACKOFF = 60
 
-# AniList query
-QUERY = """
-query ($id: Int) {
-  Media (id: $id, type: ANIME) {
+# Up to this many Media can be fetched in one batched request (AniList's Page
+# perPage max). Batching collapses one-request-per-id into a handful, which is
+# what keeps a big run from tripping the rate limit one lookup at a time.
+ANILIST_BATCH_SIZE = 50
+
+# The Media fields both queries select. Kept in one place so the cached shape is
+# identical no matter which query populated it.
+_MEDIA_FIELDS = """
     id
     title {
         english
@@ -29,13 +32,31 @@ query ($id: Int) {
     }
     episodes
     format
+"""
+
+# Single-id query
+QUERY = """
+query ($id: Int) {
+  Media (id: $id, type: ANIME) {
+""" + _MEDIA_FIELDS + """
+  }
+}
+"""
+
+# Batched query: many Media in one request via id_in
+BATCH_QUERY = """
+query ($ids: [Int]) {
+  Page (perPage: %d) {
+    media (id_in: $ids, type: ANIME) {
+""" % ANILIST_BATCH_SIZE + _MEDIA_FIELDS + """
+    }
   }
 }
 """
 
 
-def get_query(al_id):
-    """Do the AniList query, retrying politely on rate-limits / transient errors
+def _post_with_retry(query, variables):
+    """POST a GraphQL query to AniList, retrying politely on rate-limits / 5xx
 
     On a rate-limit (HTTP 429) or a transient 5xx, AniList returns
     ``{"data": null, ...}``. Returning that unretried is what surfaced
@@ -44,19 +65,13 @@ def get_query(al_id):
     present) and retry before giving up. Returns the parsed JSON - which may
     still be an error payload after the final attempt - or ``{}`` if the
     response body wasn't JSON.
-
-    Args:
-        al_id (int): Anilist ID
     """
-
-    # Define query variables and values that will be used in the query request
-    variables = {"id": al_id}
 
     for attempt in range(MAX_RETRIES + 1):
 
         try:
             resp = requests.post(
-                API_URL, json={"query": QUERY, "variables": variables}
+                API_URL, json={"query": query, "variables": variables}
             )
         except requests.RequestException:
             # Network blip: back off and retry, then give up with an empty result
@@ -81,6 +96,39 @@ def get_query(al_id):
             return {}
 
     return {}
+
+
+def get_query(al_id):
+    """Fetch one AniList Media by id (see _post_with_retry for the retry policy)
+
+    Args:
+        al_id (int): Anilist ID
+    """
+
+    return _post_with_retry(QUERY, {"id": al_id})
+
+
+def get_query_batch(al_ids):
+    """Fetch up to ANILIST_BATCH_SIZE AniList Media in a single request via id_in
+
+    Returns ``{id: {"data": {"Media": {...}}}}`` mirroring the single-id shape,
+    so the results can seed the same cache directly. Ids unknown to AniList are
+    simply absent from the result.
+
+    Args:
+        al_ids (list[int]): Up to ANILIST_BATCH_SIZE AniList IDs
+    """
+
+    j = _post_with_retry(BATCH_QUERY, {"ids": list(al_ids)})
+    media_list = (
+        ((j or {}).get("data") or {}).get("Page") or {}
+    ).get("media") or []
+
+    return {
+        m["id"]: {"data": {"Media": m}}
+        for m in media_list
+        if isinstance(m, dict) and m.get("id") is not None
+    }
 
 
 def _get_media(
@@ -115,9 +163,11 @@ def _get_media(
     if j is None:
         j = get_query(al_id)
         # Only remember a response that actually carried Media, so a transient
-        # failure (rate-limit, network) isn't cached as a permanent miss
+        # failure (rate-limit, network) isn't cached as a permanent miss. The
+        # cached payload is only ever read (the helpers do .get() lookups, no
+        # mutation), so store it directly rather than deep-copying.
         if ((j or {}).get("data") or {}).get("Media"):
-            al_cache[al_id] = copy.deepcopy(j)
+            al_cache[al_id] = j
 
     media = ((j or {}).get("data") or {}).get("Media") or {}
 

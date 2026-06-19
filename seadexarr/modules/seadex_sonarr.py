@@ -266,6 +266,23 @@ class SeaDexSonarr(SeaDexArr):
             n_items=n_sonarr,
         )
 
+        # Warm the AniList cache before the per-series loop: reuse what past runs
+        # fetched, then batch-fetch (id_in pages) everything still missing, so
+        # the loop rarely hits AniList one id at a time and trips its rate limit.
+        self.load_anilist_cache()
+        prefetch_ids = set()
+        for series in all_sonarr_series:
+            if not series.monitored and self.ignore_unmonitored:
+                continue
+            prefetch_ids.update(
+                self.get_anilist_ids(
+                    tvdb_id=series.tvdbId,
+                    imdb_id=series.imdbId,
+                    log_ignored=False,
+                )
+            )
+        self.prefetch_anilist(prefetch_ids)
+
         # Now start looping over these series, finding any potential mappings
         for sonarr_idx, sonarr_series in enumerate(all_sonarr_series):
 

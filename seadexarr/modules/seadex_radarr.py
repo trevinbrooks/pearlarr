@@ -81,6 +81,24 @@ class SeaDexRadarr(SeaDexArr):
             n_items=n_radarr,
         )
 
+        # Warm the AniList cache before the per-movie loop: reuse what past runs
+        # fetched, then batch-fetch (id_in pages) everything still missing, so
+        # the loop rarely hits AniList one id at a time and trips its rate limit.
+        self.load_anilist_cache()
+        prefetch_ids = set()
+        for movie in all_radarr_movies:
+            if not movie.monitored and self.ignore_unmonitored:
+                continue
+            prefetch_ids.update(
+                self.get_anilist_ids(
+                    tmdb_id=movie.tmdbId,
+                    imdb_id=movie.imdbId,
+                    tmdb_type="movie",
+                    log_ignored=False,
+                )
+            )
+        self.prefetch_anilist(prefetch_ids)
+
         # Now start looping over these movies
         for radarr_idx, radarr_movie in enumerate(all_radarr_movies):
 

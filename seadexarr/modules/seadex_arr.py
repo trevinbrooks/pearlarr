@@ -4,7 +4,7 @@ import logging
 import os
 import shutil
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from hashlib import md5
 from itertools import compress
 from urllib.request import urlretrieve
@@ -17,7 +17,12 @@ from ruamel.yaml import YAML
 from seadex import SeaDexEntry, EntryNotFoundError, EntryRecord
 
 from .. import __version__
-from .anilist import get_anilist_title, get_anilist_thumb
+from .anilist import (
+    get_anilist_title,
+    get_anilist_thumb,
+    get_query_batch,
+    ANILIST_BATCH_SIZE,
+)
 from .log import (
     setup_logger,
     left_aligned_string,
@@ -26,9 +31,7 @@ from .log import (
     rule_string,
     count_noun,
     entry_string,
-    INDENT,
     KEY_WIDTH,
-    ENTRY_LABEL_OFFSET,
     DETAIL_INDENT,
     DETAIL_KEY_WIDTH,
 )
@@ -103,6 +106,11 @@ PRIVATE_TRACKERS = {
 }
 
 UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+# How long a persisted AniList response stays usable before it's re-fetched.
+# title/format/coverImage are effectively static; episodes for a currently-airing
+# show drift, so this caps how stale that count can get (~one episode/week).
+ANILIST_CACHE_TTL_DAYS = 7
 
 
 def normalize_rg(name):
@@ -702,6 +710,7 @@ class SeaDexArr:
         tmdb_id=None,
         imdb_id=None,
         tmdb_type="movie",
+        log_ignored=True,
     ):
         """Get a list of entries that match on TVDB ID
 
@@ -710,6 +719,9 @@ class SeaDexArr:
             tmdb_id (int): TMDB ID
             imdb_id (int): IMDb ID
             tmdb_type (str): TMDB type. Can be "movie" or "show"
+            log_ignored (bool): Log a ledger row for each ignored AniList ID.
+                Defaults to True; pass False from the prefetch pass so ignored
+                ids aren't logged twice (once there, once in the main loop)
         """
 
         if tmdb_type not in ["movie", "show"]:
@@ -750,12 +762,124 @@ class SeaDexArr:
         ids_to_drop = [al_id for al_id in anilist_mappings if al_id in self.ignore_anilist_ids]
         for al_id in ids_to_drop:
             del anilist_mappings[al_id]
-            self.log_ignored_anilist_id(al_id=al_id)
+            if log_ignored:
+                self.log_ignored_anilist_id(al_id=al_id)
 
         # Sort by AniList ID
         anilist_mappings = dict(sorted(anilist_mappings.items()))
 
         return anilist_mappings
+
+    @staticmethod
+    def _anilist_meta_is_fresh(record):
+        """True if a persisted AniList record has a payload and is within TTL
+
+        Shared by load (which ids to seed) and save (which to keep vs refresh),
+        so the two never disagree about what "still good" means.
+        """
+
+        if not (record or {}).get("data"):
+            return False
+        try:
+            stamp = datetime.strptime(
+                record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT
+            )
+        except (TypeError, ValueError):
+            return False
+        return stamp >= datetime.now() - timedelta(days=ANILIST_CACHE_TTL_DAYS)
+
+    def load_anilist_cache(self):
+        """Seed the in-memory AniList cache from the persisted store
+
+        AniList metadata (title / format / episodes / cover) is effectively
+        static, so reusing what we fetched on previous runs is what keeps a run
+        from re-querying AniList for ids it has already seen - the main cause of
+        the rate-limit stalls. Entries older than ANILIST_CACHE_TTL_DAYS are
+        skipped so the data can't get arbitrarily stale (see prefetch_anilist /
+        save_anilist_cache for the write side).
+        """
+
+        meta = self.cache.get("anilist_meta", {})
+        if not meta:
+            return
+
+        loaded = 0
+        for id_str, record in meta.items():
+            if not self._anilist_meta_is_fresh(record):
+                continue
+            try:
+                self.al_cache[int(id_str)] = record["data"]
+            except (TypeError, ValueError):
+                continue
+            loaded += 1
+
+        if loaded:
+            self.logger.debug(
+                indent_string(f"Loaded {loaded} AniList entries from cache")
+            )
+
+    def save_anilist_cache(self):
+        """Persist any newly seen AniList responses back to the on-disk cache
+
+        An entry that's already stored and still fresh keeps its original
+        fetched_at (so the TTL actually expires it rather than resetting every
+        run); a missing OR stale entry is (re)written with the current time, so
+        an aged-out id is refreshed instead of being re-fetched on every run.
+        """
+
+        meta = self.cache.setdefault("anilist_meta", {})
+        now_str = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
+
+        written = 0
+        for al_id, data in self.al_cache.items():
+            id_str = str(al_id)
+            if self._anilist_meta_is_fresh(meta.get(id_str)):
+                continue
+            meta[id_str] = {"fetched_at": now_str, "data": data}
+            written += 1
+
+        if written:
+            save_json(self.cache, self.cache_file, sort_cache=True)
+
+    def prefetch_anilist(self, al_ids):
+        """Warm the AniList cache for a set of ids in batched requests
+
+        Fetches everything still missing from the cache in ANILIST_BATCH_SIZE-id
+        "id_in" pages (one request per page) instead of one request per id on
+        demand, then persists the results. This is what collapses a cold run's
+        ~one-AniList-request-per-series into a handful, so the per-title loop
+        rarely has to hit AniList one id at a time and trip its rate limit.
+
+        Args:
+            al_ids (iterable[int]): Candidate AniList IDs for this run
+        """
+
+        missing = sorted(
+            {i for i in al_ids if i is not None and i not in self.al_cache}
+        )
+        if not missing:
+            return
+
+        # Surfaced at INFO (only when there's actually something to fetch, so
+        # warm runs stay silent) so the upfront pause on a cold run is explained
+        self.logger.info(
+            indent_string(
+                f"Prefetching {len(missing)} AniList entries "
+                f"in batches of {ANILIST_BATCH_SIZE}"
+            ),
+            extra={"line_style": "grey50"},
+        )
+
+        for start in range(0, len(missing), ANILIST_BATCH_SIZE):
+            chunk = missing[start:start + ANILIST_BATCH_SIZE]
+            # Ids unknown to AniList are simply absent from the result; the
+            # per-id helpers will try once more on demand and degrade gracefully
+            for al_id, data in get_query_batch(chunk).items():
+                self.al_cache[al_id] = data
+
+        # Persist now (before the main loop) so the batch's work survives even an
+        # early return - e.g. when max_torrents_to_add is hit mid-run
+        self.save_anilist_cache()
 
     def get_mappings_from_anime_mappings(
         self,
@@ -1784,22 +1908,16 @@ class SeaDexArr:
                 if not torrent_name:
                     torrent_name = parsed_url
 
-                # Compute the episode coverage once and reuse it for both the
-                # log line and the summary stats below
-                coverage = self.format_episode_coverage(
-                    url_item.get("episodes", [])
-                )
-
                 if success == "torrent_added":
                     results.append(
                         {"outcome": "added", "name": torrent_name, "group": srg}
                     )
 
-                    # Record the grab for the end-of-run summary
-                    coverage_str = (
-                        "  ".join(f"{s} {e}" for s, e in coverage)
-                        if coverage
-                        else ""
+                    # Record the grab for the end-of-run summary. Coverage is only
+                    # needed for a torrent we actually added, so compute it here
+                    # (via the shared coverage_string) rather than for every URL.
+                    coverage_str = self.coverage_string(
+                        url_item.get("episodes", [])
                     )
                     self.stats["added"].append(
                         {
@@ -1953,7 +2071,7 @@ class SeaDexArr:
         value_style=None,
         level=logging.INFO,
         indent=1,
-        key_width=16,
+        key_width=KEY_WIDTH,
         sep=" :",
         tail=None,
         tail_style="yellow",
@@ -1970,7 +2088,7 @@ class SeaDexArr:
             value_style: Optional rich style for the value (e.g. "green")
             level: Logging level. Defaults to logging.INFO
             indent: Number of indent levels. Defaults to 1
-            key_width: Column width the key is padded to. Defaults to 16
+            key_width: Column width the key is padded to. Defaults to KEY_WIDTH (16)
             sep: Separator after the padded key. Defaults to " :"; pass "" for
                 the colon-less gutter format (see log_detail)
             tail: Optional emphasised suffix (console only), e.g. an "incomplete"
@@ -2586,11 +2704,8 @@ class SeaDexArr:
         # The release group(s) we recommend (those flagged for download), tags too
         for srg, srg_item in seadex_dict.items():
 
-            dl = [
-                srg_item.get("urls", {}).get(x, {}).get("download", False)
-                for x in srg_item.get("urls", {})
-            ]
-            if any(dl):
+            urls = srg_item.get("urls", {})
+            if any(u.get("download", False) for u in urls.values()):
                 tags = srg_item.get("tags", [])
                 if len(tags) > 0:
                     recommendation = f"{srg} [{', '.join(tags)}]"
