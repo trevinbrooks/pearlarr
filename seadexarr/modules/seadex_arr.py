@@ -1874,20 +1874,17 @@ class SeaDexArr:
         }[arr]
 
         self.logger.info(
-            centred_string(
-                self.log_line_sep * self.log_line_length,
+            rule_string(
+                rule_char=self.log_line_sep,
                 total_length=self.log_line_length,
             )
         )
         self.logger.info(
-            centred_string(
-                f"Starting SeaDex-{arr.capitalize()} for {n_items} {item_type}",
-                total_length=self.log_line_length,
-            )
+            f"Starting SeaDex-{arr.capitalize()} for {n_items} {item_type}"
         )
         self.logger.info(
-            centred_string(
-                self.log_line_sep * self.log_line_length,
+            rule_string(
+                rule_char=self.log_line_sep,
                 total_length=self.log_line_length,
             )
         )
@@ -1914,8 +1911,8 @@ class SeaDexArr:
         )
 
         self.logger.info(
-            centred_string(
-                self.log_line_sep * self.log_line_length,
+            rule_string(
+                rule_char=self.log_line_sep,
                 total_length=self.log_line_length,
             )
         )
@@ -1966,16 +1963,7 @@ class SeaDexArr:
         """
 
         self.logger.info(
-            centred_string(
-                self.log_line_sep * self.log_line_length,
-                total_length=self.log_line_length,
-            )
-        )
-        self.logger.info(
-            centred_string(
-                f"[{n_item}/{n_items}] {arr.capitalize()}: {item_title}",
-                total_length=self.log_line_length,
-            )
+            f"[{n_item}/{n_items}] {arr.capitalize()}: {item_title}"
         )
         self.logger.info(
             rule_string(
@@ -2002,8 +1990,8 @@ class SeaDexArr:
             )
         )
         self.logger.info(
-            centred_string(
-                self.log_line_sep * self.log_line_length,
+            rule_string(
+                rule_char=self.log_line_sep,
                 total_length=self.log_line_length,
             )
         )
@@ -2209,8 +2197,8 @@ class SeaDexArr:
             )
         )
         self.logger.info(
-            centred_string(
-                self.log_line_sep * self.log_line_length,
+            rule_string(
+                rule_char=self.log_line_sep,
                 total_length=self.log_line_length,
             )
         )

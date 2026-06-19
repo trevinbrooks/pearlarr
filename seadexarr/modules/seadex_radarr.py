@@ -293,8 +293,8 @@ class SeaDexRadarr(SeaDexArr):
                     time.sleep(self.sleep_time)
 
                 self.logger.info(
-                    centred_string(
-                        self.log_line_sep * self.log_line_length,
+                    rule_string(
+                        rule_char=self.log_line_sep,
                         total_length=self.log_line_length,
                     )
                 )
@@ -307,8 +307,8 @@ class SeaDexRadarr(SeaDexArr):
             except Exception as e:
                 self.logger.error(f"Exception: {e}")
                 self.logger.info(
-                    centred_string(
-                        self.log_line_sep * self.log_line_length,
+                    rule_string(
+                        rule_char=self.log_line_sep,
                         total_length=self.log_line_length,
                     )
                 )
