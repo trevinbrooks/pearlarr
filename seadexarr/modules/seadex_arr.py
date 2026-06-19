@@ -47,7 +47,7 @@ def save_json(
     out_file,
     sort_cache=False,
 ):
-    """Save json in a pretty way
+    """Save JSON prettily
 
     Args:
         data (dict): Data to be saved
@@ -108,7 +108,7 @@ PRIVATE_TRACKERS = {
 UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # How long a persisted AniList response stays usable before it's re-fetched.
-# title/format/coverImage are effectively static; episodes for a currently-airing
+# title/format/coverImage are effectively static; episodes for a currently airing
 # show drift, so this caps how stale that count can get (~one episode/week).
 ANILIST_CACHE_TTL_DAYS = 7
 
@@ -117,8 +117,8 @@ def normalize_rg(name):
     """Normalize a release group name for comparison
 
     Lower-cases and strips surrounding whitespace and dashes so that the same
-    group named slightly differently by Sonarr and SeaDex (e.g. "Erai-Raws" vs
-    "erai-raws ") compares equal. Returns None for a missing/blank name.
+    group named slightly differently by Sonarr and SeaDex (e.g. "Era-Raws" vs.
+    "era-raws ") compare equal. Returns None for a missing/blank name.
 
     Args:
         name (str | None): Release group name
@@ -155,7 +155,7 @@ def get_all_seadex_rgs_per_episode(
                 seadex_episodes = url_item.get("episodes", [])
 
                 # If we haven't managed to parse, then set this up as an
-                # "all" episodes fallback
+                # "all" episode fallback
                 if len(seadex_episodes) == 0:
                     if seadex_rg_normalized not in all_seadex_rgs_per_episode["all"]:
                         all_seadex_rgs_per_episode["all"].append(seadex_rg_normalized)
@@ -210,11 +210,11 @@ def get_same_files_groups(seadex_dict):
     Release groups are grouped by their parsed episode coverage: two groups are
     only treated as covering the same files when their parsed episode lists are
     identical. This is deliberately stricter than "episodes overlap" -- groups
-    that overlap without being equal (e.g. a full-season batch and a single
+    that overlap without being equal (e.g., a full-season batch and a single
     cour) cover *different* files and must not be collapsed, or we'd silently
     drop episodes when keeping only one of them.
 
-    Release groups with no episode parsing at all (e.g. Radarr movies) are
+    Release groups with no episode parsing at all (e.g., Radarr movies) are
     treated as covering the same files. Release groups whose files couldn't be
     parsed (Sonarr parse failure, empty episode list) are each kept on their
     own: we can't prove what they cover, so we'd rather grab a duplicate than
@@ -229,7 +229,7 @@ def get_same_files_groups(seadex_dict):
         all_episodes = seadex_dict[rg].get("all_episodes", None)
 
         if all_episodes is None:
-            # No episode parsing for this Arr (e.g. Radarr): treat as one movie
+            # No episode parsing for this Arr (e.g., Radarr): treat as one movie
             key = "__no_episode_parsing__"
         elif len(all_episodes) == 0:
             # Parsing ran but found nothing: keep this group on its own so we
@@ -248,8 +248,7 @@ def format_episode_ranges(episode_numbers):
     """Condense a set of episode numbers into a readable range string
 
     Contiguous runs are collapsed (e.g. [1, 2, 3] -> "E01-E03"), lone episodes
-    are kept as-is (e.g. [5] -> "E05"), and gaps split into multiple comma-
-    separated ranges (e.g. [1, 2, 3, 7, 8] -> "E01-E03, E07-E08").
+    are kept as-is (e.g. [5] -> "E05"), and gaps split into multiple comma-separated ranges (e.g. [1, 2, 3, 7, 8] -> "E01-E03, E07-E08").
 
     Args:
         episode_numbers (iterable): Episode numbers within a single season
@@ -291,9 +290,9 @@ class SeaDexArr:
         Args:
             arr (str, optional): Which Arr is being run.
                 Defaults to "sonarr".
-            config (str, optional): Path to config file.
+            config (str, optional): Path to a config file.
                 Defaults to "config.yml".
-            cache (str, optional): Path to cache file.
+            cache (str, optional): Path to a cache file.
                 Defaults to "cache.json".
             logger. Logging instance. Defaults to None,
                 which will create one.
@@ -322,7 +321,7 @@ class SeaDexArr:
         # Ignore unmonitored flag
         self.ignore_unmonitored = self.config.get(f"{arr}_ignore_unmonitored", False)
 
-        # qBit
+        # qbit
         self.qbit = None
         qbit_info = self.config.get("qbit_info", None)
 
@@ -352,7 +351,7 @@ class SeaDexArr:
             "use_torrent_hash_to_filter", False
         )
 
-        # Hooks between torrents and Arrs, and torrent number bookkeeping
+        # Hooks between torrents and Arts, and torrent number bookkeeping
         self.torrent_category = self.config.get(f"{arr}_torrent_category", None)
         self.torrent_tags = self.config.get("torrent_tags", None)
         self.max_torrents_to_add = self.config.get("max_torrents_to_add", None)
@@ -449,7 +448,7 @@ class SeaDexArr:
         # Set up cache for AL API calls
         self.al_cache = {}
 
-        # Load in cache, if it exists. Else create
+        # Load in cache if it exists. Else create
         self.cache_file = cache
         if os.path.exists(cache):
             with open(cache, "r") as f:
@@ -472,7 +471,7 @@ class SeaDexArr:
         """Verify all the keys in the current config file match those in the template
 
         Args:
-            config_path (str): Path to config file
+            config_path (str): Path to a config file
             config_template_path (str): Path to config template
         """
 
@@ -641,7 +640,7 @@ class SeaDexArr:
         al_id,
         seadex_entry,
     ):
-        """Check if timestamps in cache match when SeaDex entry was last updated
+        """Check if timestamps in the cache match when SeaDex entry was last updated
 
         Args:
             arr (str): Arr instance
@@ -737,7 +736,7 @@ class SeaDexArr:
 
         anilist_mappings = {}
 
-        # Start by looking through our base case, which are the Kometa
+        # Start by looking through our base case, which are the Tomeka
         # Anime IDs. Save these to a dict where the key is the AniList ID
         if self.anime_mappings:
             anilist_mappings = self.get_mappings_from_anime_mappings(
@@ -774,7 +773,7 @@ class SeaDexArr:
     def _anilist_meta_is_fresh(record):
         """True if a persisted AniList record has a payload and is within TTL
 
-        Shared by load (which ids to seed) and save (which to keep vs refresh),
+        Shared by a load (which ids to seed) and save (which to keep vs. refresh),
         so the two never disagree about what "still good" means.
         """
 
@@ -795,8 +794,8 @@ class SeaDexArr:
         static, so reusing what we fetched on previous runs is what keeps a run
         from re-querying AniList for ids it has already seen - the main cause of
         the rate-limit stalls. Entries older than ANILIST_CACHE_TTL_DAYS are
-        skipped so the data can't get arbitrarily stale (see prefetch_anilist /
-        save_anilist_cache for the write side).
+         skipped, so the data can't get arbitrarily stale (see prefetch_anilist /
+        save_anilist_cache for the writing side).
         """
 
         meta = self.cache.get("anilist_meta", {})
@@ -861,7 +860,7 @@ class SeaDexArr:
             return
 
         # Surfaced at INFO (only when there's actually something to fetch, so
-        # warm runs stay silent) so the upfront pause on a cold run is explained
+        # warm runs stay silent), so the upfront pause on a cold run is explained
         self.logger.info(
             indent_string(
                 f"Prefetching {len(missing)} AniList entries "
@@ -878,7 +877,7 @@ class SeaDexArr:
                 self.al_cache[al_id] = data
 
         # Persist now (before the main loop) so the batch's work survives even an
-        # early return - e.g. when max_torrents_to_add is hit mid-run
+        # early return - e.g., when max_torrents_to_add is hit mid-run
         self.save_anilist_cache()
 
     def get_mappings_from_anime_mappings(
@@ -1030,7 +1029,7 @@ class SeaDexArr:
             al_cache=self.al_cache,
         )
 
-        # If the lookup came back empty (e.g. AniList was rate-limiting even
+        # If the lookup came back empty (e.g., AniList was rate-limiting even
         # after retries), fall back to the id so the entry is still identifiable
         # rather than showing "None"
         if not anilist_title:
@@ -1063,8 +1062,8 @@ class SeaDexArr:
         ]
 
         # Pull out torrents tagged as best, so long as at least one
-        # is tagged as best. Keep a copy so we can fallback if audio
-        # preferences would otherwise downgrade quality
+        # is tagged as best. Keep a copy so we can fall back if audio
+        # preferences otherwise downgrade quality
         best_torrents = [t for t in final_torrent_list if t.is_best]
         any_best = len(best_torrents) > 0
 
@@ -1074,7 +1073,7 @@ class SeaDexArr:
         else:
             candidates = final_torrent_list
 
-        # Now, if we prefer dual audio then remove any that aren't
+        # Now, if we prefer dual audio, then remove any that aren't
         # tagged, so long as at least one is tagged
         if self.prefer_dual_audio:
             duals = [t for t in candidates if t.is_dual_audio]
@@ -1108,7 +1107,7 @@ class SeaDexArr:
         # If we only want public releases, then within each release group drop
         # any private URLs, so long as that group also has a public option. We
         # deliberately do this per-group rather than across the whole list: a
-        # group that only has a private URL is kept for now, and only filtered
+        # group that only has a private URL is kept for now and only filtered
         # out later if the Arr doesn't already have a matching download (see
         # reduce_overlapping_downloads)
         if self.public_only:
@@ -1308,7 +1307,7 @@ class SeaDexArr:
         seadex_dict,
         arr,
     ):
-        """Select downloads if torrent hash is not already in cache
+        """Select downloads if the torrent hash is not already in the cache
 
         Multiple "best" releases are all grabbed, except where several cover
         the same files (see reduce_overlapping_downloads), in which case only
@@ -1378,7 +1377,7 @@ class SeaDexArr:
     ):
         """Filter torrents by release group
 
-        This is either episode-by-episode for the Sonarr
+        This is either an episode-by-episode for the Sonarr
         case where we can parse episodes, or a more blunt
         hammer just checking against anything for Radarr
         and weirdly named TV
@@ -1425,7 +1424,7 @@ class SeaDexArr:
 
                 seadex_episodes = url_item.get("episodes", [])
 
-                # Simple case, we have no episode mappings so
+                # Simple case, we have no episode mappings, so
                 # just fall back to checking against release group
                 if len(seadex_episodes) == 0:
                     if seadex_rg not in arr_release_groups and not overlapping_results:
@@ -1439,7 +1438,7 @@ class SeaDexArr:
 
                         url_item.update({"download": True})
 
-                    # Else, if we match then double-check against the size
+                    # Else, if we match, then double-check against the size
                     if seadex_rg in arr_release_groups:
 
                         # Be a blunt hammer and just check intersections
@@ -1487,8 +1486,8 @@ class SeaDexArr:
                         continue
 
                     # For each episode we've parsed from the torrent, check if a) it exists in the Sonarr list, b) if
-                    # the release group matches, and c) if the filesizes match. If there's any mismatch between release
-                    # groups (and there's no alternatives), then flip download to True. If all the sizes mismatch,
+                    # the release group matches, and c) if the file sizes match. If there's any mismatch between release
+                    # groups (and there are no alternatives), then flip download to True. If all the sizes mismatch,
                     # flip download to true
 
                     found_episodes = [False] * len(seadex_episodes)
@@ -1534,8 +1533,7 @@ class SeaDexArr:
                                 seadex_rg_normalized = normalize_rg(seadex_rg)
                                 # If not, flag as should be downloaded if it's not
                                 # already in some overlapping release.
-                                # all_seadex_rgs_per_episode is indexed by
-                                # normalized name, so compare the normalized name
+                                # normalized name indexes all_seadex_rgs_per_episode, so compare the normalized name
                                 if (
                                     sonarr_rg_normalized != seadex_rg_normalized
                                     and sonarr_rg_normalized
@@ -1743,7 +1741,7 @@ class SeaDexArr:
         and the episode ranges condense contiguous runs, e.g. "E01-E12" or
         "E01-E03, E07-E12" for a season with a gap, or "E05" for a lone episode.
 
-        Returns None when there is no parsed episode info (e.g. Radarr movies,
+        Returns None when there is no parsed episode info (e.g., Radarr movies,
         or a Sonarr parse failure).
 
         Args:
@@ -1774,7 +1772,7 @@ class SeaDexArr:
     def coverage_string(self, episodes):
         """One-line season/episode coverage, e.g. "S04 E01-E12" or
         "S00 E10, S02 E01-E12". Returns "" when there's no parsed episode info
-        (e.g. a Radarr movie), so callers can treat it as "URL only".
+        (e.g., a Radarr movie), so callers can treat it as "URL only".
 
         Args:
             episodes (list): {"season", "episode"} dicts
@@ -1790,8 +1788,8 @@ class SeaDexArr:
         """Convert a Sonarr ep_list into {"season","episode"} coverage dicts
 
         Sonarr episodes carry "seasonNumber"/"episodeNumber"; the coverage
-        helpers expect "season"/"episode". Optionally keep only missing episodes
-        (no file on disk) to summarise what is still needed.
+        helpers expect "season"/"episode". Optionally, keep only missing episodes
+        (no file on disk) to summarize what is still needed.
 
         Args:
             ep_list (list): Sonarr episode dicts
@@ -1875,7 +1873,7 @@ class SeaDexArr:
                 if tracker.lower() == "nyaa":
                     parsed_url = get_nyaa_url(url=url)
 
-                # AnimeTosho
+                # AnimeToshio
                 elif tracker.lower() == "animetosho":
                     parsed_url = get_animetosho_url(url=url)
 
@@ -1928,7 +1926,7 @@ class SeaDexArr:
                         }
                     )
 
-                    # Increment the number of torrents added, and if we've hit the limit then
+                    # Increment the number of torrents added, and if we've hit the limit, then
                     # jump out
                     self.torrents_added += 1
                     n_torrents_added += 1
@@ -1963,12 +1961,12 @@ class SeaDexArr:
             tuple: (status, torrent_name), where status is one of
                 "torrent_added" or "torrent_already_added", and torrent_name is
                 the name reported by qBittorrent (or None if the torrent has no
-                infohash to look up, in which case the caller uses the URL)
+                info hash to look up, in which case the caller uses the URL)
         """
 
-        # A private torrent has no infohash, so we can't look it up by hash to
+        # A private torrent has no info hash, so we can't look it up by hash to
         # dedup or to read its name back; just add it and let qBittorrent dedup
-        # internally. With a hash, skip the add if it's already present
+        # internally. With a hash, skip the adding if it's already present
         if torrent_hash is not None:
             torr_info = self.qbit.torrents_info(torrent_hashes=torrent_hash)
             torr_hashes = [i.hash for i in torr_info]
@@ -1989,7 +1987,7 @@ class SeaDexArr:
             raise Exception("Failed to add torrent")
 
         # Look the torrent back up by hash so we can report its name. A private
-        # torrent has no infohash to look up, so leave the name unset and let
+        # torrent has no info hash to look up, so leave the name unset and let
         # the caller fall back to the URL
         torrent_name = None
         if torrent_hash is not None:
@@ -2080,7 +2078,7 @@ class SeaDexArr:
 
         The file log stores the plain kv_string text; on the console the label
         is dimmed so the value reads first, and an optional value_style accents
-        the outcome (e.g. green for "added").
+        the outcome (e.g., green for "added").
 
         Args:
             key: Left-hand label
@@ -2089,9 +2087,9 @@ class SeaDexArr:
             level: Logging level. Defaults to logging.INFO
             indent: Number of indent levels. Defaults to 1
             key_width: Column width the key is padded to. Defaults to KEY_WIDTH (16)
-            sep: Separator after the padded key. Defaults to " :"; pass "" for
+            sep: Separator after the padded key. Defaults to ":"; pass "" for
                 the colon-less gutter format (see log_detail)
-            tail: Optional emphasised suffix (console only), e.g. an "incomplete"
+            tail: Optional emphasized suffix (console only), e.g., an "incomplete"
                 note. Defaults to None
             tail_style: Style for the tail. Defaults to "yellow"
         """
@@ -2126,18 +2124,18 @@ class SeaDexArr:
     ):
         """Log an entry-detail line: dim gutter label, value at the title column
 
-        The colon-less "<label>  <value>" form used for everything indented under
+        The colon-less "<label> <value>" form is used for everything indented under
         an entry (files / link / status / group / added / kept / missing /
-        skipped / anilist). The value lands in the same column as the entry title
+        skipped / anilist). The value lands in the same column as the entry title, 
         so the whole block reads as one aligned column; the label sits dimmed in
-        the indent gutter and the value carries any accent colour.
+        the indent gutter and the value carries any accent color.
 
         Args:
             label: Gutter label, e.g. "files" or "added"
             value: The value text
             value_style: Optional rich style for the value (e.g. "green")
             level: Logging level. Defaults to logging.INFO
-            tail: Optional emphasised suffix (console only). Defaults to None
+            tail: Optional emphasized suffix (console only). Defaults to None
             tail_style: Style for the tail. Defaults to "yellow"
         """
 
@@ -2213,15 +2211,15 @@ class SeaDexArr:
         )
 
         # The summary's key column is narrower than the per-title detail column:
-        # "needs action" (12) is the widest key here, vs "missing episodes" (16)
+        # "needs action" (12) is the widest key here, vs. "missing episodes" (16)
         # in entry details. A heavy rule separates the two blocks, so the differing
         # colon columns never sit adjacent. Wrap log_kv to fix the width at 12.
         def summary_kv(key, value, **kwargs):
             return self.log_kv(key, value, key_width=12, **kwargs)
 
-        # A title + sub-lines block, stacked: the variable-length title hangs at
-        # indent 2 and each fixed sub-line (facts, then the URL) sits at indent 3
-        # beneath it, so title length can never push them out of column. Titles
+        # A title + sublines block, stacked: the variable-length title hangs at
+        # indent 2, and each fixed subline (facts, then the URL) sits at indent 3
+        # beneath it, so title length can never push them out of the column. Titles
         # are truncated so they can't wrap onto a second line and break alignment.
         def stacked_detail(title_text, lines, style):
             t = title_text or "(unknown title)"
@@ -2310,7 +2308,7 @@ class SeaDexArr:
 
         # A single guidance line if anything was skipped purely for being
         # private-only, rather than repeating it per-entry during the run. Kept
-        # at indent 1 so it reads as part of the summary block, not detached.
+        # at indent 1, so it reads as part of the summary block, not detached.
         public_only_skipped = any(
             "public_only" in (item.get("reason") or "") for item in needs
         )
@@ -2377,13 +2375,13 @@ class SeaDexArr:
         skipped, no mapping, ignored, and no entry. The state word carries the
         meaning, so there is no trailing note; season/episode coverage and the
         SeaDex URL ride a separate continuation line (log_entry_coverage). The
-        indent is baked into the message so the file log keeps it too.
+        indent is baked into the message, so the file log keeps it too.
 
         Args:
             state (str): Short state word, e.g. "unchanged" or "no entry"
             label (str): What the state applies to (usually a title)
             style (str): Console style for the line. Defaults to "grey50" (dim);
-                pass None for an emphasised line such as the active "checking" one
+                pass None for an emphasized line such as the active "checking" one
         """
 
         # A blank line before each ledger row separates entries within a title
@@ -2407,19 +2405,19 @@ class SeaDexArr:
 
         Two dim detail lines whose values sit directly beneath the entry's title
         (so they line up with each other and with the title): the season/episode
-        coverage labelled "files", then the full SeaDex URL labelled "link".
+        coverage labeled "files", then the full SeaDex URL labeled "link".
         Either part may be absent - a Radarr movie has no episode coverage (link
         only) - and nothing is logged when both are absent. An incomplete SeaDex
-        entry is flagged as an emphasised tail on the last line shown.
+        entry is flagged as an emphasized tail on the last line shown.
 
-        Example::
+        Example:
 
-            files     S04 E01-E12
-            link      https://releases.moe/111852
+            files S04 E01-E12
+            link https://releases.moe/111852
 
         Args:
-            coverage (str): One-line coverage, e.g. "S04 E01-E12" (may be "")
-            url (str): Full SeaDex URL (may be None/"")
+            coverage (str): One-line coverage, e.g. "S04 E01-E12" (maybe "")
+            url (str): Full SeaDex URL (maybe None/"")
             style (str): Console style. Defaults to "grey50" (dim)
             incomplete (bool): Flag the SeaDex entry as incomplete. Defaults False
         """
@@ -2447,7 +2445,7 @@ class SeaDexArr:
         arr,
         item_title,
     ):
-        """Produce a log message if skipping because item is unmonitored
+        """Produce a log message if skipping because the item is unmonitored
 
         Args:
             arr: Type of arr instance
@@ -2460,7 +2458,7 @@ class SeaDexArr:
             item_title,
         )
 
-    # Both Arrs reach the same "unmonitored" outcome, so this is just an alias
+    # Both Ares reach the same "unmonitored" outcome, so this is just an alias
     log_anilist_item_unmonitored = log_arr_item_unmonitored
 
     def log_arr_item_start(
@@ -2572,27 +2570,27 @@ class SeaDexArr:
         sd_entry,
         coverage=None,
     ):
-        """Log the active-entry header: a "checking" row + its coverage/URL line
+        """Log the active-entry header: a "checking" row and its coverage/URL line
 
         The entry being evaluated is the focal line of the title block, so it sits
-        on the ledger (state "checking") un-dimmed. Dim continuation lines below
+        on the ledger (state "checking") undimmed. The dim continuation lines below
         carry the season/episode coverage and, on its own line, the full SeaDex
         URL, so you can see what it covers and where to find it; an incomplete
-        SeaDex entry is flagged as an emphasised tail on the last of those lines.
+        SeaDex entry is flagged as an emphasized tail on the last of those lines.
 
         Args:
             anilist_title (str): Title for the AniList entry
             sd_entry: SeaDex entry
             coverage (str, optional): One-line coverage (e.g. "S04 E01-E12").
-                Defaults to None / "" (e.g. a Radarr movie -> URL only)
+                Defaults to None / "" (e.g., a Radarr movie -> URL only)
         """
 
         # Remember title + URL so add_torrent / the summary can attribute and link
         self.current_title = anilist_title
         self.current_url = sd_entry.url
 
-        # The active entry, on the ledger but un-dimmed (style=None) so it reads
-        # as the focal line, not a no-op like the grey unchanged rows
+        # The active entry, on the ledger but undimmed (style=None) so it reads
+        # as the focal line, not a no-op like the gray unchanged rows
         self.log_entry_status("checking", anilist_title, style=None)
         self.log_entry_coverage(
             coverage, sd_entry.url, incomplete=sd_entry.is_incomplete
@@ -2608,8 +2606,8 @@ class SeaDexArr:
     ):
         """Log a cached entry as a ledger row plus its coverage/URL line
 
-        Cached entries are unchanged since the last run, so they collapse to a dim
-        ledger row (state + title) and continuation lines carrying the stored
+        Cached entries have been unchanged since the last run, so they collapse to a dim
+        ledger row (state and title) and continuation lines carrying the stored
         season/episode coverage and, on its own line, the SeaDex URL. Everything
         is read from the cache
         record (written when the entry was first processed), with a name lookup
@@ -2663,10 +2661,10 @@ class SeaDexArr:
     ):
         """Log the action block for a title that differs from SeaDex's pick
 
-        Called after the add has run, so the status reflects what actually
+        Called after the adding has run, so the status reflects what actually
         happened rather than what we set out to do: if a better release was
-        grabbed it reads "adding"; if every recommended release was already
-        present it reads "matches - keeping it". The block is, in order: the
+         grabbed, it reads "adding"; if every recommended release was already
+        present, it reads "matches - keeping it". The block is, in order: the
         status line, then each recommended release group, then the per-release
         outcome (added / kept).
 
@@ -2674,18 +2672,18 @@ class SeaDexArr:
             seadex_dict (dict): SeaDex entries (used for the recommended groups)
             results (list): add_torrent's per-release outcomes (empty on a dry
                 run, where there are no client-reported names)
-            dry_run (bool): No torrent client, so nothing was really grabbed but
+            dry_run (bool): No torrent client, so nothing was really grabbed,, but
                 we'd have added everything. Defaults to False
 
         Returns:
             bool: True if a status block was logged; False if there was nothing
-                to report (e.g. every release was skipped - the skip warning
+                to report (e.g., every release was skipped - the skip warning
                 already explains that, so a status would only mislead)
         """
 
         added = dry_run or any(r.get("outcome") == "added" for r in results)
 
-        # Nothing grabbed and nothing already present (e.g. all releases skipped
+        # Nothing grabbed and nothing already present (e.g., all releases skipped
         # by public_only): leave the status to the inline "skipped" warning
         if not results and not dry_run:
             return False
@@ -2724,7 +2722,7 @@ class SeaDexArr:
         return True
 
     def log_max_torrents_added(self):
-        """Produce a log message about hitting maximum number of torrents added"""
+        """Produce a log message about hitting the maximum number of torrents added"""
 
         self.logger.info(
             "Reached the maximum torrents for this run; stopping",

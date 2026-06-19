@@ -213,7 +213,7 @@ __marimo__/
 .vscode/
 
 # uv lockfile
-uv.lock
+# uv.lock
 
 # SeaDexArr runtime / user files
 config.yml

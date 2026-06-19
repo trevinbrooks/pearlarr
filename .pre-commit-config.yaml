@@ -1,0 +1,14 @@
+# Mirrors the `static-analysis` dependency-group: autopep8 for whitespace/format
+# fixes, ruff for linting. Enable locally with `pre-commit install` (the `dev`
+# dependency-group provides pre-commit). Tool settings live in pyproject.toml.
+repos:
+  - repo: https://github.com/hhatto/autopep8
+    rev: v2.3.2
+    hooks:
+      - id: autopep8
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.18
+    hooks:
+      - id: ruff
+        name: ruff lint
