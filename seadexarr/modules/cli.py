@@ -2,7 +2,6 @@ import copy
 import os
 import shutil
 import time
-import traceback
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -71,9 +70,7 @@ def run_scheduled():
             )
             sdr.run()
         except Exception:
-            tb = traceback.format_exc()
-            for line in tb.splitlines():
-                logger.warning(line)
+            logger.error("Unexpected error during Radarr run", exc_info=True)
 
         try:
             sds = SeaDexSonarr(
@@ -83,9 +80,7 @@ def run_scheduled():
             )
             sds.run()
         except Exception:
-            tb = traceback.format_exc()
-            for line in tb.splitlines():
-                logger.warning(line)
+            logger.error("Unexpected error during Sonarr run", exc_info=True)
 
         next_run_time = datetime.now() + timedelta(hours=schedule_time)
         next_run_time = next_run_time.strftime("%H:%M")
@@ -134,9 +129,7 @@ def run_single(
             )
             sdr.run(tmdb_id=movie_id)
         except Exception:
-            tb = traceback.format_exc()
-            for line in tb.splitlines():
-                logger.warning(line)
+            logger.error("Unexpected error during Radarr run", exc_info=True)
 
     if run_sonarr:
         try:
@@ -147,9 +140,7 @@ def run_single(
             )
             sds.run(tvdb_id=series_id)
         except Exception:
-            tb = traceback.format_exc()
-            for line in tb.splitlines():
-                logger.warning(line)
+            logger.error("Unexpected error during Sonarr run", exc_info=True)
 
     return True
 

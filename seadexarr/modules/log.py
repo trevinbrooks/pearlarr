@@ -7,6 +7,7 @@ from logging.handlers import RotatingFileHandler
 from rich.console import Console
 from rich.rule import Rule
 from rich.text import Text
+from rich.traceback import Traceback
 
 
 class RichConsoleHandler(logging.Handler):
@@ -53,6 +54,12 @@ class RichConsoleHandler(logging.Handler):
         logging.ERROR: ("ERROR", "bold red"),
         logging.CRITICAL: ("CRITICAL", "bold white on red"),
     }
+
+    # Cap how many stack frames a rendered traceback shows. An unexpected crash
+    # is logged as a legible excerpt (rich keeps the outermost and innermost
+    # frames and elides the middle when the stack is deeper than this) rather
+    # than a full-screen wall of frames.
+    MAX_TRACEBACK_FRAMES = 10
 
     def __init__(self, console, level=logging.NOTSET):
         super().__init__(level=level)
@@ -105,6 +112,27 @@ class RichConsoleHandler(logging.Handler):
                 return
 
             message = record.getMessage()
+
+            # An unexpected exception (logged with exc_info): show a coloured
+            # level badge + message, then a rich traceback with locals and a
+            # capped frame count so a crash is legible at a glance. The file
+            # handler still records the full plain-text traceback (the formatter
+            # renders exc_info), so nothing is lost from the log file.
+            if record.exc_info:
+                label, style = self.LEVEL_BADGES.get(
+                    record.levelno, ("ERROR", "bold red")
+                )
+                line = Text(f"{label:<8} ", style=style)
+                line.append(message)
+                self.console.print(line, highlight=False, soft_wrap=True)
+                self.console.print(
+                    Traceback.from_exception(
+                        *record.exc_info,
+                        show_locals=True,
+                        max_frames=self.MAX_TRACEBACK_FRAMES,
+                    )
+                )
+                return
 
             # A separator rule. The preferred form is an explicit ``rule_char``
             # marker; we also fall back to detecting a hand-drawn ASCII rule (a
@@ -306,7 +334,7 @@ INDENT = "  "
 # for the longest key in use ("already have"), so the colons line up.
 KEY_WIDTH = 16
 
-# Entry "ledger" columns for one-line entry statuses (cached / checking /
+# Entry "ledger" columns for one-line entry statuses (unchanged / checking /
 # skipped / no entry / in radarr / ...). Each line is "<state> <label>" with the
 # state padded to a fixed width, so the label (usually a title) starts at the
 # same column on every row regardless of state-word length. STATE_WIDTH fits the

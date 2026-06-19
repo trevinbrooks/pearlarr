@@ -604,7 +604,7 @@ class SeaDexSonarr(SeaDexArr):
                         self.log_detail(
                             "status",
                             "already have the recommended release",
-                            value_style="green",
+                            value_style="blue",
                         )
 
                     # Work out whether THIS title actually grabbed anything
@@ -646,8 +646,9 @@ class SeaDexSonarr(SeaDexArr):
 
             except Exception as e:
                 title = getattr(sonarr_series, "title", "unknown title")
-                self.logger.error(f"{title}: unexpected error: {e}")
-                self.logger.debug("Traceback:", exc_info=True)
+                self.logger.error(
+                    f"{title}: unexpected error: {e}", exc_info=True
+                )
                 continue
 
         self.log_run_summary(arr="sonarr")

@@ -2260,8 +2260,8 @@ class SeaDexArr:
 
         summary_kv("up to date", str(stats["up_to_date"]))
         summary_kv(
-            "cached",
-            f"{stats['cached']}  (unchanged since last run)"
+            "unchanged",
+            f"{stats['cached']}  (since last run)"
             if stats["cached"]
             else "0",
             value_style="grey50",
@@ -2373,14 +2373,14 @@ class SeaDexArr:
 
         Renders "<state> <label>" at indent level 1, with state padded to a fixed
         width so the label lines up across rows (see entry_string). Used for the
-        entry-level outcomes: cached, in radarr, checking, unmonitored, skipped,
-        no mapping, ignored, and no entry. The state word carries the meaning, so
-        there is no trailing note; season/episode coverage and the SeaDex URL ride
-        a separate continuation line (log_entry_coverage). The indent is baked
-        into the message so the file log keeps it too.
+        entry-level outcomes: unchanged, in radarr, checking, unmonitored,
+        skipped, no mapping, ignored, and no entry. The state word carries the
+        meaning, so there is no trailing note; season/episode coverage and the
+        SeaDex URL ride a separate continuation line (log_entry_coverage). The
+        indent is baked into the message so the file log keeps it too.
 
         Args:
-            state (str): Short state word, e.g. "cached" or "no entry"
+            state (str): Short state word, e.g. "unchanged" or "no entry"
             label (str): What the state applies to (usually a title)
             style (str): Console style for the line. Defaults to "grey50" (dim);
                 pass None for an emphasised line such as the active "checking" one
@@ -2592,7 +2592,7 @@ class SeaDexArr:
         self.current_url = sd_entry.url
 
         # The active entry, on the ledger but un-dimmed (style=None) so it reads
-        # as the focal line, not a no-op like the grey cached rows
+        # as the focal line, not a no-op like the grey unchanged rows
         self.log_entry_status("checking", anilist_title, style=None)
         self.log_entry_coverage(
             coverage, sd_entry.url, incomplete=sd_entry.is_incomplete
@@ -2604,7 +2604,7 @@ class SeaDexArr:
         self,
         arr,
         al_id,
-        state="cached",
+        state="unchanged",
     ):
         """Log a cached entry as a ledger row plus its coverage/URL line
 
@@ -2618,8 +2618,9 @@ class SeaDexArr:
         Args:
             arr (str): Arr instance the entry is cached under
             al_id (int): AniList ID
-            state (str): State word. Defaults to "cached"; pass "in radarr" for
-                entries already handled by a Radarr sync
+            state (str): State word. Defaults to "unchanged" (skipped because the
+                SeaDex entry's update time matches the cache); pass "in radarr"
+                for entries already handled by a Radarr sync
         """
 
         self.stats["cached"] += 1
