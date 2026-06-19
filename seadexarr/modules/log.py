@@ -4,7 +4,74 @@ import shutil
 import sys
 from logging.handlers import RotatingFileHandler
 
-import colorlog
+from rich.console import Console
+from rich.rule import Rule
+from rich.text import Text
+
+
+class RichConsoleHandler(logging.Handler):
+    """Console log handler that renders records through ``rich``.
+
+    Routine INFO/DEBUG lines print with no level prefix, so the output reads
+    as clean text. WARNING and above get a coloured level badge so problems
+    stand out. Records whose message is a full-width separator (only "=" or
+    "-" characters) are drawn as a ``rich`` rule, and records carrying a
+    ``rule_title`` attribute (passed via ``logger.info(..., extra=...)``) are
+    drawn as a titled rule.
+
+    Messages are rendered as literal text rather than ``rich`` markup, so
+    bracketed content such as "[1/1]" or "[MARKED INCOMPLETE]" is never
+    mistaken for a style tag.
+    """
+
+    # Level -> (badge label, rich style). INFO/DEBUG are deliberately absent
+    # so they print without a prefix.
+    LEVEL_BADGES = {
+        logging.WARNING: ("WARNING", "yellow"),
+        logging.ERROR: ("ERROR", "bold red"),
+        logging.CRITICAL: ("CRITICAL", "bold white on red"),
+    }
+
+    def __init__(self, console, level=logging.NOTSET):
+        super().__init__(level=level)
+        self.console = console
+
+    def emit(self, record):
+        try:
+            message = record.getMessage()
+
+            # A titled rule, e.g. the run banner or a per-title header
+            rule_title = getattr(record, "rule_title", None)
+            if rule_title is not None:
+                style = getattr(record, "rule_style", "cyan")
+                self.console.print(Rule(rule_title, style=style))
+                return
+
+            # A hand-drawn separator -> draw a crisp rich rule instead. A heavy
+            # line marks section ("=") breaks and a light line marks sub ("-")
+            # breaks, so the two stay distinguishable even without colour (e.g.
+            # piped to a file or Docker logs).
+            stripped = message.strip()
+            if stripped and set(stripped) <= {"=", "-"}:
+                if "=" in stripped:
+                    self.console.print(Rule(style="cyan", characters="━"))
+                else:
+                    self.console.print(Rule(style="grey37", characters="─"))
+                return
+
+            # Emit messages whole (soft_wrap) and let the terminal handle any
+            # overflow, rather than having rich re-wrap with unindented
+            # continuation lines, as the previous logger did.
+            badge = self.LEVEL_BADGES.get(record.levelno)
+            if badge is None:
+                self.console.print(Text(message), highlight=False, soft_wrap=True)
+            else:
+                label, style = badge
+                line = Text(f"{label:<8} ", style=style)
+                line.append(message)
+                self.console.print(line, highlight=False, soft_wrap=True)
+        except Exception:
+            self.handleError(record)
 
 
 def setup_logger(
@@ -85,28 +152,23 @@ def setup_logger(
     )
     handler.setFormatter(logfile_formatter)
 
-    # Add the file handler to the logger
-    logger.addHandler(handler)
-
-    # Configure console logging with the specified log level
-    console_handler = colorlog.StreamHandler(sys.stdout)
+    # Configure console logging through rich. Routine lines print with no
+    # level prefix; warnings and errors get a coloured badge (see
+    # RichConsoleHandler). rich auto-detects non-interactive output (pipes,
+    # Docker logs) and drops ANSI styling there.
+    console = Console(file=sys.stdout)
+    console_handler = RichConsoleHandler(console)
     if log_level == "DEBUG":
         console_handler.setLevel(logging.DEBUG)
-    elif log_level == "INFO":
-        console_handler.setLevel(logging.INFO)
     elif log_level == "CRITICAL":
         console_handler.setLevel(logging.CRITICAL)
+    else:
+        console_handler.setLevel(logging.INFO)
 
-    # Add the console handler to the logger
-    console_handler.setFormatter(
-        colorlog.ColoredFormatter("%(log_color)s%(levelname)s: %(message)s")
-    )
+    # Replace any handlers from a previous call, then attach file + console
+    logger.handlers.clear()
+    logger.addHandler(handler)
     logger.addHandler(console_handler)
-
-    # Overwrite previous logger if exists
-    logging.getLogger(log_name).handlers.clear()
-    logging.getLogger(log_name).addHandler(handler)
-    logging.getLogger(log_name).addHandler(console_handler)
 
     return logger
 

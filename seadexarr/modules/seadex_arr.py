@@ -1873,20 +1873,10 @@ class SeaDexArr:
             "sonarr": "series",
         }[arr]
 
+        banner = f"Starting SeaDex-{arr.capitalize()} for {n_items} {item_type}"
         self.logger.info(
-            rule_string(
-                rule_char=self.log_line_sep,
-                total_length=self.log_line_length,
-            )
-        )
-        self.logger.info(
-            f"Starting SeaDex-{arr.capitalize()} for {n_items} {item_type}"
-        )
-        self.logger.info(
-            rule_string(
-                rule_char=self.log_line_sep,
-                total_length=self.log_line_length,
-            )
+            banner,
+            extra={"rule_title": banner, "rule_style": "bold cyan"},
         )
 
         return True
@@ -1962,13 +1952,10 @@ class SeaDexArr:
             n_items: Total number of shows/movies
         """
 
+        header = f"[{n_item}/{n_items}] {arr.capitalize()}: {item_title}"
         self.logger.info(
-            f"[{n_item}/{n_items}] {arr.capitalize()}: {item_title}"
-        )
-        self.logger.info(
-            rule_string(
-                total_length=self.log_line_length,
-            )
+            header,
+            extra={"rule_title": header},
         )
 
         return True
