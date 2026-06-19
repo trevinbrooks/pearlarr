@@ -12,6 +12,12 @@ RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 MAX_RETRIES = 3
 MAX_BACKOFF = 60
 
+# AniList also soft-throttles by returning HTTP 200 with a GraphQL error payload
+# (``{"data": null, "errors": [{"message": "Too Many Requests", "status": 429}]}")
+# instead of a 429 status. These substrings flag a throttle/rate-limit error so it
+# gets the same polite retry as a real 429 rather than being treated as real data.
+RETRYABLE_ERROR_SUBSTRINGS = ("too many requests", "rate limit", "throttle")
+
 # Up to this many Media can be fetched in one batched request (AniList's Page
 # perPage max). Batching collapses one-request-per-id into a handful, which is
 # what keeps a big run from tripping the rate limit one lookup at a time.
@@ -55,16 +61,52 @@ query ($ids: [Int]) {
 """
 
 
+def _errors_are_retryable(body):
+    """True if a GraphQL body carries a throttle/rate-limit or 5xx-style error
+
+    AniList sometimes soft-throttles with HTTP 200 and a non-empty "errors"
+    array (``{"data": null, "errors": [{"message": "Too Many Requests",
+    "status": 429}]}``). That should be retried like a real 429. A legitimate
+    "not found" is HTTP 200 with "data" present, the entry "null" and *no*
+    "errors" array, so a body without errors is never treated as retryable
+    here - the caller's null-safe extraction handles it as an ordinary miss.
+
+    Args:
+        body (dict): The parsed JSON response body
+    """
+
+    errors = (body or {}).get("errors")
+    if not errors or not isinstance(errors, list):
+        return False
+
+    for err in errors:
+        if not isinstance(err, dict):
+            continue
+        # A 429 or 5xx status carried in the error entry is retryable.
+        status = err.get("status")
+        if status in RETRYABLE_STATUS:
+            return True
+        # Otherwise match the message (case-insensitive) for throttle wording.
+        message = str(err.get("message") or "").lower()
+        if any(s in message for s in RETRYABLE_ERROR_SUBSTRINGS):
+            return True
+
+    return False
+
+
 def _post_with_retry(query, variables):
     """POST a GraphQL query to AniList, retrying politely on rate-limits / 5xx
 
     On a rate-limit (HTTP 429) or a transient 5xx, AniList returns
-    ``{"data": null, ...}``. Returning that unretried is what surfaced
-    downstream as ``'NoneType' object has no attribute 'get'`` when a run made
-    many requests in quick succession, so we wait (honouring Retry-After when
-    present) and retry before giving up. Returns the parsed JSON - which may
-    still be an error payload after the final attempt - or ``{}`` if the
-    response body wasn't JSON.
+    "{"data": null, ...}". It can also soft-throttle with HTTP 200 and a
+    throttle/rate-limit error in the "errors" array (see
+    ``_errors_are_retryable``); both take the same backoff path. Returning a
+    throttled response untried is what surfaced downstream as
+    "'NoneType' object has no attribute 'get'" when a run made many requests
+    in quick succession, so we wait (honoring Retry-After when present) and
+    retry before giving up. Returns the parsed JSON - which may still be an
+    error payload after the final attempt - or "{}" if the response body
+    wasn't JSON.
     """
 
     for attempt in range(MAX_RETRIES + 1):
@@ -80,7 +122,20 @@ def _post_with_retry(query, variables):
             time.sleep(min(2 ** attempt, MAX_BACKOFF))
             continue
 
-        if resp.status_code in RETRYABLE_STATUS and attempt < MAX_RETRIES:
+        retryable = resp.status_code in RETRYABLE_STATUS
+
+        # Parse the body so a soft-throttle (HTTP 200 + throttle error payload)
+        # can take the same retry path as a 429 status. A non-JSON body yields
+        # {} here and falls through to the return below.
+        try:
+            body = resp.json()
+        except ValueError:
+            body = None
+
+        if not retryable and isinstance(body, dict) and _errors_are_retryable(body):
+            retryable = True
+
+        if retryable and attempt < MAX_RETRIES:
             # Prefer the server's Retry-After (seconds); otherwise exponential
             retry_after = resp.headers.get("Retry-After")
             try:
@@ -90,10 +145,9 @@ def _post_with_retry(query, variables):
             time.sleep(min(max(wait, 1), MAX_BACKOFF))
             continue
 
-        try:
-            return resp.json()
-        except ValueError:
-            return {}
+        # Final attempt (or a non-retryable response): return the parsed body,
+        # or {} when the body wasn't JSON, so the caller degrades gracefully.
+        return body if body is not None else {}
 
     return {}
 
@@ -111,7 +165,7 @@ def get_query(al_id):
 def get_query_batch(al_ids):
     """Fetch up to ANILIST_BATCH_SIZE AniList Media in a single request via id_in
 
-    Returns ``{id: {"data": {"Media": {...}}}}`` mirroring the single-id shape,
+    Returns "{id: {"data": {"Media": {...}}}}" mirroring the single-id shape,
     so the results can seed the same cache directly. Ids unknown to AniList are
     simply absent from the result.
 
@@ -137,11 +191,11 @@ def _get_media(
 ):
     """Fetch the AniList Media object for an ID, caching successful lookups
 
-    Centralises the cache lookup and the null-safe extraction the public helpers
-    share. AniList returns ``{"data": {"Media": null}}`` (or ``{"data": null}``)
-    for an unknown ID or a rate-limit, so every level is guarded with ``or {}``
+    Centralizes the cache lookup and the null-safe extraction the public helpers
+    share. AniList returns {"data": {"Media": null}} (or "{"data": null}")
+    for an unknown ID or a rate-limit, so every level is guarded with "or {}"
     and a miss yields an empty dict rather than raising
-    ``'NoneType' object has no attribute 'get'``. A miss is deliberately not
+    "'NoneType' object has no attribute 'get'". A miss is deliberately not
     cached, so a transient rate-limit isn't remembered as a permanent "unknown"
     for the rest of the run - the next call gets a fresh chance.
 
@@ -150,7 +204,7 @@ def _get_media(
         al_cache (dict | None): Cache of prior AniList responses, keyed by ID
 
     Returns:
-        tuple: (media_dict, al_cache). media_dict is {} on a miss.
+        tuple: (media_dict, al_cache) media_dict is {} on a miss.
     """
 
     if al_cache is None:
@@ -178,7 +232,7 @@ def get_anilist_n_eps(
     al_id,
     al_cache=None,
 ):
-    """Query AniList to get number of episodes for an anime.
+    """Query AniList to get the number of episodes for anime.
 
     Args:
         al_id (int): Anilist ID
@@ -195,7 +249,7 @@ def get_anilist_title(
     al_id,
     al_cache=None,
 ):
-    """Query AniList to get title for an anime.
+    """Query AniList to get a title for anime.
 
     Args:
         al_id (int): Anilist ID
@@ -205,7 +259,7 @@ def get_anilist_title(
 
     media, al_cache = _get_media(al_id, al_cache)
 
-    # Prefer the english title, but fall back to romaji
+    # Prefer the English title, but fall back to romaji
     title = media.get("title") or {}
 
     return (title.get("english") or title.get("romaji")), al_cache
@@ -215,7 +269,7 @@ def get_anilist_thumb(
     al_id,
     al_cache=None,
 ):
-    """Query AniList to get thumbnail URL for an anime.
+    """Query AniList to get thumbnail URL for anime.
 
     Args:
         al_id (int): Anilist ID
@@ -232,7 +286,7 @@ def get_anilist_format(
     al_id,
     al_cache=None,
 ):
-    """Query AniList to get format for an anime.
+    """Query AniList to get format for anime.
 
     Args:
         al_id (int): Anilist ID

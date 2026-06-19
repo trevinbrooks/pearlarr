@@ -62,6 +62,7 @@ def run_scheduled():
         # Run both Radarr and Sonarr syncs, catching
         # errors if they do arise. Split them up
         # so one crashing doesn't ruin the other
+        sdr = None
         try:
             sdr = SeaDexRadarr(
                 config=config,
@@ -71,7 +72,11 @@ def run_scheduled():
             sdr.run()
         except Exception:
             logger.error("Unexpected error during Radarr run", exc_info=True)
+        finally:
+            if sdr is not None:
+                sdr.close()
 
+        sds = None
         try:
             sds = SeaDexSonarr(
                 config=config,
@@ -81,6 +86,9 @@ def run_scheduled():
             sds.run()
         except Exception:
             logger.error("Unexpected error during Sonarr run", exc_info=True)
+        finally:
+            if sds is not None:
+                sds.close()
 
         next_run_time = datetime.now() + timedelta(hours=schedule_time)
         next_run_time = next_run_time.strftime("%H:%M")
@@ -124,6 +132,7 @@ def run_single(
     run_sonarr = sonarr or series_id is not None
 
     if run_radarr:
+        sdr = None
         try:
             sdr = SeaDexRadarr(
                 config=config,
@@ -133,8 +142,12 @@ def run_single(
             sdr.run(tmdb_id=movie_id, dry_run=dry_run)
         except Exception:
             logger.error("Unexpected error during Radarr run", exc_info=True)
+        finally:
+            if sdr is not None:
+                sdr.close()
 
     if run_sonarr:
+        sds = None
         try:
             sds = SeaDexSonarr(
                 config=config,
@@ -144,6 +157,9 @@ def run_single(
             sds.run(tvdb_id=series_id, dry_run=dry_run)
         except Exception:
             logger.error("Unexpected error during Sonarr run", exc_info=True)
+        finally:
+            if sds is not None:
+                sds.close()
 
     return True
 

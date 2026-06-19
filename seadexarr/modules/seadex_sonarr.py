@@ -1,10 +1,10 @@
 import copy
 import time
 import os
+from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
 import arrapi.exceptions
-import requests
 from arrapi import SonarrAPI
 
 from .anilist import (
@@ -13,7 +13,7 @@ from .anilist import (
 )
 from .discord import discord_push
 from .log import indent_string
-from .seadex_arr import SeaDexArr, get_episode_keys
+from .seadex_arr import SeaDexArr, get_episode_keys, UPDATED_AT_STR_FORMAT
 from .seadex_radarr import SeaDexRadarr
 
 
@@ -25,6 +25,49 @@ TORRENT_FILENAMES_TO_SKIP = [
     "Creditless ED",
     "Creditless OP",
 ]
+
+# File extensions that never map to an episode (subtitles, fonts, chapters,
+# metadata, images, samples, ...). We skip these before querying Sonarr so we
+# don't waste a round-trip on them. This is deliberately a deny-list rather than
+# an allow-list of video extensions: the cost of missing one here is a single
+# harmless API call (Sonarr just returns no episode), whereas an allow-list that
+# omits an unusual container would silently drop a real episode.
+NON_VIDEO_EXTENSIONS = {
+    ".ass",
+    ".srt",
+    ".ssa",
+    ".sub",
+    ".idx",
+    ".sup",
+    ".vtt",
+    ".nfo",
+    ".txt",
+    ".md",
+    ".sfv",
+    ".xml",
+    ".json",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".bmp",
+    ".gif",
+    ".webp",
+    ".ttf",
+    ".otf",
+    ".woff",
+    ".woff2",
+    ".torrent",
+    ".url",
+    ".rar",
+    ".zip",
+    ".7z",
+}
+
+# How long a persisted Sonarr /parse result stays usable before it's re-queried.
+# A filename's season/episode mapping is stable, but Sonarr's /parse depends on
+# the current library, so a wrong-but-non-empty match could otherwise be trusted
+# forever; re-validate monthly so such an entry self-heals.
+SONARR_PARSE_CACHE_TTL_DAYS = 30
 
 
 def get_tvdb_id(mapping):
@@ -220,6 +263,10 @@ class SeaDexSonarr(SeaDexArr):
             apikey=self.sonarr_api_key,
         )
 
+        # self.session (a shared keep-alive requests.Session) is inherited from
+        # SeaDexArr.__init__ above. parse_episodes_from_seadex in particular
+        # fires one request per file, so reusing it removes a per-file handshake.
+
         self.ignore_movies_in_radarr = self.config.get("ignore_movies_in_radarr", False)
 
         # Also, if we have Radarr info, set up an instance there
@@ -234,6 +281,11 @@ class SeaDexSonarr(SeaDexArr):
                 logger=logger,
             )
             self.all_radarr_movies = self.radarr.get_all_radarr_movies()
+
+    def close(self):
+        super().close()
+        if self.radarr is not None:
+            self.radarr.close()
 
     def run(self, tvdb_id=None, dry_run=False):
         """Run the SeaDex Sonarr Syncer
@@ -553,31 +605,16 @@ class SeaDexSonarr(SeaDexArr):
                             n_torrents_added = 0
                             results = []
 
-                            # Add torrents to qBittorrent
-                            if self.qbit is not None:
-                                added, results = self.add_torrent(
-                                    torrent_dict=seadex_dict,
-                                    torrent_client="qbit",
-                                )
-                                n_torrents_added += added
-
-                            # Otherwise, increment by the number of torrents in the SeaDex dict
-                            else:
-                                n_torrents_added += len(seadex_dict)
-                                self.torrents_added += len(seadex_dict)
-
-                                # Dry run (no qBittorrent): record a placeholder
-                                # per release group so the summary's "added"
-                                # count and detail list agree
-                                for srg in seadex_dict:
-                                    self.stats["added"].append(
-                                        {
-                                            "title": self.current_title,
-                                            "group": srg,
-                                            "coverage": coverage,
-                                            "url": self.current_url,
-                                        }
-                                    )
+                            # Add torrents to qBittorrent. add_torrent runs even
+                            # in a preview (no client / dry run): add_torrent_to_qbit
+                            # simulates the add, while the download-flag,
+                            # public_only and tracker filters still apply, so only
+                            # releases that would actually be grabbed are counted.
+                            added, results = self.add_torrent(
+                                torrent_dict=seadex_dict,
+                                torrent_client="qbit",
+                            )
+                            n_torrents_added += added
 
                             # Log the action block now the outcome is known, so
                             # the status reads "adding" only when something was
@@ -585,15 +622,15 @@ class SeaDexSonarr(SeaDexArr):
                             self.log_seadex_action(
                                 seadex_dict=seadex_dict,
                                 results=results,
-                                dry_run=self.qbit is None,
+                                dry_run=self._is_preview(),
                             )
 
                             # Push a message to Discord if we've added anything
-                            # (never on a dry run - it's an outward notification)
+                            # (never on a preview - it's an outward notification)
                             if (
                                 self.discord_url is not None
                                 and n_torrents_added > 0
-                                and not self.dry_run
+                                and not self._is_preview()
                             ):
                                 discord_push(
                                     url=self.discord_url,
@@ -607,6 +644,7 @@ class SeaDexSonarr(SeaDexArr):
                             if self.max_torrents_to_add is not None:
                                 if self.torrents_added >= self.max_torrents_to_add:
                                     self.log_max_torrents_added()
+                                    self.save_cache()
                                     self.log_run_summary(arr="sonarr")
                                     return True
 
@@ -621,12 +659,14 @@ class SeaDexSonarr(SeaDexArr):
                     # Work out whether THIS title actually grabbed anything
                     added_this_title = self.torrents_added - torrents_before
 
-                    # Update and save out the cache, unless public_only made us
-                    # skip a release - leave the title uncached so it's
+                    # Update and save out the cache whenever something was
+                    # grabbed for this title, or when nothing was skipped at all.
+                    # Leave the title uncached ONLY when public_only skipped a
+                    # release AND nothing else was grabbed for it - so it's
                     # re-checked (and the skip re-logged as a reminder) on every
                     # run, and retried once a public release appears or
                     # public_only is relaxed
-                    if not self.public_only_skipped:
+                    if added_this_title > 0 or not self.public_only_skipped:
                         cache_details.update({"torrent_hashes": torrent_hashes})
                         self.update_cache(
                             arr="sonarr",
@@ -652,6 +692,7 @@ class SeaDexSonarr(SeaDexArr):
                 if self.max_torrents_to_add is not None:
                     if self.torrents_added >= self.max_torrents_to_add:
                         self.log_max_torrents_added()
+                        self.save_cache()
                         self.log_run_summary(arr="sonarr")
                         return True
 
@@ -662,6 +703,7 @@ class SeaDexSonarr(SeaDexArr):
                 )
                 continue
 
+        self.save_cache()
         self.log_run_summary(arr="sonarr")
 
         return True
@@ -764,7 +806,7 @@ class SeaDexSonarr(SeaDexArr):
             f"includeEpisodeFile=true&"
             f"apikey={self.sonarr_api_key}"
         )
-        eps_req = requests.get(eps_req_url)
+        eps_req = self.session.get(eps_req_url)
 
         if eps_req.status_code != 200:
             self.logger.warning(
@@ -957,6 +999,82 @@ class SeaDexSonarr(SeaDexArr):
 
         return sonarr_release_dict
 
+    def get_sonarr_parse(
+        self,
+        filename,
+    ):
+        """Ask Sonarr to parse a single filename into season/episode numbers
+
+        Only the season/episode mapping is returned - the file size is filled in
+        by the caller, since it comes from the SeaDex file list rather than from
+        Sonarr.
+
+        Args:
+            filename (str): Filename to parse (basename, not full path)
+
+        Returns:
+            list: List of {"season", "episode"} dicts (empty if Sonarr couldn't
+                parse the filename)
+        """
+
+        d = {"title": filename, "apikey": self.sonarr_api_key}
+        d_enc = urlencode(d)
+
+        # Parse through Sonarr
+        parse_req_url = f"{self.sonarr_url}/api/v3/parse?" f"{d_enc}"
+        parse_req = self.session.get(parse_req_url)
+
+        if parse_req.status_code != 200:
+            self.logger.warning(
+                indent_string(
+                    f"Could not parse {filename} via Sonarr "
+                    f"(status code {parse_req.status_code}); skipping file"
+                )
+            )
+            return []
+
+        episode_info = parse_req.json().get("episodes", [])
+
+        parsed = []
+        for ep in episode_info:
+
+            season = ep.get("seasonNumber", None)
+            episode = ep.get("episodeNumber", None)
+
+            if season is None or episode is None:
+                self.logger.debug(
+                    indent_string(
+                        f"Season or episode came up None for {filename}; "
+                        f"skipping this episode entry"
+                    )
+                )
+                continue
+
+            parsed.append({"season": season, "episode": episode})
+
+        return parsed
+
+    @staticmethod
+    def _sonarr_parse_is_fresh(record):
+        """True if a persisted parse record has episodes and is within TTL
+
+        Legacy list-form entries (pre-TTL, no timestamp) are treated as stale so
+        they are re-queried once and upgraded to the timestamped form.
+        """
+        if not isinstance(record, dict):
+            return False
+        if not record.get("episodes"):
+            return False
+        try:
+            stamp = datetime.strptime(
+                record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT
+            )
+        except (TypeError, ValueError):
+            return False
+        return stamp >= datetime.now() - timedelta(
+            days=SONARR_PARSE_CACHE_TTL_DAYS
+        )
+
     def parse_episodes_from_seadex(
         self,
         seadex_dict,
@@ -966,16 +1084,28 @@ class SeaDexSonarr(SeaDexArr):
         This gets an overall episode list per-release group, and also episode lists per-torrent,
         if there are multiple
 
+        Parsed filenames are cached (in memory and persisted to cache.json), so a
+        given filename is only ever sent to Sonarr once - both within a run, where
+        the same file can appear across overlapping release groups, and across
+        runs. The mapping is deterministic for a SeaDex release name, so this is
+        safe; only successful parses are cached, so a file becomes parseable as
+        soon as its series is added to Sonarr.
+
         Args:
             seadex_dict (dict): Dictionary of seadex releases
         """
 
-        for release_group, release_group_item in seadex_dict.items():
+        # filename -> {"fetched_at": <str>, "episodes": [{"season", "episode"}]},
+        # shared across runs via cache.json; fetched_at lets entries expire (TTL)
+        parse_cache = self.cache.setdefault("sonarr_parse_cache", {})
+        now_str = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
+
+        for release_group_item in seadex_dict.values():
 
             # Set up an overall "all episodes" list
             release_group_item.update({"all_episodes": []})
 
-            for url, url_item in release_group_item.get("urls", {}).items():
+            for url_item in release_group_item.get("urls", {}).values():
 
                 # Set up a list to parse episodes from files
                 url_item.update({"episodes": []})
@@ -983,41 +1113,45 @@ class SeaDexSonarr(SeaDexArr):
 
                 for sd_file_idx, seadex_file in enumerate(url_item.get("files", [])):
 
-                    # Get basename from the file, and encode it through for the API
-                    # query
+                    # Get basename from the file
                     f = os.path.basename(seadex_file)
 
                     # Skip filenames with things like "NCED", "NCOP"
                     if any([x in f for x in TORRENT_FILENAMES_TO_SKIP]):
                         continue
 
-                    d = {"title": f, "apikey": self.sonarr_api_key}
-                    d_enc = urlencode(d)
-
-                    # Parse through Sonarr
-                    parse_req_url = f"{self.sonarr_url}/api/v3/parse?" f"{d_enc}"
-                    parse_req = requests.get(parse_req_url)
-                    j = parse_req.json()
-
-                    episode_info = j.get("episodes", [])
-
-                    if len(episode_info) == 0:
-                        self.logger.debug(
-                            indent_string(
-                                f"Sonarr could not parse episode for {f}"
-                            )
-                        )
+                    # Skip non-video files (subtitles, fonts, images, ...) before
+                    # hitting Sonarr - they never resolve to an episode
+                    if os.path.splitext(f)[1].lower() in NON_VIDEO_EXTENSIONS:
                         continue
 
+                    # Use the cached parse if it's still fresh, otherwise query
+                    # Sonarr and remember the result with a timestamp so it
+                    # expires (re-validates) rather than being trusted forever
+                    record = parse_cache.get(f)
+                    if self._sonarr_parse_is_fresh(record):
+                        parsed = record["episodes"]
+                    else:
+                        parsed = self.get_sonarr_parse(f)
+
+                        if len(parsed) == 0:
+                            self.logger.debug(
+                                indent_string(
+                                    f"Sonarr could not parse episode for {f}"
+                                )
+                            )
+                            # Deliberately not cached: a miss may just mean the
+                            # series isn't in Sonarr yet
+                            continue
+
+                        parse_cache[f] = {"fetched_at": now_str, "episodes": parsed}
+
                     # Add the season and episode numbers in
-                    for ep in episode_info:
+                    size = sizes[sd_file_idx]
+                    for ep in parsed:
 
-                        season = ep.get("seasonNumber", None)
-                        episode = ep.get("episodeNumber", None)
-                        size = sizes[sd_file_idx]
-
-                        if season is None or episode is None:
-                            raise ValueError("Season or episode has come up None")
+                        season = ep["season"]
+                        episode = ep["episode"]
 
                         self.logger.debug(
                             indent_string(

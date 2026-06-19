@@ -12,6 +12,7 @@ from xml.etree import ElementTree
 
 import httpx
 import qbittorrentapi
+import requests
 import yaml
 from ruamel.yaml import YAML
 from seadex import SeaDexEntry, EntryNotFoundError, EntryRecord
@@ -58,12 +59,14 @@ def save_json(
     # Optionally sort this data
     if sort_cache:
 
-        for arr, arr_item in data["anilist_entries"].items():
-            keys = list(arr_item.keys())
-            keys.sort(key=int)
-            sorted_data = {key: arr_item[key] for key in keys}
+        anilist_entries = data.get("anilist_entries", None)
+        if anilist_entries is not None:
+            for arr, arr_item in anilist_entries.items():
+                keys = list(arr_item.keys())
+                keys.sort(key=int)
+                sorted_data = {key: arr_item[key] for key in keys}
 
-            data["anilist_entries"][arr] = sorted_data
+                anilist_entries[arr] = sorted_data
 
     with open(out_file, "w", encoding="utf-8") as f:
         json.dump(
@@ -75,7 +78,7 @@ def save_json(
 
 ANIME_IDS_URL = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/refs/heads/master/anime_ids.json"
 ANIDB_MAPPINGS_URL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/refs/heads/master/anime-list-master.xml"
-ANIBRIDGE_MAPPINGS_URL = "https://raw.githubusercontent.com/eliasbenb/PlexAniBridge-Mappings/refs/heads/v2/mappings.json"
+ANIBRIDGE_MAPPINGS_URL = "https://github.com/anibridge/anibridge-mappings/releases/download/v3/mappings.json"
 
 ALLOWED_ARRS = [
     "radarr",
@@ -321,6 +324,9 @@ class SeaDexArr:
         # Ignore unmonitored flag
         self.ignore_unmonitored = self.config.get(f"{arr}_ignore_unmonitored", False)
 
+        # A single keep-alive session shared by the raw Sonarr/Radarr API calls
+        self.session = requests.Session()
+
         # qbit
         self.qbit = None
         qbit_info = self.config.get("qbit_info", None)
@@ -453,6 +459,10 @@ class SeaDexArr:
         # Set up cache for AL API calls
         self.al_cache = {}
 
+        # Memoize get_anilist_ids mapping computation per identifying key, so
+        # the prefetch pass and the main loop don't compute it twice per item
+        self._anilist_ids_cache = {}
+
         # Load in cache if it exists. Else create
         self.cache_file = cache
         if os.path.exists(cache):
@@ -467,6 +477,11 @@ class SeaDexArr:
         self.check_cache_updates()
 
         self.log_line_length = 80
+
+    def close(self):
+        """Close the shared HTTP session (release pooled connections)."""
+        if self.session is not None:
+            self.session.close()
 
     def verify_config(
         self,
@@ -739,40 +754,57 @@ class SeaDexArr:
                 "At least one of tvdb_id, tmdb_id, and imdb_id must be provided"
             )
 
-        anilist_mappings = {}
+        # The mapping computation is deterministic for a given set of
+        # identifying args, so memoize it and only redo the per-call logging
+        key = (tvdb_id, tmdb_id, imdb_id, tmdb_type)
+        if key in self._anilist_ids_cache:
+            anilist_mappings, ids_to_drop = self._anilist_ids_cache[key]
+        else:
+            anilist_mappings = {}
 
-        # Start by looking through our base case, which are the Tomeka
-        # Anime IDs. Save these to a dict where the key is the AniList ID
-        if self.anime_mappings:
-            anilist_mappings = self.get_mappings_from_anime_mappings(
-                tvdb_id=tvdb_id,
-                tmdb_id=tmdb_id,
-                imdb_id=imdb_id,
-                tmdb_type=tmdb_type,
-                anilist_mappings=anilist_mappings,
-            )
+            # Start by looking through our base case, which are the Tomeka
+            # Anime IDs. Save these to a dict where the key is the AniList ID
+            if self.anime_mappings:
+                anilist_mappings = self.get_mappings_from_anime_mappings(
+                    tvdb_id=tvdb_id,
+                    tmdb_id=tmdb_id,
+                    imdb_id=imdb_id,
+                    tmdb_type=tmdb_type,
+                    anilist_mappings=anilist_mappings,
+                )
 
-        # Then, look through the AniBridge mappings
-        if self.anibridge_mappings:
-            anilist_mappings = self.get_mappings_from_anibridge_mappings(
-                tvdb_id=tvdb_id,
-                tmdb_id=tmdb_id,
-                imdb_id=imdb_id,
-                tmdb_type=tmdb_type,
-                anilist_mappings=anilist_mappings,
-            )
+            # Then, look through the AniBridge mappings
+            if self.anibridge_mappings:
+                anilist_mappings = self.get_mappings_from_anibridge_mappings(
+                    tvdb_id=tvdb_id,
+                    tmdb_id=tmdb_id,
+                    imdb_id=imdb_id,
+                    tmdb_type=tmdb_type,
+                    anilist_mappings=anilist_mappings,
+                )
 
-        # Drop any AniList IDs the user has chosen to ignore
-        ids_to_drop = [al_id for al_id in anilist_mappings if al_id in self.ignore_anilist_ids]
-        for al_id in ids_to_drop:
-            del anilist_mappings[al_id]
-            if log_ignored:
+            # Drop any AniList IDs the user has chosen to ignore
+            ids_to_drop = [
+                al_id
+                for al_id in anilist_mappings
+                if al_id in self.ignore_anilist_ids
+            ]
+            for al_id in ids_to_drop:
+                del anilist_mappings[al_id]
+
+            # Sort by AniList ID
+            anilist_mappings = dict(sorted(anilist_mappings.items()))
+
+            self._anilist_ids_cache[key] = (anilist_mappings, ids_to_drop)
+
+        # Log ignored ids per-call (not just on the cache-filling call), so the
+        # main loop still logs every ignored id even after the prefetch pass ran
+        if log_ignored:
+            for al_id in ids_to_drop:
                 self.log_ignored_anilist_id(al_id=al_id)
 
-        # Sort by AniList ID
-        anilist_mappings = dict(sorted(anilist_mappings.items()))
-
-        return anilist_mappings
+        # Return a copy so a caller mutating the result can't corrupt the memo
+        return dict(anilist_mappings)
 
     @staticmethod
     def _anilist_meta_is_fresh(record):
@@ -842,10 +874,11 @@ class SeaDexArr:
             meta[id_str] = {"fetched_at": now_str, "data": data}
             written += 1
 
-        # A dry run keeps the warmed entries in memory but doesn't persist them,
-        # so a preview leaves the on-disk cache untouched.
-        if written and not self.dry_run:
-            save_json(self.cache, self.cache_file, sort_cache=True)
+        # A preview keeps the warmed entries in memory but doesn't persist them,
+        # so a preview leaves the on-disk cache untouched (gate lives in
+        # save_cache).
+        if written:
+            self.save_cache()
 
     def prefetch_anilist(self, al_ids):
         """Warm the AniList cache for a set of ids in batched requests
@@ -1967,7 +2000,7 @@ class SeaDexArr:
         # A private torrent has no info hash, so we can't look it up by hash to
         # dedup or to read its name back; just add it and let qBittorrent dedup
         # internally. With a hash, skip the adding if it's already present
-        if torrent_hash is not None:
+        if torrent_hash is not None and self.qbit is not None:
             torr_info = self.qbit.torrents_info(torrent_hashes=torrent_hash)
             torr_hashes = [i.hash for i in torr_info]
 
@@ -1977,11 +2010,11 @@ class SeaDexArr:
                 )
                 return "torrent_already_added", torr_info[0].name
 
-        # Dry run: report it as added without touching the client (the dedup
-        # lookup above still ran, so an already-present torrent is reported
-        # accurately). There's no client-side name to read back, so the caller
-        # falls back to the URL.
-        if self.dry_run:
+        # Preview (dry run or no client): report it as added without touching the
+        # client. With a client present the dedup lookup above still ran, so an
+        # already-present torrent is reported accurately. There's no client-side
+        # name to read back, so the caller falls back to the URL.
+        if self._is_preview():
             return "torrent_added", None
 
         # Add the torrent
@@ -2002,6 +2035,25 @@ class SeaDexArr:
             torrent_name = added_info[0].name if added_info else None
 
         return "torrent_added", torrent_name
+
+    def _is_preview(self):
+        """A run is a no-op preview when an explicit dry run was requested OR
+        qBittorrent is not configured (nothing can actually be grabbed)."""
+        return self.dry_run or self.qbit is None
+
+    def save_cache(self):
+        """Persist the in-memory cache to disk
+
+        Skipped during a preview so a preview never writes state, mirroring
+        update_cache.
+        """
+
+        if not self._is_preview():
+            save_json(
+                self.cache,
+                self.cache_file,
+                sort_cache=True,
+            )
 
     def update_cache(self, arr, al_id, cache_details=None):
         """Update cache with useful info
@@ -2031,14 +2083,10 @@ class SeaDexArr:
 
         self.cache["anilist_entries"][arr][str(al_id)].update(cache_details)
 
-        # Dry run: keep the in-memory cache consistent for the rest of the run,
-        # but don't persist it - so a preview never marks a title as done.
-        if not self.dry_run:
-            save_json(
-                self.cache,
-                self.cache_file,
-                sort_cache=True,
-            )
+        # Persist via save_cache, which keeps the preview gate in one place:
+        # a preview keeps the in-memory cache consistent for the rest of the
+        # run, but never persists it - so a preview never marks a title as done.
+        self.save_cache()
 
         return True
 
@@ -2212,7 +2260,7 @@ class SeaDexArr:
         rule_title = title
         # A run grabs nothing when explicitly flagged dry, or when no client is
         # configured at all - annotate (and later dim) the summary either way.
-        is_dry_run = self.dry_run or self.qbit is None
+        is_dry_run = self._is_preview()
         if is_dry_run:
             note = "nothing grabbed" if self.qbit is not None else (
                 "no client; nothing grabbed"

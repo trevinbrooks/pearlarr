@@ -1,6 +1,5 @@
 import time
 
-import requests
 import arrapi.exceptions
 from arrapi import RadarrAPI
 
@@ -264,31 +263,16 @@ class SeaDexRadarr(SeaDexArr):
                             n_torrents_added = 0
                             results = []
 
-                            # Add torrents to qBittorrent
-                            if self.qbit is not None:
-                                added, results = self.add_torrent(
-                                    torrent_dict=seadex_dict,
-                                    torrent_client="qbit",
-                                )
-                                n_torrents_added += added
-
-                            # Otherwise, increment by the number of torrents in the SeaDex dict
-                            else:
-                                n_torrents_added += len(seadex_dict)
-                                self.torrents_added += len(seadex_dict)
-
-                                # Dry run (no qBittorrent): record a placeholder
-                                # per release group so the summary's "added"
-                                # count and detail list agree
-                                for srg in seadex_dict:
-                                    self.stats["added"].append(
-                                        {
-                                            "title": self.current_title,
-                                            "group": srg,
-                                            "coverage": "",
-                                            "url": self.current_url,
-                                        }
-                                    )
+                            # Add torrents to qBittorrent. add_torrent runs even
+                            # in a preview (no client / dry run): add_torrent_to_qbit
+                            # simulates the add, while the download-flag,
+                            # public_only and tracker filters still apply, so only
+                            # releases that would actually be grabbed are counted.
+                            added, results = self.add_torrent(
+                                torrent_dict=seadex_dict,
+                                torrent_client="qbit",
+                            )
+                            n_torrents_added += added
 
                             # Log the action block now the outcome is known, so
                             # the status reads "adding" only when something was
@@ -296,15 +280,15 @@ class SeaDexRadarr(SeaDexArr):
                             self.log_seadex_action(
                                 seadex_dict=seadex_dict,
                                 results=results,
-                                dry_run=self.qbit is None,
+                                dry_run=self._is_preview(),
                             )
 
                             # Push a message to Discord if we've added anything
-                            # (never on a dry run - it's an outward notification)
+                            # (never on a preview - it's an outward notification)
                             if (
                                 self.discord_url is not None
                                 and n_torrents_added > 0
-                                and not self.dry_run
+                                and not self._is_preview()
                             ):
                                 discord_push(
                                     url=self.discord_url,
@@ -332,12 +316,14 @@ class SeaDexRadarr(SeaDexArr):
                     # Work out whether THIS title actually grabbed anything
                     added_this_title = self.torrents_added - torrents_before
 
-                    # Update and save out the cache, unless public_only made us
-                    # skip a release - leave the title uncached so it's
+                    # Update and save out the cache whenever something was
+                    # grabbed for this title, or when nothing was skipped at all.
+                    # Leave the title uncached ONLY when public_only skipped a
+                    # release AND nothing else was grabbed for it - so it's
                     # re-checked (and the skip re-logged as a reminder) on every
                     # run, and retried once a public release appears or
                     # public_only is relaxed
-                    if not self.public_only_skipped:
+                    if added_this_title > 0 or not self.public_only_skipped:
                         cache_details.update({"torrent_hashes": torrent_hashes})
                         self.update_cache(
                             arr="radarr",
@@ -451,7 +437,7 @@ class SeaDexRadarr(SeaDexArr):
             f"movieId={radarr_movie_id}&"
             f"apikey={self.radarr_api_key}"
         )
-        mov_req = requests.get(mov_req_url)
+        mov_req = self.session.get(mov_req_url)
 
         radarr_release_dict = {
             r.get("releaseGroup", None): {"size": r.get("size", None)}
