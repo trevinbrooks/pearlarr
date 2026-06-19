@@ -5,7 +5,7 @@ import arrapi.exceptions
 from arrapi import RadarrAPI
 
 from .discord import discord_push
-from .log import centred_string, kv_string, rule_string
+from .log import indent_string
 from .seadex_arr import SeaDexArr
 
 
@@ -58,6 +58,9 @@ class SeaDexRadarr(SeaDexArr):
                 TMDB ID. Defaults to None, which runs for all movies.
         """
 
+        # Reset the per-run tally and start the run clock
+        self.reset_run_stats()
+
         # Get all the anime movies
         all_radarr_movies = self.get_all_radarr_movies()
 
@@ -68,10 +71,7 @@ class SeaDexRadarr(SeaDexArr):
             ]
             if len(all_radarr_movies) == 0:
                 self.logger.warning(
-                    centred_string(
-                        f"No anime movie with TMDB ID {tmdb_id} found in Radarr",
-                        total_length=self.log_line_length,
-                    )
+                    f"No anime movie with TMDB ID {tmdb_id} found in Radarr"
                 )
 
         n_radarr = len(all_radarr_movies)
@@ -123,6 +123,7 @@ class SeaDexRadarr(SeaDexArr):
                     # Reset the per-title public_only skip flag before we make
                     # any download decisions for this title
                     self.public_only_skipped = False
+                    self.stats["checked"] += 1
 
                     # Map the TMDB ID through to AniList
                     if al_id is None:
@@ -144,24 +145,31 @@ class SeaDexRadarr(SeaDexArr):
                     )
 
                     if al_id_in_cache and not self.ignore_seadex_update_times:
-                        self.log_cached_entry(
-                            arr="radarr",
-                            al_id=al_id,
-                            sd_entry=sd_entry,
-                        )
+                        # Backfill the URL for cache records written before it was
+                        # stored, so cached rows can still link to SeaDex. Movies
+                        # have no episode coverage, so there's nothing else to add.
+                        if not self.get_cached_field("radarr", al_id, "url"):
+                            self.update_cache(
+                                arr="radarr",
+                                al_id=al_id,
+                                cache_details={"url": sd_url, "coverage": ""},
+                            )
+                        self.log_cached_entry(arr="radarr", al_id=al_id)
                         continue
 
-                    # Get the AniList title
-                    anilist_title = self.get_anilist_title(
-                        al_id=al_id,
-                        sd_entry=sd_entry,
-                    )
+                    # Resolve the AniList title, then log the active entry (a movie
+                    # has no episode coverage, so the line carries just the URL)
+                    anilist_title = self.get_anilist_title(al_id=al_id)
+                    self.log_al_title(anilist_title=anilist_title, sd_entry=sd_entry)
 
-                    # Setup info for cache
+                    # Setup info for cache (URL so cached runs can link to SeaDex;
+                    # movies have no episode coverage)
                     cache_details = {
                         "name": anilist_title,
                         "updated_at": sd_entry.updated_at,
                         "torrent_hashes": [],
+                        "url": sd_url,
+                        "coverage": "",
                     }
 
                     radarr_release_dict = self.get_radarr_release_dict(
@@ -170,9 +178,8 @@ class SeaDexRadarr(SeaDexArr):
                     radarr_release_group = list(radarr_release_dict.keys())[0]
 
                     self.logger.debug(
-                        centred_string(
+                        indent_string(
                             f"Radarr release group: {radarr_release_group}",
-                            total_length=self.log_line_length,
                         )
                     )
 
@@ -192,9 +199,8 @@ class SeaDexRadarr(SeaDexArr):
                         continue
 
                     self.logger.debug(
-                        centred_string(
+                        indent_string(
                             f"SeaDex: {', '.join(seadex_dict)}",
-                            total_length=self.log_line_length,
                         )
                     )
 
@@ -215,11 +221,11 @@ class SeaDexRadarr(SeaDexArr):
                     # Check the release groups are matching, and get a bespoke list of torrents
                     any_to_download = self.get_any_to_download(seadex_dict=seadex_dict)
 
+                    # Capture the running total before the add block so we can
+                    # tell whether THIS title actually grabbed anything
+                    torrents_before = self.torrents_added
+
                     if any_to_download:
-                        self.log_arr_seadex_mismatch(
-                            arr="radarr",
-                            seadex_dict=seadex_dict,
-                        )
                         fields, anilist_thumb = self.get_seadex_fields(
                             arr="radarr",
                             al_id=al_id,
@@ -232,18 +238,42 @@ class SeaDexRadarr(SeaDexArr):
 
                             # Keep track of how many torrents we've added
                             n_torrents_added = 0
+                            results = []
 
                             # Add torrents to qBittorrent
                             if self.qbit is not None:
-                                n_torrents_added += self.add_torrent(
+                                added, results = self.add_torrent(
                                     torrent_dict=seadex_dict,
                                     torrent_client="qbit",
                                 )
+                                n_torrents_added += added
 
                             # Otherwise, increment by the number of torrents in the SeaDex dict
                             else:
                                 n_torrents_added += len(seadex_dict)
                                 self.torrents_added += len(seadex_dict)
+
+                                # Dry run (no qBittorrent): record a placeholder
+                                # per release group so the summary's "added"
+                                # count and detail list agree
+                                for srg in seadex_dict:
+                                    self.stats["added"].append(
+                                        {
+                                            "title": self.current_title,
+                                            "group": srg,
+                                            "coverage": "",
+                                            "url": self.current_url,
+                                        }
+                                    )
+
+                            # Log the action block now the outcome is known, so
+                            # the status reads "adding" only when something was
+                            # actually grabbed (else "keeping")
+                            self.log_seadex_action(
+                                seadex_dict=seadex_dict,
+                                results=results,
+                                dry_run=self.qbit is None,
+                            )
 
                             # Push a message to Discord if we've added anything
                             if self.discord_url is not None and n_torrents_added > 0:
@@ -259,16 +289,19 @@ class SeaDexRadarr(SeaDexArr):
                             if self.max_torrents_to_add is not None:
                                 if self.torrents_added >= self.max_torrents_to_add:
                                     self.log_max_torrents_added()
+                                    self.log_run_summary(arr="radarr")
                                     return True
 
                     elif not self.public_only_skipped:
-
-                        self.logger.info(
-                            kv_string(
-                                "status",
-                                "already have the recommended release(s)",
-                            )
+                        self.stats["up_to_date"] += 1
+                        self.log_detail(
+                            "status",
+                            "already have the recommended release",
+                            value_style="green",
                         )
+
+                    # Work out whether THIS title actually grabbed anything
+                    added_this_title = self.torrents_added - torrents_before
 
                     # Update and save out the cache, unless public_only made us
                     # skip a release - leave the title uncached so it's
@@ -282,40 +315,34 @@ class SeaDexRadarr(SeaDexArr):
                             al_id=al_id,
                             cache_details=cache_details,
                         )
-
-                    self.logger.info(
-                        rule_string(
-                            total_length=self.log_line_length,
+                    elif added_this_title == 0:
+                        # Record the private-only skip for the summary's
+                        # "needs action" list, attributed to this title - but
+                        # only when nothing was actually added for it
+                        self.stats["needs_action"].append(
+                            {
+                                "title": self.current_title,
+                                "url": self.current_url,
+                                "reason": "private-only release; public_only on",
+                            }
                         )
-                    )
 
                     # Add in a wait, if required
                     time.sleep(self.sleep_time)
 
-                self.logger.info(
-                    rule_string(
-                        rule_char=self.log_line_sep,
-                        total_length=self.log_line_length,
-                    )
-                )
-
                 if self.max_torrents_to_add is not None:
                     if self.torrents_added >= self.max_torrents_to_add:
                         self.log_max_torrents_added()
+                        self.log_run_summary(arr="radarr")
                         return True
 
             except Exception as e:
-                self.logger.error(f"Exception: {e}")
-                self.logger.info(
-                    rule_string(
-                        rule_char=self.log_line_sep,
-                        total_length=self.log_line_length,
-                    )
-                )
+                title = getattr(radarr_movie, "title", "unknown title")
+                self.logger.error(f"{title}: unexpected error: {e}")
+                self.logger.debug("Traceback:", exc_info=True)
                 continue
 
-            # Add in a blank line to break things up
-            self.logger.info("")
+        self.log_run_summary(arr="radarr")
 
         return True
 

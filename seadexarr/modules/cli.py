@@ -55,7 +55,7 @@ def run_scheduled():
     while True:
 
         logger = setup_logger(log_level="INFO")
-        logger.info(f"Running in scheduled mode")
+        logger.info("Starting SeaDexArr in scheduled mode")
 
         present_time = datetime.now().strftime("%H:%M")
         logger.info(f"Time is {present_time}. Starting scheduled run")
@@ -89,7 +89,7 @@ def run_scheduled():
 
         next_run_time = datetime.now() + timedelta(hours=schedule_time)
         next_run_time = next_run_time.strftime("%H:%M")
-        logger.info(f"Scheduled run complete! Will run again at {next_run_time}")
+        logger.info(f"Scheduled run complete - next run at {next_run_time}")
 
         # Good job, have a rest
         time.sleep(schedule_time * 3600)

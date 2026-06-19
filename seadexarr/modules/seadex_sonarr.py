@@ -12,7 +12,7 @@ from .anilist import (
     get_anilist_format,
 )
 from .discord import discord_push
-from .log import centred_string, left_aligned_string, kv_string, rule_string
+from .log import indent_string
 from .seadex_arr import SeaDexArr, get_episode_keys
 from .seadex_radarr import SeaDexRadarr
 
@@ -55,23 +55,6 @@ def get_tvdb_season(mapping):
     tvdb_season = mapping.get("tvdb_season", -1)
 
     return tvdb_season
-
-
-def get_season_label(mapping):
-    """Build a season label (e.g. "S01") for a mapping, or None if unknown
-
-    Args:
-        mapping (dict): Dictionary of SeaDex mappings
-
-    Returns:
-        str | None: Season label, or None when the season is unknown (-1)
-    """
-
-    tvdb_season = get_tvdb_season(mapping)
-    if tvdb_season is None or tvdb_season == -1:
-        return None
-
-    return f"S{tvdb_season:02d}"
 
 
 def get_overlapping_results(seadex_dict):
@@ -260,6 +243,9 @@ class SeaDexSonarr(SeaDexArr):
                 TVDB ID. Defaults to None, which runs for all series.
         """
 
+        # Reset the per-run tally and start the run clock
+        self.reset_run_stats()
+
         # Get all the anime series
         all_sonarr_series = self.get_all_sonarr_series()
 
@@ -270,10 +256,7 @@ class SeaDexSonarr(SeaDexArr):
             ]
             if len(all_sonarr_series) == 0:
                 self.logger.warning(
-                    centred_string(
-                        f"No anime series with TVDB ID {tvdb_id} found in Sonarr",
-                        total_length=self.log_line_length,
-                    )
+                    f"No anime series with TVDB ID {tvdb_id} found in Sonarr"
                 )
 
         n_sonarr = len(all_sonarr_series)
@@ -324,6 +307,7 @@ class SeaDexSonarr(SeaDexArr):
                     # Reset the per-title public_only skip flag before we make
                     # any download decisions for this title
                     self.public_only_skipped = False
+                    self.stats["checked"] += 1
 
                     # Map the TVDB ID through to AniList
                     if al_id is None:
@@ -345,12 +329,26 @@ class SeaDexSonarr(SeaDexArr):
                     )
 
                     if al_id_in_cache and not self.ignore_seadex_update_times:
-                        self.log_cached_entry(
-                            arr="sonarr",
-                            al_id=al_id,
-                            sd_entry=sd_entry,
-                            seasons=get_season_label(mapping),
-                        )
+                        # Backfill the enriched fields (coverage + URL) for cache
+                        # records written before they existed, so cached rows can
+                        # still show season/episodes/URL. One-time per old entry.
+                        if not self.get_cached_field("sonarr", al_id, "url"):
+                            backfill_eps = self.get_ep_list(
+                                sonarr_series_id=sonarr_series_id,
+                                al_id=al_id,
+                                mapping=mapping,
+                            )
+                            self.update_cache(
+                                arr="sonarr",
+                                al_id=al_id,
+                                cache_details={
+                                    "url": sd_url,
+                                    "coverage": self.coverage_string(
+                                        self.episodes_from_ep_list(backfill_eps)
+                                    ),
+                                },
+                            )
+                        self.log_cached_entry(arr="sonarr", al_id=al_id)
                         continue
 
                     # Also check if it's in the Radarr cache, if we have that option
@@ -364,17 +362,13 @@ class SeaDexSonarr(SeaDexArr):
                             self.log_cached_entry(
                                 arr="radarr",
                                 al_id=al_id,
-                                sd_entry=sd_entry,
-                                status="cached in Radarr (matches SeaDex updated time)",
-                                seasons=get_season_label(mapping),
+                                state="in radarr",
                             )
                             continue
 
-                    # Get the AniList title
-                    anilist_title = self.get_anilist_title(
-                        al_id=al_id,
-                        sd_entry=sd_entry,
-                    )
+                    # Resolve the AniList title (logged later, once episodes give
+                    # us the season/episode coverage)
+                    anilist_title = self.get_anilist_title(al_id=al_id)
 
                     # Setup info for cache
                     cache_details = {
@@ -422,18 +416,10 @@ class SeaDexSonarr(SeaDexArr):
                         if len(radarr_movies) > 0:
 
                             for movie in radarr_movies:
-                                self.logger.info(
-                                    centred_string(
-                                        f"{movie.title} found in Radarr, will skip",
-                                        total_length=self.log_line_length,
-                                    )
+                                self.log_entry_status(
+                                    "in radarr",
+                                    movie.title,
                                 )
-
-                            self.logger.info(
-                                rule_string(
-                                    total_length=self.log_line_length,
-                                )
-                            )
 
                             time.sleep(self.sleep_time)
                             continue
@@ -458,13 +444,26 @@ class SeaDexSonarr(SeaDexArr):
                         time.sleep(self.sleep_time)
                         continue
 
+                    # Now that we have the episodes, log the active entry with its
+                    # season/episode coverage + URL, and remember them for the cache
+                    # so future cached runs can show the same detail
+                    coverage = self.coverage_string(
+                        self.episodes_from_ep_list(ep_list)
+                    )
+                    self.log_al_title(
+                        anilist_title=anilist_title,
+                        sd_entry=sd_entry,
+                        coverage=coverage,
+                    )
+                    cache_details["coverage"] = coverage
+                    cache_details["url"] = sd_url
+
                     sonarr_release_dict = self.get_sonarr_release_dict(ep_list=ep_list)
                     sonarr_release_groups = list(sonarr_release_dict.keys())
 
                     self.logger.debug(
-                        centred_string(
+                        indent_string(
                             f"Sonarr release group(s): {', '.join(sonarr_release_groups)}",
-                            total_length=self.log_line_length,
                         )
                     )
 
@@ -484,9 +483,8 @@ class SeaDexSonarr(SeaDexArr):
                         continue
 
                     self.logger.debug(
-                        centred_string(
+                        indent_string(
                             f"SeaDex: {', '.join(seadex_dict)}",
-                            total_length=self.log_line_length,
                         )
                     )
 
@@ -513,11 +511,11 @@ class SeaDexSonarr(SeaDexArr):
 
                     any_to_download = self.get_any_to_download(seadex_dict=seadex_dict)
 
+                    # Capture the running total before the add block so we can
+                    # tell whether THIS title actually grabbed anything
+                    torrents_before = self.torrents_added
+
                     if any_to_download:
-                        self.log_arr_seadex_mismatch(
-                            arr="sonarr",
-                            seadex_dict=seadex_dict,
-                        )
                         fields, anilist_thumb = self.get_seadex_fields(
                             arr="sonarr",
                             al_id=al_id,
@@ -530,18 +528,42 @@ class SeaDexSonarr(SeaDexArr):
 
                             # Keep track of how many torrents we've added
                             n_torrents_added = 0
+                            results = []
 
                             # Add torrents to qBittorrent
                             if self.qbit is not None:
-                                n_torrents_added += self.add_torrent(
+                                added, results = self.add_torrent(
                                     torrent_dict=seadex_dict,
                                     torrent_client="qbit",
                                 )
+                                n_torrents_added += added
 
                             # Otherwise, increment by the number of torrents in the SeaDex dict
                             else:
                                 n_torrents_added += len(seadex_dict)
                                 self.torrents_added += len(seadex_dict)
+
+                                # Dry run (no qBittorrent): record a placeholder
+                                # per release group so the summary's "added"
+                                # count and detail list agree
+                                for srg in seadex_dict:
+                                    self.stats["added"].append(
+                                        {
+                                            "title": self.current_title,
+                                            "group": srg,
+                                            "coverage": coverage,
+                                            "url": self.current_url,
+                                        }
+                                    )
+
+                            # Log the action block now the outcome is known, so
+                            # the status reads "adding" only when something was
+                            # actually grabbed (else "keeping")
+                            self.log_seadex_action(
+                                seadex_dict=seadex_dict,
+                                results=results,
+                                dry_run=self.qbit is None,
+                            )
 
                             # Push a message to Discord if we've added anything
                             if self.discord_url is not None and n_torrents_added > 0:
@@ -557,16 +579,19 @@ class SeaDexSonarr(SeaDexArr):
                             if self.max_torrents_to_add is not None:
                                 if self.torrents_added >= self.max_torrents_to_add:
                                     self.log_max_torrents_added()
+                                    self.log_run_summary(arr="sonarr")
                                     return True
 
                     elif not self.public_only_skipped:
-
-                        self.logger.info(
-                            kv_string(
-                                "status",
-                                "already have the recommended release(s)",
-                            )
+                        self.stats["up_to_date"] += 1
+                        self.log_detail(
+                            "status",
+                            "already have the recommended release",
+                            value_style="green",
                         )
+
+                    # Work out whether THIS title actually grabbed anything
+                    added_this_title = self.torrents_added - torrents_before
 
                     # Update and save out the cache, unless public_only made us
                     # skip a release - leave the title uncached so it's
@@ -580,40 +605,35 @@ class SeaDexSonarr(SeaDexArr):
                             al_id=al_id,
                             cache_details=cache_details,
                         )
-
-                    self.logger.info(
-                        rule_string(
-                            total_length=self.log_line_length,
+                    elif added_this_title == 0:
+                        # Record the private-only skip for the summary's
+                        # "needs action" list, attributed to this title - but
+                        # only when nothing was actually added for it
+                        self.stats["needs_action"].append(
+                            {
+                                "title": self.current_title,
+                                "coverage": coverage,
+                                "url": self.current_url,
+                                "reason": "private-only release; public_only on",
+                            }
                         )
-                    )
 
                     # Add in a wait, if required
                     time.sleep(self.sleep_time)
 
-                self.logger.info(
-                    rule_string(
-                        rule_char=self.log_line_sep,
-                        total_length=self.log_line_length,
-                    )
-                )
-
                 if self.max_torrents_to_add is not None:
                     if self.torrents_added >= self.max_torrents_to_add:
                         self.log_max_torrents_added()
+                        self.log_run_summary(arr="sonarr")
                         return True
 
             except Exception as e:
-                self.logger.error(f"Exception: {e}")
-                self.logger.info(
-                    rule_string(
-                        rule_char=self.log_line_sep,
-                        total_length=self.log_line_length,
-                    )
-                )
+                title = getattr(sonarr_series, "title", "unknown title")
+                self.logger.error(f"{title}: unexpected error: {e}")
+                self.logger.debug("Traceback:", exc_info=True)
                 continue
 
-            # Add in a blank line to break things up
-            self.logger.info("")
+        self.log_run_summary(arr="sonarr")
 
         return True
 
@@ -718,7 +738,9 @@ class SeaDexSonarr(SeaDexArr):
         eps_req = requests.get(eps_req_url)
 
         if eps_req.status_code != 200:
-            self.logger.warning("Failed get episodes data from Sonarr")
+            self.logger.warning(
+                "Could not fetch episode data from Sonarr; it may be unreachable"
+            )
             return None
 
         ep_list = eps_req.json()
@@ -892,8 +914,16 @@ class SeaDexSonarr(SeaDexArr):
             sonarr_release_dict[release_group]["size"].append(size)
 
         if missing_eps > 0:
-            self.logger.info(
-                kv_string("missing episodes", f"{missing_eps}/{n_eps}")
+            # Show which episodes are missing as ranges (e.g. "S04 E12"), not just
+            # a count, so it's clear what's absent. Fall back to the count if the
+            # episodes can't be condensed.
+            missing_coverage = self.coverage_string(
+                self.episodes_from_ep_list(ep_list, missing_only=True)
+            )
+            self.log_detail(
+                "missing",
+                missing_coverage or f"{missing_eps}/{n_eps}",
+                value_style="yellow",
             )
 
         return sonarr_release_dict
@@ -944,7 +974,7 @@ class SeaDexSonarr(SeaDexArr):
 
                     if len(episode_info) == 0:
                         self.logger.debug(
-                            left_aligned_string(
+                            indent_string(
                                 f"Sonarr could not parse episode for {f}"
                             )
                         )
@@ -961,7 +991,7 @@ class SeaDexSonarr(SeaDexArr):
                             raise ValueError("Season or episode has come up None")
 
                         self.logger.debug(
-                            left_aligned_string(
+                            indent_string(
                                 f"{f} mapped to: S{season:02d}E{episode:02d}"
                             )
                         )

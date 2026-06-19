@@ -1,7 +1,9 @@
 import copy
 import json
+import logging
 import os
 import shutil
+import time
 from datetime import datetime
 from hashlib import md5
 from itertools import compress
@@ -16,7 +18,20 @@ from seadex import SeaDexEntry, EntryNotFoundError, EntryRecord
 
 from .. import __version__
 from .anilist import get_anilist_title, get_anilist_thumb
-from .log import setup_logger, centred_string, left_aligned_string, kv_string, rule_string
+from .log import (
+    setup_logger,
+    left_aligned_string,
+    indent_string,
+    kv_string,
+    rule_string,
+    count_noun,
+    entry_string,
+    INDENT,
+    KEY_WIDTH,
+    ENTRY_LABEL_OFFSET,
+    DETAIL_INDENT,
+    DETAIL_KEY_WIDTH,
+)
 from .torrent import (
     get_nyaa_url,
     get_animetosho_url,
@@ -314,7 +329,10 @@ class SeaDexArr:
             try:
                 qbit.auth_log_in()
             except qbittorrentapi.LoginFailed:
-                raise ValueError("qBittorrent login failed!")
+                raise ValueError(
+                    "qBittorrent login failed - check the qbit_info host and "
+                    "credentials in your config"
+                )
 
             self.qbit = qbit
 
@@ -331,6 +349,16 @@ class SeaDexArr:
         self.torrent_tags = self.config.get("torrent_tags", None)
         self.max_torrents_to_add = self.config.get("max_torrents_to_add", None)
         self.torrents_added = 0
+
+        # Per-run tally for the end-of-run summary (reset at the start of run())
+        self.stats = self._fresh_stats()
+        self._run_started_monotonic = None
+        self._log_counts_at_start = {}
+        # Title + SeaDex URL currently being processed, so add_torrent and the
+        # summary can attribute what they grab (and link to it) without threading
+        # them through every call
+        self.current_title = None
+        self.current_url = None
 
         # Discord
         self.discord_url = self.config.get("discord_url", None)
@@ -426,7 +454,6 @@ class SeaDexArr:
         # edit the cache description
         self.check_cache_updates()
 
-        self.log_line_sep = "="
         self.log_line_length = 80
 
     def verify_config(
@@ -643,11 +670,30 @@ class SeaDexArr:
             str | None: Cached title, or None if not present
         """
 
+        return self.get_cached_field(arr, al_id, "name")
+
+    def get_cached_field(
+        self,
+        arr,
+        al_id,
+        field,
+    ):
+        """Read a single stored field from an entry's cache record, if present
+
+        Args:
+            arr (str): Arr instance the entry is cached under
+            al_id (int): AniList ID
+            field (str): Cache field name (e.g. "name", "url", "coverage")
+
+        Returns:
+            The stored value, or None if absent
+        """
+
         return (
             self.cache.get("anilist_entries", {})
             .get(arr, {})
             .get(str(al_id), {})
-            .get("name")
+            .get(field)
         )
 
     def get_anilist_ids(
@@ -843,13 +889,16 @@ class SeaDexArr:
     def get_anilist_title(
         self,
         al_id,
-        sd_entry,
     ):
-        """Get the AniList title from an ID and the SeaDex entry
+        """Resolve and remember the AniList title for an ID (no logging)
+
+        Fetches the title (via cache or a live AniList query) and stores it as
+        the current title so later steps can attribute grabs to it. The entry
+        header is logged separately by log_al_title, once episodes are known and
+        the season/episode coverage can be shown.
 
         Args:
             al_id (int): AniList ID
-            sd_entry: SeaDex entry
         """
 
         anilist_title, self.al_cache = get_anilist_title(
@@ -857,10 +906,13 @@ class SeaDexArr:
             al_cache=self.al_cache,
         )
 
-        self.log_al_title(
-            anilist_title=anilist_title,
-            sd_entry=sd_entry,
-        )
+        # If the lookup came back empty (e.g. AniList was rate-limiting even
+        # after retries), fall back to the id so the entry is still identifiable
+        # rather than showing "None"
+        if not anilist_title:
+            anilist_title = f"AniList #{al_id}"
+
+        self.current_title = anilist_title
 
         return anilist_title
 
@@ -958,46 +1010,29 @@ class SeaDexArr:
             sd_entry: SeaDex entry
         """
 
-        self.logger.warning(
-            centred_string(
-                f"Multiple releases found!:",
-                total_length=self.log_line_length,
-            )
-        )
-        self.logger.warning(
-            left_aligned_string(
-                f"Here are the SeaDex notes:",
-                total_length=self.log_line_length,
-            )
+        self.logger.warning("Multiple releases found - pick which to grab")
+        self.logger.info(
+            indent_string("SeaDex notes:"),
         )
 
         notes = sd_entry.notes.split("\n")
         for n in notes:
             self.logger.warning(
-                left_aligned_string(
-                    n,
-                    total_length=self.log_line_length,
-                )
+                indent_string(n)
             )
         self.logger.warning(
-            left_aligned_string(
-                "",
-                total_length=self.log_line_length,
-            )
+            indent_string("")
         )
 
         all_srgs = list(seadex_dict.keys())
         for s_i, s in enumerate(all_srgs):
             self.logger.warning(
-                left_aligned_string(
-                    f"[{s_i}]: {s}",
-                    total_length=self.log_line_length,
-                )
+                indent_string(f"[{s_i}]: {s}")
             )
 
         srgs_to_grab = input(
-            f"Which release do you want to grab? "
-            f"Single number for one, comma separated list for multiple, or blank for all: "
+            "Which release group(s)? Enter one number, a comma-separated list, "
+            "or leave blank for all: "
         )
 
         srgs_to_grab = srgs_to_grab.split(",")
@@ -1015,10 +1050,7 @@ class SeaDexArr:
                     srg = all_srgs[int(srg_idx)]
                 except IndexError:
                     self.logger.warning(
-                        left_aligned_string(
-                            f"Index {srg_idx} is out of range",
-                            total_length=self.log_line_length,
-                        )
+                        indent_string(f"Index {srg_idx} is out of range")
                     )
                     continue
                 seadex_dict_filtered[srg] = copy.deepcopy(seadex_dict[srg])
@@ -1275,9 +1307,8 @@ class SeaDexArr:
                     if seadex_rg not in arr_release_groups and not overlapping_results:
                         self.logger.debug(
                             left_aligned_string(
-                                f"SeaDex release group {seadex_rg} not in {arr.capitalize()} release(s): "
-                                f"{','.join([str(x) for x in arr_release_groups])}. "
-                                f"Will add {url} to downloads",
+                                f"SeaDex release group {seadex_rg} not in {arr.capitalize()} releases: "
+                                f"{', '.join([str(x) for x in arr_release_groups])} - will download {url}",
                                 total_length=self.log_line_length,
                             )
                         )
@@ -1303,11 +1334,10 @@ class SeaDexArr:
 
                         # If we have no overlaps at all, then add
                         if len(intersect) == 0:
-                            self.logger.info(
+                            self.logger.debug(
                                 left_aligned_string(
-                                    f"SeaDex release group {seadex_rg} in {arr.capitalize()} release(s): "
-                                    f"{','.join([str(x) for x in arr_release_groups])}, but filesizes do not match. "
-                                    f"Will add {url} to downloads",
+                                    f"SeaDex release group {seadex_rg} in {arr.capitalize()} releases: "
+                                    f"{', '.join([str(x) for x in arr_release_groups])}, but file sizes do not match - will download {url}",
                                     total_length=self.log_line_length,
                                 )
                             )
@@ -1317,8 +1347,8 @@ class SeaDexArr:
                         else:
                             self.logger.debug(
                                 left_aligned_string(
-                                    f"SeaDex release group {seadex_rg} in {arr.capitalize()} release(s): "
-                                    f"{','.join([str(x) for x in arr_release_groups])}, and filesizes match. ",
+                                    f"SeaDex release group {seadex_rg} in {arr.capitalize()} releases: "
+                                    f"{', '.join([str(x) for x in arr_release_groups])}, and file sizes match",
                                     total_length=self.log_line_length,
                                 )
                             )
@@ -1327,8 +1357,8 @@ class SeaDexArr:
 
                     # At this point, we need an episode list from Sonarr
                     if ep_list is None:
-                        self.logger.warning(
-                            "If checking against individual episodes, you need to pass the Sonarr ep_list"
+                        self.logger.debug(
+                            "Skipping per-episode check: no Sonarr episode list available"
                         )
                         continue
 
@@ -1397,11 +1427,10 @@ class SeaDexArr:
                                     if sonarr_rg_normalized not in all_seadex_rg:
                                         self.logger.debug(
                                             left_aligned_string(
-                                                f"SeaDex release group {seadex_rg} not the same as "
+                                                f"SeaDex release group {seadex_rg} differs from "
                                                 f"{arr.capitalize()} release for "
-                                                f"{season_ep_str} {sonarr_rg}, "
-                                                f"and does not match any other suitable releases. "
-                                                f"Will add {url} to downloads",
+                                                f"{season_ep_str} ({sonarr_rg}) and no other "
+                                                f"recommended release covers it - will download {url}",
                                                 total_length=self.log_line_length,
                                             )
                                         )
@@ -1445,10 +1474,9 @@ class SeaDexArr:
                     # here and mark for download
                     size_matches = list(compress(size_matches, rg_matches))
                     if not any(size_matches) and len(size_matches) > 0:
-                        self.logger.info(
+                        self.logger.debug(
                             left_aligned_string(
-                                f"File sizes are all different for release group {seadex_rg}. "
-                                f"Will add {url} to downloads",
+                                f"File sizes all differ for release group {seadex_rg} - will download {url}",
                                 total_length=self.log_line_length,
                             )
                         )
@@ -1530,13 +1558,11 @@ class SeaDexArr:
                     # set, but none are available on a public tracker. Don't
                     # grab a private release, just log an error and skip. Flag
                     # the skip so the caller doesn't cache the title as done
-                    plural = len(flagged) > 1
-                    self.logger.error(
-                        left_aligned_string(
-                            f"The preferred release {'groups' if plural else 'group'} "
-                            f"{', '.join(flagged)} {'are' if plural else 'is'} not on a "
-                            f"public tracker and public_only is set. Skipping",
-                        )
+                    self.log_detail(
+                        "skipped",
+                        f"{', '.join(flagged)} private-only (public_only on)",
+                        value_style="yellow",
+                        level=logging.WARNING,
                     )
                     self.public_only_skipped = True
                     for rg in flagged:
@@ -1553,10 +1579,10 @@ class SeaDexArr:
                 if rg == keeper:
                     continue
 
-                self.logger.info(
+                self.logger.debug(
                     left_aligned_string(
-                        f"Not downloading release group {rg} as another preferred "
-                        f"release covers the same files. Keeping {keeper}",
+                        f"Not downloading release group {rg}: release group "
+                        f"{keeper} already covers the same files",
                     )
                 )
                 unflag(seadex_dict[rg])
@@ -1621,36 +1647,44 @@ class SeaDexArr:
             for season in sorted(episodes_by_season)
         ]
 
-    def log_episode_coverage(self, episodes):
-        """Log a torrent's season/episode coverage, one line per season
-
-        A single covered season is logged inline (e.g. "seasons : S01 E01-E12");
-        multiple seasons are logged as a "seasons" header followed by one
-        indented line per season. Nothing is logged when there's no parsed
-        episode info (e.g., Radarr movies).
+    def coverage_string(self, episodes):
+        """One-line season/episode coverage, e.g. "S04 E01-E12" or
+        "S00 E10, S02 E01-E12". Returns "" when there's no parsed episode info
+        (e.g. a Radarr movie), so callers can treat it as "URL only".
 
         Args:
-            episodes (list): List of {"season", "episode", ...} dicts
+            episodes (list): {"season", "episode"} dicts
         """
 
         coverage = self.format_episode_coverage(episodes)
         if not coverage:
-            return
+            return ""
+        return ", ".join(f"{label} {ranges}" for label, ranges in coverage)
 
-        # A single season reads fine on one line
-        if len(coverage) == 1:
-            season_label, episode_ranges = coverage[0]
-            self.logger.info(
-                kv_string("seasons", f"{season_label}  {episode_ranges}")
-            )
-            return
+    @staticmethod
+    def episodes_from_ep_list(ep_list, missing_only=False):
+        """Convert a Sonarr ep_list into {"season","episode"} coverage dicts
 
-        # Multiple seasons: a header, then one line each
-        self.logger.info(kv_string("seasons", ""))
-        for season_label, episode_ranges in coverage:
-            self.logger.info(
-                left_aligned_string(f"  {season_label}  {episode_ranges}")
+        Sonarr episodes carry "seasonNumber"/"episodeNumber"; the coverage
+        helpers expect "season"/"episode". Optionally keep only missing episodes
+        (no file on disk) to summarise what is still needed.
+
+        Args:
+            ep_list (list): Sonarr episode dicts
+            missing_only (bool): Keep only episodes with no file. Defaults to False
+        """
+
+        episodes = []
+        for ep in ep_list or []:
+            if missing_only and ep.get("episodeFileId", 0) != 0:
+                continue
+            episodes.append(
+                {
+                    "season": ep.get("seasonNumber"),
+                    "episode": ep.get("episodeNumber"),
+                }
             )
+        return episodes
 
     def add_torrent(
         self,
@@ -1659,13 +1693,26 @@ class SeaDexArr:
     ):
         """Add torrent(s) to a torrent client
 
+        The per-release outcome lines (added / kept) are NOT logged here; this
+        returns them so the caller (log_seadex_action) can print the whole block
+        in order with a status that reflects what actually happened - "adding" if
+        anything was grabbed, "keeping" if every recommended release was already
+        present. The "skipped" warnings (private-only, unselected tracker) are
+        still logged inline, as they're independent of that status.
+
         Args:
             torrent_dict (dict): Dictionary of torrent info
             torrent_client (str): Torrent client to use. Options are
                 "qbit" for qBittorrent. Defaults to "qbit"
+
+        Returns:
+            tuple: (n_torrents_added, results), where results is a list of
+                {"outcome": "added" | "already have", "name": str, "group": str}
+                dicts, one per release acted on, in order
         """
 
         n_torrents_added = 0
+        results = []
 
         for srg, srg_item in torrent_dict.items():
 
@@ -1681,11 +1728,11 @@ class SeaDexArr:
                 tracker = url_item.get("tracker", None)
 
                 if self.public_only and not url_item.get("is_public", True):
-                    self.logger.error(
-                        kv_string(
-                            "skipped",
-                            f"{url} (tracker {tracker} not public, public_only set)",
-                        )
+                    self.log_detail(
+                        "skipped",
+                        f"{tracker} private-only (public_only on)",
+                        value_style="yellow",
+                        level=logging.WARNING,
                     )
                     self.public_only_skipped = True
                     continue
@@ -1693,11 +1740,10 @@ class SeaDexArr:
                 # If we don't have a tracker from our list selected, then
                 # get out of here
                 if tracker.casefold() not in self.trackers:
-                    self.logger.info(
-                        kv_string(
-                            "skipped",
-                            f"{url} (tracker {tracker} not in selected list)",
-                        )
+                    self.log_detail(
+                        "skipped",
+                        f"{url} (tracker {tracker} not in your selected list)",
+                        value_style="yellow",
                     )
                     continue
 
@@ -1738,11 +1784,31 @@ class SeaDexArr:
                 if not torrent_name:
                     torrent_name = parsed_url
 
+                # Compute the episode coverage once and reuse it for both the
+                # log line and the summary stats below
+                coverage = self.format_episode_coverage(
+                    url_item.get("episodes", [])
+                )
+
                 if success == "torrent_added":
-                    self.logger.info(
-                        kv_string(f"added ({torrent_client})", torrent_name)
+                    results.append(
+                        {"outcome": "added", "name": torrent_name, "group": srg}
                     )
-                    self.log_episode_coverage(url_item.get("episodes", []))
+
+                    # Record the grab for the end-of-run summary
+                    coverage_str = (
+                        "  ".join(f"{s} {e}" for s, e in coverage)
+                        if coverage
+                        else ""
+                    )
+                    self.stats["added"].append(
+                        {
+                            "title": self.current_title,
+                            "group": srg,
+                            "coverage": coverage_str,
+                            "url": self.current_url,
+                        }
+                    )
 
                     # Increment the number of torrents added, and if we've hit the limit then
                     # jump out
@@ -1750,18 +1816,17 @@ class SeaDexArr:
                     n_torrents_added += 1
                     if self.max_torrents_to_add is not None:
                         if self.torrents_added >= self.max_torrents_to_add:
-                            return n_torrents_added
+                            return n_torrents_added, results
 
                 elif success == "torrent_already_added":
-                    self.logger.info(
-                        kv_string(f"already in {torrent_client}", torrent_name)
+                    results.append(
+                        {"outcome": "already have", "name": torrent_name, "group": srg}
                     )
-                    self.log_episode_coverage(url_item.get("episodes", []))
 
                 else:
                     raise ValueError(f"Cannot handle torrent client {torrent_client}")
 
-        return n_torrents_added
+        return n_torrents_added, results
 
     def add_torrent_to_qbit(
         self,
@@ -1792,10 +1857,7 @@ class SeaDexArr:
 
             if torrent_hash in torr_hashes:
                 self.logger.debug(
-                    centred_string(
-                        f"Torrent {url} already in qBittorrent",
-                        total_length=self.log_line_length,
-                    )
+                    indent_string(f"Torrent {url} already in qBittorrent")
                 )
                 return "torrent_already_added", torr_info[0].name
 
@@ -1853,6 +1915,304 @@ class SeaDexArr:
 
         return True
 
+    def _fresh_stats(self):
+        """Build an empty per-run stats tally for the end-of-run summary"""
+
+        return {
+            "checked": 0,
+            "added": [],  # list of {"title", "group", "coverage"}
+            "up_to_date": 0,
+            "cached": 0,
+            "no_seadex_entry": 0,
+            "no_releases": 0,
+            "no_mappings": 0,
+            "needs_action": [],  # list of {"title", "reason"}
+            "unmonitored": 0,
+        }
+
+    def reset_run_stats(self):
+        """Reset the per-run tally and start the run clock
+
+        Warning/error counts are read from the logger-level counter by diffing
+        a snapshot taken here against one taken when the summary is logged.
+        """
+
+        self.stats = self._fresh_stats()
+        self.torrents_added = 0
+        # Monotonic so a wall-clock step (NTP, DST) can't yield negative elapsed
+        self._run_started_monotonic = time.monotonic()
+        counter = getattr(self.logger, "seadex_counter", None)
+        self._log_counts_at_start = counter.snapshot() if counter else {}
+
+        return True
+
+    def log_kv(
+        self,
+        key,
+        value,
+        value_style=None,
+        level=logging.INFO,
+        indent=1,
+        key_width=16,
+        sep=" :",
+        tail=None,
+        tail_style="yellow",
+    ):
+        """Log an aligned "key : value" (or gutter "key value") detail line
+
+        The file log stores the plain kv_string text; on the console the label
+        is dimmed so the value reads first, and an optional value_style accents
+        the outcome (e.g. green for "added").
+
+        Args:
+            key: Left-hand label
+            value: Right-hand value
+            value_style: Optional rich style for the value (e.g. "green")
+            level: Logging level. Defaults to logging.INFO
+            indent: Number of indent levels. Defaults to 1
+            key_width: Column width the key is padded to. Defaults to 16
+            sep: Separator after the padded key. Defaults to " :"; pass "" for
+                the colon-less gutter format (see log_detail)
+            tail: Optional emphasised suffix (console only), e.g. an "incomplete"
+                note. Defaults to None
+            tail_style: Style for the tail. Defaults to "yellow"
+        """
+
+        self.logger.log(
+            level,
+            kv_string(key, value, key_width=key_width, indent=indent, sep=sep),
+            extra={
+                "kv": {
+                    "key": key,
+                    "value": value,
+                    "value_style": value_style,
+                    "indent": indent,
+                    "key_width": key_width,
+                    "sep": sep,
+                    "tail": tail,
+                    "tail_style": tail_style,
+                }
+            },
+        )
+
+        return True
+
+    def log_detail(
+        self,
+        label,
+        value,
+        value_style=None,
+        level=logging.INFO,
+        tail=None,
+        tail_style="yellow",
+    ):
+        """Log an entry-detail line: dim gutter label, value at the title column
+
+        The colon-less "<label>  <value>" form used for everything indented under
+        an entry (files / link / status / group / added / kept / missing /
+        skipped / anilist). The value lands in the same column as the entry title
+        so the whole block reads as one aligned column; the label sits dimmed in
+        the indent gutter and the value carries any accent colour.
+
+        Args:
+            label: Gutter label, e.g. "files" or "added"
+            value: The value text
+            value_style: Optional rich style for the value (e.g. "green")
+            level: Logging level. Defaults to logging.INFO
+            tail: Optional emphasised suffix (console only). Defaults to None
+            tail_style: Style for the tail. Defaults to "yellow"
+        """
+
+        return self.log_kv(
+            label,
+            value,
+            value_style=value_style,
+            level=level,
+            indent=DETAIL_INDENT,
+            key_width=DETAIL_KEY_WIDTH,
+            sep="",
+            tail=tail,
+            tail_style=tail_style,
+        )
+
+    def log_blank(self):
+        """Emit a blank line to visually separate entries / item blocks"""
+
+        self.logger.info("")
+        return True
+
+    @staticmethod
+    def _format_elapsed(seconds):
+        """Format an elapsed number of seconds as e.g. "8s", "14m 03s" or "1h 02m 03s" """
+
+        total = int(seconds)
+        hours, rem = divmod(total, 3600)
+        minutes, seconds = divmod(rem, 60)
+        if hours:
+            return f"{hours}h {minutes:02d}m {seconds:02d}s"
+        if minutes:
+            return f"{minutes}m {seconds:02d}s"
+        return f"{seconds}s"
+
+    def log_run_summary(self, arr):
+        """Log the end-of-run scoreboard for an Arr run
+
+        Args:
+            arr (str): Type of arr instance
+        """
+
+        if arr not in ALLOWED_ARRS:
+            raise ValueError(f"arr must be one of: {ALLOWED_ARRS}")
+
+        stats = self.stats
+
+        # Warning/error counts come from the logger-level counter, diffed
+        # against the snapshot taken when the run started
+        counter = getattr(self.logger, "seadex_counter", None)
+        now_counts = counter.snapshot() if counter else {}
+        start_counts = self._log_counts_at_start
+
+        def _delta(level):
+            return now_counts.get(level, 0) - start_counts.get(level, 0)
+
+        n_warnings = _delta(logging.WARNING)
+        n_errors = _delta(logging.ERROR) + _delta(logging.CRITICAL)
+
+        title = f"SeaDexArr ({arr.capitalize()}) run complete"
+        # State dry-run once, here, scoping the whole summary - rather than also
+        # tagging the "added" value (the same fact twice in one block). The file
+        # log keeps the plain title; the annotation rides the console rule_title.
+        rule_title = title
+        if self.qbit is None:
+            rule_title += "   (DRY RUN — no client; nothing grabbed)"
+        self.logger.info(
+            title,
+            extra={
+                "rule_title": rule_title,
+                "rule_style": "bold cyan",
+                "rule_heavy": True,
+            },
+        )
+
+        # The summary's key column is narrower than the per-title detail column:
+        # "needs action" (12) is the widest key here, vs "missing episodes" (16)
+        # in entry details. A heavy rule separates the two blocks, so the differing
+        # colon columns never sit adjacent. Wrap log_kv to fix the width at 12.
+        def summary_kv(key, value, **kwargs):
+            return self.log_kv(key, value, key_width=12, **kwargs)
+
+        # A title + sub-lines block, stacked: the variable-length title hangs at
+        # indent 2 and each fixed sub-line (facts, then the URL) sits at indent 3
+        # beneath it, so title length can never push them out of column. Titles
+        # are truncated so they can't wrap onto a second line and break alignment.
+        def stacked_detail(title_text, lines, style):
+            t = title_text or "(unknown title)"
+            if len(t) > 38:
+                t = t[:37] + "…"
+            self.logger.info(
+                indent_string(t, level=2), extra={"line_style": style}
+            )
+            for line in lines:
+                if line:
+                    self.logger.info(
+                        indent_string(line, level=3), extra={"line_style": style}
+                    )
+
+        summary_kv("checked", str(stats["checked"]))
+
+        # The count is the authoritative torrents_added (covers the no-client
+        # dry-run path too); the list is the per-grab detail from add_torrent.
+        summary_kv(
+            "added",
+            str(self.torrents_added),
+            value_style="green" if self.torrents_added else None,
+        )
+        for item in stats["added"]:
+            parts = []
+            if item.get("coverage"):
+                parts.append(item["coverage"])
+            if item.get("group"):
+                parts.append(f"[{item['group']}]")
+            # Dim the would-be grabs in a dry run so they don't read as real
+            stacked_detail(
+                item["title"],
+                ["   ".join(parts), item.get("url")],
+                "grey50" if self.qbit is None else "green",
+            )
+
+        summary_kv("up to date", str(stats["up_to_date"]))
+        summary_kv(
+            "cached",
+            f"{stats['cached']}  (unchanged since last run)"
+            if stats["cached"]
+            else "0",
+            value_style="grey50",
+        )
+        if stats["no_mappings"]:
+            summary_kv("no mapping", str(stats["no_mappings"]))
+        # Keep "no entry" (no SeaDex entry at all) separate from "no release"
+        # (an entry exists but nothing suitable to grab) so they don't conflate
+        if stats["no_seadex_entry"]:
+            summary_kv("no entry", str(stats["no_seadex_entry"]))
+        summary_kv("no release", str(stats["no_releases"]))
+
+        needs = stats["needs_action"]
+        summary_kv(
+            "needs action",
+            str(len(needs)),
+            value_style="yellow" if needs else None,
+        )
+        for item in needs:
+            parts = []
+            if item.get("coverage"):
+                parts.append(item["coverage"])
+            if item.get("reason"):
+                parts.append(item["reason"])
+            stacked_detail(
+                item["title"],
+                ["   ·   ".join(parts), item.get("url")],
+                "yellow",
+            )
+
+        if stats["unmonitored"]:
+            summary_kv("unmonitored", str(stats["unmonitored"]))
+
+        summary_kv(
+            "issues",
+            f"{count_noun(n_warnings, 'warning')}, {count_noun(n_errors, 'error')}",
+            value_style="bold red"
+            if n_errors
+            else ("yellow" if n_warnings else None),
+        )
+        if self._run_started_monotonic is not None:
+            elapsed = self._format_elapsed(
+                time.monotonic() - self._run_started_monotonic
+            )
+            summary_kv("elapsed", elapsed)
+
+        # A single guidance line if anything was skipped purely for being
+        # private-only, rather than repeating it per-entry during the run. Kept
+        # at indent 1 so it reads as part of the summary block, not detached.
+        public_only_skipped = any(
+            "public_only" in (item.get("reason") or "") for item in needs
+        )
+        if public_only_skipped:
+            self.logger.info(
+                indent_string(
+                    "Tip: set public_only: false to allow private trackers, or "
+                    "wait for a public release.",
+                    level=1,
+                ),
+                extra={"line_style": "grey50"},
+            )
+
+        self.logger.info(
+            rule_string(rule_char="=", total_length=self.log_line_length),
+            extra={"rule_char": "="},
+        )
+
+        return True
+
     def log_arr_start(
         self,
         arr,
@@ -1868,16 +2228,99 @@ class SeaDexArr:
         if arr not in ALLOWED_ARRS:
             raise ValueError(f"arr must be one of: {ALLOWED_ARRS}")
 
-        item_type = {
-            "radarr": "movies",
-            "sonarr": "series",
+        item_label = {
+            "radarr": count_noun(n_items, "movie"),
+            "sonarr": count_noun(n_items, "series", "series"),
         }[arr]
 
-        banner = f"Starting SeaDex-{arr.capitalize()} for {n_items} {item_type}"
+        banner = f"Starting SeaDexArr ({arr.capitalize()}) for {item_label}"
         self.logger.info(
             banner,
-            extra={"rule_title": banner, "rule_style": "bold cyan"},
+            extra={
+                "rule_title": banner,
+                "rule_style": "bold cyan",
+                "rule_heavy": True,
+            },
         )
+
+        return True
+
+    def log_entry_status(
+        self,
+        state,
+        label,
+        style="grey50",
+    ):
+        """Log a one-line entry status as a fixed-column ledger row
+
+        Renders "<state> <label>" at indent level 1, with state padded to a fixed
+        width so the label lines up across rows (see entry_string). Used for the
+        entry-level outcomes: cached, in radarr, checking, unmonitored, skipped,
+        no mapping, ignored, and no entry. The state word carries the meaning, so
+        there is no trailing note; season/episode coverage and the SeaDex URL ride
+        a separate continuation line (log_entry_coverage). The indent is baked
+        into the message so the file log keeps it too.
+
+        Args:
+            state (str): Short state word, e.g. "cached" or "no entry"
+            label (str): What the state applies to (usually a title)
+            style (str): Console style for the line. Defaults to "grey50" (dim);
+                pass None for an emphasised line such as the active "checking" one
+        """
+
+        # A blank line before each ledger row separates entries within a title
+        # block (and the first entry from its header)
+        self.log_blank()
+        self.logger.info(
+            indent_string(entry_string(state, label), level=1),
+            extra={"line_style": style},
+        )
+
+        return True
+
+    def log_entry_coverage(
+        self,
+        coverage,
+        url,
+        style="grey50",
+        incomplete=False,
+    ):
+        """Log the season/episode coverage and SeaDex URL beneath an entry
+
+        Two dim detail lines whose values sit directly beneath the entry's title
+        (so they line up with each other and with the title): the season/episode
+        coverage labelled "files", then the full SeaDex URL labelled "link".
+        Either part may be absent - a Radarr movie has no episode coverage (link
+        only) - and nothing is logged when both are absent. An incomplete SeaDex
+        entry is flagged as an emphasised tail on the last line shown.
+
+        Example::
+
+            files     S04 E01-E12
+            link      https://releases.moe/111852
+
+        Args:
+            coverage (str): One-line coverage, e.g. "S04 E01-E12" (may be "")
+            url (str): Full SeaDex URL (may be None/"")
+            style (str): Console style. Defaults to "grey50" (dim)
+            incomplete (bool): Flag the SeaDex entry as incomplete. Defaults False
+        """
+
+        rows = [
+            row for row in (("files", coverage), ("link", url)) if row[1]
+        ]
+        if not rows:
+            return False
+
+        for idx, (label, value) in enumerate(rows):
+            # The incomplete flag rides the last line so it reads once, next to
+            # the URL when there is one
+            tail = (
+                "(marked incomplete on SeaDex)"
+                if incomplete and idx == len(rows) - 1
+                else None
+            )
+            self.log_detail(label, value, value_style=style, tail=tail)
 
         return True
 
@@ -1893,48 +2336,14 @@ class SeaDexArr:
             item_title (str): Item title
         """
 
-        self.logger.info(
-            centred_string(
-                f"{item_title} is unmonitored in {arr.capitalize()}",
-                total_length=self.log_line_length,
-            )
+        self.stats["unmonitored"] += 1
+        return self.log_entry_status(
+            "unmonitored",
+            item_title,
         )
 
-        self.logger.info(
-            rule_string(
-                rule_char=self.log_line_sep,
-                total_length=self.log_line_length,
-            )
-        )
-
-        return True
-
-    def log_anilist_item_unmonitored(
-        self,
-        arr,
-        item_title,
-    ):
-        """Produce a log message if skipping an AniList item because it's unmonitored in Sonarr
-
-        Args:
-            arr: Type of arr instance
-            item_title (str): Item title
-        """
-
-        self.logger.info(
-            centred_string(
-                f"{item_title} is unmonitored in {arr.capitalize()}",
-                total_length=self.log_line_length,
-            )
-        )
-
-        self.logger.info(
-            rule_string(
-                total_length=self.log_line_length,
-            )
-        )
-
-        return True
+    # Both Arrs reach the same "unmonitored" outcome, so this is just an alias
+    log_anilist_item_unmonitored = log_arr_item_unmonitored
 
     def log_arr_item_start(
         self,
@@ -1952,10 +2361,13 @@ class SeaDexArr:
             n_items: Total number of shows/movies
         """
 
+        # A blank line before the separator rule sets each item's block apart
+        # from the previous one (and from the run banner for the first item)
+        self.log_blank()
         header = f"[{n_item}/{n_items}] {arr.capitalize()}: {item_title}"
         self.logger.info(
             header,
-            extra={"rule_title": header},
+            extra={"rule_title": header, "rule_style": "bold cyan"},
         )
 
         return True
@@ -1970,20 +2382,11 @@ class SeaDexArr:
             title: Title for the item
         """
 
-        self.logger.warning(
-            centred_string(
-                f"No AniList mappings found for {title}. Skipping",
-                total_length=self.log_line_length,
-            )
+        self.stats["no_mappings"] += 1
+        return self.log_entry_status(
+            "no mapping",
+            title,
         )
-        self.logger.info(
-            rule_string(
-                rule_char=self.log_line_sep,
-                total_length=self.log_line_length,
-            )
-        )
-
-        return True
 
     def log_ignored_anilist_id(
         self,
@@ -1995,23 +2398,16 @@ class SeaDexArr:
             al_id (int): AniList ID
         """
 
-        self.logger.info(
-            centred_string(
-                f"AniList ID {al_id} is in the ignore list. Skipping",
-                total_length=self.log_line_length,
-            )
+        return self.log_entry_status(
+            "ignored",
+            f"AniList #{al_id}",
         )
-
-        return True
 
     def log_no_anilist_id(self):
         """Produce a log message for the case where no AniList ID is found"""
 
         self.logger.debug(
-            centred_string(
-                f"-> No AL ID found. Continuing",
-                total_length=self.log_line_length,
-            )
+            indent_string("-> No AL ID found. Continuing")
         )
         self.logger.debug(
             rule_string(
@@ -2031,17 +2427,24 @@ class SeaDexArr:
             al_id (int): Al ID
         """
 
-        self.logger.debug(
-            centred_string(
-                f"No SeaDex entry found for AniList ID {al_id}. Continuing",
-                total_length=self.log_line_length,
-            )
+        self.stats["no_seadex_entry"] += 1
+
+        # Resolve a human title so the line is meaningful. There's no SeaDex
+        # entry and the id isn't cached (we only cache processed ids), so this
+        # is a live AniList lookup; the id rides its own "anilist" detail line.
+        anilist_title, self.al_cache = get_anilist_title(
+            al_id,
+            al_cache=self.al_cache,
         )
-        self.logger.debug(
-            rule_string(
-                total_length=self.log_line_length,
-            )
+        self.log_entry_status(
+            "no entry",
+            anilist_title or f"AniList #{al_id}",
         )
+        # Only repeat the id on its own line when the ledger shows a title;
+        # otherwise the ledger already reads "AniList #<id>" and a detail line
+        # would just duplicate it
+        if anilist_title:
+            self.log_detail("anilist", str(al_id))
 
         return True
 
@@ -2049,23 +2452,33 @@ class SeaDexArr:
         self,
         anilist_title,
         sd_entry,
+        coverage=None,
     ):
-        """Produce a log message for the AniList title, with URL and notice if incomplete
+        """Log the active-entry header: a "checking" row + its coverage/URL line
+
+        The entry being evaluated is the focal line of the title block, so it sits
+        on the ledger (state "checking") un-dimmed. Dim continuation lines below
+        carry the season/episode coverage and, on its own line, the full SeaDex
+        URL, so you can see what it covers and where to find it; an incomplete
+        SeaDex entry is flagged as an emphasised tail on the last of those lines.
 
         Args:
-            anilist_title (str): Title for the AniList
+            anilist_title (str): Title for the AniList entry
             sd_entry: SeaDex entry
+            coverage (str, optional): One-line coverage (e.g. "S04 E01-E12").
+                Defaults to None / "" (e.g. a Radarr movie -> URL only)
         """
 
-        sd_url = sd_entry.url
-        is_incomplete = sd_entry.is_incomplete
+        # Remember title + URL so add_torrent / the summary can attribute and link
+        self.current_title = anilist_title
+        self.current_url = sd_entry.url
 
-        # Top-level title header (column 0), marking if things are incomplete
-        al_str = f"AniList: {anilist_title} | {sd_url}"
-        if is_incomplete:
-            al_str += f" [MARKED INCOMPLETE]"
-
-        self.logger.info(al_str)
+        # The active entry, on the ledger but un-dimmed (style=None) so it reads
+        # as the focal line, not a no-op like the grey cached rows
+        self.log_entry_status("checking", anilist_title, style=None)
+        self.log_entry_coverage(
+            coverage, sd_entry.url, incomplete=sd_entry.is_incomplete
+        )
 
         return True
 
@@ -2073,50 +2486,40 @@ class SeaDexArr:
         self,
         arr,
         al_id,
-        sd_entry,
-        status="cached (matches SeaDex updated time)",
-        seasons=None,
+        state="cached",
     ):
-        """Log a cached AniList entry in the same flat style as a processed item
+        """Log a cached entry as a ledger row plus its coverage/URL line
 
-        Renders the AniList title header followed by aligned key/value detail
-        lines, so cached entries line up with non-cached ones in the log. The
-        title is read from the cache (where it was stored when first
-        processed), falling back to an AniList lookup only if it's missing.
+        Cached entries are unchanged since the last run, so they collapse to a dim
+        ledger row (state + title) and continuation lines carrying the stored
+        season/episode coverage and, on its own line, the SeaDex URL. Everything
+        is read from the cache
+        record (written when the entry was first processed), with a name lookup
+        only if the cache predates name storage.
 
         Args:
             arr (str): Arr instance the entry is cached under
             al_id (int): AniList ID
-            sd_entry: SeaDex entry
-            status (str): Value for the "status" line. Defaults to
-                "cached (matches SeaDex updated time)"
-            seasons (str, optional): Season label (e.g. "S01") for a "seasons"
-                line. Defaults to None, which omits the line
+            state (str): State word. Defaults to "cached"; pass "in radarr" for
+                entries already handled by a Radarr sync
         """
 
+        self.stats["cached"] += 1
+
         anilist_title = self.get_cached_name(arr=arr, al_id=al_id)
-
-        if anilist_title is not None:
-            self.log_al_title(
-                anilist_title=anilist_title,
-                sd_entry=sd_entry,
-            )
-        else:
+        if anilist_title is None:
             # Older cache without a stored name - fall back to a lookup
-            self.get_anilist_title(
-                al_id=al_id,
-                sd_entry=sd_entry,
+            anilist_title, self.al_cache = get_anilist_title(
+                al_id,
+                al_cache=self.al_cache,
             )
+        if anilist_title is None:
+            anilist_title = "(unknown title)"
 
-        self.logger.info(kv_string("status", status))
-
-        if seasons is not None:
-            self.logger.info(kv_string("seasons", seasons))
-
-        self.logger.info(
-            rule_string(
-                total_length=self.log_line_length,
-            )
+        self.log_entry_status(state, anilist_title)
+        self.log_entry_coverage(
+            self.get_cached_field(arr, al_id, "coverage"),
+            self.get_cached_field(arr, al_id, "url"),
         )
 
         return True
@@ -2124,40 +2527,63 @@ class SeaDexArr:
     def log_no_seadex_releases(self):
         """Log if no suitable SeaDex releases are found"""
 
-        self.logger.info(kv_string("status", "no suitable releases on SeaDex"))
-        self.logger.info(
-            rule_string(
-                total_length=self.log_line_length,
-            )
+        self.stats["no_releases"] += 1
+        self.log_detail(
+            "status",
+            "no suitable releases on SeaDex",
+            value_style="grey50",
         )
 
         return True
 
-    def log_arr_seadex_mismatch(
+    def log_seadex_action(
         self,
-        arr,
         seadex_dict,
+        results,
+        dry_run=False,
     ):
-        """Log out there's a mismatch between the Arr releases and the SeaDex recommendations
+        """Log the action block for a title that differs from SeaDex's pick
+
+        Called after the add has run, so the status reflects what actually
+        happened rather than what we set out to do: if a better release was
+        grabbed it reads "adding"; if every recommended release was already
+        present it reads "matches - keeping it". The block is, in order: the
+        status line, then each recommended release group, then the per-release
+        outcome (added / kept).
 
         Args:
-            arr: Type of arr instance
-            seadex_dict (dict): Dictionary of SeaDex entries
+            seadex_dict (dict): SeaDex entries (used for the recommended groups)
+            results (list): add_torrent's per-release outcomes (empty on a dry
+                run, where there are no client-reported names)
+            dry_run (bool): No torrent client, so nothing was really grabbed but
+                we'd have added everything. Defaults to False
+
+        Returns:
+            bool: True if a status block was logged; False if there was nothing
+                to report (e.g. every release was skipped - the skip warning
+                already explains that, so a status would only mislead)
         """
 
-        if arr not in ALLOWED_ARRS:
-            raise ValueError(f"arr must be one of: {ALLOWED_ARRS}")
+        added = dry_run or any(r.get("outcome") == "added" for r in results)
 
-        item_type = {
-            "radarr": "movie",
-            "sonarr": "series",
-        }[arr]
+        # Nothing grabbed and nothing already present (e.g. all releases skipped
+        # by public_only): leave the status to the inline "skipped" warning
+        if not results and not dry_run:
+            return False
 
-        self.logger.info(
-            kv_string("status", f"mismatch with existing {arr.capitalize()} {item_type}")
-        )
+        if added:
+            self.log_detail(
+                "status",
+                "your copy differs from SeaDex's pick - adding a better release",
+            )
+        else:
+            self.log_detail(
+                "status",
+                "your copy matches SeaDex's pick - keeping it",
+                value_style="green",
+            )
 
-        # Recommend each release group we're going to grab, with its tags
+        # The release group(s) we recommend (those flagged for download), tags too
         for srg, srg_item in seadex_dict.items():
 
             dl = [
@@ -2170,7 +2596,14 @@ class SeaDexArr:
                     recommendation = f"{srg} [{', '.join(tags)}]"
                 else:
                     recommendation = srg
-                self.logger.info(kv_string("recommend", recommendation))
+                self.log_detail("group", recommendation, value_style="cyan")
+
+        # Per-release outcome (qBittorrent path; a dry run has no names to show)
+        for r in results:
+            if r.get("outcome") == "added":
+                self.log_detail("added", r.get("name"), value_style="green")
+            else:
+                self.log_detail("kept", r.get("name"))
 
         return True
 
@@ -2178,16 +2611,8 @@ class SeaDexArr:
         """Produce a log message about hitting maximum number of torrents added"""
 
         self.logger.info(
-            centred_string(
-                "Added maximum number of torrents for this run. Stopping",
-                total_length=self.log_line_length,
-            )
-        )
-        self.logger.info(
-            rule_string(
-                rule_char=self.log_line_sep,
-                total_length=self.log_line_length,
-            )
+            "Reached the maximum torrents for this run; stopping",
+            extra={"line_style": "yellow"},
         )
 
         return True
