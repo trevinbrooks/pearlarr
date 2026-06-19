@@ -115,11 +115,20 @@ def setup_logger(
 INDENT = "  "
 
 
-def _is_rule(s):
-    """Whether a string is a separator rule (only '=', '-', '_' or '*')"""
+def rule_string(
+    rule_char="-",
+    total_length=80,
+    str_prefix="",
+):
+    """Draw a full-width separator rule for the (flat-style) logger
 
-    stripped = s.strip()
-    return bool(stripped) and set(stripped) <= {"=", "-", "_", "*"}
+    Args:
+        rule_char: Character to repeat across the rule. Defaults to "-"
+        total_length: Width of the rule. Defaults to 80
+        str_prefix: Will include this at the start of the string. Defaults to ""
+    """
+
+    return f"{str_prefix}{rule_char * total_length}"
 
 
 def centred_string(
@@ -129,22 +138,16 @@ def centred_string(
 ):
     """Format a string for the (flat-style) logger
 
-    Despite the historical name, this no longer draws a bordered box. A
-    separator string (e.g. "=" * 80) becomes a clean full-width rule, and any
-    other text is emitted as a single indented line. Long lines are left to run
-    on rather than being padded to a fixed width, so they can never break the
-    layout.
+    Despite the historical name, this no longer draws a bordered box; text is
+    emitted as a single indented line. Long lines are left to run on rather than
+    being padded to a fixed width, so they can never break the layout. To draw a
+    separator rule, use rule_string instead.
 
     Args:
         str_to_centre: String to format
-        total_length: Width of the rule drawn for separator strings.
-            Defaults to 80.
+        total_length: Unused, kept for call-site compatibility
         str_prefix: Will include this at the start of any string. Defaults to ""
     """
-
-    if _is_rule(str_to_centre):
-        rule_char = str_to_centre.strip()[0]
-        return f"{str_prefix}{rule_char * total_length}"
 
     return f"{str_prefix}{INDENT}{str_to_centre}"
 

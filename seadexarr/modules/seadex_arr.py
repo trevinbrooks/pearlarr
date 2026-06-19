@@ -16,7 +16,7 @@ from seadex import SeaDexEntry, EntryNotFoundError, EntryRecord
 
 from .. import __version__
 from .anilist import get_anilist_title, get_anilist_thumb
-from .log import setup_logger, centred_string, left_aligned_string, kv_string
+from .log import setup_logger, centred_string, left_aligned_string, kv_string, rule_string
 from .torrent import (
     get_nyaa_url,
     get_animetosho_url,
@@ -90,6 +90,22 @@ PRIVATE_TRACKERS = {
 UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
+def normalize_rg(name):
+    """Normalize a release group name for comparison
+
+    Lower-cases and strips surrounding whitespace and dashes so that the same
+    group named slightly differently by Sonarr and SeaDex (e.g. "Erai-Raws" vs
+    "erai-raws ") compares equal. Returns None for a missing/blank name.
+
+    Args:
+        name (str | None): Release group name
+    """
+
+    if not name:
+        return None
+    return name.strip().strip("-").casefold()
+
+
 def get_all_seadex_rgs_per_episode(
     seadex_dict,
     ep_list,
@@ -105,6 +121,11 @@ def get_all_seadex_rgs_per_episode(
 
     if len(seadex_dict) > 1:
         for seadex_rg, seadex_rg_item in seadex_dict.items():
+
+            # Index by the normalized name so the membership checks in
+            # filter_by_release_group are case- and dash-insensitive
+            seadex_rg_normalized = normalize_rg(seadex_rg)
+
             seadex_urls = seadex_rg_item.get("urls", {})
             for url, url_item in seadex_urls.items():
 
@@ -113,8 +134,8 @@ def get_all_seadex_rgs_per_episode(
                 # If we haven't managed to parse, then set this up as an
                 # "all" episodes fallback
                 if len(seadex_episodes) == 0:
-                    if seadex_rg not in all_seadex_rgs_per_episode.get(seadex_rg, []):
-                        all_seadex_rgs_per_episode["all"].append(seadex_rg)
+                    if seadex_rg_normalized not in all_seadex_rgs_per_episode["all"]:
+                        all_seadex_rgs_per_episode["all"].append(seadex_rg_normalized)
 
                 found_episodes = [False] * len(seadex_episodes)
 
@@ -138,8 +159,8 @@ def get_all_seadex_rgs_per_episode(
                             if season_key not in all_seadex_rgs_per_episode:
                                 all_seadex_rgs_per_episode[season_key] = []
 
-                            if seadex_rg not in all_seadex_rgs_per_episode[season_key]:
-                                all_seadex_rgs_per_episode[season_key].append(seadex_rg)
+                            if seadex_rg_normalized not in all_seadex_rgs_per_episode[season_key]:
+                                all_seadex_rgs_per_episode[season_key].append(seadex_rg_normalized)
 
                             found_episodes[seadex_idx] = True
 
@@ -1097,10 +1118,6 @@ class SeaDexArr:
             ep_list: List of episodes. Defaults to None
         """
 
-        # Reset the per-title public_only skip flag before we make any download
-        # decisions for this title
-        self.public_only_skipped = False
-
         if self.use_torrent_hash_to_filter:
             torrent_hashes, seadex_dict = self.filter_by_torrent_hash(
                 al_id=al_id,
@@ -1137,8 +1154,9 @@ class SeaDexArr:
     ):
         """Select downloads if torrent hash is not already in cache
 
-        Note that for multiple "best" releases, this means everything will
-        be grabbed
+        Multiple "best" releases are all grabbed, except where several cover
+        the same files (see reduce_overlapping_downloads), in which case only
+        one is kept
 
         Args:
             al_id: AniList ID
@@ -1188,6 +1206,10 @@ class SeaDexArr:
                             total_length=self.log_line_length,
                         )
                     )
+
+        # Where multiple preferred release groups cover the same files and the
+        # Arr has none of them, only grab one (preferring public if public_only)
+        self.reduce_overlapping_downloads(seadex_dict=seadex_dict, arr=arr)
 
         return torrent_hashes, seadex_dict
 
@@ -1354,13 +1376,15 @@ class SeaDexArr:
                                 sonarr_rg = sonarr_ep.get("episodeFile", {}).get(
                                     "releaseGroup", None
                                 )
-                                sonarr_rg_normalized = sonarr_rg.strip().strip('-').casefold() if sonarr_rg else None
-                                seadex_rg_normalized = seadex_rg.strip().strip('-').casefold() if seadex_rg else None
-                                # If not, flag as should be downloaded if it's not already
-                                # in some overlapping release
+                                sonarr_rg_normalized = normalize_rg(sonarr_rg)
+                                seadex_rg_normalized = normalize_rg(seadex_rg)
+                                # If not, flag as should be downloaded if it's not
+                                # already in some overlapping release.
+                                # all_seadex_rgs_per_episode is indexed by
+                                # normalized name, so compare the normalized name
                                 if (
                                     sonarr_rg_normalized != seadex_rg_normalized
-                                    and sonarr_rg
+                                    and sonarr_rg_normalized
                                     not in all_seadex_rgs_per_episode["all"]
                                 ):
 
@@ -1370,7 +1394,7 @@ class SeaDexArr:
                                         season_ep_str, []
                                     )
 
-                                    if sonarr_rg not in all_seadex_rg:
+                                    if sonarr_rg_normalized not in all_seadex_rg:
                                         self.logger.debug(
                                             left_aligned_string(
                                                 f"SeaDex release group {seadex_rg} not the same as "
@@ -1512,7 +1536,6 @@ class SeaDexArr:
                             f"The preferred release {'groups' if plural else 'group'} "
                             f"{', '.join(flagged)} {'are' if plural else 'is'} not on a "
                             f"public tracker and public_only is set. Skipping",
-                            total_length=self.log_line_length,
                         )
                     )
                     self.public_only_skipped = True
@@ -1534,7 +1557,6 @@ class SeaDexArr:
                     left_aligned_string(
                         f"Not downloading release group {rg} as another preferred "
                         f"release covers the same files. Keeping {keeper}",
-                        total_length=self.log_line_length,
                     )
                 )
                 unflag(seadex_dict[rg])
@@ -1756,24 +1778,26 @@ class SeaDexArr:
 
         Returns:
             tuple: (status, torrent_name), where status is one of
-                "torrent_added" or "torrent_already_added", and
-                torrent_name is the name reported by qBittorrent (or
-                None if it could not be determined)
+                "torrent_added" or "torrent_already_added", and torrent_name is
+                the name reported by qBittorrent (or None if the torrent has no
+                infohash to look up, in which case the caller uses the URL)
         """
 
-        # Ensure we don't already have the hash in there
-        torr_info = self.qbit.torrents_info(torrent_hashes=torrent_hash)
-        torr_hashes = [i.hash for i in torr_info]
+        # A private torrent has no infohash, so we can't look it up by hash to
+        # dedup or to read its name back; just add it and let qBittorrent dedup
+        # internally. With a hash, skip the add if it's already present
+        if torrent_hash is not None:
+            torr_info = self.qbit.torrents_info(torrent_hashes=torrent_hash)
+            torr_hashes = [i.hash for i in torr_info]
 
-        if torrent_hash in torr_hashes:
-            torrent_name = torr_info[0].name if torr_info else None
-            self.logger.debug(
-                centred_string(
-                    f"Torrent {url} already in qBittorrent",
-                    total_length=self.log_line_length,
+            if torrent_hash in torr_hashes:
+                self.logger.debug(
+                    centred_string(
+                        f"Torrent {url} already in qBittorrent",
+                        total_length=self.log_line_length,
+                    )
                 )
-            )
-            return "torrent_already_added", torrent_name
+                return "torrent_already_added", torr_info[0].name
 
         # Add the torrent
         result = self.qbit.torrents_add(
@@ -1784,9 +1808,13 @@ class SeaDexArr:
         if result != "Ok.":
             raise Exception("Failed to add torrent")
 
-        # Look the torrent back up by hash so we can report its name
-        added_info = self.qbit.torrents_info(torrent_hashes=torrent_hash)
-        torrent_name = added_info[0].name if added_info else None
+        # Look the torrent back up by hash so we can report its name. A private
+        # torrent has no infohash to look up, so leave the name unset and let
+        # the caller fall back to the URL
+        torrent_name = None
+        if torrent_hash is not None:
+            added_info = self.qbit.torrents_info(torrent_hashes=torrent_hash)
+            torrent_name = added_info[0].name if added_info else None
 
         return "torrent_added", torrent_name
 
@@ -1914,8 +1942,7 @@ class SeaDexArr:
         )
 
         self.logger.info(
-            centred_string(
-                "-" * self.log_line_length,
+            rule_string(
                 total_length=self.log_line_length,
             )
         )
@@ -1951,8 +1978,7 @@ class SeaDexArr:
             )
         )
         self.logger.info(
-            centred_string(
-                "-" * self.log_line_length,
+            rule_string(
                 total_length=self.log_line_length,
             )
         )
@@ -2013,8 +2039,7 @@ class SeaDexArr:
             )
         )
         self.logger.debug(
-            centred_string(
-                "-" * self.log_line_length,
+            rule_string(
                 total_length=self.log_line_length,
             )
         )
@@ -2038,8 +2063,7 @@ class SeaDexArr:
             )
         )
         self.logger.debug(
-            centred_string(
-                "-" * self.log_line_length,
+            rule_string(
                 total_length=self.log_line_length,
             )
         )
@@ -2115,8 +2139,7 @@ class SeaDexArr:
             self.logger.info(kv_string("seasons", seasons))
 
         self.logger.info(
-            centred_string(
-                "-" * self.log_line_length,
+            rule_string(
                 total_length=self.log_line_length,
             )
         )
@@ -2128,8 +2151,7 @@ class SeaDexArr:
 
         self.logger.info(kv_string("status", "no suitable releases on SeaDex"))
         self.logger.info(
-            centred_string(
-                "-" * self.log_line_length,
+            rule_string(
                 total_length=self.log_line_length,
             )
         )

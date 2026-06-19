@@ -12,7 +12,7 @@ from .anilist import (
     get_anilist_format,
 )
 from .discord import discord_push
-from .log import centred_string, left_aligned_string, kv_string
+from .log import centred_string, left_aligned_string, kv_string, rule_string
 from .seadex_arr import SeaDexArr, get_episode_keys
 from .seadex_radarr import SeaDexRadarr
 
@@ -81,7 +81,11 @@ def get_overlapping_results(seadex_dict):
         seadex_dict (dict): Dictionary of SeaDex releases
     """
 
-    # Build a (season, episode) set per release group
+    # Shares get_episode_keys with get_same_files_groups (seadex_arr) but
+    # deliberately differs on unparsed releases: here an unparsed release is
+    # assumed to overlap (we can't prove it doesn't), whereas get_same_files_groups
+    # keeps it separate (so we never drop content we couldn't verify). Keep both
+    # consistent if the coverage semantics change.
     episode_sets = {}
     for rg in seadex_dict:
         all_episodes = seadex_dict[rg].get("all_episodes", [])
@@ -317,6 +321,10 @@ class SeaDexSonarr(SeaDexArr):
 
                 for al_id, mapping in al_mappings.items():
 
+                    # Reset the per-title public_only skip flag before we make
+                    # any download decisions for this title
+                    self.public_only_skipped = False
+
                     # Map the TVDB ID through to AniList
                     if al_id is None:
                         self.log_no_anilist_id()
@@ -422,8 +430,7 @@ class SeaDexSonarr(SeaDexArr):
                                 )
 
                             self.logger.info(
-                                centred_string(
-                                    "-" * self.log_line_length,
+                                rule_string(
                                     total_length=self.log_line_length,
                                 )
                             )
@@ -561,10 +568,11 @@ class SeaDexSonarr(SeaDexArr):
                             )
                         )
 
-                    # Update and save out the cache, unless we skipped a release
-                    # purely because of public_only - in that case leave the
-                    # title uncached so it's retried (e.g. once a public release
-                    # appears or public_only is relaxed)
+                    # Update and save out the cache, unless public_only made us
+                    # skip a release - leave the title uncached so it's
+                    # re-checked (and the skip re-logged as a reminder) on every
+                    # run, and retried once a public release appears or
+                    # public_only is relaxed
                     if not self.public_only_skipped:
                         cache_details.update({"torrent_hashes": torrent_hashes})
                         self.update_cache(
@@ -574,8 +582,7 @@ class SeaDexSonarr(SeaDexArr):
                         )
 
                     self.logger.info(
-                        centred_string(
-                            "-" * self.log_line_length,
+                        rule_string(
                             total_length=self.log_line_length,
                         )
                     )

@@ -5,7 +5,7 @@ import arrapi.exceptions
 from arrapi import RadarrAPI
 
 from .discord import discord_push
-from .log import centred_string, kv_string
+from .log import centred_string, kv_string, rule_string
 from .seadex_arr import SeaDexArr
 
 
@@ -119,6 +119,10 @@ class SeaDexRadarr(SeaDexArr):
                     continue
 
                 for al_id, mapping in al_mappings.items():
+
+                    # Reset the per-title public_only skip flag before we make
+                    # any download decisions for this title
+                    self.public_only_skipped = False
 
                     # Map the TMDB ID through to AniList
                     if al_id is None:
@@ -266,10 +270,11 @@ class SeaDexRadarr(SeaDexArr):
                             )
                         )
 
-                    # Update and save out the cache, unless we skipped a release
-                    # purely because of public_only - in that case leave the
-                    # title uncached so it's retried (e.g. once a public release
-                    # appears or public_only is relaxed)
+                    # Update and save out the cache, unless public_only made us
+                    # skip a release - leave the title uncached so it's
+                    # re-checked (and the skip re-logged as a reminder) on every
+                    # run, and retried once a public release appears or
+                    # public_only is relaxed
                     if not self.public_only_skipped:
                         cache_details.update({"torrent_hashes": torrent_hashes})
                         self.update_cache(
@@ -279,8 +284,7 @@ class SeaDexRadarr(SeaDexArr):
                         )
 
                     self.logger.info(
-                        centred_string(
-                            "-" * self.log_line_length,
+                        rule_string(
                             total_length=self.log_line_length,
                         )
                     )
