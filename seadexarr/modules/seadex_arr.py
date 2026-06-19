@@ -357,6 +357,11 @@ class SeaDexArr:
         self.max_torrents_to_add = self.config.get("max_torrents_to_add", None)
         self.torrents_added = 0
 
+        # When True, simulate a run without grabbing torrents, writing the cache,
+        # or sending notifications. Set per-run by run(); the no-op default here
+        # keeps every method that consults it safe before run() is called.
+        self.dry_run = False
+
         # Per-run tally for the end-of-run summary (reset at the start of run())
         self.stats = self._fresh_stats()
         self._run_started_monotonic = None
@@ -837,7 +842,9 @@ class SeaDexArr:
             meta[id_str] = {"fetched_at": now_str, "data": data}
             written += 1
 
-        if written:
+        # A dry run keeps the warmed entries in memory but doesn't persist them,
+        # so a preview leaves the on-disk cache untouched.
+        if written and not self.dry_run:
             save_json(self.cache, self.cache_file, sort_cache=True)
 
     def prefetch_anilist(self, al_ids):
@@ -1394,15 +1401,8 @@ class SeaDexArr:
 
         # And also just check if any release group matches
         # any Arr release tag
-        overlapping_results = False
-        intersect = list(
-            filter(
-                lambda x: x in list(seadex_dict.keys()),
-                arr_release_groups,
-            )
-        )
-        if len(intersect) > 0:
-            overlapping_results = True
+        seadex_keys = set(seadex_dict.keys())
+        overlapping_results = any(rg in seadex_keys for rg in arr_release_groups)
 
         # If we have overlaps, get a note of them here
         all_seadex_rgs_per_episode = get_all_seadex_rgs_per_episode(
@@ -1977,6 +1977,13 @@ class SeaDexArr:
                 )
                 return "torrent_already_added", torr_info[0].name
 
+        # Dry run: report it as added without touching the client (the dedup
+        # lookup above still ran, so an already-present torrent is reported
+        # accurately). There's no client-side name to read back, so the caller
+        # falls back to the URL.
+        if self.dry_run:
+            return "torrent_added", None
+
         # Add the torrent
         result = self.qbit.torrents_add(
             urls=torrent_url,
@@ -2023,11 +2030,15 @@ class SeaDexArr:
             self.cache["anilist_entries"][arr][str(al_id)] = {}
 
         self.cache["anilist_entries"][arr][str(al_id)].update(cache_details)
-        save_json(
-            self.cache,
-            self.cache_file,
-            sort_cache=True,
-        )
+
+        # Dry run: keep the in-memory cache consistent for the rest of the run,
+        # but don't persist it - so a preview never marks a title as done.
+        if not self.dry_run:
+            save_json(
+                self.cache,
+                self.cache_file,
+                sort_cache=True,
+            )
 
         return True
 
@@ -2199,8 +2210,14 @@ class SeaDexArr:
         # tagging the "added" value (the same fact twice in one block). The file
         # log keeps the plain title; the annotation rides the console rule_title.
         rule_title = title
-        if self.qbit is None:
-            rule_title += "   (DRY RUN — no client; nothing grabbed)"
+        # A run grabs nothing when explicitly flagged dry, or when no client is
+        # configured at all - annotate (and later dim) the summary either way.
+        is_dry_run = self.dry_run or self.qbit is None
+        if is_dry_run:
+            note = "nothing grabbed" if self.qbit is not None else (
+                "no client; nothing grabbed"
+            )
+            rule_title += f"   (DRY RUN — {note})"
         self.logger.info(
             title,
             extra={
@@ -2253,7 +2270,7 @@ class SeaDexArr:
             stacked_detail(
                 item["title"],
                 ["   ".join(parts), item.get("url")],
-                "grey50" if self.qbit is None else "green",
+                "grey50" if is_dry_run else "green",
             )
 
         summary_kv("up to date", str(stats["up_to_date"]))

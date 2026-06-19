@@ -97,6 +97,7 @@ def run_single(
     sonarr: bool = False,
     movie_id: Optional[int] = None,
     series_id: Optional[int] = None,
+    dry_run: bool = False,
 ):
     """Do a single SeaDexArr run
 
@@ -107,6 +108,8 @@ def run_single(
             Implies a Radarr run. Defaults to None
         series_id: If set, only run Sonarr for the series with this TVDB ID.
             Implies a Sonarr run. Defaults to None
+        dry_run: If set, simulate the run without grabbing torrents, writing
+            the cache, or sending notifications. Defaults to False
     """
 
     # Set up config file location
@@ -127,7 +130,7 @@ def run_single(
                 cache=cache,
                 logger=logger,
             )
-            sdr.run(tmdb_id=movie_id)
+            sdr.run(tmdb_id=movie_id, dry_run=dry_run)
         except Exception:
             logger.error("Unexpected error during Radarr run", exc_info=True)
 
@@ -138,7 +141,7 @@ def run_single(
                 cache=cache,
                 logger=logger,
             )
-            sds.run(tvdb_id=series_id)
+            sds.run(tvdb_id=series_id, dry_run=dry_run)
         except Exception:
             logger.error("Unexpected error during Sonarr run", exc_info=True)
 

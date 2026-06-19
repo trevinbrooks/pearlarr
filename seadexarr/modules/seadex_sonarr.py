@@ -235,13 +235,19 @@ class SeaDexSonarr(SeaDexArr):
             )
             self.all_radarr_movies = self.radarr.get_all_radarr_movies()
 
-    def run(self, tvdb_id=None):
+    def run(self, tvdb_id=None, dry_run=False):
         """Run the SeaDex Sonarr Syncer
 
         Args:
             tvdb_id (int, optional): If set, only run for the series with this
                 TVDB ID. Defaults to None, which runs for all series.
+            dry_run (bool, optional): If True, simulate the run without grabbing
+                torrents, writing the cache, or sending notifications.
+                Defaults to False.
         """
+
+        # Whether this is a no-op preview - consulted by the mutating helpers
+        self.dry_run = dry_run
 
         # Reset the per-run tally and start the run clock
         self.reset_run_stats()
@@ -583,7 +589,12 @@ class SeaDexSonarr(SeaDexArr):
                             )
 
                             # Push a message to Discord if we've added anything
-                            if self.discord_url is not None and n_torrents_added > 0:
+                            # (never on a dry run - it's an outward notification)
+                            if (
+                                self.discord_url is not None
+                                and n_torrents_added > 0
+                                and not self.dry_run
+                            ):
                                 discord_push(
                                     url=self.discord_url,
                                     arr_title=sonarr_title,
