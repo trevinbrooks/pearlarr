@@ -1,8 +1,17 @@
 import copy
+import time
 
 import requests
 
 API_URL = "https://graphql.anilist.co"
+
+# AniList rate-limits (HTTP 429) and occasionally returns a transient 5xx. Retry
+# those a few times with a backoff that respects a Retry-After header, so a busy
+# run (many series in quick succession) waits out the limit instead of treating
+# the throttled response as real data.
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+MAX_RETRIES = 3
+MAX_BACKOFF = 60
 
 # AniList query
 QUERY = """
@@ -26,7 +35,15 @@ query ($id: Int) {
 
 
 def get_query(al_id):
-    """Do the AniList query
+    """Do the AniList query, retrying politely on rate-limits / transient errors
+
+    On a rate-limit (HTTP 429) or a transient 5xx, AniList returns
+    ``{"data": null, ...}``. Returning that unretried is what surfaced
+    downstream as ``'NoneType' object has no attribute 'get'`` when a run made
+    many requests in quick succession, so we wait (honouring Retry-After when
+    present) and retry before giving up. Returns the parsed JSON - which may
+    still be an error payload after the final attempt - or ``{}`` if the
+    response body wasn't JSON.
 
     Args:
         al_id (int): Anilist ID
@@ -35,10 +52,76 @@ def get_query(al_id):
     # Define query variables and values that will be used in the query request
     variables = {"id": al_id}
 
-    resp = requests.post(API_URL, json={"query": QUERY, "variables": variables})
-    j = resp.json()
+    for attempt in range(MAX_RETRIES + 1):
 
-    return j
+        try:
+            resp = requests.post(
+                API_URL, json={"query": QUERY, "variables": variables}
+            )
+        except requests.RequestException:
+            # Network blip: back off and retry, then give up with an empty result
+            if attempt >= MAX_RETRIES:
+                return {}
+            time.sleep(min(2 ** attempt, MAX_BACKOFF))
+            continue
+
+        if resp.status_code in RETRYABLE_STATUS and attempt < MAX_RETRIES:
+            # Prefer the server's Retry-After (seconds); otherwise exponential
+            retry_after = resp.headers.get("Retry-After")
+            try:
+                wait = float(retry_after)
+            except (TypeError, ValueError):
+                wait = 2 ** attempt
+            time.sleep(min(max(wait, 1), MAX_BACKOFF))
+            continue
+
+        try:
+            return resp.json()
+        except ValueError:
+            return {}
+
+    return {}
+
+
+def _get_media(
+    al_id,
+    al_cache,
+):
+    """Fetch the AniList Media object for an ID, caching successful lookups
+
+    Centralises the cache lookup and the null-safe extraction the public helpers
+    share. AniList returns ``{"data": {"Media": null}}`` (or ``{"data": null}``)
+    for an unknown ID or a rate-limit, so every level is guarded with ``or {}``
+    and a miss yields an empty dict rather than raising
+    ``'NoneType' object has no attribute 'get'``. A miss is deliberately not
+    cached, so a transient rate-limit isn't remembered as a permanent "unknown"
+    for the rest of the run - the next call gets a fresh chance.
+
+    Args:
+        al_id (int): Anilist ID
+        al_cache (dict | None): Cache of prior AniList responses, keyed by ID
+
+    Returns:
+        tuple: (media_dict, al_cache). media_dict is {} on a miss.
+    """
+
+    if al_cache is None:
+        al_cache = {}
+
+    # Try and find query in cache
+    j = al_cache.get(al_id, None)
+
+    # If we don't have it, do the query
+    if j is None:
+        j = get_query(al_id)
+        # Only remember a response that actually carried Media, so a transient
+        # failure (rate-limit, network) isn't cached as a permanent miss
+        if ((j or {}).get("data") or {}).get("Media"):
+            al_cache[al_id] = copy.deepcopy(j)
+
+    media = ((j or {}).get("data") or {}).get("Media") or {}
+
+    return media, al_cache
 
 
 def get_anilist_n_eps(
@@ -53,20 +136,9 @@ def get_anilist_n_eps(
             which will create a dictionary
     """
 
-    # Try and find query in cache
-    if al_cache is None:
-        al_cache = {}
-    j = al_cache.get(al_id, None)
+    media, al_cache = _get_media(al_id, al_cache)
 
-    # If we don't have it, do the query
-    if j is None:
-        j = get_query(al_id)
-        al_cache[al_id] = copy.deepcopy(j)
-
-    # Pull out number of episodes
-    n_eps = j.get("data", {}).get("Media", {}).get("episodes", None)
-
-    return n_eps, al_cache
+    return media.get("episodes", None), al_cache
 
 
 def get_anilist_title(
@@ -81,22 +153,12 @@ def get_anilist_title(
             which will create a dictionary
     """
 
-    # Try and find query in cache
-    if al_cache is None:
-        al_cache = {}
-    j = al_cache.get(al_id, None)
-
-    # If we don't have it, do the query
-    if j is None:
-        j = get_query(al_id)
-        al_cache[al_id] = copy.deepcopy(j)
+    media, al_cache = _get_media(al_id, al_cache)
 
     # Prefer the english title, but fall back to romaji
-    title = j.get("data", {}).get("Media", {}).get("title", {}).get("english", None)
-    if title is None:
-        title = j.get("data", {}).get("Media", {}).get("title", {}).get("romaji", None)
+    title = media.get("title") or {}
 
-    return title, al_cache
+    return (title.get("english") or title.get("romaji")), al_cache
 
 
 def get_anilist_thumb(
@@ -111,19 +173,9 @@ def get_anilist_thumb(
             which will create a dictionary
     """
 
-    # Try and find query in cache
-    if al_cache is None:
-        al_cache = {}
-    j = al_cache.get(al_id, None)
+    media, al_cache = _get_media(al_id, al_cache)
 
-    # If we don't have it, do the query
-    if j is None:
-        j = get_query(al_id)
-        al_cache[al_id] = copy.deepcopy(j)
-
-    thumb = j.get("data", {}).get("Media", {}).get("coverImage", {}).get("large", None)
-
-    return thumb, al_cache
+    return (media.get("coverImage") or {}).get("large", None), al_cache
 
 
 def get_anilist_format(
@@ -138,16 +190,6 @@ def get_anilist_format(
             which will create a dictionary
     """
 
-    # Try and find query in cache
-    if al_cache is None:
-        al_cache = {}
-    j = al_cache.get(al_id, None)
+    media, al_cache = _get_media(al_id, al_cache)
 
-    # If we don't have it, do the query
-    if j is None:
-        j = get_query(al_id)
-        al_cache[al_id] = copy.deepcopy(j)
-
-    al_format = j.get("data", {}).get("Media", {}).get("format", None)
-
-    return al_format, al_cache
+    return media.get("format", None), al_cache
