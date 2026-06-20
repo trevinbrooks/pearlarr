@@ -786,8 +786,8 @@ class SeaDexArr:
             # Drop any AniList IDs the user has chosen to ignore
             ids_to_drop = [
                 al_id
-                for al_id in anilist_mappings
-                if al_id in self.ignore_anilist_ids
+                for al_id in self.ignore_anilist_ids
+                if al_id in anilist_mappings
             ]
             for al_id in ids_to_drop:
                 del anilist_mappings[al_id]
