@@ -15,32 +15,32 @@ import qbittorrentapi
 import requests
 import yaml
 from ruamel.yaml import YAML
-from seadex import SeaDexEntry, EntryNotFoundError, EntryRecord
+from seadex import EntryNotFoundError, EntryRecord, SeaDexEntry
 
-from .. import __version__
 from .anilist import (
-    get_anilist_title,
-    get_anilist_thumb,
-    get_query_batch,
     ANILIST_BATCH_SIZE,
+    get_anilist_thumb,
+    get_anilist_title,
+    get_query_batch,
 )
 from .log import (
-    setup_logger,
-    left_aligned_string,
-    indent_string,
-    kv_string,
-    rule_string,
-    count_noun,
-    entry_string,
-    KEY_WIDTH,
     DETAIL_INDENT,
     DETAIL_KEY_WIDTH,
+    KEY_WIDTH,
+    count_noun,
+    entry_string,
+    indent_string,
+    kv_string,
+    left_aligned_string,
+    rule_string,
+    setup_logger,
 )
 from .torrent import (
-    get_nyaa_url,
     get_animetosho_url,
+    get_nyaa_url,
     get_rutracker_url,
 )
+from .. import __version__
 
 
 def save_json(
