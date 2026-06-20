@@ -367,28 +367,26 @@ class SeaDexRadarr(SeaDexArr):
 
         radarr_movies = []
 
-        all_tmdb_ids = []
-        all_imdb_ids = []
+        all_tmdb_ids = set()
+        all_imdb_ids = set()
 
-        # Search through TMDB and IMDb IDs via Anime IDs and AniBridge mappings
-        for mapping in [
-            self.anime_mappings,
-            self.anibridge_mappings,
-        ]:
-            if not mapping:
-                continue
-
-            all_tmdb_ids.extend(
-                mapping[x].get("tmdb_movie_id", None)
-                for x in mapping
-                if "tmdb_movie_id" in mapping[x].keys()
+        # Kometa Anime-IDs is a flat {anilist_id: mapping} dict we scan directly
+        if self.anime_mappings:
+            all_tmdb_ids.update(
+                e.get("tmdb_movie_id")
+                for e in self.anime_mappings.values()
+                if e.get("tmdb_movie_id") is not None
+            )
+            all_imdb_ids.update(
+                e.get("imdb_id")
+                for e in self.anime_mappings.values()
+                if e.get("imdb_id") is not None
             )
 
-            all_imdb_ids.extend(
-                mapping[x].get("imdb_id", None)
-                for x in mapping
-                if "imdb_id" in mapping[x].keys()
-            )
+        # AniBridge exposes precomputed id sets (no per-call scan needed)
+        if self.anibridge:
+            all_tmdb_ids |= self.anibridge.all_tmdb_movie_ids
+            all_imdb_ids |= self.anibridge.all_imdb_ids
 
         for m in self.radarr.all_movies():
 

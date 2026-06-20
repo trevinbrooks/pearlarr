@@ -36,6 +36,7 @@ from .log import (
     rule_string,
     setup_logger,
 )
+from .anibridge import AniBridge
 from .torrent import (
     get_animetosho_url,
     get_nyaa_url,
@@ -79,7 +80,13 @@ def save_json(
 
 ANIME_IDS_URL = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/refs/heads/master/anime_ids.json"
 ANIDB_MAPPINGS_URL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/refs/heads/master/anime-list-master.xml"
-ANIBRIDGE_MAPPINGS_URL = "https://github.com/eliasbenb/PlexAniBridge-Mappings/raw/refs/heads/v2/mappings.json"
+
+# anibridge-mappings ships daily-rolling release assets tagged by major version.
+# Bump ANIBRIDGE_RELEASE when a new (breaking) major lands; the cache filename is
+# versioned to match so an old-format file is never parsed by the new loader.
+ANIBRIDGE_RELEASE = "v3"
+ANIBRIDGE_MAPPINGS_URL = f"https://github.com/anibridge/anibridge-mappings/releases/download/{ANIBRIDGE_RELEASE}/mappings.min.json"
+ANIBRIDGE_MAPPINGS_FILE = f"anibridge_mappings_{ANIBRIDGE_RELEASE}.json"
 
 ALLOWED_ARRS = [
     "radarr",
@@ -436,15 +443,19 @@ class SeaDexArr:
             anidb_mappings = anidb_mappings_cfg
 
         if anibridge_mappings_cfg is False:
-            anibridge_mappings = {}
+            anibridge = None
         elif anibridge_mappings_cfg is None:
-            anibridge_mappings = self.get_anibridge_mappings()
+            anibridge = self.get_anibridge_mappings()
         else:
-            anibridge_mappings = anibridge_mappings_cfg
+            # A config-provided value is treated as a raw anibridge graph dict
+            anibridge = AniBridge(
+                anibridge_mappings_cfg,
+                logger=getattr(self, "logger", None),
+            )
 
         self.anime_mappings = anime_mappings
         self.anidb_mappings = anidb_mappings
-        self.anibridge_mappings = anibridge_mappings
+        self.anibridge = anibridge
 
         self.interactive = self.config.get("interactive", False)
 
@@ -589,18 +600,22 @@ class SeaDexArr:
 
 
     def get_anibridge_mappings(self):
-        """Get PlexAniBridge mappings file"""
+        """Download the anibridge-mappings graph and build an indexed view.
 
-        anibridge_mappings_file = os.path.join("anibridge_mappings.json")
+        Returns:
+            AniBridge: Parsed, indexed mappings ready for id lookups
+        """
 
         # If a file doesn't exist, get it
         self.get_external_mappings(
-            f=anibridge_mappings_file,
+            f=ANIBRIDGE_MAPPINGS_FILE,
             url=ANIBRIDGE_MAPPINGS_URL,
         )
 
-        with open(anibridge_mappings_file) as f:
-            return json.load(f)
+        with open(ANIBRIDGE_MAPPINGS_FILE) as f:
+            graph = json.load(f)
+
+        return AniBridge(graph, logger=getattr(self, "logger", None))
 
 
     def get_external_mappings(
@@ -760,10 +775,10 @@ class SeaDexArr:
         else:
             anilist_mappings = {}
 
-            # Start by looking through our base case, which are the Tomeka
-            # Anime IDs. Save these to a dict where the key is the AniList ID
-            if self.anime_mappings:
-                anilist_mappings = self.get_mappings_from_anime_mappings(
+            # AniBridge is the primary source: its richer per-season episode
+            # offsets win, so query it first and key results by AniList ID
+            if self.anibridge:
+                anilist_mappings = self.get_mappings_from_anibridge_mappings(
                     tvdb_id=tvdb_id,
                     tmdb_id=tmdb_id,
                     imdb_id=imdb_id,
@@ -771,9 +786,10 @@ class SeaDexArr:
                     anilist_mappings=anilist_mappings,
                 )
 
-            # Then, look through the AniBridge mappings
-            if self.anibridge_mappings:
-                anilist_mappings = self.get_mappings_from_anibridge_mappings(
+            # Then fall back to the Kometa Anime IDs for anything AniBridge
+            # doesn't cover (it only adds AniList IDs not already present)
+            if self.anime_mappings:
+                anilist_mappings = self.get_mappings_from_anime_mappings(
                     tvdb_id=tvdb_id,
                     tmdb_id=tmdb_id,
                     imdb_id=imdb_id,
@@ -1006,6 +1022,10 @@ class SeaDexArr:
         if anilist_mappings is None:
             anilist_mappings = {}
 
+        anibridge = self.anibridge
+        if not anibridge:
+            return anilist_mappings
+
         if tmdb_type not in ["movie", "show"]:
             raise ValueError("tmdb_type must be 'movie' or 'show'")
 
@@ -1017,33 +1037,19 @@ class SeaDexArr:
                 "At least one of tvdb_id, tmdb_id, and imdb_id must be provided",
             )
 
+        # Add any AniList IDs the indexes resolve for the supplied ids, without
+        # clobbering matches an earlier id already produced (tvdb > tmdb > imdb).
+        def merge(found):
+            for anilist_id, entry in found.items():
+                if anilist_id not in anilist_mappings:
+                    anilist_mappings[anilist_id] = entry
+
         if tvdb_id is not None:
-            anilist_mappings.update(
-                {
-                    int(n): m
-                    for n, m in self.anibridge_mappings.items()
-                    if m.get("tvdb_id", None) == tvdb_id
-                    and int(n) not in anilist_mappings
-                },
-            )
+            merge(anibridge.lookup_by_tvdb(tvdb_id))
         if tmdb_id is not None:
-            anilist_mappings.update(
-                {
-                    int(n): m
-                    for n, m in self.anibridge_mappings.items()
-                    if m.get(f"tmdb_{tmdb_type}_id", None) == tmdb_id
-                    and int(n) not in anilist_mappings
-                },
-            )
+            merge(anibridge.lookup_by_tmdb(tmdb_id, tmdb_type))
         if imdb_id is not None:
-            anilist_mappings.update(
-                {
-                    int(n): m
-                    for n, m in self.anibridge_mappings.items()
-                    if m.get("imdb_id", None) == imdb_id
-                    and int(n) not in anilist_mappings
-                },
-            )
+            merge(anibridge.lookup_by_imdb(imdb_id))
 
         return anilist_mappings
 

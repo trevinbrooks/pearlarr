@@ -163,61 +163,35 @@ def check_ep_by_anibridge(
     ep,
     tvdb_mappings,
 ):
-    """Check whether to include an episode by AniBridge style
+    """Check whether a Sonarr episode is covered by an AniBridge mapping.
 
     Args:
-        ep (dict): Dictionary of episode info
-        tvdb_mappings (dict): Dictionary of AniBridge-style TVDB mappings
+        ep (dict): Sonarr episode info (seasonNumber, episodeNumber)
+        tvdb_mappings (dict): season (int) -> list of inclusive (start, end)
+            TVDB episode ranges. An empty list matches the whole season; an
+            end of None is open-ended.
     """
 
     ep_season = ep.get("seasonNumber", -1)
     ep_episode = ep.get("episodeNumber", -1)
 
-    for season, episodes in tvdb_mappings.items():
+    ranges = tvdb_mappings.get(ep_season)
 
-        tvdb_season = int(season.strip("s"))
+    # Season isn't part of this mapping at all
+    if ranges is None:
+        return False
 
-        # Simplest case, we have an empty string so just
-        # match by season
-        if episodes == "" and ep_season == tvdb_season:
+    # No explicit episode ranges -> the whole season is covered
+    if not ranges:
+        return True
+
+    for start, end in ranges:
+        if end is None:
+            if ep_episode >= start:
+                return True
+        elif start <= ep_episode <= end:
             return True
 
-        if ep_season != tvdb_season:
-            continue
-
-        # We may have multiple mappings per season,
-        # so we need to split
-        episodes_split = episodes.split(",")
-        for episode_split in episodes_split:
-
-            # There may be some ratio mapping that we
-            # can ignore
-            episode_split = episode_split.split("|")[0]
-
-            # The simpler case here is a single episode
-            if "-" not in episode_split:
-                episode_split_exact = int(episode_split.strip("e"))
-
-                if episode_split_exact == ep_episode:
-                    return True
-
-            # Or we need to split again, to get the start and
-            # end points
-            else:
-                episode_split_start_end = episode_split.split("-")
-                episode_split_start = int(episode_split_start_end[0].strip("e"))
-
-                # Now we might have an open-ended end point, in which case set to
-                # a large number
-                if len(episode_split_start_end) == 1:
-                    episode_split_end = 9999
-                else:
-                    episode_split_end = int(episode_split_start_end[1].strip("e"))
-
-                if episode_split_start <= ep_episode <= episode_split_end:
-                    return True
-
-    # If after all that, we haven't found anything, just return False
     return False
 
 
@@ -712,28 +686,26 @@ class SeaDexSonarr(SeaDexArr):
 
         sonarr_series = []
 
-        all_tvdb_ids = []
-        all_imdb_ids = []
+        all_tvdb_ids = set()
+        all_imdb_ids = set()
 
-        # Search through TVDB and IMDb IDs via Anime IDs and AniBridge mappings
-        for mapping in [
-            self.anime_mappings,
-            self.anibridge_mappings,
-        ]:
-            if not mapping:
-                continue
-
-            all_tvdb_ids.extend(
-                mapping[x].get("tvdb_id", None)
-                for x in mapping
-                if "tvdb_id" in mapping[x].keys()
+        # Kometa Anime-IDs is a flat {anilist_id: mapping} dict we scan directly
+        if self.anime_mappings:
+            all_tvdb_ids.update(
+                m.get("tvdb_id")
+                for m in self.anime_mappings.values()
+                if m.get("tvdb_id") is not None
+            )
+            all_imdb_ids.update(
+                m.get("imdb_id")
+                for m in self.anime_mappings.values()
+                if m.get("imdb_id") is not None
             )
 
-            all_imdb_ids.extend(
-                mapping[x].get("imdb_id", None)
-                for x in mapping
-                if "imdb_id" in mapping[x].keys()
-            )
+        # AniBridge exposes precomputed id sets (no per-call scan needed)
+        if self.anibridge:
+            all_tvdb_ids |= self.anibridge.all_tvdb_ids
+            all_imdb_ids |= self.anibridge.all_imdb_ids
 
         for s in self.sonarr.all_series():
 

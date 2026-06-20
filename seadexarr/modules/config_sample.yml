@@ -46,7 +46,10 @@ ignore_anilist_ids:
 sleep_time: 2
 cache_time: 1
 interactive: false
-anime_mappings:
-anidb_mappings:
-anibridge_mappings:
+# ID/episode mapping sources. Leave blank to auto-download, set to false to
+# disable, or inline your own data. anibridge is the primary source; the others
+# act as fallbacks for anything it doesn't cover.
+anime_mappings:      # Kometa Anime-IDs (fallback)
+anidb_mappings:      # AniDB anime-lists XML (fallback, used for specials)
+anibridge_mappings:  # anibridge-mappings v3 graph (primary: IDs + per-season episode maps)
 log_level: "INFO"
