@@ -8,23 +8,32 @@ ANIMETOSHO_FEED_URL = "https://animetosho.org/feed/json"
 RUTRACKER_MAGNET_ANNOUNCE = "http://bt2.t-ru.org/ann?magnet"
 
 
-def get_nyaa_url(url: str) -> str:
-    """Get Nyaa torrent link from URL
+def get_nyaa_torrent(url: str) -> tuple[str, str]:
+    """Get the Nyaa download link and release title from a Nyaa URL
 
     Args:
-        url (str): URL to get Nyaa torrent link
+        url (str): URL of the Nyaa release page
+
+    Returns:
+        tuple: (download_url, release_title) - the .torrent download link and
+            the human-readable release title
     """
 
-    parsed_url = pynyaa.get(url).torrent.url
+    release = pynyaa.get(url)
 
-    return parsed_url
+    return release.torrent.url, release.title
 
 
-def get_animetosho_url(url: str) -> str | None:
-    """Get AnimeTosho torrent link from URL
+def get_animetosho_torrent(url: str) -> tuple[str | None, str]:
+    """Get the AnimeTosho download link and release title from a URL
 
     Args:
-        url (str): URL to get AnimeTosho torrent link
+        url (str): URL of the AnimeTosho release page
+
+    Returns:
+        tuple: (download_url, release_title) - the .torrent download link
+            (None if no matching link is found in the feed) and the
+            human-readable release title scraped from the page
     """
 
     # Start by getting the webpage, so we can get a title
@@ -56,24 +65,30 @@ def get_animetosho_url(url: str) -> str | None:
         if link == url:
             parsed_url = i.get("torrent_url", None)
 
-    return parsed_url
+    return parsed_url, title
 
 
-def get_rutracker_url(
+def get_rutracker_torrent(
     url: str,
     torrent_hash: str,
-) -> str:
-    """Get RuTracker torrent link from URL
+) -> tuple[str, str]:
+    """Get the RuTracker magnet link and torrent title from a URL
 
     Args:
-        url (str): URL to get RuTracker torrent link
+        url (str): URL of the RuTracker topic
         torrent_hash (str): Torrent hash
+
+    Returns:
+        tuple: (magnet_url, torrent_title) - the magnet link and the
+            human-readable torrent title scraped from the page
     """
 
     # Pull the torrent title from souping the URL
     r = requests.get(url)
     soup = BeautifulSoup(r.content, "lxml")
     main_title = soup.find("h1", attrs={"class": "maintitle"})
+    if main_title is None:
+        raise Exception("Could not find torrent title in RuTracker webpage")
     torrent_title = main_title.text
 
     params = {
@@ -84,4 +99,4 @@ def get_rutracker_url(
     url_encoded = urlencode(params)
     parsed_url = f"magnet:?{url_encoded}"
 
-    return parsed_url
+    return parsed_url, torrent_title

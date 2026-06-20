@@ -39,9 +39,9 @@ from .log import (
 )
 from .anibridge import AniBridge
 from .torrent import (
-    get_animetosho_url,
-    get_nyaa_url,
-    get_rutracker_url,
+    get_animetosho_torrent,
+    get_nyaa_torrent,
+    get_rutracker_torrent,
 )
 from .. import __version__
 
@@ -381,11 +381,13 @@ class SeaDexArr:
         self.stats = self._fresh_stats()
         self._run_started_monotonic = None
         self._log_counts_at_start = {}
-        # Title + SeaDex URL currently being processed, so add_torrent and the
-        # summary can attribute what they grab (and link to it) without threading
-        # them through every call
+        # Title, SeaDex URL, and season/episode coverage currently being
+        # processed, so add_torrent and the summary can attribute what they grab
+        # (and link to it, and show which files we mapped) without threading them
+        # through every call
         self.current_title = None
         self.current_url = None
+        self.current_coverage = None
 
         # Discord
         self.discord_url = self.config.get("discord_url", None)
@@ -396,8 +398,11 @@ class SeaDexArr:
         self.want_best = self.config.get("want_best", True)
 
         # Set per-title when public_only forces us to skip a release that's only
-        # available privately, so the caller knows not to cache the title as done
+        # available privately, so the caller knows not to cache the title as done.
+        # public_only_groups collects the release-group name(s) that were skipped
+        # for that reason, so the run summary can name them under "needs action"
         self.public_only_skipped = False
+        self.public_only_groups: list[str] = []
 
         ignore_tags = self.config.get("ignore_tags", None)
         if ignore_tags is None:
@@ -1713,6 +1718,7 @@ class SeaDexArr:
                         level=logging.WARNING,
                     )
                     self.public_only_skipped = True
+                    self.public_only_groups.extend(flagged)
                     for rg in flagged:
                         unflag(seadex_dict[rg])
                     continue
@@ -1883,6 +1889,7 @@ class SeaDexArr:
                         level=logging.WARNING,
                     )
                     self.public_only_skipped = True
+                    self.public_only_groups.append(srg)
                     continue
 
                 # If we don't have a tracker from our list selected, then
@@ -1895,17 +1902,22 @@ class SeaDexArr:
                     )
                     continue
 
+                # Each parser returns the download/magnet link plus the release's
+                # human-readable title scraped from the source page, so we always
+                # have a real name to show even when the client can't report one
+                # (e.g. a private torrent with no info hash, or a dry run)
+
                 # Nyaa
                 if tracker.lower() == "nyaa":
-                    parsed_url = get_nyaa_url(url=url)
+                    parsed_url, source_name = get_nyaa_torrent(url=url)
 
                 # AnimeToshio
                 elif tracker.lower() == "animetosho":
-                    parsed_url = get_animetosho_url(url=url)
+                    parsed_url, source_name = get_animetosho_torrent(url=url)
 
                 # RuTracker
                 elif tracker.lower() == "rutracker":
-                    parsed_url = get_rutracker_url(
+                    parsed_url, source_name = get_rutracker_torrent(
                         url=url,
                         torrent_hash=item_hash,
                     )
@@ -1927,28 +1939,30 @@ class SeaDexArr:
                 else:
                     raise ValueError(f"Unsupported torrent client {torrent_client}")
 
-                # Fall back to the parsed URL if we couldn't get a name from the
-                # client
+                # Prefer the name qBittorrent reports; fall back to the release's
+                # title from the source page rather than the raw download link
                 if not torrent_name:
-                    torrent_name = parsed_url
+                    torrent_name = source_name
 
                 if success == "torrent_added":
                     results.append(
                         {"outcome": "added", "name": torrent_name, "group": srg},
                     )
 
-                    # Record the grab for the end-of-run summary. Coverage is only
-                    # needed for a torrent we actually added, so compute it here
-                    # (via the shared coverage_string) rather than for every URL.
+                    # Record the grab for the end-of-run summary. Prefer the
+                    # release's own parsed file list (precise for multi-cour /
+                    # per-torrent grabs); fall back to the entry-level coverage we
+                    # mapped from the Arr so the summary's "files" is never blank
+                    # when a release's filenames couldn't be parsed (e.g. an OVA).
                     coverage_str = self.coverage_string(
                         url_item.get("episodes", []),
-                    )
+                    ) or self.current_coverage
                     self.stats["added"].append(
                         {
                             "title": self.current_title,
-                            "group": srg,
                             "coverage": coverage_str,
                             "url": self.current_url,
+                            "name": torrent_name,
                         },
                     )
 
@@ -2275,24 +2289,82 @@ class SeaDexArr:
         def summary_kv(key: str, value: Any, **kwargs: Any) -> bool:
             return self.log_kv(key, value, key_width=12, **kwargs)
 
-        # A title + sublines block, stacked: the variable-length title hangs at
-        # indent 2, and each fixed subline (facts, then the URL) sits at indent 3
-        # beneath it, so title length can never push them out of the column. Titles
-        # are truncated so they can't wrap onto a second line and break alignment.
-        def stacked_detail(title_text: str | None, lines: list, style: str) -> None:
-            t = title_text or "(unknown title)"
+        # A needs-action entry in the summary, rendered with the same labeled
+        # gutter as added_detail so the two blocks read alike: the title hangs at
+        # indent 2, then fixed fields sit at indent 3 beneath it. Unlike a grab
+        # there's no torrent name to lean on, so the skipped private release
+        # group IS named here. The whole block is yellow - it's the one section
+        # asking the user to do something. Titles are truncated so they can't wrap
+        # onto a second line and break the column.
+        def needs_detail(item: dict) -> None:
+            t = item.get("title") or "(unknown title)"
             if len(t) > 38:
                 t = t[:37] + "…"
             self.logger.info(
-                indent_string(t, level=2), extra={"line_style": style},
+                indent_string(t, level=2), extra={"line_style": "yellow"},
             )
-            for line in lines:
-                if line:
-                    self.logger.info(
-                        indent_string(line, level=3), extra={"line_style": style},
-                    )
+            rows = [
+                ("files", item.get("coverage"), "grey50"),
+                ("group", item.get("group"), "yellow"),
+                ("reason", item.get("reason"), "yellow"),
+                ("link", item.get("url"), "grey50"),
+            ]
+            for label, value, accent in rows:
+                if not value:
+                    continue
+                self.log_kv(
+                    label,
+                    value,
+                    value_style=accent,
+                    indent=3,
+                    key_width=7,
+                    sep="",
+                )
+
+        # A grab in the summary, rendered like the live per-entry "checking"
+        # block: the title hangs at indent 2, then labeled gutter fields sit
+        # beneath it at indent 3, their values landing in the same column (14) as
+        # the live block. The recommended group is dropped here (the torrent name
+        # already carries it), and the grab is labeled "torrent" rather than
+        # "added" since the whole section is already the added list. A dry run
+        # dims the block so the would-be grabs don't read as real.
+        def added_detail(item: dict) -> None:
+            t = item.get("title") or "(unknown title)"
+            if len(t) > 38:
+                t = t[:37] + "…"
+            self.logger.info(
+                indent_string(t, level=2),
+                extra={"line_style": "grey50" if is_dry_run else None},
+            )
+            rows = [
+                ("files", item.get("coverage"), "grey50"),
+                ("link", item.get("url"), "grey50"),
+                ("torrent", item.get("name"), "green"),
+            ]
+            for label, value, accent in rows:
+                if not value:
+                    continue
+                self.log_kv(
+                    label,
+                    value,
+                    value_style="grey50" if is_dry_run else accent,
+                    indent=3,
+                    key_width=7,
+                    sep="",
+                )
 
         summary_kv("checked", str(stats["checked"]))
+
+        # Needs-action sits ahead of "added" so anything still waiting on the
+        # user surfaces first, before the (often longer) list of completed grabs.
+        needs = stats["needs_action"]
+        summary_kv(
+            "needs action",
+            str(len(needs)),
+            value_style="yellow" if needs else None,
+        )
+        for item in needs:
+            needs_detail(item)
 
         # The count is the authoritative torrents_added (covers the no-client
         # dry-run path too); the list is the per-grab detail from add_torrent.
@@ -2302,17 +2374,7 @@ class SeaDexArr:
             value_style="green" if self.torrents_added else None,
         )
         for item in stats["added"]:
-            parts = []
-            if item.get("coverage"):
-                parts.append(item["coverage"])
-            if item.get("group"):
-                parts.append(f"[{item['group']}]")
-            # Dim the would-be grabs in a dry run so they don't read as real
-            stacked_detail(
-                item["title"],
-                ["   ".join(parts), item.get("url")],
-                "grey50" if is_dry_run else "green",
-            )
+            added_detail(item)
 
         summary_kv("up to date", str(stats["up_to_date"]))
         summary_kv(
@@ -2329,24 +2391,6 @@ class SeaDexArr:
         if stats["no_seadex_entry"]:
             summary_kv("no entry", str(stats["no_seadex_entry"]))
         summary_kv("no release", str(stats["no_releases"]))
-
-        needs = stats["needs_action"]
-        summary_kv(
-            "needs action",
-            str(len(needs)),
-            value_style="yellow" if needs else None,
-        )
-        for item in needs:
-            parts = []
-            if item.get("coverage"):
-                parts.append(item["coverage"])
-            if item.get("reason"):
-                parts.append(item["reason"])
-            stacked_detail(
-                item["title"],
-                ["   ·   ".join(parts), item.get("url")],
-                "yellow",
-            )
 
         if stats["unmonitored"]:
             summary_kv("unmonitored", str(stats["unmonitored"]))
@@ -2643,9 +2687,12 @@ class SeaDexArr:
                 Defaults to None / "" (e.g., a Radarr movie -> URL only)
         """
 
-        # Remember title + URL so add_torrent / the summary can attribute and link
+        # Remember title, URL, and coverage so add_torrent / the summary can
+        # attribute and link what they grab, and show the same files we mapped
+        # from the Arr even when a release's own file list can't be parsed
         self.current_title = anilist_title
         self.current_url = sd_entry.url
+        self.current_coverage = coverage
 
         # The active entry, on the ledger but undimmed (style=None) so it reads
         # as the focal line, not a no-op like the gray unchanged rows

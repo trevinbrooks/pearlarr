@@ -108,6 +108,15 @@ include = [
 [tool.hatch.build.targets.wheel]
 packages = ["seadexarr"]
 
+# Point the type checkers at the project virtualenv so third-party imports
+# resolve. Without it, Pyright/Pylance launched outside the repo root can't find
+# .venv and flags every third-party import as unresolved. pyrefly reads these
+# pyright-compatible settings too, so with the venv resolved it now surfaces a
+# handful of pre-existing latent type errors (to be addressed separately).
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+
 [tool.ruff]
 line-length = 120
 

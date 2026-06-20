@@ -144,9 +144,11 @@ class SeaDexRadarr(SeaDexArr):
 
                 for al_id, mapping in al_mappings.items():
 
-                    # Reset the per-title public_only skip flag before we make
-                    # any download decisions for this title
+                    # Reset the per-title public_only skip flag (and the skipped
+                    # group names) before we make any download decisions for this
+                    # title
                     self.public_only_skipped = False
+                    self.public_only_groups = []
                     self.stats["checked"] += 1
 
                     # Map the TMDB ID through to AniList
@@ -338,6 +340,9 @@ class SeaDexRadarr(SeaDexArr):
                         self.stats["needs_action"].append(
                             {
                                 "title": self.current_title,
+                                "group": ", ".join(
+                                    dict.fromkeys(self.public_only_groups)
+                                ),
                                 "url": self.current_url,
                                 "reason": "private-only release; public_only on",
                             }
