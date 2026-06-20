@@ -8,7 +8,7 @@ ANIMETOSHO_FEED_URL = "https://animetosho.org/feed/json"
 RUTRACKER_MAGNET_ANNOUNCE = "http://bt2.t-ru.org/ann?magnet"
 
 
-def get_nyaa_url(url):
+def get_nyaa_url(url: str) -> str:
     """Get Nyaa torrent link from URL
 
     Args:
@@ -20,7 +20,7 @@ def get_nyaa_url(url):
     return parsed_url
 
 
-def get_animetosho_url(url):
+def get_animetosho_url(url: str) -> str | None:
     """Get AnimeTosho torrent link from URL
 
     Args:
@@ -60,9 +60,9 @@ def get_animetosho_url(url):
 
 
 def get_rutracker_url(
-    url,
-    torrent_hash,
-):
+    url: str,
+    torrent_hash: str,
+) -> str:
     """Get RuTracker torrent link from URL
 
     Args:

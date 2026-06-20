@@ -1,4 +1,5 @@
 import copy
+import logging
 import os
 import time
 from datetime import datetime, timedelta
@@ -69,7 +70,7 @@ NON_VIDEO_EXTENSIONS = {
 SONARR_PARSE_CACHE_TTL_DAYS = 30
 
 
-def get_tvdb_id(mapping):
+def get_tvdb_id(mapping: dict) -> int | None:
     """Get TVDB ID for a particular mapping
 
     Args:
@@ -79,12 +80,12 @@ def get_tvdb_id(mapping):
         int: TVDB ID
     """
 
-    tvdb_id = mapping.get("tvdb_id", None)
+    tvdb_id = mapping.get("tvdb_id")
 
     return tvdb_id
 
 
-def get_tvdb_season(mapping):
+def get_tvdb_season(mapping: dict) -> int:
     """Get TVDB season for a particular mapping
 
     Args:
@@ -99,7 +100,7 @@ def get_tvdb_season(mapping):
     return tvdb_season
 
 
-def get_overlapping_results(seadex_dict):
+def get_overlapping_results(seadex_dict: dict) -> bool:
     """See if SeaDex releases have overlapping episodes
 
     Args:
@@ -112,8 +113,8 @@ def get_overlapping_results(seadex_dict):
     # keeps it separate (so we never drop content we couldn't verify). Keep both
     # consistent if the coverage semantics change.
     episode_sets = {}
-    for rg in seadex_dict:
-        all_episodes = seadex_dict[rg].get("all_episodes", [])
+    for rg, rg_item in seadex_dict.items():
+        all_episodes = rg_item.get("all_episodes", [])
         episode_sets[rg] = get_episode_keys(all_episodes)
 
     release_groups = list(episode_sets.keys())
@@ -133,9 +134,9 @@ def get_overlapping_results(seadex_dict):
 
 
 def check_ep_by_anime_ids(
-    ep,
-    tvdb_season,
-):
+    ep: dict,
+    tvdb_season: int,
+) -> bool:
     """Check whether to include an episode by Anime ID style
 
     Args:
@@ -146,7 +147,7 @@ def check_ep_by_anime_ids(
     include_episode = True
 
     # First, check by season
-    season_number = ep.get("seasonNumber", None)
+    season_number = ep.get("seasonNumber")
 
     # If the TVDB season is -1, this is anything but specials
     if tvdb_season == -1 and season_number == 0:
@@ -160,9 +161,9 @@ def check_ep_by_anime_ids(
 
 
 def check_ep_by_anibridge(
-    ep,
-    tvdb_mappings,
-):
+    ep: dict,
+    tvdb_mappings: dict,
+) -> bool:
     """Check whether a Sonarr episode is covered by an AniBridge mapping.
 
     Args:
@@ -199,10 +200,10 @@ class SeaDexSonarr(SeaDexArr):
 
     def __init__(
         self,
-        config="config.yml",
-        cache="cache.json",
-        logger=None,
-    ):
+        config: str = "config.yml",
+        cache: str = "cache.json",
+        logger: logging.Logger | None = None,
+    ) -> None:
         """Sync Sonarr instance with SeaDex
 
         Args:
@@ -255,12 +256,12 @@ class SeaDexSonarr(SeaDexArr):
             )
             self.all_radarr_movies = self.radarr.get_all_radarr_movies()
 
-    def close(self):
+    def close(self) -> None:
         super().close()
         if self.radarr is not None:
             self.radarr.close()
 
-    def run(self, tvdb_id=None, dry_run=False):
+    def run(self, tvdb_id: int | None = None, dry_run: bool = False) -> bool:
         """Run the SeaDex Sonarr Syncer
 
         Args:
@@ -681,7 +682,7 @@ class SeaDexSonarr(SeaDexArr):
 
         return True
 
-    def get_all_sonarr_series(self):
+    def get_all_sonarr_series(self) -> list:
         """Get all series in Sonarr with AniList mapping info"""
 
         sonarr_series = []
@@ -723,7 +724,7 @@ class SeaDexSonarr(SeaDexArr):
 
         return sonarr_series
 
-    def get_sonarr_series(self, tvdb_id):
+    def get_sonarr_series(self, tvdb_id: int):
         """Get Sonarr series for a given TVDB ID
 
         Args:
@@ -739,10 +740,10 @@ class SeaDexSonarr(SeaDexArr):
 
     def get_ep_list(
         self,
-        sonarr_series_id,
-        al_id,
-        mapping,
-    ):
+        sonarr_series_id: int,
+        al_id: int,
+        mapping: dict,
+    ) -> list | None:
         """Get a list of relevant episodes for an AniList mapping
 
         Args:
@@ -759,7 +760,7 @@ class SeaDexSonarr(SeaDexArr):
             raise ValueError("AniList ID not defined!")
 
         # Get the AniDB ID
-        anidb_id = mapping.get("anidb_id", None)
+        anidb_id = mapping.get("anidb_id")
 
         # Check what kind of mode we're in here,
         # it's either AniBridge or Anime IDs
@@ -926,8 +927,8 @@ class SeaDexSonarr(SeaDexArr):
 
     def get_sonarr_release_dict(
         self,
-        ep_list,
-    ):
+        ep_list: list,
+    ) -> dict:
         """Get a dictionary of useful info for a series in Sonarr
 
         Args:
@@ -972,8 +973,8 @@ class SeaDexSonarr(SeaDexArr):
 
     def get_sonarr_parse(
         self,
-        filename,
-    ):
+        filename: str,
+    ) -> list:
         """Ask Sonarr to parse a single filename into season/episode numbers
 
         Only the season/episode mapping is returned - the file size is filled in
@@ -1026,7 +1027,7 @@ class SeaDexSonarr(SeaDexArr):
         return parsed
 
     @staticmethod
-    def _sonarr_parse_is_fresh(record):
+    def _sonarr_parse_is_fresh(record: dict | None) -> bool:
         """True if a persisted parse record has episodes and is within TTL
 
         Legacy list-form entries (pre-TTL, no timestamp) are treated as stale so
@@ -1048,8 +1049,8 @@ class SeaDexSonarr(SeaDexArr):
 
     def parse_episodes_from_seadex(
         self,
-        seadex_dict,
-    ):
+        seadex_dict: dict,
+    ) -> dict:
         """For files in a SeaDex release, parse this through Sonarr to get season/episode numbers
 
         This gets an overall episode list per-release group, and also episode lists per-torrent,

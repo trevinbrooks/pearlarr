@@ -1,3 +1,4 @@
+import logging
 import time
 
 import arrapi.exceptions
@@ -12,10 +13,10 @@ class SeaDexRadarr(SeaDexArr):
 
     def __init__(
         self,
-        config="config.yml",
-        cache="cache.json",
-        logger=None,
-    ):
+        config: str = "config.yml",
+        cache: str = "cache.json",
+        logger: logging.Logger | None = None,
+    ) -> None:
         """Sync Radarr instance with SeaDex
 
         Args:
@@ -49,7 +50,7 @@ class SeaDexRadarr(SeaDexArr):
             apikey=self.radarr_api_key,
         )
 
-    def run(self, tmdb_id=None, dry_run=False):
+    def run(self, tmdb_id: int | None = None, dry_run: bool = False) -> bool:
         """Run the SeaDex Radarr syncer
 
         Args:
@@ -362,7 +363,7 @@ class SeaDexRadarr(SeaDexArr):
 
         return True
 
-    def get_all_radarr_movies(self):
+    def get_all_radarr_movies(self) -> list:
         """Get all movies in Radarr that have an associated AniList ID"""
 
         radarr_movies = []
@@ -404,7 +405,7 @@ class SeaDexRadarr(SeaDexArr):
 
         return radarr_movies
 
-    def get_radarr_movie(self, tmdb_id=None, imdb_id=None):
+    def get_radarr_movie(self, tmdb_id: int | None = None, imdb_id: str | None = None):
         """Get Radarr movie for a given TMDB ID or IMDb ID
 
         Args:
@@ -421,8 +422,8 @@ class SeaDexRadarr(SeaDexArr):
 
     def get_radarr_release_dict(
         self,
-        radarr_movie_id,
-    ):
+        radarr_movie_id: int,
+    ) -> dict:
         """Get a dictionary of useful info for a Radarr movie
 
         Args:

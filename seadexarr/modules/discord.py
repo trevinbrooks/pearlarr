@@ -4,13 +4,13 @@ from discordwebhook import Discord
 
 
 def discord_push(
-    url,
-    arr_title,
-    al_title,
-    seadex_url,
-    fields,
-    thumb_url,
-):
+    url: str,
+    arr_title: str,
+    al_title: str,
+    seadex_url: str,
+    fields: list,
+    thumb_url: str | None,
+) -> bool:
     """Post a message to Discord
 
     Args:

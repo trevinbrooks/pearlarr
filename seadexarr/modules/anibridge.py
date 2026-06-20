@@ -16,10 +16,12 @@ Episode ranges are kept in TVDB/TMDB numbering: for "anilist:269" ->
 filtering in Sonarr needs.
 """
 
+import logging
 from collections import defaultdict
+from typing import Any
 
 
-def _parse_descriptor(descriptor):
+def _parse_descriptor(descriptor: str) -> tuple[str, str | None, str | None]:
     """Split a "provider:id[:scope]" descriptor into its parts.
 
     Args:
@@ -36,7 +38,7 @@ def _parse_descriptor(descriptor):
     return provider, pid, scope
 
 
-def _parse_season(scope):
+def _parse_season(scope: str | None) -> int | None:
     """Parse a show scope like "s2" into an integer season number.
 
     Args:
@@ -54,7 +56,7 @@ def _parse_season(scope):
         return None
 
 
-def _parse_ranges(target):
+def _parse_ranges(target: str) -> list[tuple[int, int | None]]:
     """Parse a target range string into a list of inclusive (start, end) tuples.
 
     Handles comma-separated non-contiguous segments and open-ended ranges and
@@ -99,7 +101,7 @@ def _parse_ranges(target):
     return ranges
 
 
-def _first(values):
+def _first(values: list) -> Any:
     """Return the first value of a sequence, or None when empty.
 
     Args:
@@ -120,7 +122,7 @@ class AniBridge:
         logger (logging.Logger | None): Optional logger for skipped descriptors
     """
 
-    def __init__(self, graph, logger=None):
+    def __init__(self, graph: dict, logger: logging.Logger | None = None) -> None:
 
         self.logger = logger
 
@@ -140,13 +142,13 @@ class AniBridge:
         self.all_tmdb_movie_ids = set(self.tmdb_movie_index)
         self.all_imdb_ids = set(self.imdb_index)
 
-    def __bool__(self):
+    def __bool__(self) -> bool:
         return bool(self.by_anilist)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.by_anilist)
 
-    def _parse(self, graph):
+    def _parse(self, graph: dict) -> None:
         """Build per-AniList records and reverse indexes from the graph.
 
         Args:
@@ -181,7 +183,7 @@ class AniBridge:
 
             self.by_anilist[anilist_id] = record
 
-    def _add_target(self, record, anilist_id, target, ep_map):
+    def _add_target(self, record: dict, anilist_id: int, target: str, ep_map: dict) -> None:
         """Fold a single target descriptor into an AniList record.
 
         Args:
@@ -241,7 +243,7 @@ class AniBridge:
                 record["imdb_ids"].append(pid)
                 self.imdb_index[pid].add(anilist_id)
 
-    def _as_int(self, value):
+    def _as_int(self, value: str | None) -> int | None:
         """Coerce a descriptor id to int, returning None on failure.
 
         Args:
@@ -255,11 +257,16 @@ class AniBridge:
         except (TypeError, ValueError):
             return None
 
-    def _debug(self, msg, *args):
+    def _debug(self, msg: str, *args: Any) -> None:
         if self.logger is not None:
             self.logger.debug(msg, *args)
 
-    def _consumer_entry(self, anilist_id, tvdb_id=None, tmdb_show_id=None):
+    def _consumer_entry(
+        self,
+        anilist_id: int,
+        tvdb_id: int | None = None,
+        tmdb_show_id: int | None = None,
+    ) -> dict:
         """Build the mapping dict consumed by the Sonarr/Radarr pipeline.
 
         The entry mirrors the field names the rest of the code already reads.
@@ -293,7 +300,7 @@ class AniBridge:
 
         return entry
 
-    def lookup_by_tvdb(self, tvdb_id):
+    def lookup_by_tvdb(self, tvdb_id: int) -> dict:
         """Return "{anilist_id: entry}" for AniList ids mapped to a tvdb id.
 
         Args:
@@ -305,7 +312,7 @@ class AniBridge:
             for anilist_id in self.tvdb_index.get(tvdb_id, ())
         }
 
-    def lookup_by_tmdb(self, tmdb_id, tmdb_type="movie"):
+    def lookup_by_tmdb(self, tmdb_id: int, tmdb_type: str = "movie") -> dict:
         """Return "{anilist_id: entry}" for AniList ids mapped to a tmdb id.
 
         Args:
@@ -324,7 +331,7 @@ class AniBridge:
             for anilist_id in self.tmdb_movie_index.get(tmdb_id, ())
         }
 
-    def lookup_by_imdb(self, imdb_id):
+    def lookup_by_imdb(self, imdb_id: str) -> dict:
         """Return "{anilist_id: entry}" for AniList ids mapped to an IMDb id.
 
         Args:

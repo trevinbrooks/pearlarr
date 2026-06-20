@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import time
+from collections.abc import Iterable
 from datetime import datetime, timedelta
 from hashlib import md5
 from itertools import compress
@@ -46,10 +47,10 @@ from .. import __version__
 
 
 def save_json(
-    data,
-    out_file,
-    sort_cache=False,
-):
+    data: dict,
+    out_file: str,
+    sort_cache: bool = False,
+) -> None:
     """Save JSON prettily
 
     Args:
@@ -61,7 +62,7 @@ def save_json(
     # Optionally sort this data
     if sort_cache:
 
-        anilist_entries = data.get("anilist_entries", None)
+        anilist_entries = data.get("anilist_entries")
         if anilist_entries is not None:
             for arr, arr_item in anilist_entries.items():
                 keys = list(arr_item.keys())
@@ -124,7 +125,7 @@ UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
 ANILIST_CACHE_TTL_DAYS = 7
 
 
-def normalize_rg(name):
+def normalize_rg(name: str | None) -> str | None:
     """Normalize a release group name for comparison
 
     Lower-cases and strips surrounding whitespace and dashes so that the same
@@ -141,9 +142,9 @@ def normalize_rg(name):
 
 
 def get_all_seadex_rgs_per_episode(
-    seadex_dict,
-    ep_list,
-):
+    seadex_dict: dict,
+    ep_list: list | None,
+) -> dict:
     """Get a list of all SeaDex releases per-episode
 
     Args:
@@ -201,7 +202,7 @@ def get_all_seadex_rgs_per_episode(
     return all_seadex_rgs_per_episode
 
 
-def get_episode_keys(all_episodes):
+def get_episode_keys(all_episodes: Iterable[dict]) -> set:
     """Build the set of (season, episode) keys an episode list covers
 
     Reduces a release's parsed episode list to the set of (season, episode)
@@ -215,7 +216,7 @@ def get_episode_keys(all_episodes):
     return {(ep.get("season"), ep.get("episode")) for ep in all_episodes}
 
 
-def get_same_files_groups(seadex_dict):
+def get_same_files_groups(seadex_dict: dict) -> list:
     """Group SeaDex release groups that cover exactly the same files
 
     Release groups are grouped by their parsed episode coverage: two groups are
@@ -236,8 +237,8 @@ def get_same_files_groups(seadex_dict):
     """
 
     grouped = {}
-    for rg in seadex_dict:
-        all_episodes = seadex_dict[rg].get("all_episodes", None)
+    for rg, rg_item in seadex_dict.items():
+        all_episodes = rg_item.get("all_episodes", None)
 
         if all_episodes is None:
             # No episode parsing for this Arr (e.g., Radarr): treat as one movie
@@ -255,7 +256,7 @@ def get_same_files_groups(seadex_dict):
     return list(grouped.values())
 
 
-def format_episode_ranges(episode_numbers):
+def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
     """Condense a set of episode numbers into a readable range string
 
     Contiguous runs are collapsed (e.g. [1, 2, 3] -> "E01-E03"), lone episodes
@@ -291,11 +292,11 @@ class SeaDexArr:
 
     def __init__(
         self,
-        arr="sonarr",
-        config="config.yml",
-        cache="cache.json",
-        logger=None,
-    ):
+        arr: str = "sonarr",
+        config: str = "config.yml",
+        cache: str = "cache.json",
+        logger: logging.Logger | None = None,
+    ) -> None:
         """Base class for SeaDexArr instances
 
         Args:
@@ -490,16 +491,16 @@ class SeaDexArr:
 
         self.log_line_length = 80
 
-    def close(self):
+    def close(self) -> None:
         """Close the shared HTTP session (release pooled connections)."""
         if self.session is not None:
             self.session.close()
 
     def verify_config(
         self,
-        config_path,
-        config_template_path,
-    ):
+        config_path: str,
+        config_template_path: str,
+    ) -> bool:
         """Verify all the keys in the current config file match those in the template
 
         Args:
@@ -530,7 +531,7 @@ class SeaDexArr:
 
         return True
 
-    def setup_cache(self):
+    def setup_cache(self) -> dict:
         """Set up the cache file"""
 
         cache = {}
@@ -549,7 +550,7 @@ class SeaDexArr:
 
         return cache
 
-    def check_cache_updates(self):
+    def check_cache_updates(self) -> bool:
         """Check if anything's been updated, and if so update in cache"""
 
         # Check if SeaDexArr version has updated
@@ -570,7 +571,7 @@ class SeaDexArr:
 
         return True
 
-    def get_anime_mappings(self):
+    def get_anime_mappings(self) -> dict:
         """Get the anime IDs file"""
 
         anime_mappings_file = os.path.join("anime_ids.json")
@@ -585,7 +586,7 @@ class SeaDexArr:
             return json.load(f)
 
 
-    def get_anidb_mappings(self):
+    def get_anidb_mappings(self) -> ElementTree.Element:
         """Get the AniDB mappings file"""
 
         anidb_mappings_file = os.path.join("anime-list-master.xml")
@@ -599,7 +600,7 @@ class SeaDexArr:
         return ElementTree.parse(anidb_mappings_file).getroot()
 
 
-    def get_anibridge_mappings(self):
+    def get_anibridge_mappings(self) -> AniBridge:
         """Download the anibridge-mappings graph and build an indexed view.
 
         Returns:
@@ -620,9 +621,9 @@ class SeaDexArr:
 
     def get_external_mappings(
         self,
-        f,
-        url,
-    ):
+        f: str,
+        url: str,
+    ) -> bool:
         """Get an external mapping file, respecting a cache time
 
         Args:
@@ -649,8 +650,8 @@ class SeaDexArr:
 
     def get_seadex_entry(
         self,
-        al_id,
-    ):
+        al_id: int,
+    ) -> EntryRecord | None:
         """Get SeaDex entry from AniList ID
 
         Args:
@@ -669,10 +670,10 @@ class SeaDexArr:
 
     def check_al_id_in_cache(
         self,
-        arr,
-        al_id,
-        seadex_entry,
-    ):
+        arr: str,
+        al_id: int,
+        seadex_entry: EntryRecord,
+    ) -> bool:
         """Check if timestamps in the cache match when SeaDex entry was last updated
 
         Args:
@@ -693,9 +694,9 @@ class SeaDexArr:
 
     def get_cached_name(
         self,
-        arr,
-        al_id,
-    ):
+        arr: str,
+        al_id: int,
+    ) -> str | None:
         """Get the AniList title stored in the cache for an entry, if any
 
         The title is written into the cache alongside the timestamp when an
@@ -714,10 +715,10 @@ class SeaDexArr:
 
     def get_cached_field(
         self,
-        arr,
-        al_id,
-        field,
-    ):
+        arr: str,
+        al_id: int,
+        field: str,
+    ) -> Any:
         """Read a single stored field from an entry's cache record, if present
 
         Args:
@@ -738,12 +739,12 @@ class SeaDexArr:
 
     def get_anilist_ids(
         self,
-        tvdb_id=None,
-        tmdb_id=None,
-        imdb_id=None,
-        tmdb_type="movie",
-        log_ignored=True,
-    ):
+        tvdb_id: int | None = None,
+        tmdb_id: int | None = None,
+        imdb_id: str | None = None,
+        tmdb_type: str = "movie",
+        log_ignored: bool = True,
+    ) -> dict:
         """Get a list of entries that match on TVDB ID
 
         Args:
@@ -821,7 +822,7 @@ class SeaDexArr:
         return dict(anilist_mappings)
 
     @staticmethod
-    def _anilist_meta_is_fresh(record):
+    def _anilist_meta_is_fresh(record: dict | None) -> bool:
         """True if a persisted AniList record has a payload and is within TTL
 
         Shared by a load (which ids to seed) and save (which to keep vs. refresh),
@@ -838,7 +839,7 @@ class SeaDexArr:
             return False
         return stamp >= datetime.now() - timedelta(days=ANILIST_CACHE_TTL_DAYS)
 
-    def load_anilist_cache(self):
+    def load_anilist_cache(self) -> None:
         """Seed the in-memory AniList cache from the persisted store
 
         AniList metadata (title / format / episodes / cover) is effectively
@@ -868,7 +869,7 @@ class SeaDexArr:
                 indent_string(f"Loaded {loaded} AniList entries from cache"),
             )
 
-    def save_anilist_cache(self):
+    def save_anilist_cache(self) -> None:
         """Persist any newly seen AniList responses back to the on-disk cache
 
         An entry that's already stored and still fresh keeps its original
@@ -894,7 +895,7 @@ class SeaDexArr:
         if written:
             self.save_cache()
 
-    def prefetch_anilist(self, al_ids):
+    def prefetch_anilist(self, al_ids: Iterable[int]) -> None:
         """Warm the AniList cache for a set of ids in batched requests
 
         Fetches everything still missing from the cache in ANILIST_BATCH_SIZE-id
@@ -936,12 +937,12 @@ class SeaDexArr:
 
     def get_mappings_from_anime_mappings(
         self,
-        tvdb_id=None,
-        tmdb_id=None,
-        imdb_id=None,
-        tmdb_type="movie",
-        anilist_mappings=None,
-    ):
+        tvdb_id: int | None = None,
+        tmdb_id: int | None = None,
+        imdb_id: str | None = None,
+        tmdb_type: str = "movie",
+        anilist_mappings: dict | None = None,
+    ) -> dict:
         """Get mappings from the Anime ID mappings
 
         Args:
@@ -1002,12 +1003,12 @@ class SeaDexArr:
 
     def get_mappings_from_anibridge_mappings(
         self,
-        tvdb_id=None,
-        tmdb_id=None,
-        imdb_id=None,
-        tmdb_type="movie",
-        anilist_mappings=None,
-    ):
+        tvdb_id: int | None = None,
+        tmdb_id: int | None = None,
+        imdb_id: str | None = None,
+        tmdb_type: str = "movie",
+        anilist_mappings: dict | None = None,
+    ) -> dict:
         """Get mappings from the AniBridge mappings
 
         Args:
@@ -1039,7 +1040,7 @@ class SeaDexArr:
 
         # Add any AniList IDs the indexes resolve for the supplied ids, without
         # clobbering matches an earlier id already produced (tvdb > tmdb > imdb).
-        def merge(found):
+        def merge(found: dict) -> None:
             for anilist_id, entry in found.items():
                 if anilist_id not in anilist_mappings:
                     anilist_mappings[anilist_id] = entry
@@ -1055,8 +1056,8 @@ class SeaDexArr:
 
     def get_anilist_title(
         self,
-        al_id,
-    ):
+        al_id: int,
+    ) -> str:
         """Resolve and remember the AniList title for an ID (no logging)
 
         Fetches the title (via cache or a live AniList query) and stores it as
@@ -1086,7 +1087,7 @@ class SeaDexArr:
     def get_seadex_dict(
         self,
         sd_entry: EntryRecord,
-    ):
+    ) -> dict:
         """Parse and filter SeaDex request
 
         Args:
@@ -1167,9 +1168,9 @@ class SeaDexArr:
 
     def filter_seadex_interactive(
         self,
-        seadex_dict,
-        sd_entry,
-    ):
+        seadex_dict: dict,
+        sd_entry: EntryRecord,
+    ) -> dict:
         """If multiple matches are found, let the user filter them interactively
 
         Args:
@@ -1228,11 +1229,11 @@ class SeaDexArr:
 
     def get_seadex_fields(
         self,
-        arr,
-        al_id,
-        release_group,
-        seadex_dict,
-    ):
+        arr: str,
+        al_id: int,
+        release_group: list | str | None,
+        seadex_dict: dict,
+    ) -> tuple[list, str | None]:
         """Get fields for Discord post
 
         Args:
@@ -1301,12 +1302,12 @@ class SeaDexArr:
 
     def filter_seadex_downloads(
         self,
-        al_id,
-        seadex_dict,
-        arr,
-        arr_release_dict,
-        ep_list=None,
-    ):
+        al_id: int,
+        seadex_dict: dict,
+        arr: str,
+        arr_release_dict: dict,
+        ep_list: list | None = None,
+    ) -> tuple[list, dict]:
         """Flip the switch on whether we're downloading this torrent or not
 
         Args:
@@ -1347,10 +1348,10 @@ class SeaDexArr:
 
     def filter_by_torrent_hash(
         self,
-        al_id,
-        seadex_dict,
-        arr,
-    ):
+        al_id: int,
+        seadex_dict: dict,
+        arr: str,
+    ) -> tuple[list, dict]:
         """Select downloads if the torrent hash is not already in the cache
 
         Multiple "best" releases are all grabbed, except where several cover
@@ -1411,11 +1412,11 @@ class SeaDexArr:
 
     def filter_by_release_group(
         self,
-        seadex_dict,
-        arr,
-        arr_release_dict,
-        ep_list=None,
-    ):
+        seadex_dict: dict,
+        arr: str,
+        arr_release_dict: dict,
+        ep_list: list | None = None,
+    ) -> tuple[list, dict]:
         """Filter torrents by release group
 
         This is either an episode-by-episode for the Sonarr
@@ -1647,9 +1648,9 @@ class SeaDexArr:
 
     def reduce_overlapping_downloads(
         self,
-        seadex_dict,
-        arr,
-    ):
+        seadex_dict: dict,
+        arr: str,
+    ) -> None:
         """Reduce overlapping flagged downloads down to a single release group
 
         Where multiple preferred release groups cover the same files and the
@@ -1672,17 +1673,17 @@ class SeaDexArr:
         if self.interactive:
             return
 
-        def is_flagged(rg_item):
+        def is_flagged(rg_item: dict) -> bool:
             return any(
                 u.get("download", False) for u in rg_item.get("urls", {}).values()
             )
 
-        def is_public_group(rg_item):
+        def is_public_group(rg_item: dict) -> bool:
             return any(
                 u.get("is_public", False) for u in rg_item.get("urls", {}).values()
             )
 
-        def unflag(rg_item):
+        def unflag(rg_item: dict) -> None:
             for u in rg_item.get("urls", {}).values():
                 u["download"] = False
 
@@ -1735,7 +1736,7 @@ class SeaDexArr:
                 unflag(seadex_dict[rg])
 
     @staticmethod
-    def get_any_to_download(seadex_dict):
+    def get_any_to_download(seadex_dict: dict) -> bool:
         """Check if any torrents are marked as to download
 
         Args:
@@ -1758,7 +1759,7 @@ class SeaDexArr:
         return any_to_download
 
     @staticmethod
-    def format_episode_coverage(episodes):
+    def format_episode_coverage(episodes: list) -> list | None:
         """Summarize the Sonarr season/episode coverage of a torrent, per season
 
         Returns a list of (season_label, episode_ranges) tuples, one per season
@@ -1794,7 +1795,7 @@ class SeaDexArr:
             for season in sorted(episodes_by_season)
         ]
 
-    def coverage_string(self, episodes):
+    def coverage_string(self, episodes: list) -> str:
         """One-line season/episode coverage, e.g. "S04 E01-E12" or
         "S00 E10, S02 E01-E12". Returns "" when there's no parsed episode info
         (e.g., a Radarr movie), so callers can treat it as "URL only".
@@ -1809,7 +1810,7 @@ class SeaDexArr:
         return ", ".join(f"{label} {ranges}" for label, ranges in coverage)
 
     @staticmethod
-    def episodes_from_ep_list(ep_list, missing_only=False):
+    def episodes_from_ep_list(ep_list: list | None, missing_only: bool = False) -> list:
         """Convert a Sonarr ep_list into {"season","episode"} coverage dicts
 
         Sonarr episodes carry "seasonNumber"/"episodeNumber"; the coverage
@@ -1835,9 +1836,9 @@ class SeaDexArr:
 
     def add_torrent(
         self,
-        torrent_dict,
-        torrent_client="qbit",
-    ):
+        torrent_dict: dict,
+        torrent_client: str = "qbit",
+    ) -> tuple[int, list]:
         """Add torrent(s) to a torrent client
 
         The per-release outcome lines (added / kept) are NOT logged here; this
@@ -1971,10 +1972,10 @@ class SeaDexArr:
 
     def add_torrent_to_qbit(
         self,
-        url,
-        torrent_url,
-        torrent_hash,
-    ):
+        url: str,
+        torrent_url: str,
+        torrent_hash: str | None,
+    ) -> tuple[str, str | None]:
         """Add a torrent to qbittorrent
 
         Args:
@@ -2028,12 +2029,12 @@ class SeaDexArr:
 
         return "torrent_added", torrent_name
 
-    def _is_preview(self):
+    def _is_preview(self) -> bool:
         """A run is a no-op preview when an explicit dry run was requested OR
         qBittorrent is not configured (nothing can actually be grabbed)."""
         return self.dry_run or self.qbit is None
 
-    def save_cache(self):
+    def save_cache(self) -> None:
         """Persist the in-memory cache to disk
 
         Skipped during a preview so a preview never writes state, mirroring
@@ -2047,7 +2048,7 @@ class SeaDexArr:
                 sort_cache=True,
             )
 
-    def update_cache(self, arr, al_id, cache_details=None):
+    def update_cache(self, arr: str, al_id: int, cache_details: dict | None = None) -> bool:
         """Update cache with useful info
 
         Args:
@@ -2082,7 +2083,7 @@ class SeaDexArr:
 
         return True
 
-    def _fresh_stats(self):
+    def _fresh_stats(self) -> dict:
         """Build an empty per-run stats tally for the end-of-run summary"""
 
         return {
@@ -2097,7 +2098,7 @@ class SeaDexArr:
             "unmonitored": 0,
         }
 
-    def reset_run_stats(self):
+    def reset_run_stats(self) -> bool:
         """Reset the per-run tally and start the run clock
 
         Warning/error counts are read from the logger-level counter by diffing
@@ -2115,16 +2116,16 @@ class SeaDexArr:
 
     def log_kv(
         self,
-        key,
-        value,
-        value_style=None,
-        level=logging.INFO,
-        indent=1,
-        key_width=KEY_WIDTH,
-        sep=" :",
-        tail=None,
-        tail_style="yellow",
-    ):
+        key: str,
+        value: Any,
+        value_style: str | None = None,
+        level: int = logging.INFO,
+        indent: int = 1,
+        key_width: int = KEY_WIDTH,
+        sep: str = " :",
+        tail: str | None = None,
+        tail_style: str = "yellow",
+    ) -> bool:
         """Log an aligned "key : value" (or gutter "key value") detail line
 
         The file log stores the plain kv_string text; on the console the label
@@ -2166,13 +2167,13 @@ class SeaDexArr:
 
     def log_detail(
         self,
-        label,
-        value,
-        value_style=None,
-        level=logging.INFO,
-        tail=None,
-        tail_style="yellow",
-    ):
+        label: str,
+        value: Any,
+        value_style: str | None = None,
+        level: int = logging.INFO,
+        tail: str | None = None,
+        tail_style: str = "yellow",
+    ) -> bool:
         """Log an entry-detail line: dim gutter label, value at the title column
 
         The colon-less "<label> <value>" form is used for everything indented under
@@ -2202,14 +2203,14 @@ class SeaDexArr:
             tail_style=tail_style,
         )
 
-    def log_blank(self):
+    def log_blank(self) -> bool:
         """Emit a blank line to visually separate entries / item blocks"""
 
         self.logger.info("")
         return True
 
     @staticmethod
-    def _format_elapsed(seconds):
+    def _format_elapsed(seconds: float) -> str:
         """Format an elapsed number of seconds as e.g. "8s", "14m 03s" or "1h 02m 03s" """
 
         total = int(seconds)
@@ -2221,7 +2222,7 @@ class SeaDexArr:
             return f"{minutes}m {seconds:02d}s"
         return f"{seconds}s"
 
-    def log_run_summary(self, arr):
+    def log_run_summary(self, arr: str) -> bool:
         """Log the end-of-run scoreboard for an Arr run
 
         Args:
@@ -2239,7 +2240,7 @@ class SeaDexArr:
         now_counts = counter.snapshot() if counter else {}
         start_counts = self._log_counts_at_start
 
-        def _delta(level):
+        def _delta(level: int) -> int:
             return now_counts.get(level, 0) - start_counts.get(level, 0)
 
         n_warnings = _delta(logging.WARNING)
@@ -2271,14 +2272,14 @@ class SeaDexArr:
         # "needs action" (12) is the widest key here, vs. "missing episodes" (16)
         # in entry details. A heavy rule separates the two blocks, so the differing
         # colon columns never sit adjacent. Wrap log_kv to fix the width at 12.
-        def summary_kv(key, value, **kwargs):
+        def summary_kv(key: str, value: Any, **kwargs: Any) -> bool:
             return self.log_kv(key, value, key_width=12, **kwargs)
 
         # A title + sublines block, stacked: the variable-length title hangs at
         # indent 2, and each fixed subline (facts, then the URL) sits at indent 3
         # beneath it, so title length can never push them out of the column. Titles
         # are truncated so they can't wrap onto a second line and break alignment.
-        def stacked_detail(title_text, lines, style):
+        def stacked_detail(title_text: str | None, lines: list, style: str) -> None:
             t = title_text or "(unknown title)"
             if len(t) > 38:
                 t = t[:37] + "…"
@@ -2388,9 +2389,9 @@ class SeaDexArr:
 
     def log_arr_start(
         self,
-        arr,
-        n_items,
-    ):
+        arr: str,
+        n_items: int,
+    ) -> bool:
         """Produce a log message for the start of the run
 
         Args:
@@ -2420,10 +2421,10 @@ class SeaDexArr:
 
     def log_entry_status(
         self,
-        state,
-        label,
-        style="grey50",
-    ):
+        state: str,
+        label: str,
+        style: str | None = "grey50",
+    ) -> bool:
         """Log a one-line entry status as a fixed-column ledger row
 
         Renders "<state> <label>" at indent level 1, with state padded to a fixed
@@ -2453,11 +2454,11 @@ class SeaDexArr:
 
     def log_entry_coverage(
         self,
-        coverage,
-        url,
-        style="grey50",
-        incomplete=False,
-    ):
+        coverage: str | None,
+        url: str | None,
+        style: str | None = "grey50",
+        incomplete: bool = False,
+    ) -> bool:
         """Log the season/episode coverage and SeaDex URL beneath an entry
 
         Two dim detail lines whose values sit directly beneath the entry's title
@@ -2499,9 +2500,9 @@ class SeaDexArr:
 
     def log_arr_item_unmonitored(
         self,
-        arr,
-        item_title,
-    ):
+        arr: str,
+        item_title: str,
+    ) -> bool:
         """Produce a log message if skipping because the item is unmonitored
 
         Args:
@@ -2520,11 +2521,11 @@ class SeaDexArr:
 
     def log_arr_item_start(
         self,
-        arr,
-        item_title,
-        n_item,
-        n_items,
-    ):
+        arr: str,
+        item_title: str,
+        n_item: int,
+        n_items: int,
+    ) -> bool:
         """Produce a log message for the start of Arr item
 
         Args:
@@ -2547,8 +2548,8 @@ class SeaDexArr:
 
     def log_no_anilist_mappings(
         self,
-        title,
-    ):
+        title: str,
+    ) -> bool:
         """Produce a log message for the case where no AniList mappings are found
 
         Args:
@@ -2563,8 +2564,8 @@ class SeaDexArr:
 
     def log_ignored_anilist_id(
         self,
-        al_id,
-    ):
+        al_id: int,
+    ) -> bool:
         """Produce a log message when an AniList ID is skipped via the ignore list
 
         Args:
@@ -2576,7 +2577,7 @@ class SeaDexArr:
             f"AniList #{al_id}",
         )
 
-    def log_no_anilist_id(self):
+    def log_no_anilist_id(self) -> bool:
         """Produce a log message for the case where no AniList ID is found"""
 
         self.logger.debug(
@@ -2592,8 +2593,8 @@ class SeaDexArr:
 
     def log_no_sd_entry(
         self,
-        al_id,
-    ):
+        al_id: int,
+    ) -> bool:
         """Produce a log message if no SeaDex entry is found
 
         Args:
@@ -2623,10 +2624,10 @@ class SeaDexArr:
 
     def log_al_title(
         self,
-        anilist_title,
-        sd_entry,
-        coverage=None,
-    ):
+        anilist_title: str,
+        sd_entry: EntryRecord,
+        coverage: str | None = None,
+    ) -> bool:
         """Log the active-entry header: a "checking" row and its coverage/URL line
 
         The entry being evaluated is the focal line of the title block, so it sits
@@ -2657,10 +2658,10 @@ class SeaDexArr:
 
     def log_cached_entry(
         self,
-        arr,
-        al_id,
-        state="unchanged",
-    ):
+        arr: str,
+        al_id: int,
+        state: str = "unchanged",
+    ) -> bool:
         """Log a cached entry as a ledger row plus its coverage/URL line
 
         Cached entries have been unchanged since the last run, so they collapse to a dim
@@ -2698,7 +2699,7 @@ class SeaDexArr:
 
         return True
 
-    def log_no_seadex_releases(self):
+    def log_no_seadex_releases(self) -> bool:
         """Log if no suitable SeaDex releases are found"""
 
         self.stats["no_releases"] += 1
@@ -2712,10 +2713,10 @@ class SeaDexArr:
 
     def log_seadex_action(
         self,
-        seadex_dict,
-        results,
-        dry_run=False,
-    ):
+        seadex_dict: dict,
+        results: list,
+        dry_run: bool = False,
+    ) -> bool:
         """Log the action block for a title that differs from SeaDex's pick
 
         Called after the adding has run, so the status reflects what actually
@@ -2778,7 +2779,7 @@ class SeaDexArr:
 
         return True
 
-    def log_max_torrents_added(self):
+    def log_max_torrents_added(self) -> bool:
         """Produce a log message about hitting the maximum number of torrents added"""
 
         self.logger.info(

@@ -23,7 +23,7 @@ seadexarr_cli.add_typer(seadexarr_cache)
 
 # Default command, schedule run
 @seadexarr_cli.callback(invoke_without_command=True)
-def main(ctx: typer.Context):
+def main(ctx: typer.Context) -> bool:
     """Run SeaDexArr in scheduled mode
 
     Will run both Radarr and Sonarr modules
@@ -37,7 +37,7 @@ def main(ctx: typer.Context):
 
 
 @seadexarr_run.command("scheduled")
-def run_scheduled():
+def run_scheduled() -> None:
     """Run SeaDexArr in scheduled mode
 
     Will run both Radarr and Sonarr modules
@@ -106,7 +106,7 @@ def run_single(
     movie_id: Optional[int] = None,
     series_id: Optional[int] = None,
     dry_run: bool = False,
-):
+) -> bool:
     """Do a single SeaDexArr run
 
     Args:
@@ -166,7 +166,7 @@ def run_single(
 
 # Config commands
 @seadexarr_config.command("init")
-def config_init():
+def config_init() -> bool:
     """Initialise a configuration file.
 
     If not running in Docker, will create a config.yml in the current working
@@ -186,7 +186,7 @@ def config_init():
 
 # Cache commands
 @seadexarr_cache.command("backup")
-def cache_backup():
+def cache_backup() -> bool:
     """Backup cache file.
 
     Will rename cache to cache.backup.json
@@ -202,7 +202,7 @@ def cache_backup():
 
 
 @seadexarr_cache.command("restore")
-def cache_restore():
+def cache_restore() -> bool:
     """Restore cache file.
 
     Will rename cache.backup.json to cache.json
@@ -221,7 +221,7 @@ def cache_restore():
 
 
 @seadexarr_cache.command("remove")
-def cache_remove():
+def cache_remove() -> bool:
     """Remove cache file.
 
     Will remove cache.json

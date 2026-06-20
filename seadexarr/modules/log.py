@@ -3,6 +3,7 @@ import os
 import shutil
 import sys
 from logging.handlers import RotatingFileHandler
+from typing import Any
 
 from rich.console import Console
 from rich.rule import Rule
@@ -61,12 +62,12 @@ class RichConsoleHandler(logging.Handler):
     # than a full-screen wall of frames.
     MAX_TRACEBACK_FRAMES = 10
 
-    def __init__(self, console, level=logging.NOTSET):
+    def __init__(self, console: Console, level: int = logging.NOTSET) -> None:
         super().__init__(level=level)
         self.console = console
 
     @staticmethod
-    def _render_kv(kv):
+    def _render_kv(kv: dict) -> Text:
         """Build a styled "key : value" (or gutter "key value") line from a kv dict.
 
         The leading "<indent><key><sep>" segment comes from the shared _kv_prefix
@@ -92,7 +93,7 @@ class RichConsoleHandler(logging.Handler):
             line.append(Text(str(tail), style=kv.get("tail_style") or "yellow"))
         return line
 
-    def emit(self, record):
+    def emit(self, record: logging.LogRecord) -> None:
         try:
             # A titled section: a full-width rule, then the title text
             # LEFT-ALIGNED on the next line (user directive). A heavy rule
@@ -204,25 +205,25 @@ class LogCounter(logging.Filter):
     those counts without having to instrument each call site.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.counts = {}
 
-    def filter(self, record):
+    def filter(self, record: logging.LogRecord) -> bool:
         self.counts[record.levelno] = self.counts.get(record.levelno, 0) + 1
         return True
 
-    def snapshot(self):
+    def snapshot(self) -> dict:
         """Return a copy of the current per-level counts"""
         return dict(self.counts)
 
 
 def setup_logger(
-    log_level,
-    log_dir="logs",
-    log_name="SeaDexArr",
-    max_logs=9,
-):
+    log_level: str,
+    log_dir: str = "logs",
+    log_name: str = "SeaDexArr",
+    max_logs: int = 9,
+) -> logging.Logger:
     """
     Set up the logger.
 
@@ -365,7 +366,7 @@ DETAIL_KEY_WIDTH = (
 )
 
 
-def entry_string(state, label):
+def entry_string(state: str, label: str) -> str:
     """Format the body of an entry-ledger line: "<state> <label>".
 
     state is padded to STATE_WIDTH so the label lines up across rows regardless
@@ -377,7 +378,7 @@ def entry_string(state, label):
     return f"{state.ljust(STATE_WIDTH)} {label}"
 
 
-def _kv_prefix(indent, key, key_width, sep=" :"):
+def _kv_prefix(indent: int, key: str, key_width: int, sep: str = " :") -> str:
     """Build the shared "<indent><key><sep>" leading segment for a kv line.
 
     Single source of truth so the console handler (_render_kv) and the file
@@ -390,10 +391,10 @@ def _kv_prefix(indent, key, key_width, sep=" :"):
 
 
 def rule_string(
-    rule_char="-",
-    total_length=80,
-    str_prefix="",
-):
+    rule_char: str = "-",
+    total_length: int = 80,
+    str_prefix: str = "",
+) -> str:
     """Draw a full-width separator rule for the (flat-style) logger
 
     Args:
@@ -406,10 +407,10 @@ def rule_string(
 
 
 def indent_string(
-    text,
-    level=1,
-    str_prefix="",
-):
+    text: str,
+    level: int = 1,
+    str_prefix: str = "",
+) -> str:
     """Format an indented detail line for the (flat-style) logger
 
     Args:
@@ -424,22 +425,22 @@ def indent_string(
 # Deprecated aliases kept during the migration to indent_string. Both
 # historically accepted (and ignored) a total_length argument; neither ever
 # centred anything. Prefer indent_string in new code.
-def centred_string(str_to_centre, str_prefix=""):
+def centred_string(str_to_centre: str, str_prefix: str = "") -> str:
     return indent_string(str_to_centre, str_prefix=str_prefix)
 
 
-def left_aligned_string(str_to_align, str_prefix=""):
+def left_aligned_string(str_to_align: str, str_prefix: str = "") -> str:
     return indent_string(str_to_align, str_prefix=str_prefix)
 
 
 def kv_string(
-    key,
-    value,
-    key_width=KEY_WIDTH,
-    indent=1,
-    str_prefix="",
-    sep=" :",
-):
+    key: str,
+    value: Any,
+    key_width: int = KEY_WIDTH,
+    indent: int = 1,
+    str_prefix: str = "",
+    sep: str = " :",
+) -> str:
     """Format an aligned "key : value" detail line for flat-style output
 
     Args:
@@ -464,7 +465,7 @@ def kv_string(
     return f"{line} {value}"
 
 
-def pluralize(n, singular, plural=None):
+def pluralize(n: int, singular: str, plural: str | None = None) -> str:
     """Pick the singular or plural form of a word based on a count
 
     Args:
@@ -478,7 +479,7 @@ def pluralize(n, singular, plural=None):
     return plural if plural is not None else f"{singular}s"
 
 
-def count_noun(n, singular, plural=None):
+def count_noun(n: int, singular: str, plural: str | None = None) -> str:
     """Format a count with its correctly pluralised noun, e.g. "3 movies"
 
     Args:

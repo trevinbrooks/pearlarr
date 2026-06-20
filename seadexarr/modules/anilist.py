@@ -62,7 +62,7 @@ query ($ids: [Int]) {
 """
 
 
-def _errors_are_retryable(body):
+def _errors_are_retryable(body: dict | None) -> bool:
     """True if a GraphQL body carries a throttle/rate-limit or 5xx-style error
 
     AniList sometimes soft-throttles with HTTP 200 and a non-empty "errors"
@@ -95,7 +95,7 @@ def _errors_are_retryable(body):
     return False
 
 
-def _post_with_retry(query, variables):
+def _post_with_retry(query: str, variables: dict) -> dict:
     """POST a GraphQL query to AniList, retrying politely on rate-limits / 5xx
 
     On a rate-limit (HTTP 429) or a transient 5xx, AniList returns
@@ -154,7 +154,7 @@ def _post_with_retry(query, variables):
     return {}
 
 
-def get_query(al_id):
+def get_query(al_id: int) -> dict:
     """Fetch one AniList Media by id (see _post_with_retry for the retry policy)
 
     Args:
@@ -164,7 +164,7 @@ def get_query(al_id):
     return _post_with_retry(QUERY, {"id": al_id})
 
 
-def get_query_batch(al_ids):
+def get_query_batch(al_ids: list[int]) -> dict:
     """Fetch up to ANILIST_BATCH_SIZE AniList Media in a single request via id_in
 
     Returns "{id: {"data": {"Media": {...}}}}" mirroring the single-id shape,
@@ -188,9 +188,9 @@ def get_query_batch(al_ids):
 
 
 def _get_media(
-    al_id,
-    al_cache,
-):
+    al_id: int,
+    al_cache: dict | None,
+) -> tuple[dict, dict]:
     """Fetch the AniList Media object for an ID, caching successful lookups
 
     Centralizes the cache lookup and the null-safe extraction the public helpers
@@ -231,9 +231,9 @@ def _get_media(
 
 
 def get_anilist_n_eps(
-    al_id,
-    al_cache=None,
-):
+    al_id: int,
+    al_cache: dict | None = None,
+) -> tuple[int | None, dict]:
     """Query AniList to get the number of episodes for anime.
 
     Args:
@@ -248,9 +248,9 @@ def get_anilist_n_eps(
 
 
 def get_anilist_title(
-    al_id,
-    al_cache=None,
-):
+    al_id: int,
+    al_cache: dict | None = None,
+) -> tuple[str | None, dict]:
     """Query AniList to get a title for anime.
 
     Args:
@@ -268,9 +268,9 @@ def get_anilist_title(
 
 
 def get_anilist_thumb(
-    al_id,
-    al_cache=None,
-):
+    al_id: int,
+    al_cache: dict | None = None,
+) -> tuple[str | None, dict]:
     """Query AniList to get thumbnail URL for anime.
 
     Args:
@@ -285,9 +285,9 @@ def get_anilist_thumb(
 
 
 def get_anilist_format(
-    al_id,
-    al_cache=None,
-):
+    al_id: int,
+    al_cache: dict | None = None,
+) -> tuple[str | None, dict]:
     """Query AniList to get format for anime.
 
     Args:
