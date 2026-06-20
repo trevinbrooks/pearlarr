@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timedelta
 from hashlib import md5
 from itertools import compress
+from typing import Any
 from urllib.request import urlretrieve
 from xml.etree import ElementTree
 
@@ -78,7 +79,7 @@ def save_json(
 
 ANIME_IDS_URL = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/refs/heads/master/anime_ids.json"
 ANIDB_MAPPINGS_URL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/refs/heads/master/anime-list-master.xml"
-ANIBRIDGE_MAPPINGS_URL = "https://github.com/anibridge/anibridge-mappings/releases/download/v3/mappings.json"
+ANIBRIDGE_MAPPINGS_URL = "https://github.com/eliasbenb/PlexAniBridge-Mappings/raw/refs/heads/v2/mappings.json"
 
 ALLOWED_ARRS = [
     "radarr",
@@ -104,7 +105,7 @@ PRIVATE_TRACKERS = {
         "BroadcastTheNet",
         "HDBits",
         "Blutopia",
-        "Aither"
+        "Aither",
     ]
 }
 
@@ -153,7 +154,7 @@ def get_all_seadex_rgs_per_episode(
             seadex_rg_normalized = normalize_rg(seadex_rg)
 
             seadex_urls = seadex_rg_item.get("urls", {})
-            for url, url_item in seadex_urls.items():
+            for _url, url_item in seadex_urls.items():
 
                 seadex_episodes = url_item.get("episodes", [])
 
@@ -176,7 +177,7 @@ def get_all_seadex_rgs_per_episode(
 
                         # Do we have a match?
                         if sonarr_ep_season == seadex_ep.get(
-                            "season", 888
+                            "season", 888,
                         ) and sonarr_ep_episode == seadex_ep.get("episode", 888):
 
                             season_key = (
@@ -305,14 +306,14 @@ class SeaDexArr:
         # working directory
         f_path = copy.deepcopy(__file__)
         config_template_path = os.path.join(
-            os.path.dirname(f_path), "config_sample.yml"
+            os.path.dirname(f_path), "config_sample.yml",
         )
         if not os.path.exists(config):
             shutil.copy(config_template_path, config)
             raise FileNotFoundError(f"{config} not found. Copying template")
 
         self.config_file = config
-        with open(config, "r") as f:
+        with open(config) as f:
             self.config = yaml.safe_load(f)
 
         # Check the config has all the same keys as the sample, if not add 'em in
@@ -328,12 +329,12 @@ class SeaDexArr:
         self.session = requests.Session()
 
         # qbit
-        self.qbit = None
+        self.qbit: qbittorrentapi.Client
         qbit_info = self.config.get("qbit_info", None)
 
         # Check we've got everything we need
         qbit_info_provided = all(
-            [qbit_info.get(key, None) is not None for key in qbit_info]
+            qbit_info.get(key, None) is not None for key in qbit_info
         )
         if qbit_info_provided:
             qbit = qbittorrentapi.Client(**qbit_info)
@@ -344,17 +345,17 @@ class SeaDexArr:
             except qbittorrentapi.LoginFailed:
                 raise ValueError(
                     "qBittorrent login failed - check the qbit_info host and "
-                    "credentials in your config"
+                    "credentials in your config",
                 )
 
             self.qbit = qbit
 
         self.ignore_seadex_update_times = self.config.get(
-            "ignore_seadex_update_times", False
+            "ignore_seadex_update_times", False,
         )
 
         self.use_torrent_hash_to_filter = self.config.get(
-            "use_torrent_hash_to_filter", False
+            "use_torrent_hash_to_filter", False,
         )
 
         # Hooks between torrents and Arts, and torrent number bookkeeping
@@ -466,11 +467,11 @@ class SeaDexArr:
         # Load in cache if it exists. Else create
         self.cache_file = cache
         if os.path.exists(cache):
-            with open(cache, "r") as f:
+            with open(cache) as f:
                 cache = json.load(f)
         else:
             cache = self.setup_cache()
-        self.cache = cache
+        self.cache: dict[str, Any] = cache
 
         # Check the package or config hasn't updated, else
         # edit the cache description
@@ -495,16 +496,16 @@ class SeaDexArr:
             config_template_path (str): Path to config template
         """
 
-        with open(config_template_path, "r") as f:
+        with open(config_template_path) as f:
             config_template = YAML().load(f)
 
         # If the keys aren't in the right order, then
         # use the template as a base and inherit from
         # the main config
-        if not list(self.config.keys()) == list(config_template.keys()):
+        if list(self.config.keys()) != list(config_template.keys()):
 
             new_config = copy.deepcopy(config_template)
-            for key in config_template.keys():
+            for key in config_template:
                 if key in self.config:
                     new_config[key] = copy.deepcopy(self.config[key])
                 else:
@@ -569,10 +570,9 @@ class SeaDexArr:
             url=ANIME_IDS_URL,
         )
 
-        with open(anime_mappings_file, "r") as f:
-            anime_mappings = json.load(f)
+        with open(anime_mappings_file) as f:
+            return json.load(f)
 
-        return anime_mappings
 
     def get_anidb_mappings(self):
         """Get the AniDB mappings file"""
@@ -585,9 +585,8 @@ class SeaDexArr:
             url=ANIDB_MAPPINGS_URL,
         )
 
-        anidb_mappings = ElementTree.parse(anidb_mappings_file).getroot()
+        return ElementTree.parse(anidb_mappings_file).getroot()
 
-        return anidb_mappings
 
     def get_anibridge_mappings(self):
         """Get PlexAniBridge mappings file"""
@@ -600,10 +599,9 @@ class SeaDexArr:
             url=ANIBRIDGE_MAPPINGS_URL,
         )
 
-        with open(anibridge_mappings_file, "r") as f:
-            anibridge_mappings = json.load(f)
+        with open(anibridge_mappings_file) as f:
+            return json.load(f)
 
-        return anibridge_mappings
 
     def get_external_mappings(
         self,
@@ -751,7 +749,7 @@ class SeaDexArr:
 
         if non_none_sum == 0:
             raise ValueError(
-                "At least one of tvdb_id, tmdb_id, and imdb_id must be provided"
+                "At least one of tvdb_id, tmdb_id, and imdb_id must be provided",
             )
 
         # The mapping computation is deterministic for a given set of
@@ -818,7 +816,7 @@ class SeaDexArr:
             return False
         try:
             stamp = datetime.strptime(
-                record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT
+                record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT,
             )
         except (TypeError, ValueError):
             return False
@@ -851,7 +849,7 @@ class SeaDexArr:
 
         if loaded:
             self.logger.debug(
-                indent_string(f"Loaded {loaded} AniList entries from cache")
+                indent_string(f"Loaded {loaded} AniList entries from cache"),
             )
 
     def save_anilist_cache(self):
@@ -894,7 +892,7 @@ class SeaDexArr:
         """
 
         missing = sorted(
-            {i for i in al_ids if i is not None and i not in self.al_cache}
+            {i for i in al_ids if i is not None and i not in self.al_cache},
         )
         if not missing:
             return
@@ -904,7 +902,7 @@ class SeaDexArr:
         self.logger.info(
             indent_string(
                 f"Prefetching {len(missing)} AniList entries "
-                f"in batches of {ANILIST_BATCH_SIZE}"
+                f"in batches of {ANILIST_BATCH_SIZE}",
             ),
             extra={"line_style": "grey50"},
         )
@@ -950,7 +948,7 @@ class SeaDexArr:
 
         if non_none_sum == 0:
             raise ValueError(
-                "At least one of tvdb_id, tmdb_id, and imdb_id must be provided"
+                "At least one of tvdb_id, tmdb_id, and imdb_id must be provided",
             )
 
         if tvdb_id is not None:
@@ -961,7 +959,7 @@ class SeaDexArr:
                     if m.get("tvdb_id", None) == tvdb_id
                     and m.get("anilist_id", None) is not None
                     and m.get("anilist_id", None) not in anilist_mappings
-                }
+                },
             )
         if tmdb_id is not None:
             anilist_mappings.update(
@@ -971,7 +969,7 @@ class SeaDexArr:
                     if m.get(f"tmdb_{tmdb_type}_id", None) == tmdb_id
                     and m.get("anilist_id", None) is not None
                     and m.get("anilist_id", None) not in anilist_mappings
-                }
+                },
             )
         if imdb_id is not None:
             anilist_mappings.update(
@@ -981,7 +979,7 @@ class SeaDexArr:
                     if m.get("imdb_id", None) == imdb_id
                     and m.get("anilist_id", None) is not None
                     and m.get("anilist_id", None) not in anilist_mappings
-                }
+                },
             )
 
         return anilist_mappings
@@ -1016,7 +1014,7 @@ class SeaDexArr:
 
         if non_none_sum == 0:
             raise ValueError(
-                "At least one of tvdb_id, tmdb_id, and imdb_id must be provided"
+                "At least one of tvdb_id, tmdb_id, and imdb_id must be provided",
             )
 
         if tvdb_id is not None:
@@ -1026,7 +1024,7 @@ class SeaDexArr:
                     for n, m in self.anibridge_mappings.items()
                     if m.get("tvdb_id", None) == tvdb_id
                     and int(n) not in anilist_mappings
-                }
+                },
             )
         if tmdb_id is not None:
             anilist_mappings.update(
@@ -1035,7 +1033,7 @@ class SeaDexArr:
                     for n, m in self.anibridge_mappings.items()
                     if m.get(f"tmdb_{tmdb_type}_id", None) == tmdb_id
                     and int(n) not in anilist_mappings
-                }
+                },
             )
         if imdb_id is not None:
             anilist_mappings.update(
@@ -1044,7 +1042,7 @@ class SeaDexArr:
                     for n, m in self.anibridge_mappings.items()
                     if m.get("imdb_id", None) == imdb_id
                     and int(n) not in anilist_mappings
-                }
+                },
             )
 
         return anilist_mappings
@@ -1181,21 +1179,21 @@ class SeaDexArr:
         notes = sd_entry.notes.split("\n")
         for n in notes:
             self.logger.warning(
-                indent_string(n)
+                indent_string(n),
             )
         self.logger.warning(
-            indent_string("")
+            indent_string(""),
         )
 
         all_srgs = list(seadex_dict.keys())
         for s_i, s in enumerate(all_srgs):
             self.logger.warning(
-                indent_string(f"[{s_i}]: {s}")
+                indent_string(f"[{s_i}]: {s}"),
             )
 
         srgs_to_grab = input(
             "Which release group(s)? Enter one number, a comma-separated list, "
-            "or leave blank for all: "
+            "or leave blank for all: ",
         )
 
         srgs_to_grab = srgs_to_grab.split(",")
@@ -1213,7 +1211,7 @@ class SeaDexArr:
                     srg = all_srgs[int(srg_idx)]
                 except IndexError:
                     self.logger.warning(
-                        indent_string(f"Index {srg_idx} is out of range")
+                        indent_string(f"Index {srg_idx} is out of range"),
                     )
                     continue
                 seadex_dict_filtered[srg] = copy.deepcopy(seadex_dict[srg])
@@ -1372,12 +1370,11 @@ class SeaDexArr:
             self.logger.debug(
                 left_aligned_string(
                     f"Filtering for release group {seadex_rg}",
-                    total_length=self.log_line_length,
-                )
+                ),
             )
 
             seadex_urls = seadex_rg_item.get("urls", {})
-            for url, url_item in seadex_urls.items():
+            for _url, url_item in seadex_urls.items():
 
                 url_hash = url_item.get("hash", None)
 
@@ -1388,8 +1385,7 @@ class SeaDexArr:
                         left_aligned_string(
                             f"Torrent hash {url_hash} not found in cache. "
                             f"Will add to downloads",
-                            total_length=self.log_line_length,
-                        )
+                        ),
                     )
 
                     url_item.update({"download": True})
@@ -1397,9 +1393,8 @@ class SeaDexArr:
                 else:
                     self.logger.debug(
                         left_aligned_string(
-                            f"Torrent hash {url_hash} in cache. " f"Will skip download",
-                            total_length=self.log_line_length,
-                        )
+                            f"Torrent hash {url_hash} in cache. Will skip download",
+                        ),
                     )
 
         # Where multiple preferred release groups cover the same files and the
@@ -1448,8 +1443,7 @@ class SeaDexArr:
             self.logger.debug(
                 left_aligned_string(
                     f"Filtering for release group {seadex_rg}",
-                    total_length=self.log_line_length,
-                )
+                ),
             )
 
             seadex_urls = seadex_rg_item.get("urls", {})
@@ -1465,8 +1459,7 @@ class SeaDexArr:
                             left_aligned_string(
                                 f"SeaDex release group {seadex_rg} not in {arr.capitalize()} releases: "
                                 f"{', '.join([str(x) for x in arr_release_groups])} - will download {url}",
-                                total_length=self.log_line_length,
-                            )
+                            ),
                         )
 
                         url_item.update({"download": True})
@@ -1485,7 +1478,7 @@ class SeaDexArr:
                             filter(
                                 lambda x: x in seadex_file_sizes,
                                 arr_file_sizes,
-                            )
+                            ),
                         )
 
                         # If we have no overlaps at all, then add
@@ -1494,8 +1487,7 @@ class SeaDexArr:
                                 left_aligned_string(
                                     f"SeaDex release group {seadex_rg} in {arr.capitalize()} releases: "
                                     f"{', '.join([str(x) for x in arr_release_groups])}, but file sizes do not match - will download {url}",
-                                    total_length=self.log_line_length,
-                                )
+                                ),
                             )
 
                             url_item.update({"download": True})
@@ -1505,8 +1497,7 @@ class SeaDexArr:
                                 left_aligned_string(
                                     f"SeaDex release group {seadex_rg} in {arr.capitalize()} releases: "
                                     f"{', '.join([str(x) for x in arr_release_groups])}, and file sizes match",
-                                    total_length=self.log_line_length,
-                                )
+                                ),
                             )
 
                 else:
@@ -1514,7 +1505,7 @@ class SeaDexArr:
                     # At this point, we need an episode list from Sonarr
                     if ep_list is None:
                         self.logger.debug(
-                            "Skipping per-episode check: no Sonarr episode list available"
+                            "Skipping per-episode check: no Sonarr episode list available",
                         )
                         continue
 
@@ -1538,7 +1529,7 @@ class SeaDexArr:
                             sonarr_ep_season = sonarr_ep.get("seasonNumber", 999)
                             sonarr_ep_episode = sonarr_ep.get("episodeNumber", 999)
                             sonarr_ep_size = sonarr_ep.get("episodeFile", {}).get(
-                                "size", None
+                                "size", None,
                             )
 
                             seadex_ep_season = seadex_ep.get("season", 888)
@@ -1560,7 +1551,7 @@ class SeaDexArr:
 
                                 # Check SeaDex release group matches the episode release group in Sonarr
                                 sonarr_rg = sonarr_ep.get("episodeFile", {}).get(
-                                    "releaseGroup", None
+                                    "releaseGroup", None,
                                 )
                                 sonarr_rg_normalized = normalize_rg(sonarr_rg)
                                 seadex_rg_normalized = normalize_rg(seadex_rg)
@@ -1576,7 +1567,7 @@ class SeaDexArr:
                                     # This check here is to make sure we don't duplicate
                                     # if there's overlap
                                     all_seadex_rg = all_seadex_rgs_per_episode.get(
-                                        season_ep_str, []
+                                        season_ep_str, [],
                                     )
 
                                     if sonarr_rg_normalized not in all_seadex_rg:
@@ -1586,8 +1577,7 @@ class SeaDexArr:
                                                 f"{arr.capitalize()} release for "
                                                 f"{season_ep_str} ({sonarr_rg}) and no other "
                                                 f"recommended release covers it - will download {url}",
-                                                total_length=self.log_line_length,
-                                            )
+                                            ),
                                         )
 
                                         url_item.update({"download": True})
@@ -1598,23 +1588,20 @@ class SeaDexArr:
                                         left_aligned_string(
                                             f"Found SeaDex match to {arr.capitalize()} "
                                             f"for {season_ep_str}.",
-                                            total_length=self.log_line_length,
-                                        )
+                                        ),
                                     )
                                     if not size_match:
                                         self.logger.debug(
                                             left_aligned_string(
                                                 f"-> Sizes are different: "
                                                 f"{sonarr_ep_size} (Sonarr), {seadex_ep_size} (SeaDex)",
-                                                total_length=self.log_line_length,
-                                            )
+                                            ),
                                         )
                                     else:
                                         self.logger.debug(
                                             left_aligned_string(
                                                 f"-> Sizes match: {sonarr_ep_size}",
-                                                total_length=self.log_line_length,
-                                            )
+                                            ),
                                         )
 
                                     rg_matches[seadex_idx] = True
@@ -1632,8 +1619,7 @@ class SeaDexArr:
                         self.logger.debug(
                             left_aligned_string(
                                 f"File sizes all differ for release group {seadex_rg} - will download {url}",
-                                total_length=self.log_line_length,
-                            )
+                            ),
                         )
                         url_item.update({"download": True})
 
@@ -1738,7 +1724,7 @@ class SeaDexArr:
                     left_aligned_string(
                         f"Not downloading release group {rg}: release group "
                         f"{keeper} already covers the same files",
-                    )
+                    ),
                 )
                 unflag(seadex_dict[rg])
 
@@ -1837,7 +1823,7 @@ class SeaDexArr:
                 {
                     "season": ep.get("seasonNumber"),
                     "episode": ep.get("episodeNumber"),
-                }
+                },
             )
         return episodes
 
@@ -1941,14 +1927,14 @@ class SeaDexArr:
 
                 if success == "torrent_added":
                     results.append(
-                        {"outcome": "added", "name": torrent_name, "group": srg}
+                        {"outcome": "added", "name": torrent_name, "group": srg},
                     )
 
                     # Record the grab for the end-of-run summary. Coverage is only
                     # needed for a torrent we actually added, so compute it here
                     # (via the shared coverage_string) rather than for every URL.
                     coverage_str = self.coverage_string(
-                        url_item.get("episodes", [])
+                        url_item.get("episodes", []),
                     )
                     self.stats["added"].append(
                         {
@@ -1956,7 +1942,7 @@ class SeaDexArr:
                             "group": srg,
                             "coverage": coverage_str,
                             "url": self.current_url,
-                        }
+                        },
                     )
 
                     # Increment the number of torrents added, and if we've hit the limit, then
@@ -1969,7 +1955,7 @@ class SeaDexArr:
 
                 elif success == "torrent_already_added":
                     results.append(
-                        {"outcome": "already have", "name": torrent_name, "group": srg}
+                        {"outcome": "already have", "name": torrent_name, "group": srg},
                     )
 
                 else:
@@ -2006,7 +1992,7 @@ class SeaDexArr:
 
             if torrent_hash in torr_hashes:
                 self.logger.debug(
-                    indent_string(f"Torrent {url} already in qBittorrent")
+                    indent_string(f"Torrent {url} already in qBittorrent"),
                 )
                 return "torrent_already_added", torr_info[0].name
 
@@ -2071,7 +2057,7 @@ class SeaDexArr:
         # Turn datetime to string
         if "updated_at" in cache_details:
             cache_details["updated_at"] = cache_details["updated_at"].strftime(
-                UPDATED_AT_STR_FORMAT
+                UPDATED_AT_STR_FORMAT,
             )
 
         # Add to cache and save out
@@ -2166,7 +2152,7 @@ class SeaDexArr:
                     "sep": sep,
                     "tail": tail,
                     "tail_style": tail_style,
-                }
+                },
             },
         )
 
@@ -2185,7 +2171,7 @@ class SeaDexArr:
 
         The colon-less "<label> <value>" form is used for everything indented under
         an entry (files / link / status / group / added / kept / missing /
-        skipped / anilist). The value lands in the same column as the entry title, 
+        skipped / anilist). The value lands in the same column as the entry title,
         so the whole block reads as one aligned column; the label sits dimmed in
         the indent gutter and the value carries any accent color.
 
@@ -2291,12 +2277,12 @@ class SeaDexArr:
             if len(t) > 38:
                 t = t[:37] + "…"
             self.logger.info(
-                indent_string(t, level=2), extra={"line_style": style}
+                indent_string(t, level=2), extra={"line_style": style},
             )
             for line in lines:
                 if line:
                     self.logger.info(
-                        indent_string(line, level=3), extra={"line_style": style}
+                        indent_string(line, level=3), extra={"line_style": style},
                     )
 
         summary_kv("checked", str(stats["checked"]))
@@ -2367,7 +2353,7 @@ class SeaDexArr:
         )
         if self._run_started_monotonic is not None:
             elapsed = self._format_elapsed(
-                time.monotonic() - self._run_started_monotonic
+                time.monotonic() - self._run_started_monotonic,
             )
             summary_kv("elapsed", elapsed)
 
@@ -2588,12 +2574,12 @@ class SeaDexArr:
         """Produce a log message for the case where no AniList ID is found"""
 
         self.logger.debug(
-            indent_string("-> No AL ID found. Continuing")
+            indent_string("-> No AL ID found. Continuing"),
         )
         self.logger.debug(
             rule_string(
                 total_length=self.log_line_length,
-            )
+            ),
         )
 
         return True
@@ -2658,7 +2644,7 @@ class SeaDexArr:
         # as the focal line, not a no-op like the gray unchanged rows
         self.log_entry_status("checking", anilist_title, style=None)
         self.log_entry_coverage(
-            coverage, sd_entry.url, incomplete=sd_entry.is_incomplete
+            coverage, sd_entry.url, incomplete=sd_entry.is_incomplete,
         )
 
         return True

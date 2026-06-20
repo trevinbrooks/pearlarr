@@ -1,4 +1,4 @@
-from urllib.parse import urljoin, urlencode
+from urllib.parse import urlencode, urljoin
 
 import pynyaa
 import requests

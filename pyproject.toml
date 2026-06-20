@@ -50,6 +50,7 @@ dependencies = [
     "discordwebhook == 1.0.3",
     "httpx == 0.28.1",
     "pynyaa == 3.0.0",
+    "pyrefly>=0.60.0",
     "PyYAML == 6.0.3",
     "qbittorrent-api == 2025.11.1",
     "requests == 2.32.5",

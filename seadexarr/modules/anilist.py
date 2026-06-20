@@ -1,6 +1,7 @@
 import time
 
 import requests
+import contextlib
 
 API_URL = "https://graphql.anilist.co"
 
@@ -138,10 +139,11 @@ def _post_with_retry(query, variables):
         if retryable and attempt < MAX_RETRIES:
             # Prefer the server's Retry-After (seconds); otherwise exponential
             retry_after = resp.headers.get("Retry-After")
-            try:
-                wait = float(retry_after)
-            except (TypeError, ValueError):
-                wait = 2 ** attempt
+            wait = 2 ** attempt
+            if retry_after is not None:
+                with contextlib.suppress(TypeError, ValueError):
+                    wait = float(retry_after)
+
             time.sleep(min(max(wait, 1), MAX_BACKOFF))
             continue
 
@@ -211,7 +213,7 @@ def _get_media(
         al_cache = {}
 
     # Try and find query in cache
-    j = al_cache.get(al_id, None)
+    j = al_cache.get(al_id)
 
     # If we don't have it, do the query
     if j is None:

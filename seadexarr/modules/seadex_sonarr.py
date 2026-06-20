@@ -1,6 +1,6 @@
 import copy
-import time
 import os
+import time
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
@@ -8,14 +8,13 @@ import arrapi.exceptions
 from arrapi import SonarrAPI
 
 from .anilist import (
-    get_anilist_n_eps,
     get_anilist_format,
+    get_anilist_n_eps,
 )
 from .discord import discord_push
 from .log import indent_string
-from .seadex_arr import SeaDexArr, get_episode_keys, UPDATED_AT_STR_FORMAT
+from .seadex_arr import UPDATED_AT_STR_FORMAT, SeaDexArr, get_episode_keys
 from .seadex_radarr import SeaDexRadarr
-
 
 TORRENT_FILENAMES_TO_SKIP = [
     "NCED",

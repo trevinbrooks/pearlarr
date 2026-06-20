@@ -65,7 +65,8 @@ class RichConsoleHandler(logging.Handler):
         super().__init__(level=level)
         self.console = console
 
-    def _render_kv(self, kv):
+    @staticmethod
+    def _render_kv(kv):
         """Build a styled "key : value" (or gutter "key value") line from a kv dict.
 
         The leading "<indent><key><sep>" segment comes from the shared _kv_prefix
@@ -102,7 +103,7 @@ class RichConsoleHandler(logging.Handler):
                 rule_style = getattr(record, "rule_style", "cyan")
                 rule_heavy = getattr(record, "rule_heavy", False)
                 self.console.print(
-                    Rule(style=rule_style, characters="━" if rule_heavy else "─")
+                    Rule(style=rule_style, characters="━" if rule_heavy else "─"),
                 )
                 self.console.print(
                     Text(rule_title, style=f"{rule_style} bold"),
@@ -120,7 +121,7 @@ class RichConsoleHandler(logging.Handler):
             # renders exc_info), so nothing is lost from the log file.
             if record.exc_info:
                 label, style = self.LEVEL_BADGES.get(
-                    record.levelno, ("ERROR", "bold red")
+                    record.levelno, ("ERROR", "bold red"),
                 )
                 line = Text(f"{label:<8} ", style=style)
                 line.append(message)
@@ -130,7 +131,7 @@ class RichConsoleHandler(logging.Handler):
                         *record.exc_info,
                         show_locals=True,
                         max_frames=self.MAX_TRACEBACK_FRAMES,
-                    )
+                    ),
                 )
                 return
 
@@ -163,7 +164,7 @@ class RichConsoleHandler(logging.Handler):
                 # run summary's "issues" tally; here, position and value_style
                 # carry the meaning.
                 self.console.print(
-                    self._render_kv(kv), highlight=False, soft_wrap=True
+                    self._render_kv(kv), highlight=False, soft_wrap=True,
                 )
                 return
 
@@ -183,7 +184,7 @@ class RichConsoleHandler(logging.Handler):
             if tail is not None:
                 line.append(" ")
                 line.append(
-                    Text(str(tail), style=getattr(record, "tail_style", "yellow"))
+                    Text(str(tail), style=getattr(record, "tail_style", "yellow")),
                 )
 
             self.console.print(line, highlight=False, soft_wrap=True)
@@ -285,7 +286,7 @@ def setup_logger(
 
     # Define the log message format for the log files
     logfile_formatter = logging.Formatter(
-        fmt="%(asctime)s %(levelname)s: %(message)s", datefmt="%m/%d/%y %I:%M %p"
+        fmt="%(asctime)s %(levelname)s: %(message)s", datefmt="%m/%d/%y %I:%M %p",
     )
 
     # Create the file handler. Rotation is performed manually above (the
@@ -293,7 +294,7 @@ def setup_logger(
     # opens a fresh file each run (mode="w"). maxBytes is intentionally unset,
     # so size-based rollover never fires - hence no backupCount here.
     handler = RotatingFileHandler(
-        log_file, delay=True, mode="w", encoding="utf-8"
+        log_file, delay=True, mode="w", encoding="utf-8",
     )
     handler.setFormatter(logfile_formatter)
 
@@ -322,6 +323,7 @@ def setup_logger(
             logger.removeFilter(existing_filter)
     counter = LogCounter()
     logger.addFilter(counter)
+    # pyrefly: ignore [missing-attribute]
     logger.seadex_counter = counter
 
     return logger
@@ -422,11 +424,11 @@ def indent_string(
 # Deprecated aliases kept during the migration to indent_string. Both
 # historically accepted (and ignored) a total_length argument; neither ever
 # centred anything. Prefer indent_string in new code.
-def centred_string(str_to_centre, total_length=80, str_prefix=""):
+def centred_string(str_to_centre, str_prefix=""):
     return indent_string(str_to_centre, str_prefix=str_prefix)
 
 
-def left_aligned_string(str_to_align, total_length=80, str_prefix=""):
+def left_aligned_string(str_to_align, str_prefix=""):
     return indent_string(str_to_align, str_prefix=str_prefix)
 
 
