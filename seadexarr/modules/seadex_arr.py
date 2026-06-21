@@ -31,6 +31,7 @@ from .log import (
     KEY_WIDTH,
     count_noun,
     entry_string,
+    group_highlight,
     indent_string,
     kv_string,
     left_aligned_string,
@@ -59,7 +60,6 @@ def save_json(
         sort_cache (bool, optional): Whether to sort cache files by AniList ID. Defaults to False.
     """
 
-    # Optionally sort this data
     if sort_cache:
 
         anilist_entries = data.get("anilist_entries")
@@ -340,14 +340,12 @@ class SeaDexArr:
         self.qbit: qbittorrentapi.Client
         qbit_info = self.config.get("qbit_info", None)
 
-        # Check we've got everything we need
         qbit_info_provided = all(
             qbit_info.get(key, None) is not None for key in qbit_info
         )
         if qbit_info_provided:
             qbit = qbittorrentapi.Client(**qbit_info)
 
-            # Ensure this works
             try:
                 qbit.auth_log_in()
             except qbittorrentapi.LoginFailed:
@@ -417,9 +415,9 @@ class SeaDexArr:
 
         trackers = self.config.get("trackers", None)
 
-        # If we don't have any trackers selected, build a list from public
-        # and private trackers
-        # Include all even if public_only is True, as these filter out releases before we check if they overlap with what's downloaded in Sonarr
+        # Default to all trackers (public + private) when none configured.
+        # Include private even when public_only: they're filtered later, after
+        # the overlap check against what's already downloaded
         if trackers is None:
             trackers = PUBLIC_TRACKERS.union(PRIVATE_TRACKERS)
 
@@ -474,7 +472,6 @@ class SeaDexArr:
         # Instantiate the SeaDex API
         self.seadex = SeaDexEntry()
 
-        # Set up cache for AL API calls
         self.al_cache = {}
 
         # Memoize get_anilist_ids mapping computation per identifying key, so
@@ -581,7 +578,6 @@ class SeaDexArr:
 
         anime_mappings_file = os.path.join("anime_ids.json")
 
-        # If a file doesn't exist, get it
         self.get_external_mappings(
             f=anime_mappings_file,
             url=ANIME_IDS_URL,
@@ -596,7 +592,6 @@ class SeaDexArr:
 
         anidb_mappings_file = os.path.join("anime-list-master.xml")
 
-        # If a file doesn't exist, get it
         self.get_external_mappings(
             f=anidb_mappings_file,
             url=ANIDB_MAPPINGS_URL,
@@ -612,7 +607,6 @@ class SeaDexArr:
             AniBridge: Parsed, indexed mappings ready for id lookups
         """
 
-        # If a file doesn't exist, get it
         self.get_external_mappings(
             f=ANIBRIDGE_MAPPINGS_FILE,
             url=ANIBRIDGE_MAPPINGS_URL,
@@ -639,12 +633,10 @@ class SeaDexArr:
         if not os.path.exists(f):
             urlretrieve(url, f)
 
-        # Check if this is older than the cache
         f_mtime = os.path.getmtime(f)
         f_datetime = datetime.fromtimestamp(f_mtime)
         now_datetime = datetime.now()
 
-        # Get the time difference
         t_diff = now_datetime - f_datetime
 
         # If the file is older than the cache time, re-download
@@ -1117,19 +1109,18 @@ class SeaDexArr:
         best_torrents = [t for t in final_torrent_list if t.is_best]
         any_best = len(best_torrents) > 0
 
-        # If the user wants only 'best' releases and any exist, narrow down to those
+        # Narrow to 'best' releases when any exist
         if self.want_best and any_best:
             candidates = best_torrents
         else:
             candidates = final_torrent_list
 
-        # Now, if we prefer dual audio, then remove any that aren't
-        # tagged, so long as at least one is tagged
+        # Prefer dual-audio releases, but only when at least one exists
         if self.prefer_dual_audio:
             duals = [t for t in candidates if t.is_dual_audio]
             if len(duals) > 0:
                 candidates = duals
-        # Or, if it's False, do the opposite
+        # Otherwise prefer non-dual-audio
         else:
             non_duals = [t for t in candidates if not t.is_dual_audio]
             if len(non_duals) > 0:
@@ -1476,10 +1467,9 @@ class SeaDexArr:
 
                         url_item.update({"download": True})
 
-                    # Else, if we match, then double-check against the size
+                    # If the group matches, fall through to a size comparison
                     if seadex_rg in arr_release_groups:
 
-                        # Be a blunt hammer and just check intersections
                         seadex_file_sizes = url_item.get("size", [])
                         arr_file_sizes = arr_release_dict[seadex_rg].get("size", [])
 
@@ -1576,8 +1566,7 @@ class SeaDexArr:
                                     not in all_seadex_rgs_per_episode["all"]
                                 ):
 
-                                    # This check here is to make sure we don't duplicate
-                                    # if there's overlap
+                                    # Avoid duplicating when another release already covers it
                                     all_seadex_rg = all_seadex_rgs_per_episode.get(
                                         season_ep_str, [],
                                     )
@@ -1892,8 +1881,7 @@ class SeaDexArr:
                     self.public_only_groups.append(srg)
                     continue
 
-                # If we don't have a tracker from our list selected, then
-                # get out of here
+                # Skip trackers not in the user's selected list
                 if tracker.casefold() not in self.trackers:
                     self.log_detail(
                         "skipped",
@@ -1963,11 +1951,11 @@ class SeaDexArr:
                             "coverage": coverage_str,
                             "url": self.current_url,
                             "name": torrent_name,
+                            "group": srg,
                         },
                     )
 
-                    # Increment the number of torrents added, and if we've hit the limit, then
-                    # jump out
+                    # Stop once max_torrents_to_add is reached
                     self.torrents_added += 1
                     n_torrents_added += 1
                     if self.max_torrents_to_add is not None:
@@ -2075,7 +2063,6 @@ class SeaDexArr:
         if cache_details is None:
             cache_details = {}
 
-        # Turn datetime to string
         if "updated_at" in cache_details:
             cache_details["updated_at"] = cache_details["updated_at"].strftime(
                 UPDATED_AT_STR_FORMAT,
@@ -2102,7 +2089,7 @@ class SeaDexArr:
 
         return {
             "checked": 0,
-            "added": [],  # list of {"title", "group", "coverage"}
+            "added": [],  # list of {"title", "coverage", "url", "name", "group"}
             "up_to_date": 0,
             "cached": 0,
             "no_seadex_entry": 0,
@@ -2294,12 +2281,10 @@ class SeaDexArr:
         # indent 2, then fixed fields sit at indent 3 beneath it. Unlike a grab
         # there's no torrent name to lean on, so the skipped private release
         # group IS named here. The whole block is yellow - it's the one section
-        # asking the user to do something. Titles are truncated so they can't wrap
-        # onto a second line and break the column.
+        # asking the user to do something. The title is shown in full; it sits on
+        # its own line above the fixed fields, so its length can't break the column.
         def needs_detail(item: dict) -> None:
             t = item.get("title") or "(unknown title)"
-            if len(t) > 38:
-                t = t[:37] + "…"
             self.logger.info(
                 indent_string(t, level=2), extra={"line_style": "yellow"},
             )
@@ -2324,22 +2309,29 @@ class SeaDexArr:
         # A grab in the summary, rendered like the live per-entry "checking"
         # block: the title hangs at indent 2, then labeled gutter fields sit
         # beneath it at indent 3, their values landing in the same column (14) as
-        # the live block. The recommended group is dropped here (the torrent name
-        # already carries it), and the grab is labeled "torrent" rather than
-        # "added" since the whole section is already the added list. A dry run
-        # dims the block so the would-be grabs don't read as real.
+        # the live block. The grab is labeled "torrent" rather than "added" since
+        # the whole section is already the added list. The recommended group is
+        # called out at the front of the torrent name - highlighted in place when
+        # the name already leads with it, or prepended in brackets otherwise - so
+        # the group always reads first. A dry run dims the whole block (group accent
+        # included) so the would-be grabs don't read as real. The title is shown
+        # in full on its own line, so its length can't break the column.
         def added_detail(item: dict) -> None:
             t = item.get("title") or "(unknown title)"
-            if len(t) > 38:
-                t = t[:37] + "…"
             self.logger.info(
                 indent_string(t, level=2),
                 extra={"line_style": "grey50" if is_dry_run else None},
             )
+            torrent_value = group_highlight(
+                item.get("name"),
+                item.get("group"),
+                group_style="grey50" if is_dry_run else "cyan",
+                base_style="grey50" if is_dry_run else "green",
+            )
             rows = [
                 ("files", item.get("coverage"), "grey50"),
                 ("link", item.get("url"), "grey50"),
-                ("torrent", item.get("name"), "green"),
+                ("torrent", torrent_value, "green"),
             ]
             for label, value, accent in rows:
                 if not value:

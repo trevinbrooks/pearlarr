@@ -29,7 +29,6 @@ def main(ctx: typer.Context) -> bool:
     Will run both Radarr and Sonarr modules
     """
 
-    # Only run this if there's nothing going on
     if ctx.invoked_subcommand is None:
         run_scheduled()
 
@@ -94,7 +93,6 @@ def run_scheduled() -> None:
         next_run_time = next_run_time.strftime("%H:%M")
         logger.info(f"Scheduled run complete - next run at {next_run_time}")
 
-        # Good job, have a rest
         time.sleep(schedule_time * 3600)
 
 

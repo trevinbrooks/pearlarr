@@ -278,7 +278,6 @@ class SeaDexSonarr(SeaDexArr):
         # Reset the per-run tally and start the run clock
         self.reset_run_stats()
 
-        # Get all the anime series
         all_sonarr_series = self.get_all_sonarr_series()
 
         # If we're targeting a single series, filter down to that TVDB ID
@@ -315,7 +314,7 @@ class SeaDexSonarr(SeaDexArr):
             )
         self.prefetch_anilist(prefetch_ids)
 
-        # Now start looping over these series, finding any potential mappings
+        # Loop over series, finding potential mappings
         for sonarr_idx, sonarr_series in enumerate(all_sonarr_series):
 
             try:
@@ -360,7 +359,6 @@ class SeaDexSonarr(SeaDexArr):
                     self.public_only_groups = []
                     self.stats["checked"] += 1
 
-                    # Map the TVDB ID through to AniList
                     if al_id is None:
                         self.log_no_anilist_id()
                         continue
@@ -574,10 +572,8 @@ class SeaDexSonarr(SeaDexArr):
                             seadex_dict=seadex_dict,
                         )
 
-                        # If we've got stuff, time to do something!
                         if len(seadex_dict) > 0:
 
-                            # Keep track of how many torrents we've added
                             n_torrents_added = 0
                             results = []
 
@@ -817,7 +813,6 @@ class SeaDexSonarr(SeaDexArr):
             else:
                 raise ValueError(f"Invalid mapping mode {mapping_mode}")
 
-            # If we've passed the vibe check, include things now
             if include_episode:
                 final_ep_list.append(ep)
 
@@ -896,7 +891,6 @@ class SeaDexSonarr(SeaDexArr):
 
         else:
 
-            # First case, we've got Anime IDs
             if mapping_mode == "anime_ids":
 
                 # Slice the list to get the correct episodes, so any potential offsets
@@ -947,7 +941,6 @@ class SeaDexSonarr(SeaDexArr):
         n_eps = len(ep_list)
         for ep in ep_list:
 
-            # Get missing episodes, then skip
             if ep.get("episodeFileId", 0) == 0:
                 missing_eps += 1
                 continue
@@ -1123,7 +1116,6 @@ class SeaDexSonarr(SeaDexArr):
 
                         parse_cache[f] = {"fetched_at": now_str, "episodes": parsed}
 
-                    # Add the season and episode numbers in
                     size = sizes[sd_file_idx]
                     for ep in parsed:
 

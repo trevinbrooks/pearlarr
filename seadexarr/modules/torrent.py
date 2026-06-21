@@ -49,12 +49,12 @@ def get_animetosho_torrent(url: str) -> tuple[str | None, str]:
 
     title = titles[0].text
 
-    # Fantastic, we have a title. Now query API
+    # Query the feed API for the matching release
     query_url = urljoin(ANIMETOSHO_FEED_URL, f"?t=search&q={title}")
     r = requests.get(query_url)
     j = r.json()
 
-    # Loop over, make sure the link matches the URL and get a torrent link out
+    # Find the feed entry whose link matches the page URL
     parsed_url = None
     for i in j:
 

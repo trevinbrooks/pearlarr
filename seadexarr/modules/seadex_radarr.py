@@ -67,7 +67,6 @@ class SeaDexRadarr(SeaDexArr):
         # Reset the per-run tally and start the run clock
         self.reset_run_stats()
 
-        # Get all the anime movies
         all_radarr_movies = self.get_all_radarr_movies()
 
         # If we're targeting a single movie, filter down to that TMDB ID
@@ -105,12 +104,10 @@ class SeaDexRadarr(SeaDexArr):
             )
         self.prefetch_anilist(prefetch_ids)
 
-        # Now start looping over these movies
         for radarr_idx, radarr_movie in enumerate(all_radarr_movies):
 
             try:
 
-                # Pull Radarr and database info out
                 tmdb_id = radarr_movie.tmdbId
                 imdb_id = radarr_movie.imdbId
                 radarr_title = radarr_movie.title
@@ -151,7 +148,6 @@ class SeaDexRadarr(SeaDexArr):
                     self.public_only_groups = []
                     self.stats["checked"] += 1
 
-                    # Map the TMDB ID through to AniList
                     if al_id is None:
                         self.log_no_anilist_id()
                         continue
@@ -259,10 +255,8 @@ class SeaDexRadarr(SeaDexArr):
                             seadex_dict=seadex_dict,
                         )
 
-                        # If we've got stuff, time to do something!
                         if len(seadex_dict) > 0:
 
-                            # Keep track of how many torrents we've added
                             n_torrents_added = 0
                             results = []
 
@@ -396,12 +390,10 @@ class SeaDexRadarr(SeaDexArr):
 
         for m in self.radarr.all_movies():
 
-            # Check by TMDB IDs
             tmdb_id = m.tmdbId
             if tmdb_id in all_tmdb_ids and m not in radarr_movies:
                 radarr_movies.append(m)
 
-            # Check by IMDb IDs
             imdb_id = m.imdbId
             if imdb_id in all_imdb_ids and m not in radarr_movies:
                 radarr_movies.append(m)
@@ -435,7 +427,6 @@ class SeaDexRadarr(SeaDexArr):
             radarr_movie_id (int): ID for movie in Radarr
         """
 
-        # Get the movie file if it exists
         mov_req_url = (
             f"{self.radarr_url}/api/v3/moviefile?"
             f"movieId={radarr_movie_id}&"

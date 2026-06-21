@@ -84,7 +84,14 @@ class RichConsoleHandler(logging.Handler):
         )
         line = Text(prefix, style="grey50")
         value = kv.get("value", "")
-        if value != "":
+        if isinstance(value, Text):
+            # A pre-styled value (e.g. a torrent name with its release group
+            # highlighted) already carries its own spans, so append it as-is and
+            # let those stand - value_style here would flatten them.
+            if len(value):
+                line.append(" ")
+                line.append(value)
+        elif value != "":
             line.append(" ")
             line.append(Text(str(value), style=kv.get("value_style") or ""))
         tail = kv.get("tail")
@@ -246,11 +253,9 @@ def setup_logger(
     else:
         log_dir = os.path.join(os.getcwd(), log_dir)
 
-    # Create the log directory if it doesn't exist
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
-    # Define the log file path
     log_file = os.path.join(log_dir, f"{log_name}.log")
 
     # Check if a log file already exists. Copy, then remove to avoid I/O errors
@@ -267,7 +272,6 @@ def setup_logger(
         shutil.copy(log_file, os.path.join(log_dir, f"{log_name}.log.1"))
         os.remove(log_file)
 
-    # Create a logger object with the script name
     logger = logging.getLogger(log_name)
     logger.propagate = False
 
@@ -463,6 +467,68 @@ def kv_string(
         return line
 
     return f"{line} {value}"
+
+
+def group_highlight(
+    name: str | None,
+    group: str | None,
+    group_style: str = "cyan",
+    base_style: str = "",
+) -> "Text | str":
+    """Build a torrent-name value with its SeaDex release group called out.
+
+    The release group is the thing worth spotting at a glance on a grab line, so
+    it gets the same accent the live log gives groups (``group_style``). When the
+    group already leads the torrent name (bare, or in the usual "[Group]" wrapper,
+    matched case-insensitively), that span is highlighted in place; otherwise the
+    group is prepended in brackets so it always reads at the front - a match
+    buried mid-name doesn't count. Returns a styled rich ``Text`` for the console;
+    the file log sees its plain text via ``str()`` (so a prepended "[group] "
+    still shows, just without colour).
+
+    With no group (or no name), the plain name is returned unchanged, so the
+    caller's own ``value_style`` applies as before.
+
+    Args:
+        name: The torrent name as reported by the client / scraped from source
+        group: The recommended SeaDex release group, or None
+        group_style: Rich style for the group span/prefix. Defaults to "cyan"
+            (the live log's group colour)
+        base_style: Rich style for the rest of the name. Defaults to "" (none)
+    """
+
+    name = name or ""
+    if not group:
+        return name
+
+    # Only treat the group as "already shown" when it leads the name - bare, or
+    # in the usual "[Group]" wrapper. A match buried mid-name doesn't count; we
+    # prepend instead, so the group always reads at the front of the line.
+    cf, gf = name.casefold(), group.casefold()
+    if cf.startswith(gf):
+        start = 0
+    elif cf.startswith(f"[{gf}"):
+        start = 1
+    else:
+        start = -1
+
+    text = Text(style=base_style)
+    if start >= 0:
+        # Highlight the existing leading group in place
+        end = start + len(group)
+        text.append(name[:start])
+        text.append(name[start:end], style=group_style)
+        text.append(name[end:])
+    else:
+        # Not at the front - prepend it so the group always leads. Only the group
+        # name takes the accent; the brackets stay in base_style so a prepended
+        # "[group]" matches the "[group]" already in a name (brackets base, name
+        # accented) rather than colouring the whole wrapper.
+        text.append("[")
+        text.append(group, style=group_style)
+        text.append("] ")
+        text.append(name)
+    return text
 
 
 def pluralize(n: int, singular: str, plural: str | None = None) -> str:
