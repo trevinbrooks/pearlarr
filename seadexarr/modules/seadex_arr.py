@@ -19,6 +19,7 @@ import yaml
 from ruamel.yaml import YAML
 from seadex import EntryNotFoundError, EntryRecord, SeaDexEntry
 
+from .anibridge import AniBridge
 from .anilist import (
     ANILIST_BATCH_SIZE,
     get_anilist_thumb,
@@ -38,7 +39,6 @@ from .log import (
     rule_string,
     setup_logger,
 )
-from .anibridge import AniBridge
 from .torrent import (
     get_animetosho_torrent,
     get_nyaa_torrent,
@@ -179,7 +179,7 @@ def get_all_seadex_rgs_per_episode(
                     if found_episodes[seadex_idx]:
                         continue
 
-                    for sonarr_ep in ep_list:
+                    for sonarr_ep in ep_list or []:
                         sonarr_ep_season = sonarr_ep.get("seasonNumber", 999)
                         sonarr_ep_episode = sonarr_ep.get("episodeNumber", 999)
 
@@ -482,10 +482,10 @@ class SeaDexArr:
         self.cache_file = cache
         if os.path.exists(cache):
             with open(cache) as f:
-                cache = json.load(f)
+                cache_data = json.load(f)
         else:
-            cache = self.setup_cache()
-        self.cache: dict[str, Any] = cache
+            cache_data = self.setup_cache()
+        self.cache: dict[str, Any] = cache_data
 
         # Check the package or config hasn't updated, else
         # edit the cache description
@@ -830,7 +830,7 @@ class SeaDexArr:
             return False
         try:
             stamp = datetime.strptime(
-                record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT,
+                (record or {}).get("fetched_at", ""), UPDATED_AT_STR_FORMAT,
             )
         except (TypeError, ValueError):
             return False
@@ -1248,13 +1248,11 @@ class SeaDexArr:
         # The first field should be the Arr group. If it's empty, mention it's missing
         release_group_discord = copy.deepcopy(release_group)
 
-        # Catch various edge cases
-        if release_group_discord is None:
+        # Catch various edge cases: normalise to a non-empty list of strings
+        if not release_group_discord:
             release_group_discord = ["None"]
-        if len(release_group_discord) == 0:
-            release_group_discord = ["None"]
-        if isinstance(release_group_discord, str):
-            release_group_discord = [release_group]
+        elif isinstance(release_group_discord, str):
+            release_group_discord = [release_group_discord]
 
         field_dict = {
             "name": f"{arr.capitalize()} Release:",
@@ -1402,7 +1400,7 @@ class SeaDexArr:
 
         # Where multiple preferred release groups cover the same files and the
         # Arr has none of them, only grab one (preferring public if public_only)
-        self.reduce_overlapping_downloads(seadex_dict=seadex_dict, arr=arr)
+        self.reduce_overlapping_downloads(seadex_dict=seadex_dict)
 
         return torrent_hashes, seadex_dict
 
@@ -1626,7 +1624,7 @@ class SeaDexArr:
 
         # Where multiple preferred release groups cover the same files and the
         # Arr has none of them, only grab one (preferring public if public_only)
-        self.reduce_overlapping_downloads(seadex_dict=seadex_dict, arr=arr)
+        self.reduce_overlapping_downloads(seadex_dict=seadex_dict)
 
         # Build the hash list from whatever is still flagged for download, so it
         # always matches the exact set of torrents we'll add. Private torrents
@@ -1643,7 +1641,6 @@ class SeaDexArr:
     def reduce_overlapping_downloads(
         self,
         seadex_dict: dict,
-        arr: str,
     ) -> None:
         """Reduce overlapping flagged downloads down to a single release group
 
@@ -1659,7 +1656,6 @@ class SeaDexArr:
 
         Args:
             seadex_dict (dict): Dictionary of SeaDex releases
-            arr (str): Type of arr instance
         """
 
         # In interactive mode the user has explicitly chosen which releases to
@@ -2084,7 +2080,8 @@ class SeaDexArr:
 
         return True
 
-    def _fresh_stats(self) -> dict:
+    @staticmethod
+    def _fresh_stats() -> dict:
         """Build an empty per-run stats tally for the end-of-run summary"""
 
         return {
@@ -2536,13 +2533,11 @@ class SeaDexArr:
 
     def log_arr_item_unmonitored(
         self,
-        arr: str,
         item_title: str,
     ) -> bool:
         """Produce a log message if skipping because the item is unmonitored
 
         Args:
-            arr: Type of arr instance
             item_title (str): Item title
         """
 

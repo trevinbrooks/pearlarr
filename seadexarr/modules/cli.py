@@ -3,7 +3,6 @@ import os
 import shutil
 import time
 from datetime import datetime, timedelta
-from typing import Optional
 
 import typer
 
@@ -48,7 +47,7 @@ def run_scheduled() -> None:
     cache = os.path.join(config_dir, "cache.json")
 
     # Get how often to run things
-    schedule_time = float(os.getenv("SCHEDULE_TIME", 6))
+    schedule_time = float(os.getenv("SCHEDULE_TIME", "6"))
 
     while True:
 
@@ -101,8 +100,8 @@ def run_scheduled() -> None:
 def run_single(
     radarr: bool = False,
     sonarr: bool = False,
-    movie_id: Optional[int] = None,
-    series_id: Optional[int] = None,
+    movie_id: int | None = None,
+    series_id: int | None = None,
     dry_run: bool = False,
 ) -> bool:
     """Do a single SeaDexArr run

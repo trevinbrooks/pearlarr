@@ -80,9 +80,7 @@ def get_tvdb_id(mapping: dict) -> int | None:
         int: TVDB ID
     """
 
-    tvdb_id = mapping.get("tvdb_id")
-
-    return tvdb_id
+    return mapping.get("tvdb_id")
 
 
 def get_tvdb_season(mapping: dict) -> int:
@@ -95,9 +93,7 @@ def get_tvdb_season(mapping: dict) -> int:
         int: TVDB season
     """
 
-    tvdb_season = mapping.get("tvdb_season", -1)
-
-    return tvdb_season
+    return mapping.get("tvdb_season", -1)
 
 
 def get_overlapping_results(seadex_dict: dict) -> bool:
@@ -287,7 +283,7 @@ class SeaDexSonarr(SeaDexArr):
             ]
             if len(all_sonarr_series) == 0:
                 self.logger.warning(
-                    f"No anime series with TVDB ID {tvdb_id} found in Sonarr"
+                    f"No anime series with TVDB ID {tvdb_id} found in Sonarr",
                 )
 
         n_sonarr = len(all_sonarr_series)
@@ -310,7 +306,7 @@ class SeaDexSonarr(SeaDexArr):
                     tvdb_id=series.tvdbId,
                     imdb_id=series.imdbId,
                     log_ignored=False,
-                )
+                ),
             )
         self.prefetch_anilist(prefetch_ids)
 
@@ -335,7 +331,6 @@ class SeaDexSonarr(SeaDexArr):
                 # If we're not monitored, then skip if ignore_unmonitored is switched on
                 if not sonarr_series.monitored and self.ignore_unmonitored:
                     self.log_arr_item_unmonitored(
-                        arr="sonarr",
                         item_title=sonarr_title,
                     )
                     continue
@@ -393,7 +388,7 @@ class SeaDexSonarr(SeaDexArr):
                                 cache_details={
                                     "url": sd_url,
                                     "coverage": self.coverage_string(
-                                        self.episodes_from_ep_list(backfill_eps)
+                                        self.episodes_from_ep_list(backfill_eps),
                                     ),
                                 },
                             )
@@ -487,7 +482,6 @@ class SeaDexSonarr(SeaDexArr):
                     ep_list_monitored = [x.get("monitored", True) for x in ep_list]
                     if not any(ep_list_monitored) and self.ignore_unmonitored:
                         self.log_anilist_item_unmonitored(
-                            arr="sonarr",
                             item_title=anilist_title,
                         )
                         time.sleep(self.sleep_time)
@@ -497,7 +491,7 @@ class SeaDexSonarr(SeaDexArr):
                     # season/episode coverage + URL, and remember them for the cache
                     # so future cached runs can show the same detail
                     coverage = self.coverage_string(
-                        self.episodes_from_ep_list(ep_list)
+                        self.episodes_from_ep_list(ep_list),
                     )
                     self.log_al_title(
                         anilist_title=anilist_title,
@@ -513,7 +507,7 @@ class SeaDexSonarr(SeaDexArr):
                     self.logger.debug(
                         indent_string(
                             f"Sonarr release group(s): {', '.join(sonarr_release_groups)}",
-                        )
+                        ),
                     )
 
                     # Produce a dictionary of info from the SeaDex request
@@ -534,7 +528,7 @@ class SeaDexSonarr(SeaDexArr):
                     self.logger.debug(
                         indent_string(
                             f"SeaDex: {', '.join(seadex_dict)}",
-                        )
+                        ),
                     )
 
                     # Parse out filenames and check for overlaps
@@ -654,11 +648,11 @@ class SeaDexSonarr(SeaDexArr):
                                 "title": self.current_title,
                                 "coverage": coverage,
                                 "group": ", ".join(
-                                    dict.fromkeys(self.public_only_groups)
+                                    dict.fromkeys(self.public_only_groups),
                                 ),
                                 "url": self.current_url,
                                 "reason": "private-only release; public_only on",
-                            }
+                            },
                         )
 
                     # Add in a wait, if required
@@ -674,7 +668,7 @@ class SeaDexSonarr(SeaDexArr):
             except Exception as e:
                 title = getattr(sonarr_series, "title", "unknown title")
                 self.logger.error(
-                    f"{title}: unexpected error: {e}", exc_info=True
+                    f"{title}: unexpected error: {e}", exc_info=True,
                 )
                 continue
 
@@ -783,7 +777,7 @@ class SeaDexSonarr(SeaDexArr):
 
         if eps_req.status_code != 200:
             self.logger.warning(
-                "Could not fetch episode data from Sonarr; it may be unreachable"
+                "Could not fetch episode data from Sonarr; it may be unreachable",
             )
             return None
 
@@ -833,13 +827,13 @@ class SeaDexSonarr(SeaDexArr):
             and (al_format not in ["TV"] or tvdb_season == 0)
         ):
             anidb_item = self.anidb_mappings.findall(
-                f"anime[@anidbid='{anidb_id}']"
+                f"anime[@anidbid='{anidb_id}']",
             )
 
             # If we don't find anything, no worries. If we find multiple, worries
             if len(anidb_item) > 1:
                 raise ValueError(
-                    "Multiple AniDB mappings found. This should not happen!"
+                    "Multiple AniDB mappings found. This should not happen!",
                 )
 
             if len(anidb_item) == 1:
@@ -864,7 +858,7 @@ class SeaDexSonarr(SeaDexArr):
 
                             # Only match things if AniList and AniDB agree on the TVDB season
                             anidb_tvdbseason = int(i.attrib["tvdbseason"])
-                            if not anidb_tvdbseason == tvdb_season:
+                            if anidb_tvdbseason != tvdb_season:
                                 continue
 
                             anidb_mapping_dict[anidb_tvdbseason] = {
@@ -882,7 +876,7 @@ class SeaDexSonarr(SeaDexArr):
                 episode_number = ep.get("episodeNumber", None)
 
                 anidb_mapping_dict_entry = anidb_mapping_dict.get(
-                    season_number, {}
+                    season_number, {},
                 ).get(episode_number, None)
                 if anidb_mapping_dict_entry is not None:
                     anidb_final_ep_list.append(ep)
@@ -959,7 +953,7 @@ class SeaDexSonarr(SeaDexArr):
             # a count, so it's clear what's absent. Fall back to the count if the
             # episodes can't be condensed.
             missing_coverage = self.coverage_string(
-                self.episodes_from_ep_list(ep_list, missing_only=True)
+                self.episodes_from_ep_list(ep_list, missing_only=True),
             )
             self.log_detail(
                 "missing",
@@ -991,15 +985,15 @@ class SeaDexSonarr(SeaDexArr):
         d_enc = urlencode(d)
 
         # Parse through Sonarr
-        parse_req_url = f"{self.sonarr_url}/api/v3/parse?" f"{d_enc}"
+        parse_req_url = f"{self.sonarr_url}/api/v3/parse?{d_enc}"
         parse_req = self.session.get(parse_req_url)
 
         if parse_req.status_code != 200:
             self.logger.warning(
                 indent_string(
                     f"Could not parse {filename} via Sonarr "
-                    f"(status code {parse_req.status_code}); skipping file"
-                )
+                    f"(status code {parse_req.status_code}); skipping file",
+                ),
             )
             return []
 
@@ -1015,8 +1009,8 @@ class SeaDexSonarr(SeaDexArr):
                 self.logger.debug(
                     indent_string(
                         f"Season or episode came up None for {filename}; "
-                        f"skipping this episode entry"
-                    )
+                        f"skipping this episode entry",
+                    ),
                 )
                 continue
 
@@ -1037,12 +1031,12 @@ class SeaDexSonarr(SeaDexArr):
             return False
         try:
             stamp = datetime.strptime(
-                record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT
+                record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT,
             )
         except (TypeError, ValueError):
             return False
         return stamp >= datetime.now() - timedelta(
-            days=SONARR_PARSE_CACHE_TTL_DAYS
+            days=SONARR_PARSE_CACHE_TTL_DAYS,
         )
 
     def parse_episodes_from_seadex(
@@ -1087,7 +1081,7 @@ class SeaDexSonarr(SeaDexArr):
                     f = os.path.basename(seadex_file)
 
                     # Skip filenames with things like "NCED", "NCOP"
-                    if any([x in f for x in TORRENT_FILENAMES_TO_SKIP]):
+                    if any(x in f for x in TORRENT_FILENAMES_TO_SKIP):
                         continue
 
                     # Skip non-video files (subtitles, fonts, images, ...) before
@@ -1107,8 +1101,8 @@ class SeaDexSonarr(SeaDexArr):
                         if len(parsed) == 0:
                             self.logger.debug(
                                 indent_string(
-                                    f"Sonarr could not parse episode for {f}"
-                                )
+                                    f"Sonarr could not parse episode for {f}",
+                                ),
                             )
                             # Deliberately not cached: a miss may just mean the
                             # series isn't in Sonarr yet
@@ -1124,8 +1118,8 @@ class SeaDexSonarr(SeaDexArr):
 
                         self.logger.debug(
                             indent_string(
-                                f"{f} mapped to: S{season:02d}E{episode:02d}"
-                            )
+                                f"{f} mapped to: S{season:02d}E{episode:02d}",
+                            ),
                         )
 
                         url_item["episodes"].append(
@@ -1133,14 +1127,14 @@ class SeaDexSonarr(SeaDexArr):
                                 "season": season,
                                 "episode": episode,
                                 "size": size,
-                            }
+                            },
                         )
                         release_group_item["all_episodes"].append(
                             {
                                 "season": season,
                                 "episode": episode,
                                 "size": size,
-                            }
+                            },
                         )
 
         return seadex_dict

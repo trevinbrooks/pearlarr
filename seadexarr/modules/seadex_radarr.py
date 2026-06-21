@@ -76,7 +76,7 @@ class SeaDexRadarr(SeaDexArr):
             ]
             if len(all_radarr_movies) == 0:
                 self.logger.warning(
-                    f"No anime movie with TMDB ID {tmdb_id} found in Radarr"
+                    f"No anime movie with TMDB ID {tmdb_id} found in Radarr",
                 )
 
         n_radarr = len(all_radarr_movies)
@@ -100,7 +100,7 @@ class SeaDexRadarr(SeaDexArr):
                     imdb_id=movie.imdbId,
                     tmdb_type="movie",
                     log_ignored=False,
-                )
+                ),
             )
         self.prefetch_anilist(prefetch_ids)
 
@@ -123,7 +123,6 @@ class SeaDexRadarr(SeaDexArr):
                 # If we're not monitored, then skip if ignore_unmonitored is switched on
                 if not radarr_movie.monitored and self.ignore_unmonitored:
                     self.log_arr_item_unmonitored(
-                        arr="radarr",
                         item_title=radarr_title,
                     )
                     continue
@@ -139,7 +138,7 @@ class SeaDexRadarr(SeaDexArr):
                     self.log_no_anilist_mappings(title=radarr_title)
                     continue
 
-                for al_id, mapping in al_mappings.items():
+                for al_id in al_mappings:
 
                     # Reset the per-title public_only skip flag (and the skipped
                     # group names) before we make any download decisions for this
@@ -195,14 +194,14 @@ class SeaDexRadarr(SeaDexArr):
                     }
 
                     radarr_release_dict = self.get_radarr_release_dict(
-                        radarr_movie_id=radarr_movie_id
+                        radarr_movie_id=radarr_movie_id,
                     )
-                    radarr_release_group = list(radarr_release_dict.keys())[0]
+                    radarr_release_group = next(iter(radarr_release_dict))
 
                     self.logger.debug(
                         indent_string(
                             f"Radarr release group: {radarr_release_group}",
-                        )
+                        ),
                     )
 
                     # Produce a dictionary of info from the SeaDex request
@@ -223,7 +222,7 @@ class SeaDexRadarr(SeaDexArr):
                     self.logger.debug(
                         indent_string(
                             f"SeaDex: {', '.join(seadex_dict)}",
-                        )
+                        ),
                     )
 
                     # If we're in interactive mode and there are multiple options here, then select
@@ -335,11 +334,11 @@ class SeaDexRadarr(SeaDexArr):
                             {
                                 "title": self.current_title,
                                 "group": ", ".join(
-                                    dict.fromkeys(self.public_only_groups)
+                                    dict.fromkeys(self.public_only_groups),
                                 ),
                                 "url": self.current_url,
                                 "reason": "private-only release; public_only on",
-                            }
+                            },
                         )
 
                     # Add in a wait, if required
@@ -354,7 +353,7 @@ class SeaDexRadarr(SeaDexArr):
             except Exception as e:
                 title = getattr(radarr_movie, "title", "unknown title")
                 self.logger.error(
-                    f"{title}: unexpected error: {e}", exc_info=True
+                    f"{title}: unexpected error: {e}", exc_info=True,
                 )
                 continue
 

@@ -134,13 +134,15 @@ class RichConsoleHandler(logging.Handler):
                 line = Text(f"{label:<8} ", style=style)
                 line.append(message)
                 self.console.print(line, highlight=False, soft_wrap=True)
-                self.console.print(
-                    Traceback.from_exception(
-                        *record.exc_info,
-                        show_locals=True,
-                        max_frames=self.MAX_TRACEBACK_FRAMES,
-                    ),
-                )
+                exc_type, exc_value, exc_tb = record.exc_info
+                if exc_type is not None and exc_value is not None:
+                    self.console.print(
+                        Traceback.from_exception(
+                            exc_type, exc_value, exc_tb,
+                            show_locals=True,
+                            max_frames=self.MAX_TRACEBACK_FRAMES,
+                        ),
+                    )
                 return
 
             # A separator rule. The preferred form is an explicit ``rule_char``
@@ -248,7 +250,7 @@ def setup_logger(
     """
 
     if os.environ.get("DOCKER_ENV"):
-        config_dir = os.environ.get("CONFIG_DIR")
+        config_dir = os.environ.get("CONFIG_DIR", os.getcwd())
         log_dir = os.path.join(config_dir, log_dir)
     else:
         log_dir = os.path.join(os.getcwd(), log_dir)

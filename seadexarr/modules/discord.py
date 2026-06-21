@@ -35,7 +35,7 @@ def discord_push(
                 "description": seadex_url,
                 "fields": fields,
                 "thumbnail": {"url": thumb_url},
-            }
+            },
         ],
     )
 

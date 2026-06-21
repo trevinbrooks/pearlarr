@@ -1,7 +1,7 @@
+import contextlib
 import time
 
 import requests
-import contextlib
 
 API_URL = "https://graphql.anilist.co"
 
@@ -114,7 +114,7 @@ def _post_with_retry(query: str, variables: dict) -> dict:
 
         try:
             resp = requests.post(
-                API_URL, json={"query": query, "variables": variables}
+                API_URL, json={"query": query, "variables": variables},
             )
         except requests.RequestException:
             # Network blip: back off and retry, then give up with an empty result
