@@ -11,6 +11,7 @@ from .anilist import (
 )
 from .cache import UPDATED_AT_STR_FORMAT
 from .log import indent_string
+from .mappings import MappingResolver
 from .planner import get_episode_keys
 from .radarr_client import RadarrClient, collect_anime_movies
 from .seadex_arr import SeaDexArr
@@ -198,6 +199,8 @@ class SeaDexSonarr(SeaDexArr):
         config: str = "config.yml",
         cache: str = "cache.json",
         logger: logging.Logger | None = None,
+        *,
+        mappings: MappingResolver,
     ) -> None:
         """Sync Sonarr instance with SeaDex
 
@@ -208,6 +211,8 @@ class SeaDexSonarr(SeaDexArr):
                 Defaults to "cache.json".
             logger. Logging instance. Defaults to None,
                 which will create one.
+            mappings (MappingResolver): Shared id-mapping resolver, injected by
+                the CLI so both arrs reuse one download/parse of the sources.
         """
 
         SeaDexArr.__init__(
@@ -216,6 +221,7 @@ class SeaDexSonarr(SeaDexArr):
             config=config,
             cache=cache,
             logger=logger,
+            mappings=mappings,
         )
 
         # Set up Sonarr

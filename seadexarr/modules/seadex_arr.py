@@ -34,6 +34,8 @@ class SeaDexArr(ABC):
         config: str = "config.yml",
         cache: str = "cache.json",
         logger: logging.Logger | None = None,
+        *,
+        mappings: MappingResolver,
     ) -> None:
         """Base class for SeaDexArr instances
 
@@ -46,6 +48,10 @@ class SeaDexArr(ABC):
                 Defaults to "cache.json".
             logger. Logging instance. Defaults to None,
                 which will create one.
+            mappings (MappingResolver): The id-mapping resolver, built once by
+                the CLI (the composition root) and shared across a scheduled
+                Radarr->Sonarr cycle so the three large mapping sources are
+                downloaded, parsed and indexed a single time per run.
         """
 
         # Load, template-sync, and expose the config file as typed settings.
@@ -93,19 +99,14 @@ class SeaDexArr(ABC):
         # A placeholder is created here so the object is usable before run().
         self._ctx = RunContext(arr=arr, dry_run=False)
 
-        # Resolve external Arr ids -> AniList ids via the three mapping sources.
-        # The resolver downloads/refreshes, parses and indexes them, and owns the
-        # module-global parse memo shared across a scheduled Radarr->Sonarr cycle.
-        # anime_mappings / anidb_mappings / anibridge stay bound here as
-        # transitional aliases so the subclasses keep reading them directly
-        # (they're read-only after construction; the resolver owns them).
-        self._mappings = MappingResolver(
-            cache_time=self._config.cache_time,
-            ignore_anilist_ids=self._config.ignore_anilist_ids,
-            anime_mappings_cfg=self._config.anime_mappings_cfg,
-            anidb_mappings_cfg=self._config.anidb_mappings_cfg,
-            anibridge_mappings_cfg=self._config.anibridge_mappings_cfg,
-        )
+        # The id-mapping resolver (external Arr ids -> AniList ids) is injected
+        # by the CLI so a scheduled Radarr->Sonarr cycle shares one instance:
+        # the three large mapping sources are downloaded, parsed and indexed once
+        # per run rather than per arr. anime_mappings / anidb_mappings / anibridge
+        # stay bound here as transitional aliases so the subclasses keep reading
+        # them directly (they're read-only after construction; the resolver owns
+        # them).
+        self._mappings = mappings
         self.anime_mappings = self._mappings.anime_mappings
         self.anidb_mappings = self._mappings.anidb_mappings
         self.anibridge = self._mappings.anibridge

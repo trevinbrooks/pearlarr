@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 import time
@@ -5,6 +6,8 @@ from datetime import datetime, timedelta
 
 import typer
 
+from .config import AppConfig
+from .mappings import MappingResolver
 from .seadex_arr import setup_logger
 from .seadex_radarr import SeaDexRadarr
 from .seadex_sonarr import SeaDexSonarr
@@ -17,6 +20,38 @@ seadexarr_cache = typer.Typer(name="cache")
 seadexarr_cli.add_typer(seadexarr_run)
 seadexarr_cli.add_typer(seadexarr_config)
 seadexarr_cli.add_typer(seadexarr_cache)
+
+
+def _build_shared_resolver(
+    config: str,
+    logger: logging.Logger,
+) -> MappingResolver | None:
+    """Build the id-mapping resolver both arrs share for one run.
+
+    The resolver downloads, parses and indexes the three large mapping sources;
+    building it once (here, the composition root) and injecting it into both
+    SeaDexRadarr and SeaDexSonarr means that work happens a single time per run
+    rather than once per arr. The resolver settings are arr-independent, so the
+    config is loaded as "sonarr" purely to read them.
+
+    Returns None (after logging) when the config can't be loaded or a source
+    can't be fetched, so the scheduled loop skips the cycle and retries next
+    time instead of crashing - mirroring the per-arr error handling this
+    replaces.
+    """
+
+    try:
+        config_obj = AppConfig.load(config, "sonarr")
+        return MappingResolver(
+            cache_time=config_obj.cache_time,
+            ignore_anilist_ids=config_obj.ignore_anilist_ids,
+            anime_mappings_cfg=config_obj.anime_mappings_cfg,
+            anidb_mappings_cfg=config_obj.anidb_mappings_cfg,
+            anibridge_mappings_cfg=config_obj.anibridge_mappings_cfg,
+        )
+    except Exception:
+        logger.error("Unexpected error building shared mappings", exc_info=True)
+        return None
 
 
 # Default command, schedule run
@@ -56,36 +91,45 @@ def run_scheduled() -> None:
         present_time = datetime.now().strftime("%H:%M")
         logger.info(f"Time is {present_time}. Starting scheduled run")
 
-        # Run both Radarr and Sonarr syncs, catching
-        # errors if they do arise. Split them up
-        # so one crashing doesn't ruin the other
-        sdr = None
-        try:
-            sdr = SeaDexRadarr(
-                config=config,
-                cache=cache,
-                logger=logger,
-            )
-            sdr.run()
-        except Exception:
-            logger.error("Unexpected error during Radarr run", exc_info=True)
-        finally:
-            if sdr is not None:
-                sdr.close()
+        # Build the id-mapping resolver once and share it across both arrs (one
+        # download/parse per cycle). On failure it logs and returns None, so the
+        # cycle is skipped and retried on the next pass rather than crashing.
+        mappings = _build_shared_resolver(config, logger)
 
-        sds = None
-        try:
-            sds = SeaDexSonarr(
-                config=config,
-                cache=cache,
-                logger=logger,
-            )
-            sds.run()
-        except Exception:
-            logger.error("Unexpected error during Sonarr run", exc_info=True)
-        finally:
-            if sds is not None:
-                sds.close()
+        if mappings is not None:
+
+            # Run both Radarr and Sonarr syncs, catching
+            # errors if they do arise. Split them up
+            # so one crashing doesn't ruin the other
+            sdr = None
+            try:
+                sdr = SeaDexRadarr(
+                    config=config,
+                    cache=cache,
+                    logger=logger,
+                    mappings=mappings,
+                )
+                sdr.run()
+            except Exception:
+                logger.error("Unexpected error during Radarr run", exc_info=True)
+            finally:
+                if sdr is not None:
+                    sdr.close()
+
+            sds = None
+            try:
+                sds = SeaDexSonarr(
+                    config=config,
+                    cache=cache,
+                    logger=logger,
+                    mappings=mappings,
+                )
+                sds.run()
+            except Exception:
+                logger.error("Unexpected error during Sonarr run", exc_info=True)
+            finally:
+                if sds is not None:
+                    sds.close()
 
         next_run_time = datetime.now() + timedelta(hours=schedule_time)
         next_run_time = next_run_time.strftime("%H:%M")
@@ -127,13 +171,21 @@ def run_single(
     run_radarr = radarr or movie_id is not None
     run_sonarr = sonarr or series_id is not None
 
-    if run_radarr:
+    # Build the shared id-mapping resolver once for whichever arr(s) run (one
+    # download/parse, reused by both). None (after logging) on a config/source
+    # failure, in which case the run is skipped.
+    mappings = None
+    if run_radarr or run_sonarr:
+        mappings = _build_shared_resolver(config, logger)
+
+    if mappings is not None and run_radarr:
         sdr = None
         try:
             sdr = SeaDexRadarr(
                 config=config,
                 cache=cache,
                 logger=logger,
+                mappings=mappings,
             )
             sdr.run(tmdb_id=movie_id, dry_run=dry_run)
         except Exception:
@@ -142,13 +194,14 @@ def run_single(
             if sdr is not None:
                 sdr.close()
 
-    if run_sonarr:
+    if mappings is not None and run_sonarr:
         sds = None
         try:
             sds = SeaDexSonarr(
                 config=config,
                 cache=cache,
                 logger=logger,
+                mappings=mappings,
             )
             sds.run(tvdb_id=series_id, dry_run=dry_run)
         except Exception:

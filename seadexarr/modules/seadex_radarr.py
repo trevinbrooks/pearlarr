@@ -3,6 +3,7 @@ import time
 from typing import Any
 
 from .log import indent_string
+from .mappings import MappingResolver
 from .radarr_client import RadarrClient, collect_anime_movies
 from .seadex_arr import SeaDexArr
 
@@ -14,6 +15,8 @@ class SeaDexRadarr(SeaDexArr):
         config: str = "config.yml",
         cache: str = "cache.json",
         logger: logging.Logger | None = None,
+        *,
+        mappings: MappingResolver,
     ) -> None:
         """Sync Radarr instance with SeaDex
 
@@ -24,6 +27,8 @@ class SeaDexRadarr(SeaDexArr):
                 Defaults to "cache.json".
             logger. Logging instance. Defaults to None,
                 which will create one.
+            mappings (MappingResolver): Shared id-mapping resolver, injected by
+                the CLI so both arrs reuse one download/parse of the sources.
         """
 
         SeaDexArr.__init__(
@@ -32,6 +37,7 @@ class SeaDexRadarr(SeaDexArr):
             config=config,
             cache=cache,
             logger=logger,
+            mappings=mappings,
         )
 
         # Set up Radarr
