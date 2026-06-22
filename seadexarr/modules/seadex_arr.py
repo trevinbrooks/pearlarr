@@ -21,6 +21,7 @@ import yaml
 from ruamel.yaml import YAML
 from seadex import EntryNotFoundError, EntryRecord, SeaDexEntry
 
+from . import coverage as _coverage
 from .anibridge import AniBridge
 from .anilist import (
     ANILIST_BATCH_SIZE,
@@ -37,6 +38,11 @@ from .log import (
     indent_string,
     rule_string,
     setup_logger,
+)
+from .planner import (
+    get_all_seadex_rgs_per_episode,
+    get_same_files_groups,
+    normalize_rg,
 )
 from .torrent import (
     get_animetosho_torrent,
@@ -227,156 +233,6 @@ UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
 # title/format/coverImage are effectively static; episodes for a currently airing
 # show drift, so this caps how stale that count can get (~one episode/week).
 ANILIST_CACHE_TTL_DAYS = 7
-
-
-def normalize_rg(name: str | None) -> str | None:
-    """Normalize a release group name for comparison
-
-    Lower-cases and strips surrounding whitespace and dashes so that the same
-    group named slightly differently by Sonarr and SeaDex (e.g. "Era-Raws" vs.
-    "era-raws ") compare equal. Returns None for a missing/blank name.
-
-    Args:
-        name (str | None): Release group name
-    """
-
-    if not name:
-        return None
-    return name.strip().strip("-").casefold()
-
-
-def get_all_seadex_rgs_per_episode(
-    seadex_dict: dict,
-    sonarr_by_key: dict,
-) -> dict:
-    """Get a list of all SeaDex releases per-episode
-
-    Args:
-        seadex_dict: Dictionary of SeaDex releases
-        sonarr_by_key: Sonarr episodes indexed by (season, episode). A parsed
-            SeaDex (season, episode) is recorded only when Sonarr has it, which
-            this makes an O(1) key lookup. Built once by the caller and shared
-            with the per-episode match loop in filter_by_release_group.
-    """
-
-    all_seadex_rgs_per_episode: dict[str, set] = {"all": set()}
-
-    if len(seadex_dict) > 1:
-        for seadex_rg, seadex_rg_item in seadex_dict.items():
-
-            # Index by the normalized name so the membership checks in
-            # filter_by_release_group are case- and dash-insensitive
-            seadex_rg_normalized = normalize_rg(seadex_rg)
-
-            seadex_urls = seadex_rg_item.get("urls", {})
-            for url_item in seadex_urls.values():
-
-                seadex_episodes = url_item.get("episodes", [])
-
-                # If we haven't managed to parse, then set this up as an
-                # "all" episode fallback
-                if len(seadex_episodes) == 0:
-                    all_seadex_rgs_per_episode["all"].add(seadex_rg_normalized)
-
-                for seadex_ep in seadex_episodes:
-                    season = seadex_ep.get("season", 888)
-                    episode = seadex_ep.get("episode", 888)
-
-                    # Only record episodes Sonarr actually has, matching the
-                    # original per-episode gate against the episode list
-                    if (season, episode) in sonarr_by_key:
-                        season_key = f"S{season:02d}E{episode:02d}"
-                        all_seadex_rgs_per_episode.setdefault(
-                            season_key, set(),
-                        ).add(seadex_rg_normalized)
-
-    return all_seadex_rgs_per_episode
-
-
-def get_episode_keys(all_episodes: Iterable[dict]) -> set:
-    """Build the set of (season, episode) keys an episode list covers
-
-    Reduces a release's parsed episode list to the set of (season, episode)
-    pairs it contains, so different SeaDex release groups can be compared by
-    what files they cover.
-
-    Args:
-        all_episodes (iterable): Parsed episode dicts with "season"/"episode"
-    """
-
-    return {(ep.get("season"), ep.get("episode")) for ep in all_episodes}
-
-
-def get_same_files_groups(seadex_dict: dict) -> list:
-    """Group SeaDex release groups that cover exactly the same files
-
-    Release groups are grouped by their parsed episode coverage: two groups are
-    only treated as covering the same files when their parsed episode lists are
-    identical. This is deliberately stricter than "episodes overlap" -- groups
-    that overlap without being equal (e.g., a full-season batch and a single
-    cour) cover *different* files and must not be collapsed, or we'd silently
-    drop episodes when keeping only one of them.
-
-    Release groups with no episode parsing at all (e.g., Radarr movies) are
-    treated as covering the same files. Release groups whose files couldn't be
-    parsed (Sonarr parse failure, empty episode list) are each kept on their
-    own: we can't prove what they cover, so we'd rather grab a duplicate than
-    silently drop content. Returns a list of lists of release group names.
-
-    Args:
-        seadex_dict (dict): Dictionary of SeaDex releases
-    """
-
-    grouped = {}
-    for rg, rg_item in seadex_dict.items():
-        all_episodes = rg_item.get("all_episodes", None)
-
-        if all_episodes is None:
-            # No episode parsing for this Arr (e.g., Radarr): treat as one movie
-            key = "__no_episode_parsing__"
-        elif len(all_episodes) == 0:
-            # Parsing ran but found nothing: keep this group on its own so we
-            # never drop content we couldn't verify
-            key = ("__unparsed__", rg)
-        else:
-            key = frozenset(get_episode_keys(all_episodes))
-
-        # Insertion-ordered dict preserves first-seen group order for us
-        grouped.setdefault(key, []).append(rg)
-
-    return list(grouped.values())
-
-
-def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
-    """Condense a set of episode numbers into a readable range string
-
-    Contiguous runs are collapsed (e.g. [1, 2, 3] -> "E01-E03"), lone episodes
-    are kept as-is (e.g. [5] -> "E05"), and gaps split into multiple comma-separated ranges (e.g. [1, 2, 3, 7, 8] -> "E01-E03, E07-E08").
-
-    Args:
-        episode_numbers (iterable): Episode numbers within a single season
-    """
-
-    episodes = sorted(set(episode_numbers))
-    if not episodes:
-        return ""
-
-    # Walk the sorted episodes, breaking into runs wherever they aren't
-    # consecutive
-    runs = []
-    run_start = run_end = episodes[0]
-    for episode in episodes[1:]:
-        if episode == run_end + 1:
-            run_end = episode
-        else:
-            runs.append((run_start, run_end))
-            run_start = run_end = episode
-    runs.append((run_start, run_end))
-
-    return ", ".join(
-        f"E{start:02d}" if start == end else f"E{start:02d}-E{end:02d}"
-        for start, end in runs
-    )
 
 
 class SeaDexArr(ABC):
@@ -1890,79 +1746,31 @@ class SeaDexArr(ABC):
 
     @staticmethod
     def format_episode_coverage(episodes: list) -> list | None:
-        """Summarize the Sonarr season/episode coverage of a torrent, per season
+        """Per-season season/episode coverage tuples for a torrent.
 
-        Returns a list of (season_label, episode_ranges) tuples, one per season
-        the torrent covers, ordered by season. The season label is e.g. "S01"
-        and the episode ranges condense contiguous runs, e.g. "E01-E12" or
-        "E01-E03, E07-E12" for a season with a gap, or "E05" for a lone episode.
-
-        Returns None when there is no parsed episode info (e.g., Radarr movies,
-        or a Sonarr parse failure).
-
-        Args:
-            episodes (list): List of {"season", "episode", ...} dicts,
-                as parsed onto each torrent's url_item
+        Thin wrapper over :func:`coverage.format_episode_coverage`, relocated in
+        the Phase 1 decomposition; kept on the class so subclasses can call it
+        via ``self``.
         """
 
-        if not episodes:
-            return None
-
-        # Collect the episode numbers seen for each season
-        episodes_by_season = {}
-        for ep in episodes:
-            season = ep.get("season")
-            episode = ep.get("episode")
-            if season is None or episode is None:
-                continue
-            episodes_by_season.setdefault(season, set()).add(episode)
-
-        if not episodes_by_season:
-            return None
-
-        return [
-            (f"S{season:02d}", format_episode_ranges(episodes_by_season[season]))
-            for season in sorted(episodes_by_season)
-        ]
+        return _coverage.format_episode_coverage(episodes)
 
     def coverage_string(self, episodes: list) -> str:
-        """One-line season/episode coverage, e.g. "S04 E01-E12" or
-        "S00 E10, S02 E01-E12". Returns "" when there's no parsed episode info
-        (e.g., a Radarr movie), so callers can treat it as "URL only".
+        """One-line season/episode coverage, e.g. "S04 E01-E12".
 
-        Args:
-            episodes (list): {"season", "episode"} dicts
+        Thin wrapper over :func:`coverage.coverage_string`.
         """
 
-        coverage = self.format_episode_coverage(episodes)
-        if not coverage:
-            return ""
-        return ", ".join(f"{label} {ranges}" for label, ranges in coverage)
+        return _coverage.coverage_string(episodes)
 
     @staticmethod
     def episodes_from_ep_list(ep_list: list | None, missing_only: bool = False) -> list:
-        """Convert a Sonarr ep_list into {"season","episode"} coverage dicts
+        """Convert a Sonarr ep_list into {"season","episode"} coverage dicts.
 
-        Sonarr episodes carry "seasonNumber"/"episodeNumber"; the coverage
-        helpers expect "season"/"episode". Optionally, keep only missing episodes
-        (no file on disk) to summarize what is still needed.
-
-        Args:
-            ep_list (list): Sonarr episode dicts
-            missing_only (bool): Keep only episodes with no file. Defaults to False
+        Thin wrapper over :func:`coverage.episodes_from_ep_list`.
         """
 
-        episodes = []
-        for ep in ep_list or []:
-            if missing_only and ep.get("episodeFileId", 0) != 0:
-                continue
-            episodes.append(
-                {
-                    "season": ep.get("seasonNumber"),
-                    "episode": ep.get("episodeNumber"),
-                },
-            )
-        return episodes
+        return _coverage.episodes_from_ep_list(ep_list, missing_only=missing_only)
 
     def add_torrent(
         self,

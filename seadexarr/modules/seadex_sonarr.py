@@ -14,7 +14,8 @@ from .anilist import (
     get_anilist_n_eps,
 )
 from .log import indent_string
-from .seadex_arr import UPDATED_AT_STR_FORMAT, SeaDexArr, get_episode_keys
+from .planner import get_episode_keys
+from .seadex_arr import UPDATED_AT_STR_FORMAT, SeaDexArr
 from .seadex_radarr import SeaDexRadarr
 
 TORRENT_FILENAMES_TO_SKIP = [
