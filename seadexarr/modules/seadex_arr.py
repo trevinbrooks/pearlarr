@@ -76,8 +76,10 @@ class SeaDexArr(ABC):
         # A single keep-alive session shared by the raw Sonarr/Radarr API calls
         self.session = requests.Session()
 
-        # qbit
-        self.qbit: qbittorrentapi.Client
+        # qbit. None until a fully-configured client is built below; the rest of
+        # the app reads `self.qbit is None` to mean "no client -> perpetual
+        # preview", so this must always be a defined attribute.
+        self.qbit: qbittorrentapi.Client | None = None
         qbit_info = self._config.qbit_info
 
         # Configured only when every qbit_info field has a value; with a missing
@@ -200,10 +202,10 @@ class SeaDexArr(ABC):
         )
 
         # qBittorrent adapter: parses a release URL by tracker and adds it. qbit
-        # may be unset when no client is configured, so read it defensively; the
-        # service treats a missing client as a perpetual preview.
+        # is None when no client is configured; the service treats a missing
+        # client as a perpetual preview.
         self._torrents = TorrentService(
-            qbit=getattr(self, "qbit", None),
+            qbit=self.qbit,
             session=self.session,
             category=self.torrent_category,
             tags=self.torrent_tags,
@@ -265,7 +267,7 @@ class SeaDexArr(ABC):
     ) -> str | None:
         """Cached AniList title for an entry, reused without an AniList lookup."""
 
-        return self.get_cached_field(arr, al_id, "name")
+        return self.cache_store.get_cached_name(arr, al_id)
 
     def get_cached_field(
         self,
@@ -774,8 +776,13 @@ class SeaDexArr(ABC):
                             "size", None,
                         )
 
-                        # Do the sizes match?
-                        size_match = sonarr_ep_size == seadex_ep_size
+                        # Do the sizes match? A missing Sonarr file reports no
+                        # size, so guard against None == None reading as a match
+                        # when neither side actually has a size.
+                        size_match = (
+                            sonarr_ep_size is not None
+                            and sonarr_ep_size == seadex_ep_size
+                        )
 
                         season_ep_str = (
                             f"S{seadex_ep_season:02d}E{seadex_ep_episode:02d}"
@@ -971,17 +978,6 @@ class SeaDexArr(ABC):
             for rg_item in seadex_dict.values()
             for url_item in rg_item.get("urls", {}).values()
         )
-
-    @staticmethod
-    def format_episode_coverage(episodes: list) -> list | None:
-        """Per-season season/episode coverage tuples for a torrent.
-
-        Thin wrapper over :func:`coverage.format_episode_coverage`, relocated in
-        the Phase 1 decomposition; kept on the class so subclasses can call it
-        via ``self``.
-        """
-
-        return _coverage.format_episode_coverage(episodes)
 
     def coverage_string(self, episodes: list) -> str:
         """One-line season/episode coverage, e.g. "S04 E01-E12".

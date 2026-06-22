@@ -3,24 +3,25 @@
 These move to ``coverage.py`` in Phase 1.
 """
 
+from seadexarr.modules.coverage import format_episode_coverage
 from seadexarr.modules.seadex_arr import SeaDexArr
 from tests.builders import make_arr, sonarr_ep
 
 
 class TestFormatEpisodeCoverage:
     def test_none_when_empty(self) -> None:
-        assert SeaDexArr.format_episode_coverage([]) is None
+        assert format_episode_coverage([]) is None
 
     def test_none_when_all_keys_missing(self) -> None:
-        assert SeaDexArr.format_episode_coverage([{"foo": 1}]) is None
+        assert format_episode_coverage([{"foo": 1}]) is None
 
     def test_single_season(self) -> None:
         eps = [{"season": 1, "episode": 1}, {"season": 1, "episode": 2}]
-        assert SeaDexArr.format_episode_coverage(eps) == [("S01", "E01-E02")]
+        assert format_episode_coverage(eps) == [("S01", "E01-E02")]
 
     def test_multi_season_sorted(self) -> None:
         eps = [{"season": 2, "episode": 1}, {"season": 0, "episode": 10}]
-        assert SeaDexArr.format_episode_coverage(eps) == [
+        assert format_episode_coverage(eps) == [
             ("S00", "E10"),
             ("S02", "E01"),
         ]
