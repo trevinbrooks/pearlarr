@@ -5,7 +5,7 @@ into a slim orchestrator plus focused, independently-testable collaborators —
 **without changing behaviour or the CLI surface**.
 
 **Branch:** `public-only-release-filtering`
-**Status:** Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅ (4a planner · 4b reporter+context) · Phases 5–6 pending
+**Status:** Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅ (4a planner · 4b reporter+context) · Phase 5 ✅ (5a clients+ignore_movies fix · 5b config single-source) · Phase 6 pending
 **Gates (every phase):** `pyrefly check` = 0 errors · `ruff check` = clean ·
 `pytest` = all pass · package import smoke · (user-side) one `--dry-run` run.
 Native unions, no `Optional`, no suppressions.
@@ -85,8 +85,16 @@ reshuffle, so `from .x import Y` patterns are unchanged).
 | `torrents.py` | `TorrentService` — qBittorrent adapter (URL-parse + add; driving loop stays till Phase 4) | ✅ created (Phase 3) |
 | `notify.py` | `Notifier` — Discord fields + push | ✅ created (Phase 3) |
 | `reporter.py` | `RunReporter` (all `log_*` + summary) + `RunContext` + `fresh_stats` | ✅ created (Phase 4b) |
-| `sync.py` | `SeaDexSync(ABC)` — `run_sync` template + the 3 shared helpers | Phase 5 |
-| `sonarr.py` / `radarr.py` | `SonarrClient`/`RadarrClient` + thin `SeaDex*` adapter | Phase 5 |
+| `sonarr_client.py` | `SonarrClient` — Sonarr REST adapter (arrapi + raw `/episode`,`/parse`) | ✅ created (Phase 5a) |
+| `radarr_client.py` | `RadarrClient` + `collect_anime_movies` — Radarr REST adapter | ✅ created (Phase 5a) |
+
+**Layout note (decided 2026-06-22, Phase 5):** the `sync.py` / `sonarr.py` /
+`radarr.py` rename above was **dropped** in favour of "new client files only" —
+the orchestration template stays in `seadex_arr.py` (class `SeaDexArr`), the
+`SeaDexSonarr` / `SeaDexRadarr` adapters slimmed *in place* (still in
+`seadex_sonarr.py` / `seadex_radarr.py`), and `__init__.py` re-exports + test
+imports are unchanged. The new client classes live in the two `*_client.py`
+files above and are composed by the adapters.
 
 Net target: base class **3213 → ~300**, Sonarr **981 → ~280**, Radarr **279 → ~130**.
 
@@ -365,3 +373,37 @@ Each phase is independently shippable and ends at the gates in the header.
   orchestrator). 82 tests, all gates green (pyrefly 0 / ruff clean); import +
   delegator-chain smoke OK. **Still owed for the phase:** the user-side one-`--dry-run` gate
   (needs live Sonarr/Radarr).
+- **2026-06-22 — Phase 5a done (Arr REST clients + `ignore_movies_in_radarr` fix).**
+  Extracted the Sonarr/Radarr HTTP surface into two independently-testable adapters:
+  `sonarr_client.py` (`SonarrClient`: `all_series` / `get_series` / `episodes` /
+  `parse` — the arrapi calls plus the raw `/api/v3/episode` and `/parse` endpoints)
+  and `radarr_client.py` (`RadarrClient`: `all_movies` / `get_movie` / `movie_files`,
+  plus the shared `collect_anime_movies` scan). The subclasses keep their 4 hooks and
+  the episode-mapping **domain** logic (`get_ep_list`, `parse_episodes_from_seadex`,
+  the AniDB offset mapping) and compose the clients for I/O. **`ignore_movies_in_radarr`
+  fix:** no longer constructs a nested `SeaDexRadarr` (which re-ran the whole base
+  `__init__` — mapping parse, cache load, *and a qBittorrent login* — all unused); it
+  builds a lightweight `RadarrClient` and reuses the already-built **shared** mappings
+  via `collect_anime_movies`, removing the `seadex_sonarr → seadex_radarr` import and
+  collapsing `SeaDexSonarr.close()` to the inherited base. `_ep_list_cache` moved off
+  the generic base onto the Sonarr adapter (cleared at the top of each `run()`).
+  **Layout (with user):** new `*_client.py` files only — the `sync.py`/`sonarr.py`/
+  `radarr.py` rename was dropped; module/class names + re-exports + test imports
+  unchanged. `seadex_sonarr.py` 984 → 909, `seadex_radarr.py` 280 → 232 (+297 LOC of
+  isolated, testable client code). 82 tests, all gates green (pyrefly 0 / ruff clean);
+  import/structure smoke OK.
+- **2026-06-22 — Phase 5b done (config single source of truth).** Deleted the 15 flat
+  config "mirror" attributes copied in `SeaDexArr.__init__` and the two transitional
+  aliases (`self.config` → raw dict, `self.cache` → `CacheStore.data`); the
+  orchestrator and subclasses now read `self._config.<x>` directly (`self._config.get(...)`
+  for the arr-specific keys), and the Sonarr parse cache reads `self.cache_store.data`.
+  `AppConfig.trackers` / `ignore_anilist_ids` became `cached_property` so they parse
+  their set **once** per instance — the §8 landmine: with the mirrors gone they're read
+  inside `get_seadex_dict` / `add_torrent`, where a per-access `set` rebuild would
+  otherwise reappear. `tests/builders.make_arr` now backs the decision-test config flags
+  with an in-memory `AppConfig` (`self._config`); added `make_config`. `seadex_arr.py`
+  1204 → 1162. 82 tests, all gates green (pyrefly 0 / ruff clean); config smoke
+  (cached_property parse-once + no mirrors/aliases on the base) OK. **Still owed:** the
+  user-side one-`--dry-run` gate (needs live Sonarr/Radarr). `data` + `AppConfig.get()`
+  intentionally remain for the still-untyped arr-specific keys (`sonarr_url`, profiles,
+  …) per §5.
