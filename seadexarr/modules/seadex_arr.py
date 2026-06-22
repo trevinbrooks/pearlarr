@@ -5,7 +5,7 @@ import os
 import shutil
 import time
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta
 from hashlib import md5
 from itertools import compress
@@ -36,7 +36,6 @@ from .log import (
     group_highlight,
     indent_string,
     kv_string,
-    left_aligned_string,
     rule_string,
     setup_logger,
 )
@@ -81,7 +80,9 @@ def save_json(
 
 
 ANIME_IDS_URL = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/refs/heads/master/anime_ids.json"
+ANIME_IDS_FILE = "anime_ids.json"
 ANIDB_MAPPINGS_URL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/refs/heads/master/anime-list-master.xml"
+ANIDB_MAPPINGS_FILE = "anime-list-master.xml"
 
 # anibridge-mappings ships daily-rolling release assets tagged by major version.
 # Bump ANIBRIDGE_RELEASE when a new (breaking) major lands; the cache filename is
@@ -89,6 +90,109 @@ ANIDB_MAPPINGS_URL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/
 ANIBRIDGE_RELEASE = "v3"
 ANIBRIDGE_MAPPINGS_URL = f"https://github.com/anibridge/anibridge-mappings/releases/download/{ANIBRIDGE_RELEASE}/mappings.min.json"
 ANIBRIDGE_MAPPINGS_FILE = f"anibridge_mappings_{ANIBRIDGE_RELEASE}.json"
+
+
+# --- Shared parse cache for the immutable mapping sources -------------------
+#
+# anime_ids.json, anime-list-master.xml and the anibridge graph are large,
+# read-only files whose parsed and indexed forms never change once an arr
+# instance is built. A scheduled cycle builds a SeaDexRadarr then a SeaDexSonarr
+# in the same process, and each used to independently re-read and re-index all
+# three. This memo caches the parsed result under a stable key, holding a single
+# (mtime, value) slot per key: the second instance reuses the first's parse
+# while the file is unchanged on disk, and a re-download (new mtime) replaces the
+# slot rather than accumulating. The parsed objects are only ever read after
+# construction, so sharing them is safe; the CLI run path is single-threaded, so
+# the plain dict needs no locking.
+_PARSED_MAPPING_CACHE: dict[str, tuple[float, Any]] = {}
+
+
+def _load_mapping_by_mtime(
+    path: str,
+    parse: Callable[[str], Any],
+    cache_key: str | None = None,
+) -> Any:
+    """Return ``parse(path)``, reusing a cached result while the mtime is unchanged.
+
+    Args:
+        path (str): File whose modification time gates the cache
+        parse (Callable[[str], Any]): Builds the parsed value from the path
+        cache_key (str | None): Cache slot to use; defaults to ``path``. Pass a
+            distinct key when more than one product is derived from one file
+            (e.g. the Anime-IDs map and its reverse index).
+    """
+
+    key = cache_key or path
+    mtime = os.path.getmtime(path)
+
+    cached = _PARSED_MAPPING_CACHE.get(key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+
+    value = parse(path)
+    _PARSED_MAPPING_CACHE[key] = (mtime, value)
+    return value
+
+
+def _parse_anime_mappings(path: str) -> dict:
+    """Load the Kometa Anime-IDs JSON map from disk."""
+
+    with open(path) as f:
+        return json.load(f)
+
+
+def _build_anime_mappings_index(anime_mappings: dict) -> dict[str, dict]:
+    """Build reverse indexes over the Kometa Anime-IDs map for fast lookups
+
+    Anime-IDs is a flat {name: mapping} dict of ~16k entries. Querying it by
+    external id (the per-series hot path) used to mean a full scan per id type;
+    this groups every mapping with an AniList id by each external id it carries,
+    so get_mappings_from_anime_mappings becomes a dict lookup.
+
+    Args:
+        anime_mappings (dict): Parsed Anime-IDs map ({name: mapping})
+
+    Returns:
+        dict: field name -> {external id -> [mapping, ...]}, for the
+            "tvdb_id", "tmdb_movie_id", "tmdb_show_id" and "imdb_id" fields
+    """
+
+    index: dict[str, dict] = {
+        "tvdb_id": defaultdict(list),
+        "tmdb_movie_id": defaultdict(list),
+        "tmdb_show_id": defaultdict(list),
+        "imdb_id": defaultdict(list),
+    }
+    for m in anime_mappings.values():
+        if m.get("anilist_id") is None:
+            continue
+        for field, bucket in index.items():
+            value = m.get(field)
+            if value is not None:
+                bucket[value].append(m)
+    return index
+
+
+def _parse_anime_mappings_index(path: str) -> dict[str, dict]:
+    """Build the Anime-IDs reverse index over the memoized parse of ``path``."""
+
+    return _build_anime_mappings_index(_load_mapping_by_mtime(path, _parse_anime_mappings))
+
+
+def _parse_anidb_mappings(path: str) -> ElementTree.Element:
+    """Parse the AniDB anime-list XML and return its root element."""
+
+    return ElementTree.parse(path).getroot()
+
+
+def _parse_anibridge(path: str, logger: logging.Logger | None) -> AniBridge:
+    """Load the anibridge graph from disk and build its indexed view."""
+
+    with open(path) as f:
+        graph = json.load(f)
+
+    return AniBridge(graph, logger=logger)
+
 
 ALLOWED_ARRS = [
     "radarr",
@@ -153,9 +257,17 @@ def get_all_seadex_rgs_per_episode(
         ep_list (list): List of episodes and info
     """
 
-    all_seadex_rgs_per_episode = {"all": []}
+    all_seadex_rgs_per_episode: dict[str, set] = {"all": set()}
 
     if len(seadex_dict) > 1:
+        # Index the Sonarr episodes by (season, episode) once so each parsed
+        # SeaDex episode is an O(1) membership test instead of a full scan of
+        # the episode list. The buckets are sets, so dedup is free.
+        sonarr_keys = {
+            (ep.get("seasonNumber", 999), ep.get("episodeNumber", 999))
+            for ep in ep_list or []
+        }
+
         for seadex_rg, seadex_rg_item in seadex_dict.items():
 
             # Index by the normalized name so the membership checks in
@@ -163,42 +275,26 @@ def get_all_seadex_rgs_per_episode(
             seadex_rg_normalized = normalize_rg(seadex_rg)
 
             seadex_urls = seadex_rg_item.get("urls", {})
-            for _url, url_item in seadex_urls.items():
+            for url_item in seadex_urls.values():
 
                 seadex_episodes = url_item.get("episodes", [])
 
                 # If we haven't managed to parse, then set this up as an
                 # "all" episode fallback
                 if len(seadex_episodes) == 0:
-                    if seadex_rg_normalized not in all_seadex_rgs_per_episode["all"]:
-                        all_seadex_rgs_per_episode["all"].append(seadex_rg_normalized)
+                    all_seadex_rgs_per_episode["all"].add(seadex_rg_normalized)
 
-                found_episodes = [False] * len(seadex_episodes)
+                for seadex_ep in seadex_episodes:
+                    season = seadex_ep.get("season", 888)
+                    episode = seadex_ep.get("episode", 888)
 
-                for seadex_idx, seadex_ep in enumerate(seadex_episodes):
-
-                    if found_episodes[seadex_idx]:
-                        continue
-
-                    for sonarr_ep in ep_list or []:
-                        sonarr_ep_season = sonarr_ep.get("seasonNumber", 999)
-                        sonarr_ep_episode = sonarr_ep.get("episodeNumber", 999)
-
-                        # Do we have a match?
-                        if sonarr_ep_season == seadex_ep.get(
-                            "season", 888,
-                        ) and sonarr_ep_episode == seadex_ep.get("episode", 888):
-
-                            season_key = (
-                                f"S{sonarr_ep_season:02d}E{sonarr_ep_episode:02d}"
-                            )
-                            if season_key not in all_seadex_rgs_per_episode:
-                                all_seadex_rgs_per_episode[season_key] = []
-
-                            if seadex_rg_normalized not in all_seadex_rgs_per_episode[season_key]:
-                                all_seadex_rgs_per_episode[season_key].append(seadex_rg_normalized)
-
-                            found_episodes[seadex_idx] = True
+                    # Only record episodes Sonarr actually has, matching the
+                    # original per-episode gate against the episode list
+                    if (season, episode) in sonarr_keys:
+                        season_key = f"S{season:02d}E{episode:02d}"
+                        all_seadex_rgs_per_episode.setdefault(
+                            season_key, set(),
+                        ).add(seadex_rg_normalized)
 
     return all_seadex_rgs_per_episode
 
@@ -313,9 +409,8 @@ class SeaDexArr:
 
         # If we don't have a config file, copy the sample to the current
         # working directory
-        f_path = copy.deepcopy(__file__)
         config_template_path = os.path.join(
-            os.path.dirname(f_path), "config_sample.yml",
+            os.path.dirname(__file__), "config_sample.yml",
         )
         if not os.path.exists(config):
             shutil.copy(config_template_path, config)
@@ -435,10 +530,13 @@ class SeaDexArr:
 
         if anime_mappings_cfg is False:
             anime_mappings = {}
+            anime_mappings_index = None
         elif anime_mappings_cfg is None:
             anime_mappings = self.get_anime_mappings()
+            anime_mappings_index = self._get_anime_mappings_index()
         else:
             anime_mappings = anime_mappings_cfg
+            anime_mappings_index = _build_anime_mappings_index(anime_mappings)
 
         if anidb_mappings_cfg is False:
             anidb_mappings = None
@@ -461,10 +559,9 @@ class SeaDexArr:
         self.anime_mappings = anime_mappings
         # Reverse indexes over the (large, ~16k-entry) Kometa Anime-IDs map so
         # get_mappings_from_anime_mappings is an O(matches) dict lookup instead of
-        # three full scans of every mapping per series. Built once here.
-        self._anime_mappings_index = (
-            self._build_anime_mappings_index() if anime_mappings else None
-        )
+        # three full scans of every mapping per series. Shared across instances
+        # via the mtime memo when both arrs read the same on-disk file.
+        self._anime_mappings_index = anime_mappings_index if anime_mappings else None
         self.anidb_mappings = anidb_mappings
         # Lazily-built {anidbid -> [element]} index over the AniDB XML, so the
         # specials/movie path in get_ep_list does a dict lookup instead of an
@@ -593,28 +690,37 @@ class SeaDexArr:
     def get_anime_mappings(self) -> dict:
         """Get the anime IDs file"""
 
-        anime_mappings_file = os.path.join("anime_ids.json")
-
         self.get_external_mappings(
-            f=anime_mappings_file,
+            f=ANIME_IDS_FILE,
             url=ANIME_IDS_URL,
         )
 
-        with open(anime_mappings_file) as f:
-            return json.load(f)
+        return _load_mapping_by_mtime(ANIME_IDS_FILE, _parse_anime_mappings)
+
+
+    def _get_anime_mappings_index(self) -> dict[str, dict]:
+        """Reverse index over the on-disk Anime-IDs map, shared via the mtime memo.
+
+        Must follow get_anime_mappings (which downloads/refreshes the file); it
+        reuses that memoized parse instead of re-reading the JSON.
+        """
+
+        return _load_mapping_by_mtime(
+            ANIME_IDS_FILE,
+            _parse_anime_mappings_index,
+            cache_key=f"{ANIME_IDS_FILE}#index",
+        )
 
 
     def get_anidb_mappings(self) -> ElementTree.Element:
         """Get the AniDB mappings file"""
 
-        anidb_mappings_file = os.path.join("anime-list-master.xml")
-
         self.get_external_mappings(
-            f=anidb_mappings_file,
+            f=ANIDB_MAPPINGS_FILE,
             url=ANIDB_MAPPINGS_URL,
         )
 
-        return ElementTree.parse(anidb_mappings_file).getroot()
+        return _load_mapping_by_mtime(ANIDB_MAPPINGS_FILE, _parse_anidb_mappings)
 
 
     def anidb_anime_by_id(self, anidb_id: int) -> list:
@@ -654,10 +760,13 @@ class SeaDexArr:
             url=ANIBRIDGE_MAPPINGS_URL,
         )
 
-        with open(ANIBRIDGE_MAPPINGS_FILE) as f:
-            graph = json.load(f)
-
-        return AniBridge(graph, logger=getattr(self, "logger", None))
+        # self.logger isn't set until after mappings load, so this is None during
+        # __init__; the lambda lets the shared parse build AniBridge with it.
+        logger = getattr(self, "logger", None)
+        return _load_mapping_by_mtime(
+            ANIBRIDGE_MAPPINGS_FILE,
+            lambda path: _parse_anibridge(path, logger),
+        )
 
 
     def get_external_mappings(
@@ -973,34 +1082,6 @@ class SeaDexArr:
         # Persist now (before the main loop) so the batch's work survives even an
         # early return - e.g., when max_torrents_to_add is hit mid-run
         self.save_anilist_cache()
-
-    def _build_anime_mappings_index(self) -> dict[str, dict]:
-        """Build reverse indexes over the Kometa Anime-IDs map for fast lookups
-
-        Anime-IDs is a flat {name: mapping} dict of ~16k entries. Querying it by
-        external id (the per-series hot path) used to mean a full scan per id
-        type; this groups every mapping with an AniList id by each external id it
-        carries, so get_mappings_from_anime_mappings becomes a dict lookup.
-
-        Returns:
-            dict: field name -> {external id -> [mapping, ...]}, for the
-                "tvdb_id", "tmdb_movie_id", "tmdb_show_id" and "imdb_id" fields
-        """
-
-        index: dict[str, dict] = {
-            "tvdb_id": defaultdict(list),
-            "tmdb_movie_id": defaultdict(list),
-            "tmdb_show_id": defaultdict(list),
-            "imdb_id": defaultdict(list),
-        }
-        for m in self.anime_mappings.values():
-            if m.get("anilist_id") is None:
-                continue
-            for field, bucket in index.items():
-                value = m.get(field)
-                if value is not None:
-                    bucket[value].append(m)
-        return index
 
     def get_mappings_from_anime_mappings(
         self,
@@ -1324,13 +1405,14 @@ class SeaDexArr:
         # SeaDex options with links
         for srg, srg_item in seadex_dict.items():
 
-            # Check if we're actually downloading anything
-            dl = [
-                srg_item.get("urls", {}).get(x, {}).get("download", False)
-                for x in srg_item["urls"]
+            # URLs flagged for download in this group, in one pass
+            urls_to_download = [
+                url
+                for url, u in srg_item.get("urls", {}).items()
+                if u.get("download", False)
             ]
 
-            if any(dl):
+            if urls_to_download:
 
                 # Include any tags in the string
                 discord_value = ""
@@ -1339,8 +1421,6 @@ class SeaDexArr:
                     discord_value += "Tags:\n"
                     discord_value += "\n".join(tags)
                     discord_value += "\n\n"
-
-                urls_to_download = [x for i, x in enumerate(srg_item["urls"]) if dl[i]]
 
                 # And include URLs for files we're downloading
                 discord_value += "Links:\n"
@@ -1430,13 +1510,13 @@ class SeaDexArr:
         for seadex_rg, seadex_rg_item in seadex_dict.items():
 
             self.logger.debug(
-                left_aligned_string(
+                indent_string(
                     f"Filtering for release group {seadex_rg}",
                 ),
             )
 
             seadex_urls = seadex_rg_item.get("urls", {})
-            for _url, url_item in seadex_urls.items():
+            for url_item in seadex_urls.values():
 
                 url_hash = url_item.get("hash", None)
 
@@ -1444,7 +1524,7 @@ class SeaDexArr:
                 torrent_hashes.append(url_hash)
                 if url_hash not in cached_hashes:
                     self.logger.debug(
-                        left_aligned_string(
+                        indent_string(
                             f"Torrent hash {url_hash} not found in cache. "
                             f"Will add to downloads",
                         ),
@@ -1454,7 +1534,7 @@ class SeaDexArr:
 
                 else:
                     self.logger.debug(
-                        left_aligned_string(
+                        indent_string(
                             f"Torrent hash {url_hash} in cache. Will skip download",
                         ),
                     )
@@ -1486,8 +1566,10 @@ class SeaDexArr:
             ep_list: List of episodes. Defaults to None
         """
 
-        # Get a simple list of the release groups
-        arr_release_groups = list(arr_release_dict.keys())
+        # The release-group names, used both for display (insertion order
+        # preserved) and for membership tests below. A dict keys view already
+        # supports `in` in O(1), so there's no need to materialize a list.
+        arr_release_groups = arr_release_dict.keys()
 
         # And also just check if any release group matches
         # any Arr release tag
@@ -1500,10 +1582,29 @@ class SeaDexArr:
             ep_list=ep_list,
         )
 
+        # Index the Sonarr episodes by (season, episode) once, so the
+        # per-episode checks below are O(1) lookups rather than a fresh scan of
+        # the whole list for every parsed SeaDex episode. First entry wins on a
+        # duplicate key (Sonarr episodes are unique by season+episode).
+        sonarr_by_key: dict = {}
+        for sonarr_ep in ep_list or []:
+            sonarr_by_key.setdefault(
+                (
+                    sonarr_ep.get("seasonNumber", 999),
+                    sonarr_ep.get("episodeNumber", 999),
+                ),
+                sonarr_ep,
+            )
+
+        # Resolve once: the per-episode debug lines below sit in the hot
+        # matching loop, so this lets us skip building their f-strings on a
+        # normal INFO run instead of formatting them only to discard them.
+        debug_on = self.logger.isEnabledFor(logging.DEBUG)
+
         for seadex_rg, seadex_rg_item in seadex_dict.items():
 
             self.logger.debug(
-                left_aligned_string(
+                indent_string(
                     f"Filtering for release group {seadex_rg}",
                 ),
             )
@@ -1518,7 +1619,7 @@ class SeaDexArr:
                 if len(seadex_episodes) == 0:
                     if seadex_rg not in arr_release_groups and not overlapping_results:
                         self.logger.debug(
-                            left_aligned_string(
+                            indent_string(
                                 f"SeaDex release group {seadex_rg} not in {arr.capitalize()} releases: "
                                 f"{', '.join([str(x) for x in arr_release_groups])} - will download {url}",
                             ),
@@ -1535,17 +1636,10 @@ class SeaDexArr:
                         if not isinstance(arr_file_sizes, list):
                             arr_file_sizes = [arr_file_sizes]
 
-                        intersect = list(
-                            filter(
-                                lambda x: x in seadex_file_sizes,
-                                arr_file_sizes,
-                            ),
-                        )
-
                         # If we have no overlaps at all, then add
-                        if len(intersect) == 0:
+                        if set(seadex_file_sizes).isdisjoint(arr_file_sizes):
                             self.logger.debug(
-                                left_aligned_string(
+                                indent_string(
                                     f"SeaDex release group {seadex_rg} in {arr.capitalize()} releases: "
                                     f"{', '.join([str(x) for x in arr_release_groups])}, but file sizes do not match - will download {url}",
                                 ),
@@ -1555,7 +1649,7 @@ class SeaDexArr:
 
                         else:
                             self.logger.debug(
-                                left_aligned_string(
+                                indent_string(
                                     f"SeaDex release group {seadex_rg} in {arr.capitalize()} releases: "
                                     f"{', '.join([str(x) for x in arr_release_groups])}, and file sizes match",
                                 ),
@@ -1575,109 +1669,103 @@ class SeaDexArr:
                     # groups (and there are no alternatives), then flip download to True. If all the sizes mismatch,
                     # flip download to true
 
-                    found_episodes = [False] * len(seadex_episodes)
                     rg_matches = [False] * len(seadex_episodes)
                     size_matches = [False] * len(seadex_episodes)
 
                     for seadex_idx, seadex_ep in enumerate(seadex_episodes):
 
-                        if found_episodes[seadex_idx]:
+                        seadex_ep_season = seadex_ep.get("season", 888)
+                        seadex_ep_episode = seadex_ep.get("episode", 888)
+                        seadex_ep_size = seadex_ep.get("size", None)
+
+                        # O(1) lookup into the indexed Sonarr episodes instead of
+                        # re-scanning the whole list for every parsed episode
+                        sonarr_ep = sonarr_by_key.get(
+                            (seadex_ep_season, seadex_ep_episode),
+                        )
+                        if sonarr_ep is None:
                             continue
 
-                        for sonarr_ep in ep_list:
+                        # Get the matched Sonarr episode's file size
+                        sonarr_ep_size = sonarr_ep.get("episodeFile", {}).get(
+                            "size", None,
+                        )
 
-                            # Get Season, Episode, and size numbers for Sonarr and SeaDex
-                            sonarr_ep_season = sonarr_ep.get("seasonNumber", 999)
-                            sonarr_ep_episode = sonarr_ep.get("episodeNumber", 999)
-                            sonarr_ep_size = sonarr_ep.get("episodeFile", {}).get(
-                                "size", None,
+                        # Do the sizes match?
+                        size_match = sonarr_ep_size == seadex_ep_size
+
+                        season_ep_str = (
+                            f"S{seadex_ep_season:02d}E{seadex_ep_episode:02d}"
+                        )
+
+                        # Check SeaDex release group matches the episode release group in Sonarr
+                        sonarr_rg = sonarr_ep.get("episodeFile", {}).get(
+                            "releaseGroup", None,
+                        )
+                        sonarr_rg_normalized = normalize_rg(sonarr_rg)
+                        seadex_rg_normalized = normalize_rg(seadex_rg)
+                        # If not, flag as should be downloaded if it's not
+                        # already in some overlapping release.
+                        # normalized name indexes all_seadex_rgs_per_episode, so compare the normalized name
+                        if (
+                            sonarr_rg_normalized != seadex_rg_normalized
+                            and sonarr_rg_normalized
+                            not in all_seadex_rgs_per_episode["all"]
+                        ):
+
+                            # Avoid duplicating when another release already covers it
+                            all_seadex_rg = all_seadex_rgs_per_episode.get(
+                                season_ep_str, (),
                             )
 
-                            seadex_ep_season = seadex_ep.get("season", 888)
-                            seadex_ep_episode = seadex_ep.get("episode", 888)
-                            seadex_ep_size = seadex_ep.get("size", None)
-
-                            # Do we have a match?
-                            if (
-                                sonarr_ep_season == seadex_ep_season
-                                and sonarr_ep_episode == seadex_ep_episode
-                            ):
-
-                                # Do the sizes match?
-                                size_match = sonarr_ep_size == seadex_ep_size
-
-                                season_ep_str = (
-                                    f"S{sonarr_ep_season:02d}E{sonarr_ep_episode:02d}"
-                                )
-
-                                # Check SeaDex release group matches the episode release group in Sonarr
-                                sonarr_rg = sonarr_ep.get("episodeFile", {}).get(
-                                    "releaseGroup", None,
-                                )
-                                sonarr_rg_normalized = normalize_rg(sonarr_rg)
-                                seadex_rg_normalized = normalize_rg(seadex_rg)
-                                # If not, flag as should be downloaded if it's not
-                                # already in some overlapping release.
-                                # normalized name indexes all_seadex_rgs_per_episode, so compare the normalized name
-                                if (
-                                    sonarr_rg_normalized != seadex_rg_normalized
-                                    and sonarr_rg_normalized
-                                    not in all_seadex_rgs_per_episode["all"]
-                                ):
-
-                                    # Avoid duplicating when another release already covers it
-                                    all_seadex_rg = all_seadex_rgs_per_episode.get(
-                                        season_ep_str, [],
-                                    )
-
-                                    if sonarr_rg_normalized not in all_seadex_rg:
-                                        self.logger.debug(
-                                            left_aligned_string(
-                                                f"SeaDex release group {seadex_rg} differs from "
-                                                f"{arr.capitalize()} release for "
-                                                f"{season_ep_str} ({sonarr_rg}) and no other "
-                                                f"recommended release covers it - will download {url}",
-                                            ),
-                                        )
-
-                                        url_item.update({"download": True})
-
-                                else:
-
+                            if sonarr_rg_normalized not in all_seadex_rg:
+                                if debug_on:
                                     self.logger.debug(
-                                        left_aligned_string(
-                                            f"Found SeaDex match to {arr.capitalize()} "
-                                            f"for {season_ep_str}.",
+                                        indent_string(
+                                            f"SeaDex release group {seadex_rg} differs from "
+                                            f"{arr.capitalize()} release for "
+                                            f"{season_ep_str} ({sonarr_rg}) and no other "
+                                            f"recommended release covers it - will download {url}",
                                         ),
                                     )
-                                    if not size_match:
-                                        self.logger.debug(
-                                            left_aligned_string(
-                                                f"-> Sizes are different: "
-                                                f"{sonarr_ep_size} (Sonarr), {seadex_ep_size} (SeaDex)",
-                                            ),
-                                        )
-                                    else:
-                                        self.logger.debug(
-                                            left_aligned_string(
-                                                f"-> Sizes match: {sonarr_ep_size}",
-                                            ),
-                                        )
 
-                                    rg_matches[seadex_idx] = True
+                                url_item.update({"download": True})
 
-                                # Now check against file size
-                                if size_match:
-                                    size_matches[seadex_idx] = True
+                        else:
 
-                                found_episodes[seadex_idx] = True
+                            if debug_on:
+                                self.logger.debug(
+                                    indent_string(
+                                        f"Found SeaDex match to {arr.capitalize()} "
+                                        f"for {season_ep_str}.",
+                                    ),
+                                )
+                                if not size_match:
+                                    self.logger.debug(
+                                        indent_string(
+                                            f"-> Sizes are different: "
+                                            f"{sonarr_ep_size} (Sonarr), {seadex_ep_size} (SeaDex)",
+                                        ),
+                                    )
+                                else:
+                                    self.logger.debug(
+                                        indent_string(
+                                            f"-> Sizes match: {sonarr_ep_size}",
+                                        ),
+                                    )
+
+                            rg_matches[seadex_idx] = True
+
+                        # Now check against file size
+                        if size_match:
+                            size_matches[seadex_idx] = True
 
                     # If we have matched the release groups but not the file sizes, then flag that
                     # here and mark for download
                     size_matches = list(compress(size_matches, rg_matches))
                     if not any(size_matches) and len(size_matches) > 0:
                         self.logger.debug(
-                            left_aligned_string(
+                            indent_string(
                                 f"File sizes all differ for release group {seadex_rg} - will download {url}",
                             ),
                         )
@@ -1780,7 +1868,7 @@ class SeaDexArr:
                     continue
 
                 self.logger.debug(
-                    left_aligned_string(
+                    indent_string(
                         f"Not downloading release group {rg}: release group "
                         f"{keeper} already covers the same files",
                     ),
@@ -1795,20 +1883,11 @@ class SeaDexArr:
             seadex_dict (dict): Dictionary of SeaDex releases
         """
 
-        any_to_download = False
-        for rg in seadex_dict:
-
-            if any_to_download:
-                return any_to_download
-
-            dl = [
-                seadex_dict[rg]["urls"][x].get("download", False)
-                for x in seadex_dict[rg]["urls"]
-            ]
-            if any(dl):
-                any_to_download = True
-
-        return any_to_download
+        return any(
+            url_item.get("download", False)
+            for rg_item in seadex_dict.values()
+            for url_item in rg_item.get("urls", {}).values()
+        )
 
     @staticmethod
     def format_episode_coverage(episodes: list) -> list | None:
@@ -1958,13 +2037,17 @@ class SeaDexArr:
 
                 # AnimeToshio
                 elif tracker.lower() == "animetosho":
-                    parsed_url, source_name = get_animetosho_torrent(url=url)
+                    parsed_url, source_name = get_animetosho_torrent(
+                        url=url,
+                        session=self.session,
+                    )
 
                 # RuTracker
                 elif tracker.lower() == "rutracker":
                     parsed_url, source_name = get_rutracker_torrent(
                         url=url,
                         torrent_hash=item_hash,
+                        session=self.session,
                     )
 
                 # Otherwise, bug out
@@ -2101,10 +2184,8 @@ class SeaDexArr:
 
         Args:
             sort (bool): Sort anilist_entries by id before writing. Defaults to
-                True. The frequent per-title durability writes pass False to skip
-                re-sorting the whole cache each time; an end-of-run save (and the
-                max-torrents early exit) re-sorts, so the persisted file always
-                ends up sorted.
+                True so the persisted file is ordered by id; pass False to skip
+                the sort on a hot write path.
         """
 
         if not self._is_preview():
@@ -2141,12 +2222,17 @@ class SeaDexArr:
 
         self.cache["anilist_entries"][arr][str(al_id)].update(cache_details)
 
-        # Persist via save_cache, which keeps the preview gate in one place:
-        # a preview keeps the in-memory cache consistent for the rest of the
-        # run, but never persists it - so a preview never marks a title as done.
-        # Skip the sort on these frequent per-title writes; the end-of-run save
-        # re-sorts, so the persisted file still ends up ordered by id.
-        self.save_cache(sort=False)
+        # Mutate the in-memory cache only - don't persist here. The run's save
+        # points (the max_torrents_to_add early exits and the end-of-run save in
+        # run()) flush it. This avoids re-serializing the whole cache - which
+        # includes the large, mostly-static anilist_meta block - once per title,
+        # turning N full-file writes per run into a handful.
+        #
+        # Trade-off: a hard kill mid-run loses the titles finished since the last
+        # save point, so they're simply re-checked on the next run. That's the
+        # safe direction - we never skip a title that wasn't durably recorded as
+        # done. (A preview likewise only mutates in memory; the end-of-run
+        # save_cache is gated on _is_preview, so a preview still never persists.)
 
         return True
 
@@ -2353,17 +2439,15 @@ class SeaDexArr:
         # group IS named here. The whole block is yellow - it's the one section
         # asking the user to do something. The title is shown in full; it sits on
         # its own line above the fixed fields, so its length can't break the column.
-        def needs_detail(item: dict) -> None:
-            t = item.get("title") or "(unknown title)"
+        def _summary_block(title: str, title_style: str | None, rows: list) -> None:
+            # Shared layout for the summary's per-entry blocks: the title hangs
+            # at indent 2, then labeled gutter fields sit beneath it at indent 3,
+            # their values landing in the same column as the live "checking"
+            # block. Each row carries its already-resolved accent.
             self.logger.info(
-                indent_string(t, level=2), extra={"line_style": "yellow"},
+                indent_string(title, level=2),
+                extra={"line_style": title_style},
             )
-            rows = [
-                ("files", item.get("coverage"), "grey50"),
-                ("group", item.get("group"), "yellow"),
-                ("reason", item.get("reason"), "yellow"),
-                ("link", item.get("url"), "grey50"),
-            ]
             for label, value, accent in rows:
                 if not value:
                     continue
@@ -2376,6 +2460,15 @@ class SeaDexArr:
                     sep="",
                 )
 
+        def needs_detail(item: dict) -> None:
+            rows = [
+                ("files", item.get("coverage"), "grey50"),
+                ("group", item.get("group"), "yellow"),
+                ("reason", item.get("reason"), "yellow"),
+                ("link", item.get("url"), "grey50"),
+            ]
+            _summary_block(item.get("title") or "(unknown title)", "yellow", rows)
+
         # A grab in the summary, rendered like the live per-entry "checking"
         # block: the title hangs at indent 2, then labeled gutter fields sit
         # beneath it at indent 3, their values landing in the same column (14) as
@@ -2387,11 +2480,6 @@ class SeaDexArr:
         # included) so the would-be grabs don't read as real. The title is shown
         # in full on its own line, so its length can't break the column.
         def added_detail(item: dict) -> None:
-            t = item.get("title") or "(unknown title)"
-            self.logger.info(
-                indent_string(t, level=2),
-                extra={"line_style": "grey50" if is_dry_run else None},
-            )
             torrent_value = group_highlight(
                 item.get("name"),
                 item.get("group"),
@@ -2403,17 +2491,15 @@ class SeaDexArr:
                 ("link", item.get("url"), "grey50"),
                 ("torrent", torrent_value, "green"),
             ]
-            for label, value, accent in rows:
-                if not value:
-                    continue
-                self.log_kv(
-                    label,
-                    value,
-                    value_style="grey50" if is_dry_run else accent,
-                    indent=3,
-                    key_width=7,
-                    sep="",
-                )
+            # A dry run dims every value (matching the dimmed title line) so the
+            # would-be grabs don't read as real
+            if is_dry_run:
+                rows = [(label, value, "grey50") for label, value, _ in rows]
+            _summary_block(
+                item.get("title") or "(unknown title)",
+                "grey50" if is_dry_run else None,
+                rows,
+            )
 
         summary_kv("checked", str(stats["checked"]))
 

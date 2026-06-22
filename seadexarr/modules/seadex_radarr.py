@@ -359,9 +359,8 @@ class SeaDexRadarr(SeaDexArr):
                 )
                 continue
 
-        # Final sorted persist: the per-title writes use save_cache(sort=False),
-        # and (unlike Sonarr) this run path has no other save, so without this the
-        # on-disk cache would be left in unsorted insertion order
+        # Per-title update_cache calls only mutate memory now, so this end-of-run
+        # save is what actually persists the run (and sorts by id on the way out)
         self.save_cache()
         self.log_run_summary(arr="radarr")
 

@@ -286,10 +286,10 @@ class AniBridge:
         record = self.by_anilist[anilist_id]
 
         entry = {
-            "tvdb_id": tvdb_id if tvdb_id is not None else _first(list(record["tvdb_shows"])),
+            "tvdb_id": tvdb_id if tvdb_id is not None else next(iter(record["tvdb_shows"]), None),
             "anidb_id": record["anidb_id"],
             "imdb_id": _first(record["imdb_ids"]),
-            "tmdb_show_id": tmdb_show_id if tmdb_show_id is not None else _first(list(record["tmdb_shows"])),
+            "tmdb_show_id": tmdb_show_id if tmdb_show_id is not None else next(iter(record["tmdb_shows"]), None),
             "tmdb_movie_id": _first(record["tmdb_movie_ids"]),
             "mal_id": _first(record["mal_ids"]),
             "source": "anibridge",

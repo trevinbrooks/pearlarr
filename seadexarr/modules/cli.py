@@ -1,4 +1,3 @@
-import copy
 import os
 import shutil
 import time
@@ -170,8 +169,7 @@ def config_init() -> bool:
     directory. For Docker, will create config.yml in the /config directory
     """
 
-    f_path = copy.deepcopy(__file__)
-    config_template_path = os.path.join(os.path.dirname(f_path), "config_sample.yml")
+    config_template_path = os.path.join(os.path.dirname(__file__), "config_sample.yml")
 
     config_dir = os.environ.get("CONFIG_DIR", os.getcwd())
     config = os.path.join(config_dir, "config.yml")

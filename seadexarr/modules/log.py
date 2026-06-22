@@ -399,44 +399,29 @@ def _kv_prefix(indent: int, key: str, key_width: int, sep: str = " :") -> str:
 def rule_string(
     rule_char: str = "-",
     total_length: int = 80,
-    str_prefix: str = "",
 ) -> str:
     """Draw a full-width separator rule for the (flat-style) logger
 
     Args:
         rule_char: Character to repeat across the rule. Defaults to "-"
         total_length: Width of the rule. Defaults to 80
-        str_prefix: Will include this at the start of the string. Defaults to ""
     """
 
-    return f"{str_prefix}{rule_char * total_length}"
+    return rule_char * total_length
 
 
 def indent_string(
     text: str,
     level: int = 1,
-    str_prefix: str = "",
 ) -> str:
     """Format an indented detail line for the (flat-style) logger
 
     Args:
         text: String to format
         level: Number of indent levels (each INDENT wide). Defaults to 1
-        str_prefix: Will include this at the start of any string. Defaults to ""
     """
 
-    return f"{str_prefix}{INDENT * level}{text}"
-
-
-# Deprecated aliases kept during the migration to indent_string. Both
-# historically accepted (and ignored) a total_length argument; neither ever
-# centred anything. Prefer indent_string in new code.
-def centred_string(str_to_centre: str, str_prefix: str = "") -> str:
-    return indent_string(str_to_centre, str_prefix=str_prefix)
-
-
-def left_aligned_string(str_to_align: str, str_prefix: str = "") -> str:
-    return indent_string(str_to_align, str_prefix=str_prefix)
+    return f"{INDENT * level}{text}"
 
 
 def kv_string(
@@ -444,7 +429,6 @@ def kv_string(
     value: Any,
     key_width: int = KEY_WIDTH,
     indent: int = 1,
-    str_prefix: str = "",
     sep: str = " :",
 ) -> str:
     """Format an aligned "key : value" detail line for flat-style output
@@ -455,14 +439,13 @@ def kv_string(
         key_width: Column width the key is padded to, so the colons line up.
             Defaults to KEY_WIDTH (16)
         indent: Number of indent levels to prefix. Defaults to 1
-        str_prefix: Will include this at the start of any string. Defaults to ""
         sep: Separator after the padded key. Defaults to " :"; pass "" for the
             colon-less gutter "label value" entry-detail format
     """
 
     # Built from the shared _kv_prefix helper so the file log matches the
     # console handler (_render_kv) exactly.
-    line = f"{str_prefix}{_kv_prefix(indent, key, key_width, sep)}"
+    line = _kv_prefix(indent, key, key_width, sep)
 
     # Allow an empty value to act as a header for an indented block below it
     if value == "":

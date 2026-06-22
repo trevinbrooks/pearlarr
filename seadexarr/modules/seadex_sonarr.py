@@ -239,13 +239,21 @@ class SeaDexSonarr(SeaDexArr):
 
         self.ignore_movies_in_radarr = self.config.get("ignore_movies_in_radarr", False)
 
-        # Also, if we have Radarr info, set up an instance there
+        # Only when ignore_movies_in_radarr is on do we need a Radarr instance,
+        # and only then to fetch its movie list for the specials cross-check in
+        # run(). Building it otherwise would re-run the whole base __init__
+        # (mapping parse + index + cache load) plus a Radarr movie fetch, all of
+        # which would then go unused - so gate the construction on the flag.
         self.radarr = None
         self.all_radarr_movies = None
         radarr_url = self.config.get("radarr_url", None)
         radarr_api_key = self.config.get("radarr_api_key", None)
 
-        if radarr_url is not None and radarr_api_key is not None:
+        if (
+            self.ignore_movies_in_radarr
+            and radarr_url is not None
+            and radarr_api_key is not None
+        ):
             self.radarr = SeaDexRadarr(
                 config=config,
                 logger=logger,
