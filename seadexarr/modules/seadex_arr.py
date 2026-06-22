@@ -150,12 +150,6 @@ class SeaDexArr(ABC):
         # SeaDex API gateway (entry lookups, with connection-error handling)
         self._seadex = SeaDexGateway(logger=self.logger)
 
-        # Per-run cache of the raw Sonarr episode fetch, keyed by series id. A
-        # multi-season series maps to several AniList ids, each of which would
-        # otherwise re-fetch the same whole-series episode list; cache it for the
-        # run so the network round-trip happens once per series. Reset per run.
-        self._ep_list_cache: dict[int, list] = {}
-
         # Load the cache (or create its schema) and reconcile the descriptor
         # against the current package version + config checksum. Each arr builds
         # its own store that reads the file fresh, so a scheduled Radarr->Sonarr
@@ -728,9 +722,9 @@ class SeaDexArr(ABC):
     def reset_run_stats(self, arr: str, dry_run: bool) -> bool:
         """Start a fresh run context and the run clock
 
-        Replaces the run-scoped state wholesale with a new RunContext, snapshots
-        the logger-level counter (warning/error counts are diffed against this
-        when the summary is logged), and drops any per-run scratch.
+        Replaces the run-scoped state wholesale with a new RunContext and
+        snapshots the logger-level counter (warning/error counts are diffed
+        against this when the summary is logged).
 
         Args:
             arr (str): "radarr" or "sonarr" being run.
@@ -745,9 +739,6 @@ class SeaDexArr(ABC):
             started_monotonic=time.monotonic(),
             log_counts_at_start=counter.snapshot() if counter else {},
         )
-        # Drop any episode lists cached from a previous run so a fresh run always
-        # re-reads the current Sonarr library
-        self._ep_list_cache = {}
 
         return True
 

@@ -4,10 +4,6 @@ import os
 import time
 from datetime import datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode
-
-import arrapi.exceptions
-from arrapi import SonarrAPI
 
 from .anilist import (
     get_anilist_format,
@@ -16,8 +12,9 @@ from .anilist import (
 from .cache import UPDATED_AT_STR_FORMAT
 from .log import indent_string
 from .planner import get_episode_keys
+from .radarr_client import RadarrClient, collect_anime_movies
 from .seadex_arr import SeaDexArr
-from .seadex_radarr import SeaDexRadarr
+from .sonarr_client import SonarrClient
 
 TORRENT_FILENAMES_TO_SKIP = [
     "NCED",
@@ -222,31 +219,38 @@ class SeaDexSonarr(SeaDexArr):
         )
 
         # Set up Sonarr
-        self.sonarr_url = self.config.get("sonarr_url", None)
-        if not self.sonarr_url:
+        sonarr_url = self.config.get("sonarr_url", None)
+        if not sonarr_url:
             raise ValueError(f"sonarr_url needs to be defined in {config}")
 
-        self.sonarr_api_key = self.config.get("sonarr_api_key", None)
-        if not self.sonarr_api_key:
+        sonarr_api_key = self.config.get("sonarr_api_key", None)
+        if not sonarr_api_key:
             raise ValueError(f"sonarr_api_key needs to be defined in {config}")
 
-        self.sonarr = SonarrAPI(
-            url=self.sonarr_url,
-            apikey=self.sonarr_api_key,
+        # self.session (a shared keep-alive requests.Session) is inherited from
+        # SeaDexArr.__init__ above and handed to the client; parse in particular
+        # fires one request per file, so reusing it removes a per-file handshake.
+        self.sonarr = SonarrClient(
+            url=sonarr_url,
+            api_key=sonarr_api_key,
+            session=self.session,
+            logger=self.logger,
         )
 
-        # self.session (a shared keep-alive requests.Session) is inherited from
-        # SeaDexArr.__init__ above. parse_episodes_from_seadex in particular
-        # fires one request per file, so reusing it removes a per-file handshake.
+        # Per-run cache of the raw Sonarr episode fetch, keyed by series id. A
+        # multi-season series maps to several AniList ids, each of which would
+        # otherwise re-fetch the same whole-series episode list; cache it for the
+        # run so the network round-trip happens once per series. Cleared at the
+        # top of each run() (Sonarr-only scratch; not on the generic RunContext).
+        self._ep_list_cache: dict[int, list] = {}
 
         self.ignore_movies_in_radarr = self.config.get("ignore_movies_in_radarr", False)
 
-        # Only when ignore_movies_in_radarr is on do we need a Radarr instance,
-        # and only then to fetch its movie list for the specials cross-check in
-        # run(). Building it otherwise would re-run the whole base __init__
-        # (mapping parse + index + cache load) plus a Radarr movie fetch, all of
-        # which would then go unused - so gate the construction on the flag.
-        self.radarr = None
+        # Only when ignore_movies_in_radarr is on do we need Radarr's movie list
+        # (for the specials cross-check in _process_al_id). Build a lightweight
+        # RadarrClient and reuse the already-built shared mappings - no nested
+        # SeaDexRadarr (which would re-run the whole base __init__: mapping parse,
+        # cache load, and a qBittorrent login, all unused here).
         self.all_radarr_movies = None
         radarr_url = self.config.get("radarr_url", None)
         radarr_api_key = self.config.get("radarr_api_key", None)
@@ -256,16 +260,17 @@ class SeaDexSonarr(SeaDexArr):
             and radarr_url is not None
             and radarr_api_key is not None
         ):
-            self.radarr = SeaDexRadarr(
-                config=config,
-                logger=logger,
+            radarr_client = RadarrClient(
+                url=radarr_url,
+                api_key=radarr_api_key,
+                session=self.session,
+                logger=self.logger,
             )
-            self.all_radarr_movies = self.radarr.get_all_radarr_movies()
-
-    def close(self) -> None:
-        super().close()
-        if self.radarr is not None:
-            self.radarr.close()
+            self.all_radarr_movies = collect_anime_movies(
+                radarr_client,
+                self.anime_mappings,
+                self.anibridge,
+            )
 
     def run(self, tvdb_id: int | None = None, dry_run: bool = False) -> bool:
         """Run the SeaDex Sonarr Syncer
@@ -278,6 +283,9 @@ class SeaDexSonarr(SeaDexArr):
                 Defaults to False.
         """
 
+        # Drop any episode lists cached from a previous run so a fresh run always
+        # re-reads the current Sonarr library (Sonarr-only per-run scratch).
+        self._ep_list_cache = {}
         return self.run_sync(arr="sonarr", item_id=tvdb_id, dry_run=dry_run)
 
     def _get_all_items(self) -> list:
@@ -371,12 +379,10 @@ class SeaDexSonarr(SeaDexArr):
             "torrent_hashes": [],
         }
 
-        # If we have a Radarr instance, and we don't want to add movies that are
-        # already in Radarr, do that now
+        # If we don't want to add movies that are already in Radarr, do that now
         if (
-            self.radarr is not None
+            self.ignore_movies_in_radarr
             and self.all_radarr_movies is not None
-            and self.ignore_movies_in_radarr
         ):
 
             radarr_movies = []
@@ -565,12 +571,7 @@ class SeaDexSonarr(SeaDexArr):
             tvdb_id (int): TVDB ID
         """
 
-        try:
-            series = self.sonarr.get_series(tvdb_id=tvdb_id)
-        except arrapi.exceptions.NotFound:
-            series = None
-
-        return series
+        return self.sonarr.get_series(tvdb_id=tvdb_id)
 
     def get_ep_list(
         self,
@@ -609,29 +610,9 @@ class SeaDexSonarr(SeaDexArr):
         # and only do the per-id filtering below on the shared, read-only list.
         ep_list = self._ep_list_cache.get(sonarr_series_id)
         if ep_list is None:
-            eps_req_url = (
-                f"{self.sonarr_url}/api/v3/episode?"
-                f"seriesId={sonarr_series_id}&"
-                f"includeImages=false&"
-                f"includeEpisodeFile=true&"
-                f"apikey={self.sonarr_api_key}"
-            )
-            eps_req = self.session.get(eps_req_url)
-
-            if eps_req.status_code != 200:
-                self.logger.warning(
-                    "Could not fetch episode data from Sonarr; it may be unreachable",
-                )
+            ep_list = self.sonarr.episodes(sonarr_series_id)
+            if ep_list is None:
                 return None
-
-            # Sort by season/episode number for slicing later
-            ep_list = sorted(
-                eps_req.json(),
-                key=lambda x: (
-                    x.get("seasonNumber", None),
-                    x.get("episodeNumber", None),
-                ),
-            )
             self._ep_list_cache[sonarr_series_id] = ep_list
 
         # Filter down here by various things
@@ -806,61 +787,6 @@ class SeaDexSonarr(SeaDexArr):
 
         return sonarr_release_dict
 
-    def get_sonarr_parse(
-        self,
-        filename: str,
-    ) -> list:
-        """Ask Sonarr to parse a single filename into season/episode numbers
-
-        Only the season/episode mapping is returned - the file size is filled in
-        by the caller, since it comes from the SeaDex file list rather than from
-        Sonarr.
-
-        Args:
-            filename (str): Filename to parse (basename, not full path)
-
-        Returns:
-            list: List of {"season", "episode"} dicts (empty if Sonarr couldn't
-                parse the filename)
-        """
-
-        d = {"title": filename, "apikey": self.sonarr_api_key}
-        d_enc = urlencode(d)
-
-        # Parse through Sonarr
-        parse_req_url = f"{self.sonarr_url}/api/v3/parse?{d_enc}"
-        parse_req = self.session.get(parse_req_url)
-
-        if parse_req.status_code != 200:
-            self.logger.warning(
-                indent_string(
-                    f"Could not parse {filename} via Sonarr "
-                    f"(status code {parse_req.status_code}); skipping file",
-                ),
-            )
-            return []
-
-        episode_info = parse_req.json().get("episodes", [])
-
-        parsed = []
-        for ep in episode_info:
-
-            season = ep.get("seasonNumber", None)
-            episode = ep.get("episodeNumber", None)
-
-            if season is None or episode is None:
-                self.logger.debug(
-                    indent_string(
-                        f"Season or episode came up None for {filename}; "
-                        f"skipping this episode entry",
-                    ),
-                )
-                continue
-
-            parsed.append({"season": season, "episode": episode})
-
-        return parsed
-
     @staticmethod
     def _sonarr_parse_is_fresh(record: dict | None) -> bool:
         """True if a persisted parse record has episodes and is within TTL
@@ -939,7 +865,7 @@ class SeaDexSonarr(SeaDexArr):
                     if self._sonarr_parse_is_fresh(record):
                         parsed = record["episodes"]
                     else:
-                        parsed = self.get_sonarr_parse(f)
+                        parsed = self.sonarr.parse(f)
 
                         if len(parsed) == 0:
                             self.logger.debug(

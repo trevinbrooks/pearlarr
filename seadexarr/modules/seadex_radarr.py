@@ -2,10 +2,8 @@ import logging
 import time
 from typing import Any
 
-import arrapi.exceptions
-from arrapi import RadarrAPI
-
 from .log import indent_string
+from .radarr_client import RadarrClient, collect_anime_movies
 from .seadex_arr import SeaDexArr
 
 
@@ -37,17 +35,19 @@ class SeaDexRadarr(SeaDexArr):
         )
 
         # Set up Radarr
-        self.radarr_url = self.config.get("radarr_url", None)
-        if not self.radarr_url:
+        radarr_url = self.config.get("radarr_url", None)
+        if not radarr_url:
             raise ValueError(f"radarr_url needs to be defined in {config}")
 
-        self.radarr_api_key = self.config.get("radarr_api_key", None)
-        if not self.radarr_api_key:
+        radarr_api_key = self.config.get("radarr_api_key", None)
+        if not radarr_api_key:
             raise ValueError(f"radarr_api_key needs to be defined in {config}")
 
-        self.radarr = RadarrAPI(
-            url=self.radarr_url,
-            apikey=self.radarr_api_key,
+        self.radarr = RadarrClient(
+            url=radarr_url,
+            api_key=radarr_api_key,
+            session=self.session,
+            logger=self.logger,
         )
 
     def run(self, tmdb_id: int | None = None, dry_run: bool = False) -> bool:
@@ -190,46 +190,11 @@ class SeaDexRadarr(SeaDexArr):
     def get_all_radarr_movies(self) -> list:
         """Get all movies in Radarr that have an associated AniList ID"""
 
-        radarr_movies = []
-
-        all_tmdb_ids = set()
-        all_imdb_ids = set()
-
-        # Kometa Anime-IDs is a flat {anilist_id: mapping} dict we scan directly
-        if self.anime_mappings:
-            all_tmdb_ids.update(
-                e.get("tmdb_movie_id")
-                for e in self.anime_mappings.values()
-                if e.get("tmdb_movie_id") is not None
-            )
-            all_imdb_ids.update(
-                e.get("imdb_id")
-                for e in self.anime_mappings.values()
-                if e.get("imdb_id") is not None
-            )
-
-        # AniBridge exposes precomputed id sets (no per-call scan needed)
-        if self.anibridge:
-            all_tmdb_ids |= self.anibridge.all_tmdb_movie_ids
-            all_imdb_ids |= self.anibridge.all_imdb_ids
-
-        # Track kept movie ids in a set: "m not in radarr_movies" on a growing
-        # list is O(n) per check (and compares whole movie objects), making the
-        # scan quadratic on a large library
-        seen_ids = set()
-        for m in self.radarr.all_movies():
-
-            if m.id in seen_ids:
-                continue
-
-            # Keep the movie if it matches by TMDB or IMDb id
-            if m.tmdbId in all_tmdb_ids or m.imdbId in all_imdb_ids:
-                radarr_movies.append(m)
-                seen_ids.add(m.id)
-
-        radarr_movies.sort(key=lambda x: x.title)
-
-        return radarr_movies
+        return collect_anime_movies(
+            self.radarr,
+            self.anime_mappings,
+            self.anibridge,
+        )
 
     def get_radarr_movie(self, tmdb_id: int | None = None, imdb_id: str | None = None):
         """Get Radarr movie for a given TMDB ID or IMDb ID
@@ -239,12 +204,7 @@ class SeaDexRadarr(SeaDexArr):
             imdb_id (str): IMDb movie ID
         """
 
-        try:
-            movie = self.radarr.get_movie(tmdb_id=tmdb_id, imdb_id=imdb_id)
-        except arrapi.exceptions.NotFound:
-            movie = None
-
-        return movie
+        return self.radarr.get_movie(tmdb_id=tmdb_id, imdb_id=imdb_id)
 
     def get_radarr_release_dict(
         self,
@@ -256,16 +216,9 @@ class SeaDexRadarr(SeaDexArr):
             radarr_movie_id (int): ID for movie in Radarr
         """
 
-        mov_req_url = (
-            f"{self.radarr_url}/api/v3/moviefile?"
-            f"movieId={radarr_movie_id}&"
-            f"apikey={self.radarr_api_key}"
-        )
-        mov_req = self.session.get(mov_req_url)
-
         radarr_release_dict = {
             r.get("releaseGroup", None): {"size": r.get("size", None)}
-            for r in mov_req.json()
+            for r in self.radarr.movie_files(radarr_movie_id)
         }
 
         # If we have multiple options, throw up an error
