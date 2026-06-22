@@ -12,7 +12,7 @@ import logging
 from typing import Any
 from unittest import mock
 
-from seadexarr.modules.config import PRIVATE_TRACKERS, PUBLIC_TRACKERS
+from seadexarr.modules.config import AppConfig
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.seadex_arr import SeaDexArr
 
@@ -64,31 +64,64 @@ class _StubArr(SeaDexArr):
         return False
 
 
+def make_config(**overrides: Any) -> AppConfig:
+    """An in-memory ``AppConfig`` carrying ``make_arr``'s decision-test defaults.
+
+    After Phase 5b the config flags are read through ``self._config`` (the single
+    source of truth), so a bare instance needs a real ``AppConfig`` rather than
+    flat mirror attributes. These defaults mirror the historical ``make_arr``
+    flags - notably ``public_only=False`` (``AppConfig``'s own default is True) -
+    and leave ``trackers`` unset so it defaults to PUBLIC | PRIVATE.
+    """
+
+    data: dict[str, Any] = {
+        "public_only": False,
+        "want_best": True,
+        "prefer_dual_audio": True,
+        "ignore_tags": [],
+        "interactive": False,
+        "use_torrent_hash_to_filter": False,
+    }
+    data.update(overrides)
+    return AppConfig(path="unused.yml", arr="sonarr", data=data)
+
+
 def make_arr(**overrides: Any) -> _StubArr:
     """Build a bare ``SeaDexArr`` with only the attributes the methods read.
 
     Bypasses ``__init__`` via ``object.__new__`` and assigns sane defaults for
-    the config flags / collaborators the decision methods consult. Pass keyword
-    overrides to vary a single flag (e.g. ``make_arr(public_only=True)``).
+    the collaborators the decision methods consult; the config flags live on an
+    in-memory ``AppConfig`` (``self._config``). Pass keyword overrides to vary a
+    single config flag (e.g. ``make_arr(public_only=True)``) or another attribute.
     """
 
     arr = object.__new__(_StubArr)
 
     logger = make_logger()
 
+    # Config-backed flags are read via self._config after Phase 5b; route any
+    # passed as overrides through an in-memory AppConfig, leaving the rest as
+    # direct attributes/collaborators.
+    config_keys = {
+        "public_only",
+        "want_best",
+        "prefer_dual_audio",
+        "ignore_tags",
+        "trackers",
+        "interactive",
+        "use_torrent_hash_to_filter",
+    }
+    config_overrides = {
+        key: overrides.pop(key) for key in list(overrides) if key in config_keys
+    }
+
     defaults: dict[str, Any] = {
         "logger": logger,
         "log_fmt": mock.MagicMock(),
-        "interactive": False,
-        "public_only": False,
-        "want_best": True,
-        "prefer_dual_audio": True,
-        "ignore_tags": [],
-        "trackers": PUBLIC_TRACKERS | PRIVATE_TRACKERS,
+        "_config": make_config(**config_overrides),
         "public_only_skipped": False,
         "public_only_groups": [],
         "cache": {"anilist_entries": {}},
-        "use_torrent_hash_to_filter": False,
     }
     defaults.update(overrides)
     for name, value in defaults.items():

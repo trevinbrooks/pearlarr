@@ -35,11 +35,11 @@ class SeaDexRadarr(SeaDexArr):
         )
 
         # Set up Radarr
-        radarr_url = self.config.get("radarr_url", None)
+        radarr_url = self._config.get("radarr_url", None)
         if not radarr_url:
             raise ValueError(f"radarr_url needs to be defined in {config}")
 
-        radarr_api_key = self.config.get("radarr_api_key", None)
+        radarr_api_key = self._config.get("radarr_api_key", None)
         if not radarr_api_key:
             raise ValueError(f"radarr_api_key needs to be defined in {config}")
 
@@ -152,7 +152,7 @@ class SeaDexRadarr(SeaDexArr):
                 cache_details=cache_details,
             )
 
-            time.sleep(self.sleep_time)
+            time.sleep(self._config.sleep_time)
             return False
 
         self.logger.debug(
@@ -162,7 +162,7 @@ class SeaDexRadarr(SeaDexArr):
         )
 
         # If we're in interactive mode and there are multiple options here, then select
-        if self.interactive and len(seadex_dict) > 1:
+        if self._config.interactive and len(seadex_dict) > 1:
             seadex_dict = self.filter_seadex_interactive(
                 seadex_dict=seadex_dict,
                 sd_entry=sd_entry,

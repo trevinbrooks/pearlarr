@@ -50,14 +50,11 @@ class SeaDexArr(ABC):
 
         # Load, template-sync, and expose the config file as typed settings.
         # AppConfig owns the file lifecycle (copy-template-if-missing, parse,
-        # key-order sync); self.config stays bound to the raw mapping for the
-        # few arr-specific keys the subclasses still read directly.
+        # key-order sync) and is the single source of truth for every setting:
+        # the orchestrator and subclasses read self._config.<x> directly (the
+        # subclasses use self._config.get(...) for the arr-specific keys).
         self._config = AppConfig.load(config, arr)
         self.config_file = config
-        self.config = self._config.data
-
-        # Ignore unmonitored flag
-        self.ignore_unmonitored = self._config.ignore_unmonitored
 
         # A single keep-alive session shared by the raw Sonarr/Radarr API calls
         self.session = requests.Session()
@@ -85,15 +82,6 @@ class SeaDexArr(ABC):
 
             self.qbit = qbit
 
-        self.ignore_seadex_update_times = self._config.ignore_seadex_update_times
-
-        self.use_torrent_hash_to_filter = self._config.use_torrent_hash_to_filter
-
-        # Hooks between torrents and Arts, and torrent number bookkeeping
-        self.torrent_category = self._config.torrent_category
-        self.torrent_tags = self._config.torrent_tags
-        self.max_torrents_to_add = self._config.max_torrents_to_add
-
         # When True, simulate a run without grabbing torrents, writing the cache,
         # or sending notifications. Set per-run by run(); the no-op default here
         # keeps every method that consults it safe before run() is called.
@@ -104,24 +92,6 @@ class SeaDexArr(ABC):
         # this context, replaced fresh at the start of each run by reset_run_stats.
         # A placeholder is created here so the object is usable before run().
         self._ctx = RunContext(arr=arr, dry_run=False)
-
-        # Flags for filtering torrents
-        self.public_only = self._config.public_only
-        self.prefer_dual_audio = self._config.prefer_dual_audio
-        self.want_best = self._config.want_best
-
-        self.ignore_tags = self._config.ignore_tags
-
-        # AniList IDs to skip entirely
-        self.ignore_anilist_ids = self._config.ignore_anilist_ids
-
-        # All trackers (public + private) by default; private are filtered later,
-        # after the overlap check against what's already downloaded.
-        self.trackers = self._config.trackers
-
-        # Advanced settings
-        self.sleep_time = self._config.sleep_time
-        self.cache_time = self._config.cache_time
 
         # Resolve external Arr ids -> AniList ids via the three mapping sources.
         # The resolver downloads/refreshes, parses and indexes them, and owns the
@@ -140,8 +110,6 @@ class SeaDexArr(ABC):
         self.anidb_mappings = self._mappings.anidb_mappings
         self.anibridge = self._mappings.anibridge
 
-        self.interactive = self._config.interactive
-
         if logger is None:
             self.logger = setup_logger(log_level=self._config.log_level)
         else:
@@ -156,7 +124,6 @@ class SeaDexArr(ABC):
         # cycle hands off through cache.json rather than shared memory.
         self.cache_file = cache
         self.cache_store = CacheStore.load(cache, config_checksum=self._config.checksum())
-        self.cache: dict[str, Any] = self.cache_store.data
 
         # AniList client gateway: owns the in-memory meta cache (al_cache) and the
         # persisted anilist_meta block. al_cache is exposed via the property below
@@ -173,8 +140,8 @@ class SeaDexArr(ABC):
         self._torrents = TorrentService(
             qbit=self.qbit,
             session=self.session,
-            category=self.torrent_category,
-            tags=self.torrent_tags,
+            category=self._config.torrent_category,
+            tags=self._config.torrent_tags,
             logger=self.logger,
         )
 
@@ -377,14 +344,14 @@ class SeaDexArr(ABC):
         # the whole list of model objects on every entry.
 
         # Filter out any tags
-        ignore_tags = set(self.ignore_tags)
+        ignore_tags = set(self._config.ignore_tags)
         final_torrent_list = [
             t for t in sd_entry.torrents if ignore_tags.isdisjoint(t.tags)
         ]
 
         # Filter down by allowed trackers
         final_torrent_list = [
-            t for t in final_torrent_list if t.tracker.casefold() in self.trackers
+            t for t in final_torrent_list if t.tracker.casefold() in self._config.trackers
         ]
 
         # Pull out torrents tagged as best, so long as at least one
@@ -394,13 +361,13 @@ class SeaDexArr(ABC):
         any_best = len(best_torrents) > 0
 
         # Narrow to 'best' releases when any exist
-        if self.want_best and any_best:
+        if self._config.want_best and any_best:
             candidates = best_torrents
         else:
             candidates = final_torrent_list
 
         # Prefer dual-audio releases, but only when at least one exists
-        if self.prefer_dual_audio:
+        if self._config.prefer_dual_audio:
             duals = [t for t in candidates if t.is_dual_audio]
             if len(duals) > 0:
                 candidates = duals
@@ -435,7 +402,7 @@ class SeaDexArr(ABC):
         # group that only has a private URL is kept for now and only filtered
         # out later if the Arr doesn't already have a matching download (see
         # reduce_overlapping_downloads)
-        if self.public_only:
+        if self._config.public_only:
             for release_group_item in seadex_release_groups.values():
                 urls = release_group_item["urls"]
                 has_public = any(u["is_public"] for u in urls.values())
@@ -616,7 +583,7 @@ class SeaDexArr(ABC):
                 item_hash = url_item.get("hash", None)
                 tracker = url_item.get("tracker", None)
 
-                if self.public_only and not url_item.get("is_public", True):
+                if self._config.public_only and not url_item.get("is_public", True):
                     self.log_fmt.detail(
                         "skipped",
                         f"{tracker} private-only (public_only on)",
@@ -628,7 +595,7 @@ class SeaDexArr(ABC):
                     continue
 
                 # Skip trackers not in the user's selected list
-                if tracker.casefold() not in self.trackers:
+                if tracker.casefold() not in self._config.trackers:
                     self.log_fmt.detail(
                         "skipped",
                         f"{url} (tracker {tracker} not in your selected list)",
@@ -676,8 +643,8 @@ class SeaDexArr(ABC):
                     # Stop once max_torrents_to_add is reached
                     self._ctx.torrents_added += 1
                     n_torrents_added += 1
-                    if self.max_torrents_to_add is not None:
-                        if self._ctx.torrents_added >= self.max_torrents_to_add:
+                    if self._config.max_torrents_to_add is not None:
+                        if self._ctx.torrents_added >= self._config.max_torrents_to_add:
                             return n_torrents_added, results
 
                 elif success == "torrent_already_added":
@@ -813,7 +780,7 @@ class SeaDexArr(ABC):
         self.load_anilist_cache()
         prefetch_ids = set()
         for item in all_items:
-            if not item.monitored and self.ignore_unmonitored:
+            if not item.monitored and self._config.ignore_unmonitored:
                 continue
             prefetch_ids.update(
                 self._item_anilist_ids(item, log_ignored=False),
@@ -834,7 +801,7 @@ class SeaDexArr(ABC):
                 )
 
                 # If we're not monitored, then skip if ignore_unmonitored is switched on
-                if not item.monitored and self.ignore_unmonitored:
+                if not item.monitored and self._config.ignore_unmonitored:
                     self.log_arr_item_unmonitored(item_title=item_title)
                     continue
 
@@ -933,7 +900,7 @@ class SeaDexArr(ABC):
 
         if not self.check_al_id_in_cache(arr=arr, al_id=al_id, seadex_entry=sd_entry):
             return False
-        if self.ignore_seadex_update_times:
+        if self._config.ignore_seadex_update_times:
             return False
 
         # Backfill the enriched fields for records written before they existed,
@@ -1030,8 +997,8 @@ class SeaDexArr(ABC):
                     thumb_url=anilist_thumb,
                 )
 
-            if self.max_torrents_to_add is not None:
-                if self._ctx.torrents_added >= self.max_torrents_to_add:
+            if self._config.max_torrents_to_add is not None:
+                if self._ctx.torrents_added >= self._config.max_torrents_to_add:
                     self.log_max_torrents_added()
                     self.save_cache()
                     self.log_run_summary(arr=arr)
@@ -1078,7 +1045,7 @@ class SeaDexArr(ABC):
             )
 
         # Add in a wait, if required
-        time.sleep(self.sleep_time)
+        time.sleep(self._config.sleep_time)
 
         return False
 

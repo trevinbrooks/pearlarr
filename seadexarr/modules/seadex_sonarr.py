@@ -219,11 +219,11 @@ class SeaDexSonarr(SeaDexArr):
         )
 
         # Set up Sonarr
-        sonarr_url = self.config.get("sonarr_url", None)
+        sonarr_url = self._config.get("sonarr_url", None)
         if not sonarr_url:
             raise ValueError(f"sonarr_url needs to be defined in {config}")
 
-        sonarr_api_key = self.config.get("sonarr_api_key", None)
+        sonarr_api_key = self._config.get("sonarr_api_key", None)
         if not sonarr_api_key:
             raise ValueError(f"sonarr_api_key needs to be defined in {config}")
 
@@ -244,7 +244,7 @@ class SeaDexSonarr(SeaDexArr):
         # top of each run() (Sonarr-only scratch; not on the generic RunContext).
         self._ep_list_cache: dict[int, list] = {}
 
-        self.ignore_movies_in_radarr = self.config.get("ignore_movies_in_radarr", False)
+        self.ignore_movies_in_radarr = self._config.get("ignore_movies_in_radarr", False)
 
         # Only when ignore_movies_in_radarr is on do we need Radarr's movie list
         # (for the specials cross-check in _process_al_id). Build a lightweight
@@ -252,8 +252,8 @@ class SeaDexSonarr(SeaDexArr):
         # SeaDexRadarr (which would re-run the whole base __init__: mapping parse,
         # cache load, and a qBittorrent login, all unused here).
         self.all_radarr_movies = None
-        radarr_url = self.config.get("radarr_url", None)
-        radarr_api_key = self.config.get("radarr_api_key", None)
+        radarr_url = self._config.get("radarr_url", None)
+        radarr_api_key = self._config.get("radarr_api_key", None)
 
         if (
             self.ignore_movies_in_radarr
@@ -354,7 +354,7 @@ class SeaDexSonarr(SeaDexArr):
             return False
 
         # Also check if it's in the Radarr cache, if we have that option
-        if self.ignore_movies_in_radarr and not self.ignore_seadex_update_times:
+        if self.ignore_movies_in_radarr and not self._config.ignore_seadex_update_times:
             al_id_in_radarr_cache = self.check_al_id_in_cache(
                 arr="radarr",
                 al_id=al_id,
@@ -421,7 +421,7 @@ class SeaDexSonarr(SeaDexArr):
                         movie.title,
                     )
 
-                time.sleep(self.sleep_time)
+                time.sleep(self._config.sleep_time)
                 return False
 
         # Get the episode list for all relevant episodes
@@ -436,11 +436,11 @@ class SeaDexSonarr(SeaDexArr):
 
         # If all episodes are unmonitored, then skip if ignore_unmonitored is switched on
         ep_list_monitored = [x.get("monitored", True) for x in ep_list]
-        if not any(ep_list_monitored) and self.ignore_unmonitored:
+        if not any(ep_list_monitored) and self._config.ignore_unmonitored:
             self.log_anilist_item_unmonitored(
                 item_title=anilist_title,
             )
-            time.sleep(self.sleep_time)
+            time.sleep(self._config.sleep_time)
             return False
 
         # Now that we have the episodes, log the active entry with its
@@ -478,7 +478,7 @@ class SeaDexSonarr(SeaDexArr):
                 cache_details=cache_details,
             )
 
-            time.sleep(self.sleep_time)
+            time.sleep(self._config.sleep_time)
             return False
 
         self.logger.debug(
@@ -492,7 +492,7 @@ class SeaDexSonarr(SeaDexArr):
         overlapping_results = get_overlapping_results(seadex_dict=seadex_dict)
 
         # If we're in interactive mode and there are multiple equivalent options here, then select
-        if self.interactive and len(seadex_dict) > 1 and overlapping_results:
+        if self._config.interactive and len(seadex_dict) > 1 and overlapping_results:
             seadex_dict = self.filter_seadex_interactive(
                 seadex_dict=seadex_dict,
                 sd_entry=sd_entry,
@@ -830,7 +830,7 @@ class SeaDexSonarr(SeaDexArr):
 
         # filename -> {"fetched_at": <str>, "episodes": [{"season", "episode"}]},
         # shared across runs via cache.json; fetched_at lets entries expire (TTL)
-        parse_cache = self.cache.setdefault("sonarr_parse_cache", {})
+        parse_cache = self.cache_store.data.setdefault("sonarr_parse_cache", {})
         now_str = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
 
         for release_group_item in seadex_dict.values():

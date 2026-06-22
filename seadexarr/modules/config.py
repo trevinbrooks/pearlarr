@@ -14,6 +14,7 @@ import copy
 import os
 import shutil
 from dataclasses import dataclass
+from functools import cached_property
 from hashlib import md5
 from typing import Any
 
@@ -182,14 +183,20 @@ class AppConfig:
             ignore_tags = []
         return ignore_tags
 
-    @property
+    # cached_property, not property: these two normalize into a fresh ``set`` on
+    # every access, and after Phase 5b removed the SeaDexArr mirror attributes
+    # they're read inside hot loops (get_seadex_dict / add_torrent). Caching keeps
+    # them parse-once per instance. Safe because ``data`` is only ever reassigned
+    # by ``_sync_with_template`` during ``load`` (before any property access) and
+    # is never mutated afterwards.
+    @cached_property
     def ignore_anilist_ids(self) -> set[int]:
         ignore_anilist_ids = self.data.get("ignore_anilist_ids", None)
         if ignore_anilist_ids is None:
             ignore_anilist_ids = set()
         return {int(x) for x in ignore_anilist_ids}
 
-    @property
+    @cached_property
     def trackers(self) -> set[str]:
         trackers = self.data.get("trackers", None)
         # Default to all trackers (public + private) when none configured.
