@@ -1,10 +1,10 @@
 import logging
 import time
+from typing import Any
 
 import arrapi.exceptions
 from arrapi import RadarrAPI
 
-from .discord import discord_push
 from .log import indent_string
 from .seadex_arr import SeaDexArr
 
@@ -61,310 +61,146 @@ class SeaDexRadarr(SeaDexArr):
                 Defaults to False.
         """
 
-        # Whether this is a no-op preview - consulted by the mutating helpers
-        self.dry_run = dry_run
+        return self.run_sync(arr="radarr", item_id=tmdb_id, dry_run=dry_run)
 
-        # Reset the per-run tally and start the run clock
-        self.reset_run_stats()
+    def _get_all_items(self) -> list:
+        """Every Radarr movie that has an associated AniList ID."""
 
-        all_radarr_movies = self.get_all_radarr_movies()
+        return self.get_all_radarr_movies()
 
-        # If we're targeting a single movie, filter down to that TMDB ID
-        if tmdb_id is not None:
-            all_radarr_movies = [
-                m for m in all_radarr_movies if m.tmdbId == tmdb_id
-            ]
-            if len(all_radarr_movies) == 0:
-                self.logger.warning(
-                    f"No anime movie with TMDB ID {tmdb_id} found in Radarr",
-                )
+    def _filter_to_single_item(self, items: list, item_id: int) -> list:
+        """Narrow the movie list to a single TMDB ID."""
 
-        n_radarr = len(all_radarr_movies)
+        filtered = [m for m in items if m.tmdbId == item_id]
+        if len(filtered) == 0:
+            self.logger.warning(
+                f"No anime movie with TMDB ID {item_id} found in Radarr",
+            )
+        return filtered
 
-        self.log_arr_start(
-            arr="radarr",
-            n_items=n_radarr,
+    def _item_anilist_ids(self, item: Any, log_ignored: bool = True) -> dict:
+        """Resolve AniList ids for a Radarr movie (by TMDB / IMDb id)."""
+
+        return self.get_anilist_ids(
+            tmdb_id=item.tmdbId,
+            imdb_id=item.imdbId,
+            tmdb_type="movie",
+            log_ignored=log_ignored,
         )
 
-        # Warm the AniList cache before the per-movie loop: reuse what past runs
-        # fetched, then batch-fetch (id_in pages) everything still missing, so
-        # the loop rarely hits AniList one id at a time and trips its rate limit.
-        self.load_anilist_cache()
-        prefetch_ids = set()
-        for movie in all_radarr_movies:
-            if not movie.monitored and self.ignore_unmonitored:
-                continue
-            prefetch_ids.update(
-                self.get_anilist_ids(
-                    tmdb_id=movie.tmdbId,
-                    imdb_id=movie.imdbId,
-                    tmdb_type="movie",
-                    log_ignored=False,
-                ),
+    def _process_al_id(
+        self,
+        arr: str,
+        item: Any,
+        item_title: str,
+        al_id: int,
+        mapping: dict,
+    ) -> bool:
+        """Process one AniList id for a Radarr movie
+
+        A movie is a single file, so the middle is simply: resolve the Radarr
+        release group, pull the SeaDex releases, filter them, then hand off to
+        the shared grab/cache tail. ``mapping`` is unused (movies need no episode
+        mapping) but is accepted to match the shared hook signature.
+        """
+
+        sd_entry = self._al_id_prologue(al_id)
+        if sd_entry is None:
+            return False
+        sd_url = sd_entry.url
+
+        # Check if we've already got this cached
+        al_id_in_cache = self.check_al_id_in_cache(
+            arr=arr,
+            al_id=al_id,
+            seadex_entry=sd_entry,
+        )
+
+        if al_id_in_cache and not self.ignore_seadex_update_times:
+            # Backfill the URL for cache records written before it was stored, so
+            # cached rows can still link to SeaDex. Movies have no episode
+            # coverage, so there's nothing else to add.
+            if not self.get_cached_field(arr, al_id, "url"):
+                self.update_cache(
+                    arr=arr,
+                    al_id=al_id,
+                    cache_details={"url": sd_url, "coverage": ""},
+                )
+            self.log_cached_entry(arr=arr, al_id=al_id)
+            return False
+
+        # Resolve the AniList title, then log the active entry (a movie has no
+        # episode coverage, so the line carries just the URL)
+        anilist_title = self.get_anilist_title(al_id=al_id)
+        self.log_al_title(anilist_title=anilist_title, sd_entry=sd_entry)
+
+        # Setup info for cache (URL so cached runs can link to SeaDex; movies have
+        # no episode coverage)
+        cache_details = {
+            "name": anilist_title,
+            "updated_at": sd_entry.updated_at,
+            "torrent_hashes": [],
+            "url": sd_url,
+            "coverage": "",
+        }
+
+        radarr_release_dict = self.get_radarr_release_dict(
+            radarr_movie_id=item.id,
+        )
+        radarr_release_group = next(iter(radarr_release_dict))
+
+        self.logger.debug(
+            indent_string(
+                f"Radarr release group: {radarr_release_group}",
+            ),
+        )
+
+        # Produce a dictionary of info from the SeaDex request
+        seadex_dict = self.get_seadex_dict(sd_entry=sd_entry)
+
+        if len(seadex_dict) == 0:
+            self.log_no_seadex_releases()
+
+            self.update_cache(
+                arr=arr,
+                al_id=al_id,
+                cache_details=cache_details,
             )
-        self.prefetch_anilist(prefetch_ids)
 
-        for radarr_idx, radarr_movie in enumerate(all_radarr_movies):
+            time.sleep(self.sleep_time)
+            return False
 
-            try:
+        self.logger.debug(
+            indent_string(
+                f"SeaDex: {', '.join(seadex_dict)}",
+            ),
+        )
 
-                tmdb_id = radarr_movie.tmdbId
-                imdb_id = radarr_movie.imdbId
-                radarr_title = radarr_movie.title
-                radarr_movie_id = radarr_movie.id
+        # If we're in interactive mode and there are multiple options here, then select
+        if self.interactive and len(seadex_dict) > 1:
+            seadex_dict = self.filter_seadex_interactive(
+                seadex_dict=seadex_dict,
+                sd_entry=sd_entry,
+            )
 
-                self.log_arr_item_start(
-                    arr="radarr",
-                    item_title=radarr_title,
-                    n_item=radarr_idx + 1,
-                    n_items=n_radarr,
-                )
+        torrent_hashes, seadex_dict = self.filter_seadex_downloads(
+            al_id=al_id,
+            seadex_dict=seadex_dict,
+            arr=arr,
+            arr_release_dict=radarr_release_dict,
+        )
 
-                # If we're not monitored, then skip if ignore_unmonitored is switched on
-                if not radarr_movie.monitored and self.ignore_unmonitored:
-                    self.log_arr_item_unmonitored(
-                        item_title=radarr_title,
-                    )
-                    continue
-
-                # Get the mappings from the Radarr movies to AniList
-                al_mappings = self.get_anilist_ids(
-                    tmdb_id=tmdb_id,
-                    imdb_id=imdb_id,
-                    tmdb_type="movie",
-                )
-
-                if len(al_mappings) == 0:
-                    self.log_no_anilist_mappings(title=radarr_title)
-                    continue
-
-                for al_id in al_mappings:
-
-                    # Reset the per-title public_only skip flag (and the skipped
-                    # group names) before we make any download decisions for this
-                    # title
-                    self.public_only_skipped = False
-                    self.public_only_groups = []
-                    self.stats["checked"] += 1
-
-                    if al_id is None:
-                        self.log_no_anilist_id()
-                        continue
-
-                    # Get the SeaDex entry if it exists
-                    sd_entry = self.get_seadex_entry(al_id=al_id)
-                    if sd_entry is None:
-                        self.log_no_sd_entry(al_id=al_id)
-                        continue
-                    sd_url = sd_entry.url
-
-                    # Check if we've already got this cached
-                    al_id_in_cache = self.check_al_id_in_cache(
-                        arr="radarr",
-                        al_id=al_id,
-                        seadex_entry=sd_entry,
-                    )
-
-                    if al_id_in_cache and not self.ignore_seadex_update_times:
-                        # Backfill the URL for cache records written before it was
-                        # stored, so cached rows can still link to SeaDex. Movies
-                        # have no episode coverage, so there's nothing else to add.
-                        if not self.get_cached_field("radarr", al_id, "url"):
-                            self.update_cache(
-                                arr="radarr",
-                                al_id=al_id,
-                                cache_details={"url": sd_url, "coverage": ""},
-                            )
-                        self.log_cached_entry(arr="radarr", al_id=al_id)
-                        continue
-
-                    # Resolve the AniList title, then log the active entry (a movie
-                    # has no episode coverage, so the line carries just the URL)
-                    anilist_title = self.get_anilist_title(al_id=al_id)
-                    self.log_al_title(anilist_title=anilist_title, sd_entry=sd_entry)
-
-                    # Setup info for cache (URL so cached runs can link to SeaDex;
-                    # movies have no episode coverage)
-                    cache_details = {
-                        "name": anilist_title,
-                        "updated_at": sd_entry.updated_at,
-                        "torrent_hashes": [],
-                        "url": sd_url,
-                        "coverage": "",
-                    }
-
-                    radarr_release_dict = self.get_radarr_release_dict(
-                        radarr_movie_id=radarr_movie_id,
-                    )
-                    radarr_release_group = next(iter(radarr_release_dict))
-
-                    self.logger.debug(
-                        indent_string(
-                            f"Radarr release group: {radarr_release_group}",
-                        ),
-                    )
-
-                    # Produce a dictionary of info from the SeaDex request
-                    seadex_dict = self.get_seadex_dict(sd_entry=sd_entry)
-
-                    if len(seadex_dict) == 0:
-                        self.log_no_seadex_releases()
-
-                        self.update_cache(
-                            arr="radarr",
-                            al_id=al_id,
-                            cache_details=cache_details,
-                        )
-
-                        time.sleep(self.sleep_time)
-                        continue
-
-                    self.logger.debug(
-                        indent_string(
-                            f"SeaDex: {', '.join(seadex_dict)}",
-                        ),
-                    )
-
-                    # If we're in interactive mode and there are multiple options here, then select
-                    if self.interactive and len(seadex_dict) > 1:
-                        seadex_dict = self.filter_seadex_interactive(
-                            seadex_dict=seadex_dict,
-                            sd_entry=sd_entry,
-                        )
-
-                    torrent_hashes, seadex_dict = self.filter_seadex_downloads(
-                        al_id=al_id,
-                        seadex_dict=seadex_dict,
-                        arr="radarr",
-                        arr_release_dict=radarr_release_dict,
-                    )
-
-                    # Check the release groups are matching, and get a bespoke list of torrents
-                    any_to_download = self.get_any_to_download(seadex_dict=seadex_dict)
-
-                    # Capture the running total before the add block so we can
-                    # tell whether THIS title actually grabbed anything
-                    torrents_before = self.torrents_added
-
-                    if any_to_download:
-                        fields, anilist_thumb = self.get_seadex_fields(
-                            arr="radarr",
-                            al_id=al_id,
-                            release_group=radarr_release_group,
-                            seadex_dict=seadex_dict,
-                        )
-
-                        if len(seadex_dict) > 0:
-
-                            n_torrents_added = 0
-                            results = []
-
-                            # Add torrents to qBittorrent. add_torrent runs even
-                            # in a preview (no client / dry run): add_torrent_to_qbit
-                            # simulates the add, while the download-flag,
-                            # public_only and tracker filters still apply, so only
-                            # releases that would actually be grabbed are counted.
-                            added, results = self.add_torrent(
-                                torrent_dict=seadex_dict,
-                                torrent_client="qbit",
-                            )
-                            n_torrents_added += added
-
-                            # Log the action block now the outcome is known, so
-                            # the status reads "adding" only when something was
-                            # actually grabbed (else "keeping")
-                            self.log_seadex_action(
-                                seadex_dict=seadex_dict,
-                                results=results,
-                                dry_run=self._is_preview(),
-                            )
-
-                            # Push a message to Discord if we've added anything
-                            # (never on a preview - it's an outward notification)
-                            if (
-                                self.discord_url is not None
-                                and n_torrents_added > 0
-                                and not self._is_preview()
-                            ):
-                                discord_push(
-                                    url=self.discord_url,
-                                    arr_title=radarr_title,
-                                    al_title=anilist_title,
-                                    seadex_url=sd_url,
-                                    fields=fields,
-                                    thumb_url=anilist_thumb,
-                                )
-
-                            if self.max_torrents_to_add is not None:
-                                if self.torrents_added >= self.max_torrents_to_add:
-                                    self.log_max_torrents_added()
-                                    self.save_cache()
-                                    self.log_run_summary(arr="radarr")
-                                    return True
-
-                    elif not self.public_only_skipped:
-                        self.stats["up_to_date"] += 1
-                        self.log_detail(
-                            "status",
-                            "already have the recommended release",
-                            value_style="blue",
-                        )
-
-                    # Work out whether THIS title actually grabbed anything
-                    added_this_title = self.torrents_added - torrents_before
-
-                    # Update and save out the cache whenever something was
-                    # grabbed for this title, or when nothing was skipped at all.
-                    # Leave the title uncached ONLY when public_only skipped a
-                    # release AND nothing else was grabbed for it - so it's
-                    # re-checked (and the skip re-logged as a reminder) on every
-                    # run, and retried once a public release appears or
-                    # public_only is relaxed
-                    if added_this_title > 0 or not self.public_only_skipped:
-                        cache_details.update({"torrent_hashes": torrent_hashes})
-                        self.update_cache(
-                            arr="radarr",
-                            al_id=al_id,
-                            cache_details=cache_details,
-                        )
-                    elif added_this_title == 0:
-                        # Record the private-only skip for the summary's
-                        # "needs action" list, attributed to this title - but
-                        # only when nothing was actually added for it
-                        self.stats["needs_action"].append(
-                            {
-                                "title": self.current_title,
-                                "group": ", ".join(
-                                    dict.fromkeys(self.public_only_groups),
-                                ),
-                                "url": self.current_url,
-                                "reason": "private-only release; public_only on",
-                            },
-                        )
-
-                    # Add in a wait, if required
-                    time.sleep(self.sleep_time)
-
-                if self.max_torrents_to_add is not None:
-                    if self.torrents_added >= self.max_torrents_to_add:
-                        self.log_max_torrents_added()
-                        self.save_cache()
-                        self.log_run_summary(arr="radarr")
-                        return True
-
-            except Exception as e:
-                title = getattr(radarr_movie, "title", "unknown title")
-                self.logger.error(
-                    f"{title}: unexpected error: {e}", exc_info=True,
-                )
-                continue
-
-        # Per-title update_cache calls only mutate memory now, so this end-of-run
-        # save is what actually persists the run (and sorts by id on the way out)
-        self.save_cache()
-        self.log_run_summary(arr="radarr")
-
-        return True
+        return self._grab_and_cache(
+            arr=arr,
+            al_id=al_id,
+            item_title=item_title,
+            anilist_title=anilist_title,
+            sd_url=sd_url,
+            seadex_dict=seadex_dict,
+            torrent_hashes=torrent_hashes,
+            cache_details=cache_details,
+            release_group=radarr_release_group,
+        )
 
     def get_all_radarr_movies(self) -> list:
         """Get all movies in Radarr that have an associated AniList ID"""

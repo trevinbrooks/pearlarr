@@ -540,3 +540,130 @@ def count_noun(n: int, singular: str, plural: str | None = None) -> str:
     """
 
     return f"{n} {pluralize(n, singular, plural)}"
+
+
+class LogFormatter:
+    """Render aligned detail lines through a logger.
+
+    Holds only the logger and the rule width - no run state - so the
+    presentation primitives (an aligned "key : value" line, a blank separator,
+    an elapsed-time string) live apart from the SeaDexArr orchestration that
+    decides *what* to report. The semantic ``log_*`` methods on SeaDexArr keep
+    the run state (stats, current title/url) and delegate their rendering here.
+
+    Args:
+        logger (logging.Logger): Logger every line is emitted through
+        line_length (int): Full width used for separator rules. Defaults to 80
+    """
+
+    def __init__(self, logger: logging.Logger, line_length: int = 80) -> None:
+        self.logger = logger
+        self.line_length = line_length
+
+    def kv(
+        self,
+        key: str,
+        value: Any,
+        value_style: str | None = None,
+        level: int = logging.INFO,
+        indent: int = 1,
+        key_width: int = KEY_WIDTH,
+        sep: str = " :",
+        tail: str | None = None,
+        tail_style: str = "yellow",
+    ) -> bool:
+        """Log an aligned "key : value" (or gutter "key value") detail line
+
+        The file log stores the plain kv_string text; on the console the label
+        is dimmed so the value reads first, and an optional value_style accents
+        the outcome (e.g., green for "added").
+
+        Args:
+            key: Left-hand label
+            value: Right-hand value
+            value_style: Optional rich style for the value (e.g. "green")
+            level: Logging level. Defaults to logging.INFO
+            indent: Number of indent levels. Defaults to 1
+            key_width: Column width the key is padded to. Defaults to KEY_WIDTH (16)
+            sep: Separator after the padded key. Defaults to ":"; pass "" for
+                the colon-less gutter format (see detail)
+            tail: Optional emphasized suffix (console only), e.g., an "incomplete"
+                note. Defaults to None
+            tail_style: Style for the tail. Defaults to "yellow"
+        """
+
+        self.logger.log(
+            level,
+            kv_string(key, value, key_width=key_width, indent=indent, sep=sep),
+            extra={
+                "kv": {
+                    "key": key,
+                    "value": value,
+                    "value_style": value_style,
+                    "indent": indent,
+                    "key_width": key_width,
+                    "sep": sep,
+                    "tail": tail,
+                    "tail_style": tail_style,
+                },
+            },
+        )
+
+        return True
+
+    def detail(
+        self,
+        label: str,
+        value: Any,
+        value_style: str | None = None,
+        level: int = logging.INFO,
+        tail: str | None = None,
+        tail_style: str = "yellow",
+    ) -> bool:
+        """Log an entry-detail line: dim gutter label, value at the title column
+
+        The colon-less "<label> <value>" form is used for everything indented under
+        an entry (files / link / status / group / added / kept / missing /
+        skipped / anilist). The value lands in the same column as the entry title,
+        so the whole block reads as one aligned column; the label sits dimmed in
+        the indent gutter and the value carries any accent color.
+
+        Args:
+            label: Gutter label, e.g. "files" or "added"
+            value: The value text
+            value_style: Optional rich style for the value (e.g. "green")
+            level: Logging level. Defaults to logging.INFO
+            tail: Optional emphasized suffix (console only). Defaults to None
+            tail_style: Style for the tail. Defaults to "yellow"
+        """
+
+        return self.kv(
+            label,
+            value,
+            value_style=value_style,
+            level=level,
+            indent=DETAIL_INDENT,
+            key_width=DETAIL_KEY_WIDTH,
+            sep="",
+            tail=tail,
+            tail_style=tail_style,
+        )
+
+    def blank(self) -> bool:
+        """Emit a blank line to visually separate entries / item blocks"""
+
+        self.logger.info("")
+        return True
+
+    @staticmethod
+    def format_elapsed(seconds: float) -> str:
+        """Format an elapsed number of seconds as e.g. "8s", "14m 03s" or "1h 02m 03s" """
+
+        total = int(seconds)
+        hours, rem = divmod(total, 3600)
+        minutes, seconds = divmod(rem, 60)
+        if hours:
+            return f"{hours}h {minutes:02d}m {seconds:02d}s"
+        if minutes:
+            return f"{minutes}m {seconds:02d}s"
+        return f"{seconds}s"

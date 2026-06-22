@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import time
+from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta
@@ -27,15 +28,13 @@ from .anilist import (
     get_anilist_title,
     get_query_batch,
 )
+from .discord import discord_push
 from .log import (
-    DETAIL_INDENT,
-    DETAIL_KEY_WIDTH,
-    KEY_WIDTH,
+    LogFormatter,
     count_noun,
     entry_string,
     group_highlight,
     indent_string,
-    kv_string,
     rule_string,
     setup_logger,
 )
@@ -385,7 +384,7 @@ def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
     )
 
 
-class SeaDexArr:
+class SeaDexArr(ABC):
 
     def __init__(
         self,
@@ -605,7 +604,11 @@ class SeaDexArr:
         # edit the cache description
         self.check_cache_updates()
 
-        self.log_line_length = 80
+        # All aligned detail rendering goes through this formatter, so the
+        # presentation primitives (kv lines, blank separators, elapsed strings)
+        # live on it rather than on the orchestration class. line_length is the
+        # full width used for the run's separator rules.
+        self.log_fmt = LogFormatter(self.logger)
 
     def close(self) -> None:
         """Close the shared HTTP session (release pooled connections)."""
@@ -1845,7 +1848,7 @@ class SeaDexArr:
                     # set, but none are available on a public tracker. Don't
                     # grab a private release, just log an error and skip. Flag
                     # the skip so the caller doesn't cache the title as done
-                    self.log_detail(
+                    self.log_fmt.detail(
                         "skipped",
                         f"{', '.join(flagged)} private-only (public_only on)",
                         value_style="yellow",
@@ -2007,7 +2010,7 @@ class SeaDexArr:
                 tracker = url_item.get("tracker", None)
 
                 if self.public_only and not url_item.get("is_public", True):
-                    self.log_detail(
+                    self.log_fmt.detail(
                         "skipped",
                         f"{tracker} private-only (public_only on)",
                         value_style="yellow",
@@ -2019,7 +2022,7 @@ class SeaDexArr:
 
                 # Skip trackers not in the user's selected list
                 if tracker.casefold() not in self.trackers:
-                    self.log_detail(
+                    self.log_fmt.detail(
                         "skipped",
                         f"{url} (tracker {tracker} not in your selected list)",
                         value_style="yellow",
@@ -2271,113 +2274,306 @@ class SeaDexArr:
 
         return True
 
-    def log_kv(
+    # --- Run orchestration (shared template) --------------------------------
+    #
+    # Each subclass's run() is a thin wrapper over run_sync: both Arrs share the
+    # whole scaffolding (reset stats, fetch items, optional single-id filter,
+    # AniList prefetch, the per-item loop, and the end-of-run save + summary) and
+    # differ only in how an item is fetched/identified and what the per-AniList-id
+    # body does. The divergent pieces are the hooks (_get_all_items,
+    # _filter_to_single_item, _item_anilist_ids, _process_al_id); the identical
+    # per-id head and grab/cache tail are _al_id_prologue and _grab_and_cache.
+
+    @abstractmethod
+    def _get_all_items(self) -> list:
+        """Fetch every Arr item (movie/series) that has an AniList mapping."""
+
+    @abstractmethod
+    def _filter_to_single_item(self, items: list, item_id: int) -> list:
+        """Narrow the item list to the one matching a single CLI-supplied id."""
+
+    @abstractmethod
+    def _item_anilist_ids(self, item: Any, log_ignored: bool = True) -> dict:
+        """Resolve the AniList ids an Arr item maps to (arr-specific id args)."""
+
+    @abstractmethod
+    def _process_al_id(
         self,
-        key: str,
-        value: Any,
-        value_style: str | None = None,
-        level: int = logging.INFO,
-        indent: int = 1,
-        key_width: int = KEY_WIDTH,
-        sep: str = " :",
-        tail: str | None = None,
-        tail_style: str = "yellow",
+        arr: str,
+        item: Any,
+        item_title: str,
+        al_id: int,
+        mapping: dict,
     ) -> bool:
-        """Log an aligned "key : value" (or gutter "key value") detail line
+        """Handle one AniList id for an item; return True to stop the whole run.
 
-        The file log stores the plain kv_string text; on the console the label
-        is dimmed so the value reads first, and an optional value_style accents
-        the outcome (e.g., green for "added").
-
-        Args:
-            key: Left-hand label
-            value: Right-hand value
-            value_style: Optional rich style for the value (e.g. "green")
-            level: Logging level. Defaults to logging.INFO
-            indent: Number of indent levels. Defaults to 1
-            key_width: Column width the key is padded to. Defaults to KEY_WIDTH (16)
-            sep: Separator after the padded key. Defaults to ":"; pass "" for
-                the colon-less gutter format (see log_detail)
-            tail: Optional emphasized suffix (console only), e.g., an "incomplete"
-                note. Defaults to None
-            tail_style: Style for the tail. Defaults to "yellow"
+        The per-id middle is the genuinely Arr-specific part (Radarr's single
+        file vs. Sonarr's episode coverage); the shared head and tail live in
+        _al_id_prologue and _grab_and_cache.
         """
 
-        self.logger.log(
-            level,
-            kv_string(key, value, key_width=key_width, indent=indent, sep=sep),
-            extra={
-                "kv": {
-                    "key": key,
-                    "value": value,
-                    "value_style": value_style,
-                    "indent": indent,
-                    "key_width": key_width,
-                    "sep": sep,
-                    "tail": tail,
-                    "tail_style": tail_style,
+    def run_sync(self, arr: str, item_id: int | None, dry_run: bool) -> bool:
+        """Shared run scaffolding for both Arr syncers
+
+        Args:
+            arr (str): "radarr" or "sonarr"
+            item_id (int | None): If set, only run for the single item with this
+                id (TMDB for Radarr, TVDB for Sonarr)
+            dry_run (bool): Simulate the run without grabbing torrents, writing
+                the cache, or sending notifications
+        """
+
+        # Whether this is a no-op preview - consulted by the mutating helpers
+        self.dry_run = dry_run
+
+        # Reset the per-run tally and start the run clock
+        self.reset_run_stats()
+
+        all_items = self._get_all_items()
+
+        # If we're targeting a single item, filter down to it
+        if item_id is not None:
+            all_items = self._filter_to_single_item(all_items, item_id)
+
+        n_items = len(all_items)
+
+        self.log_arr_start(arr=arr, n_items=n_items)
+
+        # Warm the AniList cache before the per-item loop: reuse what past runs
+        # fetched, then batch-fetch (id_in pages) everything still missing, so the
+        # loop rarely hits AniList one id at a time and trips its rate limit.
+        self.load_anilist_cache()
+        prefetch_ids = set()
+        for item in all_items:
+            if not item.monitored and self.ignore_unmonitored:
+                continue
+            prefetch_ids.update(
+                self._item_anilist_ids(item, log_ignored=False),
+            )
+        self.prefetch_anilist(prefetch_ids)
+
+        for item_idx, item in enumerate(all_items):
+
+            try:
+
+                item_title = item.title
+
+                self.log_arr_item_start(
+                    arr=arr,
+                    item_title=item_title,
+                    n_item=item_idx + 1,
+                    n_items=n_items,
+                )
+
+                # If we're not monitored, then skip if ignore_unmonitored is switched on
+                if not item.monitored and self.ignore_unmonitored:
+                    self.log_arr_item_unmonitored(item_title=item_title)
+                    continue
+
+                # Get the mappings from the Arr item to AniList
+                al_mappings = self._item_anilist_ids(item)
+
+                if len(al_mappings) == 0:
+                    self.log_no_anilist_mappings(title=item_title)
+                    continue
+
+                for al_id, mapping in al_mappings.items():
+                    # _process_al_id returns True only when max_torrents_to_add was
+                    # reached - it has already saved the cache and logged the
+                    # summary - so stop the whole run here. The original per-item
+                    # post-loop max check is redundant with this early return (the
+                    # in-block check fires after every add, so torrents_added can
+                    # never reach the cap without _process_al_id stopping first),
+                    # so it isn't repeated.
+                    if self._process_al_id(
+                        arr=arr,
+                        item=item,
+                        item_title=item_title,
+                        al_id=al_id,
+                        mapping=mapping,
+                    ):
+                        return True
+
+            except Exception as e:
+                title = getattr(item, "title", "unknown title")
+                self.logger.error(
+                    f"{title}: unexpected error: {e}", exc_info=True,
+                )
+                continue
+
+        # Per-title update_cache calls only mutate memory now, so this end-of-run
+        # save is what actually persists the run (and sorts by id on the way out)
+        self.save_cache()
+        self.log_run_summary(arr=arr)
+
+        return True
+
+    def _al_id_prologue(self, al_id: int | None) -> EntryRecord | None:
+        """Shared per-AniList-id head: reset skip flags, tally, fetch SeaDex entry
+
+        Returns the SeaDex entry to process, or None when the id should be
+        skipped (no id, or no SeaDex entry) - the caller moves to the next id.
+
+        Args:
+            al_id (int | None): AniList id being processed; defensively None-checked
+                since the mapping dicts are built from external data
+        """
+
+        # Reset the per-title public_only skip flag (and the skipped group names)
+        # before we make any download decisions for this title
+        self.public_only_skipped = False
+        self.public_only_groups = []
+        self.stats["checked"] += 1
+
+        if al_id is None:
+            self.log_no_anilist_id()
+            return None
+
+        # Get the SeaDex entry if it exists
+        sd_entry = self.get_seadex_entry(al_id=al_id)
+        if sd_entry is None:
+            self.log_no_sd_entry(al_id=al_id)
+            return None
+
+        return sd_entry
+
+    def _grab_and_cache(
+        self,
+        arr: str,
+        al_id: int,
+        item_title: str,
+        anilist_title: str,
+        sd_url: str,
+        seadex_dict: dict,
+        torrent_hashes: list,
+        cache_details: dict,
+        release_group: Any,
+    ) -> bool:
+        """Shared per-id tail: add torrents, notify, then cache the outcome
+
+        Identical across both Arrs once the (Arr-specific) seadex_dict and
+        release-group info have been resolved. Returns True only when
+        max_torrents_to_add has been reached (cache saved and summary logged),
+        so the caller stops the whole run; otherwise False (move to the next id).
+
+        Args:
+            arr (str): "radarr" or "sonarr"
+            al_id (int): AniList id being processed
+            item_title (str): Arr item title (Discord notification heading)
+            anilist_title (str): Resolved AniList title
+            sd_url (str): SeaDex entry URL
+            seadex_dict (dict): Filtered SeaDex releases
+            torrent_hashes (list): Hashes to remember in the cache record
+            cache_details (dict): Cache record being assembled for this id
+            release_group (Any): Arr release group(s) for the Discord fields
+        """
+
+        # Check the release groups are matching, and get a bespoke list of torrents
+        any_to_download = self.get_any_to_download(seadex_dict=seadex_dict)
+
+        # Capture the running total before the add block so we can tell whether
+        # THIS title actually grabbed anything
+        torrents_before = self.torrents_added
+
+        if any_to_download:
+            fields, anilist_thumb = self.get_seadex_fields(
+                arr=arr,
+                al_id=al_id,
+                release_group=release_group,
+                seadex_dict=seadex_dict,
+            )
+
+            if len(seadex_dict) > 0:
+
+                n_torrents_added = 0
+                results = []
+
+                # Add torrents to qBittorrent. add_torrent runs even in a preview
+                # (no client / dry run): add_torrent_to_qbit simulates the add,
+                # while the download-flag, public_only and tracker filters still
+                # apply, so only releases that would actually be grabbed are counted.
+                added, results = self.add_torrent(
+                    torrent_dict=seadex_dict,
+                    torrent_client="qbit",
+                )
+                n_torrents_added += added
+
+                # Log the action block now the outcome is known, so the status
+                # reads "adding" only when something was actually grabbed (else
+                # "keeping")
+                self.log_seadex_action(
+                    seadex_dict=seadex_dict,
+                    results=results,
+                    dry_run=self._is_preview(),
+                )
+
+                # Push a message to Discord if we've added anything (never on a
+                # preview - it's an outward notification)
+                if (
+                    self.discord_url is not None
+                    and n_torrents_added > 0
+                    and not self._is_preview()
+                ):
+                    discord_push(
+                        url=self.discord_url,
+                        arr_title=item_title,
+                        al_title=anilist_title,
+                        seadex_url=sd_url,
+                        fields=fields,
+                        thumb_url=anilist_thumb,
+                    )
+
+                if self.max_torrents_to_add is not None:
+                    if self.torrents_added >= self.max_torrents_to_add:
+                        self.log_max_torrents_added()
+                        self.save_cache()
+                        self.log_run_summary(arr=arr)
+                        return True
+
+        elif not self.public_only_skipped:
+            self.stats["up_to_date"] += 1
+            self.log_fmt.detail(
+                "status",
+                "already have the recommended release",
+                value_style="blue",
+            )
+
+        # Work out whether THIS title actually grabbed anything
+        added_this_title = self.torrents_added - torrents_before
+
+        # Update and save out the cache whenever something was grabbed for this
+        # title, or when nothing was skipped at all. Leave the title uncached ONLY
+        # when public_only skipped a release AND nothing else was grabbed for it -
+        # so it's re-checked (and the skip re-logged as a reminder) on every run,
+        # and retried once a public release appears or public_only is relaxed
+        if added_this_title > 0 or not self.public_only_skipped:
+            cache_details.update({"torrent_hashes": torrent_hashes})
+            self.update_cache(
+                arr=arr,
+                al_id=al_id,
+                cache_details=cache_details,
+            )
+        elif added_this_title == 0:
+            # Record the private-only skip for the summary's "needs action" list,
+            # attributed to this title - but only when nothing was actually added
+            # for it. The coverage is whatever log_al_title recorded as current
+            # (a season/episode string for Sonarr, None for a Radarr movie).
+            self.stats["needs_action"].append(
+                {
+                    "title": self.current_title,
+                    "coverage": self.current_coverage,
+                    "group": ", ".join(
+                        dict.fromkeys(self.public_only_groups),
+                    ),
+                    "url": self.current_url,
+                    "reason": "private-only release; public_only on",
                 },
-            },
-        )
+            )
 
-        return True
+        # Add in a wait, if required
+        time.sleep(self.sleep_time)
 
-    def log_detail(
-        self,
-        label: str,
-        value: Any,
-        value_style: str | None = None,
-        level: int = logging.INFO,
-        tail: str | None = None,
-        tail_style: str = "yellow",
-    ) -> bool:
-        """Log an entry-detail line: dim gutter label, value at the title column
-
-        The colon-less "<label> <value>" form is used for everything indented under
-        an entry (files / link / status / group / added / kept / missing /
-        skipped / anilist). The value lands in the same column as the entry title,
-        so the whole block reads as one aligned column; the label sits dimmed in
-        the indent gutter and the value carries any accent color.
-
-        Args:
-            label: Gutter label, e.g. "files" or "added"
-            value: The value text
-            value_style: Optional rich style for the value (e.g. "green")
-            level: Logging level. Defaults to logging.INFO
-            tail: Optional emphasized suffix (console only). Defaults to None
-            tail_style: Style for the tail. Defaults to "yellow"
-        """
-
-        return self.log_kv(
-            label,
-            value,
-            value_style=value_style,
-            level=level,
-            indent=DETAIL_INDENT,
-            key_width=DETAIL_KEY_WIDTH,
-            sep="",
-            tail=tail,
-            tail_style=tail_style,
-        )
-
-    def log_blank(self) -> bool:
-        """Emit a blank line to visually separate entries / item blocks"""
-
-        self.logger.info("")
-        return True
-
-    @staticmethod
-    def _format_elapsed(seconds: float) -> str:
-        """Format an elapsed number of seconds as e.g. "8s", "14m 03s" or "1h 02m 03s" """
-
-        total = int(seconds)
-        hours, rem = divmod(total, 3600)
-        minutes, seconds = divmod(rem, 60)
-        if hours:
-            return f"{hours}h {minutes:02d}m {seconds:02d}s"
-        if minutes:
-            return f"{minutes}m {seconds:02d}s"
-        return f"{seconds}s"
+        return False
 
     def log_run_summary(self, arr: str) -> bool:
         """Log the end-of-run scoreboard for an Arr run
@@ -2428,9 +2624,9 @@ class SeaDexArr:
         # The summary's key column is narrower than the per-title detail column:
         # "needs action" (12) is the widest key here, vs. "missing episodes" (16)
         # in entry details. A heavy rule separates the two blocks, so the differing
-        # colon columns never sit adjacent. Wrap log_kv to fix the width at 12.
+        # colon columns never sit adjacent. Wrap the formatter to fix width at 12.
         def summary_kv(key: str, value: Any, **kwargs: Any) -> bool:
-            return self.log_kv(key, value, key_width=12, **kwargs)
+            return self.log_fmt.kv(key, value, key_width=12, **kwargs)
 
         # A needs-action entry in the summary, rendered with the same labeled
         # gutter as added_detail so the two blocks read alike: the title hangs at
@@ -2451,7 +2647,7 @@ class SeaDexArr:
             for label, value, accent in rows:
                 if not value:
                     continue
-                self.log_kv(
+                self.log_fmt.kv(
                     label,
                     value,
                     value_style=accent,
@@ -2551,7 +2747,7 @@ class SeaDexArr:
             else ("yellow" if n_warnings else None),
         )
         if self._run_started_monotonic is not None:
-            elapsed = self._format_elapsed(
+            elapsed = self.log_fmt.format_elapsed(
                 time.monotonic() - self._run_started_monotonic,
             )
             summary_kv("elapsed", elapsed)
@@ -2573,7 +2769,7 @@ class SeaDexArr:
             )
 
         self.logger.info(
-            rule_string(rule_char="=", total_length=self.log_line_length),
+            rule_string(rule_char="=", total_length=self.log_fmt.line_length),
             extra={"rule_char": "="},
         )
 
@@ -2636,7 +2832,7 @@ class SeaDexArr:
 
         # A blank line before each ledger row separates entries within a title
         # block (and the first entry from its header)
-        self.log_blank()
+        self.log_fmt.blank()
         self.logger.info(
             indent_string(entry_string(state, label), level=1),
             extra={"line_style": style},
@@ -2686,7 +2882,7 @@ class SeaDexArr:
                 if incomplete and idx == len(rows) - 1
                 else None
             )
-            self.log_detail(label, value, value_style=style, tail=tail)
+            self.log_fmt.detail(label, value, value_style=style, tail=tail)
 
         return True
 
@@ -2727,7 +2923,7 @@ class SeaDexArr:
 
         # A blank line before the separator rule sets each item's block apart
         # from the previous one (and from the run banner for the first item)
-        self.log_blank()
+        self.log_fmt.blank()
         header = f"[{n_item}/{n_items}] {arr.capitalize()}: {item_title}"
         self.logger.info(
             header,
@@ -2775,7 +2971,7 @@ class SeaDexArr:
         )
         self.logger.debug(
             rule_string(
-                total_length=self.log_line_length,
+                total_length=self.log_fmt.line_length,
             ),
         )
 
@@ -2808,7 +3004,7 @@ class SeaDexArr:
         # otherwise the ledger already reads "AniList #<id>" and a detail line
         # would just duplicate it
         if anilist_title:
-            self.log_detail("anilist", str(al_id))
+            self.log_fmt.detail("anilist", str(al_id))
 
         return True
 
@@ -2896,7 +3092,7 @@ class SeaDexArr:
         """Log if no suitable SeaDex releases are found"""
 
         self.stats["no_releases"] += 1
-        self.log_detail(
+        self.log_fmt.detail(
             "status",
             "no suitable releases on SeaDex",
             value_style="grey50",
@@ -2940,12 +3136,12 @@ class SeaDexArr:
             return False
 
         if added:
-            self.log_detail(
+            self.log_fmt.detail(
                 "status",
                 "your copy differs from SeaDex's pick - adding a better release",
             )
         else:
-            self.log_detail(
+            self.log_fmt.detail(
                 "status",
                 "your copy matches SeaDex's pick - keeping it",
                 value_style="green",
@@ -2961,14 +3157,14 @@ class SeaDexArr:
                     recommendation = f"{srg} [{', '.join(tags)}]"
                 else:
                     recommendation = srg
-                self.log_detail("group", recommendation, value_style="cyan")
+                self.log_fmt.detail("group", recommendation, value_style="cyan")
 
         # Per-release outcome (qBittorrent path; a dry run has no names to show)
         for r in results:
             if r.get("outcome") == "added":
-                self.log_detail("added", r.get("name"), value_style="green")
+                self.log_fmt.detail("added", r.get("name"), value_style="green")
             else:
-                self.log_detail("kept", r.get("name"))
+                self.log_fmt.detail("kept", r.get("name"))
 
         return True
 
