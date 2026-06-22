@@ -5,7 +5,7 @@ into a slim orchestrator plus focused, independently-testable collaborators —
 **without changing behaviour or the CLI surface**.
 
 **Branch:** `public-only-release-filtering`
-**Status:** Phase 0 ✅ done · Phase 1 ✅ done · Phase 2 ✅ done · Phase 3 ✅ done · Phases 4–6 pending
+**Status:** Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4a ✅ (planner) · Phase 4b pending (reporter) · Phases 5–6 pending
 **Gates (every phase):** `pyrefly check` = 0 errors · `ruff check` = clean ·
 `pytest` = all pass · package import smoke · (user-side) one `--dry-run` run.
 Native unions, no `Optional`, no suppressions.
@@ -76,7 +76,7 @@ reshuffle, so `from .x import Y` patterns are unchanged).
 | Module | Class / contents | Status |
 |---|---|---|
 | `coverage.py` | episode-range / coverage formatting (pure functions) | ✅ created (Phase 1) |
-| `planner.py` | release-matching helpers now; `DownloadPlanner` + `PlanResult` in Phase 4 | ✅ created (Phase 1, helpers only) |
+| `planner.py` | release-matching helpers + `DownloadPlanner` / `PlanResult` / `SkipNotice` | ✅ created (Phase 1 helpers; engine Phase 4a) |
 | `config.py` | `AppConfig` — typed settings + YAML load + template-sync | ✅ created (Phase 2) |
 | `cache.py` | `CacheStore` — owns the cache schema | ✅ created (Phase 2) |
 | `mappings.py` | `MappingResolver` — 3 sources → AniList ids; owns the parse memo | ✅ created (Phase 3) |
@@ -317,3 +317,21 @@ Each phase is independently shippable and ends at the gates in the header.
   None at runtime; the strictness was masked by `dict.get`'s `Any`). `seadex_arr.py`
   2776 → 2123. 72 tests, all gates green (pyrefly 0 / ruff clean / pytest); package
   import smoke OK.
+- **2026-06-22 — Phase 4a done (decision engine).** Moved the heart of the app —
+  `filter_seadex_downloads` / `filter_by_torrent_hash` / `filter_by_release_group` /
+  `reduce_overlapping_downloads` / `get_any_to_download` — out of `SeaDexArr` into a
+  `DownloadPlanner` class in `planner.py`, alongside the new `PlanResult` / `SkipNotice`
+  / `PublicOnlySkips` dataclasses. The planner is near-pure: built once per run with the
+  three flags it consults (`public_only`, `interactive`, `use_torrent_hash_to_filter`)
+  plus a logger for the debug breadcrumbs, it flips each release's `download` flag in
+  place and **returns** the hash list + the private-only skip outcome rather than mutating
+  `self.public_only_*` or calling `self.log_fmt` from deep in the stack. The cache read
+  moved out too: `CacheStore.torrent_hashes(arr, al_id)` is passed in. `SeaDexArr` keeps a
+  thin `filter_seadex_downloads` seam that calls `planner.plan(...)` and translates the
+  `PlanResult` back onto run state (render each `SkipNotice` exactly as the old inline
+  `log_fmt.detail`; OR-in `public_only_skipped` / extend `public_only_groups`) —
+  transitional scaffolding that unwinds in 4b. `_grab_and_cache` now calls
+  `self._planner.get_any_to_download`. `test_download_planner.py` repointed to build a
+  `DownloadPlanner` (new `make_planner` builder) and assert on `PlanResult` /
+  `PublicOnlySkips` instead of mutated `self`. `seadex_arr.py` 2123 → 1716. 72 tests, all
+  gates green (pyrefly 0 / ruff clean); import smoke OK.

@@ -188,6 +188,19 @@ class CacheStore:
             .get(field)
         )
 
+    def torrent_hashes(self, arr: str, al_id: int) -> list:
+        """Torrent hashes already remembered for an entry (empty if none).
+
+        Used by the download planner to skip releases already grabbed in a past
+        run; returns a list even for a missing record or a stored ``None``.
+
+        Args:
+            arr (str): Arr instance the entry is cached under
+            al_id (int): AniList ID
+        """
+
+        return self.get_cached_field(arr, al_id, "torrent_hashes") or []
+
     def update_cache(self, arr: str, al_id: int, cache_details: dict | None = None) -> bool:
         """Update cache with useful info
 

@@ -13,6 +13,7 @@ from typing import Any
 from unittest import mock
 
 from seadexarr.modules.config import PRIVATE_TRACKERS, PUBLIC_TRACKERS
+from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.seadex_arr import SeaDexArr
 
 
@@ -84,6 +85,31 @@ def make_arr(**overrides: Any) -> _StubArr:
     for name, value in defaults.items():
         setattr(arr, name, value)
     return arr
+
+
+def make_planner(**overrides: Any) -> DownloadPlanner:
+    """Build a ``DownloadPlanner`` with test-friendly defaults.
+
+    The planner reads three config flags plus a logger; pass keyword overrides
+    to vary a single flag (e.g. ``make_planner(public_only=True)``). The logger
+    defaults to WARNING so the hot-path debug f-strings aren't formatted, mirroring
+    ``make_arr``.
+    """
+
+    logger = logging.getLogger("seadexarr-test")
+    if not logger.handlers:
+        logger.addHandler(logging.NullHandler())
+    logger.propagate = False
+    logger.setLevel(logging.WARNING)
+
+    defaults: dict[str, Any] = {
+        "public_only": False,
+        "interactive": False,
+        "use_torrent_hash_to_filter": False,
+        "logger": logger,
+    }
+    defaults.update(overrides)
+    return DownloadPlanner(**defaults)
 
 
 def url_item(
