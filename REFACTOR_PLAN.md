@@ -5,7 +5,7 @@ into a slim orchestrator plus focused, independently-testable collaborators —
 **without changing behaviour or the CLI surface**.
 
 **Branch:** `public-only-release-filtering`
-**Status:** Phase 0 ✅ done · Phase 1 ✅ done · Phases 2–6 pending
+**Status:** Phase 0 ✅ done · Phase 1 ✅ done · Phase 2 ✅ done · Phases 3–6 pending
 **Gates (every phase):** `pyrefly check` = 0 errors · `ruff check` = clean ·
 `pytest` = all pass · package import smoke · (user-side) one `--dry-run` run.
 Native unions, no `Optional`, no suppressions.
@@ -77,8 +77,8 @@ reshuffle, so `from .x import Y` patterns are unchanged).
 |---|---|---|
 | `coverage.py` | episode-range / coverage formatting (pure functions) | ✅ created (Phase 1) |
 | `planner.py` | release-matching helpers now; `DownloadPlanner` + `PlanResult` in Phase 4 | ✅ created (Phase 1, helpers only) |
-| `config.py` | `AppConfig` — typed settings + YAML load + template-sync | Phase 2 |
-| `cache.py` | `CacheStore` — owns the cache schema | Phase 2 |
+| `config.py` | `AppConfig` — typed settings + YAML load + template-sync | ✅ created (Phase 2) |
+| `cache.py` | `CacheStore` — owns the cache schema | ✅ created (Phase 2) |
 | `mappings.py` | `MappingResolver` — 3 sources → AniList ids; owns the parse memo | Phase 3 |
 | `anilist_gateway.py` | `AniListGateway` — `al_cache` + meta TTL + prefetch + titles/thumbs | Phase 3 |
 | `seadex_gateway.py` | `SeaDexGateway` — fetch entry → normalized `seadex_dict` | Phase 3 |
@@ -255,3 +255,21 @@ Each phase is independently shippable and ends at the gates in the header.
   as _coverage`, `from .planner import ...`); the three coverage methods became thin
   delegators; `seadex_sonarr.py` imports `get_episode_keys` from `.planner`. Tests
   repointed to the new modules. 50 tests, all gates green.
+- **2026-06-22 — Phase 2 done.** Extracted `config.py` (`AppConfig`: file lifecycle —
+  copy-template / parse / key-order sync — plus `checksum()` and typed, normalized
+  settings; now owns `PUBLIC_TRACKERS` / `PRIVATE_TRACKERS`) and `cache.py`
+  (`CacheStore`: schema + version/checksum reconcile + freshness check + records +
+  preview-gated `save`; now owns `UPDATED_AT_STR_FORMAT` and `save_json`).
+  `SeaDexArr.__init__` builds `self._config = AppConfig.load(...)` and
+  `self.cache_store = CacheStore.load(...)`, sourcing every scalar setting from the
+  typed props. **Two transitional aliases kept for zero-churn / behaviour-parity:**
+  `self.config` stays bound to the raw dict (subclasses still read `self.config.get`)
+  and `self.cache` stays bound to `cache_store.data` (the not-yet-extracted direct
+  reads — `anilist_meta`, `anilist_entries`, `sonarr_parse_cache` — are untouched;
+  they migrate in Phases 3–5). The cache read/write methods became thin delegators.
+  `seadex_sonarr` / `tests/builders` now import the relocated constants from their new
+  homes. Typing `qbit_info` as `dict | None` surfaced a latent None-unsafety; guarded
+  with an inlined `qbit_info is not None and ...` (behaviour-identical for every real
+  config — the None path is unreachable after template-sync). `seadex_arr.py`
+  3020 → 2776. Added `tests/test_config.py` + `tests/test_cache.py` (22 tests).
+  72 tests, all gates green.

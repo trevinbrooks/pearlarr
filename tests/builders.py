@@ -12,11 +12,8 @@ import logging
 from typing import Any
 from unittest import mock
 
-from seadexarr.modules.seadex_arr import (
-    PRIVATE_TRACKERS,
-    PUBLIC_TRACKERS,
-    SeaDexArr,
-)
+from seadexarr.modules.config import PRIVATE_TRACKERS, PUBLIC_TRACKERS
+from seadexarr.modules.seadex_arr import SeaDexArr
 
 
 class _StubArr(SeaDexArr):

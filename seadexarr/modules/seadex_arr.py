@@ -2,13 +2,11 @@ import copy
 import json
 import logging
 import os
-import shutil
 import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta
-from hashlib import md5
 from itertools import compress
 from typing import Any
 from urllib.request import urlretrieve
@@ -17,8 +15,6 @@ from xml.etree import ElementTree
 import httpx
 import qbittorrentapi
 import requests
-import yaml
-from ruamel.yaml import YAML
 from seadex import EntryNotFoundError, EntryRecord, SeaDexEntry
 
 from . import coverage as _coverage
@@ -29,6 +25,8 @@ from .anilist import (
     get_anilist_title,
     get_query_batch,
 )
+from .cache import UPDATED_AT_STR_FORMAT, CacheStore
+from .config import PRIVATE_TRACKERS, AppConfig
 from .discord import discord_push
 from .log import (
     LogFormatter,
@@ -49,40 +47,6 @@ from .torrent import (
     get_nyaa_torrent,
     get_rutracker_torrent,
 )
-from .. import __version__
-
-
-def save_json(
-    data: dict,
-    out_file: str,
-    sort_cache: bool = False,
-) -> None:
-    """Save JSON prettily
-
-    Args:
-        data (dict): Data to be saved
-        out_file (str): Path to JSON file
-        sort_cache (bool, optional): Whether to sort cache files by AniList ID. Defaults to False.
-    """
-
-    if sort_cache:
-
-        anilist_entries = data.get("anilist_entries")
-        if anilist_entries is not None:
-            for arr, arr_item in anilist_entries.items():
-                keys = list(arr_item.keys())
-                keys.sort(key=int)
-                sorted_data = {key: arr_item[key] for key in keys}
-
-                anilist_entries[arr] = sorted_data
-
-    with open(out_file, "w", encoding="utf-8") as f:
-        json.dump(
-            data,
-            f,
-            indent=4,
-        )
-
 
 ANIME_IDS_URL = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/refs/heads/master/anime_ids.json"
 ANIME_IDS_FILE = "anime_ids.json"
@@ -204,31 +168,6 @@ ALLOWED_ARRS = [
     "sonarr",
 ]
 
-PUBLIC_TRACKERS = {
-    tracker.casefold()
-    for tracker in [
-        "Nyaa",
-        "AnimeTosho",
-        "AniDex",
-        "RuTracker",
-    ]
-}
-
-PRIVATE_TRACKERS = {
-    tracker.casefold()
-    for tracker in [
-        "AB",
-        "BeyondHD",
-        "PassThePopcorn",
-        "BroadcastTheNet",
-        "HDBits",
-        "Blutopia",
-        "Aither",
-    ]
-}
-
-UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
-
 # How long a persisted AniList response stays usable before it's re-fetched.
 # title/format/coverImage are effectively static; episodes for a currently airing
 # show drift, so this caps how stale that count can get (~one episode/week).
@@ -257,39 +196,29 @@ class SeaDexArr(ABC):
                 which will create one.
         """
 
-        # If we don't have a config file, copy the sample to the current
-        # working directory
-        config_template_path = os.path.join(
-            os.path.dirname(__file__), "config_sample.yml",
-        )
-        if not os.path.exists(config):
-            shutil.copy(config_template_path, config)
-            raise FileNotFoundError(f"{config} not found. Copying template")
-
+        # Load, template-sync, and expose the config file as typed settings.
+        # AppConfig owns the file lifecycle (copy-template-if-missing, parse,
+        # key-order sync); self.config stays bound to the raw mapping for the
+        # few arr-specific keys the subclasses still read directly.
+        self._config = AppConfig.load(config, arr)
         self.config_file = config
-        with open(config) as f:
-            self.config = yaml.safe_load(f)
-
-        # Check the config has all the same keys as the sample, if not add 'em in
-        self.verify_config(
-            config_path=config,
-            config_template_path=config_template_path,
-        )
+        self.config = self._config.data
 
         # Ignore unmonitored flag
-        self.ignore_unmonitored = self.config.get(f"{arr}_ignore_unmonitored", False)
+        self.ignore_unmonitored = self._config.ignore_unmonitored
 
         # A single keep-alive session shared by the raw Sonarr/Radarr API calls
         self.session = requests.Session()
 
         # qbit
         self.qbit: qbittorrentapi.Client
-        qbit_info = self.config.get("qbit_info", None)
+        qbit_info = self._config.qbit_info
 
-        qbit_info_provided = all(
+        # Configured only when every qbit_info field has a value; with a missing
+        # block or any null field, no client is created.
+        if qbit_info is not None and all(
             qbit_info.get(key, None) is not None for key in qbit_info
-        )
-        if qbit_info_provided:
+        ):
             qbit = qbittorrentapi.Client(**qbit_info)
 
             try:
@@ -302,18 +231,14 @@ class SeaDexArr(ABC):
 
             self.qbit = qbit
 
-        self.ignore_seadex_update_times = self.config.get(
-            "ignore_seadex_update_times", False,
-        )
+        self.ignore_seadex_update_times = self._config.ignore_seadex_update_times
 
-        self.use_torrent_hash_to_filter = self.config.get(
-            "use_torrent_hash_to_filter", False,
-        )
+        self.use_torrent_hash_to_filter = self._config.use_torrent_hash_to_filter
 
         # Hooks between torrents and Arts, and torrent number bookkeeping
-        self.torrent_category = self.config.get(f"{arr}_torrent_category", None)
-        self.torrent_tags = self.config.get("torrent_tags", None)
-        self.max_torrents_to_add = self.config.get("max_torrents_to_add", None)
+        self.torrent_category = self._config.torrent_category
+        self.torrent_tags = self._config.torrent_tags
+        self.max_torrents_to_add = self._config.max_torrents_to_add
         self.torrents_added = 0
 
         # When True, simulate a run without grabbing torrents, writing the cache,
@@ -334,12 +259,12 @@ class SeaDexArr(ABC):
         self.current_coverage = None
 
         # Discord
-        self.discord_url = self.config.get("discord_url", None)
+        self.discord_url = self._config.discord_url
 
         # Flags for filtering torrents
-        self.public_only = self.config.get("public_only", True)
-        self.prefer_dual_audio = self.config.get("prefer_dual_audio", True)
-        self.want_best = self.config.get("want_best", True)
+        self.public_only = self._config.public_only
+        self.prefer_dual_audio = self._config.prefer_dual_audio
+        self.want_best = self._config.want_best
 
         # Set per-title when public_only forces us to skip a release that's only
         # available privately, so the caller knows not to cache the title as done.
@@ -348,35 +273,23 @@ class SeaDexArr(ABC):
         self.public_only_skipped = False
         self.public_only_groups: list[str] = []
 
-        ignore_tags = self.config.get("ignore_tags", None)
-        if ignore_tags is None:
-            ignore_tags = []
-        self.ignore_tags = ignore_tags
+        self.ignore_tags = self._config.ignore_tags
 
         # AniList IDs to skip entirely
-        ignore_anilist_ids = self.config.get("ignore_anilist_ids", None)
-        if ignore_anilist_ids is None:
-            ignore_anilist_ids = set()
-        self.ignore_anilist_ids = {int(x) for x in ignore_anilist_ids}
+        self.ignore_anilist_ids = self._config.ignore_anilist_ids
 
-        trackers = self.config.get("trackers", None)
-
-        # Default to all trackers (public + private) when none configured.
-        # Include private even when public_only: they're filtered later, after
-        # the overlap check against what's already downloaded
-        if trackers is None:
-            trackers = PUBLIC_TRACKERS.union(PRIVATE_TRACKERS)
-
-        self.trackers = {t.casefold() for t in trackers}
+        # All trackers (public + private) by default; private are filtered later,
+        # after the overlap check against what's already downloaded.
+        self.trackers = self._config.trackers
 
         # Advanced settings
-        self.sleep_time = self.config.get("sleep_time", 2)
-        self.cache_time = self.config.get("cache_time", 1)
+        self.sleep_time = self._config.sleep_time
+        self.cache_time = self._config.cache_time
 
         # Get the mapping files
-        anime_mappings_cfg = self.config.get("anime_mappings", None)
-        anidb_mappings_cfg = self.config.get("anidb_mappings", None)
-        anibridge_mappings_cfg = self.config.get("anibridge_mappings", None)
+        anime_mappings_cfg = self._config.anime_mappings_cfg
+        anidb_mappings_cfg = self._config.anidb_mappings_cfg
+        anibridge_mappings_cfg = self._config.anibridge_mappings_cfg
 
         if anime_mappings_cfg is False:
             anime_mappings = {}
@@ -419,11 +332,10 @@ class SeaDexArr(ABC):
         self._anidb_index: dict[str, list] | None = None
         self.anibridge = anibridge
 
-        self.interactive = self.config.get("interactive", False)
+        self.interactive = self._config.interactive
 
         if logger is None:
-            log_level = self.config.get("log_level", "INFO")
-            self.logger = setup_logger(log_level=log_level)
+            self.logger = setup_logger(log_level=self._config.log_level)
         else:
             self.logger = logger
 
@@ -442,18 +354,13 @@ class SeaDexArr(ABC):
         # run so the network round-trip happens once per series. Reset per run.
         self._ep_list_cache: dict[int, list] = {}
 
-        # Load in cache if it exists. Else create
+        # Load the cache (or create its schema) and reconcile the descriptor
+        # against the current package version + config checksum. Each arr builds
+        # its own store that reads the file fresh, so a scheduled Radarr->Sonarr
+        # cycle hands off through cache.json rather than shared memory.
         self.cache_file = cache
-        if os.path.exists(cache):
-            with open(cache) as f:
-                cache_data = json.load(f)
-        else:
-            cache_data = self.setup_cache()
-        self.cache: dict[str, Any] = cache_data
-
-        # Check the package or config hasn't updated, else
-        # edit the cache description
-        self.check_cache_updates()
+        self.cache_store = CacheStore.load(cache, self._config)
+        self.cache: dict[str, Any] = self.cache_store.data
 
         # All aligned detail rendering goes through this formatter, so the
         # presentation primitives (kv lines, blank separators, elapsed strings)
@@ -465,81 +372,6 @@ class SeaDexArr(ABC):
         """Close the shared HTTP session (release pooled connections)."""
         if self.session is not None:
             self.session.close()
-
-    def verify_config(
-        self,
-        config_path: str,
-        config_template_path: str,
-    ) -> bool:
-        """Verify all the keys in the current config file match those in the template
-
-        Args:
-            config_path (str): Path to a config file
-            config_template_path (str): Path to config template
-        """
-
-        with open(config_template_path) as f:
-            config_template = YAML().load(f)
-
-        # If the keys aren't in the right order, then
-        # use the template as a base and inherit from
-        # the main config
-        if list(self.config.keys()) != list(config_template.keys()):
-
-            new_config = copy.deepcopy(config_template)
-            for key in config_template:
-                if key in self.config:
-                    new_config[key] = copy.deepcopy(self.config[key])
-                else:
-                    new_config[key] = copy.deepcopy(config_template[key])
-
-            self.config = copy.deepcopy(new_config)
-
-            # Save out
-            with open(config_path, "w+") as f:
-                YAML().dump(self.config, f)
-
-        return True
-
-    def setup_cache(self) -> dict:
-        """Set up the cache file"""
-
-        cache = {}
-
-        with open(self.config_file, "rb") as f:
-            config_hash = md5(f.read()).hexdigest()
-
-        # Descriptor for the file so we know if things have changed
-        description = {
-            "seadexarr_version": __version__,
-            "config_checksum": config_hash,
-        }
-
-        cache.update({"description": description})
-        cache.update({"anilist_entries": {}})
-
-        return cache
-
-    def check_cache_updates(self) -> bool:
-        """Check if anything's been updated, and if so update in cache"""
-
-        # Check if SeaDexArr version has updated
-        if (
-            self.cache.get("description", {}).get("seadexarr_version", None)
-            != __version__
-        ):
-            self.cache["description"]["seadexarr_version"] = __version__
-
-        # Check if the config file has changed
-        with open(self.config_file, "rb") as f:
-            config_hash = md5(f.read()).hexdigest()
-            if (
-                self.cache.get("description", {}).get("config_checksum", None)
-                != config_hash
-            ):
-                self.cache["description"]["config_checksum"] = config_hash
-
-        return True
 
     def get_anime_mappings(self) -> dict:
         """Get the anime IDs file"""
@@ -676,42 +508,16 @@ class SeaDexArr(ABC):
         al_id: int,
         seadex_entry: EntryRecord,
     ) -> bool:
-        """Check if timestamps in the cache match when SeaDex entry was last updated
+        """Whether the cached entry matches SeaDex's last-updated timestamp."""
 
-        Args:
-            arr (str): Arr instance
-            al_id (int): AniList ID
-            seadex_entry: SeaDex entry
-        """
-        sd_time = seadex_entry.updated_at
-        sd_time_str = sd_time.strftime(UPDATED_AT_STR_FORMAT)
-        cache_time = (
-            self.cache.get("anilist_entries", {})
-            .get(arr, {})
-            .get(str(al_id), {})
-            .get("updated_at")
-        )
-
-        return sd_time_str == cache_time
+        return self.cache_store.check_al_id_in_cache(arr, al_id, seadex_entry)
 
     def get_cached_name(
         self,
         arr: str,
         al_id: int,
     ) -> str | None:
-        """Get the AniList title stored in the cache for an entry, if any
-
-        The title is written into the cache alongside the timestamp when an
-        entry is first processed, so it can be reused for cached entries
-        without an additional AniList lookup.
-
-        Args:
-            arr (str): Arr instance the entry is cached under
-            al_id (int): AniList ID
-
-        Returns:
-            str | None: Cached title, or None if not present
-        """
+        """Cached AniList title for an entry, reused without an AniList lookup."""
 
         return self.get_cached_field(arr, al_id, "name")
 
@@ -721,23 +527,9 @@ class SeaDexArr(ABC):
         al_id: int,
         field: str,
     ) -> Any:
-        """Read a single stored field from an entry's cache record, if present
+        """Read a single stored field from an entry's cache record, if present."""
 
-        Args:
-            arr (str): Arr instance the entry is cached under
-            al_id (int): AniList ID
-            field (str): Cache field name (e.g. "name", "url", "coverage")
-
-        Returns:
-            The stored value, or None if absent
-        """
-
-        return (
-            self.cache.get("anilist_entries", {})
-            .get(arr, {})
-            .get(str(al_id), {})
-            .get(field)
-        )
+        return self.cache_store.get_cached_field(arr, al_id, field)
 
     def get_anilist_ids(
         self,
@@ -1984,10 +1776,7 @@ class SeaDexArr(ABC):
         return self.dry_run or self.qbit is None
 
     def save_cache(self, sort: bool = True) -> None:
-        """Persist the in-memory cache to disk
-
-        Skipped during a preview so a preview never writes state, mirroring
-        update_cache.
+        """Persist the in-memory cache to disk, unless this run is a preview.
 
         Args:
             sort (bool): Sort anilist_entries by id before writing. Defaults to
@@ -1995,53 +1784,20 @@ class SeaDexArr(ABC):
                 the sort on a hot write path.
         """
 
-        if not self._is_preview():
-            save_json(
-                self.cache,
-                self.cache_file,
-                sort_cache=sort,
-            )
+        self.cache_store.save(preview=self._is_preview(), sort=sort)
 
     def update_cache(self, arr: str, al_id: int, cache_details: dict | None = None) -> bool:
-        """Update cache with useful info
+        """Merge ``cache_details`` into an entry's cache record (in-memory only).
+
+        The run's save points flush it; see ``CacheStore.update_cache``.
 
         Args:
             arr (str): Arr instance
             al_id (int): AniList ID
-            cache_details (dict): Details for the cache entry.
-                Defaults to None
+            cache_details (dict): Details for the cache entry. Defaults to None
         """
 
-        if cache_details is None:
-            cache_details = {}
-
-        if "updated_at" in cache_details:
-            cache_details["updated_at"] = cache_details["updated_at"].strftime(
-                UPDATED_AT_STR_FORMAT,
-            )
-
-        # Add to cache and save out
-        if arr not in self.cache["anilist_entries"]:
-            self.cache["anilist_entries"][arr] = {}
-
-        if str(al_id) not in self.cache["anilist_entries"][arr]:
-            self.cache["anilist_entries"][arr][str(al_id)] = {}
-
-        self.cache["anilist_entries"][arr][str(al_id)].update(cache_details)
-
-        # Mutate the in-memory cache only - don't persist here. The run's save
-        # points (the max_torrents_to_add early exits and the end-of-run save in
-        # run()) flush it. This avoids re-serializing the whole cache - which
-        # includes the large, mostly-static anilist_meta block - once per title,
-        # turning N full-file writes per run into a handful.
-        #
-        # Trade-off: a hard kill mid-run loses the titles finished since the last
-        # save point, so they're simply re-checked on the next run. That's the
-        # safe direction - we never skip a title that wasn't durably recorded as
-        # done. (A preview likewise only mutates in memory; the end-of-run
-        # save_cache is gated on _is_preview, so a preview still never persists.)
-
-        return True
+        return self.cache_store.update_cache(arr, al_id, cache_details)
 
     @staticmethod
     def _fresh_stats() -> dict:
