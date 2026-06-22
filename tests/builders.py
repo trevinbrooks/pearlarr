@@ -9,12 +9,24 @@ test actually read.
 """
 
 import logging
+from functools import cached_property
 from typing import Any
 from unittest import mock
 
 from seadexarr.modules.config import AppConfig
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.seadex_arr import SeaDexArr
+
+# The override keys make_arr routes into self._config, derived from AppConfig's
+# real setting surface so it can't drift into a stale subset. The old hardcoded
+# list silently misrouted any flag it omitted to a dead direct attribute that no
+# code reads (so the test exercised the config default while looking like it set
+# the override).
+_CONFIG_SETTING_NAMES = frozenset(
+    name
+    for name, attr in vars(AppConfig).items()
+    if isinstance(attr, (property, cached_property))
+)
 
 
 def make_logger(name: str = "seadexarr-test") -> logging.Logger:
@@ -82,7 +94,13 @@ def make_config(**overrides: Any) -> AppConfig:
         "interactive": False,
         "use_torrent_hash_to_filter": False,
     }
-    data.update(overrides)
+    # AppConfig reads a few settings under an ``{arr}_`` data key (e.g.
+    # ``ignore_unmonitored`` -> ``sonarr_ignore_unmonitored``). Write each
+    # override under both the bare and the sonarr-prefixed key so it takes effect
+    # whichever form the property reads - no per-key allow-list to keep in sync.
+    for key, value in overrides.items():
+        data[key] = value
+        data[f"sonarr_{key}"] = value
     return AppConfig(path="unused.yml", arr="sonarr", data=data)
 
 
@@ -102,17 +120,10 @@ def make_arr(**overrides: Any) -> _StubArr:
     # Config-backed flags are read via self._config after Phase 5b; route any
     # passed as overrides through an in-memory AppConfig, leaving the rest as
     # direct attributes/collaborators.
-    config_keys = {
-        "public_only",
-        "want_best",
-        "prefer_dual_audio",
-        "ignore_tags",
-        "trackers",
-        "interactive",
-        "use_torrent_hash_to_filter",
-    }
     config_overrides = {
-        key: overrides.pop(key) for key in list(overrides) if key in config_keys
+        key: overrides.pop(key)
+        for key in list(overrides)
+        if key in _CONFIG_SETTING_NAMES
     }
 
     defaults: dict[str, Any] = {
@@ -121,7 +132,6 @@ def make_arr(**overrides: Any) -> _StubArr:
         "_config": make_config(**config_overrides),
         "public_only_skipped": False,
         "public_only_groups": [],
-        "cache": {"anilist_entries": {}},
     }
     defaults.update(overrides)
     for name, value in defaults.items():
