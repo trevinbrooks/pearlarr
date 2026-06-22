@@ -247,26 +247,21 @@ def normalize_rg(name: str | None) -> str | None:
 
 def get_all_seadex_rgs_per_episode(
     seadex_dict: dict,
-    ep_list: list | None,
+    sonarr_by_key: dict,
 ) -> dict:
     """Get a list of all SeaDex releases per-episode
 
     Args:
         seadex_dict: Dictionary of SeaDex releases
-        ep_list (list): List of episodes and info
+        sonarr_by_key: Sonarr episodes indexed by (season, episode). A parsed
+            SeaDex (season, episode) is recorded only when Sonarr has it, which
+            this makes an O(1) key lookup. Built once by the caller and shared
+            with the per-episode match loop in filter_by_release_group.
     """
 
     all_seadex_rgs_per_episode: dict[str, set] = {"all": set()}
 
     if len(seadex_dict) > 1:
-        # Index the Sonarr episodes by (season, episode) once so each parsed
-        # SeaDex episode is an O(1) membership test instead of a full scan of
-        # the episode list. The buckets are sets, so dedup is free.
-        sonarr_keys = {
-            (ep.get("seasonNumber", 999), ep.get("episodeNumber", 999))
-            for ep in ep_list or []
-        }
-
         for seadex_rg, seadex_rg_item in seadex_dict.items():
 
             # Index by the normalized name so the membership checks in
@@ -289,7 +284,7 @@ def get_all_seadex_rgs_per_episode(
 
                     # Only record episodes Sonarr actually has, matching the
                     # original per-episode gate against the episode list
-                    if (season, episode) in sonarr_keys:
+                    if (season, episode) in sonarr_by_key:
                         season_key = f"S{season:02d}E{episode:02d}"
                         all_seadex_rgs_per_episode.setdefault(
                             season_key, set(),
@@ -1579,16 +1574,11 @@ class SeaDexArr(ABC):
         seadex_keys = set(seadex_dict.keys())
         overlapping_results = any(rg in seadex_keys for rg in arr_release_groups)
 
-        # If we have overlaps, get a note of them here
-        all_seadex_rgs_per_episode = get_all_seadex_rgs_per_episode(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
-        )
-
-        # Index the Sonarr episodes by (season, episode) once, so the
-        # per-episode checks below are O(1) lookups rather than a fresh scan of
-        # the whole list for every parsed SeaDex episode. First entry wins on a
-        # duplicate key (Sonarr episodes are unique by season+episode).
+        # Index the Sonarr episodes by (season, episode) once, shared by both
+        # the overlap map below and the per-episode match loop: looking up a
+        # parsed SeaDex (season, episode) is then an O(1) dict op rather than a
+        # fresh scan of the whole list. First entry wins on a duplicate key
+        # (Sonarr episodes are unique by season+episode).
         sonarr_by_key: dict = {}
         for sonarr_ep in ep_list or []:
             sonarr_by_key.setdefault(
@@ -1598,6 +1588,12 @@ class SeaDexArr(ABC):
                 ),
                 sonarr_ep,
             )
+
+        # If we have overlaps, get a note of them here, reusing the index above
+        all_seadex_rgs_per_episode = get_all_seadex_rgs_per_episode(
+            seadex_dict=seadex_dict,
+            sonarr_by_key=sonarr_by_key,
+        )
 
         # Resolve once: the per-episode debug lines below sit in the hot
         # matching loop, so this lets us skip building their f-strings on a
@@ -2437,6 +2433,49 @@ class SeaDexArr(ABC):
 
         return sd_entry
 
+    def _cached_entry_skip(
+        self,
+        arr: str,
+        al_id: int,
+        sd_entry: EntryRecord,
+        sd_url: str,
+        coverage: Callable[[], str],
+    ) -> bool:
+        """Shared cached-entry short-circuit for both Arr runners
+
+        When the id is already cached and we're honoring SeaDex update times,
+        backfill the url + coverage on legacy records that predate those fields,
+        log the cached entry, and return True so the caller skips it. ``coverage``
+        is a zero-arg callable so the (for Sonarr, episode-fetching) coverage
+        lookup runs only on the one-time backfill, never on the common
+        already-backfilled path.
+
+        Args:
+            arr (str): "radarr" or "sonarr"
+            al_id (int): AniList id being processed
+            sd_entry (EntryRecord): Resolved SeaDex entry
+            sd_url (str): SeaDex entry URL stored on the backfilled record
+            coverage (Callable[[], str]): Lazily builds the coverage string for
+                the backfill ("" for a movie, a season/episode range for a series)
+        """
+
+        if not self.check_al_id_in_cache(arr=arr, al_id=al_id, seadex_entry=sd_entry):
+            return False
+        if self.ignore_seadex_update_times:
+            return False
+
+        # Backfill the enriched fields for records written before they existed,
+        # so cached rows can still link to SeaDex (and, for series, show the
+        # season/episode coverage). One-time per old entry.
+        if not self.get_cached_field(arr, al_id, "url"):
+            self.update_cache(
+                arr=arr,
+                al_id=al_id,
+                cache_details={"url": sd_url, "coverage": coverage()},
+            )
+        self.log_cached_entry(arr=arr, al_id=al_id)
+        return True
+
     def _grab_and_cache(
         self,
         arr: str,
@@ -2447,7 +2486,7 @@ class SeaDexArr(ABC):
         seadex_dict: dict,
         torrent_hashes: list,
         cache_details: dict,
-        release_group: Any,
+        release_group: list | str | None,
     ) -> bool:
         """Shared per-id tail: add torrents, notify, then cache the outcome
 
@@ -2460,12 +2499,13 @@ class SeaDexArr(ABC):
             arr (str): "radarr" or "sonarr"
             al_id (int): AniList id being processed
             item_title (str): Arr item title (Discord notification heading)
-            anilist_title (str): Resolved AniList title
-            sd_url (str): SeaDex entry URL
+            anilist_title (str): Resolved AniList title (non-None; Discord field)
+            sd_url (str): SeaDex entry URL (non-None; Discord field)
             seadex_dict (dict): Filtered SeaDex releases
             torrent_hashes (list): Hashes to remember in the cache record
             cache_details (dict): Cache record being assembled for this id
-            release_group (Any): Arr release group(s) for the Discord fields
+            release_group (list | str | None): Arr release group(s) for the
+                Discord fields
         """
 
         # Check the release groups are matching, and get a bespoke list of torrents
@@ -2483,52 +2523,45 @@ class SeaDexArr(ABC):
                 seadex_dict=seadex_dict,
             )
 
-            if len(seadex_dict) > 0:
+            # Add torrents to qBittorrent. add_torrent runs even in a preview
+            # (no client / dry run): add_torrent_to_qbit simulates the add, while
+            # the download-flag, public_only and tracker filters still apply, so
+            # only releases that would actually be grabbed are counted.
+            n_torrents_added, results = self.add_torrent(
+                torrent_dict=seadex_dict,
+                torrent_client="qbit",
+            )
 
-                n_torrents_added = 0
-                results = []
+            # Log the action block now the outcome is known, so the status reads
+            # "adding" only when something was actually grabbed (else "keeping")
+            self.log_seadex_action(
+                seadex_dict=seadex_dict,
+                results=results,
+                dry_run=self._is_preview(),
+            )
 
-                # Add torrents to qBittorrent. add_torrent runs even in a preview
-                # (no client / dry run): add_torrent_to_qbit simulates the add,
-                # while the download-flag, public_only and tracker filters still
-                # apply, so only releases that would actually be grabbed are counted.
-                added, results = self.add_torrent(
-                    torrent_dict=seadex_dict,
-                    torrent_client="qbit",
+            # Push a message to Discord if we've added anything (never on a
+            # preview - it's an outward notification)
+            if (
+                self.discord_url is not None
+                and n_torrents_added > 0
+                and not self._is_preview()
+            ):
+                discord_push(
+                    url=self.discord_url,
+                    arr_title=item_title,
+                    al_title=anilist_title,
+                    seadex_url=sd_url,
+                    fields=fields,
+                    thumb_url=anilist_thumb,
                 )
-                n_torrents_added += added
 
-                # Log the action block now the outcome is known, so the status
-                # reads "adding" only when something was actually grabbed (else
-                # "keeping")
-                self.log_seadex_action(
-                    seadex_dict=seadex_dict,
-                    results=results,
-                    dry_run=self._is_preview(),
-                )
-
-                # Push a message to Discord if we've added anything (never on a
-                # preview - it's an outward notification)
-                if (
-                    self.discord_url is not None
-                    and n_torrents_added > 0
-                    and not self._is_preview()
-                ):
-                    discord_push(
-                        url=self.discord_url,
-                        arr_title=item_title,
-                        al_title=anilist_title,
-                        seadex_url=sd_url,
-                        fields=fields,
-                        thumb_url=anilist_thumb,
-                    )
-
-                if self.max_torrents_to_add is not None:
-                    if self.torrents_added >= self.max_torrents_to_add:
-                        self.log_max_torrents_added()
-                        self.save_cache()
-                        self.log_run_summary(arr=arr)
-                        return True
+            if self.max_torrents_to_add is not None:
+                if self.torrents_added >= self.max_torrents_to_add:
+                    self.log_max_torrents_added()
+                    self.save_cache()
+                    self.log_run_summary(arr=arr)
+                    return True
 
         elif not self.public_only_skipped:
             self.stats["up_to_date"] += 1

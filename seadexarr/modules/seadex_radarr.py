@@ -109,24 +109,9 @@ class SeaDexRadarr(SeaDexArr):
             return False
         sd_url = sd_entry.url
 
-        # Check if we've already got this cached
-        al_id_in_cache = self.check_al_id_in_cache(
-            arr=arr,
-            al_id=al_id,
-            seadex_entry=sd_entry,
-        )
-
-        if al_id_in_cache and not self.ignore_seadex_update_times:
-            # Backfill the URL for cache records written before it was stored, so
-            # cached rows can still link to SeaDex. Movies have no episode
-            # coverage, so there's nothing else to add.
-            if not self.get_cached_field(arr, al_id, "url"):
-                self.update_cache(
-                    arr=arr,
-                    al_id=al_id,
-                    cache_details={"url": sd_url, "coverage": ""},
-                )
-            self.log_cached_entry(arr=arr, al_id=al_id)
+        # Skip if already cached. Movies have no episode coverage, so the
+        # one-time backfill on a legacy record is just the URL.
+        if self._cached_entry_skip(arr, al_id, sd_entry, sd_url, lambda: ""):
             return False
 
         # Resolve the AniList title, then log the active entry (a movie has no

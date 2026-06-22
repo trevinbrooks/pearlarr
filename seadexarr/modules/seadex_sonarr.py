@@ -323,34 +323,24 @@ class SeaDexSonarr(SeaDexArr):
         sd_url = sd_entry.url
         sonarr_series_id = item.id
 
-        # Check if we've already got this cached
-        al_id_in_cache = self.check_al_id_in_cache(
-            arr=arr,
-            al_id=al_id,
-            seadex_entry=sd_entry,
-        )
-
-        if al_id_in_cache and not self.ignore_seadex_update_times:
-            # Backfill the enriched fields (coverage + URL) for cache records
-            # written before they existed, so cached rows can still show
-            # season/episodes/URL. One-time per old entry.
-            if not self.get_cached_field(arr, al_id, "url"):
-                backfill_eps = self.get_ep_list(
-                    sonarr_series_id=sonarr_series_id,
-                    al_id=al_id,
-                    mapping=mapping,
-                )
-                self.update_cache(
-                    arr=arr,
-                    al_id=al_id,
-                    cache_details={
-                        "url": sd_url,
-                        "coverage": self.coverage_string(
-                            self.episodes_from_ep_list(backfill_eps),
-                        ),
-                    },
-                )
-            self.log_cached_entry(arr=arr, al_id=al_id)
+        # Skip if already cached. The one-time backfill on a legacy record adds
+        # the URL and the season/episode coverage; the coverage needs the episode
+        # list, so it's resolved lazily, only when the backfill actually runs.
+        if self._cached_entry_skip(
+            arr,
+            al_id,
+            sd_entry,
+            sd_url,
+            lambda: self.coverage_string(
+                self.episodes_from_ep_list(
+                    self.get_ep_list(
+                        sonarr_series_id=sonarr_series_id,
+                        al_id=al_id,
+                        mapping=mapping,
+                    ),
+                ),
+            ),
+        ):
             return False
 
         # Also check if it's in the Radarr cache, if we have that option
