@@ -1,33 +1,20 @@
 import copy
-import json
 import logging
-import os
 import time
 from abc import ABC, abstractmethod
-from collections import defaultdict
 from collections.abc import Callable, Iterable
-from datetime import datetime, timedelta
 from itertools import compress
 from typing import Any
-from urllib.request import urlretrieve
-from xml.etree import ElementTree
 
-import httpx
 import qbittorrentapi
 import requests
-from seadex import EntryNotFoundError, EntryRecord, SeaDexEntry
+from seadex import EntryRecord
 
 from . import coverage as _coverage
-from .anibridge import AniBridge
-from .anilist import (
-    ANILIST_BATCH_SIZE,
-    get_anilist_thumb,
-    get_anilist_title,
-    get_query_batch,
-)
-from .cache import UPDATED_AT_STR_FORMAT, CacheStore
+from .anilist import get_anilist_title
+from .anilist_gateway import AniListGateway
+from .cache import CacheStore
 from .config import PRIVATE_TRACKERS, AppConfig
-from .discord import discord_push
 from .log import (
     LogFormatter,
     count_noun,
@@ -37,141 +24,20 @@ from .log import (
     rule_string,
     setup_logger,
 )
+from .mappings import MappingResolver
+from .notify import Notifier
 from .planner import (
     get_all_seadex_rgs_per_episode,
     get_same_files_groups,
     normalize_rg,
 )
-from .torrent import (
-    get_animetosho_torrent,
-    get_nyaa_torrent,
-    get_rutracker_torrent,
-)
-
-ANIME_IDS_URL = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/refs/heads/master/anime_ids.json"
-ANIME_IDS_FILE = "anime_ids.json"
-ANIDB_MAPPINGS_URL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/refs/heads/master/anime-list-master.xml"
-ANIDB_MAPPINGS_FILE = "anime-list-master.xml"
-
-# anibridge-mappings ships daily-rolling release assets tagged by major version.
-# Bump ANIBRIDGE_RELEASE when a new (breaking) major lands; the cache filename is
-# versioned to match so an old-format file is never parsed by the new loader.
-ANIBRIDGE_RELEASE = "v3"
-ANIBRIDGE_MAPPINGS_URL = f"https://github.com/anibridge/anibridge-mappings/releases/download/{ANIBRIDGE_RELEASE}/mappings.min.json"
-ANIBRIDGE_MAPPINGS_FILE = f"anibridge_mappings_{ANIBRIDGE_RELEASE}.json"
-
-
-# --- Shared parse cache for the immutable mapping sources -------------------
-#
-# anime_ids.json, anime-list-master.xml and the anibridge graph are large,
-# read-only files whose parsed and indexed forms never change once an arr
-# instance is built. A scheduled cycle builds a SeaDexRadarr then a SeaDexSonarr
-# in the same process, and each used to independently re-read and re-index all
-# three. This memo caches the parsed result under a stable key, holding a single
-# (mtime, value) slot per key: the second instance reuses the first's parse
-# while the file is unchanged on disk, and a re-download (new mtime) replaces the
-# slot rather than accumulating. The parsed objects are only ever read after
-# construction, so sharing them is safe; the CLI run path is single-threaded, so
-# the plain dict needs no locking.
-_PARSED_MAPPING_CACHE: dict[str, tuple[float, Any]] = {}
-
-
-def _load_mapping_by_mtime(
-    path: str,
-    parse: Callable[[str], Any],
-    cache_key: str | None = None,
-) -> Any:
-    """Return ``parse(path)``, reusing a cached result while the mtime is unchanged.
-
-    Args:
-        path (str): File whose modification time gates the cache
-        parse (Callable[[str], Any]): Builds the parsed value from the path
-        cache_key (str | None): Cache slot to use; defaults to ``path``. Pass a
-            distinct key when more than one product is derived from one file
-            (e.g. the Anime-IDs map and its reverse index).
-    """
-
-    key = cache_key or path
-    mtime = os.path.getmtime(path)
-
-    cached = _PARSED_MAPPING_CACHE.get(key)
-    if cached is not None and cached[0] == mtime:
-        return cached[1]
-
-    value = parse(path)
-    _PARSED_MAPPING_CACHE[key] = (mtime, value)
-    return value
-
-
-def _parse_anime_mappings(path: str) -> dict:
-    """Load the Kometa Anime-IDs JSON map from disk."""
-
-    with open(path) as f:
-        return json.load(f)
-
-
-def _build_anime_mappings_index(anime_mappings: dict) -> dict[str, dict]:
-    """Build reverse indexes over the Kometa Anime-IDs map for fast lookups
-
-    Anime-IDs is a flat {name: mapping} dict of ~16k entries. Querying it by
-    external id (the per-series hot path) used to mean a full scan per id type;
-    this groups every mapping with an AniList id by each external id it carries,
-    so get_mappings_from_anime_mappings becomes a dict lookup.
-
-    Args:
-        anime_mappings (dict): Parsed Anime-IDs map ({name: mapping})
-
-    Returns:
-        dict: field name -> {external id -> [mapping, ...]}, for the
-            "tvdb_id", "tmdb_movie_id", "tmdb_show_id" and "imdb_id" fields
-    """
-
-    index: dict[str, dict] = {
-        "tvdb_id": defaultdict(list),
-        "tmdb_movie_id": defaultdict(list),
-        "tmdb_show_id": defaultdict(list),
-        "imdb_id": defaultdict(list),
-    }
-    for m in anime_mappings.values():
-        if m.get("anilist_id") is None:
-            continue
-        for field, bucket in index.items():
-            value = m.get(field)
-            if value is not None:
-                bucket[value].append(m)
-    return index
-
-
-def _parse_anime_mappings_index(path: str) -> dict[str, dict]:
-    """Build the Anime-IDs reverse index over the memoized parse of ``path``."""
-
-    return _build_anime_mappings_index(_load_mapping_by_mtime(path, _parse_anime_mappings))
-
-
-def _parse_anidb_mappings(path: str) -> ElementTree.Element:
-    """Parse the AniDB anime-list XML and return its root element."""
-
-    return ElementTree.parse(path).getroot()
-
-
-def _parse_anibridge(path: str, logger: logging.Logger | None) -> AniBridge:
-    """Load the anibridge graph from disk and build its indexed view."""
-
-    with open(path) as f:
-        graph = json.load(f)
-
-    return AniBridge(graph, logger=logger)
-
+from .seadex_gateway import SeaDexGateway
+from .torrents import TorrentService
 
 ALLOWED_ARRS = [
     "radarr",
     "sonarr",
 ]
-
-# How long a persisted AniList response stays usable before it's re-fetched.
-# title/format/coverImage are effectively static; episodes for a currently airing
-# show drift, so this caps how stale that count can get (~one episode/week).
-ANILIST_CACHE_TTL_DAYS = 7
 
 
 class SeaDexArr(ABC):
@@ -258,9 +124,6 @@ class SeaDexArr(ABC):
         self.current_url = None
         self.current_coverage = None
 
-        # Discord
-        self.discord_url = self._config.discord_url
-
         # Flags for filtering torrents
         self.public_only = self._config.public_only
         self.prefer_dual_audio = self._config.prefer_dual_audio
@@ -286,51 +149,22 @@ class SeaDexArr(ABC):
         self.sleep_time = self._config.sleep_time
         self.cache_time = self._config.cache_time
 
-        # Get the mapping files
-        anime_mappings_cfg = self._config.anime_mappings_cfg
-        anidb_mappings_cfg = self._config.anidb_mappings_cfg
-        anibridge_mappings_cfg = self._config.anibridge_mappings_cfg
-
-        if anime_mappings_cfg is False:
-            anime_mappings = {}
-            anime_mappings_index = None
-        elif anime_mappings_cfg is None:
-            anime_mappings = self.get_anime_mappings()
-            anime_mappings_index = self._get_anime_mappings_index()
-        else:
-            anime_mappings = anime_mappings_cfg
-            anime_mappings_index = _build_anime_mappings_index(anime_mappings)
-
-        if anidb_mappings_cfg is False:
-            anidb_mappings = None
-        elif anidb_mappings_cfg is None:
-            anidb_mappings = self.get_anidb_mappings()
-        else:
-            anidb_mappings = anidb_mappings_cfg
-
-        if anibridge_mappings_cfg is False:
-            anibridge = None
-        elif anibridge_mappings_cfg is None:
-            anibridge = self.get_anibridge_mappings()
-        else:
-            # A config-provided value is treated as a raw anibridge graph dict
-            anibridge = AniBridge(
-                anibridge_mappings_cfg,
-                logger=getattr(self, "logger", None),
-            )
-
-        self.anime_mappings = anime_mappings
-        # Reverse indexes over the (large, ~16k-entry) Kometa Anime-IDs map so
-        # get_mappings_from_anime_mappings is an O(matches) dict lookup instead of
-        # three full scans of every mapping per series. Shared across instances
-        # via the mtime memo when both arrs read the same on-disk file.
-        self._anime_mappings_index = anime_mappings_index if anime_mappings else None
-        self.anidb_mappings = anidb_mappings
-        # Lazily-built {anidbid -> [element]} index over the AniDB XML, so the
-        # specials/movie path in get_ep_list does a dict lookup instead of an
-        # XPath scan of every <anime> element. Populated on first use.
-        self._anidb_index: dict[str, list] | None = None
-        self.anibridge = anibridge
+        # Resolve external Arr ids -> AniList ids via the three mapping sources.
+        # The resolver downloads/refreshes, parses and indexes them, and owns the
+        # module-global parse memo shared across a scheduled Radarr->Sonarr cycle.
+        # anime_mappings / anidb_mappings / anibridge stay bound here as
+        # transitional aliases so the subclasses keep reading them directly
+        # (they're read-only after construction; the resolver owns them).
+        self._mappings = MappingResolver(
+            cache_time=self._config.cache_time,
+            ignore_anilist_ids=self._config.ignore_anilist_ids,
+            anime_mappings_cfg=self._config.anime_mappings_cfg,
+            anidb_mappings_cfg=self._config.anidb_mappings_cfg,
+            anibridge_mappings_cfg=self._config.anibridge_mappings_cfg,
+        )
+        self.anime_mappings = self._mappings.anime_mappings
+        self.anidb_mappings = self._mappings.anidb_mappings
+        self.anibridge = self._mappings.anibridge
 
         self.interactive = self._config.interactive
 
@@ -339,14 +173,8 @@ class SeaDexArr(ABC):
         else:
             self.logger = logger
 
-        # Instantiate the SeaDex API
-        self.seadex = SeaDexEntry()
-
-        self.al_cache = {}
-
-        # Memoize get_anilist_ids mapping computation per identifying key, so
-        # the prefetch pass and the main loop don't compute it twice per item
-        self._anilist_ids_cache = {}
+        # SeaDex API gateway (entry lookups, with connection-error handling)
+        self._seadex = SeaDexGateway(logger=self.logger)
 
         # Per-run cache of the raw Sonarr episode fetch, keyed by series id. A
         # multi-season series maps to several AniList ids, each of which would
@@ -362,6 +190,30 @@ class SeaDexArr(ABC):
         self.cache_store = CacheStore.load(cache, config_checksum=self._config.checksum())
         self.cache: dict[str, Any] = self.cache_store.data
 
+        # AniList client gateway: owns the in-memory meta cache (al_cache) and the
+        # persisted anilist_meta block. al_cache is exposed via the property below
+        # so the subclasses and the not-yet-extracted presentation helpers keep
+        # reading and reassigning self.al_cache transparently.
+        self._anilist = AniListGateway(
+            cache_store=self.cache_store,
+            logger=self.logger,
+        )
+
+        # qBittorrent adapter: parses a release URL by tracker and adds it. qbit
+        # may be unset when no client is configured, so read it defensively; the
+        # service treats a missing client as a perpetual preview.
+        self._torrents = TorrentService(
+            qbit=getattr(self, "qbit", None),
+            session=self.session,
+            category=self.torrent_category,
+            tags=self.torrent_tags,
+            logger=self.logger,
+        )
+
+        # Discord notifier (builds the embed fields and posts grabs); a no-op
+        # when no webhook is configured.
+        self._notifier = Notifier(discord_url=self._config.discord_url)
+
         # All aligned detail rendering goes through this formatter, so the
         # presentation primitives (kv lines, blank separators, elapsed strings)
         # live on it rather than on the orchestration class. line_length is the
@@ -373,114 +225,16 @@ class SeaDexArr(ABC):
         if self.session is not None:
             self.session.close()
 
-    def get_anime_mappings(self) -> dict:
-        """Get the anime IDs file"""
-
-        self.get_external_mappings(
-            f=ANIME_IDS_FILE,
-            url=ANIME_IDS_URL,
-        )
-
-        return _load_mapping_by_mtime(ANIME_IDS_FILE, _parse_anime_mappings)
-
-
-    def _get_anime_mappings_index(self) -> dict[str, dict]:
-        """Reverse index over the on-disk Anime-IDs map, shared via the mtime memo.
-
-        Must follow get_anime_mappings (which downloads/refreshes the file); it
-        reuses that memoized parse instead of re-reading the JSON.
-        """
-
-        return _load_mapping_by_mtime(
-            ANIME_IDS_FILE,
-            _parse_anime_mappings_index,
-            cache_key=f"{ANIME_IDS_FILE}#index",
-        )
-
-
-    def get_anidb_mappings(self) -> ElementTree.Element:
-        """Get the AniDB mappings file"""
-
-        self.get_external_mappings(
-            f=ANIDB_MAPPINGS_FILE,
-            url=ANIDB_MAPPINGS_URL,
-        )
-
-        return _load_mapping_by_mtime(ANIDB_MAPPINGS_FILE, _parse_anidb_mappings)
-
-
     def anidb_anime_by_id(self, anidb_id: int) -> list:
-        """Return the AniDB XML <anime> element(s) for an AniDB id
+        """Return the AniDB XML <anime> element(s) for an AniDB id.
 
-        Builds (once, lazily) an "{anidbid -> [element]}" index over the parsed
-        AniDB mappings, so callers do a dict lookup instead of an XPath scan of
-        every <anime> element. Returns a list to preserve the caller's existing
-        "0 / 1 / >1 match" handling.
+        Delegates to the MappingResolver, which owns the lazily-built index.
 
         Args:
             anidb_id (int): AniDB id to look up
         """
 
-        if self.anidb_mappings is None:
-            return []
-
-        if self._anidb_index is None:
-            index: dict[str, list] = defaultdict(list)
-            for anime in self.anidb_mappings.findall("anime"):
-                anidbid = anime.get("anidbid")
-                if anidbid is not None:
-                    index[anidbid].append(anime)
-            self._anidb_index = index
-
-        return self._anidb_index.get(str(anidb_id), [])
-
-    def get_anibridge_mappings(self) -> AniBridge:
-        """Download the anibridge-mappings graph and build an indexed view.
-
-        Returns:
-            AniBridge: Parsed, indexed mappings ready for id lookups
-        """
-
-        self.get_external_mappings(
-            f=ANIBRIDGE_MAPPINGS_FILE,
-            url=ANIBRIDGE_MAPPINGS_URL,
-        )
-
-        # self.logger isn't set until after mappings load, so this is None during
-        # __init__; the lambda lets the shared parse build AniBridge with it.
-        logger = getattr(self, "logger", None)
-        return _load_mapping_by_mtime(
-            ANIBRIDGE_MAPPINGS_FILE,
-            lambda path: _parse_anibridge(path, logger),
-        )
-
-
-    def get_external_mappings(
-        self,
-        f: str,
-        url: str,
-    ) -> bool:
-        """Get an external mapping file, respecting a cache time
-
-        Args:
-            f (str): file on disk
-            url (str): url to download the file from
-        """
-
-        if not os.path.exists(f):
-            urlretrieve(url, f)
-
-        f_mtime = os.path.getmtime(f)
-        f_datetime = datetime.fromtimestamp(f_mtime)
-        now_datetime = datetime.now()
-
-        t_diff = now_datetime - f_datetime
-
-        # If the file is older than the cache time, re-download
-        if t_diff.days >= self.cache_time:
-            urlretrieve(url, f)
-
-        return True
+        return self._mappings.anidb_anime_by_id(anidb_id)
 
     def get_seadex_entry(
         self,
@@ -492,15 +246,7 @@ class SeaDexArr(ABC):
             al_id (int): AniList ID
         """
 
-        sd_entry = None
-        try:
-            sd_entry = self.seadex.from_id(al_id)
-        except EntryNotFoundError:
-            pass
-        except httpx.ConnectError:
-            self.logger.warning("Could not connect to SeaDex. Website may be down")
-
-        return sd_entry
+        return self._seadex.entry(al_id)
 
     def check_al_id_in_cache(
         self,
@@ -539,7 +285,11 @@ class SeaDexArr(ABC):
         tmdb_type: str = "movie",
         log_ignored: bool = True,
     ) -> dict:
-        """Get a list of entries that match on TVDB ID
+        """Resolve external Arr ids to a {AniList id -> mapping} dict
+
+        The resolver does the mapping computation and reports which ids it
+        dropped (the user's ignore list); the logging stays here so the
+        presentation concern doesn't leak into the resolver.
 
         Args:
             tvdb_id (int): TVDB ID
@@ -551,60 +301,12 @@ class SeaDexArr(ABC):
                 ids aren't logged twice (once there, once in the main loop)
         """
 
-        if tmdb_type not in ["movie", "show"]:
-            raise ValueError("tmdb_type must be 'movie' or 'show'")
-
-        # Check we have exactly one ID specified here
-        non_none_sum = sum(v is not None for v in [tvdb_id, tmdb_id, imdb_id])
-
-        if non_none_sum == 0:
-            raise ValueError(
-                "At least one of tvdb_id, tmdb_id, and imdb_id must be provided",
-            )
-
-        # The mapping computation is deterministic for a given set of
-        # identifying args, so memoize it and only redo the per-call logging
-        key = (tvdb_id, tmdb_id, imdb_id, tmdb_type)
-        if key in self._anilist_ids_cache:
-            anilist_mappings, ids_to_drop = self._anilist_ids_cache[key]
-        else:
-            anilist_mappings = {}
-
-            # AniBridge is the primary source: its richer per-season episode
-            # offsets win, so query it first and key results by AniList ID
-            if self.anibridge:
-                anilist_mappings = self.get_mappings_from_anibridge_mappings(
-                    tvdb_id=tvdb_id,
-                    tmdb_id=tmdb_id,
-                    imdb_id=imdb_id,
-                    tmdb_type=tmdb_type,
-                    anilist_mappings=anilist_mappings,
-                )
-
-            # Then fall back to the Kometa Anime IDs for anything AniBridge
-            # doesn't cover (it only adds AniList IDs not already present)
-            if self.anime_mappings:
-                anilist_mappings = self.get_mappings_from_anime_mappings(
-                    tvdb_id=tvdb_id,
-                    tmdb_id=tmdb_id,
-                    imdb_id=imdb_id,
-                    tmdb_type=tmdb_type,
-                    anilist_mappings=anilist_mappings,
-                )
-
-            # Drop any AniList IDs the user has chosen to ignore
-            ids_to_drop = [
-                al_id
-                for al_id in self.ignore_anilist_ids
-                if al_id in anilist_mappings
-            ]
-            for al_id in ids_to_drop:
-                del anilist_mappings[al_id]
-
-            # Sort by AniList ID
-            anilist_mappings = dict(sorted(anilist_mappings.items()))
-
-            self._anilist_ids_cache[key] = (anilist_mappings, ids_to_drop)
+        anilist_mappings, ids_to_drop = self._mappings.get_anilist_ids(
+            tvdb_id=tvdb_id,
+            tmdb_id=tmdb_id,
+            imdb_id=imdb_id,
+            tmdb_type=tmdb_type,
+        )
 
         # Log ignored ids per-call (not just on the cache-filling call), so the
         # main loop still logs every ignored id even after the prefetch pass ran
@@ -612,229 +314,36 @@ class SeaDexArr(ABC):
             for al_id in ids_to_drop:
                 self.log_ignored_anilist_id(al_id=al_id)
 
-        # Return a copy so a caller mutating the result can't corrupt the memo
-        return dict(anilist_mappings)
+        return anilist_mappings
 
-    @staticmethod
-    def _anilist_meta_is_fresh(record: dict | None) -> bool:
-        """True if a persisted AniList record has a payload and is within TTL
+    @property
+    def al_cache(self) -> dict:
+        """In-memory AniList response cache, owned by the AniList gateway.
 
-        Shared by a load (which ids to seed) and save (which to keep vs. refresh),
-        so the two never disagree about what "still good" means.
+        Exposed as a read/write property so the subclasses and the
+        not-yet-extracted presentation helpers keep reading and (re)assigning
+        ``self.al_cache`` while the gateway is the single owner.
         """
 
-        if not (record or {}).get("data"):
-            return False
-        try:
-            stamp = datetime.strptime(
-                (record or {}).get("fetched_at", ""), UPDATED_AT_STR_FORMAT,
-            )
-        except (TypeError, ValueError):
-            return False
-        return stamp >= datetime.now() - timedelta(days=ANILIST_CACHE_TTL_DAYS)
+        return self._anilist.al_cache
+
+    @al_cache.setter
+    def al_cache(self, value: dict) -> None:
+        self._anilist.al_cache = value
 
     def load_anilist_cache(self) -> None:
-        """Seed the in-memory AniList cache from the persisted store
+        """Seed the in-memory AniList cache from the persisted store."""
 
-        AniList metadata (title / format / episodes / cover) is effectively
-        static, so reusing what we fetched on previous runs is what keeps a run
-        from re-querying AniList for ids it has already seen - the main cause of
-        the rate-limit stalls. Entries older than ANILIST_CACHE_TTL_DAYS are
-         skipped, so the data can't get arbitrarily stale (see prefetch_anilist /
-        save_anilist_cache for the writing side).
-        """
-
-        meta = self.cache.get("anilist_meta", {})
-        if not meta:
-            return
-
-        loaded = 0
-        for id_str, record in meta.items():
-            if not self._anilist_meta_is_fresh(record):
-                continue
-            try:
-                self.al_cache[int(id_str)] = record["data"]
-            except (TypeError, ValueError):
-                continue
-            loaded += 1
-
-        if loaded:
-            self.logger.debug(
-                indent_string(f"Loaded {loaded} AniList entries from cache"),
-            )
-
-    def save_anilist_cache(self) -> None:
-        """Persist any newly seen AniList responses back to the on-disk cache
-
-        An entry that's already stored and still fresh keeps its original
-        fetched_at (so the TTL actually expires it rather than resetting every
-        run); a missing OR stale entry is (re)written with the current time, so
-        an aged-out id is refreshed instead of being re-fetched on every run.
-        """
-
-        meta = self.cache.setdefault("anilist_meta", {})
-        now_str = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
-
-        written = 0
-        for al_id, data in self.al_cache.items():
-            id_str = str(al_id)
-            if self._anilist_meta_is_fresh(meta.get(id_str)):
-                continue
-            meta[id_str] = {"fetched_at": now_str, "data": data}
-            written += 1
-
-        # A preview keeps the warmed entries in memory but doesn't persist them,
-        # so a preview leaves the on-disk cache untouched (gate lives in
-        # save_cache).
-        if written:
-            self.save_cache()
+        self._anilist.load_cache()
 
     def prefetch_anilist(self, al_ids: Iterable[int]) -> None:
-        """Warm the AniList cache for a set of ids in batched requests
-
-        Fetches everything still missing from the cache in ANILIST_BATCH_SIZE-id
-        "id_in" pages (one request per page) instead of one request per id on
-        demand, then persists the results. This is what collapses a cold run's
-        ~one-AniList-request-per-series into a handful, so the per-title loop
-        rarely has to hit AniList one id at a time and trip its rate limit.
+        """Warm the AniList cache for a set of ids in batched requests.
 
         Args:
             al_ids (iterable[int]): Candidate AniList IDs for this run
         """
 
-        missing = sorted(
-            {i for i in al_ids if i is not None and i not in self.al_cache},
-        )
-        if not missing:
-            return
-
-        # Surfaced at INFO (only when there's actually something to fetch, so
-        # warm runs stay silent), so the upfront pause on a cold run is explained
-        self.logger.info(
-            indent_string(
-                f"Prefetching {len(missing)} AniList entries "
-                f"in batches of {ANILIST_BATCH_SIZE}",
-            ),
-            extra={"line_style": "grey50"},
-        )
-
-        for start in range(0, len(missing), ANILIST_BATCH_SIZE):
-            chunk = missing[start:start + ANILIST_BATCH_SIZE]
-            # Ids unknown to AniList are simply absent from the result; the
-            # per-id helpers will try once more on demand and degrade gracefully
-            for al_id, data in get_query_batch(chunk).items():
-                self.al_cache[al_id] = data
-
-        # Persist now (before the main loop) so the batch's work survives even an
-        # early return - e.g., when max_torrents_to_add is hit mid-run
-        self.save_anilist_cache()
-
-    def get_mappings_from_anime_mappings(
-        self,
-        tvdb_id: int | None = None,
-        tmdb_id: int | None = None,
-        imdb_id: str | None = None,
-        tmdb_type: str = "movie",
-        anilist_mappings: dict | None = None,
-    ) -> dict:
-        """Get mappings from the Anime ID mappings
-
-        Args:
-            tvdb_id (int): TVDB ID
-            tmdb_id (int): TMDB ID
-            imdb_id (int): IMDb ID
-            tmdb_type (str): TMDB type. Can be "movie" or "show"
-            anilist_mappings (dict): Dictionary of AniList mappings.
-                Defaults to None, which will create a new dictionary
-        """
-
-        if anilist_mappings is None:
-            anilist_mappings = {}
-
-        if tmdb_type not in ["movie", "show"]:
-            raise ValueError("tmdb_type must be 'movie' or 'show'")
-
-        # Check we have exactly one ID specified here
-        non_none_sum = sum(v is not None for v in [tvdb_id, tmdb_id, imdb_id])
-
-        if non_none_sum == 0:
-            raise ValueError(
-                "At least one of tvdb_id, tmdb_id, and imdb_id must be provided",
-            )
-
-        index = self._anime_mappings_index
-        if index is None:
-            return anilist_mappings
-
-        # Add the first mapping seen for each AniList id, matching the previous
-        # "don't clobber an id another query already produced" behaviour
-        def merge(field: str, value: Any) -> None:
-            for m in index[field].get(value, ()):
-                anilist_id = m["anilist_id"]
-                if anilist_id not in anilist_mappings:
-                    anilist_mappings[anilist_id] = m
-
-        if tvdb_id is not None:
-            merge("tvdb_id", tvdb_id)
-        if tmdb_id is not None:
-            merge(f"tmdb_{tmdb_type}_id", tmdb_id)
-        if imdb_id is not None:
-            merge("imdb_id", imdb_id)
-
-        return anilist_mappings
-
-    def get_mappings_from_anibridge_mappings(
-        self,
-        tvdb_id: int | None = None,
-        tmdb_id: int | None = None,
-        imdb_id: str | None = None,
-        tmdb_type: str = "movie",
-        anilist_mappings: dict | None = None,
-    ) -> dict:
-        """Get mappings from the AniBridge mappings
-
-        Args:
-            tvdb_id (int): TVDB ID
-            tmdb_id (int): TMDB ID
-            imdb_id (int): IMDb ID
-            tmdb_type (str): TMDB type. Can be "movie" or "show"
-            anilist_mappings (dict): Dictionary of AniList mappings.
-                Defaults to None, which will create a new dictionary
-        """
-
-        if anilist_mappings is None:
-            anilist_mappings = {}
-
-        anibridge = self.anibridge
-        if not anibridge:
-            return anilist_mappings
-
-        if tmdb_type not in ["movie", "show"]:
-            raise ValueError("tmdb_type must be 'movie' or 'show'")
-
-        # Check we have exactly one ID specified here
-        non_none_sum = sum(v is not None for v in [tvdb_id, tmdb_id, imdb_id])
-
-        if non_none_sum == 0:
-            raise ValueError(
-                "At least one of tvdb_id, tmdb_id, and imdb_id must be provided",
-            )
-
-        # Add any AniList IDs the indexes resolve for the supplied ids, without
-        # clobbering matches an earlier id already produced (tvdb > tmdb > imdb).
-        def merge(found: dict) -> None:
-            for anilist_id, entry in found.items():
-                if anilist_id not in anilist_mappings:
-                    anilist_mappings[anilist_id] = entry
-
-        if tvdb_id is not None:
-            merge(anibridge.lookup_by_tvdb(tvdb_id))
-        if tmdb_id is not None:
-            merge(anibridge.lookup_by_tmdb(tmdb_id, tmdb_type))
-        if imdb_id is not None:
-            merge(anibridge.lookup_by_imdb(imdb_id))
-
-        return anilist_mappings
+        self._anilist.prefetch(al_ids, preview=self._is_preview())
 
     def get_anilist_title(
         self,
@@ -842,19 +351,16 @@ class SeaDexArr(ABC):
     ) -> str:
         """Resolve and remember the AniList title for an ID (no logging)
 
-        Fetches the title (via cache or a live AniList query) and stores it as
-        the current title so later steps can attribute grabs to it. The entry
-        header is logged separately by log_al_title, once episodes are known and
-        the season/episode coverage can be shown.
+        The gateway resolves the raw title (no side-effects); the empty-result
+        fallback and the transitional ``current_title`` attribution live here so
+        later steps can attribute grabs to the active entry. The entry header is
+        logged separately by log_al_title, once episodes are known.
 
         Args:
             al_id (int): AniList ID
         """
 
-        anilist_title, self.al_cache = get_anilist_title(
-            al_id,
-            al_cache=self.al_cache,
-        )
+        anilist_title = self._anilist.title(al_id)
 
         # If the lookup came back empty (e.g., AniList was rate-limiting even
         # after retries), fall back to the id so the entry is still identifiable
@@ -1010,76 +516,6 @@ class SeaDexArr(ABC):
             seadex_dict = copy.deepcopy(seadex_dict_filtered)
 
         return seadex_dict
-
-    def get_seadex_fields(
-        self,
-        arr: str,
-        al_id: int,
-        release_group: list | str | None,
-        seadex_dict: dict,
-    ) -> tuple[list, str | None]:
-        """Get fields for Discord post
-
-        Args:
-            arr: Type of arr instance
-            al_id: AniList ID
-            release_group: Arr release group
-            seadex_dict: Dictionary of SeaDex releases
-        """
-
-        anilist_thumb, self.al_cache = get_anilist_thumb(
-            al_id=al_id,
-            al_cache=self.al_cache,
-        )
-        fields = []
-
-        # The first field should be the Arr group. If it's empty, mention it's missing
-        release_group_discord = copy.deepcopy(release_group)
-
-        # Catch various edge cases: normalise to a non-empty list of strings
-        if not release_group_discord:
-            release_group_discord = ["None"]
-        elif isinstance(release_group_discord, str):
-            release_group_discord = [release_group_discord]
-
-        field_dict = {
-            "name": f"{arr.capitalize()} Release:",
-            "value": "\n".join(release_group_discord),
-        }
-        fields.append(field_dict)
-
-        # SeaDex options with links
-        for srg, srg_item in seadex_dict.items():
-
-            # URLs flagged for download in this group, in one pass
-            urls_to_download = [
-                url
-                for url, u in srg_item.get("urls", {}).items()
-                if u.get("download", False)
-            ]
-
-            if urls_to_download:
-
-                # Include any tags in the string
-                discord_value = ""
-                tags = srg_item.get("tags", [])
-                if len(tags) > 0:
-                    discord_value += "Tags:\n"
-                    discord_value += "\n".join(tags)
-                    discord_value += "\n\n"
-
-                # And include URLs for files we're downloading
-                discord_value += "Links:\n"
-                discord_value += "\n".join(urls_to_download)
-
-                field_dict = {
-                    "name": f"SeaDex recommendation: {srg}",
-                    "value": f"{discord_value}",
-                }
-
-                fields.append(field_dict)
-
-        return fields, anilist_thumb
 
     def filter_seadex_downloads(
         self,
@@ -1625,51 +1061,19 @@ class SeaDexArr(ABC):
                     )
                     continue
 
-                # Each parser returns the download/magnet link plus the release's
-                # human-readable title scraped from the source page, so we always
-                # have a real name to show even when the client can't report one
-                # (e.g. a private torrent with no info hash, or a dry run)
-
-                # Nyaa
-                if tracker.lower() == "nyaa":
-                    parsed_url, source_name = get_nyaa_torrent(url=url)
-
-                # AnimeToshio
-                elif tracker.lower() == "animetosho":
-                    parsed_url, source_name = get_animetosho_torrent(
-                        url=url,
-                        session=self.session,
-                    )
-
-                # RuTracker
-                elif tracker.lower() == "rutracker":
-                    parsed_url, source_name = get_rutracker_torrent(
-                        url=url,
-                        torrent_hash=item_hash,
-                        session=self.session,
-                    )
-
-                # Otherwise, bug out
-                else:
-                    raise ValueError(f"Unable to parse torrent links from {tracker}")
-
-                if parsed_url is None:
-                    raise Exception("Have not managed to parse the torrent URL")
-
-                if torrent_client == "qbit":
-                    success, torrent_name = self.add_torrent_to_qbit(
-                        url=url,
-                        torrent_url=parsed_url,
-                        torrent_hash=item_hash,
-                    )
-
-                else:
+                if torrent_client != "qbit":
                     raise ValueError(f"Unsupported torrent client {torrent_client}")
 
-                # Prefer the name qBittorrent reports; fall back to the release's
-                # title from the source page rather than the raw download link
-                if not torrent_name:
-                    torrent_name = source_name
+                # The service parses the release URL by tracker and adds it to
+                # qBittorrent, returning the add status and a display name (the
+                # client's name, or the release title scraped from the source
+                # page as a fallback). A preview run simulates the add.
+                success, torrent_name = self._torrents.add(
+                    url=url,
+                    tracker=tracker,
+                    torrent_hash=item_hash,
+                    preview=self._is_preview(),
+                )
 
                 if success == "torrent_added":
                     results.append(
@@ -1710,65 +1114,6 @@ class SeaDexArr(ABC):
                     raise ValueError(f"Cannot handle torrent client {torrent_client}")
 
         return n_torrents_added, results
-
-    def add_torrent_to_qbit(
-        self,
-        url: str,
-        torrent_url: str,
-        torrent_hash: str | None,
-    ) -> tuple[str, str | None]:
-        """Add a torrent to qbittorrent
-
-        Args:
-            url (str): SeaDex URL
-            torrent_url (str): Torrent URL to add to a client
-            torrent_hash (str): Torrent hash
-
-        Returns:
-            tuple: (status, torrent_name), where status is one of
-                "torrent_added" or "torrent_already_added", and torrent_name is
-                the name reported by qBittorrent (or None if the torrent has no
-                info hash to look up, in which case the caller uses the URL)
-        """
-
-        # A private torrent has no info hash, so we can't look it up by hash to
-        # dedup or to read its name back; just add it and let qBittorrent dedup
-        # internally. With a hash, skip the adding if it's already present
-        if torrent_hash is not None and self.qbit is not None:
-            torr_info = self.qbit.torrents_info(torrent_hashes=torrent_hash)
-            torr_hashes = [i.hash for i in torr_info]
-
-            if torrent_hash in torr_hashes:
-                self.logger.debug(
-                    indent_string(f"Torrent {url} already in qBittorrent"),
-                )
-                return "torrent_already_added", torr_info[0].name
-
-        # Preview (dry run or no client): report it as added without touching the
-        # client. With a client present the dedup lookup above still ran, so an
-        # already-present torrent is reported accurately. There's no client-side
-        # name to read back, so the caller falls back to the URL.
-        if self._is_preview():
-            return "torrent_added", None
-
-        # Add the torrent
-        result = self.qbit.torrents_add(
-            urls=torrent_url,
-            category=self.torrent_category,
-            tags=self.torrent_tags,
-        )
-        if result != "Ok.":
-            raise Exception("Failed to add torrent")
-
-        # Look the torrent back up by hash so we can report its name. A private
-        # torrent has no info hash to look up, so leave the name unset and let
-        # the caller fall back to the URL
-        torrent_name = None
-        if torrent_hash is not None:
-            added_info = self.qbit.torrents_info(torrent_hashes=torrent_hash)
-            torrent_name = added_info[0].name if added_info else None
-
-        return "torrent_added", torrent_name
 
     def _is_preview(self) -> bool:
         """A run is a no-op preview when an explicit dry run was requested OR
@@ -2080,17 +1425,20 @@ class SeaDexArr(ABC):
         torrents_before = self.torrents_added
 
         if any_to_download:
-            fields, anilist_thumb = self.get_seadex_fields(
+            # Resolve the AniList cover thumbnail (via the gateway) and build the
+            # Discord embed fields for the grab. The thumb lookup is done up front
+            # to preserve ordering even though it's only used in the push below.
+            anilist_thumb = self._anilist.thumb(al_id)
+            fields = self._notifier.build_fields(
                 arr=arr,
-                al_id=al_id,
                 release_group=release_group,
                 seadex_dict=seadex_dict,
             )
 
             # Add torrents to qBittorrent. add_torrent runs even in a preview
-            # (no client / dry run): add_torrent_to_qbit simulates the add, while
-            # the download-flag, public_only and tracker filters still apply, so
-            # only releases that would actually be grabbed are counted.
+            # (no client / dry run): the service simulates the add, while the
+            # download-flag, public_only and tracker filters still apply, so only
+            # releases that would actually be grabbed are counted.
             n_torrents_added, results = self.add_torrent(
                 torrent_dict=seadex_dict,
                 torrent_client="qbit",
@@ -2107,12 +1455,11 @@ class SeaDexArr(ABC):
             # Push a message to Discord if we've added anything (never on a
             # preview - it's an outward notification)
             if (
-                self.discord_url is not None
+                self._notifier.enabled
                 and n_torrents_added > 0
                 and not self._is_preview()
             ):
-                discord_push(
-                    url=self.discord_url,
+                self._notifier.push(
                     arr_title=item_title,
                     al_title=anilist_title,
                     seadex_url=sd_url,

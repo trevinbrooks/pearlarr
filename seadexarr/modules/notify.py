@@ -1,0 +1,137 @@
+"""Discord notifier: build the embed fields and post the grab notification.
+
+``Notifier`` owns the Discord webhook - building the per-release embed fields
+from a shaped ``seadex_dict`` and pushing the message. It's gated on the
+configured webhook url; with none, it's a no-op.
+
+Extracted from ``SeaDexArr`` in Phase 3 of the refactor (see
+``REFACTOR_PLAN.md``); behaviour-preserving. The AniList cover thumbnail is
+resolved by the AniList gateway and passed in, so the notifier stays free of the
+AniList cache.
+"""
+
+import copy
+
+from .discord import discord_push
+
+
+class Notifier:
+    """Builds Discord embed fields and posts grab notifications."""
+
+    def __init__(self, *, discord_url: str | None) -> None:
+        """Configure the notifier.
+
+        Args:
+            discord_url (str | None): Webhook url, or None to disable.
+        """
+
+        self.discord_url = discord_url
+
+    @property
+    def enabled(self) -> bool:
+        """True when a Discord webhook is configured."""
+
+        return self.discord_url is not None
+
+    def build_fields(
+        self,
+        *,
+        arr: str,
+        release_group: list | str | None,
+        seadex_dict: dict,
+    ) -> list:
+        """Build the Discord embed fields for a grab.
+
+        The first field names the Arr's current release group; one field per
+        SeaDex release group then lists its tags and the URLs flagged for
+        download.
+
+        Args:
+            arr (str): Type of arr instance
+            release_group (list | str | None): Arr release group(s)
+            seadex_dict (dict): Dictionary of SeaDex releases
+        """
+
+        fields = []
+
+        # The first field should be the Arr group. If it's empty, mention it's missing
+        release_group_discord = copy.deepcopy(release_group)
+
+        # Catch various edge cases: normalise to a non-empty list of strings
+        if not release_group_discord:
+            release_group_discord = ["None"]
+        elif isinstance(release_group_discord, str):
+            release_group_discord = [release_group_discord]
+
+        field_dict = {
+            "name": f"{arr.capitalize()} Release:",
+            "value": "\n".join(release_group_discord),
+        }
+        fields.append(field_dict)
+
+        # SeaDex options with links
+        for srg, srg_item in seadex_dict.items():
+
+            # URLs flagged for download in this group, in one pass
+            urls_to_download = [
+                url
+                for url, u in srg_item.get("urls", {}).items()
+                if u.get("download", False)
+            ]
+
+            if urls_to_download:
+
+                # Include any tags in the string
+                discord_value = ""
+                tags = srg_item.get("tags", [])
+                if len(tags) > 0:
+                    discord_value += "Tags:\n"
+                    discord_value += "\n".join(tags)
+                    discord_value += "\n\n"
+
+                # And include URLs for files we're downloading
+                discord_value += "Links:\n"
+                discord_value += "\n".join(urls_to_download)
+
+                field_dict = {
+                    "name": f"SeaDex recommendation: {srg}",
+                    "value": f"{discord_value}",
+                }
+
+                fields.append(field_dict)
+
+        return fields
+
+    def push(
+        self,
+        *,
+        arr_title: str,
+        al_title: str,
+        seadex_url: str,
+        fields: list,
+        thumb_url: str | None,
+    ) -> bool:
+        """Post a grab notification to the configured Discord webhook.
+
+        A no-op (returns False) when no webhook is configured; the caller also
+        gates on having actually grabbed something and not being a preview.
+
+        Args:
+            arr_title (str): Title as in the Arr instance
+            al_title (str): Title as in AniList
+            seadex_url (str): URL to the SeaDex page
+            fields (list): Embed fields from :meth:`build_fields`
+            thumb_url (str | None): AniList cover thumbnail URL
+        """
+
+        if self.discord_url is None:
+            return False
+
+        return discord_push(
+            url=self.discord_url,
+            arr_title=arr_title,
+            al_title=al_title,
+            seadex_url=seadex_url,
+            fields=fields,
+            thumb_url=thumb_url,
+        )

@@ -79,14 +79,14 @@ def get_animetosho_torrent(
 
 def get_rutracker_torrent(
     url: str,
-    torrent_hash: str,
+    torrent_hash: str | None,
     session: requests.Session | None = None,
 ) -> tuple[str, str]:
     """Get the RuTracker magnet link and torrent title from a URL
 
     Args:
         url (str): URL of the RuTracker topic
-        torrent_hash (str): Torrent hash
+        torrent_hash (str | None): Torrent hash
         session (requests.Session, optional): Session to reuse for the page
             fetch. Defaults to a shared one.
 

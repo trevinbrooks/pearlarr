@@ -5,7 +5,7 @@ into a slim orchestrator plus focused, independently-testable collaborators —
 **without changing behaviour or the CLI surface**.
 
 **Branch:** `public-only-release-filtering`
-**Status:** Phase 0 ✅ done · Phase 1 ✅ done · Phase 2 ✅ done · Phases 3–6 pending
+**Status:** Phase 0 ✅ done · Phase 1 ✅ done · Phase 2 ✅ done · Phase 3 ✅ done · Phases 4–6 pending
 **Gates (every phase):** `pyrefly check` = 0 errors · `ruff check` = clean ·
 `pytest` = all pass · package import smoke · (user-side) one `--dry-run` run.
 Native unions, no `Optional`, no suppressions.
@@ -79,11 +79,11 @@ reshuffle, so `from .x import Y` patterns are unchanged).
 | `planner.py` | release-matching helpers now; `DownloadPlanner` + `PlanResult` in Phase 4 | ✅ created (Phase 1, helpers only) |
 | `config.py` | `AppConfig` — typed settings + YAML load + template-sync | ✅ created (Phase 2) |
 | `cache.py` | `CacheStore` — owns the cache schema | ✅ created (Phase 2) |
-| `mappings.py` | `MappingResolver` — 3 sources → AniList ids; owns the parse memo | Phase 3 |
-| `anilist_gateway.py` | `AniListGateway` — `al_cache` + meta TTL + prefetch + titles/thumbs | Phase 3 |
-| `seadex_gateway.py` | `SeaDexGateway` — fetch entry → normalized `seadex_dict` | Phase 3 |
-| `torrents.py` | `TorrentService` — qBittorrent adapter | Phase 3 |
-| `notify.py` | `Notifier` — Discord fields + push | Phase 3 |
+| `mappings.py` | `MappingResolver` — 3 sources → AniList ids; owns the parse memo | ✅ created (Phase 3) |
+| `anilist_gateway.py` | `AniListGateway` — `al_cache` + meta TTL + prefetch + titles/thumbs | ✅ created (Phase 3) |
+| `seadex_gateway.py` | `SeaDexGateway` — fetch entry (`get_seadex_dict` shaping deferred to Phase 4) | ✅ created (Phase 3) |
+| `torrents.py` | `TorrentService` — qBittorrent adapter (URL-parse + add; driving loop stays till Phase 4) | ✅ created (Phase 3) |
+| `notify.py` | `Notifier` — Discord fields + push | ✅ created (Phase 3) |
 | `reporter.py` | `RunReporter` (all `log_*` + stats) + `RunContext` | Phase 4 |
 | `sync.py` | `SeaDexSync(ABC)` — `run_sync` template + the 3 shared helpers | Phase 5 |
 | `sonarr.py` / `radarr.py` | `SonarrClient`/`RadarrClient` + thin `SeaDex*` adapter | Phase 5 |
@@ -293,3 +293,27 @@ Each phase is independently shippable and ends at the gates in the header.
   config — the None path is unreachable after template-sync). `seadex_arr.py`
   3020 → 2776. Added `tests/test_config.py` + `tests/test_cache.py` (22 tests).
   72 tests, all gates green.
+- **2026-06-22 — Phase 3 done.** Extracted five I/O gateways beside the leaves:
+  `mappings.py` (`MappingResolver` — owns the module-global parse memo + the three
+  sources + `get_anilist_ids`, which now **returns the dropped-ignored-ids** for the
+  orchestrator to log rather than logging itself; `AniBridge` built with `logger=None`
+  to preserve the historical "mappings load before the logger exists" behaviour),
+  `anilist_gateway.py` (`AniListGateway` — owns `al_cache` + meta TTL + load/save/
+  prefetch + **side-effect-free** `title`/`thumb`), `seadex_gateway.py` (`SeaDexGateway`
+  — `get_seadex_entry`), `torrents.py` (`TorrentService` — URL-parse-by-tracker +
+  qBittorrent add, with `preview` passed in so it never reads run state), `notify.py`
+  (`Notifier` — Discord embed fields + webhook-gated push; the cover thumb is resolved
+  by the AniList gateway and passed in). `SeaDexArr` keeps thin delegators/aliases so
+  the subclasses and the Phase-0 tests are untouched: `anime_mappings` /
+  `anidb_mappings` / `anibridge` aliases, `anidb_anime_by_id`, `get_anilist_ids`
+  (+logging), an `al_cache` get/set **property** (Sonarr reassigns it), `load_anilist_cache`
+  / `prefetch_anilist`, `get_anilist_title` (keeps the `current_title` side-effect +
+  `AniList #id` fallback transitionally), and `get_seadex_entry`. **Deliberately deferred
+  to Phase 4** (config-coupled / run-state, per the §8 landmines): `get_seadex_dict`
+  shaping and `filter_seadex_interactive` stay on the class (test-pinned); the
+  `add_torrent` driving loop (stats / `public_only_*` flags / max-torrents cap) stays —
+  only its parse+add I/O moved into the service. Widened
+  `torrent.get_rutracker_torrent`'s `torrent_hash` to `str | None` (it already handled
+  None at runtime; the strictness was masked by `dict.get`'s `Any`). `seadex_arr.py`
+  2776 → 2123. 72 tests, all gates green (pyrefly 0 / ruff clean / pytest); package
+  import smoke OK.
