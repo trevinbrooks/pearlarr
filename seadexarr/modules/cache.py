@@ -23,12 +23,11 @@ from typing import Any
 
 from seadex import EntryRecord
 
-from .config import AppConfig
 from .. import __version__
 
 # Timestamp format for cache record fields (entry ``updated_at`` and the AniList
-# meta ``fetched_at``). Lives here because the cache owns the record schema; the
-# orchestrator re-exports it for the Sonarr adapter that reads the same records.
+# meta ``fetched_at``). Lives here because the cache owns the record schema;
+# consumers (the orchestrator and the Sonarr adapter) import it directly.
 UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
@@ -72,38 +71,40 @@ class CacheStore:
         self.data = data
 
     @classmethod
-    def load(cls, path: str, config: AppConfig) -> "CacheStore":
+    def load(cls, path: str, *, config_checksum: str) -> "CacheStore":
         """Load the cache from disk (or create the schema) and reconcile it.
 
         Args:
             path (str): Path to the cache file.
-            config (AppConfig): Source of the config checksum stored in the
-                descriptor block.
+            config_checksum (str): Current config-file checksum, stamped into the
+                descriptor block so a changed config invalidates stale records.
         """
 
         if os.path.exists(path):
             with open(path) as f:
                 data = json.load(f)
+            store = cls(path, data)
+            store._reconcile(config_checksum)
         else:
-            data = cls._initial_schema(config)
+            # A freshly built schema already carries the current version and
+            # checksum, so there is nothing to reconcile.
+            store = cls(path, cls._initial_schema(config_checksum))
 
-        store = cls(path, data)
-        store._reconcile(config)
         return store
 
     @staticmethod
-    def _initial_schema(config: AppConfig) -> dict[str, Any]:
+    def _initial_schema(config_checksum: str) -> dict[str, Any]:
         """Build a fresh cache: descriptor (version + checksum) + entry store."""
 
         return {
             "description": {
                 "seadexarr_version": __version__,
-                "config_checksum": config.checksum(),
+                "config_checksum": config_checksum,
             },
             "anilist_entries": {},
         }
 
-    def _reconcile(self, config: AppConfig) -> None:
+    def _reconcile(self, config_checksum: str) -> None:
         """Update the descriptor when the package version or config has changed."""
 
         if (
@@ -112,12 +113,11 @@ class CacheStore:
         ):
             self.data["description"]["seadexarr_version"] = __version__
 
-        config_hash = config.checksum()
         if (
             self.data.get("description", {}).get("config_checksum", None)
-            != config_hash
+            != config_checksum
         ):
-            self.data["description"]["config_checksum"] = config_hash
+            self.data["description"]["config_checksum"] = config_checksum
 
     def check_al_id_in_cache(
         self,

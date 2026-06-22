@@ -359,7 +359,7 @@ class SeaDexArr(ABC):
         # its own store that reads the file fresh, so a scheduled Radarr->Sonarr
         # cycle hands off through cache.json rather than shared memory.
         self.cache_file = cache
-        self.cache_store = CacheStore.load(cache, self._config)
+        self.cache_store = CacheStore.load(cache, config_checksum=self._config.checksum())
         self.cache: dict[str, Any] = self.cache_store.data
 
         # All aligned detail rendering goes through this formatter, so the

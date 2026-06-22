@@ -105,14 +105,15 @@ class AppConfig:
             config_template = YAML().load(f)
 
         if list(self.data.keys()) != list(config_template.keys()):
+            # Start from the template (template key order + any newly added
+            # defaults) and overwrite with the user's existing values. Keys the
+            # user has that the template lacks are intentionally dropped.
             new_config = copy.deepcopy(config_template)
             for key in config_template:
                 if key in self.data:
                     new_config[key] = copy.deepcopy(self.data[key])
-                else:
-                    new_config[key] = copy.deepcopy(config_template[key])
 
-            self.data = copy.deepcopy(new_config)
+            self.data = new_config
 
             with open(self.path, "w+") as f:
                 YAML().dump(self.data, f)
