@@ -5,7 +5,7 @@ into a slim orchestrator plus focused, independently-testable collaborators —
 **without changing behaviour or the CLI surface**.
 
 **Branch:** `public-only-release-filtering`
-**Status:** Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4a ✅ (planner) · Phase 4b pending (reporter) · Phases 5–6 pending
+**Status:** Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅ (4a planner · 4b reporter+context) · Phases 5–6 pending
 **Gates (every phase):** `pyrefly check` = 0 errors · `ruff check` = clean ·
 `pytest` = all pass · package import smoke · (user-side) one `--dry-run` run.
 Native unions, no `Optional`, no suppressions.
@@ -84,7 +84,7 @@ reshuffle, so `from .x import Y` patterns are unchanged).
 | `seadex_gateway.py` | `SeaDexGateway` — fetch entry (`get_seadex_dict` shaping deferred to Phase 4) | ✅ created (Phase 3) |
 | `torrents.py` | `TorrentService` — qBittorrent adapter (URL-parse + add; driving loop stays till Phase 4) | ✅ created (Phase 3) |
 | `notify.py` | `Notifier` — Discord fields + push | ✅ created (Phase 3) |
-| `reporter.py` | `RunReporter` (all `log_*` + stats) + `RunContext` | Phase 4 |
+| `reporter.py` | `RunReporter` (all `log_*` + summary) + `RunContext` + `fresh_stats` | ✅ created (Phase 4b) |
 | `sync.py` | `SeaDexSync(ABC)` — `run_sync` template + the 3 shared helpers | Phase 5 |
 | `sonarr.py` / `radarr.py` | `SonarrClient`/`RadarrClient` + thin `SeaDex*` adapter | Phase 5 |
 
@@ -335,3 +335,33 @@ Each phase is independently shippable and ends at the gates in the header.
   `DownloadPlanner` (new `make_planner` builder) and assert on `PlanResult` /
   `PublicOnlySkips` instead of mutated `self`. `seadex_arr.py` 2123 → 1716. 72 tests, all
   gates green (pyrefly 0 / ruff clean); import smoke OK.
+- **2026-06-22 — Phase 4b done (run context + presentation).** Extracted the per-run
+  mutable state into `RunContext` and the entire `log_*` surface + end-of-run summary
+  into `RunReporter` (new `reporter.py`, with `fresh_stats` + `ALLOWED_ARRS`). `RunContext`
+  replaces the scattered `self.*` run fields (`stats`, `torrents_added`, `current_title/
+  url/coverage`, `public_only_skipped/groups`, the run clock, the logger-counter snapshot);
+  a fresh one is built per run by `reset_run_stats(arr, dry_run)` (the old method,
+  repurposed), and a placeholder is created in `__init__` so the object is usable before
+  `run()`. `RunReporter` is built once with the stable collaborators it needs (logger,
+  log_fmt, cache_store, anilist gateway — the last two only for the cached-title lookups in
+  `log_cached_entry` / `log_no_sd_entry`); the state-touching methods take the `RunContext`
+  as their first argument, the rest are pure presentation. **Pattern (consistent with
+  Phases 2–3):** `SeaDexArr` keeps a thin `log_*` delegator for every method, injecting
+  `self._ctx` (and, for the summary, `is_preview` / `has_client`), so the Sonarr/Radarr
+  adapters are untouched — confirmed to read no run state directly and to call only `log_*`
+  + `self.log_fmt`. The orchestration methods (`run_sync`, `_al_id_prologue`,
+  `_grab_and_cache`, `add_torrent`, and `get_anilist_title`'s `current_title` side-effect)
+  now read/write `self._ctx.*`. **Two deliberate scope calls** (transparency): (1) the
+  `add_torrent` / `_grab_and_cache` knot is now expressed through the shared `RunContext`
+  rather than scattered `self` fields — the decoupling §3 endorses — but `add_torrent`
+  stays an orchestration method mutating the context, not yet a pure return-value function;
+  (2) `stats` is kept as the existing dict (the `RunStats` / `GrabRecord` /
+  `NeedsActionRecord` dataclasses from §6.1 are deferred to polish) to keep 4b
+  behaviour-preserving and the diff mechanical. The run loop and summary had **no** prior
+  coverage, so added `tests/test_reporter.py` (10 tests: every stats counter, the
+  `log_al_title` attribution, the al_cache threading in `log_no_sd_entry`, and the
+  real/dry-run summary render + invalid-arr guard); factored a shared `make_logger` builder.
+  `seadex_arr.py` 1716 → 1204 (≈920 LOC shed across Phase 4; the base class is now a slim
+  orchestrator). 82 tests, all gates green (pyrefly 0 / ruff clean); import +
+  delegator-chain smoke OK. **Still owed for the phase:** the user-side one-`--dry-run` gate
+  (needs live Sonarr/Radarr).

@@ -17,6 +17,22 @@ from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.seadex_arr import SeaDexArr
 
 
+def make_logger(name: str = "seadexarr-test") -> logging.Logger:
+    """A quiet logger for the characterization tests.
+
+    Attaches a NullHandler, disables propagation, and resets the level to
+    WARNING on every call so the hot-path debug f-strings aren't formatted and a
+    test that bumps the level can't leak into the next.
+    """
+
+    logger = logging.getLogger(name)
+    if not logger.handlers:
+        logger.addHandler(logging.NullHandler())
+    logger.propagate = False
+    logger.setLevel(logging.WARNING)
+    return logger
+
+
 class _StubArr(SeaDexArr):
     """A concrete ``SeaDexArr`` whose abstract hooks are no-ops.
 
@@ -58,14 +74,7 @@ def make_arr(**overrides: Any) -> _StubArr:
 
     arr = object.__new__(_StubArr)
 
-    logger = logging.getLogger("seadexarr-test")
-    if not logger.handlers:
-        logger.addHandler(logging.NullHandler())
-    logger.propagate = False
-    # Default to WARNING so the hot-path debug f-strings aren't formatted and
-    # the ``debug_on`` branch is exercised in its common (off) state. Reset on
-    # every call, so a test that bumps the level can't leak into the next.
-    logger.setLevel(logging.WARNING)
+    logger = make_logger()
 
     defaults: dict[str, Any] = {
         "logger": logger,
@@ -96,11 +105,7 @@ def make_planner(**overrides: Any) -> DownloadPlanner:
     ``make_arr``.
     """
 
-    logger = logging.getLogger("seadexarr-test")
-    if not logger.handlers:
-        logger.addHandler(logging.NullHandler())
-    logger.propagate = False
-    logger.setLevel(logging.WARNING)
+    logger = make_logger()
 
     defaults: dict[str, Any] = {
         "public_only": False,
