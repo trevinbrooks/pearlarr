@@ -219,6 +219,20 @@ Each phase is independently shippable and ends at the gates in the header.
 - **Phase 5 — Slim subclasses.** Extract `SonarrClient`/`RadarrClient`; reduce
   `SeaDexSonarr`/`SeaDexRadarr` to the 4 hooks. Fix `ignore_movies_in_radarr` to
   depend on a `RadarrClient`/movie-id set rather than nesting a `SeaDexRadarr`.
+  **Collapse the config to a single representation (decided 2026-06-22).** Today
+  there are three: the raw `data` dict, `AppConfig`'s per-access `@property` views,
+  and 16 flat *mirror* attributes copied in `SeaDexArr.__init__`
+  (`self.public_only = self._config.public_only`, …) — verified pure mirrors (never
+  reassigned at runtime; config never written post-load), i.e. transitional
+  scaffolding like the `self.config`/`self.cache` aliases. Target: `AppConfig`
+  normalizes **once** into real typed fields (in `__post_init__` so the in-memory
+  `_cfg(**data)` tests still construct without a file; consider `frozen=True` to
+  enforce the post-load immutability — `load` must finish the template-sync before
+  constructing), then delete the 16 mirrors **and** the raw `self.config` alias and
+  read `self._config.X` everywhere (~40+ sites across `seadex_arr.py` + the
+  subclasses — folded in here because slimming the adapters rewrites those sites
+  anyway). Keep `data` only until the arr-specific keys (`sonarr_url`, profiles, …)
+  also get typed accessors.
 - **Phase 6 — Optional polish.** inheritance → strategy; inject one shared
   `MappingResolver` from the CLI; optional `core/` subpackage.
 
@@ -235,6 +249,12 @@ Each phase is independently shippable and ends at the gates in the header.
   not a passed-around param.
 - **Module-global mapping memo** (`_PARSED_MAPPING_CACHE`) is a cross-instance
   optimization — don't regress it.
+- **The config-setting mirrors double as a cache** — `trackers` and
+  `ignore_anilist_ids` rebuild a `set` on every property access; the 16 `self.*`
+  mirrors hide that today by reading each once into a field. When Phase 5 removes the
+  mirrors and reads through `self._config`, make those normalized values parse-once
+  (typed fields / `cached_property`) or the per-access rebuild reappears inside the
+  hot loops in `get_seadex_dict` / `filter_*` (lines ~598/891/1620).
 
 ## 9. Public surface that must not change
 
