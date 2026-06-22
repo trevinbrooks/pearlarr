@@ -298,6 +298,7 @@ class SeaDexRadarr(SeaDexArr):
                             if self.max_torrents_to_add is not None:
                                 if self.torrents_added >= self.max_torrents_to_add:
                                     self.log_max_torrents_added()
+                                    self.save_cache()
                                     self.log_run_summary(arr="radarr")
                                     return True
 
@@ -347,6 +348,7 @@ class SeaDexRadarr(SeaDexArr):
                 if self.max_torrents_to_add is not None:
                     if self.torrents_added >= self.max_torrents_to_add:
                         self.log_max_torrents_added()
+                        self.save_cache()
                         self.log_run_summary(arr="radarr")
                         return True
 
@@ -357,6 +359,10 @@ class SeaDexRadarr(SeaDexArr):
                 )
                 continue
 
+        # Final sorted persist: the per-title writes use save_cache(sort=False),
+        # and (unlike Sonarr) this run path has no other save, so without this the
+        # on-disk cache would be left in unsorted insertion order
+        self.save_cache()
         self.log_run_summary(arr="radarr")
 
         return True
@@ -387,15 +393,19 @@ class SeaDexRadarr(SeaDexArr):
             all_tmdb_ids |= self.anibridge.all_tmdb_movie_ids
             all_imdb_ids |= self.anibridge.all_imdb_ids
 
+        # Track kept movie ids in a set: "m not in radarr_movies" on a growing
+        # list is O(n) per check (and compares whole movie objects), making the
+        # scan quadratic on a large library
+        seen_ids = set()
         for m in self.radarr.all_movies():
 
-            tmdb_id = m.tmdbId
-            if tmdb_id in all_tmdb_ids and m not in radarr_movies:
-                radarr_movies.append(m)
+            if m.id in seen_ids:
+                continue
 
-            imdb_id = m.imdbId
-            if imdb_id in all_imdb_ids and m not in radarr_movies:
+            # Keep the movie if it matches by TMDB or IMDb id
+            if m.tmdbId in all_tmdb_ids or m.imdbId in all_imdb_ids:
                 radarr_movies.append(m)
+                seen_ids.add(m.id)
 
         radarr_movies.sort(key=lambda x: x.title)
 

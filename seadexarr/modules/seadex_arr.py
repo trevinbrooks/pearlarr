@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import time
+from collections import defaultdict
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 from hashlib import md5
@@ -458,7 +459,17 @@ class SeaDexArr:
             )
 
         self.anime_mappings = anime_mappings
+        # Reverse indexes over the (large, ~16k-entry) Kometa Anime-IDs map so
+        # get_mappings_from_anime_mappings is an O(matches) dict lookup instead of
+        # three full scans of every mapping per series. Built once here.
+        self._anime_mappings_index = (
+            self._build_anime_mappings_index() if anime_mappings else None
+        )
         self.anidb_mappings = anidb_mappings
+        # Lazily-built {anidbid -> [element]} index over the AniDB XML, so the
+        # specials/movie path in get_ep_list does a dict lookup instead of an
+        # XPath scan of every <anime> element. Populated on first use.
+        self._anidb_index: dict[str, list] | None = None
         self.anibridge = anibridge
 
         self.interactive = self.config.get("interactive", False)
@@ -477,6 +488,12 @@ class SeaDexArr:
         # Memoize get_anilist_ids mapping computation per identifying key, so
         # the prefetch pass and the main loop don't compute it twice per item
         self._anilist_ids_cache = {}
+
+        # Per-run cache of the raw Sonarr episode fetch, keyed by series id. A
+        # multi-season series maps to several AniList ids, each of which would
+        # otherwise re-fetch the same whole-series episode list; cache it for the
+        # run so the network round-trip happens once per series. Reset per run.
+        self._ep_list_cache: dict[int, list] = {}
 
         # Load in cache if it exists. Else create
         self.cache_file = cache
@@ -599,6 +616,31 @@ class SeaDexArr:
 
         return ElementTree.parse(anidb_mappings_file).getroot()
 
+
+    def anidb_anime_by_id(self, anidb_id: int) -> list:
+        """Return the AniDB XML <anime> element(s) for an AniDB id
+
+        Builds (once, lazily) an "{anidbid -> [element]}" index over the parsed
+        AniDB mappings, so callers do a dict lookup instead of an XPath scan of
+        every <anime> element. Returns a list to preserve the caller's existing
+        "0 / 1 / >1 match" handling.
+
+        Args:
+            anidb_id (int): AniDB id to look up
+        """
+
+        if self.anidb_mappings is None:
+            return []
+
+        if self._anidb_index is None:
+            index: dict[str, list] = defaultdict(list)
+            for anime in self.anidb_mappings.findall("anime"):
+                anidbid = anime.get("anidbid")
+                if anidbid is not None:
+                    index[anidbid].append(anime)
+            self._anidb_index = index
+
+        return self._anidb_index.get(str(anidb_id), [])
 
     def get_anibridge_mappings(self) -> AniBridge:
         """Download the anibridge-mappings graph and build an indexed view.
@@ -932,6 +974,34 @@ class SeaDexArr:
         # early return - e.g., when max_torrents_to_add is hit mid-run
         self.save_anilist_cache()
 
+    def _build_anime_mappings_index(self) -> dict[str, dict]:
+        """Build reverse indexes over the Kometa Anime-IDs map for fast lookups
+
+        Anime-IDs is a flat {name: mapping} dict of ~16k entries. Querying it by
+        external id (the per-series hot path) used to mean a full scan per id
+        type; this groups every mapping with an AniList id by each external id it
+        carries, so get_mappings_from_anime_mappings becomes a dict lookup.
+
+        Returns:
+            dict: field name -> {external id -> [mapping, ...]}, for the
+                "tvdb_id", "tmdb_movie_id", "tmdb_show_id" and "imdb_id" fields
+        """
+
+        index: dict[str, dict] = {
+            "tvdb_id": defaultdict(list),
+            "tmdb_movie_id": defaultdict(list),
+            "tmdb_show_id": defaultdict(list),
+            "imdb_id": defaultdict(list),
+        }
+        for m in self.anime_mappings.values():
+            if m.get("anilist_id") is None:
+                continue
+            for field, bucket in index.items():
+                value = m.get(field)
+                if value is not None:
+                    bucket[value].append(m)
+        return index
+
     def get_mappings_from_anime_mappings(
         self,
         tvdb_id: int | None = None,
@@ -965,36 +1035,24 @@ class SeaDexArr:
                 "At least one of tvdb_id, tmdb_id, and imdb_id must be provided",
             )
 
+        index = self._anime_mappings_index
+        if index is None:
+            return anilist_mappings
+
+        # Add the first mapping seen for each AniList id, matching the previous
+        # "don't clobber an id another query already produced" behaviour
+        def merge(field: str, value: Any) -> None:
+            for m in index[field].get(value, ()):
+                anilist_id = m["anilist_id"]
+                if anilist_id not in anilist_mappings:
+                    anilist_mappings[anilist_id] = m
+
         if tvdb_id is not None:
-            anilist_mappings.update(
-                {
-                    m["anilist_id"]: m
-                    for n, m in self.anime_mappings.items()
-                    if m.get("tvdb_id", None) == tvdb_id
-                    and m.get("anilist_id", None) is not None
-                    and m.get("anilist_id", None) not in anilist_mappings
-                },
-            )
+            merge("tvdb_id", tvdb_id)
         if tmdb_id is not None:
-            anilist_mappings.update(
-                {
-                    m["anilist_id"]: m
-                    for n, m in self.anime_mappings.items()
-                    if m.get(f"tmdb_{tmdb_type}_id", None) == tmdb_id
-                    and m.get("anilist_id", None) is not None
-                    and m.get("anilist_id", None) not in anilist_mappings
-                },
-            )
+            merge(f"tmdb_{tmdb_type}_id", tmdb_id)
         if imdb_id is not None:
-            anilist_mappings.update(
-                {
-                    m["anilist_id"]: m
-                    for n, m in self.anime_mappings.items()
-                    if m.get("imdb_id", None) == imdb_id
-                    and m.get("anilist_id", None) is not None
-                    and m.get("anilist_id", None) not in anilist_mappings
-                },
-            )
+            merge("imdb_id", imdb_id)
 
         return anilist_mappings
 
@@ -1091,11 +1149,14 @@ class SeaDexArr:
             sd_entry: SeaDex API query
         """
 
-        final_torrent_list = copy.deepcopy(sd_entry.torrents)
+        # The torrent records are only read here (a fresh dict is built per
+        # release group below), so iterate them directly rather than deep-copying
+        # the whole list of model objects on every entry.
 
         # Filter out any tags
+        ignore_tags = set(self.ignore_tags)
         final_torrent_list = [
-            t for t in final_torrent_list if len(set(self.ignore_tags).intersection(set(t.tags))) == 0
+            t for t in sd_entry.torrents if ignore_tags.isdisjoint(t.tags)
         ]
 
         # Filter down by allowed trackers
@@ -2032,18 +2093,25 @@ class SeaDexArr:
         qBittorrent is not configured (nothing can actually be grabbed)."""
         return self.dry_run or self.qbit is None
 
-    def save_cache(self) -> None:
+    def save_cache(self, sort: bool = True) -> None:
         """Persist the in-memory cache to disk
 
         Skipped during a preview so a preview never writes state, mirroring
         update_cache.
+
+        Args:
+            sort (bool): Sort anilist_entries by id before writing. Defaults to
+                True. The frequent per-title durability writes pass False to skip
+                re-sorting the whole cache each time; an end-of-run save (and the
+                max-torrents early exit) re-sorts, so the persisted file always
+                ends up sorted.
         """
 
         if not self._is_preview():
             save_json(
                 self.cache,
                 self.cache_file,
-                sort_cache=True,
+                sort_cache=sort,
             )
 
     def update_cache(self, arr: str, al_id: int, cache_details: dict | None = None) -> bool:
@@ -2076,7 +2144,9 @@ class SeaDexArr:
         # Persist via save_cache, which keeps the preview gate in one place:
         # a preview keeps the in-memory cache consistent for the rest of the
         # run, but never persists it - so a preview never marks a title as done.
-        self.save_cache()
+        # Skip the sort on these frequent per-title writes; the end-of-run save
+        # re-sorts, so the persisted file still ends up ordered by id.
+        self.save_cache(sort=False)
 
         return True
 
@@ -2105,6 +2175,9 @@ class SeaDexArr:
 
         self.stats = self._fresh_stats()
         self.torrents_added = 0
+        # Drop any episode lists cached from a previous run so a fresh run always
+        # re-reads the current Sonarr library
+        self._ep_list_cache = {}
         # Monotonic so a wall-clock step (NTP, DST) can't yield negative elapsed
         self._run_started_monotonic = time.monotonic()
         counter = getattr(self.logger, "seadex_counter", None)

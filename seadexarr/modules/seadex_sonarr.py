@@ -703,17 +703,19 @@ class SeaDexSonarr(SeaDexArr):
             all_tvdb_ids |= self.anibridge.all_tvdb_ids
             all_imdb_ids |= self.anibridge.all_imdb_ids
 
+        # Track which series ids we've kept via a set: "s not in sonarr_series"
+        # on a growing list is O(n) per check (and compares whole series objects),
+        # making the scan quadratic on a large library
+        seen_ids = set()
         for s in self.sonarr.all_series():
 
-            # Check by TVDB IDs
-            tvdb_id = s.tvdbId
-            if tvdb_id in all_tvdb_ids and s not in sonarr_series:
-                sonarr_series.append(s)
+            if s.id in seen_ids:
+                continue
 
-            # Check by IMDb IDs
-            imdb_id = s.imdbId
-            if imdb_id in all_imdb_ids and s not in sonarr_series:
+            # Keep the series if it matches by TVDB or IMDb id
+            if s.tvdbId in all_tvdb_ids or s.imdbId in all_imdb_ids:
                 sonarr_series.append(s)
+                seen_ids.add(s.id)
 
         sonarr_series.sort(key=lambda x: x.title)
 
@@ -764,30 +766,36 @@ class SeaDexSonarr(SeaDexArr):
         else:
             mapping_mode = "anime_ids"
 
-        # Get all the episodes for a season. Use the raw Sonarr API
-        # call here to get details
-        eps_req_url = (
-            f"{self.sonarr_url}/api/v3/episode?"
-            f"seriesId={sonarr_series_id}&"
-            f"includeImages=false&"
-            f"includeEpisodeFile=true&"
-            f"apikey={self.sonarr_api_key}"
-        )
-        eps_req = self.session.get(eps_req_url)
-
-        if eps_req.status_code != 200:
-            self.logger.warning(
-                "Could not fetch episode data from Sonarr; it may be unreachable",
+        # Get all the episodes for the whole series. The fetch is per-series (not
+        # per-AniList-id), so a multi-season series resolving to several ids would
+        # otherwise re-request the identical list; cache it per series for the run
+        # and only do the per-id filtering below on the shared, read-only list.
+        ep_list = self._ep_list_cache.get(sonarr_series_id)
+        if ep_list is None:
+            eps_req_url = (
+                f"{self.sonarr_url}/api/v3/episode?"
+                f"seriesId={sonarr_series_id}&"
+                f"includeImages=false&"
+                f"includeEpisodeFile=true&"
+                f"apikey={self.sonarr_api_key}"
             )
-            return None
+            eps_req = self.session.get(eps_req_url)
 
-        ep_list = eps_req.json()
+            if eps_req.status_code != 200:
+                self.logger.warning(
+                    "Could not fetch episode data from Sonarr; it may be unreachable",
+                )
+                return None
 
-        # Sort by season/episode number for slicing later
-        ep_list = sorted(
-            ep_list,
-            key=lambda x: (x.get("seasonNumber", None), x.get("episodeNumber", None)),
-        )
+            # Sort by season/episode number for slicing later
+            ep_list = sorted(
+                eps_req.json(),
+                key=lambda x: (
+                    x.get("seasonNumber", None),
+                    x.get("episodeNumber", None),
+                ),
+            )
+            self._ep_list_cache[sonarr_series_id] = ep_list
 
         # Filter down here by various things
         final_ep_list = []
@@ -826,9 +834,7 @@ class SeaDexSonarr(SeaDexArr):
             and anidb_id is not None
             and (al_format not in ["TV"] or tvdb_season == 0)
         ):
-            anidb_item = self.anidb_mappings.findall(
-                f"anime[@anidbid='{anidb_id}']",
-            )
+            anidb_item = self.anidb_anime_by_id(anidb_id)
 
             # If we don't find anything, no worries. If we find multiple, worries
             if len(anidb_item) > 1:
