@@ -42,6 +42,13 @@ ALLOWED_ARRS = [
 ]
 
 
+def _require_arr(arr: str) -> None:
+    """Guard that ``arr`` is a supported Arr type."""
+
+    if arr not in ALLOWED_ARRS:
+        raise ValueError(f"arr must be one of: {ALLOWED_ARRS}")
+
+
 def fresh_stats() -> dict:
     """Build an empty per-run stats tally for the end-of-run summary."""
 
@@ -127,8 +134,7 @@ class RunReporter:
                 the dry-run note wording).
         """
 
-        if arr not in ALLOWED_ARRS:
-            raise ValueError(f"arr must be one of: {ALLOWED_ARRS}")
+        _require_arr(arr)
 
         stats = ctx.stats
 
@@ -227,15 +233,14 @@ class RunReporter:
                 group_style="grey50" if is_dry_run else "cyan",
                 base_style="grey50" if is_dry_run else "green",
             )
+            # A dry run dims the torrent value too (matching the dimmed title line
+            # and the already-dim files/link) so the would-be grabs don't read as
+            # real; files and link are dim either way.
             rows = [
                 ("files", item.get("coverage"), "grey50"),
                 ("link", item.get("url"), "grey50"),
-                ("torrent", torrent_value, "green"),
+                ("torrent", torrent_value, "grey50" if is_dry_run else "green"),
             ]
-            # A dry run dims every value (matching the dimmed title line) so the
-            # would-be grabs don't read as real
-            if is_dry_run:
-                rows = [(label, value, "grey50") for label, value, _ in rows]
             _summary_block(
                 item.get("title") or "(unknown title)",
                 "grey50" if is_dry_run else None,
@@ -332,8 +337,7 @@ class RunReporter:
             n_items: Total number of shows/movies
         """
 
-        if arr not in ALLOWED_ARRS:
-            raise ValueError(f"arr must be one of: {ALLOWED_ARRS}")
+        _require_arr(arr)
 
         item_label = {
             "radarr": count_noun(n_items, "movie"),

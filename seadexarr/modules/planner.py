@@ -537,7 +537,7 @@ class DownloadPlanner:
                     # If we have matched the release groups but not the file sizes, then flag that
                     # here and mark for download
                     size_matches = list(compress(size_matches, rg_matches))
-                    if not any(size_matches) and len(size_matches) > 0:
+                    if size_matches and not any(size_matches):
                         self.logger.debug(
                             indent_string(
                                 f"File sizes all differ for release group {seadex_rg} - will download {url}",
