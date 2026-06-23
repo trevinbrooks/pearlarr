@@ -449,7 +449,7 @@ class SeaDexArr:
                     continue
                 seadex_dict_filtered[srg] = copy.deepcopy(seadex_dict[srg])
 
-            seadex_dict = copy.deepcopy(seadex_dict_filtered)
+            seadex_dict = seadex_dict_filtered
 
         return seadex_dict
 
@@ -507,9 +507,8 @@ class SeaDexArr:
     def add_torrent(
         self,
         torrent_dict: SeadexDict,
-        torrent_client: str = "qbit",
     ) -> tuple[int, list[ReleaseOutcome]]:
-        """Add torrent(s) to a torrent client
+        """Add torrent(s) to qBittorrent
 
         The per-release outcome lines (added / kept) are NOT logged here; this
         returns them so the caller (log_seadex_action) can print the whole block
@@ -520,8 +519,6 @@ class SeaDexArr:
 
         Args:
             torrent_dict (dict): Dictionary of torrent info
-            torrent_client (str): Torrent client to use. Options are
-                "qbit" for qBittorrent. Defaults to "qbit"
 
         Returns:
             tuple: (n_torrents_added, results), where results is a list of
@@ -530,98 +527,111 @@ class SeaDexArr:
 
         n_torrents_added = 0
         results: list[ReleaseOutcome] = []
+        cap = self._config.max_torrents_to_add
 
         for srg, srg_item in torrent_dict.items():
+            for url, url_item in srg_item.urls.items():
 
-            seadex_urls = srg_item.urls
-            for url, url_item in seadex_urls.items():
-
-                # If not flagged for download, then skip
-                download = url_item.download
-                if not download:
+                outcome = self._add_one_url(srg, url, url_item)
+                if outcome is None:
                     continue
 
-                item_hash = url_item.hash
-                tracker = url_item.tracker
-
-                if self._config.public_only and not url_item.is_public:
-                    self.log_fmt.detail(
-                        "skipped",
-                        f"{tracker} private-only (public_only on)",
-                        value_style="yellow",
-                        level=logging.WARNING,
-                    )
-                    self._ctx.public_only_skipped = True
-                    self._ctx.public_only_groups.append(srg)
+                results.append(outcome)
+                if outcome.outcome is not AddOutcome.ADDED:
                     continue
 
-                # Skip trackers not in the user's selected list
-                if tracker.casefold() not in self._config.trackers:
-                    self.log_fmt.detail(
-                        "skipped",
-                        f"{url} (tracker {tracker} not in your selected list)",
-                        value_style="yellow",
-                    )
-                    continue
-
-                if torrent_client != "qbit":
-                    raise ValueError(f"Unsupported torrent client {torrent_client}")
-
-                # The service parses the release URL by tracker and adds it to
-                # qBittorrent, returning the add status and a display name (the
-                # client's name, or the release title scraped from the source
-                # page as a fallback). A preview run simulates the add.
-                success, torrent_name = self._torrents.add(
-                    url=url,
-                    tracker=tracker,
-                    torrent_hash=item_hash,
-                    preview=self._is_preview(),
-                )
-
-                if success is AddOutcome.ADDED:
-                    results.append(
-                        ReleaseOutcome(
-                            outcome=AddOutcome.ADDED,
-                            name=torrent_name,
-                            group=srg,
-                        ),
-                    )
-
-                    # Record the grab for the end-of-run summary. Prefer the
-                    # release's own parsed file list (precise for multi-cour /
-                    # per-torrent grabs); fall back to the entry-level coverage we
-                    # mapped from the Arr so the summary's "files" is never blank
-                    # when a release's filenames couldn't be parsed (e.g. an OVA).
-                    coverage_str = _coverage.coverage_string(
-                        url_item.episodes,
-                    ) or self._ctx.current_coverage
-                    self._ctx.stats.added.append(
-                        GrabRecord(
-                            title=self._ctx.current_title,
-                            coverage=coverage_str,
-                            url=self._ctx.current_url,
-                            name=torrent_name,
-                            group=srg,
-                        ),
-                    )
-
-                    # Stop once max_torrents_to_add is reached
-                    self._ctx.torrents_added += 1
-                    n_torrents_added += 1
-                    if self._config.max_torrents_to_add is not None:
-                        if self._ctx.torrents_added >= self._config.max_torrents_to_add:
-                            return n_torrents_added, results
-
-                elif success is AddOutcome.ALREADY_ADDED:
-                    results.append(
-                        ReleaseOutcome(
-                            outcome=AddOutcome.ALREADY_ADDED,
-                            name=torrent_name,
-                            group=srg,
-                        ),
-                    )
+                # Stop once max_torrents_to_add is reached
+                self._ctx.torrents_added += 1
+                n_torrents_added += 1
+                if cap is not None and self._ctx.torrents_added >= cap:
+                    return n_torrents_added, results
 
         return n_torrents_added, results
+
+    def _add_one_url(
+        self,
+        srg: str,
+        url: str,
+        url_item: SeadexUrlItem,
+    ) -> ReleaseOutcome | None:
+        """Resolve a single SeaDex url to an add outcome (or ``None`` to skip).
+
+        Returns ``None`` for a release that's filtered out (not flagged for
+        download, private-only under ``public_only``, or an unselected tracker)
+        and for a service ``add`` that neither added nor was already present. On
+        an ``AddOutcome.ADDED`` the run-summary grab record is appended here; the
+        caller owns the torrents_added/cap bookkeeping.
+        """
+
+        # If not flagged for download, then skip
+        if not url_item.download:
+            return None
+
+        tracker = url_item.tracker
+
+        if self._config.public_only and not url_item.is_public:
+            self.log_fmt.detail(
+                "skipped",
+                f"{tracker} private-only (public_only on)",
+                value_style="yellow",
+                level=logging.WARNING,
+            )
+            self._ctx.public_only_skipped = True
+            self._ctx.public_only_groups.append(srg)
+            return None
+
+        # Skip trackers not in the user's selected list
+        if tracker.casefold() not in self._config.trackers:
+            self.log_fmt.detail(
+                "skipped",
+                f"{url} (tracker {tracker} not in your selected list)",
+                value_style="yellow",
+            )
+            return None
+
+        # The service parses the release URL by tracker and adds it to
+        # qBittorrent, returning the add status and a display name (the
+        # client's name, or the release title scraped from the source
+        # page as a fallback). A preview run simulates the add.
+        success, torrent_name = self._torrents.add(
+            url=url,
+            tracker=tracker,
+            torrent_hash=url_item.hash,
+            preview=self._is_preview(),
+        )
+
+        if success is AddOutcome.ADDED:
+            # Record the grab for the end-of-run summary. Prefer the
+            # release's own parsed file list (precise for multi-cour /
+            # per-torrent grabs); fall back to the entry-level coverage we
+            # mapped from the Arr so the summary's "files" is never blank
+            # when a release's filenames couldn't be parsed (e.g. an OVA).
+            coverage_str = _coverage.coverage_string(
+                url_item.episodes,
+            ) or self._ctx.current_coverage
+            self._ctx.stats.added.append(
+                GrabRecord(
+                    title=self._ctx.current_title,
+                    coverage=coverage_str,
+                    url=self._ctx.current_url,
+                    name=torrent_name,
+                    group=srg,
+                ),
+            )
+            return ReleaseOutcome(
+                outcome=AddOutcome.ADDED,
+                name=torrent_name,
+                group=srg,
+            )
+
+        if success is AddOutcome.ALREADY_ADDED:
+            return ReleaseOutcome(
+                outcome=AddOutcome.ALREADY_ADDED,
+                name=torrent_name,
+                group=srg,
+            )
+
+        return None
 
     def _is_preview(self) -> bool:
         """A run is a no-op preview when an explicit dry run was requested OR
@@ -896,66 +906,26 @@ class SeaDexArr:
         # THIS title actually grabbed anything
         torrents_before = self._ctx.torrents_added
 
-        if any_to_download:
-            # Resolve the AniList cover thumbnail (via the gateway) and build the
-            # Discord embed fields for the grab. The thumb lookup is done up front
-            # to preserve ordering even though it's only used in the push below.
-            anilist_thumb = self._anilist.thumb(al_id)
-            fields = self._notifier.build_fields(
-                arr=arr,
-                release_group=release_group,
-                seadex_dict=seadex_dict,
-            )
-
-            # Add torrents to qBittorrent. add_torrent runs even in a preview
-            # (no client / dry run): the service simulates the add, while the
-            # download-flag, public_only and tracker filters still apply, so only
-            # releases that would actually be grabbed are counted.
-            n_torrents_added, results = self.add_torrent(
-                torrent_dict=seadex_dict,
-                torrent_client="qbit",
-            )
-
-            # Log the action block now the outcome is known, so the status reads
-            # "adding" only when something was actually grabbed (else "keeping")
-            self._reporter.log_seadex_action(
-                seadex_dict, results, dry_run=self._is_preview(),
-            )
-
-            # Push a message to Discord if we've added anything (never on a
-            # preview - it's an outward notification)
-            if (
-                self._notifier.enabled
-                and n_torrents_added > 0
-                and not self._is_preview()
-            ):
-                self._notifier.push(
-                    arr_title=item_title,
-                    al_title=anilist_title,
-                    seadex_url=sd_url,
-                    fields=fields,
-                    thumb_url=anilist_thumb,
+        if not any_to_download:
+            if not self._ctx.public_only_skipped:
+                self._ctx.stats.up_to_date += 1
+                self.log_fmt.detail(
+                    "status",
+                    "already have the recommended release",
+                    value_style="blue",
                 )
-
-            if self._config.max_torrents_to_add is not None:
-                if self._ctx.torrents_added >= self._config.max_torrents_to_add:
-                    self._reporter.log_max_torrents_added()
-                    self.cache_store.save(preview=self._is_preview())
-                    self._reporter.log_run_summary(
-                        self._ctx,
-                        arr,
-                        is_preview=self._is_preview(),
-                        has_client=self.qbit is not None,
-                    )
-                    return True
-
-        elif not self._ctx.public_only_skipped:
-            self._ctx.stats.up_to_date += 1
-            self.log_fmt.detail(
-                "status",
-                "already have the recommended release",
-                value_style="blue",
-            )
+        elif self._grab(
+            arr=arr,
+            al_id=al_id,
+            item_title=item_title,
+            anilist_title=anilist_title,
+            sd_url=sd_url,
+            seadex_dict=seadex_dict,
+            release_group=release_group,
+        ):
+            # max_torrents_to_add reached: cache saved and summary logged inside
+            # _grab; stop the whole run.
+            return True
 
         # Work out whether THIS title actually grabbed anything
         added_this_title = self._ctx.torrents_added - torrents_before
@@ -991,6 +961,74 @@ class SeaDexArr:
 
         # Add in a wait, if required
         time.sleep(self._config.sleep_time)
+
+        return False
+
+    def _grab(
+        self,
+        arr: Arr,
+        al_id: int,
+        item_title: str,
+        anilist_title: str,
+        sd_url: str,
+        seadex_dict: SeadexDict,
+        release_group: list | str | None,
+    ) -> bool:
+        """Add this title's torrents, notify, and honour the run-wide cap.
+
+        Runs only when there's something to download. Returns True once
+        max_torrents_to_add has been reached (cache saved and summary logged
+        here) so the caller stops the whole run; otherwise False.
+        """
+
+        # Resolve the AniList cover thumbnail (via the gateway) and build the
+        # Discord embed fields for the grab. The thumb lookup is done up front
+        # to preserve ordering even though it's only used in the push below.
+        anilist_thumb = self._anilist.thumb(al_id)
+        fields = self._notifier.build_fields(
+            arr=arr,
+            release_group=release_group,
+            seadex_dict=seadex_dict,
+        )
+
+        # Add torrents to qBittorrent. add_torrent runs even in a preview
+        # (no client / dry run): the service simulates the add, while the
+        # download-flag, public_only and tracker filters still apply, so only
+        # releases that would actually be grabbed are counted.
+        n_torrents_added, results = self.add_torrent(torrent_dict=seadex_dict)
+
+        # Log the action block now the outcome is known, so the status reads
+        # "adding" only when something was actually grabbed (else "keeping")
+        self._reporter.log_seadex_action(
+            seadex_dict, results, dry_run=self._is_preview(),
+        )
+
+        # Push a message to Discord if we've added anything (never on a
+        # preview - it's an outward notification)
+        if (
+            self._notifier.enabled
+            and n_torrents_added > 0
+            and not self._is_preview()
+        ):
+            self._notifier.push(
+                arr_title=item_title,
+                al_title=anilist_title,
+                seadex_url=sd_url,
+                fields=fields,
+                thumb_url=anilist_thumb,
+            )
+
+        cap = self._config.max_torrents_to_add
+        if cap is not None and self._ctx.torrents_added >= cap:
+            self._reporter.log_max_torrents_added()
+            self.cache_store.save(preview=self._is_preview())
+            self._reporter.log_run_summary(
+                self._ctx,
+                arr,
+                is_preview=self._is_preview(),
+                has_client=self.qbit is not None,
+            )
+            return True
 
         return False
 
