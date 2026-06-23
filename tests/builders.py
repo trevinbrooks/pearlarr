@@ -45,37 +45,6 @@ def make_logger(name: str = "seadexarr-test") -> logging.Logger:
     return logger
 
 
-class _StubArr(SeaDexArr):
-    """A concrete ``SeaDexArr`` whose abstract hooks are no-ops.
-
-    Exists only so ``object.__new__`` can build an instance: ``object.__new__``
-    refuses a class that still has abstract methods, so all four hooks are
-    implemented here even though the characterization tests never call them.
-    """
-
-    def _get_all_items(self) -> list:
-        return []
-
-    def _filter_to_single_item(self, items: list, item_id: int) -> list:
-        del item_id
-        return items
-
-    def _item_anilist_ids(self, item: Any, log_ignored: bool = True) -> dict:
-        del item, log_ignored
-        return {}
-
-    def _process_al_id(
-        self,
-        arr: str,
-        item: Any,
-        item_title: str,
-        al_id: int,
-        mapping: dict,
-    ) -> bool:
-        del arr, item, item_title, al_id, mapping
-        return False
-
-
 def make_config(**overrides: Any) -> AppConfig:
     """An in-memory ``AppConfig`` carrying ``make_arr``'s decision-test defaults.
 
@@ -104,16 +73,19 @@ def make_config(**overrides: Any) -> AppConfig:
     return AppConfig(path="unused.yml", arr="sonarr", data=data)
 
 
-def make_arr(**overrides: Any) -> _StubArr:
+def make_arr(**overrides: Any) -> SeaDexArr:
     """Build a bare ``SeaDexArr`` with only the attributes the methods read.
 
     Bypasses ``__init__`` via ``object.__new__`` and assigns sane defaults for
     the collaborators the decision methods consult; the config flags live on an
     in-memory ``AppConfig`` (``self._config``). Pass keyword overrides to vary a
     single config flag (e.g. ``make_arr(public_only=True)``) or another attribute.
+
+    ``SeaDexArr`` is a concrete engine after Phase 6b (no abstract hooks), so
+    ``object.__new__`` builds one directly - the old no-op-hooks stub is gone.
     """
 
-    arr = object.__new__(_StubArr)
+    arr = object.__new__(SeaDexArr)
 
     logger = make_logger()
 
@@ -130,8 +102,6 @@ def make_arr(**overrides: Any) -> _StubArr:
         "logger": logger,
         "log_fmt": mock.MagicMock(),
         "_config": make_config(**config_overrides),
-        "public_only_skipped": False,
-        "public_only_groups": [],
     }
     defaults.update(overrides)
     for name, value in defaults.items():

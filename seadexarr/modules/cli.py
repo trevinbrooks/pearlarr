@@ -22,36 +22,54 @@ seadexarr_cli.add_typer(seadexarr_config)
 seadexarr_cli.add_typer(seadexarr_cache)
 
 
-def _build_shared_resolver(
+def _build_shared(
     config: str,
     logger: logging.Logger,
-) -> MappingResolver | None:
-    """Build the id-mapping resolver both arrs share for one run.
+) -> tuple[AppConfig, MappingResolver] | None:
+    """Load the config once and build the id-mapping resolver both arrs share.
 
-    The resolver downloads, parses and indexes the three large mapping sources;
-    building it once (here, the composition root) and injecting it into both
-    SeaDexRadarr and SeaDexSonarr means that work happens a single time per run
-    rather than once per arr. The resolver settings are arr-independent, so the
-    config is loaded as "sonarr" purely to read them.
+    This is the composition root for a run. The config is read and template-synced
+    a single time and returned so each arr reuses it (one read+sync per run, not
+    one per arr); the resolver settings are arr-independent, so it's loaded as
+    "sonarr" purely to read them. The resolver downloads, parses and indexes the
+    three large mapping sources once and is injected into both SeaDexRadarr and
+    SeaDexSonarr, so that work also happens a single time per run.
 
-    Returns None (after logging) when the config can't be loaded or a source
-    can't be fetched, so the scheduled loop skips the cycle and retries next
-    time instead of crashing - mirroring the per-arr error handling this
-    replaces.
+    Returns ``(app_config, resolver)``, or None - after logging the specific
+    cause - when the config is missing/unreadable or a mapping source can't be
+    fetched, so the caller skips this run and retries next cycle instead of
+    crashing. The failure cause is distinguished so the log says whether the user
+    needs to fix their config or a source endpoint was unreachable.
     """
 
     try:
-        config_obj = AppConfig.load(config, "sonarr")
-        return MappingResolver(
-            cache_time=config_obj.cache_time,
-            ignore_anilist_ids=config_obj.ignore_anilist_ids,
-            anime_mappings_cfg=config_obj.anime_mappings_cfg,
-            anidb_mappings_cfg=config_obj.anidb_mappings_cfg,
-            anibridge_mappings_cfg=config_obj.anibridge_mappings_cfg,
+        app_config = AppConfig.load(config, "sonarr")
+    except FileNotFoundError:
+        logger.error(
+            f"No config file at {config} - a starter template was written; "
+            "fill it in and re-run. Skipping this run.",
+        )
+        return None
+    except Exception:
+        logger.error(f"Could not load config {config}; skipping this run", exc_info=True)
+        return None
+
+    try:
+        resolver = MappingResolver(
+            cache_time=app_config.cache_time,
+            ignore_anilist_ids=app_config.ignore_anilist_ids,
+            anime_mappings_cfg=app_config.anime_mappings_cfg,
+            anidb_mappings_cfg=app_config.anidb_mappings_cfg,
+            anibridge_mappings_cfg=app_config.anibridge_mappings_cfg,
         )
     except Exception:
-        logger.error("Unexpected error building shared mappings", exc_info=True)
+        logger.error(
+            "Could not fetch/parse the id-mapping sources; skipping this run",
+            exc_info=True,
+        )
         return None
+
+    return app_config, resolver
 
 
 # Default command, schedule run
@@ -91,12 +109,14 @@ def run_scheduled() -> None:
         present_time = datetime.now().strftime("%H:%M")
         logger.info(f"Time is {present_time}. Starting scheduled run")
 
-        # Build the id-mapping resolver once and share it across both arrs (one
-        # download/parse per cycle). On failure it logs and returns None, so the
-        # cycle is skipped and retried on the next pass rather than crashing.
-        mappings = _build_shared_resolver(config, logger)
+        # Load the config and build the id-mapping resolver once, then share both
+        # across the two arrs (one config read + one download/parse per cycle). On
+        # failure it logs the cause and returns None, so the cycle is skipped and
+        # retried on the next pass rather than crashing.
+        shared = _build_shared(config, logger)
 
-        if mappings is not None:
+        if shared is not None:
+            app_config, mappings = shared
 
             # Run both Radarr and Sonarr syncs, catching
             # errors if they do arise. Split them up
@@ -108,6 +128,7 @@ def run_scheduled() -> None:
                     cache=cache,
                     logger=logger,
                     mappings=mappings,
+                    app_config=app_config.for_arr("radarr"),
                 )
                 sdr.run()
             except Exception:
@@ -123,6 +144,7 @@ def run_scheduled() -> None:
                     cache=cache,
                     logger=logger,
                     mappings=mappings,
+                    app_config=app_config.for_arr("sonarr"),
                 )
                 sds.run()
             except Exception:
@@ -171,46 +193,55 @@ def run_single(
     run_radarr = radarr or movie_id is not None
     run_sonarr = sonarr or series_id is not None
 
-    # Build the shared id-mapping resolver once for whichever arr(s) run (one
-    # download/parse, reused by both). None (after logging) on a config/source
-    # failure, in which case the run is skipped.
-    mappings = None
+    # Load the config and build the shared id-mapping resolver once for whichever
+    # arr(s) run (one config read + one download/parse, reused by both). None
+    # (after logging the cause) on a config/source failure, in which case the run
+    # is skipped.
+    shared = None
     if run_radarr or run_sonarr:
-        mappings = _build_shared_resolver(config, logger)
+        shared = _build_shared(config, logger)
 
-    if mappings is not None and run_radarr:
-        sdr = None
-        try:
-            sdr = SeaDexRadarr(
-                config=config,
-                cache=cache,
-                logger=logger,
-                mappings=mappings,
-            )
-            sdr.run(tmdb_id=movie_id, dry_run=dry_run)
-        except Exception:
-            logger.error("Unexpected error during Radarr run", exc_info=True)
-        finally:
-            if sdr is not None:
-                sdr.close()
+    if shared is not None:
+        app_config, mappings = shared
 
-    if mappings is not None and run_sonarr:
-        sds = None
-        try:
-            sds = SeaDexSonarr(
-                config=config,
-                cache=cache,
-                logger=logger,
-                mappings=mappings,
-            )
-            sds.run(tvdb_id=series_id, dry_run=dry_run)
-        except Exception:
-            logger.error("Unexpected error during Sonarr run", exc_info=True)
-        finally:
-            if sds is not None:
-                sds.close()
+        if run_radarr:
+            sdr = None
+            try:
+                sdr = SeaDexRadarr(
+                    config=config,
+                    cache=cache,
+                    logger=logger,
+                    mappings=mappings,
+                    app_config=app_config.for_arr("radarr"),
+                )
+                sdr.run(tmdb_id=movie_id, dry_run=dry_run)
+            except Exception:
+                logger.error("Unexpected error during Radarr run", exc_info=True)
+            finally:
+                if sdr is not None:
+                    sdr.close()
 
-    return True
+        if run_sonarr:
+            sds = None
+            try:
+                sds = SeaDexSonarr(
+                    config=config,
+                    cache=cache,
+                    logger=logger,
+                    mappings=mappings,
+                    app_config=app_config.for_arr("sonarr"),
+                )
+                sds.run(tvdb_id=series_id, dry_run=dry_run)
+            except Exception:
+                logger.error("Unexpected error during Sonarr run", exc_info=True)
+            finally:
+                if sds is not None:
+                    sds.close()
+
+    # True when the requested run proceeded (or nothing was requested); False when
+    # an arr was requested but the shared config/mappings couldn't be built, so a
+    # programmatic caller can tell a no-op-on-failure from a real run.
+    return shared is not None or not (run_radarr or run_sonarr)
 
 
 # Config commands

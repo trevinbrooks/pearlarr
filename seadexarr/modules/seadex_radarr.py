@@ -1,53 +1,45 @@
-import logging
 import time
 from typing import Any
 
 from .log import indent_string
-from .mappings import MappingResolver
+from .protocols import RunServices
 from .radarr_client import RadarrClient, collect_anime_movies
-from .seadex_arr import SeaDexArr
+from .seadex_arr import ArrFacade, SeaDexArr
 
 
-class SeaDexRadarr(SeaDexArr):
+class RadarrSync:
+    """Radarr sync strategy: owns the Radarr REST client + movie domain logic.
 
-    def __init__(
-        self,
-        config: str = "config.yml",
-        cache: str = "cache.json",
-        logger: logging.Logger | None = None,
-        *,
-        mappings: MappingResolver,
-    ) -> None:
-        """Sync Radarr instance with SeaDex
+    Implements the :class:`~.protocols.ArrSync` hooks the engine drives. Built
+    from a fully-constructed :class:`~.seadex_arr.SeaDexArr` engine (it reads the
+    engine's config/session/mappings to stand up its client), but it does not
+    keep a reference to the engine: the per-id hooks receive the engine as a
+    :class:`~.protocols.RunServices` view instead.
+    """
+
+    def __init__(self, engine: SeaDexArr) -> None:
+        """Stand up the Radarr client from the engine's shared collaborators.
 
         Args:
-            config (str, optional): Path to config file.
-                Defaults to "config.yml".
-            cache (str, optional): Path to cache file.
-                Defaults to "cache.json".
-            logger. Logging instance. Defaults to None,
-                which will create one.
-            mappings (MappingResolver): Shared id-mapping resolver, injected by
-                the CLI so both arrs reuse one download/parse of the sources.
+            engine (SeaDexArr): The constructed run engine; its config, session
+                and mappings are read here (not retained).
         """
 
-        SeaDexArr.__init__(
-            self,
-            arr="radarr",
-            config=config,
-            cache=cache,
-            logger=logger,
-            mappings=mappings,
-        )
+        self._config = engine._config
+        self.session = engine.session
+        self.logger = engine.logger
+        self.anime_mappings = engine.anime_mappings
+        self.anibridge = engine.anibridge
 
-        # Set up Radarr
         radarr_url = self._config.get("radarr_url", None)
         if not radarr_url:
-            raise ValueError(f"radarr_url needs to be defined in {config}")
+            raise ValueError(f"radarr_url needs to be defined in {self._config.path}")
 
         radarr_api_key = self._config.get("radarr_api_key", None)
         if not radarr_api_key:
-            raise ValueError(f"radarr_api_key needs to be defined in {config}")
+            raise ValueError(
+                f"radarr_api_key needs to be defined in {self._config.path}",
+            )
 
         self.radarr = RadarrClient(
             url=radarr_url,
@@ -56,25 +48,14 @@ class SeaDexRadarr(SeaDexArr):
             logger=self.logger,
         )
 
-    def run(self, tmdb_id: int | None = None, dry_run: bool = False) -> bool:
-        """Run the SeaDex Radarr syncer
+    # --- ArrSync hooks ------------------------------------------------------
 
-        Args:
-            tmdb_id (int, optional): If set, only run for the movie with this
-                TMDB ID. Defaults to None, which runs for all movies.
-            dry_run (bool, optional): If True, simulate the run without grabbing
-                torrents, writing the cache, or sending notifications.
-                Defaults to False.
-        """
-
-        return self.run_sync(arr="radarr", item_id=tmdb_id, dry_run=dry_run)
-
-    def _get_all_items(self) -> list:
+    def get_items(self) -> list:
         """Every Radarr movie that has an associated AniList ID."""
 
         return self.get_all_radarr_movies()
 
-    def _filter_to_single_item(self, items: list, item_id: int) -> list:
+    def filter_to_single(self, items: list, item_id: int) -> list:
         """Narrow the movie list to a single TMDB ID."""
 
         filtered = [m for m in items if m.tmdbId == item_id]
@@ -84,18 +65,24 @@ class SeaDexRadarr(SeaDexArr):
             )
         return filtered
 
-    def _item_anilist_ids(self, item: Any, log_ignored: bool = True) -> dict:
+    def item_anilist_ids(
+        self,
+        run: RunServices,
+        item: Any,
+        log_ignored: bool = True,
+    ) -> dict:
         """Resolve AniList ids for a Radarr movie (by TMDB / IMDb id)."""
 
-        return self.get_anilist_ids(
+        return run.get_anilist_ids(
             tmdb_id=item.tmdbId,
             imdb_id=item.imdbId,
             tmdb_type="movie",
             log_ignored=log_ignored,
         )
 
-    def _process_al_id(
+    def process_al_id(
         self,
+        run: RunServices,
         arr: str,
         item: Any,
         item_title: str,
@@ -110,20 +97,20 @@ class SeaDexRadarr(SeaDexArr):
         mapping) but is accepted to match the shared hook signature.
         """
 
-        sd_entry = self._al_id_prologue(al_id)
+        sd_entry = run.al_id_prologue(al_id)
         if sd_entry is None:
             return False
         sd_url = sd_entry.url
 
         # Skip if already cached. Movies have no episode coverage, so the
         # one-time backfill on a legacy record is just the URL.
-        if self._cached_entry_skip(arr, al_id, sd_entry, sd_url, lambda: ""):
+        if run.cached_entry_skip(arr, al_id, sd_entry, sd_url, lambda: ""):
             return False
 
         # Resolve the AniList title, then log the active entry (a movie has no
         # episode coverage, so the line carries just the URL)
-        anilist_title = self.get_anilist_title(al_id=al_id)
-        self.log_al_title(anilist_title=anilist_title, sd_entry=sd_entry)
+        anilist_title = run.get_anilist_title(al_id=al_id)
+        run.log_al_title(anilist_title=anilist_title, sd_entry=sd_entry)
 
         # Setup info for cache (URL so cached runs can link to SeaDex; movies have
         # no episode coverage)
@@ -147,12 +134,12 @@ class SeaDexRadarr(SeaDexArr):
         )
 
         # Produce a dictionary of info from the SeaDex request
-        seadex_dict = self.get_seadex_dict(sd_entry=sd_entry)
+        seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
-            self.log_no_seadex_releases()
+            run.log_no_seadex_releases()
 
-            self.update_cache(
+            run.update_cache(
                 arr=arr,
                 al_id=al_id,
                 cache_details=cache_details,
@@ -169,19 +156,19 @@ class SeaDexRadarr(SeaDexArr):
 
         # If we're in interactive mode and there are multiple options here, then select
         if self._config.interactive and len(seadex_dict) > 1:
-            seadex_dict = self.filter_seadex_interactive(
+            seadex_dict = run.filter_seadex_interactive(
                 seadex_dict=seadex_dict,
                 sd_entry=sd_entry,
             )
 
-        torrent_hashes, seadex_dict = self.filter_seadex_downloads(
+        torrent_hashes, seadex_dict = run.filter_seadex_downloads(
             al_id=al_id,
             seadex_dict=seadex_dict,
             arr=arr,
             arr_release_dict=radarr_release_dict,
         )
 
-        return self._grab_and_cache(
+        return run.grab_and_cache(
             arr=arr,
             al_id=al_id,
             item_title=item_title,
@@ -192,6 +179,8 @@ class SeaDexRadarr(SeaDexArr):
             cache_details=cache_details,
             release_group=radarr_release_group,
         )
+
+    # --- Radarr domain logic ------------------------------------------------
 
     def get_all_radarr_movies(self) -> list:
         """Get all movies in Radarr that have an associated AniList ID"""
@@ -236,3 +225,30 @@ class SeaDexRadarr(SeaDexArr):
             radarr_release_dict = {None: {"size": None}}
 
         return radarr_release_dict
+
+
+class SeaDexRadarr(ArrFacade):
+    """Public Radarr entry point: composes the engine with a RadarrSync.
+
+    Preserves the historical surface - ``SeaDexRadarr(config, cache, logger,
+    mappings=...).run(tmdb_id=..., dry_run=...)`` / ``.close()`` - while the work
+    is split between the shared :class:`~.seadex_arr.SeaDexArr` engine and the
+    :class:`RadarrSync` strategy it drives. Construction and teardown live on
+    :class:`~.seadex_arr.ArrFacade`; only the movie-specific ``run()`` is here.
+    """
+
+    _arr = "radarr"
+    _strategy_factory = RadarrSync
+
+    def run(self, tmdb_id: int | None = None, dry_run: bool = False) -> bool:
+        """Run the SeaDex Radarr syncer
+
+        Args:
+            tmdb_id (int, optional): If set, only run for the movie with this
+                TMDB ID. Defaults to None, which runs for all movies.
+            dry_run (bool, optional): If True, simulate the run without grabbing
+                torrents, writing the cache, or sending notifications.
+                Defaults to False.
+        """
+
+        return self._engine.run_sync(arr=self._arr, item_id=tmdb_id, dry_run=dry_run)

@@ -1,7 +1,6 @@
 import copy
 import logging
 import time
-from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -21,12 +20,24 @@ from .log import (
 from .mappings import MappingResolver
 from .notify import Notifier
 from .planner import DownloadPlanner
+from .protocols import ArrSync
 from .reporter import RunContext, RunReporter
 from .seadex_gateway import SeaDexGateway
 from .torrents import TorrentService
 
 
-class SeaDexArr(ABC):
+class SeaDexArr:
+    """The Arr-agnostic run engine.
+
+    Owns the run loop, the per-run :class:`RunContext`, and every shared
+    collaborator (planner, torrents, notifier, AniList/SeaDex gateways, cache,
+    reporter). It drives an :class:`~.protocols.ArrSync` strategy (built by
+    ``strategy_factory`` at the end of construction) for the Arr-specific
+    pieces, and hands *itself* to the per-id hooks as the strategy's
+    :class:`~.protocols.RunServices`, so the strategy reaches the shared
+    pipeline without a stored back-reference. Composed by the thin
+    ``SeaDexSonarr`` / ``SeaDexRadarr`` facades.
+    """
 
     def __init__(
         self,
@@ -36,8 +47,10 @@ class SeaDexArr(ABC):
         logger: logging.Logger | None = None,
         *,
         mappings: MappingResolver,
+        strategy_factory: "Callable[[SeaDexArr], ArrSync]",
+        app_config: AppConfig | None = None,
     ) -> None:
-        """Base class for SeaDexArr instances
+        """Build the run engine and its Arr-specific strategy.
 
         Args:
             arr (str, optional): Which Arr is being run.
@@ -52,14 +65,27 @@ class SeaDexArr(ABC):
                 the CLI (the composition root) and shared across a scheduled
                 Radarr->Sonarr cycle so the three large mapping sources are
                 downloaded, parsed and indexed a single time per run.
+            strategy_factory (Callable[[SeaDexArr], ArrSync]): Builds the
+                Arr-specific strategy from this fully-constructed engine. Called
+                last, so the strategy can read the engine's collaborators
+                (config, session, mappings, cache, ...) as it builds its client.
+                The engine holds the returned strategy; the strategy does not
+                hold the engine.
+            app_config (AppConfig | None, optional): A pre-loaded config injected
+                by the CLI (the composition root) so a scheduled Radarr->Sonarr
+                cycle reads and template-syncs the file once per run rather than
+                once per arr. Defaults to None, which loads it here - the
+                standalone path, and what keeps every existing caller working.
         """
 
         # Load, template-sync, and expose the config file as typed settings.
         # AppConfig owns the file lifecycle (copy-template-if-missing, parse,
         # key-order sync) and is the single source of truth for every setting:
-        # the orchestrator and subclasses read self._config.<x> directly (the
-        # subclasses use self._config.get(...) for the arr-specific keys).
-        self._config = AppConfig.load(config, arr)
+        # the orchestrator and strategy read self._config.<x> directly (the
+        # strategy uses self._config.get(...) for the arr-specific keys). The CLI
+        # may inject an already-loaded config (one read+sync shared across the
+        # Radarr->Sonarr cycle); otherwise it's loaded here for the standalone path.
+        self._config = AppConfig.load(config, arr) if app_config is None else app_config
         self.config_file = config
 
         # A single keep-alive session shared by the raw Sonarr/Radarr API calls
@@ -177,6 +203,13 @@ class SeaDexArr(ABC):
             cache_store=self.cache_store,
             anilist=self._anilist,
         )
+
+        # Build the Arr-specific strategy last, from this fully-constructed
+        # engine: it reads the collaborators above (config/session/mappings/
+        # cache/anilist/log_fmt) to stand up its REST client and domain logic.
+        # The engine holds the strategy and drives it; the strategy reaches the
+        # shared pipeline only through the RunServices view handed to its hooks.
+        self._strategy: ArrSync = strategy_factory(self)
 
     def close(self) -> None:
         """Close the shared HTTP session (release pooled connections)."""
@@ -490,7 +523,7 @@ class SeaDexArr(ABC):
         the run state the grab/cache tail still reads (the SkipNotice log lines,
         the public_only_skipped flag, and the skipped group names). This
         translation back to ``self`` is transitional; it unwinds when the
-        add_torrent / _grab_and_cache knot is untied behind RunContext.
+        add_torrent / grab_and_cache knot is untied behind RunContext.
 
         Args:
             al_id: AniList ID
@@ -519,7 +552,7 @@ class SeaDexArr(ABC):
             )
 
         # Carry the skip flag/groups onto the run context (reset per title in the
-        # prologue; add_torrent may append more before _grab_and_cache reads them).
+        # prologue; add_torrent may append more before grab_and_cache reads them).
         if result.public_only_skipped:
             self._ctx.public_only_skipped = True
             self._ctx.public_only_groups.extend(result.public_only_groups)
@@ -710,43 +743,16 @@ class SeaDexArr(ABC):
 
         return True
 
-    # --- Run orchestration (shared template) --------------------------------
+    # --- Run orchestration (shared engine) ----------------------------------
     #
-    # Each subclass's run() is a thin wrapper over run_sync: both Arrs share the
+    # Each facade's run() is a thin wrapper over run_sync: both Arrs share the
     # whole scaffolding (reset stats, fetch items, optional single-id filter,
     # AniList prefetch, the per-item loop, and the end-of-run save + summary) and
-    # differ only in how an item is fetched/identified and what the per-AniList-id
-    # body does. The divergent pieces are the hooks (_get_all_items,
-    # _filter_to_single_item, _item_anilist_ids, _process_al_id); the identical
-    # per-id head and grab/cache tail are _al_id_prologue and _grab_and_cache.
-
-    @abstractmethod
-    def _get_all_items(self) -> list:
-        """Fetch every Arr item (movie/series) that has an AniList mapping."""
-
-    @abstractmethod
-    def _filter_to_single_item(self, items: list, item_id: int) -> list:
-        """Narrow the item list to the one matching a single CLI-supplied id."""
-
-    @abstractmethod
-    def _item_anilist_ids(self, item: Any, log_ignored: bool = True) -> dict:
-        """Resolve the AniList ids an Arr item maps to (arr-specific id args)."""
-
-    @abstractmethod
-    def _process_al_id(
-        self,
-        arr: str,
-        item: Any,
-        item_title: str,
-        al_id: int,
-        mapping: dict,
-    ) -> bool:
-        """Handle one AniList id for an item; return True to stop the whole run.
-
-        The per-id middle is the genuinely Arr-specific part (Radarr's single
-        file vs. Sonarr's episode coverage); the shared head and tail live in
-        _al_id_prologue and _grab_and_cache.
-        """
+    # differ only in the ArrSync strategy's hooks (get_items, filter_to_single,
+    # item_anilist_ids, process_al_id). The engine passes itself (as the
+    # strategy's RunServices) into the per-id hooks; the shared per-id head and
+    # tail it exposes there are al_id_prologue / cached_entry_skip /
+    # grab_and_cache.
 
     def run_sync(self, arr: str, item_id: int | None, dry_run: bool) -> bool:
         """Shared run scaffolding for both Arr syncers
@@ -765,11 +771,11 @@ class SeaDexArr(ABC):
         # Start a fresh run context (stats tally + clock + counter snapshot)
         self.reset_run_stats(arr=arr, dry_run=dry_run)
 
-        all_items = self._get_all_items()
+        all_items = self._strategy.get_items()
 
         # If we're targeting a single item, filter down to it
         if item_id is not None:
-            all_items = self._filter_to_single_item(all_items, item_id)
+            all_items = self._strategy.filter_to_single(all_items, item_id)
 
         n_items = len(all_items)
 
@@ -784,7 +790,7 @@ class SeaDexArr(ABC):
             if not item.monitored and self._config.ignore_unmonitored:
                 continue
             prefetch_ids.update(
-                self._item_anilist_ids(item, log_ignored=False),
+                self._strategy.item_anilist_ids(self, item, log_ignored=False),
             )
         self.prefetch_anilist(prefetch_ids)
 
@@ -807,21 +813,22 @@ class SeaDexArr(ABC):
                     continue
 
                 # Get the mappings from the Arr item to AniList
-                al_mappings = self._item_anilist_ids(item)
+                al_mappings = self._strategy.item_anilist_ids(self, item)
 
                 if len(al_mappings) == 0:
                     self.log_no_anilist_mappings(title=item_title)
                     continue
 
                 for al_id, mapping in al_mappings.items():
-                    # _process_al_id returns True only when max_torrents_to_add was
+                    # process_al_id returns True only when max_torrents_to_add was
                     # reached - it has already saved the cache and logged the
                     # summary - so stop the whole run here. The original per-item
                     # post-loop max check is redundant with this early return (the
                     # in-block check fires after every add, so torrents_added can
-                    # never reach the cap without _process_al_id stopping first),
+                    # never reach the cap without process_al_id stopping first),
                     # so it isn't repeated.
-                    if self._process_al_id(
+                    if self._strategy.process_al_id(
+                        self,
                         arr=arr,
                         item=item,
                         item_title=item_title,
@@ -844,7 +851,7 @@ class SeaDexArr(ABC):
 
         return True
 
-    def _al_id_prologue(self, al_id: int | None) -> EntryRecord | None:
+    def al_id_prologue(self, al_id: int | None) -> EntryRecord | None:
         """Shared per-AniList-id head: reset skip flags, tally, fetch SeaDex entry
 
         Returns the SeaDex entry to process, or None when the id should be
@@ -873,7 +880,7 @@ class SeaDexArr(ABC):
 
         return sd_entry
 
-    def _cached_entry_skip(
+    def cached_entry_skip(
         self,
         arr: str,
         al_id: int,
@@ -916,7 +923,7 @@ class SeaDexArr(ABC):
         self.log_cached_entry(arr=arr, al_id=al_id)
         return True
 
-    def _grab_and_cache(
+    def grab_and_cache(
         self,
         arr: str,
         al_id: int,
@@ -1160,4 +1167,60 @@ class SeaDexArr(ABC):
     def log_max_torrents_added(self) -> bool:
         """Log hitting the max-torrents cap (delegates to RunReporter)."""
         return self._reporter.log_max_torrents_added()
+
+
+class ArrFacade:
+    """Shared thin entry point: composes the engine with an :class:`~.protocols.ArrSync`.
+
+    The two public facades (``SeaDexRadarr`` / ``SeaDexSonarr``) preserve the
+    historical surface - ``SeaDex<Arr>(config, cache, logger, mappings=...)
+    .run(...)`` / ``.close()`` - and differ only in which strategy they drive and
+    their ``run()`` id-keyword (``tmdb_id`` vs ``tvdb_id``). The engine
+    construction and teardown are identical, so they live here once; a subclass
+    sets ``_arr`` / ``_strategy_factory`` and adds the typed ``run()``.
+    """
+
+    _arr: str
+    _strategy_factory: "Callable[[SeaDexArr], ArrSync]"
+
+    def __init__(
+        self,
+        config: str = "config.yml",
+        cache: str = "cache.json",
+        logger: logging.Logger | None = None,
+        *,
+        mappings: MappingResolver,
+        app_config: AppConfig | None = None,
+    ) -> None:
+        """Build the shared engine that drives this arr's strategy.
+
+        Args:
+            config (str, optional): Path to config file.
+                Defaults to "config.yml".
+            cache (str, optional): Path to cache file.
+                Defaults to "cache.json".
+            logger. Logging instance. Defaults to None,
+                which will create one.
+            mappings (MappingResolver): Shared id-mapping resolver, injected by
+                the CLI so both arrs reuse one download/parse of the sources.
+            app_config (AppConfig | None, optional): Pre-loaded config injected by
+                the CLI so the file is read and template-synced once per run
+                rather than once per arr. Defaults to None (the standalone path,
+                which loads it from ``config``).
+        """
+
+        self._engine = SeaDexArr(
+            arr=self._arr,
+            config=config,
+            cache=cache,
+            logger=logger,
+            mappings=mappings,
+            strategy_factory=self._strategy_factory,
+            app_config=app_config,
+        )
+
+    def close(self) -> None:
+        """Release the engine's pooled HTTP connections."""
+
+        self._engine.close()
 

@@ -5,7 +5,7 @@ into a slim orchestrator plus focused, independently-testable collaborators —
 **without changing behaviour or the CLI surface**.
 
 **Branch:** `public-only-release-filtering`
-**Status:** Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅ (4a planner · 4b reporter+context) · Phase 5 ✅ (5a clients+ignore_movies fix · 5b config single-source) · Phase 6 pending
+**Status:** Phase 0 ✅ · Phase 1 ✅ · Phase 2 ✅ · Phase 3 ✅ · Phase 4 ✅ (4a planner · 4b reporter+context) · Phase 5 ✅ (5a clients+ignore_movies fix · 5b config single-source) · Phase 6 ✅ (6a shared resolver · 6b inheritance→composition) — refactor complete
 **Gates (every phase):** `pyrefly check` = 0 errors · `ruff check` = clean ·
 `pytest` = all pass · package import smoke · (user-side) one `--dry-run` run.
 Native unions, no `Optional`, no suppressions.
@@ -87,6 +87,7 @@ reshuffle, so `from .x import Y` patterns are unchanged).
 | `reporter.py` | `RunReporter` (all `log_*` + summary) + `RunContext` + `fresh_stats` | ✅ created (Phase 4b) |
 | `sonarr_client.py` | `SonarrClient` — Sonarr REST adapter (arrapi + raw `/episode`,`/parse`) | ✅ created (Phase 5a) |
 | `radarr_client.py` | `RadarrClient` + `collect_anime_movies` — Radarr REST adapter | ✅ created (Phase 5a) |
+| `protocols.py` | `ArrSync` + `RunServices` Protocols — the engine⇄strategy seam | ✅ created (Phase 6b) |
 
 **Layout note (decided 2026-06-22, Phase 5):** the `sync.py` / `sonarr.py` /
 `radarr.py` rename above was **dropped** in favour of "new client files only" —
@@ -100,8 +101,9 @@ Net target: base class **3213 → ~300**, Sonarr **981 → ~280**, Radarr **279 
 
 ## 5. Dependency graph
 
-The orchestrator is the only thing that knows everything; collaborators mostly
-depend on `AppConfig` plus one peer.
+The engine knows everything; collaborators mostly depend on `AppConfig` plus
+one peer. After Phase 6b the Arr-specifics are a composed strategy, not a
+subclass — the graph below is an acyclic DAG (no inheritance, no back-reference).
 
 ```
                          AppConfig  (leaf)
@@ -112,12 +114,20 @@ depend on `AppConfig` plus one peer.
    AniListGw ──────┘          │       torrent.py  discord.py    log.py
         │                  DownloadPlanner ── coverage.py
         │                     │
-        └─────────────────────┴──────────── SeaDexSync (orchestrator)
-                                                 ▲
-                                    ┌────────────┴────────────┐
+        └─────────────────────┴──────────── SeaDexArr (concrete engine)
+                                              │  holds        ▲ satisfies
+                                              ▼  ArrSync      │ RunServices
+                                       SonarrSync / RadarrSync  (strategies)
+                                       (SonarrClient/RadarrClient + domain)
+                                              ▲ each composed by
+                                    ┌─────────┴──────────────┐
                               SeaDexSonarr               SeaDexRadarr
-                              (SonarrClient)             (RadarrClient)
+                              (facade: run/close)        (facade: run/close)
 ```
+
+The engine passes *itself* (as `RunServices`) into the strategy's per-id hooks;
+the strategy depends on the `RunServices` protocol, not the concrete engine, so
+`seadex_arr → protocols ← seadex_sonarr` has no import cycle and no object cycle.
 
 ## 6. Deep design — `RunContext` and `PlanResult`
 
@@ -241,8 +251,13 @@ Each phase is independently shippable and ends at the gates in the header.
   subclasses — folded in here because slimming the adapters rewrites those sites
   anyway). Keep `data` only until the arr-specific keys (`sonarr_url`, profiles, …)
   also get typed accessors.
-- **Phase 6 — Optional polish.** inheritance → strategy; inject one shared
-  `MappingResolver` from the CLI; optional `core/` subpackage.
+- **Phase 6 — Composition (done).** ✅ 6a injected one shared `MappingResolver`
+  from the CLI (the composition root); ✅ 6b replaced the `SeaDexArr` ABC +
+  subclass inheritance with an engine that drives an injected `ArrSync` strategy
+  (the per-id hooks receive the engine as a narrow `RunServices` view, so there
+  is no stored back-reference and no object cycle). The `inheritance → strategy`
+  item is what 6b delivered; the optional `core/` subpackage reshuffle was
+  **dropped** (the plan deliberately avoided a directory move, §4 layout note).
 
 ## 8. Behaviour-preservation invariants (landmines)
 
@@ -407,3 +422,46 @@ Each phase is independently shippable and ends at the gates in the header.
   user-side one-`--dry-run` gate (needs live Sonarr/Radarr). `data` + `AppConfig.get()`
   intentionally remain for the still-untyped arr-specific keys (`sonarr_url`, profiles,
   …) per §5.
+- **2026-06-22 — Phase 6a done (shared MappingResolver).** Made `MappingResolver` a
+  required, injected dependency. The CLI (`cli.py`, the composition root) builds one
+  resolver per run via `_build_shared_resolver` and passes it into both `SeaDexSonarr`
+  and `SeaDexRadarr` (new required keyword-only `mappings=`); `SeaDexArr.__init__` stops
+  constructing its own. The resolver stays decoupled from `AppConfig` (the CLI reads the
+  arr-independent settings — `cache_time`, `ignore_anilist_ids`, the three `*_cfg` — and
+  builds from primitives, matching the CacheStore decoupling). The module-global parse
+  memo still guards stray rebuilds, but the resolver *instance* (incl. `_anilist_ids_cache`
+  and the lazy `_anidb_index`) is now genuinely shared. **Behaviour note:** a config/source
+  failure now logs one "building shared mappings" error and skips the cycle (scheduled loop
+  retries; `run_single` skips) instead of up-to-two per-arr run errors — the resilience is
+  preserved, only the consolidated wording differs, which is inherent to loading the config
+  once. 82 tests, all gates green (pyrefly 0 / ruff clean); import smoke OK.
+- **2026-06-22 — Phase 6b done (inheritance → composition).** Replaced the `SeaDexArr` ABC
+  + subclass template-method with composition, **no back-reference** (the user explicitly
+  rejected a mutual cycle). New `protocols.py` defines two Protocols: `ArrSync` (what the
+  engine calls on a strategy — `get_items` / `filter_to_single` / `item_anilist_ids` /
+  `process_al_id`) and `RunServices` (the 15-method slice of the engine a strategy calls
+  while processing one id). `SeaDexArr` is now a **concrete engine**: it owns the run loop,
+  the `RunContext`, and every shared collaborator, and holds an `ArrSync` built last in
+  `__init__` via a `strategy_factory(self)` callback (so the strategy reads the engine's
+  config/session/mappings/cache/anilist as it stands up its client — extracted, never
+  retained). The 4 abstract hooks are gone; `_al_id_prologue`/`_cached_entry_skip`/
+  `_grab_and_cache` are renamed public (`al_id_prologue`/`cached_entry_skip`/
+  `grab_and_cache`, the `RunServices` surface); `run_sync` calls `self._strategy.*` and
+  passes **itself** as the strategy's `RunServices`. `SonarrSync`/`RadarrSync` are the
+  strategies — the former subclass bodies kept almost verbatim (`self.<shared>` →
+  `run.<shared>`; `self.coverage_string`/`episodes_from_ep_list` → `coverage` module;
+  `self.anidb_anime_by_id` → `self._mappings.anidb_anime_by_id`); Sonarr's per-run
+  `_ep_list_cache` reset moved into `get_items` (the run-start hook). `SeaDexSonarr`/
+  `SeaDexRadarr` shrank to thin facades composing engine+strategy and delegating
+  `run()`/`close()` (the §9 surface is preserved). **Dependency graph is an acyclic DAG**
+  (leaves ← {engine, strategy}; engine → `ArrSync`; strategy → `RunServices`, satisfied
+  structurally by the engine), verified by pyrefly at the call sites — no object cycle,
+  and crucially **no pipeline merge** (each strategy keeps its own `process_al_id`, so the
+  change is mechanical and behaviour-preserving). `builders.make_arr` builds a bare
+  concrete `SeaDexArr` (the `_StubArr` shim is gone); added `tests/test_strategy_seam.py`
+  (7 tests) — first direct coverage of the per-id seam (hooks delegate through `RunServices`,
+  not shared state). `seadex_sonarr.py` 909 → 994, `seadex_radarr.py` 232 → 289 (+155 LOC
+  `protocols.py`); the size rose because composition adds the protocols + facades — the win
+  is the decoupling (no inheritance, testable seam), not LOC. 89 tests, all gates green
+  (pyrefly 0 / ruff clean); structural smoke OK. **Still owed:** the user-side one-`--dry-run`
+  gate (needs live Sonarr/Radarr).

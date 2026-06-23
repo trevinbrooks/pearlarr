@@ -1,20 +1,20 @@
 import copy
-import logging
 import os
 import time
 from datetime import datetime, timedelta
 from typing import Any
 
+from . import coverage as _coverage
 from .anilist import (
     get_anilist_format,
     get_anilist_n_eps,
 )
 from .cache import UPDATED_AT_STR_FORMAT
 from .log import indent_string
-from .mappings import MappingResolver
 from .planner import get_episode_keys
+from .protocols import RunServices
 from .radarr_client import RadarrClient, collect_anime_movies
-from .seadex_arr import SeaDexArr
+from .seadex_arr import ArrFacade, SeaDexArr
 from .sonarr_client import SonarrClient
 
 TORRENT_FILENAMES_TO_SKIP = [
@@ -192,50 +192,54 @@ def check_ep_by_anibridge(
     return False
 
 
-class SeaDexSonarr(SeaDexArr):
+class SonarrSync:
+    """Sonarr sync strategy: owns the Sonarr REST client + episode domain logic.
 
-    def __init__(
-        self,
-        config: str = "config.yml",
-        cache: str = "cache.json",
-        logger: logging.Logger | None = None,
-        *,
-        mappings: MappingResolver,
-    ) -> None:
-        """Sync Sonarr instance with SeaDex
+    Implements the :class:`~.protocols.ArrSync` hooks the engine drives. Built
+    from a fully-constructed :class:`~.seadex_arr.SeaDexArr` engine (it reads the
+    engine's config/session/mappings/cache/AniList gateway as it stands up its
+    client), but it does not keep a reference to the engine: the per-id hooks
+    receive the engine as a :class:`~.protocols.RunServices` view instead.
+    """
+
+    def __init__(self, engine: SeaDexArr) -> None:
+        """Stand up the Sonarr client from the engine's shared collaborators.
 
         Args:
-            config (str, optional): Path to config file.
-                Defaults to "config.yml".
-            cache (str, optional): Path to cache file.
-                Defaults to "cache.json".
-            logger. Logging instance. Defaults to None,
-                which will create one.
-            mappings (MappingResolver): Shared id-mapping resolver, injected by
-                the CLI so both arrs reuse one download/parse of the sources.
+            engine (SeaDexArr): The constructed run engine; its config, session,
+                mappings, cache, AniList gateway and log formatter are read here
+                (not retained - the engine reaches the strategy, never the
+                reverse).
         """
 
-        SeaDexArr.__init__(
-            self,
-            arr="sonarr",
-            config=config,
-            cache=cache,
-            logger=logger,
-            mappings=mappings,
-        )
+        self._config = engine._config
+        self.session = engine.session
+        self.logger = engine.logger
+        self._mappings = engine._mappings
+        self.anime_mappings = engine.anime_mappings
+        self.anidb_mappings = engine.anidb_mappings
+        self.anibridge = engine.anibridge
+        self.cache_store = engine.cache_store
+        self.log_fmt = engine.log_fmt
+        # The AniList gateway owns al_cache; the strategy reads/reassigns it
+        # directly through self._anilist.al_cache while resolving episode
+        # counts/formats (the gateway is the single owner, shared with the engine).
+        self._anilist = engine._anilist
 
         # Set up Sonarr
         sonarr_url = self._config.get("sonarr_url", None)
         if not sonarr_url:
-            raise ValueError(f"sonarr_url needs to be defined in {config}")
+            raise ValueError(f"sonarr_url needs to be defined in {self._config.path}")
 
         sonarr_api_key = self._config.get("sonarr_api_key", None)
         if not sonarr_api_key:
-            raise ValueError(f"sonarr_api_key needs to be defined in {config}")
+            raise ValueError(
+                f"sonarr_api_key needs to be defined in {self._config.path}",
+            )
 
-        # self.session (a shared keep-alive requests.Session) is inherited from
-        # SeaDexArr.__init__ above and handed to the client; parse in particular
-        # fires one request per file, so reusing it removes a per-file handshake.
+        # self.session (a shared keep-alive requests.Session) comes from the
+        # engine and is handed to the client; parse in particular fires one
+        # request per file, so reusing it removes a per-file handshake.
         self.sonarr = SonarrClient(
             url=sonarr_url,
             api_key=sonarr_api_key,
@@ -247,16 +251,16 @@ class SeaDexSonarr(SeaDexArr):
         # multi-season series maps to several AniList ids, each of which would
         # otherwise re-fetch the same whole-series episode list; cache it for the
         # run so the network round-trip happens once per series. Cleared at the
-        # top of each run() (Sonarr-only scratch; not on the generic RunContext).
+        # top of each run (in get_items, the run-start hook).
         self._ep_list_cache: dict[int, list] = {}
 
         self.ignore_movies_in_radarr = self._config.get("ignore_movies_in_radarr", False)
 
         # Only when ignore_movies_in_radarr is on do we need Radarr's movie list
-        # (for the specials cross-check in _process_al_id). Build a lightweight
+        # (for the specials cross-check in process_al_id). Build a lightweight
         # RadarrClient and reuse the already-built shared mappings - no nested
-        # SeaDexRadarr (which would re-run the whole base __init__: mapping parse,
-        # cache load, and a qBittorrent login, all unused here).
+        # SeaDexRadarr (which would re-run the whole engine __init__: mapping
+        # parse, cache load, and a qBittorrent login, all unused here).
         self.all_radarr_movies = None
         radarr_url = self._config.get("radarr_url", None)
         radarr_api_key = self._config.get("radarr_api_key", None)
@@ -278,28 +282,20 @@ class SeaDexSonarr(SeaDexArr):
                 self.anibridge,
             )
 
-    def run(self, tvdb_id: int | None = None, dry_run: bool = False) -> bool:
-        """Run the SeaDex Sonarr Syncer
+    # --- ArrSync hooks ------------------------------------------------------
 
-        Args:
-            tvdb_id (int, optional): If set, only run for the series with this
-                TVDB ID. Defaults to None, which runs for all series.
-            dry_run (bool, optional): If True, simulate the run without grabbing
-                torrents, writing the cache, or sending notifications.
-                Defaults to False.
+    def get_items(self) -> list:
+        """Every Sonarr series with AniList mapping info.
+
+        Also the run-start hook: drop any episode lists cached from a previous
+        run so a fresh run always re-reads the current Sonarr library (this is
+        called once, before the per-item loop).
         """
 
-        # Drop any episode lists cached from a previous run so a fresh run always
-        # re-reads the current Sonarr library (Sonarr-only per-run scratch).
         self._ep_list_cache = {}
-        return self.run_sync(arr="sonarr", item_id=tvdb_id, dry_run=dry_run)
-
-    def _get_all_items(self) -> list:
-        """Every Sonarr series with AniList mapping info."""
-
         return self.get_all_sonarr_series()
 
-    def _filter_to_single_item(self, items: list, item_id: int) -> list:
+    def filter_to_single(self, items: list, item_id: int) -> list:
         """Narrow the series list to a single TVDB ID."""
 
         filtered = [s for s in items if s.tvdbId == item_id]
@@ -309,17 +305,23 @@ class SeaDexSonarr(SeaDexArr):
             )
         return filtered
 
-    def _item_anilist_ids(self, item: Any, log_ignored: bool = True) -> dict:
+    def item_anilist_ids(
+        self,
+        run: RunServices,
+        item: Any,
+        log_ignored: bool = True,
+    ) -> dict:
         """Resolve AniList ids for a Sonarr series (by TVDB / IMDb id)."""
 
-        return self.get_anilist_ids(
+        return run.get_anilist_ids(
             tvdb_id=item.tvdbId,
             imdb_id=item.imdbId,
             log_ignored=log_ignored,
         )
 
-    def _process_al_id(
+    def process_al_id(
         self,
+        run: RunServices,
         arr: str,
         item: Any,
         item_title: str,
@@ -333,7 +335,7 @@ class SeaDexSonarr(SeaDexArr):
         episodes, then hand off to the shared grab/cache tail.
         """
 
-        sd_entry = self._al_id_prologue(al_id)
+        sd_entry = run.al_id_prologue(al_id)
         if sd_entry is None:
             return False
         sd_url = sd_entry.url
@@ -342,13 +344,13 @@ class SeaDexSonarr(SeaDexArr):
         # Skip if already cached. The one-time backfill on a legacy record adds
         # the URL and the season/episode coverage; the coverage needs the episode
         # list, so it's resolved lazily, only when the backfill actually runs.
-        if self._cached_entry_skip(
+        if run.cached_entry_skip(
             arr,
             al_id,
             sd_entry,
             sd_url,
-            lambda: self.coverage_string(
-                self.episodes_from_ep_list(
+            lambda: _coverage.coverage_string(
+                _coverage.episodes_from_ep_list(
                     self.get_ep_list(
                         sonarr_series_id=sonarr_series_id,
                         al_id=al_id,
@@ -361,13 +363,13 @@ class SeaDexSonarr(SeaDexArr):
 
         # Also check if it's in the Radarr cache, if we have that option
         if self.ignore_movies_in_radarr and not self._config.ignore_seadex_update_times:
-            al_id_in_radarr_cache = self.check_al_id_in_cache(
+            al_id_in_radarr_cache = run.check_al_id_in_cache(
                 arr="radarr",
                 al_id=al_id,
                 seadex_entry=sd_entry,
             )
             if al_id_in_radarr_cache:
-                self.log_cached_entry(
+                run.log_cached_entry(
                     arr="radarr",
                     al_id=al_id,
                     state="in radarr",
@@ -376,7 +378,7 @@ class SeaDexSonarr(SeaDexArr):
 
         # Resolve the AniList title (logged later, once episodes give us the
         # season/episode coverage)
-        anilist_title = self.get_anilist_title(al_id=al_id)
+        anilist_title = run.get_anilist_title(al_id=al_id)
 
         # Setup info for cache
         cache_details = {
@@ -422,7 +424,7 @@ class SeaDexSonarr(SeaDexArr):
             if len(radarr_movies) > 0:
 
                 for movie in radarr_movies:
-                    self.log_entry_status(
+                    run.log_entry_status(
                         "in radarr",
                         movie.title,
                     )
@@ -443,7 +445,7 @@ class SeaDexSonarr(SeaDexArr):
         # If all episodes are unmonitored, then skip if ignore_unmonitored is switched on
         ep_list_monitored = [x.get("monitored", True) for x in ep_list]
         if not any(ep_list_monitored) and self._config.ignore_unmonitored:
-            self.log_anilist_item_unmonitored(
+            run.log_anilist_item_unmonitored(
                 item_title=anilist_title,
             )
             time.sleep(self._config.sleep_time)
@@ -452,10 +454,10 @@ class SeaDexSonarr(SeaDexArr):
         # Now that we have the episodes, log the active entry with its
         # season/episode coverage + URL, and remember them for the cache so
         # future cached runs can show the same detail
-        coverage = self.coverage_string(
-            self.episodes_from_ep_list(ep_list),
+        coverage = _coverage.coverage_string(
+            _coverage.episodes_from_ep_list(ep_list),
         )
-        self.log_al_title(
+        run.log_al_title(
             anilist_title=anilist_title,
             sd_entry=sd_entry,
             coverage=coverage,
@@ -473,12 +475,12 @@ class SeaDexSonarr(SeaDexArr):
         )
 
         # Produce a dictionary of info from the SeaDex request
-        seadex_dict = self.get_seadex_dict(sd_entry=sd_entry)
+        seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
-            self.log_no_seadex_releases()
+            run.log_no_seadex_releases()
 
-            self.update_cache(
+            run.update_cache(
                 arr=arr,
                 al_id=al_id,
                 cache_details=cache_details,
@@ -499,14 +501,14 @@ class SeaDexSonarr(SeaDexArr):
 
         # If we're in interactive mode and there are multiple equivalent options here, then select
         if self._config.interactive and len(seadex_dict) > 1 and overlapping_results:
-            seadex_dict = self.filter_seadex_interactive(
+            seadex_dict = run.filter_seadex_interactive(
                 seadex_dict=seadex_dict,
                 sd_entry=sd_entry,
             )
 
         # Filter downloads by whether the episodes in each torrent match the release
         # group we have in Sonarr
-        torrent_hashes, seadex_dict = self.filter_seadex_downloads(
+        torrent_hashes, seadex_dict = run.filter_seadex_downloads(
             al_id=al_id,
             seadex_dict=seadex_dict,
             arr=arr,
@@ -514,7 +516,7 @@ class SeaDexSonarr(SeaDexArr):
             ep_list=ep_list,
         )
 
-        return self._grab_and_cache(
+        return run.grab_and_cache(
             arr=arr,
             al_id=al_id,
             item_title=item_title,
@@ -525,6 +527,8 @@ class SeaDexSonarr(SeaDexArr):
             cache_details=cache_details,
             release_group=sonarr_release_groups,
         )
+
+    # --- Sonarr domain logic ------------------------------------------------
 
     def get_all_sonarr_series(self) -> list:
         """Get all series in Sonarr with AniList mapping info"""
@@ -644,9 +648,9 @@ class SeaDexSonarr(SeaDexArr):
 
         # For OVAs and movies, the offsets can often be wrong, so if we have specific mappings
         # then take that into account here
-        al_format, self.al_cache = get_anilist_format(
+        al_format, self._anilist.al_cache = get_anilist_format(
             al_id,
-            al_cache=self.al_cache,
+            al_cache=self._anilist.al_cache,
         )
 
         # Potentially pull out a bunch of mappings from AniDB. These should
@@ -658,7 +662,7 @@ class SeaDexSonarr(SeaDexArr):
             and anidb_id is not None
             and (al_format not in ["TV"] or tvdb_season == 0)
         ):
-            anidb_item = self.anidb_anime_by_id(anidb_id)
+            anidb_item = self._mappings.anidb_anime_by_id(anidb_id)
 
             # If we don't find anything, no worries. If we find multiple, worries
             if len(anidb_item) > 1:
@@ -719,9 +723,9 @@ class SeaDexSonarr(SeaDexArr):
 
                 # Slice the list to get the correct episodes, so any potential offsets
                 ep_offset = mapping.get("tvdb_epoffset", 0)
-                n_eps, self.al_cache = get_anilist_n_eps(
+                n_eps, self._anilist.al_cache = get_anilist_n_eps(
                     al_id,
-                    al_cache=self.al_cache,
+                    al_cache=self._anilist.al_cache,
                 )
 
                 # If we don't get a number of episodes, use them all
@@ -782,8 +786,8 @@ class SeaDexSonarr(SeaDexArr):
             # Show which episodes are missing as ranges (e.g. "S04 E12"), not just
             # a count, so it's clear what's absent. Fall back to the count if the
             # episodes can't be condensed.
-            missing_coverage = self.coverage_string(
-                self.episodes_from_ep_list(ep_list, missing_only=True),
+            missing_coverage = _coverage.coverage_string(
+                _coverage.episodes_from_ep_list(ep_list, missing_only=True),
             )
             self.log_fmt.detail(
                 "missing",
@@ -913,3 +917,30 @@ class SeaDexSonarr(SeaDexArr):
                         )
 
         return seadex_dict
+
+
+class SeaDexSonarr(ArrFacade):
+    """Public Sonarr entry point: composes the engine with a SonarrSync.
+
+    Preserves the historical surface - ``SeaDexSonarr(config, cache, logger,
+    mappings=...).run(tvdb_id=..., dry_run=...)`` / ``.close()`` - while the work
+    is split between the shared :class:`~.seadex_arr.SeaDexArr` engine and the
+    :class:`SonarrSync` strategy it drives. Construction and teardown live on
+    :class:`~.seadex_arr.ArrFacade`; only the series-specific ``run()`` is here.
+    """
+
+    _arr = "sonarr"
+    _strategy_factory = SonarrSync
+
+    def run(self, tvdb_id: int | None = None, dry_run: bool = False) -> bool:
+        """Run the SeaDex Sonarr Syncer
+
+        Args:
+            tvdb_id (int, optional): If set, only run for the series with this
+                TVDB ID. Defaults to None, which runs for all series.
+            dry_run (bool, optional): If True, simulate the run without grabbing
+                torrents, writing the cache, or sending notifications.
+                Defaults to False.
+        """
+
+        return self._engine.run_sync(arr=self._arr, item_id=tvdb_id, dry_run=dry_run)

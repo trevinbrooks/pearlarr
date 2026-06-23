@@ -94,6 +94,19 @@ class AppConfig:
         config._sync_with_template(template_path)
         return config
 
+    def for_arr(self, arr: str) -> "AppConfig":
+        """A view of this already-loaded config under a different arr selector.
+
+        The parsed ``data`` is shared with this instance (the file is read and
+        template-synced once), so the composition root can load the config a
+        single time and hand each arr its own view rather than re-reading and
+        re-syncing the same file once per arr. Only the ``{arr}_``-prefixed
+        properties differ between views; every global/resolver setting is
+        identical. ``data`` is read-only after ``load``, so sharing it is safe.
+        """
+
+        return AppConfig(path=self.path, arr=arr, data=self.data)
+
     def _sync_with_template(self, template_path: str) -> None:
         """Rewrite the config in template key order, inheriting existing values.
 
