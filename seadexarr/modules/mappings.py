@@ -180,9 +180,9 @@ class MappingResolver:
         *,
         cache_time: int,
         ignore_anilist_ids: set[int],
-        anime_mappings_cfg: Any,
-        anidb_mappings_cfg: Any,
-        anibridge_mappings_cfg: Any,
+        anime_mappings_cfg: dict | bool | None,
+        anidb_mappings_cfg: ElementTree.Element | bool | None,
+        anibridge_mappings_cfg: dict | bool | None,
     ) -> None:
         """Load and index the mapping sources.
 
@@ -212,6 +212,8 @@ class MappingResolver:
             anime_mappings = self.get_anime_mappings()
             anime_mappings_index = self._get_anime_mappings_index()
         else:
+            # Neither disabled (False) nor download (None): a pre-parsed map dict.
+            assert isinstance(anime_mappings_cfg, dict)
             anime_mappings = anime_mappings_cfg
             anime_mappings_index = _build_anime_mappings_index(anime_mappings)
 
@@ -220,6 +222,8 @@ class MappingResolver:
         elif anidb_mappings_cfg is None:
             anidb_mappings = self.get_anidb_mappings()
         else:
+            # Neither disabled (False) nor download (None): a pre-parsed root.
+            assert isinstance(anidb_mappings_cfg, ElementTree.Element)
             anidb_mappings = anidb_mappings_cfg
 
         if anibridge_mappings_cfg is False:
@@ -230,6 +234,7 @@ class MappingResolver:
             # A config-provided value is treated as a raw anibridge graph dict.
             # Built with logger=None to preserve the previous behaviour (the
             # base class loaded mappings before its logger existed).
+            assert isinstance(anibridge_mappings_cfg, dict)
             anibridge = AniBridge(anibridge_mappings_cfg, logger=None)
 
         self.anime_mappings = anime_mappings

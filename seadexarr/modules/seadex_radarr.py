@@ -36,8 +36,8 @@ class RadarrSync(ArrSync):
         self.anime_mappings = deps.mappings.anime_mappings
         self.anibridge = deps.mappings.anibridge
 
-        radarr_url = self._config.require("radarr_url")
-        radarr_api_key = self._config.require("radarr_api_key")
+        radarr_url = self._config.radarr_url
+        radarr_api_key = self._config.radarr_api_key
 
         self.radarr = RadarrClient(
             url=radarr_url,

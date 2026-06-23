@@ -18,6 +18,7 @@ from enum import StrEnum
 from functools import cached_property
 from hashlib import md5
 from typing import Any
+from xml.etree import ElementTree
 
 import yaml
 from ruamel.yaml import YAML
@@ -170,7 +171,47 @@ class AppConfig:
             raise ValueError(f"{key} needs to be defined in {self.path}")
         return value
 
+    def _require_str(self, key: str) -> str:
+        """``require(key)`` narrowed to ``str`` for the *_url/*_api_key keys.
+
+        The required connection settings are always strings; this wraps the
+        generic ``require`` so the typed properties expose ``str`` rather than
+        leaking ``Any`` to the arr strategies.
+        """
+
+        value = self.require(key)
+        assert isinstance(value, str)
+        return value
+
     # --- Typed settings -----------------------------------------------------
+
+    @property
+    def sonarr_url(self) -> str:
+        return self._require_str("sonarr_url")
+
+    @property
+    def sonarr_api_key(self) -> str:
+        return self._require_str("sonarr_api_key")
+
+    @property
+    def radarr_url(self) -> str:
+        return self._require_str("radarr_url")
+
+    @property
+    def radarr_api_key(self) -> str:
+        return self._require_str("radarr_api_key")
+
+    @property
+    def radarr_url_optional(self) -> str | None:
+        return self.data.get("radarr_url", None)
+
+    @property
+    def radarr_api_key_optional(self) -> str | None:
+        return self.data.get("radarr_api_key", None)
+
+    @property
+    def ignore_movies_in_radarr(self) -> bool:
+        return self.data.get("ignore_movies_in_radarr", False)
 
     @property
     def ignore_unmonitored(self) -> bool:
@@ -263,13 +304,13 @@ class AppConfig:
         return self.data.get("log_level", "INFO")
 
     @property
-    def anime_mappings_cfg(self) -> Any:
+    def anime_mappings_cfg(self) -> dict | bool | None:
         return self.data.get("anime_mappings", None)
 
     @property
-    def anidb_mappings_cfg(self) -> Any:
+    def anidb_mappings_cfg(self) -> ElementTree.Element | bool | None:
         return self.data.get("anidb_mappings", None)
 
     @property
-    def anibridge_mappings_cfg(self) -> Any:
+    def anibridge_mappings_cfg(self) -> dict | bool | None:
         return self.data.get("anibridge_mappings", None)

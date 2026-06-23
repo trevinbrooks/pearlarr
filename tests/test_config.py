@@ -120,3 +120,32 @@ class TestTypedSettings:
     def test_qbit_info_passthrough(self) -> None:
         info = {"host": "h", "username": "u", "password": "p"}
         assert _cfg(qbit_info=info).qbit_info == info
+
+    def test_ignore_movies_in_radarr_default_and_override(self) -> None:
+        assert _cfg().ignore_movies_in_radarr is False
+        assert _cfg(ignore_movies_in_radarr=True).ignore_movies_in_radarr is True
+
+    def test_required_connection_properties_return_value(self) -> None:
+        cfg = _cfg(
+            sonarr_url="http://s",
+            sonarr_api_key="sk",
+            radarr_url="http://r",
+            radarr_api_key="rk",
+        )
+        assert cfg.sonarr_url == "http://s"
+        assert cfg.sonarr_api_key == "sk"
+        assert cfg.radarr_url == "http://r"
+        assert cfg.radarr_api_key == "rk"
+
+    def test_required_connection_properties_raise_when_absent(self) -> None:
+        cfg = _cfg()
+        for getter in ("sonarr_url", "sonarr_api_key", "radarr_url", "radarr_api_key"):
+            with pytest.raises(ValueError):
+                getattr(cfg, getter)
+
+    def test_optional_radarr_properties_default_none(self) -> None:
+        assert _cfg().radarr_url_optional is None
+        assert _cfg().radarr_api_key_optional is None
+        cfg = _cfg(radarr_url="http://r", radarr_api_key="rk")
+        assert cfg.radarr_url_optional == "http://r"
+        assert cfg.radarr_api_key_optional == "rk"

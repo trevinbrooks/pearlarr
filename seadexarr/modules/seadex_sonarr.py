@@ -285,8 +285,8 @@ class SonarrSync(ArrSync):
         self._anilist = deps.anilist
 
         # Set up Sonarr
-        sonarr_url = self._config.require("sonarr_url")
-        sonarr_api_key = self._config.require("sonarr_api_key")
+        sonarr_url = self._config.sonarr_url
+        sonarr_api_key = self._config.sonarr_api_key
 
         # self.session (a shared keep-alive requests.Session) comes from the
         # injected deps and is handed to the client; parse in particular fires one
@@ -305,7 +305,7 @@ class SonarrSync(ArrSync):
         # top of each run (in get_items, the run-start hook).
         self._ep_list_cache: dict[int, list] = {}
 
-        self.ignore_movies_in_radarr = self._config.get("ignore_movies_in_radarr", False)
+        self.ignore_movies_in_radarr = self._config.ignore_movies_in_radarr
 
         # Only when ignore_movies_in_radarr is on do we need Radarr's movie list
         # (for the specials cross-check in process_al_id). Build a lightweight
@@ -313,8 +313,8 @@ class SonarrSync(ArrSync):
         # SeaDexRadarr (which would re-run the whole engine __init__: mapping
         # parse, cache load, and a qBittorrent login, all unused here).
         self.all_radarr_movies = None
-        radarr_url = self._config.get("radarr_url", None)
-        radarr_api_key = self._config.get("radarr_api_key", None)
+        radarr_url = self._config.radarr_url_optional
+        radarr_api_key = self._config.radarr_api_key_optional
 
         if (
             self.ignore_movies_in_radarr
