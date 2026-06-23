@@ -13,6 +13,8 @@ Extracted from ``SeaDexRadarr`` in Phase 5a of the refactor (see
 """
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 
 import arrapi.exceptions
 import requests
@@ -81,6 +83,77 @@ class RadarrClient:
         return self._session.get(mov_req_url).json()
 
 
+@dataclass(frozen=True)
+class IdField:
+    """One id space to filter an Arr library by.
+
+    Pairs the Kometa Anime-IDs map key with the live Arr item attribute that
+    holds the same id, so ``collect_anime_items`` matches each item against the
+    candidate set built for that id space.
+    """
+
+    mapping_key: str  # e.g. "tmdb_movie_id" / "tvdb_id"
+    item_attr: str  # e.g. "tmdbId" / "tvdbId"
+
+
+def collect_anime_items(
+    list_fn: Callable[[], list],
+    anime_mappings: dict | None,
+    fields: tuple[IdField, ...],
+    anibridge_id_sets: tuple[set, ...],
+) -> list:
+    """Arr library items that have an AniList mapping, sorted by title.
+
+    Builds one candidate id-set per ``fields`` entry (union of the Kometa
+    Anime-IDs values for that key and the matching precomputed AniBridge set),
+    then keeps each item that matches at least one id space.
+
+    Args:
+        list_fn (Callable[[], list]): Returns the unfiltered Arr item list.
+        anime_mappings (dict | None): Kometa Anime-IDs flat {anilist_id: mapping}
+            dict, scanned directly (once, building all id sets in one pass).
+        fields (tuple[IdField, ...]): Id spaces to filter by; one set is built
+            per field, in order.
+        anibridge_id_sets (tuple[set, ...]): Precomputed AniBridge id sets, one
+            per ``fields`` entry in the same order (pass ``set()`` when AniBridge
+            is disabled).
+    """
+
+    # One candidate set per id space, built in a single pass over the mappings
+    matched_sets: list[set] = [set() for _ in fields]
+    if anime_mappings:
+        for entry in anime_mappings.values():
+            for i, field in enumerate(fields):
+                value = entry.get(field.mapping_key)
+                if value is not None:
+                    matched_sets[i].add(value)
+
+    # AniBridge exposes precomputed id sets (no per-call scan needed)
+    for i, extra in enumerate(anibridge_id_sets):
+        matched_sets[i] |= extra
+
+    # Track kept item ids in a set: "item not in kept" on a growing list is O(n)
+    # per check (and compares whole item objects), making the scan quadratic on
+    # a large library
+    kept: list = []
+    seen_ids: set = set()
+    for item in list_fn():
+        if item.id in seen_ids:
+            continue
+
+        # Keep the item if it matches in any id space
+        if any(
+            getattr(item, field.item_attr) in matched_sets[i]
+            for i, field in enumerate(fields)
+        ):
+            kept.append(item)
+            seen_ids.add(item.id)
+
+    kept.sort(key=lambda x: x.title)
+
+    return kept
+
+
 def collect_anime_movies(
     radarr_client: RadarrClient,
     anime_mappings: dict | None,
@@ -101,43 +174,12 @@ def collect_anime_movies(
             ``all_tmdb_movie_ids`` / ``all_imdb_ids`` sets.
     """
 
-    radarr_movies = []
-
-    all_tmdb_ids = set()
-    all_imdb_ids = set()
-
-    # Kometa Anime-IDs is a flat {anilist_id: mapping} dict we scan directly
-    if anime_mappings:
-        all_tmdb_ids.update(
-            e.get("tmdb_movie_id")
-            for e in anime_mappings.values()
-            if e.get("tmdb_movie_id") is not None
-        )
-        all_imdb_ids.update(
-            e.get("imdb_id")
-            for e in anime_mappings.values()
-            if e.get("imdb_id") is not None
-        )
-
-    # AniBridge exposes precomputed id sets (no per-call scan needed)
-    if anibridge:
-        all_tmdb_ids |= anibridge.all_tmdb_movie_ids
-        all_imdb_ids |= anibridge.all_imdb_ids
-
-    # Track kept movie ids in a set: "m not in radarr_movies" on a growing
-    # list is O(n) per check (and compares whole movie objects), making the
-    # scan quadratic on a large library
-    seen_ids = set()
-    for m in radarr_client.all_movies():
-
-        if m.id in seen_ids:
-            continue
-
-        # Keep the movie if it matches by TMDB or IMDb id
-        if m.tmdbId in all_tmdb_ids or m.imdbId in all_imdb_ids:
-            radarr_movies.append(m)
-            seen_ids.add(m.id)
-
-    radarr_movies.sort(key=lambda x: x.title)
-
-    return radarr_movies
+    return collect_anime_items(
+        radarr_client.all_movies,
+        anime_mappings,
+        (IdField("tmdb_movie_id", "tmdbId"), IdField("imdb_id", "imdbId")),
+        (
+            anibridge.all_tmdb_movie_ids if anibridge else set(),
+            anibridge.all_imdb_ids if anibridge else set(),
+        ),
+    )

@@ -4,6 +4,7 @@ from typing import Any
 from .cache import CacheRecord
 from .config import Arr
 from .log import indent_string
+from .mappings import TmdbType
 from .protocols import ArrSync
 from .radarr_client import RadarrClient, collect_anime_movies
 from .seadex_arr import RunDeps, SeaDexArr
@@ -72,7 +73,7 @@ class RadarrSync(ArrSync):
         return self._services.get_anilist_ids(
             tmdb_id=item.tmdbId,
             imdb_id=item.imdbId,
-            tmdb_type="movie",
+            tmdb_type=TmdbType.MOVIE,
             log_ignored=log_ignored,
         )
 

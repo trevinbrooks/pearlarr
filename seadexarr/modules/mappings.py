@@ -18,11 +18,33 @@ import os
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any
+from enum import StrEnum
+from typing import Any, TypeVar, cast
 from urllib.request import urlretrieve
 from xml.etree import ElementTree
 
 from .anibridge import AniBridge
+
+
+class TmdbType(StrEnum):
+    """Which TMDB id space an external lookup is scoped to."""
+
+    MOVIE = "movie"
+    SHOW = "show"
+
+
+def _validate_ids(
+    tvdb_id: int | None,
+    tmdb_id: int | None,
+    imdb_id: str | None,
+) -> None:
+    """Raise if no external id was supplied (at least one is required)."""
+
+    if (tvdb_id is None) and (tmdb_id is None) and (imdb_id is None):
+        raise ValueError(
+            "At least one of tvdb_id, tmdb_id, and imdb_id must be provided",
+        )
+
 
 ANIME_IDS_URL = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/refs/heads/master/anime_ids.json"
 ANIME_IDS_FILE = "anime_ids.json"
@@ -49,19 +71,21 @@ ANIBRIDGE_MAPPINGS_FILE = f"anibridge_mappings_{ANIBRIDGE_RELEASE}.json"
 # slot rather than accumulating. The parsed objects are only ever read after
 # construction, so sharing them is safe; the CLI run path is single-threaded, so
 # the plain dict needs no locking.
-_PARSED_MAPPING_CACHE: dict[str, tuple[float, Any]] = {}
+_PARSED_MAPPING_CACHE: dict[str, tuple[float, object]] = {}
+
+_T = TypeVar("_T")
 
 
 def _load_mapping_by_mtime(
     path: str,
-    parse: Callable[[str], Any],
+    parse: Callable[[str], _T],
     cache_key: str | None = None,
-) -> Any:
+) -> _T:
     """Return ``parse(path)``, reusing a cached result while the mtime is unchanged.
 
     Args:
         path (str): File whose modification time gates the cache
-        parse (Callable[[str], Any]): Builds the parsed value from the path
+        parse (Callable[[str], _T]): Builds the parsed value from the path
         cache_key (str | None): Cache slot to use; defaults to ``path``. Pass a
             distinct key when more than one product is derived from one file
             (e.g. the Anime-IDs map and its reverse index).
@@ -72,7 +96,9 @@ def _load_mapping_by_mtime(
 
     cached = _PARSED_MAPPING_CACHE.get(key)
     if cached is not None and cached[0] == mtime:
-        return cached[1]
+        # The slot is type-erased across keys (each holds whatever its parse fn
+        # produced); the call's _T is recovered from ``parse``'s return type.
+        return cast(_T, cached[1])
 
     value = parse(path)
     _PARSED_MAPPING_CACHE[key] = (mtime, value)
@@ -328,7 +354,7 @@ class MappingResolver:
         tvdb_id: int | None = None,
         tmdb_id: int | None = None,
         imdb_id: str | None = None,
-        tmdb_type: str = "movie",
+        tmdb_type: TmdbType = TmdbType.MOVIE,
     ) -> tuple[dict, list]:
         """Resolve external ids to a sorted {AniList id -> mapping} dict
 
@@ -336,7 +362,7 @@ class MappingResolver:
             tvdb_id (int): TVDB ID
             tmdb_id (int): TMDB ID
             imdb_id (int): IMDb ID
-            tmdb_type (str): TMDB type. Can be "movie" or "show"
+            tmdb_type (TmdbType): Which TMDB id space the tmdb_id is in.
 
         Returns:
             tuple: (anilist_mappings, ids_to_drop), where anilist_mappings is a
@@ -345,16 +371,7 @@ class MappingResolver:
                 AniList ids removed from the result, for the caller to log.
         """
 
-        if tmdb_type not in ["movie", "show"]:
-            raise ValueError("tmdb_type must be 'movie' or 'show'")
-
-        # Check we have exactly one ID specified here
-        non_none_sum = sum(v is not None for v in [tvdb_id, tmdb_id, imdb_id])
-
-        if non_none_sum == 0:
-            raise ValueError(
-                "At least one of tvdb_id, tmdb_id, and imdb_id must be provided",
-            )
+        _validate_ids(tvdb_id, tmdb_id, imdb_id)
 
         # The mapping computation is deterministic for a given set of
         # identifying args, so memoize it and only redo the per-call logging
@@ -408,7 +425,7 @@ class MappingResolver:
         tvdb_id: int | None = None,
         tmdb_id: int | None = None,
         imdb_id: str | None = None,
-        tmdb_type: str = "movie",
+        tmdb_type: TmdbType = TmdbType.MOVIE,
         anilist_mappings: dict | None = None,
     ) -> dict:
         """Get mappings from the Anime ID mappings
@@ -417,7 +434,7 @@ class MappingResolver:
             tvdb_id (int): TVDB ID
             tmdb_id (int): TMDB ID
             imdb_id (int): IMDb ID
-            tmdb_type (str): TMDB type. Can be "movie" or "show"
+            tmdb_type (TmdbType): Which TMDB id space the tmdb_id is in.
             anilist_mappings (dict): Dictionary of AniList mappings.
                 Defaults to None, which will create a new dictionary
         """
@@ -425,16 +442,7 @@ class MappingResolver:
         if anilist_mappings is None:
             anilist_mappings = {}
 
-        if tmdb_type not in ["movie", "show"]:
-            raise ValueError("tmdb_type must be 'movie' or 'show'")
-
-        # Check we have exactly one ID specified here
-        non_none_sum = sum(v is not None for v in [tvdb_id, tmdb_id, imdb_id])
-
-        if non_none_sum == 0:
-            raise ValueError(
-                "At least one of tvdb_id, tmdb_id, and imdb_id must be provided",
-            )
+        _validate_ids(tvdb_id, tmdb_id, imdb_id)
 
         index = self._anime_mappings_index
         if index is None:
@@ -462,7 +470,7 @@ class MappingResolver:
         tvdb_id: int | None = None,
         tmdb_id: int | None = None,
         imdb_id: str | None = None,
-        tmdb_type: str = "movie",
+        tmdb_type: TmdbType = TmdbType.MOVIE,
         anilist_mappings: dict | None = None,
     ) -> dict:
         """Get mappings from the AniBridge mappings
@@ -471,7 +479,7 @@ class MappingResolver:
             tvdb_id (int): TVDB ID
             tmdb_id (int): TMDB ID
             imdb_id (int): IMDb ID
-            tmdb_type (str): TMDB type. Can be "movie" or "show"
+            tmdb_type (TmdbType): Which TMDB id space the tmdb_id is in.
             anilist_mappings (dict): Dictionary of AniList mappings.
                 Defaults to None, which will create a new dictionary
         """
@@ -483,16 +491,7 @@ class MappingResolver:
         if not anibridge:
             return anilist_mappings
 
-        if tmdb_type not in ["movie", "show"]:
-            raise ValueError("tmdb_type must be 'movie' or 'show'")
-
-        # Check we have exactly one ID specified here
-        non_none_sum = sum(v is not None for v in [tvdb_id, tmdb_id, imdb_id])
-
-        if non_none_sum == 0:
-            raise ValueError(
-                "At least one of tvdb_id, tmdb_id, and imdb_id must be provided",
-            )
+        _validate_ids(tvdb_id, tmdb_id, imdb_id)
 
         # Add any AniList IDs the indexes resolve for the supplied ids, without
         # clobbering matches an earlier id already produced (tvdb > tmdb > imdb).

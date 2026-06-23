@@ -14,7 +14,7 @@ from .config import Arr
 from .log import indent_string
 from .planner import get_episode_keys
 from .protocols import ArrSync
-from .radarr_client import RadarrClient, collect_anime_movies
+from .radarr_client import IdField, RadarrClient, collect_anime_items, collect_anime_movies
 from .seadex_arr import RunDeps, SeaDexArr
 from .sonarr_client import SonarrClient
 
@@ -528,46 +528,15 @@ class SonarrSync(ArrSync):
     def get_all_sonarr_series(self) -> list:
         """Get all series in Sonarr with AniList mapping info"""
 
-        sonarr_series = []
-
-        all_tvdb_ids = set()
-        all_imdb_ids = set()
-
-        # Kometa Anime-IDs is a flat {anilist_id: mapping} dict we scan directly
-        if self.anime_mappings:
-            all_tvdb_ids.update(
-                m.get("tvdb_id")
-                for m in self.anime_mappings.values()
-                if m.get("tvdb_id") is not None
-            )
-            all_imdb_ids.update(
-                m.get("imdb_id")
-                for m in self.anime_mappings.values()
-                if m.get("imdb_id") is not None
-            )
-
-        # AniBridge exposes precomputed id sets (no per-call scan needed)
-        if self.anibridge:
-            all_tvdb_ids |= self.anibridge.all_tvdb_ids
-            all_imdb_ids |= self.anibridge.all_imdb_ids
-
-        # Track which series ids we've kept via a set: "s not in sonarr_series"
-        # on a growing list is O(n) per check (and compares whole series objects),
-        # making the scan quadratic on a large library
-        seen_ids = set()
-        for s in self.sonarr.all_series():
-
-            if s.id in seen_ids:
-                continue
-
-            # Keep the series if it matches by TVDB or IMDb id
-            if s.tvdbId in all_tvdb_ids or s.imdbId in all_imdb_ids:
-                sonarr_series.append(s)
-                seen_ids.add(s.id)
-
-        sonarr_series.sort(key=lambda x: x.title)
-
-        return sonarr_series
+        return collect_anime_items(
+            self.sonarr.all_series,
+            self.anime_mappings,
+            (IdField("tvdb_id", "tvdbId"), IdField("imdb_id", "imdbId")),
+            (
+                self.anibridge.all_tvdb_ids if self.anibridge else set(),
+                self.anibridge.all_imdb_ids if self.anibridge else set(),
+            ),
+        )
 
     def get_sonarr_series(self, tvdb_id: int):
         """Get Sonarr series for a given TVDB ID

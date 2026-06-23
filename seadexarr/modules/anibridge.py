@@ -315,6 +315,10 @@ class AniBridge:
     def lookup_by_tmdb(self, tmdb_id: int, tmdb_type: str = "movie") -> dict:
         """Return "{anilist_id: entry}" for AniList ids mapped to a tmdb id.
 
+        Callers pass ``mappings.TmdbType`` (a ``StrEnum``); its str value drives
+        the branch below. The parameter stays a bare ``str`` to keep this module
+        free of the ``mappings`` import (``mappings`` imports this one).
+
         Args:
             tmdb_id (int): TMDB id
             tmdb_type (str): "movie" or "show"

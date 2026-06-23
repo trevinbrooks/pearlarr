@@ -17,7 +17,7 @@ from .log import (
     indent_string,
     setup_logger,
 )
-from .mappings import MappingResolver
+from .mappings import MappingResolver, TmdbType
 from .notify import Notifier
 from .planner import DownloadPlanner
 from .protocols import ArrSync
@@ -246,7 +246,7 @@ class SeaDexArr:
         tvdb_id: int | None = None,
         tmdb_id: int | None = None,
         imdb_id: str | None = None,
-        tmdb_type: str = "movie",
+        tmdb_type: TmdbType = TmdbType.MOVIE,
         log_ignored: bool = True,
     ) -> dict:
         """Resolve external Arr ids to a {AniList id -> mapping} dict
@@ -259,7 +259,7 @@ class SeaDexArr:
             tvdb_id (int): TVDB ID
             tmdb_id (int): TMDB ID
             imdb_id (int): IMDb ID
-            tmdb_type (str): TMDB type. Can be "movie" or "show"
+            tmdb_type (TmdbType): Which TMDB id space the tmdb_id is in.
             log_ignored (bool): Log a ledger row for each ignored AniList ID.
                 Defaults to True; pass False from the prefetch pass so ignored
                 ids aren't logged twice (once there, once in the main loop)
