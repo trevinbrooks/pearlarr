@@ -19,7 +19,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, TypedDict, TypeVar, cast
+from typing import Any, Required, TypedDict, TypeVar, cast
 from urllib.request import urlretrieve
 from xml.etree import ElementTree
 
@@ -46,7 +46,7 @@ class MappingEntry(TypedDict, total=False):
     ``.get(...)`` but are now typed.
     """
 
-    anilist_id: int
+    anilist_id: Required[int]
     tvdb_id: int | None
     tvdb_season: int
     tvdb_mappings: dict[int, list]

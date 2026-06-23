@@ -86,7 +86,7 @@ class TestProcessAlIdThreadsServices:
         run.al_id_prologue.return_value = None
         strat = make_bare_instance(RadarrSync, _services=run)
 
-        assert strat.process_al_id(Arr.RADARR, _Item(id=1), "Title", 5, {}) is False
+        assert strat.process_al_id(Arr.RADARR, _Item(id=1), "Title", 5, {"anilist_id": 5}) is False
         run.al_id_prologue.assert_called_once_with(5)
 
     def test_sonarr_no_seadex_entry_returns_false(self) -> None:
@@ -94,5 +94,5 @@ class TestProcessAlIdThreadsServices:
         run.al_id_prologue.return_value = None
         strat = make_bare_instance(SonarrSync, _services=run)
 
-        assert strat.process_al_id(Arr.SONARR, _Item(id=1), "Title", 5, {}) is False
+        assert strat.process_al_id(Arr.SONARR, _Item(id=1), "Title", 5, {"anilist_id": 5}) is False
         run.al_id_prologue.assert_called_once_with(5)
