@@ -259,6 +259,17 @@ class _CountingLogger(Protocol):
     seadex_counter: LogCounter
 
 
+# The level names the file logger honours; any other value (including ERROR or a
+# typo) warns and falls back to INFO. Kept as an explicit table so the string
+# ladder isn't reinvented for both the logger and the console handler below.
+_LOG_LEVELS = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "CRITICAL": logging.CRITICAL,
+}
+
+
 def setup_logger(
     log_level: str,
     log_dir: str = "logs",
@@ -309,12 +320,12 @@ def setup_logger(
     logger = logging.getLogger(log_name)
     logger.propagate = False
 
-    # Resolve the configured level once. logging.getLevelName maps a name to its
-    # int constant (and returns a non-int sentinel for an unknown name), so an
-    # invalid level warns and falls back to INFO. This single lookup also covers
-    # ERROR, which the prior string ladder silently dropped to INFO.
-    level = logging.getLevelName(log_level.upper())
-    if not isinstance(level, int):
+    # Resolve the configured level once through the name->constant table instead
+    # of a hand-rolled string ladder. Only the four names the logger has always
+    # honoured are accepted; anything else (including ERROR or a typo) warns and
+    # falls back to INFO, exactly as before.
+    level = _LOG_LEVELS.get(log_level.upper())
+    if level is None:
         logger.critical(f"Invalid log level '{log_level}', defaulting to 'INFO'")
         level = logging.INFO
     logger.setLevel(level)
@@ -339,10 +350,16 @@ def setup_logger(
     # Docker logs) and drops ANSI styling there.
     console = Console(file=sys.stdout)
     console_handler = RichConsoleHandler(console)
-    # The console always shows INFO+ (clamp to INFO) so routine progress stays
-    # visible even when the file logger is set to WARNING/ERROR; only DEBUG
-    # lowers the console threshold below INFO.
-    console_handler.setLevel(min(level, logging.INFO))
+    # The console always shows INFO+ so routine progress stays visible even when
+    # the file logger is raised - except DEBUG, which lowers the threshold, and
+    # CRITICAL, which raises it to match the file logger (the original
+    # DEBUG/CRITICAL/else split, preserved exactly).
+    if level == logging.DEBUG:
+        console_handler.setLevel(logging.DEBUG)
+    elif level == logging.CRITICAL:
+        console_handler.setLevel(logging.CRITICAL)
+    else:
+        console_handler.setLevel(logging.INFO)
 
     # Replace any handlers from a previous call, then attach file + console
     logger.handlers.clear()
