@@ -29,6 +29,7 @@ from .anilist_gateway import AniListGateway
 from .cache import CacheField, CacheStore
 from .config import Arr
 from .log import (
+    EntryState,
     LogFormatter,
     count_noun,
     entry_string,
@@ -377,22 +378,20 @@ class RunReporter:
 
     def log_entry_status(
         self,
-        state: str,
+        state: EntryState,
         label: str,
         style: str | None = "grey50",
     ) -> bool:
         """Log a one-line entry status as a fixed-column ledger row
 
         Renders "<state> <label>" at indent level 1, with state padded to a fixed
-        width so the label lines up across rows (see entry_string). Used for the
-        entry-level outcomes: unchanged, in radarr, checking, unmonitored,
-        skipped, no mapping, ignored, and no entry. The state word carries the
-        meaning, so there is no trailing note; season/episode coverage and the
-        SeaDex URL ride a separate continuation line (log_entry_coverage). The
-        indent is baked into the message, so the file log keeps it too.
+        width so the label lines up across rows (see entry_string). The state word
+        carries the meaning, so there is no trailing note; season/episode coverage
+        and the SeaDex URL ride a separate continuation line (log_entry_coverage).
+        The indent is baked into the message, so the file log keeps it too.
 
         Args:
-            state (str): Short state word, e.g. "unchanged" or "no entry"
+            state (EntryState): Which entry-level outcome this row reports
             label (str): What the state applies to (usually a title)
             style (str): Console style for the line. Defaults to "grey50" (dim);
                 pass None for an emphasized line such as the active "checking" one
@@ -468,7 +467,7 @@ class RunReporter:
 
         ctx.stats.unmonitored += 1
         return self.log_entry_status(
-            "unmonitored",
+            EntryState.UNMONITORED,
             item_title,
         )
 
@@ -516,7 +515,7 @@ class RunReporter:
 
         ctx.stats.no_mappings += 1
         return self.log_entry_status(
-            "no mapping",
+            EntryState.NO_MAPPING,
             title,
         )
 
@@ -531,7 +530,7 @@ class RunReporter:
         """
 
         return self.log_entry_status(
-            "ignored",
+            EntryState.IGNORED,
             f"AniList #{al_id}",
         )
 
@@ -571,7 +570,7 @@ class RunReporter:
             al_cache=self.anilist.al_cache,
         )
         self.log_entry_status(
-            "no entry",
+            EntryState.NO_ENTRY,
             anilist_title or f"AniList #{al_id}",
         )
         # Only repeat the id on its own line when the ledger shows a title;
@@ -614,7 +613,7 @@ class RunReporter:
 
         # The active entry, on the ledger but undimmed (style=None) so it reads
         # as the focal line, not a no-op like the gray unchanged rows
-        self.log_entry_status("checking", anilist_title, style=None)
+        self.log_entry_status(EntryState.CHECKING, anilist_title, style=None)
         self.log_entry_coverage(
             coverage, sd_entry.url, incomplete=sd_entry.is_incomplete,
         )
@@ -626,7 +625,7 @@ class RunReporter:
         ctx: RunContext,
         arr: Arr,
         al_id: int,
-        state: str = "unchanged",
+        state: EntryState = EntryState.UNCHANGED,
     ) -> bool:
         """Log a cached entry as a ledger row plus its coverage/URL line
 
@@ -641,9 +640,9 @@ class RunReporter:
             ctx (RunContext): The run's state (stats tally).
             arr (Arr): Arr instance the entry is cached under
             al_id (int): AniList ID
-            state (str): State word. Defaults to "unchanged" (skipped because the
-                SeaDex entry's update time matches the cache); pass "in radarr"
-                for entries already handled by a Radarr sync
+            state (EntryState): Defaults to UNCHANGED (skipped because the SeaDex
+                entry's update time matches the cache); pass IN_RADARR for entries
+                already handled by a Radarr sync
         """
 
         ctx.stats.cached += 1

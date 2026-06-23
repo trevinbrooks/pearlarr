@@ -2,6 +2,7 @@ import logging
 import os
 import shutil
 import sys
+from enum import StrEnum
 from logging.handlers import RotatingFileHandler
 from typing import Any, Protocol, TypedDict, cast
 
@@ -396,7 +397,27 @@ DETAIL_KEY_WIDTH = (
 )
 
 
-def entry_string(state: str, label: str) -> str:
+class EntryState(StrEnum):
+    """The outcome word shown in an entry-ledger row's state column.
+
+    A ``StrEnum`` so each member still equals its rendered string
+    (``EntryState.UNCHANGED == "unchanged"``) and flows through
+    ``entry_string``'s ``.ljust(STATE_WIDTH)`` byte-for-byte unchanged - while
+    making the documented set the only representable states, enforced and
+    discoverable instead of free-form literals spelled two ways at the call
+    sites. The widest value ("unmonitored") fixes STATE_WIDTH.
+    """
+
+    UNCHANGED = "unchanged"
+    IN_RADARR = "in radarr"
+    CHECKING = "checking"
+    UNMONITORED = "unmonitored"
+    NO_MAPPING = "no mapping"
+    IGNORED = "ignored"
+    NO_ENTRY = "no entry"
+
+
+def entry_string(state: EntryState, label: str) -> str:
     """Format the body of an entry-ledger line: "<state> <label>".
 
     state is padded to STATE_WIDTH so the label lines up across rows regardless

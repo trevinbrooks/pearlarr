@@ -12,7 +12,7 @@ from .anilist import (
 )
 from .cache import UPDATED_AT_STR_FORMAT, CacheRecord
 from .config import Arr
-from .log import indent_string
+from .log import EntryState, indent_string
 from .planner import get_episode_keys
 from .protocols import ArrSync
 from .radarr_client import IdField, RadarrClient, collect_anime_items, collect_anime_movies
@@ -423,7 +423,7 @@ class SonarrSync(ArrSync):
                 run.log_cached_entry(
                     arr=Arr.RADARR,
                     al_id=al_id,
-                    state="in radarr",
+                    state=EntryState.IN_RADARR,
                 )
                 return False
 
@@ -476,7 +476,7 @@ class SonarrSync(ArrSync):
 
                 for movie in radarr_movies:
                     run.log_entry_status(
-                        "in radarr",
+                        EntryState.IN_RADARR,
                         movie.title,
                     )
 

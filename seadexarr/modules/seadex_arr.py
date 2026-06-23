@@ -15,6 +15,7 @@ from .anilist_gateway import AniListGateway
 from .cache import CacheField, CacheRecord, CacheStore
 from .config import PRIVATE_TRACKERS, AppConfig, Arr
 from .log import (
+    EntryState,
     LogFormatter,
     indent_string,
     setup_logger,
@@ -1041,7 +1042,7 @@ class SeaDexArr:
 
     def log_entry_status(
         self,
-        state: str,
+        state: EntryState,
         label: str,
         style: str | None = "grey50",
     ) -> bool:
@@ -1067,7 +1068,7 @@ class SeaDexArr:
         self,
         arr: Arr,
         al_id: int,
-        state: str = "unchanged",
+        state: EntryState = EntryState.UNCHANGED,
     ) -> bool:
         """Log a cached entry (delegates to RunReporter)."""
         return self._reporter.log_cached_entry(self._ctx, arr, al_id, state=state)
