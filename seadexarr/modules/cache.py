@@ -19,7 +19,7 @@ Extracted from ``SeaDexArr`` in Phase 2 of the refactor (see
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any, TypedDict, cast
 
@@ -32,6 +32,49 @@ from .. import __version__
 # meta ``fetched_at``). Lives here because the cache owns the record schema;
 # consumers (the orchestrator and the Sonarr adapter) import it directly.
 UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def record_is_fresh(
+    record: dict | None,
+    *,
+    payload_key: str,
+    ttl_days: int,
+    stamp_key: str = "fetched_at",
+    cutoff: datetime | None = None,
+) -> bool:
+    """True if a persisted record has a payload and its stamp is within TTL.
+
+    Shared freshness check for the raw, stringly-keyed cache records that aren't
+    :class:`CacheRecord` instances (the AniList ``anilist_meta`` records and the
+    Sonarr parse-cache records), so the load (which ids to seed) and save (which
+    to keep vs. refresh) sides never disagree about what "still good" means.
+
+    Args:
+        record (dict | None): The raw cache record, or None / a non-dict (treated
+            as not fresh, subsuming both the ``(record or {})`` and ``isinstance``
+            guards at the call sites).
+        payload_key (str): Key whose presence (and truthiness) marks a usable
+            payload (e.g. ``"data"`` for AniList, ``"episodes"`` for Sonarr).
+        ttl_days (int): TTL window in days, used to derive ``cutoff`` when one
+            isn't supplied.
+        stamp_key (str): Record key holding the strftime'd fetch timestamp.
+            Defaults to ``"fetched_at"``.
+        cutoff (datetime | None): Precomputed freshness cutoff. Pass this once per
+            loop so ``datetime.now()`` isn't recomputed per record; when None it's
+            derived from ``ttl_days`` against the current time.
+    """
+
+    if not isinstance(record, dict):
+        return False
+    if not record.get(payload_key):
+        return False
+    try:
+        stamp = datetime.strptime(record.get(stamp_key, ""), UPDATED_AT_STR_FORMAT)
+    except (TypeError, ValueError):
+        return False
+    if cutoff is None:
+        cutoff = datetime.now() - timedelta(days=ttl_days)
+    return stamp >= cutoff
 
 
 class CacheField(StrEnum):

@@ -21,7 +21,7 @@ from .anilist import (
     get_anilist_title,
     get_query_batch,
 )
-from .cache import UPDATED_AT_STR_FORMAT, CacheStore
+from .cache import UPDATED_AT_STR_FORMAT, CacheStore, record_is_fresh
 from .log import indent_string
 
 # How long a persisted AniList response stays usable before it's re-fetched.
@@ -51,24 +51,6 @@ class AniListGateway:
         self.logger = logger
         self.al_cache: dict = {}
 
-    @staticmethod
-    def _meta_is_fresh(record: dict | None) -> bool:
-        """True if a persisted AniList record has a payload and is within TTL
-
-        Shared by a load (which ids to seed) and save (which to keep vs. refresh),
-        so the two never disagree about what "still good" means.
-        """
-
-        if not (record or {}).get("data"):
-            return False
-        try:
-            stamp = datetime.strptime(
-                (record or {}).get("fetched_at", ""), UPDATED_AT_STR_FORMAT,
-            )
-        except (TypeError, ValueError):
-            return False
-        return stamp >= datetime.now() - timedelta(days=ANILIST_CACHE_TTL_DAYS)
-
     def load_cache(self) -> None:
         """Seed the in-memory AniList cache from the persisted store
 
@@ -84,9 +66,15 @@ class AniListGateway:
         if not meta:
             return
 
+        cutoff = datetime.now() - timedelta(days=ANILIST_CACHE_TTL_DAYS)
         loaded = 0
         for id_str, record in meta.items():
-            if not self._meta_is_fresh(record):
+            if not record_is_fresh(
+                record,
+                payload_key="data",
+                ttl_days=ANILIST_CACHE_TTL_DAYS,
+                cutoff=cutoff,
+            ):
                 continue
             try:
                 self.al_cache[int(id_str)] = record["data"]
@@ -113,12 +101,19 @@ class AniListGateway:
         """
 
         meta = self._cache.data.setdefault("anilist_meta", {})
-        now_str = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
+        now = datetime.now()
+        now_str = now.strftime(UPDATED_AT_STR_FORMAT)
+        cutoff = now - timedelta(days=ANILIST_CACHE_TTL_DAYS)
 
         written = 0
         for al_id, data in self.al_cache.items():
             id_str = str(al_id)
-            if self._meta_is_fresh(meta.get(id_str)):
+            if record_is_fresh(
+                meta.get(id_str),
+                payload_key="data",
+                ttl_days=ANILIST_CACHE_TTL_DAYS,
+                cutoff=cutoff,
+            ):
                 continue
             meta[id_str] = {"fetched_at": now_str, "data": data}
             written += 1
