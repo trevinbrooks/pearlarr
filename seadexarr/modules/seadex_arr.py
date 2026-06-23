@@ -1,9 +1,8 @@
 import copy
 import logging
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 import qbittorrentapi
 import requests
@@ -233,29 +232,6 @@ class SeaDexArr:
         if self.session is not None:
             self.session.close()
 
-    def anidb_anime_by_id(self, anidb_id: int) -> list:
-        """Return the AniDB XML <anime> element(s) for an AniDB id.
-
-        Delegates to the MappingResolver, which owns the lazily-built index.
-
-        Args:
-            anidb_id (int): AniDB id to look up
-        """
-
-        return self._mappings.anidb_anime_by_id(anidb_id)
-
-    def get_seadex_entry(
-        self,
-        al_id: int,
-    ) -> EntryRecord | None:
-        """Get SeaDex entry from AniList ID
-
-        Args:
-            al_id (int): AniList ID
-        """
-
-        return self._seadex.entry(al_id)
-
     def check_al_id_in_cache(
         self,
         arr: str,
@@ -265,25 +241,6 @@ class SeaDexArr:
         """Whether the cached entry matches SeaDex's last-updated timestamp."""
 
         return self.cache_store.check_al_id_in_cache(arr, al_id, seadex_entry)
-
-    def get_cached_name(
-        self,
-        arr: str,
-        al_id: int,
-    ) -> str | None:
-        """Cached AniList title for an entry, reused without an AniList lookup."""
-
-        return self.cache_store.get_cached_name(arr, al_id)
-
-    def get_cached_field(
-        self,
-        arr: str,
-        al_id: int,
-        field: str,
-    ) -> Any:
-        """Read a single stored field from an entry's cache record, if present."""
-
-        return self.cache_store.get_cached_field(arr, al_id, field)
 
     def get_anilist_ids(
         self,
@@ -320,38 +277,9 @@ class SeaDexArr:
         # main loop still logs every ignored id even after the prefetch pass ran
         if log_ignored:
             for al_id in ids_to_drop:
-                self.log_ignored_anilist_id(al_id=al_id)
+                self._reporter.log_ignored_anilist_id(al_id)
 
         return anilist_mappings
-
-    @property
-    def al_cache(self) -> dict:
-        """In-memory AniList response cache, owned by the AniList gateway.
-
-        Exposed as a read/write property so the subclasses and the
-        not-yet-extracted presentation helpers keep reading and (re)assigning
-        ``self.al_cache`` while the gateway is the single owner.
-        """
-
-        return self._anilist.al_cache
-
-    @al_cache.setter
-    def al_cache(self, value: dict) -> None:
-        self._anilist.al_cache = value
-
-    def load_anilist_cache(self) -> None:
-        """Seed the in-memory AniList cache from the persisted store."""
-
-        self._anilist.load_cache()
-
-    def prefetch_anilist(self, al_ids: Iterable[int]) -> None:
-        """Warm the AniList cache for a set of ids in batched requests.
-
-        Args:
-            al_ids (iterable[int]): Candidate AniList IDs for this run
-        """
-
-        self._anilist.prefetch(al_ids, preview=self._is_preview())
 
     def get_anilist_title(
         self,
@@ -576,23 +504,6 @@ class SeaDexArr:
 
         return result.torrent_hashes, result.seadex_dict
 
-    def coverage_string(self, episodes: list) -> str:
-        """One-line season/episode coverage, e.g. "S04 E01-E12".
-
-        Thin wrapper over :func:`coverage.coverage_string`.
-        """
-
-        return _coverage.coverage_string(episodes)
-
-    @staticmethod
-    def episodes_from_ep_list(ep_list: list | None, missing_only: bool = False) -> list:
-        """Convert a Sonarr ep_list into {"season","episode"} coverage dicts.
-
-        Thin wrapper over :func:`coverage.episodes_from_ep_list`.
-        """
-
-        return _coverage.episodes_from_ep_list(ep_list, missing_only=missing_only)
-
     def add_torrent(
         self,
         torrent_dict: dict,
@@ -678,7 +589,7 @@ class SeaDexArr:
                     # per-torrent grabs); fall back to the entry-level coverage we
                     # mapped from the Arr so the summary's "files" is never blank
                     # when a release's filenames couldn't be parsed (e.g. an OVA).
-                    coverage_str = self.coverage_string(
+                    coverage_str = _coverage.coverage_string(
                         url_item.get("episodes", []),
                     ) or self._ctx.current_coverage
                     self._ctx.stats["added"].append(
@@ -712,17 +623,6 @@ class SeaDexArr:
         """A run is a no-op preview when an explicit dry run was requested OR
         qBittorrent is not configured (nothing can actually be grabbed)."""
         return self.dry_run or self.qbit is None
-
-    def save_cache(self, sort: bool = True) -> None:
-        """Persist the in-memory cache to disk, unless this run is a preview.
-
-        Args:
-            sort (bool): Sort anilist_entries by id before writing. Defaults to
-                True so the persisted file is ordered by id; pass False to skip
-                the sort on a hot write path.
-        """
-
-        self.cache_store.save(preview=self._is_preview(), sort=sort)
 
     def update_cache(self, arr: str, al_id: int, cache_details: dict | None = None) -> bool:
         """Merge ``cache_details`` into an entry's cache record (in-memory only).
@@ -805,12 +705,12 @@ class SeaDexArr:
 
         n_items = len(all_items)
 
-        self.log_arr_start(arr=arr, n_items=n_items)
+        self._reporter.log_arr_start(arr, n_items)
 
         # Warm the AniList cache before the per-item loop: reuse what past runs
         # fetched, then batch-fetch (id_in pages) everything still missing, so the
         # loop rarely hits AniList one id at a time and trips its rate limit.
-        self.load_anilist_cache()
+        self._anilist.load_cache()
         prefetch_ids = set()
         for item in all_items:
             if not item.monitored and self._config.ignore_unmonitored:
@@ -818,7 +718,7 @@ class SeaDexArr:
             prefetch_ids.update(
                 strategy.item_anilist_ids(item, log_ignored=False),
             )
-        self.prefetch_anilist(prefetch_ids)
+        self._anilist.prefetch(prefetch_ids, preview=self._is_preview())
 
         for item_idx, item in enumerate(all_items):
 
@@ -826,23 +726,20 @@ class SeaDexArr:
 
                 item_title = item.title
 
-                self.log_arr_item_start(
-                    arr=arr,
-                    item_title=item_title,
-                    n_item=item_idx + 1,
-                    n_items=n_items,
+                self._reporter.log_arr_item_start(
+                    arr, item_title, item_idx + 1, n_items,
                 )
 
                 # If we're not monitored, then skip if ignore_unmonitored is switched on
                 if not item.monitored and self._config.ignore_unmonitored:
-                    self.log_arr_item_unmonitored(item_title=item_title)
+                    self._reporter.log_arr_item_unmonitored(self._ctx, item_title)
                     continue
 
                 # Get the mappings from the Arr item to AniList
                 al_mappings = strategy.item_anilist_ids(item)
 
                 if len(al_mappings) == 0:
-                    self.log_no_anilist_mappings(title=item_title)
+                    self._reporter.log_no_anilist_mappings(self._ctx, item_title)
                     continue
 
                 for al_id, mapping in al_mappings.items():
@@ -871,8 +768,10 @@ class SeaDexArr:
 
         # Per-title update_cache calls only mutate memory now, so this end-of-run
         # save is what actually persists the run (and sorts by id on the way out)
-        self.save_cache()
-        self.log_run_summary(arr=arr)
+        self.cache_store.save(preview=self._is_preview())
+        self._reporter.log_run_summary(
+            self._ctx, arr, is_preview=self._is_preview(), has_client=self.qbit is not None,
+        )
 
         return True
 
@@ -894,13 +793,13 @@ class SeaDexArr:
         self._ctx.stats["checked"] += 1
 
         if al_id is None:
-            self.log_no_anilist_id()
+            self._reporter.log_no_anilist_id()
             return None
 
         # Get the SeaDex entry if it exists
-        sd_entry = self.get_seadex_entry(al_id=al_id)
+        sd_entry = self._seadex.entry(al_id)
         if sd_entry is None:
-            self.log_no_sd_entry(al_id=al_id)
+            self._reporter.log_no_sd_entry(self._ctx, al_id)
             return None
 
         return sd_entry
@@ -939,13 +838,13 @@ class SeaDexArr:
         # Backfill the enriched fields for records written before they existed,
         # so cached rows can still link to SeaDex (and, for series, show the
         # season/episode coverage). One-time per old entry.
-        if not self.get_cached_field(arr, al_id, "url"):
+        if not self.cache_store.get_cached_field(arr, al_id, "url"):
             self.update_cache(
                 arr=arr,
                 al_id=al_id,
                 cache_details={"url": sd_url, "coverage": coverage()},
             )
-        self.log_cached_entry(arr=arr, al_id=al_id)
+        self._reporter.log_cached_entry(self._ctx, arr, al_id)
         return True
 
     def grab_and_cache(
@@ -1009,10 +908,8 @@ class SeaDexArr:
 
             # Log the action block now the outcome is known, so the status reads
             # "adding" only when something was actually grabbed (else "keeping")
-            self.log_seadex_action(
-                seadex_dict=seadex_dict,
-                results=results,
-                dry_run=self._is_preview(),
+            self._reporter.log_seadex_action(
+                seadex_dict, results, dry_run=self._is_preview(),
             )
 
             # Push a message to Discord if we've added anything (never on a
@@ -1032,9 +929,14 @@ class SeaDexArr:
 
             if self._config.max_torrents_to_add is not None:
                 if self._ctx.torrents_added >= self._config.max_torrents_to_add:
-                    self.log_max_torrents_added()
-                    self.save_cache()
-                    self.log_run_summary(arr=arr)
+                    self._reporter.log_max_torrents_added()
+                    self.cache_store.save(preview=self._is_preview())
+                    self._reporter.log_run_summary(
+                        self._ctx,
+                        arr,
+                        is_preview=self._is_preview(),
+                        has_client=self.qbit is not None,
+                    )
                     return True
 
         elif not self._ctx.public_only_skipped:
@@ -1082,25 +984,12 @@ class SeaDexArr:
 
         return False
 
-    # --- Presentation delegators --------------------------------------------
+    # --- Presentation seam (RunServices) ------------------------------------
     #
-    # Every log_* method now lives on RunReporter (reporter.py); these thin
-    # delegators preserve the call surface the Sonarr/Radarr adapters use, and
-    # inject the current run context (and, for the summary, the preview/client
-    # facts) so the reporter stays free of orchestrator state.
-
-    def log_run_summary(self, arr: str) -> bool:
-        """Log the end-of-run scoreboard (delegates to RunReporter)."""
-        return self._reporter.log_run_summary(
-            self._ctx,
-            arr,
-            is_preview=self._is_preview(),
-            has_client=self.qbit is not None,
-        )
-
-    def log_arr_start(self, arr: str, n_items: int) -> bool:
-        """Log the run banner (delegates to RunReporter)."""
-        return self._reporter.log_arr_start(arr, n_items)
+    # The engine logs through ``self._reporter`` directly (threading ``self._ctx``
+    # and the preview/client facts so the reporter stays free of orchestrator
+    # state). The only log_* methods kept here are the ones the Sonarr/Radarr
+    # strategies invoke through their RunServices view; each delegates the same way.
 
     def log_entry_status(
         self,
@@ -1111,50 +1000,9 @@ class SeaDexArr:
         """Log a one-line entry status row (delegates to RunReporter)."""
         return self._reporter.log_entry_status(state, label, style=style)
 
-    def log_entry_coverage(
-        self,
-        coverage: str | None,
-        url: str | None,
-        style: str | None = "grey50",
-        incomplete: bool = False,
-    ) -> bool:
-        """Log the coverage/URL line beneath an entry (delegates to RunReporter)."""
-        return self._reporter.log_entry_coverage(
-            coverage, url, style=style, incomplete=incomplete,
-        )
-
-    def log_arr_item_unmonitored(self, item_title: str) -> bool:
+    def log_anilist_item_unmonitored(self, item_title: str) -> bool:
         """Log an unmonitored-item skip (delegates to RunReporter)."""
         return self._reporter.log_arr_item_unmonitored(self._ctx, item_title)
-
-    # Both Arrs reach the same "unmonitored" outcome, so this is just an alias
-    log_anilist_item_unmonitored = log_arr_item_unmonitored
-
-    def log_arr_item_start(
-        self,
-        arr: str,
-        item_title: str,
-        n_item: int,
-        n_items: int,
-    ) -> bool:
-        """Log the start of an Arr item (delegates to RunReporter)."""
-        return self._reporter.log_arr_item_start(arr, item_title, n_item, n_items)
-
-    def log_no_anilist_mappings(self, title: str) -> bool:
-        """Log a no-AniList-mapping outcome (delegates to RunReporter)."""
-        return self._reporter.log_no_anilist_mappings(self._ctx, title)
-
-    def log_ignored_anilist_id(self, al_id: int) -> bool:
-        """Log an ignore-listed AniList id (delegates to RunReporter)."""
-        return self._reporter.log_ignored_anilist_id(al_id)
-
-    def log_no_anilist_id(self) -> bool:
-        """Log a missing-AniList-id outcome (delegates to RunReporter)."""
-        return self._reporter.log_no_anilist_id()
-
-    def log_no_sd_entry(self, al_id: int) -> bool:
-        """Log a missing-SeaDex-entry outcome (delegates to RunReporter)."""
-        return self._reporter.log_no_sd_entry(self._ctx, al_id)
 
     def log_al_title(
         self,
@@ -1179,17 +1027,4 @@ class SeaDexArr:
     def log_no_seadex_releases(self) -> bool:
         """Log a no-suitable-releases outcome (delegates to RunReporter)."""
         return self._reporter.log_no_seadex_releases(self._ctx)
-
-    def log_seadex_action(
-        self,
-        seadex_dict: dict,
-        results: list,
-        dry_run: bool = False,
-    ) -> bool:
-        """Log the per-title action block (delegates to RunReporter)."""
-        return self._reporter.log_seadex_action(seadex_dict, results, dry_run=dry_run)
-
-    def log_max_torrents_added(self) -> bool:
-        """Log hitting the max-torrents cap (delegates to RunReporter)."""
-        return self._reporter.log_max_torrents_added()
 

@@ -3,6 +3,7 @@ import os
 import shutil
 import time
 from datetime import datetime, timedelta
+from typing import NamedTuple
 
 import typer
 
@@ -20,6 +21,27 @@ seadexarr_cache = typer.Typer(name="cache")
 seadexarr_cli.add_typer(seadexarr_run)
 seadexarr_cli.add_typer(seadexarr_config)
 seadexarr_cli.add_typer(seadexarr_cache)
+
+
+class _Paths(NamedTuple):
+    config: str
+    cache: str
+    cache_backup: str
+
+
+def _paths() -> _Paths:
+    """Resolve the config/cache file paths under CONFIG_DIR (cwd if unset).
+
+    The CONFIG_DIR env var and the three filenames live here only, so every
+    command shares one definition instead of re-joining them inline.
+    """
+
+    config_dir = os.getenv("CONFIG_DIR", os.getcwd())
+    return _Paths(
+        config=os.path.join(config_dir, "config.yml"),
+        cache=os.path.join(config_dir, "cache.json"),
+        cache_backup=os.path.join(config_dir, "cache.backup.json"),
+    )
 
 
 def _build_shared(
@@ -74,7 +96,6 @@ def _build_shared(
 
 def _run_arr(
     arr_name: str,
-    strategy_cls: type[RadarrSync] | type[SonarrSync],
     app_config: AppConfig,
     *,
     config: str,
@@ -105,13 +126,50 @@ def _run_arr(
             app_config=app_config.for_arr(arr_name),
         )
         services = SeaDexArr(deps, arr_name)
-        strategy = strategy_cls(deps, services)
+        strategy = SonarrSync(deps, services) if arr_name == "sonarr" else RadarrSync(deps, services)
         services.run_sync(strategy, arr=arr_name, item_id=item_id, dry_run=dry_run)
     except Exception:
         logger.error(f"Unexpected error during {arr_name.capitalize()} run", exc_info=True)
     finally:
         if services is not None:
             services.close()
+
+
+def _run_arrs(
+    arrs: list[tuple[str, int | None]],
+    *,
+    config: str,
+    cache: str,
+    logger: logging.Logger,
+    dry_run: bool = False,
+) -> bool:
+    """Build the shared config + mappings once, then run each requested arr.
+
+    ``arrs`` is a list of ``(arr_name, item_id)`` pairs; each is delegated to
+    ``_run_arr`` (which logs and closes independently, so one crashing doesn't ruin
+    the other). The shared config read and mapping download/parse happen a single
+    time, and only when at least one arr is requested. Returns True when there was
+    nothing to do or the run proceeded; False - after ``_build_shared`` logs the
+    cause - when an arr was requested but the shared deps couldn't be built, so a
+    caller can tell a no-op-on-failure from a real run.
+    """
+
+    if not arrs:
+        return True
+
+    shared = _build_shared(config, logger)
+    if shared is None:
+        return False
+
+    app_config, mappings = shared
+    for arr_name, item_id in arrs:
+        _run_arr(
+            arr_name, app_config,
+            config=config, cache=cache, logger=logger, mappings=mappings,
+            item_id=item_id, dry_run=dry_run,
+        )
+
+    return True
 
 
 # Default command, schedule run
@@ -136,9 +194,7 @@ def run_scheduled() -> None:
     """
 
     # Set up config file location
-    config_dir = os.getenv("CONFIG_DIR", os.getcwd())
-    config = os.path.join(config_dir, "config.yml")
-    cache = os.path.join(config_dir, "cache.json")
+    paths = _paths()
 
     # Get how often to run things
     schedule_time = float(os.getenv("SCHEDULE_TIME", "6"))
@@ -151,25 +207,14 @@ def run_scheduled() -> None:
         present_time = datetime.now().strftime("%H:%M")
         logger.info(f"Time is {present_time}. Starting scheduled run")
 
-        # Load the config and build the id-mapping resolver once, then share both
-        # across the two arrs (one config read + one download/parse per cycle). On
-        # failure it logs the cause and returns None, so the cycle is skipped and
-        # retried on the next pass rather than crashing.
-        shared = _build_shared(config, logger)
-
-        if shared is not None:
-            app_config, mappings = shared
-
-            # Run both Radarr and Sonarr syncs. _run_arr logs and closes each
-            # independently, so one crashing doesn't ruin the other.
-            _run_arr(
-                "radarr", RadarrSync, app_config,
-                config=config, cache=cache, logger=logger, mappings=mappings,
-            )
-            _run_arr(
-                "sonarr", SonarrSync, app_config,
-                config=config, cache=cache, logger=logger, mappings=mappings,
-            )
+        # Build the shared config + id-mapping resolver once and run both arrs
+        # (one config read + one download/parse per cycle, reused by both). On a
+        # config/source failure _build_shared logs the cause and the cycle is
+        # skipped, so it's retried next pass rather than crashing.
+        _run_arrs(
+            [("radarr", None), ("sonarr", None)],
+            config=paths.config, cache=paths.cache, logger=logger,
+        )
 
         next_run_time = datetime.now() + timedelta(hours=schedule_time)
         next_run_time = next_run_time.strftime("%H:%M")
@@ -201,45 +246,24 @@ def run_single(
     """
 
     # Set up config file location
-    config_dir = os.getenv("CONFIG_DIR", os.getcwd())
-    config = os.path.join(config_dir, "config.yml")
-    cache = os.path.join(config_dir, "cache.json")
+    paths = _paths()
 
     logger = setup_logger(log_level="INFO")
 
-    # Passing a movie/series ID implies running that arr
-    run_radarr = radarr or movie_id is not None
-    run_sonarr = sonarr or series_id is not None
+    # Passing a movie/series ID implies running that arr.
+    arrs: list[tuple[str, int | None]] = []
+    if radarr or movie_id is not None:
+        arrs.append(("radarr", movie_id))
+    if sonarr or series_id is not None:
+        arrs.append(("sonarr", series_id))
 
-    # Load the config and build the shared id-mapping resolver once for whichever
-    # arr(s) run (one config read + one download/parse, reused by both). None
-    # (after logging the cause) on a config/source failure, in which case the run
-    # is skipped.
-    shared = None
-    if run_radarr or run_sonarr:
-        shared = _build_shared(config, logger)
-
-    if shared is not None:
-        app_config, mappings = shared
-
-        if run_radarr:
-            _run_arr(
-                "radarr", RadarrSync, app_config,
-                config=config, cache=cache, logger=logger, mappings=mappings,
-                item_id=movie_id, dry_run=dry_run,
-            )
-
-        if run_sonarr:
-            _run_arr(
-                "sonarr", SonarrSync, app_config,
-                config=config, cache=cache, logger=logger, mappings=mappings,
-                item_id=series_id, dry_run=dry_run,
-            )
-
-    # True when the requested run proceeded (or nothing was requested); False when
-    # an arr was requested but the shared config/mappings couldn't be built, so a
+    # Build the shared config + mappings once (only when an arr was requested) and
+    # run each. True when the run proceeded or nothing was requested; False when an
+    # arr was requested but the shared config/mappings couldn't be built, so a
     # programmatic caller can tell a no-op-on-failure from a real run.
-    return shared is not None or not (run_radarr or run_sonarr)
+    return _run_arrs(
+        arrs, config=paths.config, cache=paths.cache, logger=logger, dry_run=dry_run,
+    )
 
 
 # Config commands
@@ -253,10 +277,7 @@ def config_init() -> bool:
 
     config_template_path = os.path.join(os.path.dirname(__file__), "config_sample.yml")
 
-    config_dir = os.environ.get("CONFIG_DIR", os.getcwd())
-    config = os.path.join(config_dir, "config.yml")
-
-    shutil.copyfile(config_template_path, config)
+    shutil.copyfile(config_template_path, _paths().config)
 
     return True
 
@@ -269,11 +290,9 @@ def cache_backup() -> bool:
     Will rename cache to cache.backup.json
     """
 
-    config_dir = os.environ.get("CONFIG_DIR", os.getcwd())
-    cache = os.path.join(config_dir, "cache.json")
-    backup_cache = os.path.join(config_dir, "cache.backup.json")
+    paths = _paths()
 
-    shutil.copyfile(cache, backup_cache)
+    shutil.copyfile(paths.cache, paths.cache_backup)
 
     return True
 
@@ -285,14 +304,12 @@ def cache_restore() -> bool:
     Will rename cache.backup.json to cache.json
     """
 
-    config_dir = os.environ.get("CONFIG_DIR", os.getcwd())
-    cache = os.path.join(config_dir, "cache.json")
-    backup_cache = os.path.join(config_dir, "cache.backup.json")
+    paths = _paths()
 
-    if os.path.exists(backup_cache):
-        shutil.move(backup_cache, cache)
+    if os.path.exists(paths.cache_backup):
+        shutil.move(paths.cache_backup, paths.cache)
     else:
-        raise FileNotFoundError(f"File {backup_cache} not found")
+        raise FileNotFoundError(f"File {paths.cache_backup} not found")
 
     return True
 
@@ -304,12 +321,11 @@ def cache_remove() -> bool:
     Will remove cache.json
     """
 
-    config_dir = os.environ.get("CONFIG_DIR", os.getcwd())
-    cache = os.path.join(config_dir, "cache.json")
+    paths = _paths()
 
-    if os.path.exists(cache):
-        os.remove(cache)
+    if os.path.exists(paths.cache):
+        os.remove(paths.cache)
     else:
-        raise FileNotFoundError(f"File {cache} not found")
+        raise FileNotFoundError(f"File {paths.cache} not found")
 
     return True

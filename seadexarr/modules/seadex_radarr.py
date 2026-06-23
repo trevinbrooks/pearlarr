@@ -2,12 +2,12 @@ import time
 from typing import Any
 
 from .log import indent_string
-from .protocols import RunServices
+from .protocols import ArrSync
 from .radarr_client import RadarrClient, collect_anime_movies
-from .seadex_arr import RunDeps
+from .seadex_arr import RunDeps, SeaDexArr
 
 
-class RadarrSync:
+class RadarrSync(ArrSync):
     """Radarr sync strategy: owns the Radarr REST client + movie domain logic.
 
     Implements the :class:`~.protocols.ArrSync` hooks the run machinery drives.
@@ -17,7 +17,7 @@ class RadarrSync:
     through it.
     """
 
-    def __init__(self, deps: RunDeps, services: RunServices) -> None:
+    def __init__(self, deps: RunDeps, services: SeaDexArr) -> None:
         """Stand up the Radarr client from the injected shared collaborators.
 
         Args:

@@ -12,9 +12,9 @@ from .anilist import (
 from .cache import UPDATED_AT_STR_FORMAT
 from .log import indent_string
 from .planner import get_episode_keys
-from .protocols import RunServices
+from .protocols import ArrSync
 from .radarr_client import RadarrClient, collect_anime_movies
-from .seadex_arr import RunDeps
+from .seadex_arr import RunDeps, SeaDexArr
 from .sonarr_client import SonarrClient
 
 TORRENT_FILENAMES_TO_SKIP = [
@@ -192,7 +192,7 @@ def check_ep_by_anibridge(
     return False
 
 
-class SonarrSync:
+class SonarrSync(ArrSync):
     """Sonarr sync strategy: owns the Sonarr REST client + episode domain logic.
 
     Implements the :class:`~.protocols.ArrSync` hooks the run machinery drives.
@@ -202,7 +202,7 @@ class SonarrSync:
     the per-id hooks call the shared pipeline through it.
     """
 
-    def __init__(self, deps: RunDeps, services: RunServices) -> None:
+    def __init__(self, deps: RunDeps, services: SeaDexArr) -> None:
         """Stand up the Sonarr client from the injected shared collaborators.
 
         Args:

@@ -1,11 +1,14 @@
 """Characterization tests for the episode-coverage formatting helpers.
 
-These move to ``coverage.py`` in Phase 1.
+These helpers live in ``coverage.py``.
 """
 
-from seadexarr.modules.coverage import format_episode_coverage
-from seadexarr.modules.seadex_arr import SeaDexArr
-from tests.builders import make_arr, sonarr_ep
+from seadexarr.modules.coverage import (
+    coverage_string,
+    episodes_from_ep_list,
+    format_episode_coverage,
+)
+from tests.builders import sonarr_ep
 
 
 class TestFormatEpisodeCoverage:
@@ -29,7 +32,7 @@ class TestFormatEpisodeCoverage:
 
 class TestCoverageString:
     def test_empty_is_blank(self) -> None:
-        assert make_arr().coverage_string([]) == ""
+        assert coverage_string([]) == ""
 
     def test_joins_seasons(self) -> None:
         eps = [
@@ -37,21 +40,21 @@ class TestCoverageString:
             {"season": 2, "episode": 1},
             {"season": 2, "episode": 2},
         ]
-        assert make_arr().coverage_string(eps) == "S00 E10, S02 E01-E02"
+        assert coverage_string(eps) == "S00 E10, S02 E01-E02"
 
 
 class TestEpisodesFromEpList:
     def test_none_returns_empty(self) -> None:
-        assert SeaDexArr.episodes_from_ep_list(None) == []
+        assert episodes_from_ep_list(None) == []
 
     def test_maps_field_names(self) -> None:
         eps = [sonarr_ep(1, 3, episode_file_id=0)]
-        assert SeaDexArr.episodes_from_ep_list(eps) == [{"season": 1, "episode": 3}]
+        assert episodes_from_ep_list(eps) == [{"season": 1, "episode": 3}]
 
     def test_missing_only_drops_episodes_with_files(self) -> None:
         eps = [
             sonarr_ep(1, 1, episode_file_id=0),   # missing (no file)
             sonarr_ep(1, 2, episode_file_id=42),  # has a file
         ]
-        result = SeaDexArr.episodes_from_ep_list(eps, missing_only=True)
+        result = episodes_from_ep_list(eps, missing_only=True)
         assert result == [{"season": 1, "episode": 1}]
