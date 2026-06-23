@@ -385,165 +385,29 @@ class DownloadPlanner:
 
                 # Simple case, we have no episode mappings, so
                 # just fall back to checking against release group
-                if len(seadex_episodes) == 0:
-                    if seadex_rg not in arr_release_groups and not overlapping_results:
-                        self.logger.debug(
-                            indent_string(
-                                f"SeaDex release group {seadex_rg} not in {arr.capitalize()} releases: "
-                                f"{', '.join([str(x) for x in arr_release_groups])} - will download {url}",
-                            ),
-                        )
+                if not seadex_episodes:
+                    self._match_url_no_episodes(
+                        seadex_rg=seadex_rg,
+                        url=url,
+                        url_item=url_item,
+                        arr=arr,
+                        arr_release_dict=arr_release_dict,
+                        arr_release_groups=arr_release_groups,
+                        overlapping_results=overlapping_results,
+                    )
+                    continue
 
-                        url_item.update({"download": True})
-
-                    # If the group matches, fall through to a size comparison
-                    if seadex_rg in arr_release_groups:
-
-                        seadex_file_sizes = url_item.get("size", [])
-                        arr_file_sizes = arr_release_dict[seadex_rg].get("size", [])
-
-                        if not isinstance(arr_file_sizes, list):
-                            arr_file_sizes = [arr_file_sizes]
-
-                        # If we have no overlaps at all, then add
-                        if set(seadex_file_sizes).isdisjoint(arr_file_sizes):
-                            self.logger.debug(
-                                indent_string(
-                                    f"SeaDex release group {seadex_rg} in {arr.capitalize()} releases: "
-                                    f"{', '.join([str(x) for x in arr_release_groups])}, but file sizes do not match - will download {url}",
-                                ),
-                            )
-
-                            url_item.update({"download": True})
-
-                        else:
-                            self.logger.debug(
-                                indent_string(
-                                    f"SeaDex release group {seadex_rg} in {arr.capitalize()} releases: "
-                                    f"{', '.join([str(x) for x in arr_release_groups])}, and file sizes match",
-                                ),
-                            )
-
-                else:
-
-                    # At this point, we need an episode list from Sonarr
-                    if ep_list is None:
-                        self.logger.debug(
-                            "Skipping per-episode check: no Sonarr episode list available",
-                        )
-                        continue
-
-                    # For each episode we've parsed from the torrent, check if a) it exists in the Sonarr list, b) if
-                    # the release group matches, and c) if the file sizes match. If there's any mismatch between release
-                    # groups (and there are no alternatives), then flip download to True. If all the sizes mismatch,
-                    # flip download to true
-
-                    rg_matches = [False] * len(seadex_episodes)
-                    size_matches = [False] * len(seadex_episodes)
-
-                    for seadex_idx, seadex_ep in enumerate(seadex_episodes):
-
-                        seadex_ep_season = seadex_ep.get("season", 888)
-                        seadex_ep_episode = seadex_ep.get("episode", 888)
-                        seadex_ep_size = seadex_ep.get("size", None)
-
-                        # O(1) lookup into the indexed Sonarr episodes instead of
-                        # re-scanning the whole list for every parsed episode
-                        sonarr_ep = sonarr_by_key.get(
-                            (seadex_ep_season, seadex_ep_episode),
-                        )
-                        if sonarr_ep is None:
-                            continue
-
-                        # Get the matched Sonarr episode's file size
-                        sonarr_ep_size = sonarr_ep.get("episodeFile", {}).get(
-                            "size", None,
-                        )
-
-                        # Do the sizes match? A missing Sonarr file reports no
-                        # size, so guard against None == None reading as a match
-                        # when neither side actually has a size.
-                        size_match = (
-                            sonarr_ep_size is not None
-                            and sonarr_ep_size == seadex_ep_size
-                        )
-
-                        season_ep_str = (
-                            f"S{seadex_ep_season:02d}E{seadex_ep_episode:02d}"
-                        )
-
-                        # Check SeaDex release group matches the episode release group in Sonarr
-                        sonarr_rg = sonarr_ep.get("episodeFile", {}).get(
-                            "releaseGroup", None,
-                        )
-                        sonarr_rg_normalized = normalize_rg(sonarr_rg)
-                        seadex_rg_normalized = normalize_rg(seadex_rg)
-                        # If not, flag as should be downloaded if it's not
-                        # already in some overlapping release.
-                        # normalized name indexes all_seadex_rgs_per_episode, so compare the normalized name
-                        if (
-                            sonarr_rg_normalized != seadex_rg_normalized
-                            and sonarr_rg_normalized
-                            not in all_seadex_rgs_per_episode["all"]
-                        ):
-
-                            # Avoid duplicating when another release already covers it
-                            all_seadex_rg = all_seadex_rgs_per_episode.get(
-                                season_ep_str, (),
-                            )
-
-                            if sonarr_rg_normalized not in all_seadex_rg:
-                                if debug_on:
-                                    self.logger.debug(
-                                        indent_string(
-                                            f"SeaDex release group {seadex_rg} differs from "
-                                            f"{arr.capitalize()} release for "
-                                            f"{season_ep_str} ({sonarr_rg}) and no other "
-                                            f"recommended release covers it - will download {url}",
-                                        ),
-                                    )
-
-                                url_item.update({"download": True})
-
-                        else:
-
-                            if debug_on:
-                                self.logger.debug(
-                                    indent_string(
-                                        f"Found SeaDex match to {arr.capitalize()} "
-                                        f"for {season_ep_str}.",
-                                    ),
-                                )
-                                if not size_match:
-                                    self.logger.debug(
-                                        indent_string(
-                                            f"-> Sizes are different: "
-                                            f"{sonarr_ep_size} (Sonarr), {seadex_ep_size} (SeaDex)",
-                                        ),
-                                    )
-                                else:
-                                    self.logger.debug(
-                                        indent_string(
-                                            f"-> Sizes match: {sonarr_ep_size}",
-                                        ),
-                                    )
-
-                            rg_matches[seadex_idx] = True
-
-                        # Now check against file size
-                        if size_match:
-                            size_matches[seadex_idx] = True
-
-                    # If we have matched the release groups but not the file sizes, then flag that
-                    # here and mark for download
-                    size_matches = list(compress(size_matches, rg_matches))
-                    if size_matches and not any(size_matches):
-                        self.logger.debug(
-                            indent_string(
-                                f"File sizes all differ for release group {seadex_rg} - will download {url}",
-                            ),
-                        )
-                        url_item.update({"download": True})
+                self._match_url_episodes(
+                    seadex_rg=seadex_rg,
+                    url=url,
+                    url_item=url_item,
+                    arr=arr,
+                    seadex_episodes=seadex_episodes,
+                    sonarr_by_key=sonarr_by_key,
+                    all_seadex_rgs_per_episode=all_seadex_rgs_per_episode,
+                    has_ep_list=ep_list is not None,
+                    debug_on=debug_on,
+                )
 
         # Where multiple preferred release groups cover the same files and the
         # Arr has none of them, only grab one (preferring public if public_only)
@@ -566,6 +430,205 @@ class DownloadPlanner:
             public_only_groups=skips.groups,
             skip_notices=skips.notices,
         )
+
+    def _match_url_no_episodes(
+        self,
+        *,
+        seadex_rg: str,
+        url: str,
+        url_item: dict,
+        arr: str,
+        arr_release_dict: dict,
+        arr_release_groups: Iterable[str],
+        overlapping_results: bool,
+    ) -> None:
+        """Decide a single url with no parsed episodes, by release group + size.
+
+        Flips ``url_item["download"]`` in place. The blunt fallback used for
+        Radarr and weirdly named TV: if the group isn't in the Arr's releases
+        (and nothing overlaps) grab it; if it is, grab it only when the file
+        sizes are disjoint.
+        """
+
+        if seadex_rg not in arr_release_groups and not overlapping_results:
+            self.logger.debug(
+                indent_string(
+                    f"SeaDex release group {seadex_rg} not in {arr.capitalize()} releases: "
+                    f"{', '.join([str(x) for x in arr_release_groups])} - will download {url}",
+                ),
+            )
+
+            url_item.update({"download": True})
+
+        # If the group matches, fall through to a size comparison
+        if seadex_rg in arr_release_groups:
+
+            seadex_file_sizes = url_item.get("size", [])
+            arr_file_sizes = arr_release_dict[seadex_rg].get("size", [])
+
+            if not isinstance(arr_file_sizes, list):
+                arr_file_sizes = [arr_file_sizes]
+
+            # If we have no overlaps at all, then add
+            if set(seadex_file_sizes).isdisjoint(arr_file_sizes):
+                self.logger.debug(
+                    indent_string(
+                        f"SeaDex release group {seadex_rg} in {arr.capitalize()} releases: "
+                        f"{', '.join([str(x) for x in arr_release_groups])}, but file sizes do not match - will download {url}",
+                    ),
+                )
+
+                url_item.update({"download": True})
+
+            else:
+                self.logger.debug(
+                    indent_string(
+                        f"SeaDex release group {seadex_rg} in {arr.capitalize()} releases: "
+                        f"{', '.join([str(x) for x in arr_release_groups])}, and file sizes match",
+                    ),
+                )
+
+    def _match_url_episodes(
+        self,
+        *,
+        seadex_rg: str,
+        url: str,
+        url_item: dict,
+        arr: str,
+        seadex_episodes: list,
+        sonarr_by_key: dict,
+        all_seadex_rgs_per_episode: dict,
+        has_ep_list: bool,
+        debug_on: bool,
+    ) -> None:
+        """Decide a single url against its parsed episodes, per episode.
+
+        Flips ``url_item["download"]`` in place. For each parsed SeaDex episode
+        we check whether it exists in the Sonarr index, whether the release
+        group matches, and whether the file sizes match; a release-group
+        mismatch with no covering alternative, or an all-sizes mismatch among
+        the rg-matched episodes, flips download on.
+        """
+
+        # At this point, we need an episode list from Sonarr. A non-None but
+        # empty list still runs the (no-op) loop below; only an absent list skips.
+        if not has_ep_list:
+            self.logger.debug(
+                "Skipping per-episode check: no Sonarr episode list available",
+            )
+            return
+
+        # For each episode we've parsed from the torrent, check if a) it exists in the Sonarr list, b) if
+        # the release group matches, and c) if the file sizes match. If there's any mismatch between release
+        # groups (and there are no alternatives), then flip download to True. If all the sizes mismatch,
+        # flip download to true
+
+        rg_matches = [False] * len(seadex_episodes)
+        size_matches = [False] * len(seadex_episodes)
+
+        for seadex_idx, seadex_ep in enumerate(seadex_episodes):
+
+            seadex_ep_season = seadex_ep.get("season", 888)
+            seadex_ep_episode = seadex_ep.get("episode", 888)
+            seadex_ep_size = seadex_ep.get("size", None)
+
+            # O(1) lookup into the indexed Sonarr episodes instead of
+            # re-scanning the whole list for every parsed episode
+            sonarr_ep = sonarr_by_key.get(
+                (seadex_ep_season, seadex_ep_episode),
+            )
+            if sonarr_ep is None:
+                continue
+
+            # Get the matched Sonarr episode's file size
+            sonarr_ep_size = sonarr_ep.get("episodeFile", {}).get(
+                "size", None,
+            )
+
+            # Do the sizes match? A missing Sonarr file reports no
+            # size, so guard against None == None reading as a match
+            # when neither side actually has a size.
+            size_match = (
+                sonarr_ep_size is not None
+                and sonarr_ep_size == seadex_ep_size
+            )
+
+            season_ep_str = (
+                f"S{seadex_ep_season:02d}E{seadex_ep_episode:02d}"
+            )
+
+            # Check SeaDex release group matches the episode release group in Sonarr
+            sonarr_rg = sonarr_ep.get("episodeFile", {}).get(
+                "releaseGroup", None,
+            )
+            sonarr_rg_normalized = normalize_rg(sonarr_rg)
+            seadex_rg_normalized = normalize_rg(seadex_rg)
+            # If not, flag as should be downloaded if it's not
+            # already in some overlapping release.
+            # normalized name indexes all_seadex_rgs_per_episode, so compare the normalized name
+            if (
+                sonarr_rg_normalized != seadex_rg_normalized
+                and sonarr_rg_normalized
+                not in all_seadex_rgs_per_episode["all"]
+            ):
+
+                # Avoid duplicating when another release already covers it
+                all_seadex_rg = all_seadex_rgs_per_episode.get(
+                    season_ep_str, (),
+                )
+
+                if sonarr_rg_normalized not in all_seadex_rg:
+                    if debug_on:
+                        self.logger.debug(
+                            indent_string(
+                                f"SeaDex release group {seadex_rg} differs from "
+                                f"{arr.capitalize()} release for "
+                                f"{season_ep_str} ({sonarr_rg}) and no other "
+                                f"recommended release covers it - will download {url}",
+                            ),
+                        )
+
+                    url_item.update({"download": True})
+
+            else:
+
+                if debug_on:
+                    self.logger.debug(
+                        indent_string(
+                            f"Found SeaDex match to {arr.capitalize()} "
+                            f"for {season_ep_str}.",
+                        ),
+                    )
+                    if not size_match:
+                        self.logger.debug(
+                            indent_string(
+                                f"-> Sizes are different: "
+                                f"{sonarr_ep_size} (Sonarr), {seadex_ep_size} (SeaDex)",
+                            ),
+                        )
+                    else:
+                        self.logger.debug(
+                            indent_string(
+                                f"-> Sizes match: {sonarr_ep_size}",
+                            ),
+                        )
+
+                rg_matches[seadex_idx] = True
+
+            # Now check against file size
+            if size_match:
+                size_matches[seadex_idx] = True
+
+        # If we have matched the release groups but not the file sizes, then flag that
+        # here and mark for download
+        size_matches = list(compress(size_matches, rg_matches))
+        if size_matches and not any(size_matches):
+            self.logger.debug(
+                indent_string(
+                    f"File sizes all differ for release group {seadex_rg} - will download {url}",
+                ),
+            )
+            url_item.update({"download": True})
 
     def reduce_overlapping_downloads(
         self,
