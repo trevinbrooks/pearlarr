@@ -18,6 +18,14 @@ from dataclasses import dataclass, field
 from itertools import compress
 
 from .log import indent_string
+from .seadex_types import (
+    SONARR_MISSING_KEY,
+    EpisodeRecord,
+    SeadexDict,
+    SeadexReleaseGroupItem,
+    SeadexUrlItem,
+    as_size_list,
+)
 
 
 @dataclass
@@ -59,8 +67,11 @@ class PlanResult:
     cache the title as done.
     """
 
-    seadex_dict: dict
-    torrent_hashes: list[str]
+    seadex_dict: SeadexDict
+    # The hash-filter path appends every url's hash unconditionally, and a
+    # private torrent has no infohash, so this can hold None entries (the
+    # release-group path filters those out, but the type must cover both).
+    torrent_hashes: list[str | None]
     public_only_skipped: bool = False
     public_only_groups: list[str] = field(default_factory=list)
     skip_notices: list[SkipNotice] = field(default_factory=list)
@@ -82,7 +93,7 @@ def normalize_rg(name: str | None) -> str | None:
     return name.strip().strip("-").casefold()
 
 
-def get_episode_keys(all_episodes: Iterable[dict]) -> set:
+def get_episode_keys(all_episodes: Iterable[EpisodeRecord]) -> set:
     """Build the set of (season, episode) keys an episode list covers
 
     Reduces a release's parsed episode list to the set of (season, episode)
@@ -93,10 +104,10 @@ def get_episode_keys(all_episodes: Iterable[dict]) -> set:
         all_episodes (iterable): Parsed episode dicts with "season"/"episode"
     """
 
-    return {(ep.get("season"), ep.get("episode")) for ep in all_episodes}
+    return {(ep.season, ep.episode) for ep in all_episodes}
 
 
-def get_same_files_groups(seadex_dict: dict) -> list:
+def get_same_files_groups(seadex_dict: SeadexDict) -> list:
     """Group SeaDex release groups that cover exactly the same files
 
     Release groups are grouped by their parsed episode coverage: two groups are
@@ -118,7 +129,7 @@ def get_same_files_groups(seadex_dict: dict) -> list:
 
     grouped = {}
     for rg, rg_item in seadex_dict.items():
-        all_episodes = rg_item.get("all_episodes", None)
+        all_episodes = rg_item.all_episodes
 
         if all_episodes is None:
             # No episode parsing for this Arr (e.g., Radarr): treat as one movie
@@ -137,7 +148,7 @@ def get_same_files_groups(seadex_dict: dict) -> list:
 
 
 def get_all_seadex_rgs_per_episode(
-    seadex_dict: dict,
+    seadex_dict: SeadexDict,
     sonarr_by_key: dict,
 ) -> dict:
     """Get a list of all SeaDex releases per-episode
@@ -159,10 +170,10 @@ def get_all_seadex_rgs_per_episode(
             # filter_by_release_group are case- and dash-insensitive
             seadex_rg_normalized = normalize_rg(seadex_rg)
 
-            seadex_urls = seadex_rg_item.get("urls", {})
+            seadex_urls = seadex_rg_item.urls
             for url_item in seadex_urls.values():
 
-                seadex_episodes = url_item.get("episodes", [])
+                seadex_episodes = url_item.episodes
 
                 # If we haven't managed to parse, then set this up as an
                 # "all" episode fallback
@@ -170,8 +181,8 @@ def get_all_seadex_rgs_per_episode(
                     all_seadex_rgs_per_episode["all"].add(seadex_rg_normalized)
 
                 for seadex_ep in seadex_episodes:
-                    season = seadex_ep.get("season", 888)
-                    episode = seadex_ep.get("episode", 888)
+                    season = seadex_ep.season
+                    episode = seadex_ep.episode
 
                     # Only record episodes Sonarr actually has, matching the
                     # original per-episode gate against the episode list
@@ -210,7 +221,7 @@ class DownloadPlanner:
     def plan(
         self,
         *,
-        seadex_dict: dict,
+        seadex_dict: SeadexDict,
         arr: str,
         arr_release_dict: dict,
         cached_hashes: list,
@@ -253,7 +264,7 @@ class DownloadPlanner:
 
     def filter_by_torrent_hash(
         self,
-        seadex_dict: dict,
+        seadex_dict: SeadexDict,
         cached_hashes: list,
     ) -> PlanResult:
         """Select downloads if the torrent hash is not already in the cache
@@ -277,10 +288,10 @@ class DownloadPlanner:
                 ),
             )
 
-            seadex_urls = seadex_rg_item.get("urls", {})
+            seadex_urls = seadex_rg_item.urls
             for url_item in seadex_urls.values():
 
-                url_hash = url_item.get("hash", None)
+                url_hash = url_item.hash
 
                 # If the URL is already in the hash cache, then append but don't set to download
                 torrent_hashes.append(url_hash)
@@ -292,7 +303,7 @@ class DownloadPlanner:
                         ),
                     )
 
-                    url_item.update({"download": True})
+                    url_item.download = True
 
                 else:
                     self.logger.debug(
@@ -315,7 +326,7 @@ class DownloadPlanner:
 
     def filter_by_release_group(
         self,
-        seadex_dict: dict,
+        seadex_dict: SeadexDict,
         arr: str,
         arr_release_dict: dict,
         ep_list: list | None = None,
@@ -353,8 +364,8 @@ class DownloadPlanner:
         for sonarr_ep in ep_list or []:
             sonarr_by_key.setdefault(
                 (
-                    sonarr_ep.get("seasonNumber", 999),
-                    sonarr_ep.get("episodeNumber", 999),
+                    sonarr_ep.get("seasonNumber", SONARR_MISSING_KEY),
+                    sonarr_ep.get("episodeNumber", SONARR_MISSING_KEY),
                 ),
                 sonarr_ep,
             )
@@ -378,10 +389,10 @@ class DownloadPlanner:
                 ),
             )
 
-            seadex_urls = seadex_rg_item.get("urls", {})
+            seadex_urls = seadex_rg_item.urls
             for url, url_item in seadex_urls.items():
 
-                seadex_episodes = url_item.get("episodes", [])
+                seadex_episodes = url_item.episodes
 
                 # Simple case, we have no episode mappings, so
                 # just fall back to checking against release group
@@ -416,11 +427,11 @@ class DownloadPlanner:
         # Build the hash list from whatever is still flagged for download, so it
         # always matches the exact set of torrents we'll add. Private torrents
         # have no infohash, so skip those
-        torrent_hashes = [
-            url_item["hash"]
+        torrent_hashes: list[str | None] = [
+            url_item.hash
             for rg_item in seadex_dict.values()
-            for url_item in rg_item.get("urls", {}).values()
-            if url_item.get("download", False) and url_item.get("hash") is not None
+            for url_item in rg_item.urls.values()
+            if url_item.download and url_item.hash is not None
         ]
 
         return PlanResult(
@@ -436,7 +447,7 @@ class DownloadPlanner:
         *,
         seadex_rg: str,
         url: str,
-        url_item: dict,
+        url_item: SeadexUrlItem,
         arr: str,
         arr_release_dict: dict,
         arr_release_groups: Iterable[str],
@@ -444,7 +455,7 @@ class DownloadPlanner:
     ) -> None:
         """Decide a single url with no parsed episodes, by release group + size.
 
-        Flips ``url_item["download"]`` in place. The blunt fallback used for
+        Flips ``url_item.download`` in place. The blunt fallback used for
         Radarr and weirdly named TV: if the group isn't in the Arr's releases
         (and nothing overlaps) grab it; if it is, grab it only when the file
         sizes are disjoint.
@@ -458,16 +469,15 @@ class DownloadPlanner:
                 ),
             )
 
-            url_item.update({"download": True})
+            url_item.download = True
 
         # If the group matches, fall through to a size comparison
         if seadex_rg in arr_release_groups:
 
-            seadex_file_sizes = url_item.get("size", [])
-            arr_file_sizes = arr_release_dict[seadex_rg].get("size", [])
-
-            if not isinstance(arr_file_sizes, list):
-                arr_file_sizes = [arr_file_sizes]
+            seadex_file_sizes = url_item.size
+            arr_file_sizes = as_size_list(
+                arr_release_dict[seadex_rg].get("size"),
+            )
 
             # If we have no overlaps at all, then add
             if set(seadex_file_sizes).isdisjoint(arr_file_sizes):
@@ -478,7 +488,7 @@ class DownloadPlanner:
                     ),
                 )
 
-                url_item.update({"download": True})
+                url_item.download = True
 
             else:
                 self.logger.debug(
@@ -493,7 +503,7 @@ class DownloadPlanner:
         *,
         seadex_rg: str,
         url: str,
-        url_item: dict,
+        url_item: SeadexUrlItem,
         arr: str,
         seadex_episodes: list,
         sonarr_by_key: dict,
@@ -503,7 +513,7 @@ class DownloadPlanner:
     ) -> None:
         """Decide a single url against its parsed episodes, per episode.
 
-        Flips ``url_item["download"]`` in place. For each parsed SeaDex episode
+        Flips ``url_item.download`` in place. For each parsed SeaDex episode
         we check whether it exists in the Sonarr index, whether the release
         group matches, and whether the file sizes match; a release-group
         mismatch with no covering alternative, or an all-sizes mismatch among
@@ -528,9 +538,9 @@ class DownloadPlanner:
 
         for seadex_idx, seadex_ep in enumerate(seadex_episodes):
 
-            seadex_ep_season = seadex_ep.get("season", 888)
-            seadex_ep_episode = seadex_ep.get("episode", 888)
-            seadex_ep_size = seadex_ep.get("size", None)
+            seadex_ep_season = seadex_ep.season
+            seadex_ep_episode = seadex_ep.episode
+            seadex_ep_size = seadex_ep.size
 
             # O(1) lookup into the indexed Sonarr episodes instead of
             # re-scanning the whole list for every parsed episode
@@ -588,7 +598,7 @@ class DownloadPlanner:
                             ),
                         )
 
-                    url_item.update({"download": True})
+                    url_item.download = True
 
             else:
 
@@ -628,11 +638,11 @@ class DownloadPlanner:
                     f"File sizes all differ for release group {seadex_rg} - will download {url}",
                 ),
             )
-            url_item.update({"download": True})
+            url_item.download = True
 
     def reduce_overlapping_downloads(
         self,
-        seadex_dict: dict,
+        seadex_dict: SeadexDict,
     ) -> PublicOnlySkips:
         """Reduce overlapping flagged downloads down to a single release group
 
@@ -659,19 +669,15 @@ class DownloadPlanner:
         if self.interactive:
             return skips
 
-        def is_flagged(rg_item: dict) -> bool:
-            return any(
-                u.get("download", False) for u in rg_item.get("urls", {}).values()
-            )
+        def is_flagged(rg_item: SeadexReleaseGroupItem) -> bool:
+            return any(u.download for u in rg_item.urls.values())
 
-        def is_public_group(rg_item: dict) -> bool:
-            return any(
-                u.get("is_public", False) for u in rg_item.get("urls", {}).values()
-            )
+        def is_public_group(rg_item: SeadexReleaseGroupItem) -> bool:
+            return any(u.is_public for u in rg_item.urls.values())
 
-        def unflag(rg_item: dict) -> None:
-            for u in rg_item.get("urls", {}).values():
-                u["download"] = False
+        def unflag(rg_item: SeadexReleaseGroupItem) -> None:
+            for u in rg_item.urls.values():
+                u.download = False
 
         same_files_groups = get_same_files_groups(seadex_dict)
 
@@ -726,7 +732,7 @@ class DownloadPlanner:
         return skips
 
     @staticmethod
-    def get_any_to_download(seadex_dict: dict) -> bool:
+    def get_any_to_download(seadex_dict: SeadexDict) -> bool:
         """Check if any torrents are marked as to download
 
         Args:
@@ -734,7 +740,7 @@ class DownloadPlanner:
         """
 
         return any(
-            url_item.get("download", False)
+            url_item.download
             for rg_item in seadex_dict.values()
-            for url_item in rg_item.get("urls", {}).values()
+            for url_item in rg_item.urls.values()
         )

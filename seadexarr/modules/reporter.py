@@ -36,6 +36,7 @@ from .log import (
     indent_string,
     rule_string,
 )
+from .seadex_types import SeadexDict
 from .torrents import ReleaseOutcome
 
 
@@ -683,7 +684,7 @@ class RunReporter:
 
     def log_seadex_action(
         self,
-        seadex_dict: dict,
+        seadex_dict: SeadexDict,
         results: list[ReleaseOutcome],
         dry_run: bool = False,
     ) -> bool:
@@ -731,9 +732,9 @@ class RunReporter:
         # The release group(s) we recommend (those flagged for download), tags too
         for srg, srg_item in seadex_dict.items():
 
-            urls = srg_item.get("urls", {})
-            if any(u.get("download", False) for u in urls.values()):
-                tags = srg_item.get("tags", [])
+            urls = srg_item.urls
+            if any(u.download for u in urls.values()):
+                tags = srg_item.tags
                 if len(tags) > 0:
                     recommendation = f"{srg} [{', '.join(tags)}]"
                 else:

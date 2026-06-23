@@ -10,9 +10,8 @@ resolved by the AniList gateway and passed in, so the notifier stays free of the
 AniList cache.
 """
 
-import copy
-
 from .discord import discord_push
+from .seadex_types import EmbedField, SeadexDict
 
 
 class Notifier:
@@ -38,13 +37,15 @@ class Notifier:
         *,
         arr: str,
         release_group: list | str | None,
-        seadex_dict: dict,
-    ) -> list:
+        seadex_dict: SeadexDict,
+    ) -> list[dict[str, str]]:
         """Build the Discord embed fields for a grab.
 
         The first field names the Arr's current release group; one field per
         SeaDex release group then lists its tags and the URLs flagged for
-        download.
+        download. Fields are assembled as typed :class:`EmbedField`s and
+        serialized to the plain ``{"name", "value"}`` dicts the webhook expects
+        at the return boundary.
 
         Args:
             arr (str): Type of arr instance
@@ -52,22 +53,24 @@ class Notifier:
             seadex_dict (dict): Dictionary of SeaDex releases
         """
 
-        fields = []
+        fields: list[EmbedField] = []
 
-        # The first field should be the Arr group. If it's empty, mention it's missing
-        release_group_discord = copy.deepcopy(release_group)
+        # The first field should be the Arr group. If it's empty, mention it's
+        # missing. Each branch allocates a fresh list, so the caller's
+        # release_group is never mutated (no defensive copy needed).
+        if not release_group:
+            names = ["None"]
+        elif isinstance(release_group, str):
+            names = [release_group]
+        else:
+            names = list(release_group)
 
-        # Catch various edge cases: normalise to a non-empty list of strings
-        if not release_group_discord:
-            release_group_discord = ["None"]
-        elif isinstance(release_group_discord, str):
-            release_group_discord = [release_group_discord]
-
-        field_dict = {
-            "name": f"{arr.capitalize()} Release:",
-            "value": "\n".join(release_group_discord),
-        }
-        fields.append(field_dict)
+        fields.append(
+            EmbedField(
+                name=f"{arr.capitalize()} Release:",
+                value="\n".join(names),
+            ),
+        )
 
         # SeaDex options with links
         for srg, srg_item in seadex_dict.items():
@@ -75,15 +78,15 @@ class Notifier:
             # URLs flagged for download in this group, in one pass
             urls_to_download = [
                 url
-                for url, u in srg_item.get("urls", {}).items()
-                if u.get("download", False)
+                for url, u in srg_item.urls.items()
+                if u.download
             ]
 
             if urls_to_download:
 
                 # Include any tags in the string
                 discord_value = ""
-                tags = srg_item.get("tags", [])
+                tags = srg_item.tags
                 if len(tags) > 0:
                     discord_value += "Tags:\n"
                     discord_value += "\n".join(tags)
@@ -93,14 +96,14 @@ class Notifier:
                 discord_value += "Links:\n"
                 discord_value += "\n".join(urls_to_download)
 
-                field_dict = {
-                    "name": f"SeaDex recommendation: {srg}",
-                    "value": f"{discord_value}",
-                }
+                fields.append(
+                    EmbedField(
+                        name=f"SeaDex recommendation: {srg}",
+                        value=f"{discord_value}",
+                    ),
+                )
 
-                fields.append(field_dict)
-
-        return fields
+        return [f.to_dict() for f in fields]
 
     def push(
         self,
@@ -108,7 +111,7 @@ class Notifier:
         arr_title: str,
         al_title: str,
         seadex_url: str,
-        fields: list,
+        fields: list[dict[str, str]],
         thumb_url: str | None,
     ) -> bool:
         """Post a grab notification to the configured Discord webhook.

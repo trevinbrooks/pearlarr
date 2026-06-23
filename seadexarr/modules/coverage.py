@@ -8,6 +8,8 @@ thin delegating methods so subclasses can still call them via ``self``.
 
 from collections.abc import Iterable
 
+from .seadex_types import EpisodeRecord
+
 
 def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
     """Condense a set of episode numbers into a readable range string
@@ -41,7 +43,7 @@ def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
     )
 
 
-def format_episode_coverage(episodes: list) -> list | None:
+def format_episode_coverage(episodes: list[EpisodeRecord]) -> list | None:
     """Summarize the Sonarr season/episode coverage of a torrent, per season
 
     Returns a list of (season_label, episode_ranges) tuples, one per season
@@ -53,8 +55,8 @@ def format_episode_coverage(episodes: list) -> list | None:
     or a Sonarr parse failure).
 
     Args:
-        episodes (list): List of {"season", "episode", ...} dicts,
-            as parsed onto each torrent's url_item
+        episodes (list): List of ``EpisodeRecord``\\ s, as parsed onto each
+            torrent's url_item
     """
 
     if not episodes:
@@ -63,8 +65,8 @@ def format_episode_coverage(episodes: list) -> list | None:
     # Collect the episode numbers seen for each season
     episodes_by_season = {}
     for ep in episodes:
-        season = ep.get("season")
-        episode = ep.get("episode")
+        season = ep.season
+        episode = ep.episode
         if season is None or episode is None:
             continue
         episodes_by_season.setdefault(season, set()).add(episode)
@@ -78,13 +80,13 @@ def format_episode_coverage(episodes: list) -> list | None:
     ]
 
 
-def coverage_string(episodes: list) -> str:
+def coverage_string(episodes: list[EpisodeRecord]) -> str:
     """One-line season/episode coverage, e.g. "S04 E01-E12" or
     "S00 E10, S02 E01-E12". Returns "" when there's no parsed episode info
     (e.g., a Radarr movie), so callers can treat it as "URL only".
 
     Args:
-        episodes (list): {"season", "episode"} dicts
+        episodes (list): List of ``EpisodeRecord``\\ s
     """
 
     coverage = format_episode_coverage(episodes)
@@ -93,12 +95,15 @@ def coverage_string(episodes: list) -> str:
     return ", ".join(f"{label} {ranges}" for label, ranges in coverage)
 
 
-def episodes_from_ep_list(ep_list: list | None, missing_only: bool = False) -> list:
-    """Convert a Sonarr ep_list into {"season","episode"} coverage dicts
+def episodes_from_ep_list(
+    ep_list: list | None,
+    missing_only: bool = False,
+) -> list[EpisodeRecord]:
+    """Convert a Sonarr ep_list into ``EpisodeRecord`` coverage records
 
-    Sonarr episodes carry "seasonNumber"/"episodeNumber"; the coverage
-    helpers expect "season"/"episode". Optionally, keep only missing episodes
-    (no file on disk) to summarize what is still needed.
+    Sonarr episodes carry "seasonNumber"/"episodeNumber"; the coverage helpers
+    read ``EpisodeRecord.season``/``.episode``. Optionally, keep only missing
+    episodes (no file on disk) to summarize what is still needed.
 
     Args:
         ep_list (list): Sonarr episode dicts
@@ -110,9 +115,9 @@ def episodes_from_ep_list(ep_list: list | None, missing_only: bool = False) -> l
         if missing_only and ep.get("episodeFileId", 0) != 0:
             continue
         episodes.append(
-            {
-                "season": ep.get("seasonNumber"),
-                "episode": ep.get("episodeNumber"),
-            },
+            EpisodeRecord(
+                season=ep.get("seasonNumber"),
+                episode=ep.get("episodeNumber"),
+            ),
         )
     return episodes

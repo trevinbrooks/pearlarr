@@ -17,6 +17,7 @@ from .planner import get_episode_keys
 from .protocols import ArrSync
 from .radarr_client import IdField, RadarrClient, collect_anime_items, collect_anime_movies
 from .seadex_arr import RunDeps, SeaDexArr
+from .seadex_types import EpisodeRecord
 from .sonarr_client import SonarrClient
 
 TORRENT_FILENAMES_TO_SKIP = [
@@ -171,7 +172,7 @@ def get_overlapping_results(seadex_dict: dict) -> bool:
     # consistent if the coverage semantics change.
     episode_sets = {}
     for rg, rg_item in seadex_dict.items():
-        all_episodes = rg_item.get("all_episodes", [])
+        all_episodes = rg_item.all_episodes or []
         episode_sets[rg] = get_episode_keys(all_episodes)
 
     release_groups = list(episode_sets.keys())
@@ -854,16 +855,19 @@ class SonarrSync(ArrSync):
 
         for release_group_item in seadex_dict.values():
 
-            # Set up an overall "all episodes" list
-            release_group_item.update({"all_episodes": []})
+            # Set up an overall "all episodes" list (bound locally so the
+            # appends below stay typed as list, not list | None)
+            all_episodes: list[EpisodeRecord] = []
+            release_group_item.all_episodes = all_episodes
 
-            for url_item in release_group_item.get("urls", {}).values():
+            for url_item in release_group_item.urls.values():
 
                 # Set up a list to parse episodes from files
-                url_item.update({"episodes": []})
-                sizes = url_item.get("size", [])
+                episodes: list[EpisodeRecord] = []
+                url_item.episodes = episodes
+                sizes = url_item.size
 
-                for sd_file_idx, seadex_file in enumerate(url_item.get("files", [])):
+                for sd_file_idx, seadex_file in enumerate(url_item.files):
 
                     # Get basename from the file
                     f = os.path.basename(seadex_file)
@@ -910,19 +914,19 @@ class SonarrSync(ArrSync):
                             ),
                         )
 
-                        url_item["episodes"].append(
-                            {
-                                "season": season,
-                                "episode": episode,
-                                "size": size,
-                            },
+                        episodes.append(
+                            EpisodeRecord(
+                                season=season,
+                                episode=episode,
+                                size=size,
+                            ),
                         )
-                        release_group_item["all_episodes"].append(
-                            {
-                                "season": season,
-                                "episode": episode,
-                                "size": size,
-                            },
+                        all_episodes.append(
+                            EpisodeRecord(
+                                season=season,
+                                episode=episode,
+                                size=size,
+                            ),
                         )
 
         return seadex_dict

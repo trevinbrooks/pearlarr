@@ -8,6 +8,8 @@ import qbittorrentapi
 import requests
 from seadex import EntryRecord
 
+from seadexarr.modules.seadex_types import SeadexReleaseGroupItem, SeadexUrlItem
+
 from . import coverage as _coverage
 from .anilist_gateway import AniListGateway
 from .cache import CacheField, CacheRecord, CacheStore
@@ -23,6 +25,7 @@ from .planner import DownloadPlanner
 from .protocols import ArrSync
 from .reporter import GrabRecord, NeedsActionRecord, RunContext, RunReporter
 from .seadex_gateway import SeaDexGateway
+from .seadex_types import SeadexDict
 from .torrents import AddOutcome, ReleaseOutcome, TorrentService
 
 
@@ -310,7 +313,7 @@ class SeaDexArr:
     def get_seadex_dict(
         self,
         sd_entry: EntryRecord,
-    ) -> dict:
+    ) -> SeadexDict:
         """Parse and filter SeaDex request
 
         Args:
@@ -357,22 +360,20 @@ class SeaDexArr:
 
         # Pull out release groups, URLs, and various other useful info as a
         # dictionary
-        seadex_release_groups = {}
+        seadex_release_groups: SeadexDict = {}
         for t in candidates:
-
             if t.release_group not in seadex_release_groups:
-                seadex_release_groups[t.release_group] = {"urls": {}}
-                seadex_release_groups[t.release_group]["tags"] = t.tags
+                seadex_release_groups[t.release_group] = SeadexReleaseGroupItem(urls={}, tags=t.tags)
 
-            seadex_release_groups[t.release_group]["urls"][t.url] = {
-                "url": t.url,
-                "files": [f.name for f in t.files],
-                "size": [f.size for f in t.files],
-                "tracker": t.tracker,
-                "is_public": t.tracker.is_public() and t.tracker.casefold() not in PRIVATE_TRACKERS,
-                "hash": t.infohash,
-                "download": False,
-            }
+            seadex_release_groups[t.release_group].urls[t.url] = SeadexUrlItem(
+                url=t.url,
+                files=[f.name for f in t.files],
+                size=[f.size for f in t.files],
+                tracker=t.tracker,
+                is_public=t.tracker.is_public() and t.tracker.casefold() not in PRIVATE_TRACKERS,
+                hash=t.infohash,
+                download=False,
+            )
 
         # If we only want public releases, then within each release group drop
         # any private URLs, so long as that group also has a public option. We
@@ -382,11 +383,11 @@ class SeaDexArr:
         # reduce_overlapping_downloads)
         if self._config.public_only:
             for release_group_item in seadex_release_groups.values():
-                urls = release_group_item["urls"]
-                has_public = any(u["is_public"] for u in urls.values())
+                urls = release_group_item.urls
+                has_public = any(u.is_public for u in urls.values())
                 if has_public:
-                    release_group_item["urls"] = {
-                        url: u for url, u in urls.items() if u["is_public"]
+                    release_group_item.urls = {
+                        url: u for url, u in urls.items() if u.is_public
                     }
 
         return seadex_release_groups
@@ -505,7 +506,7 @@ class SeaDexArr:
 
     def add_torrent(
         self,
-        torrent_dict: dict,
+        torrent_dict: SeadexDict,
         torrent_client: str = "qbit",
     ) -> tuple[int, list[ReleaseOutcome]]:
         """Add torrent(s) to a torrent client
@@ -532,18 +533,18 @@ class SeaDexArr:
 
         for srg, srg_item in torrent_dict.items():
 
-            seadex_urls = srg_item.get("urls", {})
+            seadex_urls = srg_item.urls
             for url, url_item in seadex_urls.items():
 
                 # If not flagged for download, then skip
-                download = url_item.get("download", False)
+                download = url_item.download
                 if not download:
                     continue
 
-                item_hash = url_item.get("hash", None)
-                tracker = url_item.get("tracker", None)
+                item_hash = url_item.hash
+                tracker = url_item.tracker
 
-                if self._config.public_only and not url_item.get("is_public", True):
+                if self._config.public_only and not url_item.is_public:
                     self.log_fmt.detail(
                         "skipped",
                         f"{tracker} private-only (public_only on)",
@@ -592,7 +593,7 @@ class SeaDexArr:
                     # mapped from the Arr so the summary's "files" is never blank
                     # when a release's filenames couldn't be parsed (e.g. an OVA).
                     coverage_str = _coverage.coverage_string(
-                        url_item.get("episodes", []),
+                        url_item.episodes,
                     ) or self._ctx.current_coverage
                     self._ctx.stats.added.append(
                         GrabRecord(
@@ -863,7 +864,7 @@ class SeaDexArr:
         item_title: str,
         anilist_title: str,
         sd_url: str,
-        seadex_dict: dict,
+        seadex_dict: SeadexDict,
         torrent_hashes: list,
         cache_details: CacheRecord,
         release_group: list | str | None,

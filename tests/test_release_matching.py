@@ -11,6 +11,11 @@ from seadexarr.modules.planner import (
     get_same_files_groups,
     normalize_rg,
 )
+from seadexarr.modules.seadex_types import (
+    EpisodeRecord,
+    SeadexReleaseGroupItem,
+    SeadexUrlItem,
+)
 
 
 class TestNormalizeRg:
@@ -45,35 +50,38 @@ class TestFormatEpisodeRanges:
 
 class TestGetEpisodeKeys:
     def test_builds_season_episode_pairs(self) -> None:
-        eps = [{"season": 1, "episode": 1}, {"season": 1, "episode": 2}]
+        eps = [EpisodeRecord(season=1, episode=1), EpisodeRecord(season=1, episode=2)]
         assert get_episode_keys(eps) == {(1, 1), (1, 2)}
 
     def test_missing_keys_become_none(self) -> None:
-        assert get_episode_keys([{}]) == {(None, None)}
+        assert get_episode_keys([EpisodeRecord()]) == {(None, None)}
 
 
 class TestGetSameFilesGroups:
     def test_no_episode_parsing_groups_together(self) -> None:
-        # No "all_episodes" key -> None branch -> all collapse to one group
-        seadex = {"A": {}, "B": {}}
+        # No all_episodes (None) -> no-parsing branch -> all collapse to one group
+        seadex = {"A": SeadexReleaseGroupItem(), "B": SeadexReleaseGroupItem()}
         assert get_same_files_groups(seadex) == [["A", "B"]]
 
     def test_unparsed_each_on_its_own(self) -> None:
         # Empty list -> "couldn't verify" -> each group kept separately
-        seadex = {"A": {"all_episodes": []}, "B": {"all_episodes": []}}
+        seadex = {
+            "A": SeadexReleaseGroupItem(all_episodes=[]),
+            "B": SeadexReleaseGroupItem(all_episodes=[]),
+        }
         assert get_same_files_groups(seadex) == [["A"], ["B"]]
 
     def test_identical_coverage_grouped(self) -> None:
         seadex = {
-            "A": {"all_episodes": [{"season": 1, "episode": 1}]},
-            "B": {"all_episodes": [{"season": 1, "episode": 1}]},
+            "A": SeadexReleaseGroupItem(all_episodes=[EpisodeRecord(season=1, episode=1)]),
+            "B": SeadexReleaseGroupItem(all_episodes=[EpisodeRecord(season=1, episode=1)]),
         }
         assert get_same_files_groups(seadex) == [["A", "B"]]
 
     def test_different_coverage_separate(self) -> None:
         seadex = {
-            "A": {"all_episodes": [{"season": 1, "episode": 1}]},
-            "B": {"all_episodes": [{"season": 1, "episode": 2}]},
+            "A": SeadexReleaseGroupItem(all_episodes=[EpisodeRecord(season=1, episode=1)]),
+            "B": SeadexReleaseGroupItem(all_episodes=[EpisodeRecord(season=1, episode=2)]),
         }
         assert get_same_files_groups(seadex) == [["A"], ["B"]]
 
@@ -81,13 +89,19 @@ class TestGetSameFilesGroups:
 class TestGetAllSeadexRgsPerEpisode:
     def test_single_group_short_circuits(self) -> None:
         # len(seadex_dict) <= 1 returns just the empty "all" bucket
-        seadex = {"A": {"urls": {"u": {"episodes": [{"season": 1, "episode": 1}]}}}}
+        seadex = {
+            "A": SeadexReleaseGroupItem(
+                urls={"u": SeadexUrlItem(episodes=[EpisodeRecord(season=1, episode=1)])},
+            ),
+        }
         assert get_all_seadex_rgs_per_episode(seadex, {(1, 1): {}}) == {"all": set()}
 
     def test_records_episodes_sonarr_has(self) -> None:
         seadex = {
-            "Era-Raws": {"urls": {"u": {"episodes": [{"season": 1, "episode": 1}]}}},
-            "Other": {"urls": {"u2": {"episodes": []}}},
+            "Era-Raws": SeadexReleaseGroupItem(
+                urls={"u": SeadexUrlItem(episodes=[EpisodeRecord(season=1, episode=1)])},
+            ),
+            "Other": SeadexReleaseGroupItem(urls={"u2": SeadexUrlItem(episodes=[])}),
         }
         result = get_all_seadex_rgs_per_episode(seadex, {(1, 1): {}})
         assert result["S01E01"] == {"era-raws"}
@@ -96,8 +110,12 @@ class TestGetAllSeadexRgsPerEpisode:
 
     def test_ignores_episodes_sonarr_lacks(self) -> None:
         seadex = {
-            "A": {"urls": {"u": {"episodes": [{"season": 1, "episode": 99}]}}},
-            "B": {"urls": {"u2": {"episodes": [{"season": 1, "episode": 1}]}}},
+            "A": SeadexReleaseGroupItem(
+                urls={"u": SeadexUrlItem(episodes=[EpisodeRecord(season=1, episode=99)])},
+            ),
+            "B": SeadexReleaseGroupItem(
+                urls={"u2": SeadexUrlItem(episodes=[EpisodeRecord(season=1, episode=1)])},
+            ),
         }
         result = get_all_seadex_rgs_per_episode(seadex, {(1, 1): {}})
         assert "S01E99" not in result

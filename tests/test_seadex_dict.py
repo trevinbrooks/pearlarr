@@ -56,7 +56,7 @@ class TestGetSeadexDict:
             FakeTorrent(release_group="A", url="u1", tracker=FakeTracker("AB", True)),
         )
         result = arr.get_seadex_dict(entry)
-        assert result["A"]["urls"]["u1"]["is_public"] is False
+        assert result["A"].urls["u1"].is_public is False
 
     def test_public_only_drops_private_url_when_public_exists(self) -> None:
         arr = make_arr(public_only=True, want_best=False, prefer_dual_audio=False)
@@ -65,7 +65,7 @@ class TestGetSeadexDict:
             FakeTorrent(release_group="A", url="priv", tracker=FakeTracker("AB", False)),
         )
         result = arr.get_seadex_dict(entry)
-        assert set(result["A"]["urls"]) == {"pub"}
+        assert set(result["A"].urls) == {"pub"}
 
     def test_public_only_keeps_private_only_group(self) -> None:
         # A group with no public option is kept here; it's only dropped later in
@@ -75,4 +75,4 @@ class TestGetSeadexDict:
             FakeTorrent(release_group="A", url="priv", tracker=FakeTracker("AB", False)),
         )
         result = arr.get_seadex_dict(entry)
-        assert set(result["A"]["urls"]) == {"priv"}
+        assert set(result["A"].urls) == {"priv"}

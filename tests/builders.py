@@ -13,9 +13,16 @@ from functools import cached_property
 from typing import Any, TypeVar
 from unittest import mock
 
+from seadex import Tag
+
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.seadex_arr import SeaDexArr
+from seadexarr.modules.seadex_types import (
+    EpisodeRecord,
+    SeadexReleaseGroupItem,
+    SeadexUrlItem,
+)
 
 # The override keys make_arr routes into self._config, derived from AppConfig's
 # real setting surface so it can't drift into a stale subset. The old hardcoded
@@ -149,43 +156,42 @@ def url_item(
     url: str = "https://nyaa.si/view/1",
     files: list[str] | None = None,
     size: list[int] | None = None,
-    tracker: str = "Nyaa",
     is_public: bool = True,
     infohash: str | None = "hash1",
     download: bool = False,
-    episodes: list[dict] | None = None,
-) -> dict:
+    episodes: list[EpisodeRecord] | None = None,
+) -> SeadexUrlItem:
     """One SeaDex URL record, matching ``get_seadex_dict``'s ``url_item`` shape."""
 
-    return {
-        "url": url,
-        "files": files or [],
-        "size": size or [],
-        "tracker": tracker,
-        "is_public": is_public,
-        "hash": infohash,
-        "download": download,
-        "episodes": episodes or [],
-    }
+    return SeadexUrlItem(
+        url=url,
+        files=files or [],
+        size=size or [],
+        is_public=is_public,
+        hash=infohash,
+        download=download,
+        episodes=episodes or [],
+    )
 
 
 def rg_group(
-    urls: dict[str, dict],
+    urls: dict[str, SeadexUrlItem],
     *,
-    tags: list[str] | None = None,
-    all_episodes: list[dict] | None = None,
-) -> dict:
+    tags: frozenset[Tag] | None = None,
+    all_episodes: list[EpisodeRecord] | None = None,
+) -> SeadexReleaseGroupItem:
     """One SeaDex release-group record keyed by url.
 
-    ``all_episodes`` is only set when provided, so the three branches of
-    ``get_same_files_groups`` (absent -> no-parsing, ``[]`` -> unparsed,
+    ``all_episodes`` defaults to ``None`` so the three branches of
+    ``get_same_files_groups`` (``None`` -> no-parsing, ``[]`` -> unparsed,
     populated -> coverage frozenset) can each be reached.
     """
 
-    group: dict[str, Any] = {"urls": urls, "tags": tags or []}
-    if all_episodes is not None:
-        group["all_episodes"] = all_episodes
-    return group
+    return SeadexReleaseGroupItem(
+        urls=urls,
+        tags=tags or frozenset(),
+        all_episodes=all_episodes,
+    )
 
 
 def sonarr_ep(
