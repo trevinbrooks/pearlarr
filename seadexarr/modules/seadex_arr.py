@@ -11,7 +11,7 @@ from seadex import EntryRecord
 from . import coverage as _coverage
 from .anilist_gateway import AniListGateway
 from .cache import CacheStore
-from .config import PRIVATE_TRACKERS, AppConfig
+from .config import PRIVATE_TRACKERS, AppConfig, Arr
 from .log import (
     LogFormatter,
     indent_string,
@@ -59,7 +59,7 @@ class RunDeps:
     @classmethod
     def build(
         cls,
-        arr: str,
+        arr: Arr,
         config: str = "config.yml",
         cache: str = "cache.json",
         logger: logging.Logger | None = None,
@@ -70,8 +70,7 @@ class RunDeps:
         """Construct the shared collaborators in dependency order.
 
         Args:
-            arr (str): Which Arr is being run ("sonarr"/"radarr"); selects the
-                arr-prefixed config keys.
+            arr (Arr): Which Arr is being run; selects the arr-prefixed config keys.
             config (str, optional): Path to a config file. Defaults to "config.yml".
             cache (str, optional): Path to a cache file. Defaults to "cache.json".
             logger (logging.Logger | None, optional): Logger to use. Defaults to
@@ -183,7 +182,7 @@ class SeaDexArr:
     strategy and never constructs its own dependencies.
     """
 
-    def __init__(self, deps: RunDeps, arr: str = "sonarr") -> None:
+    def __init__(self, deps: RunDeps, arr: Arr = Arr.SONARR) -> None:
         """Receive the shared collaborators and set up per-run state.
 
         Args:
@@ -191,7 +190,7 @@ class SeaDexArr:
                 composition root (``cli.py``). Unpacked into the attribute names
                 the run loop and pipeline already read; the engine does not build
                 any of them.
-            arr (str, optional): Which Arr is being run. Defaults to "sonarr".
+            arr (Arr, optional): Which Arr is being run. Defaults to Arr.SONARR.
         """
 
         # Unpack the injected collaborators into the attribute names the run loop
@@ -234,7 +233,7 @@ class SeaDexArr:
 
     def check_al_id_in_cache(
         self,
-        arr: str,
+        arr: Arr,
         al_id: int,
         seadex_entry: EntryRecord,
     ) -> bool:
@@ -457,7 +456,7 @@ class SeaDexArr:
         self,
         al_id: int,
         seadex_dict: dict,
-        arr: str,
+        arr: Arr,
         arr_release_dict: dict,
         ep_list: list | None = None,
     ) -> tuple[list, dict]:
@@ -624,20 +623,20 @@ class SeaDexArr:
         qBittorrent is not configured (nothing can actually be grabbed)."""
         return self.dry_run or self.qbit is None
 
-    def update_cache(self, arr: str, al_id: int, cache_details: dict | None = None) -> bool:
+    def update_cache(self, arr: Arr, al_id: int, cache_details: dict | None = None) -> bool:
         """Merge ``cache_details`` into an entry's cache record (in-memory only).
 
         The run's save points flush it; see ``CacheStore.update_cache``.
 
         Args:
-            arr (str): Arr instance
+            arr (Arr): Arr instance
             al_id (int): AniList ID
             cache_details (dict): Details for the cache entry. Defaults to None
         """
 
         return self.cache_store.update_cache(arr, al_id, cache_details)
 
-    def reset_run_stats(self, arr: str, dry_run: bool) -> bool:
+    def reset_run_stats(self, arr: Arr, dry_run: bool) -> bool:
         """Start a fresh run context and the run clock
 
         Replaces the run-scoped state wholesale with a new RunContext and
@@ -645,7 +644,7 @@ class SeaDexArr:
         against this when the summary is logged).
 
         Args:
-            arr (str): "radarr" or "sonarr" being run.
+            arr (Arr): Which Arr is being run.
             dry_run (bool): Whether this run simulates without grabbing/writing.
         """
 
@@ -674,7 +673,7 @@ class SeaDexArr:
         self,
         strategy: ArrSync,
         *,
-        arr: str,
+        arr: Arr,
         item_id: int | None,
         dry_run: bool,
     ) -> bool:
@@ -684,7 +683,7 @@ class SeaDexArr:
             strategy (ArrSync): The Arr-specific strategy to drive (injected by
                 the composition root). It already holds this object as its
                 RunServices, so its hooks are called without passing self.
-            arr (str): "radarr" or "sonarr"
+            arr (Arr): Which Arr is being run
             item_id (int | None): If set, only run for the single item with this
                 id (TMDB for Radarr, TVDB for Sonarr)
             dry_run (bool): Simulate the run without grabbing torrents, writing
@@ -806,7 +805,7 @@ class SeaDexArr:
 
     def cached_entry_skip(
         self,
-        arr: str,
+        arr: Arr,
         al_id: int,
         sd_entry: EntryRecord,
         sd_url: str,
@@ -822,7 +821,7 @@ class SeaDexArr:
         already-backfilled path.
 
         Args:
-            arr (str): "radarr" or "sonarr"
+            arr (Arr): Which Arr is being run
             al_id (int): AniList id being processed
             sd_entry (EntryRecord): Resolved SeaDex entry
             sd_url (str): SeaDex entry URL stored on the backfilled record
@@ -849,7 +848,7 @@ class SeaDexArr:
 
     def grab_and_cache(
         self,
-        arr: str,
+        arr: Arr,
         al_id: int,
         item_title: str,
         anilist_title: str,
@@ -867,7 +866,7 @@ class SeaDexArr:
         so the caller stops the whole run; otherwise False (move to the next id).
 
         Args:
-            arr (str): "radarr" or "sonarr"
+            arr (Arr): Which Arr is being run
             al_id (int): AniList id being processed
             item_title (str): Arr item title (Discord notification heading)
             anilist_title (str): Resolved AniList title (non-None; Discord field)
@@ -1017,7 +1016,7 @@ class SeaDexArr:
 
     def log_cached_entry(
         self,
-        arr: str,
+        arr: Arr,
         al_id: int,
         state: str = "unchanged",
     ) -> bool:

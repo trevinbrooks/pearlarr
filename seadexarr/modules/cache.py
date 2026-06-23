@@ -23,6 +23,7 @@ from typing import Any
 
 from seadex import EntryRecord
 
+from .config import Arr
 from .. import __version__
 
 # Timestamp format for cache record fields (entry ``updated_at`` and the AniList
@@ -121,14 +122,14 @@ class CacheStore:
 
     def check_al_id_in_cache(
         self,
-        arr: str,
+        arr: Arr,
         al_id: int,
         seadex_entry: EntryRecord,
     ) -> bool:
         """Check if timestamps in the cache match when SeaDex entry was last updated
 
         Args:
-            arr (str): Arr instance
+            arr (Arr): Arr instance
             al_id (int): AniList ID
             seadex_entry: SeaDex entry
         """
@@ -145,7 +146,7 @@ class CacheStore:
 
     def get_cached_name(
         self,
-        arr: str,
+        arr: Arr,
         al_id: int,
     ) -> str | None:
         """Get the AniList title stored in the cache for an entry, if any
@@ -155,7 +156,7 @@ class CacheStore:
         without an additional AniList lookup.
 
         Args:
-            arr (str): Arr instance the entry is cached under
+            arr (Arr): Arr instance the entry is cached under
             al_id (int): AniList ID
 
         Returns:
@@ -166,14 +167,14 @@ class CacheStore:
 
     def get_cached_field(
         self,
-        arr: str,
+        arr: Arr,
         al_id: int,
         field: str,
     ) -> Any:
         """Read a single stored field from an entry's cache record, if present
 
         Args:
-            arr (str): Arr instance the entry is cached under
+            arr (Arr): Arr instance the entry is cached under
             al_id (int): AniList ID
             field (str): Cache field name (e.g. "name", "url", "coverage")
 
@@ -188,24 +189,24 @@ class CacheStore:
             .get(field)
         )
 
-    def torrent_hashes(self, arr: str, al_id: int) -> list:
+    def torrent_hashes(self, arr: Arr, al_id: int) -> list:
         """Torrent hashes already remembered for an entry (empty if none).
 
         Used by the download planner to skip releases already grabbed in a past
         run; returns a list even for a missing record or a stored ``None``.
 
         Args:
-            arr (str): Arr instance the entry is cached under
+            arr (Arr): Arr instance the entry is cached under
             al_id (int): AniList ID
         """
 
         return self.get_cached_field(arr, al_id, "torrent_hashes") or []
 
-    def update_cache(self, arr: str, al_id: int, cache_details: dict | None = None) -> bool:
+    def update_cache(self, arr: Arr, al_id: int, cache_details: dict | None = None) -> bool:
         """Update cache with useful info
 
         Args:
-            arr (str): Arr instance
+            arr (Arr): Arr instance
             al_id (int): AniList ID
             cache_details (dict): Details for the cache entry.
                 Defaults to None

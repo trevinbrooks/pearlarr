@@ -27,6 +27,7 @@ from seadex import EntryRecord
 from .anilist import get_anilist_title
 from .anilist_gateway import AniListGateway
 from .cache import CacheStore
+from .config import Arr
 from .log import (
     LogFormatter,
     count_noun,
@@ -35,18 +36,6 @@ from .log import (
     indent_string,
     rule_string,
 )
-
-ALLOWED_ARRS = [
-    "radarr",
-    "sonarr",
-]
-
-
-def _require_arr(arr: str) -> None:
-    """Guard that ``arr`` is a supported Arr type."""
-
-    if arr not in ALLOWED_ARRS:
-        raise ValueError(f"arr must be one of: {ALLOWED_ARRS}")
 
 
 def fresh_stats() -> dict:
@@ -74,7 +63,7 @@ class RunContext:
     data instead of mutating shared orchestrator state.
     """
 
-    arr: str
+    arr: Arr
     dry_run: bool = False
     stats: dict = field(default_factory=fresh_stats)
     torrents_added: int = 0
@@ -119,7 +108,7 @@ class RunReporter:
     def log_run_summary(
         self,
         ctx: RunContext,
-        arr: str,
+        arr: Arr,
         *,
         is_preview: bool,
         has_client: bool,
@@ -128,13 +117,11 @@ class RunReporter:
 
         Args:
             ctx (RunContext): The run's state (stats, totals, clock).
-            arr (str): Type of arr instance
+            arr (Arr): Type of arr instance
             is_preview (bool): The run grabbed nothing (dry run or no client).
             has_client (bool): A qBittorrent client is configured (distinguishes
                 the dry-run note wording).
         """
-
-        _require_arr(arr)
 
         stats = ctx.stats
 
@@ -327,7 +314,7 @@ class RunReporter:
 
     def log_arr_start(
         self,
-        arr: str,
+        arr: Arr,
         n_items: int,
     ) -> bool:
         """Produce a log message for the start of the run
@@ -337,11 +324,9 @@ class RunReporter:
             n_items: Total number of shows/movies
         """
 
-        _require_arr(arr)
-
         item_label = {
-            "radarr": count_noun(n_items, "movie"),
-            "sonarr": count_noun(n_items, "series", "series"),
+            Arr.RADARR: count_noun(n_items, "movie"),
+            Arr.SONARR: count_noun(n_items, "series", "series"),
         }[arr]
 
         banner = f"Starting SeaDexArr ({arr.capitalize()}) for {item_label}"
@@ -458,7 +443,7 @@ class RunReporter:
 
     def log_arr_item_start(
         self,
-        arr: str,
+        arr: Arr,
         item_title: str,
         n_item: int,
         n_items: int,
@@ -605,7 +590,7 @@ class RunReporter:
     def log_cached_entry(
         self,
         ctx: RunContext,
-        arr: str,
+        arr: Arr,
         al_id: int,
         state: str = "unchanged",
     ) -> bool:
@@ -620,7 +605,7 @@ class RunReporter:
 
         Args:
             ctx (RunContext): The run's state (stats tally).
-            arr (str): Arr instance the entry is cached under
+            arr (Arr): Arr instance the entry is cached under
             al_id (int): AniList ID
             state (str): State word. Defaults to "unchanged" (skipped because the
                 SeaDex entry's update time matches the cache); pass "in radarr"

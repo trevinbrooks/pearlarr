@@ -1,6 +1,7 @@
 import time
 from typing import Any
 
+from .config import Arr
 from .log import indent_string
 from .protocols import ArrSync
 from .radarr_client import RadarrClient, collect_anime_movies
@@ -76,7 +77,7 @@ class RadarrSync(ArrSync):
 
     def process_al_id(
         self,
-        arr: str,
+        arr: Arr,
         item: Any,
         item_title: str,
         al_id: int,

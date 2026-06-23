@@ -9,20 +9,20 @@ import hashlib
 import pytest
 import yaml
 
-from seadexarr.modules.config import PRIVATE_TRACKERS, PUBLIC_TRACKERS, AppConfig
+from seadexarr.modules.config import PRIVATE_TRACKERS, PUBLIC_TRACKERS, AppConfig, Arr
 
 
 def _cfg(**data: object) -> AppConfig:
     """An ``AppConfig`` over an in-memory data dict (no file load)."""
 
-    return AppConfig(path="unused.yml", arr="sonarr", data=dict(data))
+    return AppConfig(path="unused.yml", arr=Arr.SONARR, data=dict(data))
 
 
 class TestFileLifecycle:
     def test_missing_config_copies_template_and_raises(self, tmp_path) -> None:
         cfg_path = tmp_path / "config.yml"
         with pytest.raises(FileNotFoundError):
-            AppConfig.load(str(cfg_path), "sonarr")
+            AppConfig.load(str(cfg_path), Arr.SONARR)
         # The bundled template was copied into place for the user to edit.
         assert cfg_path.exists()
         assert "sonarr_url" in yaml.safe_load(cfg_path.read_text())
@@ -30,14 +30,14 @@ class TestFileLifecycle:
     def test_load_preserves_user_values(self, tmp_path) -> None:
         cfg_path = tmp_path / "config.yml"
         cfg_path.write_text("sonarr_url: http://x\npublic_only: false\n")
-        cfg = AppConfig.load(str(cfg_path), "sonarr")
+        cfg = AppConfig.load(str(cfg_path), Arr.SONARR)
         assert cfg.data["sonarr_url"] == "http://x"
         assert cfg.public_only is False
 
     def test_checksum_matches_file_bytes(self, tmp_path) -> None:
         cfg_path = tmp_path / "config.yml"
         cfg_path.write_bytes(b"public_only: true\n")
-        cfg = AppConfig(path=str(cfg_path), arr="sonarr", data={})
+        cfg = AppConfig(path=str(cfg_path), arr=Arr.SONARR, data={})
         assert cfg.checksum() == hashlib.md5(b"public_only: true\n").hexdigest()
 
 
@@ -46,7 +46,7 @@ class TestTemplateSync:
         cfg_path = tmp_path / "config.yml"
         # Keys present but out of template order -> triggers the rewrite.
         cfg_path.write_text("public_only: false\nsonarr_url: http://x\n")
-        cfg = AppConfig.load(str(cfg_path), "sonarr")
+        cfg = AppConfig.load(str(cfg_path), Arr.SONARR)
         # First template key leads, a previously-absent key is now present, and
         # the user's values survive the merge.
         assert next(iter(cfg.data)) == "sonarr_url"
@@ -57,9 +57,9 @@ class TestTemplateSync:
     def test_template_order_config_not_rewritten(self, tmp_path) -> None:
         cfg_path = tmp_path / "config.yml"
         with pytest.raises(FileNotFoundError):
-            AppConfig.load(str(cfg_path), "sonarr")  # copies the template
+            AppConfig.load(str(cfg_path), Arr.SONARR)  # copies the template
         before = cfg_path.read_bytes()
-        AppConfig.load(str(cfg_path), "sonarr")  # already in template order
+        AppConfig.load(str(cfg_path), Arr.SONARR)  # already in template order
         assert cfg_path.read_bytes() == before
 
 
@@ -94,8 +94,8 @@ class TestTypedSettings:
             "sonarr_torrent_category": "anime-tv",
             "radarr_torrent_category": "anime-movies",
         }
-        sonarr = AppConfig(path="x", arr="sonarr", data=data)
-        radarr = AppConfig(path="x", arr="radarr", data=data)
+        sonarr = AppConfig(path="x", arr=Arr.SONARR, data=data)
+        radarr = AppConfig(path="x", arr=Arr.RADARR, data=data)
         assert sonarr.ignore_unmonitored is True
         assert radarr.ignore_unmonitored is False
         assert sonarr.torrent_category == "anime-tv"

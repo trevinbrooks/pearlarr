@@ -11,8 +11,7 @@ assert on the :class:`RunContext` mutations rather than exact log strings.
 import time
 from typing import Any
 
-import pytest
-
+from seadexarr.modules.config import Arr
 from seadexarr.modules.log import LogFormatter
 from seadexarr.modules.reporter import RunContext, RunReporter, fresh_stats
 from tests.builders import make_logger
@@ -73,17 +72,17 @@ def test_fresh_stats_shape() -> None:
 
 class TestStatsCounters:
     def test_unmonitored(self) -> None:
-        ctx = RunContext(arr="sonarr")
+        ctx = RunContext(arr=Arr.SONARR)
         _make_reporter().log_arr_item_unmonitored(ctx, "Title")
         assert ctx.stats["unmonitored"] == 1
 
     def test_no_mappings(self) -> None:
-        ctx = RunContext(arr="sonarr")
+        ctx = RunContext(arr=Arr.SONARR)
         _make_reporter().log_no_anilist_mappings(ctx, "Title")
         assert ctx.stats["no_mappings"] == 1
 
     def test_no_releases(self) -> None:
-        ctx = RunContext(arr="radarr")
+        ctx = RunContext(arr=Arr.RADARR)
         _make_reporter().log_no_seadex_releases(ctx)
         assert ctx.stats["no_releases"] == 1
 
@@ -92,8 +91,8 @@ class TestStatsCounters:
         reporter = _make_reporter(
             _FakeCacheStore(name="Cached", fields={"coverage": "S01", "url": "u"}),
         )
-        ctx = RunContext(arr="sonarr")
-        reporter.log_cached_entry(ctx, "sonarr", 1)
+        ctx = RunContext(arr=Arr.SONARR)
+        reporter.log_cached_entry(ctx, Arr.SONARR, 1)
         assert ctx.stats["cached"] == 1
 
     def test_no_sd_entry_increments_and_threads_al_cache(self, monkeypatch) -> None:
@@ -102,7 +101,7 @@ class TestStatsCounters:
             "seadexarr.modules.reporter.get_anilist_title",
             lambda al_id, al_cache: ("Resolved", {**al_cache, al_id: "Resolved"}),
         )
-        ctx = RunContext(arr="sonarr")
+        ctx = RunContext(arr=Arr.SONARR)
         reporter.log_no_sd_entry(ctx, 42)
         assert ctx.stats["no_seadex_entry"] == 1
         # The al_cache reassignment side-effect is preserved through the gateway
@@ -111,7 +110,7 @@ class TestStatsCounters:
 
 class TestActiveTitle:
     def test_log_al_title_sets_current(self) -> None:
-        ctx = RunContext(arr="sonarr")
+        ctx = RunContext(arr=Arr.SONARR)
         entry: Any = _FakeEntry(url="https://releases.moe/9")
         _make_reporter().log_al_title(ctx, "Steins;Gate", entry, coverage="S01 E01-E24")
         assert ctx.current_title == "Steins;Gate"
@@ -121,7 +120,7 @@ class TestActiveTitle:
 
 class TestRunSummary:
     def _ctx_with_data(self) -> RunContext:
-        ctx = RunContext(arr="sonarr")
+        ctx = RunContext(arr=Arr.SONARR)
         ctx.stats["checked"] = 3
         ctx.torrents_added = 1
         ctx.started_monotonic = time.monotonic() - 1.0  # exercise the elapsed line
@@ -141,16 +140,10 @@ class TestRunSummary:
 
     def test_real_run_renders(self) -> None:
         assert _make_reporter().log_run_summary(
-            self._ctx_with_data(), "sonarr", is_preview=False, has_client=True,
+            self._ctx_with_data(), Arr.SONARR, is_preview=False, has_client=True,
         )
 
     def test_dry_run_renders(self) -> None:
         assert _make_reporter().log_run_summary(
-            self._ctx_with_data(), "sonarr", is_preview=True, has_client=False,
+            self._ctx_with_data(), Arr.SONARR, is_preview=True, has_client=False,
         )
-
-    def test_invalid_arr_raises(self) -> None:
-        with pytest.raises(ValueError):
-            _make_reporter().log_run_summary(
-                RunContext(arr="x"), "plex", is_preview=False, has_client=True,
-            )

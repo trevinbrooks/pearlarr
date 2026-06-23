@@ -10,6 +10,7 @@ from .anilist import (
     get_anilist_n_eps,
 )
 from .cache import UPDATED_AT_STR_FORMAT
+from .config import Arr
 from .log import indent_string
 from .planner import get_episode_keys
 from .protocols import ArrSync
@@ -314,7 +315,7 @@ class SonarrSync(ArrSync):
 
     def process_al_id(
         self,
-        arr: str,
+        arr: Arr,
         item: Any,
         item_title: str,
         al_id: int,
@@ -358,13 +359,13 @@ class SonarrSync(ArrSync):
         # Also check if it's in the Radarr cache, if we have that option
         if self.ignore_movies_in_radarr and not self._config.ignore_seadex_update_times:
             al_id_in_radarr_cache = run.check_al_id_in_cache(
-                arr="radarr",
+                arr=Arr.RADARR,
                 al_id=al_id,
                 seadex_entry=sd_entry,
             )
             if al_id_in_radarr_cache:
                 run.log_cached_entry(
-                    arr="radarr",
+                    arr=Arr.RADARR,
                     al_id=al_id,
                     state="in radarr",
                 )

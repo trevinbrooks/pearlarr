@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
+from .config import Arr
+
 
 class ArrSync(ABC):
     """An Arr-specific sync strategy the run machinery drives.
@@ -32,7 +34,7 @@ class ArrSync(ABC):
     @abstractmethod
     def process_al_id(
         self,
-        arr: str,
+        arr: Arr,
         item: Any,
         item_title: str,
         al_id: int,

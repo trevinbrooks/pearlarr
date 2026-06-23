@@ -7,7 +7,7 @@ from typing import NamedTuple
 
 import typer
 
-from .config import AppConfig
+from .config import AppConfig, Arr
 from .mappings import MappingResolver
 from .seadex_arr import RunDeps, SeaDexArr, setup_logger
 from .seadex_radarr import RadarrSync
@@ -21,6 +21,11 @@ seadexarr_cache = typer.Typer(name="cache")
 seadexarr_cli.add_typer(seadexarr_run)
 seadexarr_cli.add_typer(seadexarr_config)
 seadexarr_cli.add_typer(seadexarr_cache)
+
+# Which sync strategy drives each arr. Replaces the old stringly-typed ternary;
+# membership is exhaustive over the two-valued Arr enum, so an unhandled arr is a
+# static type error rather than a runtime fall-through.
+_STRATEGY_BY_ARR = {Arr.SONARR: SonarrSync, Arr.RADARR: RadarrSync}
 
 
 class _Paths(NamedTuple):
@@ -65,7 +70,7 @@ def _build_shared(
     """
 
     try:
-        app_config = AppConfig.load(config, "sonarr")
+        app_config = AppConfig.load(config, Arr.SONARR)
     except FileNotFoundError:
         logger.error(
             f"No config file at {config} - a starter template was written; "
@@ -95,7 +100,7 @@ def _build_shared(
 
 
 def _run_arr(
-    arr_name: str,
+    arr_name: Arr,
     app_config: AppConfig,
     *,
     config: str,
@@ -126,7 +131,7 @@ def _run_arr(
             app_config=app_config.for_arr(arr_name),
         )
         services = SeaDexArr(deps, arr_name)
-        strategy = SonarrSync(deps, services) if arr_name == "sonarr" else RadarrSync(deps, services)
+        strategy = _STRATEGY_BY_ARR[arr_name](deps, services)
         services.run_sync(strategy, arr=arr_name, item_id=item_id, dry_run=dry_run)
     except Exception:
         logger.error(f"Unexpected error during {arr_name.capitalize()} run", exc_info=True)
@@ -136,7 +141,7 @@ def _run_arr(
 
 
 def _run_arrs(
-    arrs: list[tuple[str, int | None]],
+    arrs: list[tuple[Arr, int | None]],
     *,
     config: str,
     cache: str,
@@ -212,7 +217,7 @@ def run_scheduled() -> None:
         # config/source failure _build_shared logs the cause and the cycle is
         # skipped, so it's retried next pass rather than crashing.
         _run_arrs(
-            [("radarr", None), ("sonarr", None)],
+            [(Arr.RADARR, None), (Arr.SONARR, None)],
             config=paths.config, cache=paths.cache, logger=logger,
         )
 
@@ -251,11 +256,11 @@ def run_single(
     logger = setup_logger(log_level="INFO")
 
     # Passing a movie/series ID implies running that arr.
-    arrs: list[tuple[str, int | None]] = []
+    arrs: list[tuple[Arr, int | None]] = []
     if radarr or movie_id is not None:
-        arrs.append(("radarr", movie_id))
+        arrs.append((Arr.RADARR, movie_id))
     if sonarr or series_id is not None:
-        arrs.append(("sonarr", series_id))
+        arrs.append((Arr.SONARR, series_id))
 
     # Build the shared config + mappings once (only when an arr was requested) and
     # run each. True when the run proceeded or nothing was requested; False when an

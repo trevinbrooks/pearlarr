@@ -13,7 +13,7 @@ from functools import cached_property
 from typing import Any, TypeVar
 from unittest import mock
 
-from seadexarr.modules.config import AppConfig
+from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.seadex_arr import SeaDexArr
 
@@ -88,7 +88,7 @@ def make_config(**overrides: Any) -> AppConfig:
     for key, value in overrides.items():
         data[key] = value
         data[f"sonarr_{key}"] = value
-    return AppConfig(path="unused.yml", arr="sonarr", data=data)
+    return AppConfig(path="unused.yml", arr=Arr.SONARR, data=data)
 
 
 def make_arr(**overrides: Any) -> SeaDexArr:

@@ -10,6 +10,7 @@ from typing import Any
 
 import seadexarr
 from seadexarr.modules.cache import CacheStore, save_json
+from seadexarr.modules.config import Arr
 
 # Stand-in for a config-file checksum. ``CacheStore`` only stamps and compares
 # the value it is handed; it never computes one, so any string works here.
@@ -56,27 +57,27 @@ class TestSchemaAndReconcile:
 class TestRecords:
     def test_update_cache_creates_nested_and_formats_timestamp(self, tmp_path) -> None:
         store = CacheStore.load(str(tmp_path / "cache.json"), config_checksum=CHECKSUM)
-        store.update_cache("sonarr", 7, {"name": "Title", "updated_at": datetime(2021, 6, 5, 4, 3, 2)})
+        store.update_cache(Arr.SONARR, 7, {"name": "Title", "updated_at": datetime(2021, 6, 5, 4, 3, 2)})
         rec = store.data["anilist_entries"]["sonarr"]["7"]
         assert rec["name"] == "Title"
         assert rec["updated_at"] == "2021-06-05 04:03:02"
 
     def test_get_cached_field_and_name(self, tmp_path) -> None:
         store = CacheStore.load(str(tmp_path / "cache.json"), config_checksum=CHECKSUM)
-        store.update_cache("sonarr", 7, {"name": "Title", "url": "u"})
-        assert store.get_cached_name("sonarr", 7) == "Title"
-        assert store.get_cached_field("sonarr", 7, "url") == "u"
-        assert store.get_cached_field("sonarr", 7, "missing") is None
-        assert store.get_cached_field("sonarr", 999, "name") is None
+        store.update_cache(Arr.SONARR, 7, {"name": "Title", "url": "u"})
+        assert store.get_cached_name(Arr.SONARR, 7) == "Title"
+        assert store.get_cached_field(Arr.SONARR, 7, "url") == "u"
+        assert store.get_cached_field(Arr.SONARR, 7, "missing") is None
+        assert store.get_cached_field(Arr.SONARR, 999, "name") is None
 
     def test_check_al_id_in_cache_matches_timestamp(self, tmp_path) -> None:
         store = CacheStore.load(str(tmp_path / "cache.json"), config_checksum=CHECKSUM)
-        store.update_cache("sonarr", 7, {"updated_at": datetime(2021, 6, 5, 4, 3, 2)})
-        assert store.check_al_id_in_cache("sonarr", 7, _entry(datetime(2021, 6, 5, 4, 3, 2))) is True
+        store.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 6, 5, 4, 3, 2)})
+        assert store.check_al_id_in_cache(Arr.SONARR, 7, _entry(datetime(2021, 6, 5, 4, 3, 2))) is True
         # Same id, different timestamp -> stale.
-        assert store.check_al_id_in_cache("sonarr", 7, _entry(datetime(2022, 1, 1, 0, 0, 0))) is False
+        assert store.check_al_id_in_cache(Arr.SONARR, 7, _entry(datetime(2022, 1, 1, 0, 0, 0))) is False
         # Unknown id -> no record -> no match.
-        assert store.check_al_id_in_cache("sonarr", 8, _entry(datetime(2021, 6, 5, 4, 3, 2))) is False
+        assert store.check_al_id_in_cache(Arr.SONARR, 8, _entry(datetime(2021, 6, 5, 4, 3, 2))) is False
 
 
 class TestPersistence:

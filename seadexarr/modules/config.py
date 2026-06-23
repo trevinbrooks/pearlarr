@@ -14,6 +14,7 @@ import copy
 import os
 import shutil
 from dataclasses import dataclass
+from enum import StrEnum
 from functools import cached_property
 from hashlib import md5
 from typing import Any
@@ -49,6 +50,20 @@ PRIVATE_TRACKERS = {
 CONFIG_TEMPLATE_FILE = "config_sample.yml"
 
 
+class Arr(StrEnum):
+    """Which *arr the run targets.
+
+    A ``StrEnum`` so the value still equals its string (``Arr.SONARR ==
+    "sonarr"``), serializes as a bare JSON cache key, and builds the
+    ``{arr}_``-prefixed config keys unchanged - while making the two valid
+    arrs the only representable states (no runtime ``ALLOWED_ARRS`` guard
+    needed; an out-of-domain value is now a static type error).
+    """
+
+    SONARR = "sonarr"
+    RADARR = "radarr"
+
+
 def _template_path() -> str:
     """Absolute path to the bundled config template shipped beside this module."""
 
@@ -65,11 +80,11 @@ class AppConfig:
     """
 
     path: str
-    arr: str
+    arr: Arr
     data: dict[str, Any]
 
     @classmethod
-    def load(cls, path: str, arr: str) -> "AppConfig":
+    def load(cls, path: str, arr: Arr) -> "AppConfig":
         """Locate, load, and template-sync the config file.
 
         Copies the bundled template to ``path`` and raises if the file is
@@ -78,8 +93,7 @@ class AppConfig:
 
         Args:
             path (str): Path to the config file.
-            arr (str): Which Arr is being run ("sonarr"/"radarr"); selects the
-                arr-prefixed keys.
+            arr (Arr): Which Arr is being run; selects the arr-prefixed keys.
         """
 
         template_path = _template_path()
@@ -94,7 +108,7 @@ class AppConfig:
         config._sync_with_template(template_path)
         return config
 
-    def for_arr(self, arr: str) -> "AppConfig":
+    def for_arr(self, arr: Arr) -> "AppConfig":
         """A view of this already-loaded config under a different arr selector.
 
         The parsed ``data`` is shared with this instance (the file is read and
