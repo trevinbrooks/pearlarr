@@ -13,10 +13,10 @@ Extracted from ``SeaDexArr`` in Phase 3 of the refactor (see
 import logging
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any
 
 import qbittorrentapi
 import requests
+from seadex import Tracker
 
 from .log import indent_string
 from .torrent import (
@@ -89,7 +89,7 @@ class TorrentService:
         self,
         *,
         url: str,
-        tracker: Any,
+        tracker: Tracker,
         torrent_hash: str | None,
         preview: bool,
     ) -> tuple[AddOutcome, str | None]:
@@ -97,7 +97,7 @@ class TorrentService:
 
         Args:
             url (str): SeaDex release-page URL.
-            tracker (Any): SeaDex tracker (``.lower()`` selects the parser).
+            tracker (Tracker): SeaDex tracker (selects the parser).
             torrent_hash (str | None): Info hash, used to dedup / read the name
                 back (None for a private torrent with no hash).
             preview (bool): When True, simulate the add without touching the
@@ -115,28 +115,25 @@ class TorrentService:
         # have a real name to show even when the client can't report one
         # (e.g. a private torrent with no info hash, or a dry run)
 
-        # Nyaa
-        if tracker.lower() == "nyaa":
-            parsed_url, source_name = get_nyaa_torrent(url=url)
-
-        # AnimeToshio
-        elif tracker.lower() == "animetosho":
-            parsed_url, source_name = get_animetosho_torrent(
+        # Each tracker has its own parser with its own call shape; key the
+        # dispatch on the Tracker enum members directly (no .lower()) and look
+        # the parser up once. Closures capture the per-tracker call args.
+        parsers = {
+            Tracker.NYAA: lambda: get_nyaa_torrent(url=url),
+            Tracker.ANIMETOSHO: lambda: get_animetosho_torrent(
                 url=url,
                 session=self.session,
-            )
-
-        # RuTracker
-        elif tracker.lower() == "rutracker":
-            parsed_url, source_name = get_rutracker_torrent(
+            ),
+            Tracker.RUTRACKER: lambda: get_rutracker_torrent(
                 url=url,
                 torrent_hash=torrent_hash,
                 session=self.session,
-            )
-
-        # Otherwise, bug out
-        else:
+            ),
+        }
+        parser = parsers.get(tracker)
+        if parser is None:
             raise ValueError(f"Unable to parse torrent links from {tracker}")
+        parsed_url, source_name = parser()
 
         if parsed_url is None:
             raise Exception("Have not managed to parse the torrent URL")
