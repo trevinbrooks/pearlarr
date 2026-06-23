@@ -95,6 +95,35 @@ def _errors_are_retryable(body: dict | None) -> bool:
     return False
 
 
+def _extract(body: dict | None, *path: str) -> dict:
+    """Walk a null-safe key path through a GraphQL body, yielding {} on any miss
+
+    AniList returns {"data": null} or {"data": {"Media": null}} for an unknown
+    id or a rate-limit, so each hop is guarded with "or {}" and a missing or
+    null level yields an empty dict rather than raising
+    "'NoneType' object has no attribute 'get'".
+
+    Args:
+        body (dict | None): The parsed JSON response body
+        *path (str): The keys to walk, e.g. "data", "Media"
+    """
+
+    node = body or {}
+    for key in path:
+        node = node.get(key) or {}
+    return node
+
+
+def _media_from(body: dict | None) -> dict:
+    """Extract the Media dict from a single-id body, or {} on a miss
+
+    Args:
+        body (dict | None): The parsed JSON response body
+    """
+
+    return _extract(body, "data", "Media")
+
+
 def _post_with_retry(query: str, variables: dict) -> dict:
     """POST a GraphQL query to AniList, retrying politely on rate-limits / 5xx
 
@@ -176,9 +205,7 @@ def get_query_batch(al_ids: list[int]) -> dict:
     """
 
     j = _post_with_retry(BATCH_QUERY, {"ids": list(al_ids)})
-    media_list = (
-        ((j or {}).get("data") or {}).get("Page") or {}
-    ).get("media") or []
+    media_list = _extract(j, "data", "Page").get("media") or []
 
     return {
         m["id"]: {"data": {"Media": m}}
@@ -212,20 +239,22 @@ def _get_media(
     if al_cache is None:
         al_cache = {}
 
-    # Try and find query in cache
+    # Cache hit: return the extracted Media directly.
     j = al_cache.get(al_id)
+    if j is not None:
+        return _media_from(j), al_cache
 
-    # If we don't have it, do the query
-    if j is None:
-        j = get_query(al_id)
-        # Only remember a response that actually carried Media, so a transient
-        # failure (rate-limit, network) isn't cached as a permanent miss. The
-        # cached payload is only ever read (the helpers do .get() lookups, no
-        # mutation), so store it directly rather than deep-copying.
-        if ((j or {}).get("data") or {}).get("Media"):
-            al_cache[al_id] = j
+    # Miss: query AniList and extract Media once for both the cache-store
+    # decision and the return.
+    j = get_query(al_id)
+    media = _media_from(j)
 
-    media = ((j or {}).get("data") or {}).get("Media") or {}
+    # Only remember a response that actually carried Media, so a transient
+    # failure (rate-limit, network) isn't cached as a permanent miss. The
+    # cached payload is only ever read (the helpers do .get() lookups, no
+    # mutation), so store it directly rather than deep-copying.
+    if media:
+        al_cache[al_id] = j
 
     return media, al_cache
 
