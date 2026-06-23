@@ -2,6 +2,7 @@ import copy
 import logging
 import time
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import Any
 
 import qbittorrentapi
@@ -26,190 +27,206 @@ from .seadex_gateway import SeaDexGateway
 from .torrents import TorrentService
 
 
-class SeaDexArr:
-    """The Arr-agnostic run engine.
+@dataclass(frozen=True)
+class RunDeps:
+    """The shared leaf collaborators for one Arr run, built once at the root.
 
-    Owns the run loop, the per-run :class:`RunContext`, and every shared
-    collaborator (planner, torrents, notifier, AniList/SeaDex gateways, cache,
-    reporter). It drives an :class:`~.protocols.ArrSync` strategy (built by
-    ``strategy_factory`` at the end of construction) for the Arr-specific
-    pieces, and hands *itself* to the per-id hooks as the strategy's
-    :class:`~.protocols.RunServices`, so the strategy reaches the shared
-    pipeline without a stored back-reference. Composed by the thin
-    ``SeaDexSonarr`` / ``SeaDexRadarr`` facades.
+    A plain value object the composition root (``cli.py``) builds via
+    :meth:`build` and injects into both the :class:`SeaDexArr` run machinery and
+    the Arr-specific strategy. Keeping construction here (where every collaborator
+    type is already imported) and injection at the root means neither the engine
+    nor the strategy constructs the other's dependencies - the engine receives
+    these, the strategy receives the subset it needs. ``anime_mappings`` /
+    ``anidb_mappings`` / ``anibridge`` are read off ``mappings`` by consumers, not
+    stored separately.
     """
 
-    def __init__(
-        self,
-        arr: str = "sonarr",
+    config: AppConfig
+    config_file: str
+    session: requests.Session
+    qbit: qbittorrentapi.Client | None
+    mappings: MappingResolver
+    logger: logging.Logger
+    seadex: SeaDexGateway
+    cache_file: str
+    cache_store: CacheStore
+    anilist: AniListGateway
+    torrents: TorrentService
+    notifier: Notifier
+    planner: DownloadPlanner
+    log_fmt: LogFormatter
+    reporter: RunReporter
+
+    @classmethod
+    def build(
+        cls,
+        arr: str,
         config: str = "config.yml",
         cache: str = "cache.json",
         logger: logging.Logger | None = None,
         *,
         mappings: MappingResolver,
-        strategy_factory: "Callable[[SeaDexArr], ArrSync]",
         app_config: AppConfig | None = None,
-    ) -> None:
-        """Build the run engine and its Arr-specific strategy.
+    ) -> "RunDeps":
+        """Construct the shared collaborators in dependency order.
 
         Args:
-            arr (str, optional): Which Arr is being run.
-                Defaults to "sonarr".
-            config (str, optional): Path to a config file.
-                Defaults to "config.yml".
-            cache (str, optional): Path to a cache file.
-                Defaults to "cache.json".
-            logger. Logging instance. Defaults to None,
-                which will create one.
-            mappings (MappingResolver): The id-mapping resolver, built once by
-                the CLI (the composition root) and shared across a scheduled
-                Radarr->Sonarr cycle so the three large mapping sources are
-                downloaded, parsed and indexed a single time per run.
-            strategy_factory (Callable[[SeaDexArr], ArrSync]): Builds the
-                Arr-specific strategy from this fully-constructed engine. Called
-                last, so the strategy can read the engine's collaborators
-                (config, session, mappings, cache, ...) as it builds its client.
-                The engine holds the returned strategy; the strategy does not
-                hold the engine.
-            app_config (AppConfig | None, optional): A pre-loaded config injected
-                by the CLI (the composition root) so a scheduled Radarr->Sonarr
-                cycle reads and template-syncs the file once per run rather than
-                once per arr. Defaults to None, which loads it here - the
-                standalone path, and what keeps every existing caller working.
+            arr (str): Which Arr is being run ("sonarr"/"radarr"); selects the
+                arr-prefixed config keys.
+            config (str, optional): Path to a config file. Defaults to "config.yml".
+            cache (str, optional): Path to a cache file. Defaults to "cache.json".
+            logger (logging.Logger | None, optional): Logger to use. Defaults to
+                None, which builds one from the config's log level.
+            mappings (MappingResolver): The id-mapping resolver, built once by the
+                CLI and shared across a scheduled Radarr->Sonarr cycle so the three
+                large mapping sources are downloaded, parsed and indexed once.
+            app_config (AppConfig | None, optional): A pre-loaded config injected by
+                the CLI so a scheduled cycle reads and template-syncs the file once
+                per run. Defaults to None, which loads it here.
         """
 
         # Load, template-sync, and expose the config file as typed settings.
         # AppConfig owns the file lifecycle (copy-template-if-missing, parse,
-        # key-order sync) and is the single source of truth for every setting:
-        # the orchestrator and strategy read self._config.<x> directly (the
-        # strategy uses self._config.get(...) for the arr-specific keys). The CLI
-        # may inject an already-loaded config (one read+sync shared across the
+        # key-order sync) and is the single source of truth for every setting. The
+        # CLI may inject an already-loaded config (one read+sync shared across the
         # Radarr->Sonarr cycle); otherwise it's loaded here for the standalone path.
-        self._config = AppConfig.load(config, arr) if app_config is None else app_config
-        self.config_file = config
+        app_config = AppConfig.load(config, arr) if app_config is None else app_config
 
-        # A single keep-alive session shared by the raw Sonarr/Radarr API calls
-        self.session = requests.Session()
+        if logger is None:
+            logger = setup_logger(log_level=app_config.log_level)
 
-        # qbit. None until a fully-configured client is built below; the rest of
-        # the app reads `self.qbit is None` to mean "no client -> perpetual
-        # preview", so this must always be a defined attribute.
-        self.qbit: qbittorrentapi.Client | None = None
-        qbit_info = self._config.qbit_info
+        # A single keep-alive session shared by the raw Sonarr/Radarr API calls.
+        session = requests.Session()
 
-        # Configured only when every qbit_info field has a value; with a missing
-        # block or any null field, no client is created.
+        # qbit. None unless every qbit_info field has a value; with a missing block
+        # or any null field, no client is created and the app treats `qbit is None`
+        # as "no client -> perpetual preview".
+        qbit: qbittorrentapi.Client | None = None
+        qbit_info = app_config.qbit_info
         if qbit_info is not None and all(
             qbit_info.get(key, None) is not None for key in qbit_info
         ):
-            qbit = qbittorrentapi.Client(**qbit_info)
-
+            client = qbittorrentapi.Client(**qbit_info)
             try:
-                qbit.auth_log_in()
+                client.auth_log_in()
             except qbittorrentapi.LoginFailed:
                 raise ValueError(
                     "qBittorrent login failed - check the qbit_info host and "
                     "credentials in your config",
                 )
+            qbit = client
 
-            self.qbit = qbit
+        # Load the cache (or create its schema) and reconcile the descriptor against
+        # the current package version + config checksum. Each arr builds its own
+        # store that reads the file fresh, so a scheduled Radarr->Sonarr cycle hands
+        # off through cache.json rather than shared memory.
+        cache_store = CacheStore.load(cache, config_checksum=app_config.checksum())
+
+        # AniList client gateway: owns the in-memory meta cache (al_cache) and the
+        # persisted anilist_meta block.
+        anilist = AniListGateway(cache_store=cache_store, logger=logger)
+
+        # qBittorrent adapter: parses a release URL by tracker and adds it. A None
+        # qbit is treated as a perpetual preview.
+        torrents = TorrentService(
+            qbit=qbit,
+            session=session,
+            category=app_config.torrent_category,
+            tags=app_config.torrent_tags,
+            logger=logger,
+        )
+
+        # All aligned detail rendering goes through this formatter.
+        log_fmt = LogFormatter(logger)
+
+        return cls(
+            config=app_config,
+            config_file=config,
+            session=session,
+            qbit=qbit,
+            mappings=mappings,
+            logger=logger,
+            # SeaDex API gateway (entry lookups, with connection-error handling)
+            seadex=SeaDexGateway(logger=logger),
+            cache_file=cache,
+            cache_store=cache_store,
+            anilist=anilist,
+            torrents=torrents,
+            # Discord notifier; a no-op when no webhook is configured.
+            notifier=Notifier(discord_url=app_config.discord_url),
+            # Download-decision engine: flips each release's download flag.
+            planner=DownloadPlanner(
+                public_only=app_config.public_only,
+                interactive=app_config.interactive,
+                use_torrent_hash_to_filter=app_config.use_torrent_hash_to_filter,
+                logger=logger,
+            ),
+            log_fmt=log_fmt,
+            # Presentation: owns every log_* method and the end-of-run summary.
+            reporter=RunReporter(
+                logger=logger,
+                log_fmt=log_fmt,
+                cache_store=cache_store,
+                anilist=anilist,
+            ),
+        )
+
+
+class SeaDexArr:
+    """The Arr-agnostic run machinery (the strategy's :class:`~.protocols.RunServices`).
+
+    Receives its shared collaborators as a :class:`RunDeps` bundle (built and
+    injected by the composition root in ``cli.py``) and owns the run loop, the
+    per-run :class:`RunContext`, and the shared per-id pipeline. It drives an
+    injected :class:`~.protocols.ArrSync` strategy (passed to :meth:`run_sync`)
+    for the Arr-specific pieces; the strategy holds *this* object as its
+    ``RunServices`` and calls the pipeline through it. The engine never holds the
+    strategy and never constructs its own dependencies.
+    """
+
+    def __init__(self, deps: RunDeps, arr: str = "sonarr") -> None:
+        """Receive the shared collaborators and set up per-run state.
+
+        Args:
+            deps (RunDeps): The shared collaborators, built and injected by the
+                composition root (``cli.py``). Unpacked into the attribute names
+                the run loop and pipeline already read; the engine does not build
+                any of them.
+            arr (str, optional): Which Arr is being run. Defaults to "sonarr".
+        """
+
+        # Unpack the injected collaborators into the attribute names the run loop
+        # and pipeline methods read directly. anime_mappings / anidb_mappings /
+        # anibridge are read off the shared resolver (read-only; it owns them).
+        self._config = deps.config
+        self.config_file = deps.config_file
+        self.session = deps.session
+        self.qbit = deps.qbit
+        self._mappings = deps.mappings
+        self.anime_mappings = deps.mappings.anime_mappings
+        self.anidb_mappings = deps.mappings.anidb_mappings
+        self.anibridge = deps.mappings.anibridge
+        self.logger = deps.logger
+        self._seadex = deps.seadex
+        self.cache_file = deps.cache_file
+        self.cache_store = deps.cache_store
+        self._anilist = deps.anilist
+        self._torrents = deps.torrents
+        self._notifier = deps.notifier
+        self._planner = deps.planner
+        self.log_fmt = deps.log_fmt
+        self._reporter = deps.reporter
 
         # When True, simulate a run without grabbing torrents, writing the cache,
-        # or sending notifications. Set per-run by run(); the no-op default here
-        # keeps every method that consults it safe before run() is called.
+        # or sending notifications. Set per-run by run_sync(); the no-op default
+        # here keeps every method that consults it safe before run_sync is called.
         self.dry_run = False
 
         # All per-run state (stats tally, running torrent count, the active
         # title/url/coverage, the run clock, the public_only skip flags) lives on
         # this context, replaced fresh at the start of each run by reset_run_stats.
-        # A placeholder is created here so the object is usable before run().
+        # A placeholder is created here so the object is usable before run_sync.
         self._ctx = RunContext(arr=arr, dry_run=False)
-
-        # The id-mapping resolver (external Arr ids -> AniList ids) is injected
-        # by the CLI so a scheduled Radarr->Sonarr cycle shares one instance:
-        # the three large mapping sources are downloaded, parsed and indexed once
-        # per run rather than per arr. anime_mappings / anidb_mappings / anibridge
-        # stay bound here as transitional aliases so the subclasses keep reading
-        # them directly (they're read-only after construction; the resolver owns
-        # them).
-        self._mappings = mappings
-        self.anime_mappings = self._mappings.anime_mappings
-        self.anidb_mappings = self._mappings.anidb_mappings
-        self.anibridge = self._mappings.anibridge
-
-        if logger is None:
-            self.logger = setup_logger(log_level=self._config.log_level)
-        else:
-            self.logger = logger
-
-        # SeaDex API gateway (entry lookups, with connection-error handling)
-        self._seadex = SeaDexGateway(logger=self.logger)
-
-        # Load the cache (or create its schema) and reconcile the descriptor
-        # against the current package version + config checksum. Each arr builds
-        # its own store that reads the file fresh, so a scheduled Radarr->Sonarr
-        # cycle hands off through cache.json rather than shared memory.
-        self.cache_file = cache
-        self.cache_store = CacheStore.load(cache, config_checksum=self._config.checksum())
-
-        # AniList client gateway: owns the in-memory meta cache (al_cache) and the
-        # persisted anilist_meta block. al_cache is exposed via the property below
-        # so the subclasses and the not-yet-extracted presentation helpers keep
-        # reading and reassigning self.al_cache transparently.
-        self._anilist = AniListGateway(
-            cache_store=self.cache_store,
-            logger=self.logger,
-        )
-
-        # qBittorrent adapter: parses a release URL by tracker and adds it. qbit
-        # is None when no client is configured; the service treats a missing
-        # client as a perpetual preview.
-        self._torrents = TorrentService(
-            qbit=self.qbit,
-            session=self.session,
-            category=self._config.torrent_category,
-            tags=self._config.torrent_tags,
-            logger=self.logger,
-        )
-
-        # Discord notifier (builds the embed fields and posts grabs); a no-op
-        # when no webhook is configured.
-        self._notifier = Notifier(discord_url=self._config.discord_url)
-
-        # Download-decision engine: consumes the shaped seadex_dict + the Arr's
-        # release info and flips each release's download flag, returning a
-        # PlanResult (hashes to remember + the private-only skip outcome) rather
-        # than mutating run state or logging from deep in the call stack.
-        self._planner = DownloadPlanner(
-            public_only=self._config.public_only,
-            interactive=self._config.interactive,
-            use_torrent_hash_to_filter=self._config.use_torrent_hash_to_filter,
-            logger=self.logger,
-        )
-
-        # All aligned detail rendering goes through this formatter, so the
-        # presentation primitives (kv lines, blank separators, elapsed strings)
-        # live on it rather than on the orchestration class. line_length is the
-        # full width used for the run's separator rules.
-        self.log_fmt = LogFormatter(self.logger)
-
-        # Presentation: owns every log_* method and the end-of-run summary,
-        # reading/writing the RunContext rather than scattered self.* state. The
-        # orchestrator keeps thin log_* delegators (below) that inject self._ctx,
-        # so the Sonarr/Radarr adapters call the same surface as before.
-        self._reporter = RunReporter(
-            logger=self.logger,
-            log_fmt=self.log_fmt,
-            cache_store=self.cache_store,
-            anilist=self._anilist,
-        )
-
-        # Build the Arr-specific strategy last, from this fully-constructed
-        # engine: it reads the collaborators above (config/session/mappings/
-        # cache/anilist/log_fmt) to stand up its REST client and domain logic.
-        # The engine holds the strategy and drives it; the strategy reaches the
-        # shared pipeline only through the RunServices view handed to its hooks.
-        self._strategy: ArrSync = strategy_factory(self)
 
     def close(self) -> None:
         """Close the shared HTTP session (release pooled connections)."""
@@ -743,21 +760,30 @@ class SeaDexArr:
 
         return True
 
-    # --- Run orchestration (shared engine) ----------------------------------
+    # --- Run orchestration (shared machinery) -------------------------------
     #
-    # Each facade's run() is a thin wrapper over run_sync: both Arrs share the
-    # whole scaffolding (reset stats, fetch items, optional single-id filter,
-    # AniList prefetch, the per-item loop, and the end-of-run save + summary) and
-    # differ only in the ArrSync strategy's hooks (get_items, filter_to_single,
-    # item_anilist_ids, process_al_id). The engine passes itself (as the
-    # strategy's RunServices) into the per-id hooks; the shared per-id head and
-    # tail it exposes there are al_id_prologue / cached_entry_skip /
-    # grab_and_cache.
+    # run_sync is the shared scaffolding both Arrs use (reset stats, fetch items,
+    # optional single-id filter, AniList prefetch, the per-item loop, and the
+    # end-of-run save + summary). The Arr-specific pieces are the injected
+    # strategy's hooks (get_items, filter_to_single, item_anilist_ids,
+    # process_al_id); the strategy holds this object as its RunServices and calls
+    # the shared per-id head/tail (al_id_prologue / cached_entry_skip /
+    # grab_and_cache) through it.
 
-    def run_sync(self, arr: str, item_id: int | None, dry_run: bool) -> bool:
+    def run_sync(
+        self,
+        strategy: ArrSync,
+        *,
+        arr: str,
+        item_id: int | None,
+        dry_run: bool,
+    ) -> bool:
         """Shared run scaffolding for both Arr syncers
 
         Args:
+            strategy (ArrSync): The Arr-specific strategy to drive (injected by
+                the composition root). It already holds this object as its
+                RunServices, so its hooks are called without passing self.
             arr (str): "radarr" or "sonarr"
             item_id (int | None): If set, only run for the single item with this
                 id (TMDB for Radarr, TVDB for Sonarr)
@@ -771,11 +797,11 @@ class SeaDexArr:
         # Start a fresh run context (stats tally + clock + counter snapshot)
         self.reset_run_stats(arr=arr, dry_run=dry_run)
 
-        all_items = self._strategy.get_items()
+        all_items = strategy.get_items()
 
         # If we're targeting a single item, filter down to it
         if item_id is not None:
-            all_items = self._strategy.filter_to_single(all_items, item_id)
+            all_items = strategy.filter_to_single(all_items, item_id)
 
         n_items = len(all_items)
 
@@ -790,7 +816,7 @@ class SeaDexArr:
             if not item.monitored and self._config.ignore_unmonitored:
                 continue
             prefetch_ids.update(
-                self._strategy.item_anilist_ids(self, item, log_ignored=False),
+                strategy.item_anilist_ids(item, log_ignored=False),
             )
         self.prefetch_anilist(prefetch_ids)
 
@@ -813,7 +839,7 @@ class SeaDexArr:
                     continue
 
                 # Get the mappings from the Arr item to AniList
-                al_mappings = self._strategy.item_anilist_ids(self, item)
+                al_mappings = strategy.item_anilist_ids(item)
 
                 if len(al_mappings) == 0:
                     self.log_no_anilist_mappings(title=item_title)
@@ -827,8 +853,7 @@ class SeaDexArr:
                     # in-block check fires after every add, so torrents_added can
                     # never reach the cap without process_al_id stopping first),
                     # so it isn't repeated.
-                    if self._strategy.process_al_id(
-                        self,
+                    if strategy.process_al_id(
                         arr=arr,
                         item=item,
                         item_title=item_title,
@@ -1167,60 +1192,4 @@ class SeaDexArr:
     def log_max_torrents_added(self) -> bool:
         """Log hitting the max-torrents cap (delegates to RunReporter)."""
         return self._reporter.log_max_torrents_added()
-
-
-class ArrFacade:
-    """Shared thin entry point: composes the engine with an :class:`~.protocols.ArrSync`.
-
-    The two public facades (``SeaDexRadarr`` / ``SeaDexSonarr``) preserve the
-    historical surface - ``SeaDex<Arr>(config, cache, logger, mappings=...)
-    .run(...)`` / ``.close()`` - and differ only in which strategy they drive and
-    their ``run()`` id-keyword (``tmdb_id`` vs ``tvdb_id``). The engine
-    construction and teardown are identical, so they live here once; a subclass
-    sets ``_arr`` / ``_strategy_factory`` and adds the typed ``run()``.
-    """
-
-    _arr: str
-    _strategy_factory: "Callable[[SeaDexArr], ArrSync]"
-
-    def __init__(
-        self,
-        config: str = "config.yml",
-        cache: str = "cache.json",
-        logger: logging.Logger | None = None,
-        *,
-        mappings: MappingResolver,
-        app_config: AppConfig | None = None,
-    ) -> None:
-        """Build the shared engine that drives this arr's strategy.
-
-        Args:
-            config (str, optional): Path to config file.
-                Defaults to "config.yml".
-            cache (str, optional): Path to cache file.
-                Defaults to "cache.json".
-            logger. Logging instance. Defaults to None,
-                which will create one.
-            mappings (MappingResolver): Shared id-mapping resolver, injected by
-                the CLI so both arrs reuse one download/parse of the sources.
-            app_config (AppConfig | None, optional): Pre-loaded config injected by
-                the CLI so the file is read and template-synced once per run
-                rather than once per arr. Defaults to None (the standalone path,
-                which loads it from ``config``).
-        """
-
-        self._engine = SeaDexArr(
-            arr=self._arr,
-            config=config,
-            cache=cache,
-            logger=logger,
-            mappings=mappings,
-            strategy_factory=self._strategy_factory,
-            app_config=app_config,
-        )
-
-    def close(self) -> None:
-        """Release the engine's pooled HTTP connections."""
-
-        self._engine.close()
 

@@ -10,7 +10,7 @@ test actually read.
 
 import logging
 from functools import cached_property
-from typing import Any
+from typing import Any, TypeVar
 from unittest import mock
 
 from seadexarr.modules.config import AppConfig
@@ -27,6 +27,24 @@ _CONFIG_SETTING_NAMES = frozenset(
     for name, attr in vars(AppConfig).items()
     if isinstance(attr, (property, cached_property))
 )
+
+
+T = TypeVar("T")
+
+
+def make_bare_instance(cls: type[T], **attrs: Any) -> T:
+    """An instance with ``__init__`` bypassed and only the given attrs set.
+
+    ``object.__new__`` skips the real, heavy ``__init__`` (network downloads,
+    qBittorrent login, disk I/O); the tests assign just the attributes the
+    methods under test read. Shared by ``make_arr`` here and the strategy-seam
+    tests so the bypass idiom lives in one place.
+    """
+
+    obj = object.__new__(cls)
+    for name, value in attrs.items():
+        setattr(obj, name, value)
+    return obj
 
 
 def make_logger(name: str = "seadexarr-test") -> logging.Logger:
@@ -82,10 +100,8 @@ def make_arr(**overrides: Any) -> SeaDexArr:
     single config flag (e.g. ``make_arr(public_only=True)``) or another attribute.
 
     ``SeaDexArr`` is a concrete engine after Phase 6b (no abstract hooks), so
-    ``object.__new__`` builds one directly - the old no-op-hooks stub is gone.
+    ``make_bare_instance`` builds one directly - the old no-op-hooks stub is gone.
     """
-
-    arr = object.__new__(SeaDexArr)
 
     logger = make_logger()
 
@@ -104,9 +120,7 @@ def make_arr(**overrides: Any) -> SeaDexArr:
         "_config": make_config(**config_overrides),
     }
     defaults.update(overrides)
-    for name, value in defaults.items():
-        setattr(arr, name, value)
-    return arr
+    return make_bare_instance(SeaDexArr, **defaults)
 
 
 def make_planner(**overrides: Any) -> DownloadPlanner:

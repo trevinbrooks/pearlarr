@@ -143,6 +143,19 @@ class AppConfig:
 
         return self.data.get(key, default)
 
+    def require(self, key: str) -> Any:
+        """Read a config value that must be present and truthy, or raise.
+
+        Mirrors ``get(key)`` but raises ``ValueError`` (naming the key and the
+        config path) when the value is missing or empty - the check both arr
+        strategies repeat for their required ``*_url`` / ``*_api_key`` settings.
+        """
+
+        value = self.data.get(key, None)
+        if not value:
+            raise ValueError(f"{key} needs to be defined in {self.path}")
+        return value
+
     # --- Typed settings -----------------------------------------------------
 
     @property

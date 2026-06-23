@@ -14,7 +14,7 @@ from .log import indent_string
 from .planner import get_episode_keys
 from .protocols import RunServices
 from .radarr_client import RadarrClient, collect_anime_movies
-from .seadex_arr import ArrFacade, SeaDexArr
+from .seadex_arr import RunDeps
 from .sonarr_client import SonarrClient
 
 TORRENT_FILENAMES_TO_SKIP = [
@@ -195,50 +195,44 @@ def check_ep_by_anibridge(
 class SonarrSync:
     """Sonarr sync strategy: owns the Sonarr REST client + episode domain logic.
 
-    Implements the :class:`~.protocols.ArrSync` hooks the engine drives. Built
-    from a fully-constructed :class:`~.seadex_arr.SeaDexArr` engine (it reads the
-    engine's config/session/mappings/cache/AniList gateway as it stands up its
-    client), but it does not keep a reference to the engine: the per-id hooks
-    receive the engine as a :class:`~.protocols.RunServices` view instead.
+    Implements the :class:`~.protocols.ArrSync` hooks the run machinery drives.
+    The composition root injects the shared :class:`~.seadex_arr.RunDeps` (used to
+    stand up the client and the episode domain logic) and the
+    :class:`~.protocols.RunServices` run machinery (held as ``self._services``);
+    the per-id hooks call the shared pipeline through it.
     """
 
-    def __init__(self, engine: SeaDexArr) -> None:
-        """Stand up the Sonarr client from the engine's shared collaborators.
+    def __init__(self, deps: RunDeps, services: RunServices) -> None:
+        """Stand up the Sonarr client from the injected shared collaborators.
 
         Args:
-            engine (SeaDexArr): The constructed run engine; its config, session,
-                mappings, cache, AniList gateway and log formatter are read here
-                (not retained - the engine reaches the strategy, never the
-                reverse).
+            deps (RunDeps): The shared collaborators; the config/session/mappings/
+                cache/AniList gateway/log formatter this strategy needs are read
+                off it.
+            services (RunServices): The run machinery the per-id hooks call into.
         """
 
-        self._config = engine._config
-        self.session = engine.session
-        self.logger = engine.logger
-        self._mappings = engine._mappings
-        self.anime_mappings = engine.anime_mappings
-        self.anidb_mappings = engine.anidb_mappings
-        self.anibridge = engine.anibridge
-        self.cache_store = engine.cache_store
-        self.log_fmt = engine.log_fmt
+        self._services = services
+        self._config = deps.config
+        self.session = deps.session
+        self.logger = deps.logger
+        self._mappings = deps.mappings
+        self.anime_mappings = deps.mappings.anime_mappings
+        self.anidb_mappings = deps.mappings.anidb_mappings
+        self.anibridge = deps.mappings.anibridge
+        self.cache_store = deps.cache_store
+        self.log_fmt = deps.log_fmt
         # The AniList gateway owns al_cache; the strategy reads/reassigns it
         # directly through self._anilist.al_cache while resolving episode
         # counts/formats (the gateway is the single owner, shared with the engine).
-        self._anilist = engine._anilist
+        self._anilist = deps.anilist
 
         # Set up Sonarr
-        sonarr_url = self._config.get("sonarr_url", None)
-        if not sonarr_url:
-            raise ValueError(f"sonarr_url needs to be defined in {self._config.path}")
-
-        sonarr_api_key = self._config.get("sonarr_api_key", None)
-        if not sonarr_api_key:
-            raise ValueError(
-                f"sonarr_api_key needs to be defined in {self._config.path}",
-            )
+        sonarr_url = self._config.require("sonarr_url")
+        sonarr_api_key = self._config.require("sonarr_api_key")
 
         # self.session (a shared keep-alive requests.Session) comes from the
-        # engine and is handed to the client; parse in particular fires one
+        # injected deps and is handed to the client; parse in particular fires one
         # request per file, so reusing it removes a per-file handshake.
         self.sonarr = SonarrClient(
             url=sonarr_url,
@@ -307,13 +301,12 @@ class SonarrSync:
 
     def item_anilist_ids(
         self,
-        run: RunServices,
         item: Any,
         log_ignored: bool = True,
     ) -> dict:
         """Resolve AniList ids for a Sonarr series (by TVDB / IMDb id)."""
 
-        return run.get_anilist_ids(
+        return self._services.get_anilist_ids(
             tvdb_id=item.tvdbId,
             imdb_id=item.imdbId,
             log_ignored=log_ignored,
@@ -321,7 +314,6 @@ class SonarrSync:
 
     def process_al_id(
         self,
-        run: RunServices,
         arr: str,
         item: Any,
         item_title: str,
@@ -334,6 +326,8 @@ class SonarrSync:
         its coverage and release groups, parse the SeaDex file lists into
         episodes, then hand off to the shared grab/cache tail.
         """
+
+        run = self._services
 
         sd_entry = run.al_id_prologue(al_id)
         if sd_entry is None:
@@ -917,30 +911,3 @@ class SonarrSync:
                         )
 
         return seadex_dict
-
-
-class SeaDexSonarr(ArrFacade):
-    """Public Sonarr entry point: composes the engine with a SonarrSync.
-
-    Preserves the historical surface - ``SeaDexSonarr(config, cache, logger,
-    mappings=...).run(tvdb_id=..., dry_run=...)`` / ``.close()`` - while the work
-    is split between the shared :class:`~.seadex_arr.SeaDexArr` engine and the
-    :class:`SonarrSync` strategy it drives. Construction and teardown live on
-    :class:`~.seadex_arr.ArrFacade`; only the series-specific ``run()`` is here.
-    """
-
-    _arr = "sonarr"
-    _strategy_factory = SonarrSync
-
-    def run(self, tvdb_id: int | None = None, dry_run: bool = False) -> bool:
-        """Run the SeaDex Sonarr Syncer
-
-        Args:
-            tvdb_id (int, optional): If set, only run for the series with this
-                TVDB ID. Defaults to None, which runs for all series.
-            dry_run (bool, optional): If True, simulate the run without grabbing
-                torrents, writing the cache, or sending notifications.
-                Defaults to False.
-        """
-
-        return self._engine.run_sync(arr=self._arr, item_id=tvdb_id, dry_run=dry_run)

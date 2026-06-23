@@ -4,42 +4,37 @@ from typing import Any
 from .log import indent_string
 from .protocols import RunServices
 from .radarr_client import RadarrClient, collect_anime_movies
-from .seadex_arr import ArrFacade, SeaDexArr
+from .seadex_arr import RunDeps
 
 
 class RadarrSync:
     """Radarr sync strategy: owns the Radarr REST client + movie domain logic.
 
-    Implements the :class:`~.protocols.ArrSync` hooks the engine drives. Built
-    from a fully-constructed :class:`~.seadex_arr.SeaDexArr` engine (it reads the
-    engine's config/session/mappings to stand up its client), but it does not
-    keep a reference to the engine: the per-id hooks receive the engine as a
-    :class:`~.protocols.RunServices` view instead.
+    Implements the :class:`~.protocols.ArrSync` hooks the run machinery drives.
+    The composition root injects the shared :class:`~.seadex_arr.RunDeps` (used to
+    stand up the client) and the :class:`~.protocols.RunServices` run machinery
+    (held as ``self._services``); the per-id hooks call the shared pipeline
+    through it.
     """
 
-    def __init__(self, engine: SeaDexArr) -> None:
-        """Stand up the Radarr client from the engine's shared collaborators.
+    def __init__(self, deps: RunDeps, services: RunServices) -> None:
+        """Stand up the Radarr client from the injected shared collaborators.
 
         Args:
-            engine (SeaDexArr): The constructed run engine; its config, session
-                and mappings are read here (not retained).
+            deps (RunDeps): The shared collaborators; the config/session/mappings
+                this strategy needs are read off it.
+            services (RunServices): The run machinery the per-id hooks call into.
         """
 
-        self._config = engine._config
-        self.session = engine.session
-        self.logger = engine.logger
-        self.anime_mappings = engine.anime_mappings
-        self.anibridge = engine.anibridge
+        self._services = services
+        self._config = deps.config
+        self.session = deps.session
+        self.logger = deps.logger
+        self.anime_mappings = deps.mappings.anime_mappings
+        self.anibridge = deps.mappings.anibridge
 
-        radarr_url = self._config.get("radarr_url", None)
-        if not radarr_url:
-            raise ValueError(f"radarr_url needs to be defined in {self._config.path}")
-
-        radarr_api_key = self._config.get("radarr_api_key", None)
-        if not radarr_api_key:
-            raise ValueError(
-                f"radarr_api_key needs to be defined in {self._config.path}",
-            )
+        radarr_url = self._config.require("radarr_url")
+        radarr_api_key = self._config.require("radarr_api_key")
 
         self.radarr = RadarrClient(
             url=radarr_url,
@@ -67,13 +62,12 @@ class RadarrSync:
 
     def item_anilist_ids(
         self,
-        run: RunServices,
         item: Any,
         log_ignored: bool = True,
     ) -> dict:
         """Resolve AniList ids for a Radarr movie (by TMDB / IMDb id)."""
 
-        return run.get_anilist_ids(
+        return self._services.get_anilist_ids(
             tmdb_id=item.tmdbId,
             imdb_id=item.imdbId,
             tmdb_type="movie",
@@ -82,7 +76,6 @@ class RadarrSync:
 
     def process_al_id(
         self,
-        run: RunServices,
         arr: str,
         item: Any,
         item_title: str,
@@ -96,6 +89,8 @@ class RadarrSync:
         the shared grab/cache tail. ``mapping`` is unused (movies need no episode
         mapping) but is accepted to match the shared hook signature.
         """
+
+        run = self._services
 
         sd_entry = run.al_id_prologue(al_id)
         if sd_entry is None:
@@ -225,30 +220,3 @@ class RadarrSync:
             radarr_release_dict = {None: {"size": None}}
 
         return radarr_release_dict
-
-
-class SeaDexRadarr(ArrFacade):
-    """Public Radarr entry point: composes the engine with a RadarrSync.
-
-    Preserves the historical surface - ``SeaDexRadarr(config, cache, logger,
-    mappings=...).run(tmdb_id=..., dry_run=...)`` / ``.close()`` - while the work
-    is split between the shared :class:`~.seadex_arr.SeaDexArr` engine and the
-    :class:`RadarrSync` strategy it drives. Construction and teardown live on
-    :class:`~.seadex_arr.ArrFacade`; only the movie-specific ``run()`` is here.
-    """
-
-    _arr = "radarr"
-    _strategy_factory = RadarrSync
-
-    def run(self, tmdb_id: int | None = None, dry_run: bool = False) -> bool:
-        """Run the SeaDex Radarr syncer
-
-        Args:
-            tmdb_id (int, optional): If set, only run for the movie with this
-                TMDB ID. Defaults to None, which runs for all movies.
-            dry_run (bool, optional): If True, simulate the run without grabbing
-                torrents, writing the cache, or sending notifications.
-                Defaults to False.
-        """
-
-        return self._engine.run_sync(arr=self._arr, item_id=tmdb_id, dry_run=dry_run)

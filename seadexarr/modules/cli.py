@@ -8,9 +8,9 @@ import typer
 
 from .config import AppConfig
 from .mappings import MappingResolver
-from .seadex_arr import setup_logger
-from .seadex_radarr import SeaDexRadarr
-from .seadex_sonarr import SeaDexSonarr
+from .seadex_arr import RunDeps, SeaDexArr, setup_logger
+from .seadex_radarr import RadarrSync
+from .seadex_sonarr import SonarrSync
 
 seadexarr_cli = typer.Typer(name="seadexarr_cli")
 seadexarr_run = typer.Typer(name="run")
@@ -28,12 +28,12 @@ def _build_shared(
 ) -> tuple[AppConfig, MappingResolver] | None:
     """Load the config once and build the id-mapping resolver both arrs share.
 
-    This is the composition root for a run. The config is read and template-synced
-    a single time and returned so each arr reuses it (one read+sync per run, not
-    one per arr); the resolver settings are arr-independent, so it's loaded as
-    "sonarr" purely to read them. The resolver downloads, parses and indexes the
-    three large mapping sources once and is injected into both SeaDexRadarr and
-    SeaDexSonarr, so that work also happens a single time per run.
+    The config is read and template-synced a single time and returned so each arr
+    reuses it (one read+sync per run, not one per arr); the resolver settings are
+    arr-independent, so it's loaded as "sonarr" purely to read them. The resolver
+    downloads, parses and indexes the three large mapping sources once and is then
+    injected (by ``_run_arr``) into both arrs, so that work also happens a single
+    time per run.
 
     Returns ``(app_config, resolver)``, or None - after logging the specific
     cause - when the config is missing/unreadable or a mapping source can't be
@@ -70,6 +70,48 @@ def _build_shared(
         return None
 
     return app_config, resolver
+
+
+def _run_arr(
+    arr_name: str,
+    strategy_cls: type[RadarrSync] | type[SonarrSync],
+    app_config: AppConfig,
+    *,
+    config: str,
+    cache: str,
+    logger: logging.Logger,
+    mappings: MappingResolver,
+    item_id: int | None = None,
+    dry_run: bool = False,
+) -> None:
+    """Compose one arr run from the injected deps, run it, and always close it.
+
+    This is the composition root for a single arr: build the shared collaborators
+    (``RunDeps.build``), inject them into the ``SeaDexArr`` run machinery and the
+    strategy, then drive ``run_sync``. Any error is logged (so one arr crashing
+    doesn't abort the other or the scheduled loop) and the HTTP session is
+    released in a ``finally``. Each arr's id (TMDB for Radarr, TVDB for Sonarr) is
+    passed as ``item_id``.
+    """
+
+    services = None
+    try:
+        deps = RunDeps.build(
+            arr_name,
+            config,
+            cache,
+            logger,
+            mappings=mappings,
+            app_config=app_config.for_arr(arr_name),
+        )
+        services = SeaDexArr(deps, arr_name)
+        strategy = strategy_cls(deps, services)
+        services.run_sync(strategy, arr=arr_name, item_id=item_id, dry_run=dry_run)
+    except Exception:
+        logger.error(f"Unexpected error during {arr_name.capitalize()} run", exc_info=True)
+    finally:
+        if services is not None:
+            services.close()
 
 
 # Default command, schedule run
@@ -118,40 +160,16 @@ def run_scheduled() -> None:
         if shared is not None:
             app_config, mappings = shared
 
-            # Run both Radarr and Sonarr syncs, catching
-            # errors if they do arise. Split them up
-            # so one crashing doesn't ruin the other
-            sdr = None
-            try:
-                sdr = SeaDexRadarr(
-                    config=config,
-                    cache=cache,
-                    logger=logger,
-                    mappings=mappings,
-                    app_config=app_config.for_arr("radarr"),
-                )
-                sdr.run()
-            except Exception:
-                logger.error("Unexpected error during Radarr run", exc_info=True)
-            finally:
-                if sdr is not None:
-                    sdr.close()
-
-            sds = None
-            try:
-                sds = SeaDexSonarr(
-                    config=config,
-                    cache=cache,
-                    logger=logger,
-                    mappings=mappings,
-                    app_config=app_config.for_arr("sonarr"),
-                )
-                sds.run()
-            except Exception:
-                logger.error("Unexpected error during Sonarr run", exc_info=True)
-            finally:
-                if sds is not None:
-                    sds.close()
+            # Run both Radarr and Sonarr syncs. _run_arr logs and closes each
+            # independently, so one crashing doesn't ruin the other.
+            _run_arr(
+                "radarr", RadarrSync, app_config,
+                config=config, cache=cache, logger=logger, mappings=mappings,
+            )
+            _run_arr(
+                "sonarr", SonarrSync, app_config,
+                config=config, cache=cache, logger=logger, mappings=mappings,
+            )
 
         next_run_time = datetime.now() + timedelta(hours=schedule_time)
         next_run_time = next_run_time.strftime("%H:%M")
@@ -205,38 +223,18 @@ def run_single(
         app_config, mappings = shared
 
         if run_radarr:
-            sdr = None
-            try:
-                sdr = SeaDexRadarr(
-                    config=config,
-                    cache=cache,
-                    logger=logger,
-                    mappings=mappings,
-                    app_config=app_config.for_arr("radarr"),
-                )
-                sdr.run(tmdb_id=movie_id, dry_run=dry_run)
-            except Exception:
-                logger.error("Unexpected error during Radarr run", exc_info=True)
-            finally:
-                if sdr is not None:
-                    sdr.close()
+            _run_arr(
+                "radarr", RadarrSync, app_config,
+                config=config, cache=cache, logger=logger, mappings=mappings,
+                item_id=movie_id, dry_run=dry_run,
+            )
 
         if run_sonarr:
-            sds = None
-            try:
-                sds = SeaDexSonarr(
-                    config=config,
-                    cache=cache,
-                    logger=logger,
-                    mappings=mappings,
-                    app_config=app_config.for_arr("sonarr"),
-                )
-                sds.run(tvdb_id=series_id, dry_run=dry_run)
-            except Exception:
-                logger.error("Unexpected error during Sonarr run", exc_info=True)
-            finally:
-                if sds is not None:
-                    sds.close()
+            _run_arr(
+                "sonarr", SonarrSync, app_config,
+                config=config, cache=cache, logger=logger, mappings=mappings,
+                item_id=series_id, dry_run=dry_run,
+            )
 
     # True when the requested run proceeded (or nothing was requested); False when
     # an arr was requested but the shared config/mappings couldn't be built, so a

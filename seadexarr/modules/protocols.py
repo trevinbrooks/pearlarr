@@ -1,16 +1,15 @@
-"""Composition seams between the run engine and the Arr-specific strategies.
+"""Composition seams between the run machinery and the Arr-specific strategies.
 
-Phase 6b of the refactor replaced the ``SeaDexArr`` ABC + subclass inheritance
-with composition (see ``REFACTOR_PLAN.md``). Two Protocols express the seam:
+The refactor replaced the ``SeaDexArr`` ABC + subclass inheritance with
+composition (see ``REFACTOR_PLAN.md``). Two Protocols express the seam:
 
-- :class:`ArrSync` — what the engine calls on a strategy (the items to process
-  and the per-id body). ``SonarrSync`` / ``RadarrSync`` satisfy it.
-- :class:`RunServices` — the narrow slice of the engine a strategy calls while
-  processing one item. The engine (``SeaDexArr``) hands *itself* to each per-id
-  hook as this view, so a strategy drives the shared pipeline and run state
-  without holding a stored back-reference to the engine. ``SeaDexArr`` satisfies
-  it structurally; conformance is checked where the engine passes ``self`` into
-  ``process_al_id`` / ``item_anilist_ids``.
+- :class:`ArrSync` — what the run machinery calls on a strategy (the items to
+  process and the per-id body). ``SonarrSync`` / ``RadarrSync`` satisfy it.
+- :class:`RunServices` — the shared per-id pipeline a strategy invokes while
+  processing one item. The composition root (``cli.py``) injects the
+  ``SeaDexArr`` run machinery into each strategy, which holds it as this view and
+  calls the pipeline through it (``SeaDexArr`` satisfies it structurally). The
+  strategy depends on this abstraction, not the concrete engine.
 
 Defining both here (and importing nothing from the engine or the strategies)
 keeps the dependency graph acyclic: ``seadex_arr`` -> ``protocols`` and
@@ -124,13 +123,12 @@ class RunServices(Protocol):
 
 
 class ArrSync(Protocol):
-    """An Arr-specific sync strategy the engine drives.
+    """An Arr-specific sync strategy the run machinery drives.
 
     Owns the Arr REST client and the Arr's domain logic (episode mapping,
     release-group resolution). Provides the items to process and the per-id
-    body; the engine passes itself (as :class:`RunServices`) into the per-id
-    hooks so the strategy reaches the shared pipeline without a stored
-    back-reference.
+    body. The strategy is injected with its :class:`RunServices` and holds it,
+    so the run loop calls these hooks without passing itself.
     """
 
     def get_items(self) -> list: ...
@@ -139,14 +137,12 @@ class ArrSync(Protocol):
 
     def item_anilist_ids(
         self,
-        run: RunServices,
         item: Any,
         log_ignored: bool = True,
     ) -> dict: ...
 
     def process_al_id(
         self,
-        run: RunServices,
         arr: str,
         item: Any,
         item_title: str,
