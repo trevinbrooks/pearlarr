@@ -8,8 +8,9 @@ from typing import NamedTuple
 import typer
 
 from .config import AppConfig, Arr
+from .log import setup_logger
 from .mappings import MappingResolver
-from .seadex_arr import RunDeps, SeaDexArr, setup_logger
+from .seadex_arr import RunDeps, SeaDexArr
 from .seadex_radarr import RadarrSync
 from .seadex_sonarr import SonarrSync
 

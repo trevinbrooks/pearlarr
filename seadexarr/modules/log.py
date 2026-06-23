@@ -3,12 +3,31 @@ import os
 import shutil
 import sys
 from logging.handlers import RotatingFileHandler
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, TypedDict, cast
 
 from rich.console import Console
 from rich.rule import Rule
 from rich.text import Text
 from rich.traceback import Traceback
+
+
+class KvRecord(TypedDict):
+    """Schema for the ``kv`` record carried on a LogRecord via ``extra=``.
+
+    Locks the producer (``LogFormatter.kv``) and consumer
+    (``RichConsoleHandler._render_kv``) to the same key names and value types
+    so the two sides can't silently drift. ``value`` is a plain string or a
+    pre-styled ``Text`` (the only non-str path, from ``group_highlight``).
+    """
+
+    key: str
+    value: str | Text
+    value_style: str | None
+    indent: int
+    key_width: int
+    sep: str
+    tail: str | None
+    tail_style: str
 
 
 class RichConsoleHandler(logging.Handler):
@@ -67,8 +86,8 @@ class RichConsoleHandler(logging.Handler):
         self.console = console
 
     @staticmethod
-    def _render_kv(kv: dict) -> Text:
-        """Build a styled "key : value" (or gutter "key value") line from a kv dict.
+    def _render_kv(kv: KvRecord) -> Text:
+        """Build a styled "key : value" (or gutter "key value") line from a kv record.
 
         The leading "<indent><key><sep>" segment comes from the shared _kv_prefix
         helper, so this matches kv_string (the file log) exactly. Labels are a
@@ -77,13 +96,13 @@ class RichConsoleHandler(logging.Handler):
         plain-message tail.
         """
         prefix = _kv_prefix(
-            kv.get("indent", 1),
-            kv.get("key", ""),
-            kv.get("key_width", KEY_WIDTH),
-            kv.get("sep", " :"),
+            kv["indent"],
+            kv["key"],
+            kv["key_width"],
+            kv["sep"],
         )
         line = Text(prefix, style="grey50")
-        value = kv.get("value", "")
+        value = kv["value"]
         if isinstance(value, Text):
             # A pre-styled value (e.g. a torrent name with its release group
             # highlighted) already carries its own spans, so append it as-is and
@@ -93,11 +112,11 @@ class RichConsoleHandler(logging.Handler):
                 line.append(value)
         elif value != "":
             line.append(" ")
-            line.append(Text(str(value), style=kv.get("value_style") or ""))
-        tail = kv.get("tail")
+            line.append(Text(str(value), style=kv["value_style"] or ""))
+        tail = kv["tail"]
         if tail:
             line.append(" ")
-            line.append(Text(str(tail), style=kv.get("tail_style") or "yellow"))
+            line.append(Text(str(tail), style=kv["tail_style"] or "yellow"))
         return line
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -165,7 +184,7 @@ class RichConsoleHandler(logging.Handler):
             # A styled key/value detail line. All current callers log these at
             # INFO, but if one is WARNING+ prepend the level badge so severity
             # is not silently lost (defensive).
-            kv = getattr(record, "kv", None)
+            kv: KvRecord | None = getattr(record, "kv", None)
             if kv is not None:
                 # No level badge here, even for WARNING+ kv lines: a col-0 badge
                 # would push the value past its aligned column and detach the
@@ -289,19 +308,15 @@ def setup_logger(
     logger = logging.getLogger(log_name)
     logger.propagate = False
 
-    # Set the log level based on the provided parameter
-    log_level = log_level.upper()
-    if log_level == "DEBUG":
-        logger.setLevel(logging.DEBUG)
-    elif log_level == "INFO":
-        logger.setLevel(logging.INFO)
-    elif log_level == "WARNING":
-        logger.setLevel(logging.WARNING)
-    elif log_level == "CRITICAL":
-        logger.setLevel(logging.CRITICAL)
-    else:
+    # Resolve the configured level once. logging.getLevelName maps a name to its
+    # int constant (and returns a non-int sentinel for an unknown name), so an
+    # invalid level warns and falls back to INFO. This single lookup also covers
+    # ERROR, which the prior string ladder silently dropped to INFO.
+    level = logging.getLevelName(log_level.upper())
+    if not isinstance(level, int):
         logger.critical(f"Invalid log level '{log_level}', defaulting to 'INFO'")
-        logger.setLevel(logging.INFO)
+        level = logging.INFO
+    logger.setLevel(level)
 
     # Define the log message format for the log files
     logfile_formatter = logging.Formatter(
@@ -323,12 +338,10 @@ def setup_logger(
     # Docker logs) and drops ANSI styling there.
     console = Console(file=sys.stdout)
     console_handler = RichConsoleHandler(console)
-    if log_level == "DEBUG":
-        console_handler.setLevel(logging.DEBUG)
-    elif log_level == "CRITICAL":
-        console_handler.setLevel(logging.CRITICAL)
-    else:
-        console_handler.setLevel(logging.INFO)
+    # The console always shows INFO+ (clamp to INFO) so routine progress stays
+    # visible even when the file logger is set to WARNING/ERROR; only DEBUG
+    # lowers the console threshold below INFO.
+    console_handler.setLevel(min(level, logging.INFO))
 
     # Replace any handlers from a previous call, then attach file + console
     logger.handlers.clear()
@@ -574,7 +587,7 @@ class LogFormatter:
     def kv(
         self,
         key: str,
-        value: Any,
+        value: str | Text,
         value_style: str | None = None,
         level: int = logging.INFO,
         indent: int = 1,
@@ -603,21 +616,20 @@ class LogFormatter:
             tail_style: Style for the tail. Defaults to "yellow"
         """
 
+        record: KvRecord = {
+            "key": key,
+            "value": value,
+            "value_style": value_style,
+            "indent": indent,
+            "key_width": key_width,
+            "sep": sep,
+            "tail": tail,
+            "tail_style": tail_style,
+        }
         self.logger.log(
             level,
             kv_string(key, value, key_width=key_width, indent=indent, sep=sep),
-            extra={
-                "kv": {
-                    "key": key,
-                    "value": value,
-                    "value_style": value_style,
-                    "indent": indent,
-                    "key_width": key_width,
-                    "sep": sep,
-                    "tail": tail,
-                    "tail_style": tail_style,
-                },
-            },
+            extra={"kv": record},
         )
 
         return True
