@@ -9,7 +9,7 @@ from .anilist import (
     get_anilist_format,
     get_anilist_n_eps,
 )
-from .cache import UPDATED_AT_STR_FORMAT
+from .cache import UPDATED_AT_STR_FORMAT, CacheRecord
 from .config import Arr
 from .log import indent_string
 from .planner import get_episode_keys
@@ -376,7 +376,7 @@ class SonarrSync(ArrSync):
         anilist_title = run.get_anilist_title(al_id=al_id)
 
         # Setup info for cache
-        cache_details = {
+        cache_details: CacheRecord = {
             "name": anilist_title,
             "updated_at": sd_entry.updated_at,
             "torrent_hashes": [],

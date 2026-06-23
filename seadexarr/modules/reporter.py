@@ -20,13 +20,13 @@ Extracted from ``SeaDexArr`` in Phase 4b of the refactor; behaviour-preserving.
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from seadex import EntryRecord
 
 from .anilist import get_anilist_title
 from .anilist_gateway import AniListGateway
-from .cache import CacheStore
+from .cache import CacheField, CacheStore
 from .config import Arr
 from .log import (
     LogFormatter,
@@ -36,22 +36,55 @@ from .log import (
     indent_string,
     rule_string,
 )
+from .torrents import ReleaseOutcome
 
 
-def fresh_stats() -> dict:
-    """Build an empty per-run stats tally for the end-of-run summary."""
+@dataclass
+class GrabRecord:
+    """One grab, recorded for the end-of-run summary's "added" detail block.
 
-    return {
-        "checked": 0,
-        "added": [],  # list of {"title", "coverage", "url", "name", "group"}
-        "up_to_date": 0,
-        "cached": 0,
-        "no_seadex_entry": 0,
-        "no_releases": 0,
-        "no_mappings": 0,
-        "needs_action": [],  # list of {"title", "reason"}
-        "unmonitored": 0,
-    }
+    Replaces the ``{"title", "coverage", "url", "name", "group"}`` item dict.
+    """
+
+    title: str | None
+    coverage: str | None
+    url: str | None
+    name: str | None
+    group: str
+
+
+@dataclass
+class NeedsActionRecord:
+    """One private-only skip, recorded for the summary's "needs action" block.
+
+    Replaces the ``{"title", "coverage", "group", "url", "reason"}`` item dict.
+    """
+
+    title: str | None
+    coverage: str | None
+    group: str
+    url: str | None
+    reason: str
+
+
+@dataclass
+class RunStats:
+    """The per-run tally rendered by the end-of-run summary.
+
+    Replaces the 10-key ``fresh_stats()`` dict: field names equal the old keys, so
+    counter bumps and list appends produce identical tallies - but a typo now
+    fails to compile instead of silently birthing a key.
+    """
+
+    checked: int = 0
+    added: list[GrabRecord] = field(default_factory=list)
+    up_to_date: int = 0
+    cached: int = 0
+    no_seadex_entry: int = 0
+    no_releases: int = 0
+    no_mappings: int = 0
+    needs_action: list[NeedsActionRecord] = field(default_factory=list)
+    unmonitored: int = 0
 
 
 @dataclass
@@ -65,7 +98,7 @@ class RunContext:
 
     arr: Arr
     dry_run: bool = False
-    stats: dict = field(default_factory=fresh_stats)
+    stats: RunStats = field(default_factory=RunStats)
     torrents_added: int = 0
     # Title, SeaDex URL, and coverage of the entry currently being processed, so
     # grabs and the summary can attribute and link what they grab.
@@ -194,14 +227,14 @@ class RunReporter:
                     sep="",
                 )
 
-        def needs_detail(item: dict) -> None:
+        def needs_detail(item: NeedsActionRecord) -> None:
             rows = [
-                ("files", item.get("coverage"), "grey50"),
-                ("group", item.get("group"), "yellow"),
-                ("reason", item.get("reason"), "yellow"),
-                ("link", item.get("url"), "grey50"),
+                ("files", item.coverage, "grey50"),
+                ("group", item.group, "yellow"),
+                ("reason", item.reason, "yellow"),
+                ("link", item.url, "grey50"),
             ]
-            _summary_block(item.get("title") or "(unknown title)", "yellow", rows)
+            _summary_block(item.title or "(unknown title)", "yellow", rows)
 
         # A grab in the summary, rendered like the live per-entry "checking"
         # block: the title hangs at indent 2, then labeled gutter fields sit
@@ -213,10 +246,10 @@ class RunReporter:
         # the group always reads first. A dry run dims the whole block (group accent
         # included) so the would-be grabs don't read as real. The title is shown
         # in full on its own line, so its length can't break the column.
-        def added_detail(item: dict) -> None:
+        def added_detail(item: GrabRecord) -> None:
             torrent_value = group_highlight(
-                item.get("name"),
-                item.get("group"),
+                item.name,
+                item.group,
                 group_style="grey50" if is_dry_run else "cyan",
                 base_style="grey50" if is_dry_run else "green",
             )
@@ -224,21 +257,21 @@ class RunReporter:
             # and the already-dim files/link) so the would-be grabs don't read as
             # real; files and link are dim either way.
             rows = [
-                ("files", item.get("coverage"), "grey50"),
-                ("link", item.get("url"), "grey50"),
+                ("files", item.coverage, "grey50"),
+                ("link", item.url, "grey50"),
                 ("torrent", torrent_value, "grey50" if is_dry_run else "green"),
             ]
             _summary_block(
-                item.get("title") or "(unknown title)",
+                item.title or "(unknown title)",
                 "grey50" if is_dry_run else None,
                 rows,
             )
 
-        summary_kv("checked", str(stats["checked"]))
+        summary_kv("checked", str(stats.checked))
 
         # Needs-action sits ahead of "added" so anything still waiting on the
         # user surfaces first, before the (often longer) list of completed grabs.
-        needs = stats["needs_action"]
+        needs = stats.needs_action
         summary_kv(
             "needs action",
             str(len(needs)),
@@ -254,27 +287,27 @@ class RunReporter:
             str(ctx.torrents_added),
             value_style="green" if ctx.torrents_added else None,
         )
-        for item in stats["added"]:
+        for item in stats.added:
             added_detail(item)
 
-        summary_kv("up to date", str(stats["up_to_date"]))
+        summary_kv("up to date", str(stats.up_to_date))
         summary_kv(
             "unchanged",
-            f"{stats['cached']}  (since last run)"
-            if stats["cached"]
+            f"{stats.cached}  (since last run)"
+            if stats.cached
             else "0",
             value_style="grey50",
         )
-        if stats["no_mappings"]:
-            summary_kv("no mapping", str(stats["no_mappings"]))
+        if stats.no_mappings:
+            summary_kv("no mapping", str(stats.no_mappings))
         # Keep "no entry" (no SeaDex entry at all) separate from "no release"
         # (an entry exists but nothing suitable to grab) so they don't conflate
-        if stats["no_seadex_entry"]:
-            summary_kv("no entry", str(stats["no_seadex_entry"]))
-        summary_kv("no release", str(stats["no_releases"]))
+        if stats.no_seadex_entry:
+            summary_kv("no entry", str(stats.no_seadex_entry))
+        summary_kv("no release", str(stats.no_releases))
 
-        if stats["unmonitored"]:
-            summary_kv("unmonitored", str(stats["unmonitored"]))
+        if stats.unmonitored:
+            summary_kv("unmonitored", str(stats.unmonitored))
 
         summary_kv(
             "issues",
@@ -293,7 +326,7 @@ class RunReporter:
         # private-only, rather than repeating it per-entry during the run. Kept
         # at indent 1, so it reads as part of the summary block, not detached.
         public_only_skipped = any(
-            "public_only" in (item.get("reason") or "") for item in needs
+            "public_only" in (item.reason or "") for item in needs
         )
         if public_only_skipped:
             self.logger.info(
@@ -432,7 +465,7 @@ class RunReporter:
             item_title (str): Item title
         """
 
-        ctx.stats["unmonitored"] += 1
+        ctx.stats.unmonitored += 1
         return self.log_entry_status(
             "unmonitored",
             item_title,
@@ -480,7 +513,7 @@ class RunReporter:
             title: Title for the item
         """
 
-        ctx.stats["no_mappings"] += 1
+        ctx.stats.no_mappings += 1
         return self.log_entry_status(
             "no mapping",
             title,
@@ -527,7 +560,7 @@ class RunReporter:
             al_id (int): Al ID
         """
 
-        ctx.stats["no_seadex_entry"] += 1
+        ctx.stats.no_seadex_entry += 1
 
         # Resolve a human title so the line is meaningful. There's no SeaDex
         # entry and the id isn't cached (we only cache processed ids), so this
@@ -612,7 +645,7 @@ class RunReporter:
                 for entries already handled by a Radarr sync
         """
 
-        ctx.stats["cached"] += 1
+        ctx.stats.cached += 1
 
         anilist_title = self.cache_store.get_cached_name(arr=arr, al_id=al_id)
         if anilist_title is None:
@@ -626,8 +659,8 @@ class RunReporter:
 
         self.log_entry_status(state, anilist_title)
         self.log_entry_coverage(
-            self.cache_store.get_cached_field(arr, al_id, "coverage"),
-            self.cache_store.get_cached_field(arr, al_id, "url"),
+            cast("str | None", self.cache_store.get_cached_field(arr, al_id, CacheField.COVERAGE)),
+            cast("str | None", self.cache_store.get_cached_field(arr, al_id, CacheField.URL)),
         )
 
         return True
@@ -639,7 +672,7 @@ class RunReporter:
             ctx (RunContext): The run's state (stats tally).
         """
 
-        ctx.stats["no_releases"] += 1
+        ctx.stats.no_releases += 1
         self.log_fmt.detail(
             "status",
             "no suitable releases on SeaDex",
@@ -651,7 +684,7 @@ class RunReporter:
     def log_seadex_action(
         self,
         seadex_dict: dict,
-        results: list,
+        results: list[ReleaseOutcome],
         dry_run: bool = False,
     ) -> bool:
         """Log the action block for a title that differs from SeaDex's pick
@@ -676,7 +709,7 @@ class RunReporter:
                 already explains that, so a status would only mislead)
         """
 
-        added = dry_run or any(r.get("outcome") == "added" for r in results)
+        added = dry_run or any(r.added for r in results)
 
         # Nothing grabbed and nothing already present (e.g., all releases skipped
         # by public_only): leave the status to the inline "skipped" warning
@@ -709,10 +742,10 @@ class RunReporter:
 
         # Per-release outcome (qBittorrent path; a dry run has no names to show)
         for r in results:
-            if r.get("outcome") == "added":
-                self.log_fmt.detail("added", r.get("name"), value_style="green")
+            if r.added:
+                self.log_fmt.detail("added", r.name, value_style="green")
             else:
-                self.log_fmt.detail("kept", r.get("name"))
+                self.log_fmt.detail("kept", r.name)
 
         return True
 

@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 import seadexarr
-from seadexarr.modules.cache import CacheStore, save_json
+from seadexarr.modules.cache import CacheField, CacheStore, save_json
 from seadexarr.modules.config import Arr
 
 # Stand-in for a config-file checksum. ``CacheStore`` only stamps and compares
@@ -66,9 +66,8 @@ class TestRecords:
         store = CacheStore.load(str(tmp_path / "cache.json"), config_checksum=CHECKSUM)
         store.update_cache(Arr.SONARR, 7, {"name": "Title", "url": "u"})
         assert store.get_cached_name(Arr.SONARR, 7) == "Title"
-        assert store.get_cached_field(Arr.SONARR, 7, "url") == "u"
-        assert store.get_cached_field(Arr.SONARR, 7, "missing") is None
-        assert store.get_cached_field(Arr.SONARR, 999, "name") is None
+        assert store.get_cached_field(Arr.SONARR, 7, CacheField.URL) == "u"
+        assert store.get_cached_field(Arr.SONARR, 999, CacheField.NAME) is None
 
     def test_check_al_id_in_cache_matches_timestamp(self, tmp_path) -> None:
         store = CacheStore.load(str(tmp_path / "cache.json"), config_checksum=CHECKSUM)

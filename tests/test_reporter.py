@@ -11,9 +11,16 @@ assert on the :class:`RunContext` mutations rather than exact log strings.
 import time
 from typing import Any
 
+from seadexarr.modules.cache import CacheField
 from seadexarr.modules.config import Arr
 from seadexarr.modules.log import LogFormatter
-from seadexarr.modules.reporter import RunContext, RunReporter, fresh_stats
+from seadexarr.modules.reporter import (
+    GrabRecord,
+    NeedsActionRecord,
+    RunContext,
+    RunReporter,
+    RunStats,
+)
 from tests.builders import make_logger
 
 
@@ -28,7 +35,7 @@ class _FakeCacheStore:
         del arr, al_id
         return self._name
 
-    def get_cached_field(self, arr: str, al_id: int, field: str):
+    def get_cached_field(self, arr: str, al_id: int, field: CacheField):
         del arr, al_id
         return self._fields.get(field)
 
@@ -62,29 +69,29 @@ def _make_reporter(cache_store: Any = None) -> RunReporter:
     )
 
 
-def test_fresh_stats_shape() -> None:
-    s = fresh_stats()
-    assert s["checked"] == 0
-    assert s["added"] == []
-    assert s["needs_action"] == []
-    assert s["unmonitored"] == 0
+def test_run_stats_shape() -> None:
+    s = RunStats()
+    assert s.checked == 0
+    assert s.added == []
+    assert s.needs_action == []
+    assert s.unmonitored == 0
 
 
 class TestStatsCounters:
     def test_unmonitored(self) -> None:
         ctx = RunContext(arr=Arr.SONARR)
         _make_reporter().log_arr_item_unmonitored(ctx, "Title")
-        assert ctx.stats["unmonitored"] == 1
+        assert ctx.stats.unmonitored == 1
 
     def test_no_mappings(self) -> None:
         ctx = RunContext(arr=Arr.SONARR)
         _make_reporter().log_no_anilist_mappings(ctx, "Title")
-        assert ctx.stats["no_mappings"] == 1
+        assert ctx.stats.no_mappings == 1
 
     def test_no_releases(self) -> None:
         ctx = RunContext(arr=Arr.RADARR)
         _make_reporter().log_no_seadex_releases(ctx)
-        assert ctx.stats["no_releases"] == 1
+        assert ctx.stats.no_releases == 1
 
     def test_cached_uses_stored_name(self) -> None:
         # A stored name short-circuits the AniList lookup (no network)
@@ -93,7 +100,7 @@ class TestStatsCounters:
         )
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_cached_entry(ctx, Arr.SONARR, 1)
-        assert ctx.stats["cached"] == 1
+        assert ctx.stats.cached == 1
 
     def test_no_sd_entry_increments_and_threads_al_cache(self, monkeypatch) -> None:
         reporter = _make_reporter()
@@ -103,7 +110,7 @@ class TestStatsCounters:
         )
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_no_sd_entry(ctx, 42)
-        assert ctx.stats["no_seadex_entry"] == 1
+        assert ctx.stats.no_seadex_entry == 1
         # The al_cache reassignment side-effect is preserved through the gateway
         assert reporter.anilist.al_cache == {42: "Resolved"}
 
@@ -121,20 +128,20 @@ class TestActiveTitle:
 class TestRunSummary:
     def _ctx_with_data(self) -> RunContext:
         ctx = RunContext(arr=Arr.SONARR)
-        ctx.stats["checked"] = 3
+        ctx.stats.checked = 3
         ctx.torrents_added = 1
         ctx.started_monotonic = time.monotonic() - 1.0  # exercise the elapsed line
-        ctx.stats["added"] = [
-            {"title": "A", "coverage": "S01", "url": "u", "name": "A.mkv", "group": "G"},
+        ctx.stats.added = [
+            GrabRecord(title="A", coverage="S01", url="u", name="A.mkv", group="G"),
         ]
-        ctx.stats["needs_action"] = [
-            {
-                "title": "B",
-                "coverage": "S02",
-                "group": "Priv",
-                "url": "u2",
-                "reason": "private-only release; public_only on",
-            },
+        ctx.stats.needs_action = [
+            NeedsActionRecord(
+                title="B",
+                coverage="S02",
+                group="Priv",
+                url="u2",
+                reason="private-only release; public_only on",
+            ),
         ]
         return ctx
 

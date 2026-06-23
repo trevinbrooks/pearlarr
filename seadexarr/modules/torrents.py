@@ -11,6 +11,8 @@ Extracted from ``SeaDexArr`` in Phase 3 of the refactor (see
 """
 
 import logging
+from dataclasses import dataclass
+from enum import Enum, auto
 from typing import Any
 
 import qbittorrentapi
@@ -22,6 +24,35 @@ from .torrent import (
     get_nyaa_torrent,
     get_rutracker_torrent,
 )
+
+
+class AddOutcome(Enum):
+    """The result of handing a release to the torrent client.
+
+    Replaces the ``"torrent_added"`` / ``"torrent_already_added"`` status strings:
+    a closed two-member vocabulary, so the dispatch on it is exhaustive (no dead
+    ``else: raise`` fallthrough).
+    """
+
+    ADDED = auto()  # was "torrent_added"
+    ALREADY_ADDED = auto()  # was "torrent_already_added" / "already have"
+
+
+@dataclass(frozen=True)
+class ReleaseOutcome:
+    """One release's add result, as the engine records it for the reporter.
+
+    Replaces the ``{"outcome", "name", "group"}`` dict the engine built and
+    :meth:`RunReporter.log_seadex_action` re-read.
+    """
+
+    outcome: AddOutcome
+    name: str | None
+    group: str
+
+    @property
+    def added(self) -> bool:
+        return self.outcome is AddOutcome.ADDED
 
 
 class TorrentService:
@@ -61,7 +92,7 @@ class TorrentService:
         tracker: Any,
         torrent_hash: str | None,
         preview: bool,
-    ) -> tuple[str, str | None]:
+    ) -> tuple[AddOutcome, str | None]:
         """Parse a release URL by tracker and add it to qBittorrent.
 
         Args:
@@ -73,9 +104,10 @@ class TorrentService:
                 client.
 
         Returns:
-            tuple: (status, name) - status is "torrent_added" or
-                "torrent_already_added"; name is the qBittorrent-reported name,
-                falling back to the release title scraped from the source page.
+            tuple: (outcome, name) - outcome is ``AddOutcome.ADDED`` or
+                ``AddOutcome.ALREADY_ADDED``; name is the qBittorrent-reported
+                name, falling back to the release title scraped from the source
+                page.
         """
 
         # Each parser returns the download/magnet link plus the release's
@@ -130,7 +162,7 @@ class TorrentService:
         torrent_url: str,
         torrent_hash: str | None,
         preview: bool,
-    ) -> tuple[str, str | None]:
+    ) -> tuple[AddOutcome, str | None]:
         """Add a torrent to qBittorrent (dedup by hash, read the name back).
 
         Args:
@@ -140,9 +172,9 @@ class TorrentService:
             preview (bool): When True, report the add without touching the client.
 
         Returns:
-            tuple: (status, torrent_name) - status is "torrent_added" or
-                "torrent_already_added"; torrent_name is the client-reported name
-                (None when there's no hash to look it up by).
+            tuple: (outcome, torrent_name) - outcome is ``AddOutcome.ADDED`` or
+                ``AddOutcome.ALREADY_ADDED``; torrent_name is the client-reported
+                name (None when there's no hash to look it up by).
         """
 
         # A private torrent has no info hash, so we can't look it up by hash to
@@ -156,14 +188,14 @@ class TorrentService:
                 self.logger.debug(
                     indent_string(f"Torrent {url} already in qBittorrent"),
                 )
-                return "torrent_already_added", torr_info[0].name
+                return AddOutcome.ALREADY_ADDED, torr_info[0].name
 
         # Preview (dry run or no client): report it as added without touching the
         # client. With a client present the dedup lookup above still ran, so an
         # already-present torrent is reported accurately. There's no client-side
         # name to read back, so the caller falls back to the URL.
         if preview:
-            return "torrent_added", None
+            return AddOutcome.ADDED, None
 
         # Past the preview gate there is always a client: the caller passes
         # preview=True whenever none is configured, so this narrows for type
@@ -188,4 +220,4 @@ class TorrentService:
             added_info = self.qbit.torrents_info(torrent_hashes=torrent_hash)
             torrent_name = added_info[0].name if added_info else None
 
-        return "torrent_added", torrent_name
+        return AddOutcome.ADDED, torrent_name

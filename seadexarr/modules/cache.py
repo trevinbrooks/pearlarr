@@ -19,7 +19,9 @@ Extracted from ``SeaDexArr`` in Phase 2 of the refactor (see
 
 import json
 import os
-from typing import Any
+from datetime import datetime
+from enum import StrEnum
+from typing import Any, TypedDict, cast
 
 from seadex import EntryRecord
 
@@ -30,6 +32,37 @@ from .. import __version__
 # meta ``fetched_at``). Lives here because the cache owns the record schema;
 # consumers (the orchestrator and the Sonarr adapter) import it directly.
 UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+class CacheField(StrEnum):
+    """The stored fields of a per-entry cache record.
+
+    A ``StrEnum`` so each member IS its on-disk key string: ``CacheField.URL``
+    keys (and serializes as) ``"url"``, keeping the persisted JSON byte-for-byte
+    unchanged while turning the open ``field: str`` read into a closed vocabulary.
+    """
+
+    NAME = "name"
+    URL = "url"
+    COVERAGE = "coverage"
+    UPDATED_AT = "updated_at"
+    TORRENT_HASHES = "torrent_hashes"
+
+
+class CacheRecord(TypedDict, total=False):
+    """The fixed shape of a per-entry cache record / a ``cache_details`` payload.
+
+    ``total=False`` because producers assemble it incrementally (a movie carries
+    no coverage at first; Sonarr fills coverage/url later). ``updated_at`` holds a
+    ``datetime`` at the producer and is strftime'd to ``str`` in place by
+    :meth:`CacheStore.update_cache`, hence the union.
+    """
+
+    name: str
+    url: str
+    coverage: str
+    updated_at: "str | datetime"
+    torrent_hashes: list[str]
 
 
 def save_json(
@@ -163,20 +196,20 @@ class CacheStore:
             str | None: Cached title, or None if not present
         """
 
-        return self.get_cached_field(arr, al_id, "name")
+        return cast("str | None", self.get_cached_field(arr, al_id, CacheField.NAME))
 
     def get_cached_field(
         self,
         arr: Arr,
         al_id: int,
-        field: str,
-    ) -> Any:
+        field: CacheField,
+    ) -> object | None:
         """Read a single stored field from an entry's cache record, if present
 
         Args:
             arr (Arr): Arr instance the entry is cached under
             al_id (int): AniList ID
-            field (str): Cache field name (e.g. "name", "url", "coverage")
+            field (CacheField): Cache field to read (e.g. NAME, URL, COVERAGE)
 
         Returns:
             The stored value, or None if absent
@@ -200,23 +233,30 @@ class CacheStore:
             al_id (int): AniList ID
         """
 
-        return self.get_cached_field(arr, al_id, "torrent_hashes") or []
+        value = self.get_cached_field(arr, al_id, CacheField.TORRENT_HASHES)
+        return value if isinstance(value, list) else []
 
-    def update_cache(self, arr: Arr, al_id: int, cache_details: dict | None = None) -> bool:
+    def update_cache(
+        self,
+        arr: Arr,
+        al_id: int,
+        cache_details: CacheRecord | None = None,
+    ) -> bool:
         """Update cache with useful info
 
         Args:
             arr (Arr): Arr instance
             al_id (int): AniList ID
-            cache_details (dict): Details for the cache entry.
+            cache_details (CacheRecord): Details for the cache entry.
                 Defaults to None
         """
 
         if cache_details is None:
             cache_details = {}
 
-        if "updated_at" in cache_details:
-            cache_details["updated_at"] = cache_details["updated_at"].strftime(
+        updated_at = cache_details.get("updated_at")
+        if isinstance(updated_at, datetime):
+            cache_details["updated_at"] = updated_at.strftime(
                 UPDATED_AT_STR_FORMAT,
             )
 

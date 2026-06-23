@@ -10,7 +10,7 @@ from seadex import EntryRecord
 
 from . import coverage as _coverage
 from .anilist_gateway import AniListGateway
-from .cache import CacheStore
+from .cache import CacheField, CacheRecord, CacheStore
 from .config import PRIVATE_TRACKERS, AppConfig, Arr
 from .log import (
     LogFormatter,
@@ -21,9 +21,9 @@ from .mappings import MappingResolver
 from .notify import Notifier
 from .planner import DownloadPlanner
 from .protocols import ArrSync
-from .reporter import RunContext, RunReporter
+from .reporter import GrabRecord, NeedsActionRecord, RunContext, RunReporter
 from .seadex_gateway import SeaDexGateway
-from .torrents import TorrentService
+from .torrents import AddOutcome, ReleaseOutcome, TorrentService
 
 
 @dataclass(frozen=True)
@@ -507,7 +507,7 @@ class SeaDexArr:
         self,
         torrent_dict: dict,
         torrent_client: str = "qbit",
-    ) -> tuple[int, list]:
+    ) -> tuple[int, list[ReleaseOutcome]]:
         """Add torrent(s) to a torrent client
 
         The per-release outcome lines (added / kept) are NOT logged here; this
@@ -524,12 +524,11 @@ class SeaDexArr:
 
         Returns:
             tuple: (n_torrents_added, results), where results is a list of
-                {"outcome": "added" | "already have", "name": str, "group": str}
-                dicts, one per release acted on, in order
+                ``ReleaseOutcome``, one per release acted on, in order
         """
 
         n_torrents_added = 0
-        results = []
+        results: list[ReleaseOutcome] = []
 
         for srg, srg_item in torrent_dict.items():
 
@@ -578,9 +577,13 @@ class SeaDexArr:
                     preview=self._is_preview(),
                 )
 
-                if success == "torrent_added":
+                if success is AddOutcome.ADDED:
                     results.append(
-                        {"outcome": "added", "name": torrent_name, "group": srg},
+                        ReleaseOutcome(
+                            outcome=AddOutcome.ADDED,
+                            name=torrent_name,
+                            group=srg,
+                        ),
                     )
 
                     # Record the grab for the end-of-run summary. Prefer the
@@ -591,14 +594,14 @@ class SeaDexArr:
                     coverage_str = _coverage.coverage_string(
                         url_item.get("episodes", []),
                     ) or self._ctx.current_coverage
-                    self._ctx.stats["added"].append(
-                        {
-                            "title": self._ctx.current_title,
-                            "coverage": coverage_str,
-                            "url": self._ctx.current_url,
-                            "name": torrent_name,
-                            "group": srg,
-                        },
+                    self._ctx.stats.added.append(
+                        GrabRecord(
+                            title=self._ctx.current_title,
+                            coverage=coverage_str,
+                            url=self._ctx.current_url,
+                            name=torrent_name,
+                            group=srg,
+                        ),
                     )
 
                     # Stop once max_torrents_to_add is reached
@@ -608,13 +611,14 @@ class SeaDexArr:
                         if self._ctx.torrents_added >= self._config.max_torrents_to_add:
                             return n_torrents_added, results
 
-                elif success == "torrent_already_added":
+                elif success is AddOutcome.ALREADY_ADDED:
                     results.append(
-                        {"outcome": "already have", "name": torrent_name, "group": srg},
+                        ReleaseOutcome(
+                            outcome=AddOutcome.ALREADY_ADDED,
+                            name=torrent_name,
+                            group=srg,
+                        ),
                     )
-
-                else:
-                    raise ValueError(f"Cannot handle torrent client {torrent_client}")
 
         return n_torrents_added, results
 
@@ -623,7 +627,12 @@ class SeaDexArr:
         qBittorrent is not configured (nothing can actually be grabbed)."""
         return self.dry_run or self.qbit is None
 
-    def update_cache(self, arr: Arr, al_id: int, cache_details: dict | None = None) -> bool:
+    def update_cache(
+        self,
+        arr: Arr,
+        al_id: int,
+        cache_details: CacheRecord | None = None,
+    ) -> bool:
         """Merge ``cache_details`` into an entry's cache record (in-memory only).
 
         The run's save points flush it; see ``CacheStore.update_cache``.
@@ -631,7 +640,8 @@ class SeaDexArr:
         Args:
             arr (Arr): Arr instance
             al_id (int): AniList ID
-            cache_details (dict): Details for the cache entry. Defaults to None
+            cache_details (CacheRecord): Details for the cache entry. Defaults
+                to None
         """
 
         return self.cache_store.update_cache(arr, al_id, cache_details)
@@ -789,7 +799,7 @@ class SeaDexArr:
         # before we make any download decisions for this title
         self._ctx.public_only_skipped = False
         self._ctx.public_only_groups = []
-        self._ctx.stats["checked"] += 1
+        self._ctx.stats.checked += 1
 
         if al_id is None:
             self._reporter.log_no_anilist_id()
@@ -837,7 +847,7 @@ class SeaDexArr:
         # Backfill the enriched fields for records written before they existed,
         # so cached rows can still link to SeaDex (and, for series, show the
         # season/episode coverage). One-time per old entry.
-        if not self.cache_store.get_cached_field(arr, al_id, "url"):
+        if not self.cache_store.get_cached_field(arr, al_id, CacheField.URL):
             self.update_cache(
                 arr=arr,
                 al_id=al_id,
@@ -855,7 +865,7 @@ class SeaDexArr:
         sd_url: str,
         seadex_dict: dict,
         torrent_hashes: list,
-        cache_details: dict,
+        cache_details: CacheRecord,
         release_group: list | str | None,
     ) -> bool:
         """Shared per-id tail: add torrents, notify, then cache the outcome
@@ -873,7 +883,7 @@ class SeaDexArr:
             sd_url (str): SeaDex entry URL (non-None; Discord field)
             seadex_dict (dict): Filtered SeaDex releases
             torrent_hashes (list): Hashes to remember in the cache record
-            cache_details (dict): Cache record being assembled for this id
+            cache_details (CacheRecord): Cache record being assembled for this id
             release_group (list | str | None): Arr release group(s) for the
                 Discord fields
         """
@@ -939,7 +949,7 @@ class SeaDexArr:
                     return True
 
         elif not self._ctx.public_only_skipped:
-            self._ctx.stats["up_to_date"] += 1
+            self._ctx.stats.up_to_date += 1
             self.log_fmt.detail(
                 "status",
                 "already have the recommended release",
@@ -966,16 +976,16 @@ class SeaDexArr:
             # attributed to this title - but only when nothing was actually added
             # for it. The coverage is whatever log_al_title recorded as current
             # (a season/episode string for Sonarr, None for a Radarr movie).
-            self._ctx.stats["needs_action"].append(
-                {
-                    "title": self._ctx.current_title,
-                    "coverage": self._ctx.current_coverage,
-                    "group": ", ".join(
+            self._ctx.stats.needs_action.append(
+                NeedsActionRecord(
+                    title=self._ctx.current_title,
+                    coverage=self._ctx.current_coverage,
+                    group=", ".join(
                         dict.fromkeys(self._ctx.public_only_groups),
                     ),
-                    "url": self._ctx.current_url,
-                    "reason": "private-only release; public_only on",
-                },
+                    url=self._ctx.current_url,
+                    reason="private-only release; public_only on",
+                ),
             )
 
         # Add in a wait, if required

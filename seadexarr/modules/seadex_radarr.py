@@ -1,6 +1,7 @@
 import time
 from typing import Any
 
+from .cache import CacheRecord
 from .config import Arr
 from .log import indent_string
 from .protocols import ArrSync
@@ -110,7 +111,7 @@ class RadarrSync(ArrSync):
 
         # Setup info for cache (URL so cached runs can link to SeaDex; movies have
         # no episode coverage)
-        cache_details = {
+        cache_details: CacheRecord = {
             "name": anilist_title,
             "updated_at": sd_entry.updated_at,
             "torrent_hashes": [],
