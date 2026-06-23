@@ -19,7 +19,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, TypeVar, cast
+from typing import Any, TypedDict, TypeVar, cast
 from urllib.request import urlretrieve
 from xml.etree import ElementTree
 
@@ -31,6 +31,29 @@ class TmdbType(StrEnum):
 
     MOVIE = "movie"
     SHOW = "show"
+
+
+class MappingEntry(TypedDict, total=False):
+    """The fields the sync strategies read off one resolved AniList mapping.
+
+    ``total=False`` because the two producers emit different subsets: the
+    AniBridge graph attaches ``tvdb_mappings`` (season -> episode ranges) only
+    on a TVDB lookup, while the Kometa Anime-IDs index carries the flat
+    ``tvdb_id`` / ``tvdb_season`` / ``tvdb_epoffset`` fields. The mapping is a
+    plain ``dict`` at the JSON boundary (both producers yield raw dicts that may
+    carry extra keys this shape doesn't enumerate), so this is a structural
+    view over those dicts rather than a constructed record - reads stay
+    ``.get(...)`` but are now typed.
+    """
+
+    anilist_id: int
+    tvdb_id: int | None
+    tvdb_season: int
+    tvdb_mappings: dict[int, list]
+    tvdb_epoffset: int
+    tmdb_movie_id: int | None
+    imdb_id: str | None
+    anidb_id: int | None
 
 
 def _validate_ids(
@@ -360,7 +383,7 @@ class MappingResolver:
         tmdb_id: int | None = None,
         imdb_id: str | None = None,
         tmdb_type: TmdbType = TmdbType.MOVIE,
-    ) -> tuple[dict, list]:
+    ) -> tuple[dict[int, MappingEntry], list]:
         """Resolve external ids to a sorted {AniList id -> mapping} dict
 
         Args:
@@ -431,8 +454,8 @@ class MappingResolver:
         tmdb_id: int | None = None,
         imdb_id: str | None = None,
         tmdb_type: TmdbType = TmdbType.MOVIE,
-        anilist_mappings: dict | None = None,
-    ) -> dict:
+        anilist_mappings: dict[int, MappingEntry] | None = None,
+    ) -> dict[int, MappingEntry]:
         """Get mappings from the Anime ID mappings
 
         Args:
@@ -457,9 +480,10 @@ class MappingResolver:
         # "don't clobber an id another query already produced" behaviour
         def merge(field: str, value: Any) -> None:
             for m in index[field].get(value, ()):
-                anilist_id = m["anilist_id"]
+                entry = cast("MappingEntry", m)
+                anilist_id = entry["anilist_id"]
                 if anilist_id not in anilist_mappings:
-                    anilist_mappings[anilist_id] = m
+                    anilist_mappings[anilist_id] = entry
 
         if tvdb_id is not None:
             merge("tvdb_id", tvdb_id)
@@ -476,8 +500,8 @@ class MappingResolver:
         tmdb_id: int | None = None,
         imdb_id: str | None = None,
         tmdb_type: TmdbType = TmdbType.MOVIE,
-        anilist_mappings: dict | None = None,
-    ) -> dict:
+        anilist_mappings: dict[int, MappingEntry] | None = None,
+    ) -> dict[int, MappingEntry]:
         """Get mappings from the AniBridge mappings
 
         Args:
@@ -503,7 +527,7 @@ class MappingResolver:
         def merge(found: dict) -> None:
             for anilist_id, entry in found.items():
                 if anilist_id not in anilist_mappings:
-                    anilist_mappings[anilist_id] = entry
+                    anilist_mappings[anilist_id] = cast("MappingEntry", entry)
 
         if tvdb_id is not None:
             merge(anibridge.lookup_by_tvdb(tvdb_id))

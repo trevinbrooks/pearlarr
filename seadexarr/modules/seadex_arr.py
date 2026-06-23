@@ -20,7 +20,7 @@ from .log import (
     indent_string,
     setup_logger,
 )
-from .mappings import MappingResolver, TmdbType
+from .mappings import MappingEntry, MappingResolver, TmdbType
 from .notify import Notifier
 from .planner import DownloadPlanner
 from .protocols import ArrSync
@@ -252,7 +252,7 @@ class SeaDexArr:
         imdb_id: str | None = None,
         tmdb_type: TmdbType = TmdbType.MOVIE,
         log_ignored: bool = True,
-    ) -> dict:
+    ) -> dict[int, MappingEntry]:
         """Resolve external Arr ids to a {AniList id -> mapping} dict
 
         The resolver does the mapping computation and reports which ids it
@@ -657,6 +657,33 @@ class SeaDexArr:
         """
 
         return self.cache_store.update_cache(arr, al_id, cache_details)
+
+    def no_releases_skip(
+        self,
+        arr: Arr,
+        al_id: int,
+        cache_details: CacheRecord,
+    ) -> bool:
+        """Shared no-suitable-releases tail both Arr strategies fall into.
+
+        When SeaDex yields no usable releases for an id, every strategy does the
+        same four things: log the outcome, persist what it knows into the cache,
+        throttle, and report "not grabbed". Hoisted here so the two strategies
+        share one definition instead of a byte-for-byte duplicated block.
+
+        Args:
+            arr (Arr): Arr instance the entry is cached under.
+            al_id (int): AniList ID.
+            cache_details (CacheRecord): Cache record assembled for this id.
+
+        Returns:
+            bool: Always ``False`` (nothing was grabbed).
+        """
+
+        self.log_no_seadex_releases()
+        self.update_cache(arr=arr, al_id=al_id, cache_details=cache_details)
+        time.sleep(self._config.sleep_time)
+        return False
 
     def reset_run_stats(self, arr: Arr, dry_run: bool) -> bool:
         """Start a fresh run context and the run clock

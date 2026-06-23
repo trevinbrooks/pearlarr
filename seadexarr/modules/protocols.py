@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from .config import Arr
+from .mappings import MappingEntry
 
 
 class ArrSync(ABC):
@@ -28,7 +29,7 @@ class ArrSync(ABC):
         self,
         item: Any,
         log_ignored: bool = True,
-    ) -> dict:
+    ) -> dict[int, MappingEntry]:
         """Resolve the AniList ids mapped to one Arr item."""
 
     @abstractmethod
@@ -38,6 +39,6 @@ class ArrSync(ABC):
         item: Any,
         item_title: str,
         al_id: int,
-        mapping: dict,
+        mapping: MappingEntry,
     ) -> bool:
         """Process one AniList id for one Arr item; True if it grabbed."""

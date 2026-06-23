@@ -1,12 +1,11 @@
-import time
 from typing import Any
 
 from .cache import CacheRecord
 from .config import Arr
 from .log import indent_string
-from .mappings import TmdbType
+from .mappings import MappingEntry, TmdbType
 from .protocols import ArrSync
-from .radarr_client import RadarrClient, collect_anime_movies
+from .radarr_client import collect_anime_movies, make_radarr_client
 from .seadex_arr import RunDeps, SeaDexArr
 
 
@@ -39,7 +38,7 @@ class RadarrSync(ArrSync):
         radarr_url = self._config.radarr_url
         radarr_api_key = self._config.radarr_api_key
 
-        self.radarr = RadarrClient(
+        self.radarr = make_radarr_client(
             url=radarr_url,
             api_key=radarr_api_key,
             session=self.session,
@@ -67,7 +66,7 @@ class RadarrSync(ArrSync):
         self,
         item: Any,
         log_ignored: bool = True,
-    ) -> dict:
+    ) -> dict[int, MappingEntry]:
         """Resolve AniList ids for a Radarr movie (by TMDB / IMDb id)."""
 
         return self._services.get_anilist_ids(
@@ -83,7 +82,7 @@ class RadarrSync(ArrSync):
         item: Any,
         item_title: str,
         al_id: int,
-        mapping: dict,
+        mapping: MappingEntry,
     ) -> bool:
         """Process one AniList id for a Radarr movie
 
@@ -135,16 +134,7 @@ class RadarrSync(ArrSync):
         seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
-            run.log_no_seadex_releases()
-
-            run.update_cache(
-                arr=arr,
-                al_id=al_id,
-                cache_details=cache_details,
-            )
-
-            time.sleep(self._config.sleep_time)
-            return False
+            return run.no_releases_skip(arr, al_id, cache_details)
 
         self.logger.debug(
             indent_string(

@@ -23,6 +23,35 @@ from arrapi import RadarrAPI
 from .anibridge import AniBridge
 
 
+def make_radarr_client(
+    *,
+    url: str,
+    api_key: str,
+    session: requests.Session,
+    logger: logging.Logger,
+) -> "RadarrClient":
+    """Build a :class:`RadarrClient` from the shared session/logger and a url/key.
+
+    Hoisted so the two Arr strategies share one construction site. The url/key
+    lookup policy stays with each caller (Radarr requires them, Sonarr reads them
+    optionally for its cross-check), so they're passed in already resolved rather
+    than re-derived here.
+
+    Args:
+        url (str): Radarr base URL.
+        api_key (str): Radarr API key.
+        session (requests.Session): Shared keep-alive session.
+        logger (logging.Logger): For request warnings.
+    """
+
+    return RadarrClient(
+        url=url,
+        api_key=api_key,
+        session=session,
+        logger=logger,
+    )
+
+
 class RadarrClient:
     """Thin wrapper over the Radarr API (``arrapi`` + one raw endpoint)."""
 

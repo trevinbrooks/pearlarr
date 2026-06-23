@@ -10,12 +10,18 @@ from .anilist import (
     get_anilist_format,
     get_anilist_n_eps,
 )
-from .cache import UPDATED_AT_STR_FORMAT, CacheRecord
+from .cache import UPDATED_AT_STR_FORMAT, CacheRecord, record_is_fresh
 from .config import Arr
 from .log import EntryState, indent_string
+from .mappings import MappingEntry
 from .planner import get_episode_keys
 from .protocols import ArrSync
-from .radarr_client import IdField, RadarrClient, collect_anime_items, collect_anime_movies
+from .radarr_client import (
+    IdField,
+    collect_anime_items,
+    collect_anime_movies,
+    make_radarr_client,
+)
 from .seadex_arr import RunDeps, SeaDexArr
 from .seadex_types import EpisodeRecord
 from .sonarr_client import SonarrClient
@@ -86,7 +92,7 @@ class MappingMode(Enum):
     ANIBRIDGE = "anibridge"
 
 
-def _mapping_mode(mapping: dict) -> MappingMode:
+def _mapping_mode(mapping: MappingEntry) -> MappingMode:
     """Classify a SeaDex mapping into its closed :class:`MappingMode`."""
 
     if "tvdb_mappings" in mapping:
@@ -132,11 +138,11 @@ def _parse_anidb_mapping_dict(
     return result
 
 
-def get_tvdb_id(mapping: dict) -> int | None:
+def get_tvdb_id(mapping: MappingEntry) -> int | None:
     """Get TVDB ID for a particular mapping
 
     Args:
-        mapping (dict): Dictionary of SeaDex mappings
+        mapping (MappingEntry): SeaDex mapping for one AniList id
 
     Returns:
         int: TVDB ID
@@ -145,11 +151,11 @@ def get_tvdb_id(mapping: dict) -> int | None:
     return mapping.get("tvdb_id")
 
 
-def get_tvdb_season(mapping: dict) -> int:
+def get_tvdb_season(mapping: MappingEntry) -> int:
     """Get TVDB season for a particular mapping
 
     Args:
-        mapping (dict): Dictionary of SeaDex mappings
+        mapping (MappingEntry): SeaDex mapping for one AniList id
 
     Returns:
         int: TVDB season
@@ -321,7 +327,7 @@ class SonarrSync(ArrSync):
             and radarr_url is not None
             and radarr_api_key is not None
         ):
-            radarr_client = RadarrClient(
+            radarr_client = make_radarr_client(
                 url=radarr_url,
                 api_key=radarr_api_key,
                 session=self.session,
@@ -360,7 +366,7 @@ class SonarrSync(ArrSync):
         self,
         item: Any,
         log_ignored: bool = True,
-    ) -> dict:
+    ) -> dict[int, MappingEntry]:
         """Resolve AniList ids for a Sonarr series (by TVDB / IMDb id)."""
 
         return self._services.get_anilist_ids(
@@ -375,7 +381,7 @@ class SonarrSync(ArrSync):
         item: Any,
         item_title: str,
         al_id: int,
-        mapping: dict,
+        mapping: MappingEntry,
     ) -> bool:
         """Process one AniList id for a Sonarr series
 
@@ -529,16 +535,7 @@ class SonarrSync(ArrSync):
         seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
-            run.log_no_seadex_releases()
-
-            run.update_cache(
-                arr=arr,
-                al_id=al_id,
-                cache_details=cache_details,
-            )
-
-            time.sleep(self._config.sleep_time)
-            return False
+            return run.no_releases_skip(arr, al_id, cache_details)
 
         self.logger.debug(
             indent_string(
@@ -607,14 +604,14 @@ class SonarrSync(ArrSync):
         self,
         sonarr_series_id: int,
         al_id: int,
-        mapping: dict,
+        mapping: MappingEntry,
     ) -> list | None:
         """Get a list of relevant episodes for an AniList mapping
 
         Args:
             sonarr_series_id (int): Series ID in Sonarr
             al_id (int): Anilist ID
-            mapping (dict): Mapping dictionary between TVDB and AniList
+            mapping (MappingEntry): Mapping between TVDB and AniList
         """
 
         # If we have any season info, pull that out now
@@ -728,7 +725,7 @@ class SonarrSync(ArrSync):
         self,
         final_ep_list: list,
         al_id: int,
-        mapping: dict,
+        mapping: MappingEntry,
         tvdb_season: int,
     ) -> list:
         """Slice an anime-id episode list down by its TVDB offset / AniList count.
@@ -736,7 +733,7 @@ class SonarrSync(ArrSync):
         Args:
             final_ep_list (list): Season-filtered episodes to slice.
             al_id (int): AniList ID, used to resolve the expected episode count.
-            mapping (dict): SeaDex mapping (read for ``tvdb_epoffset``).
+            mapping (MappingEntry): SeaDex mapping (read for ``tvdb_epoffset``).
             tvdb_season (int): TVDB season (-1 means single-season offset slice).
         """
 
@@ -808,24 +805,19 @@ class SonarrSync(ArrSync):
         return sonarr_release_dict
 
     @staticmethod
-    def _sonarr_parse_is_fresh(record: dict | None) -> bool:
+    def _sonarr_parse_is_fresh(record: dict | None, cutoff: datetime) -> bool:
         """True if a persisted parse record has episodes and is within TTL
 
         Legacy list-form entries (pre-TTL, no timestamp) are treated as stale so
-        they are re-queried once and upgraded to the timestamped form.
+        they are re-queried once and upgraded to the timestamped form. ``cutoff``
+        is computed once per call to :meth:`parse_episodes_from_seadex` and threaded
+        in, so ``datetime.now()`` isn't recomputed for every SeaDex file.
         """
-        if not isinstance(record, dict):
-            return False
-        if not record.get("episodes"):
-            return False
-        try:
-            stamp = datetime.strptime(
-                record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT,
-            )
-        except (TypeError, ValueError):
-            return False
-        return stamp >= datetime.now() - timedelta(
-            days=SONARR_PARSE_CACHE_TTL_DAYS,
+        return record_is_fresh(
+            record,
+            payload_key="episodes",
+            ttl_days=SONARR_PARSE_CACHE_TTL_DAYS,
+            cutoff=cutoff,
         )
 
     def parse_episodes_from_seadex(
@@ -852,6 +844,9 @@ class SonarrSync(ArrSync):
         # shared across runs via cache.json; fetched_at lets entries expire (TTL)
         parse_cache = self.cache_store.data.setdefault("sonarr_parse_cache", {})
         now_str = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
+        # Compute the TTL cutoff once for the whole run of files rather than
+        # re-deriving datetime.now() in the per-file freshness check below.
+        cutoff = datetime.now() - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS)
 
         for release_group_item in seadex_dict.values():
 
@@ -885,7 +880,7 @@ class SonarrSync(ArrSync):
                     # Sonarr and remember the result with a timestamp so it
                     # expires (re-validates) rather than being trusted forever
                     record = parse_cache.get(f)
-                    if self._sonarr_parse_is_fresh(record):
+                    if self._sonarr_parse_is_fresh(record, cutoff):
                         parsed = record["episodes"]
                     else:
                         parsed = self.sonarr.parse(f)
