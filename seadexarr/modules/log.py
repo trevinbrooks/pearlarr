@@ -3,7 +3,7 @@ import os
 import shutil
 import sys
 from logging.handlers import RotatingFileHandler
-from typing import Any
+from typing import Any, Protocol, cast
 
 from rich.console import Console
 from rich.rule import Rule
@@ -227,6 +227,18 @@ class LogCounter(logging.Filter):
         return dict(self.counts)
 
 
+class _CountingLogger(Protocol):
+    """Structural view of a logger that carries a per-run :class:`LogCounter`.
+
+    ``setup_logger`` attaches ``seadex_counter`` dynamically; narrowing the
+    logger to this protocol lets the assignment type-check without a cast or a
+    Logger subclass, mirroring the ``getattr(..., "seadex_counter", None)`` reads
+    at the call sites.
+    """
+
+    seadex_counter: LogCounter
+
+
 def setup_logger(
     log_level: str,
     log_dir: str = "logs",
@@ -330,8 +342,7 @@ def setup_logger(
             logger.removeFilter(existing_filter)
     counter = LogCounter()
     logger.addFilter(counter)
-    # pyrefly: ignore [missing-attribute]
-    logger.seadex_counter = counter
+    cast(_CountingLogger, logger).seadex_counter = counter
 
     return logger
 
