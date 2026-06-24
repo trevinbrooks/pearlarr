@@ -21,7 +21,7 @@ The defaults also encode one load-bearing distinction:
 """
 
 from dataclasses import dataclass, field
-from typing import NamedTuple
+from typing import Any, NamedTuple, Protocol, Self, runtime_checkable
 
 from seadex import Tag, Tracker
 
@@ -102,16 +102,109 @@ a real key, so an episode with a missing key simply fails to match.
 """
 
 
-def as_size_list(size: int | list[int] | None) -> list[int]:
-    """Normalize a size value to a list of sizes.
+def as_size_list(size: int | list[int | None] | None) -> list[int]:
+    """Normalize a size value to a list of concrete sizes.
 
     ``None`` (or a missing size) becomes ``[]``; a bare int becomes ``[int]``; a
-    list passes through as a fresh list. The single home for the size-as-list
-    coercion the planner used to inline.
+    list is copied with any ``None`` entries dropped (a ``None`` size carries no
+    size to compare). The single home for the size-as-list coercion the planner
+    used to inline.
     """
 
     if size is None:
         return []
     if isinstance(size, int):
         return [size]
-    return list(size)
+    return [s for s in size if s is not None]
+
+
+# --- Arr items (Sonarr series / Radarr movies) ------------------------------
+#
+# ``arrapi`` returns attribute-objects (``item.tvdbId``), never dicts, so these
+# are Protocols rather than TypedDicts. The common surface is ``id``/``title``/
+# ``imdbId``; the per-arr external id splits the two leaf protocols (Sonarr keys
+# on ``tvdbId``, Radarr on ``tmdbId``).
+
+
+@runtime_checkable
+class ArrItem(Protocol):
+    """The attribute surface shared by a Sonarr series and a Radarr movie."""
+
+    id: int
+    title: str
+    imdbId: str | None
+
+
+@runtime_checkable
+class SonarrItem(ArrItem, Protocol):
+    """A Sonarr series item: an :class:`ArrItem` keyed on ``tvdbId``."""
+
+    tvdbId: int
+
+
+@runtime_checkable
+class RadarrItem(ArrItem, Protocol):
+    """A Radarr movie item: an :class:`ArrItem` keyed on ``tmdbId``."""
+
+    tmdbId: int
+
+
+# --- Sonarr episodes (``/api/v3/episode`` JSON) -----------------------------
+#
+# Parsed once at the client boundary (``SonarrClient.episodes`` via
+# ``from_api``); the strategy, coverage helpers and planner then read attributes
+# instead of ``ep.get(key, default)``. Each field carries the default the former
+# ``.get`` reads used, so a record missing a key reduces to a never-matching
+# value (an absent season/episode is ``None``; callers that need the
+# ``SONARR_MISSING_KEY`` sentinel substitute it explicitly).
+
+
+@dataclass(frozen=True, slots=True)
+class SonarrEpisodeFile:
+    """The ``episodeFile`` sub-record of a Sonarr episode."""
+
+    release_group: str | None = None
+    size: int | None = None
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> Self:
+        """Build from one raw Sonarr ``episodeFile`` dict."""
+
+        return cls(release_group=raw.get("releaseGroup"), size=raw.get("size"))
+
+
+@dataclass(frozen=True, slots=True)
+class SonarrEpisode:
+    """One Sonarr ``/api/v3/episode`` record, parsed at the client boundary."""
+
+    season_number: int | None = None
+    episode_number: int | None = None
+    episode_file_id: int = 0
+    monitored: bool = True
+    episode_file: SonarrEpisodeFile | None = None
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> Self:
+        """Build from one raw Sonarr episode dict (filters unknown keys)."""
+
+        raw_file = raw.get("episodeFile")
+        return cls(
+            season_number=raw.get("seasonNumber"),
+            episode_number=raw.get("episodeNumber"),
+            episode_file_id=raw.get("episodeFileId", 0),
+            monitored=raw.get("monitored", True),
+            episode_file=SonarrEpisodeFile.from_api(raw_file) if raw_file else None,
+        )
+
+
+type ArrReleaseDict = dict[str | None, list[int | None]]
+"""Release group (``None`` when unknown) -> its existing-file sizes.
+
+Built by the strategies (Sonarr accumulates a per-episode size list; Radarr
+wraps its single movie size in a one-element list) and read in the planner via
+:func:`as_size_list`, which drops the ``None`` placeholders.
+"""
+
+
+type TvdbMappings = dict[int, list[tuple[int, int | None]]]
+"""AniBridge TVDB season -> inclusive ``(start, end)`` episode ranges."""
