@@ -1,5 +1,3 @@
-from typing import Any
-
 from .cache import CacheRecord
 from .config import Arr
 from .log import indent_string
@@ -7,6 +5,7 @@ from .mappings import MappingEntry, TmdbType
 from .protocols import ArrSync
 from .radarr_client import collect_anime_movies, make_radarr_client
 from .seadex_arr import RunDeps, SeaDexArr
+from .seadex_types import ArrReleaseDict, RadarrItem
 
 
 class RadarrSync(ArrSync):
@@ -47,12 +46,14 @@ class RadarrSync(ArrSync):
 
     # --- ArrSync hooks ------------------------------------------------------
 
-    def get_items(self) -> list:
+    def get_items(self) -> list[RadarrItem]:
         """Every Radarr movie that has an associated AniList ID."""
 
         return self.get_all_radarr_movies()
 
-    def filter_to_single(self, items: list, item_id: int) -> list:
+    def filter_to_single(
+        self, items: list[RadarrItem], item_id: int,
+    ) -> list[RadarrItem]:
         """Narrow the movie list to a single TMDB ID."""
 
         filtered = [m for m in items if m.tmdbId == item_id]
@@ -64,7 +65,7 @@ class RadarrSync(ArrSync):
 
     def item_anilist_ids(
         self,
-        item: Any,
+        item: RadarrItem,
         log_ignored: bool = True,
     ) -> dict[int, MappingEntry]:
         """Resolve AniList ids for a Radarr movie (by TMDB / IMDb id)."""
@@ -79,7 +80,7 @@ class RadarrSync(ArrSync):
     def process_al_id(
         self,
         arr: Arr,
-        item: Any,
+        item: RadarrItem,
         item_title: str,
         al_id: int,
         mapping: MappingEntry,
@@ -170,7 +171,7 @@ class RadarrSync(ArrSync):
 
     # --- Radarr domain logic ------------------------------------------------
 
-    def get_all_radarr_movies(self) -> list:
+    def get_all_radarr_movies(self) -> list[RadarrItem]:
         """Get all movies in Radarr that have an associated AniList ID"""
 
         return collect_anime_movies(
@@ -179,7 +180,9 @@ class RadarrSync(ArrSync):
             self.anibridge,
         )
 
-    def get_radarr_movie(self, tmdb_id: int | None = None, imdb_id: str | None = None):
+    def get_radarr_movie(
+        self, tmdb_id: int | None = None, imdb_id: str | None = None,
+    ) -> RadarrItem | None:
         """Get Radarr movie for a given TMDB ID or IMDb ID
 
         Args:
@@ -192,15 +195,18 @@ class RadarrSync(ArrSync):
     def get_radarr_release_dict(
         self,
         radarr_movie_id: int,
-    ) -> dict:
+    ) -> ArrReleaseDict:
         """Get a dictionary of useful info for a Radarr movie
 
         Args:
             radarr_movie_id (int): ID for movie in Radarr
         """
 
-        radarr_release_dict = {
-            r.get("releaseGroup", None): {"size": r.get("size", None)}
+        # A movie is a single file per release group; wrap its size in a
+        # one-element list so the value matches the shared ArrReleaseDict shape
+        # (Sonarr accumulates a per-episode list).
+        radarr_release_dict: ArrReleaseDict = {
+            r.get("releaseGroup", None): [r.get("size", None)]
             for r in self.radarr.movie_files(radarr_movie_id)
         }
 
@@ -210,6 +216,6 @@ class RadarrSync(ArrSync):
 
         # If we have nothing, return None
         elif len(radarr_release_dict) == 0:
-            radarr_release_dict = {None: {"size": None}}
+            radarr_release_dict = {None: [None]}
 
         return radarr_release_dict

@@ -15,12 +15,14 @@ Extracted from ``SeaDexRadarr`` in Phase 5a of the refactor (see
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import cast
 
 import arrapi.exceptions
 import requests
 from arrapi import RadarrAPI
 
 from .anibridge import AniBridge
+from .seadex_types import RadarrItem
 
 
 def make_radarr_client(
@@ -84,8 +86,14 @@ class RadarrClient:
 
         return self._api.all_movies()
 
-    def get_movie(self, tmdb_id: int | None = None, imdb_id: str | None = None):
+    def get_movie(
+        self, tmdb_id: int | None = None, imdb_id: str | None = None,
+    ) -> RadarrItem | None:
         """Get the Radarr movie for a TMDB or IMDb id, or None if not found.
+
+        ``arrapi`` ships no ``py.typed``; its ``Movie`` is the untyped-boundary
+        object we read a fixed id surface off, so this is where we pin it to the
+        ``RadarrItem`` view the rest of the code relies on.
 
         Args:
             tmdb_id (int): TMDB movie ID.
@@ -93,7 +101,10 @@ class RadarrClient:
         """
 
         try:
-            return self._api.get_movie(tmdb_id=tmdb_id, imdb_id=imdb_id)
+            # arrapi's Movie carries the RadarrItem id surface but, being
+            # untyped, resolves to wide-union attrs no checker can match to the
+            # protocol; pin the view here (mirrors mappings._load_mapping_by_mtime).
+            return cast(RadarrItem, self._api.get_movie(tmdb_id=tmdb_id, imdb_id=imdb_id))
         except arrapi.exceptions.NotFound:
             return None
 
