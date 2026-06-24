@@ -1,9 +1,21 @@
 import contextlib
 import time
+from typing import Any
 
 import requests
 
+from .seadex_types import AniListMediaNode
+
 API_URL = "https://graphql.anilist.co"
+
+type AniListCache = dict[int, dict[str, dict[str, Any]]]
+"""In-memory AniList cache: id -> raw GraphQL body ``{"data": {"Media": {...}}}``.
+
+The cached value is the *whole* response body (what ``get_query`` /
+``get_query_batch`` return), so it round-trips verbatim through the persisted
+``anilist_meta`` block. ``_get_media`` extracts and parses the ``Media`` node
+out of it into an :class:`AniListMediaNode`.
+"""
 
 # AniList rate-limits (HTTP 429) and occasionally returns a transient 5xx. Retry
 # those a few times with a backoff that respects a Retry-After header, so a busy
@@ -114,14 +126,18 @@ def _extract(body: dict | None, *path: str) -> dict:
     return node
 
 
-def _media_from(body: dict | None) -> dict:
-    """Extract the Media dict from a single-id body, or {} on a miss
+def _media_from(body: dict | None) -> AniListMediaNode:
+    """Parse the Media node from a single-id body into an AniListMediaNode
+
+    The raw ``{"data": {"Media": {...}}}`` body is the dynamic GraphQL boundary;
+    this is where it crosses into the typed domain. A miss (``data``/``Media``
+    null) yields an all-``None`` node via ``from_api({})``.
 
     Args:
         body (dict | None): The parsed JSON response body
     """
 
-    return _extract(body, "data", "Media")
+    return AniListMediaNode.from_api(_extract(body, "data", "Media"))
 
 
 def _post_with_retry(query: str, variables: dict) -> dict:
@@ -193,7 +209,7 @@ def get_query(al_id: int) -> dict:
     return _post_with_retry(QUERY, {"id": al_id})
 
 
-def get_query_batch(al_ids: list[int]) -> dict:
+def get_query_batch(al_ids: list[int]) -> AniListCache:
     """Fetch up to ANILIST_BATCH_SIZE AniList Media in a single request via id_in
 
     Returns "{id: {"data": {"Media": {...}}}}" mirroring the single-id shape,
@@ -216,115 +232,113 @@ def get_query_batch(al_ids: list[int]) -> dict:
 
 def _get_media(
     al_id: int,
-    al_cache: dict | None,
-) -> tuple[dict, dict]:
-    """Fetch the AniList Media object for an ID, caching successful lookups
+    al_cache: AniListCache | None,
+) -> tuple[AniListMediaNode, AniListCache]:
+    """Fetch and parse the AniList Media node for an ID, caching successful lookups
 
-    Centralizes the cache lookup and the null-safe extraction the public helpers
-    share. AniList returns {"data": {"Media": null}} (or "{"data": null}")
-    for an unknown ID or a rate-limit, so every level is guarded with "or {}"
-    and a miss yields an empty dict rather than raising
-    "'NoneType' object has no attribute 'get'". A miss is deliberately not
-    cached, so a transient rate-limit isn't remembered as a permanent "unknown"
-    for the rest of the run - the next call gets a fresh chance.
+    Centralizes the cache lookup and the once-only parse the public helpers
+    share: the raw ``{"data": {"Media": {...}}}`` body is the cached value, but
+    callers receive a typed :class:`AniListMediaNode`. AniList returns
+    {"data": {"Media": null}} (or "{"data": null}") for an unknown ID or a
+    rate-limit, so a miss yields an all-``None`` node rather than raising. A miss
+    is deliberately not cached, so a transient rate-limit isn't remembered as a
+    permanent "unknown" for the rest of the run - the next call gets a fresh
+    chance.
 
     Args:
         al_id (int): Anilist ID
-        al_cache (dict | None): Cache of prior AniList responses, keyed by ID
+        al_cache (AniListCache | None): Cache of prior AniList bodies, keyed by ID
 
     Returns:
-        tuple: (media_dict, al_cache) media_dict is {} on a miss.
+        tuple: (media_node, al_cache); media_node is an all-``None`` node on a miss.
     """
 
     if al_cache is None:
         al_cache = {}
 
-    # Cache hit: return the extracted Media directly.
+    # Cache hit: parse the stored body's Media node.
     j = al_cache.get(al_id)
     if j is not None:
         return _media_from(j), al_cache
 
-    # Miss: query AniList and extract Media once for both the cache-store
-    # decision and the return.
+    # Miss: query AniList. Extract the raw Media dict once to gate the cache
+    # store, then parse it into the typed node for the return.
     j = get_query(al_id)
-    media = _media_from(j)
+    raw_media = _extract(j, "data", "Media")
 
     # Only remember a response that actually carried Media, so a transient
     # failure (rate-limit, network) isn't cached as a permanent miss. The
-    # cached payload is only ever read (the helpers do .get() lookups, no
-    # mutation), so store it directly rather than deep-copying.
-    if media:
+    # cached body is only ever read, so store it directly rather than copying.
+    if raw_media:
         al_cache[al_id] = j
 
-    return media, al_cache
+    return AniListMediaNode.from_api(raw_media), al_cache
 
 
 def get_anilist_n_eps(
     al_id: int,
-    al_cache: dict | None = None,
-) -> tuple[int | None, dict]:
+    al_cache: AniListCache | None = None,
+) -> tuple[int | None, AniListCache]:
     """Query AniList to get the number of episodes for anime.
 
     Args:
         al_id (int): Anilist ID
-        al_cache (dict): Cached Anilist requests. Defaults to None,
+        al_cache (AniListCache): Cached Anilist bodies. Defaults to None,
             which will create a dictionary
     """
 
     media, al_cache = _get_media(al_id, al_cache)
 
-    return media.get("episodes", None), al_cache
+    return media.episodes, al_cache
 
 
 def get_anilist_title(
     al_id: int,
-    al_cache: dict | None = None,
-) -> tuple[str | None, dict]:
+    al_cache: AniListCache | None = None,
+) -> tuple[str | None, AniListCache]:
     """Query AniList to get a title for anime.
 
     Args:
         al_id (int): Anilist ID
-        al_cache (dict): Cached Anilist requests. Defaults to None,
+        al_cache (AniListCache): Cached Anilist bodies. Defaults to None,
             which will create a dictionary
     """
 
     media, al_cache = _get_media(al_id, al_cache)
 
     # Prefer the English title, but fall back to romaji
-    title = media.get("title") or {}
-
-    return (title.get("english") or title.get("romaji")), al_cache
+    return (media.title_english or media.title_romaji), al_cache
 
 
 def get_anilist_thumb(
     al_id: int,
-    al_cache: dict | None = None,
-) -> tuple[str | None, dict]:
+    al_cache: AniListCache | None = None,
+) -> tuple[str | None, AniListCache]:
     """Query AniList to get thumbnail URL for anime.
 
     Args:
         al_id (int): Anilist ID
-        al_cache (dict): Cached Anilist requests. Defaults to None,
+        al_cache (AniListCache): Cached Anilist bodies. Defaults to None,
             which will create a dictionary
     """
 
     media, al_cache = _get_media(al_id, al_cache)
 
-    return (media.get("coverImage") or {}).get("large", None), al_cache
+    return media.cover_image, al_cache
 
 
 def get_anilist_format(
     al_id: int,
-    al_cache: dict | None = None,
-) -> tuple[str | None, dict]:
+    al_cache: AniListCache | None = None,
+) -> tuple[str | None, AniListCache]:
     """Query AniList to get format for anime.
 
     Args:
         al_id (int): Anilist ID
-        al_cache (dict): Cached Anilist requests. Defaults to None,
+        al_cache (AniListCache): Cached Anilist bodies. Defaults to None,
             which will create a dictionary
     """
 
     media, al_cache = _get_media(al_id, al_cache)
 
-    return media.get("format", None), al_cache
+    return media.format, al_cache

@@ -208,3 +208,47 @@ wraps its single movie size in a one-element list) and read in the planner via
 
 type TvdbMappings = dict[int, list[tuple[int, int | None]]]
 """AniBridge TVDB season -> inclusive ``(start, end)`` episode ranges."""
+
+
+# --- AniList Media node (cached GraphQL ``Media`` record) --------------------
+#
+# The AniList cache (``al_cache``) holds the raw GraphQL body
+# ``{"data": {"Media": {...}}}`` keyed by id; the request/response bodies stay
+# dynamic ``dict``\\ s up to the cached-node read path. ``_get_media`` extracts
+# the ``Media`` node once and parses it into this frozen record, so the public
+# ``get_anilist_*`` helpers read attributes (``node.episodes``) instead of
+# chained ``.get()`` walks. Each field carries the default the former ``.get``
+# read produced; a missing node reduces to the ``EMPTY`` all-``None`` record.
+
+
+@dataclass(frozen=True, slots=True)
+class AniListMediaNode:
+    """One AniList ``Media`` node, parsed once at the cache read boundary."""
+
+    id: int | None = None
+    title_english: str | None = None
+    title_romaji: str | None = None
+    episodes: int | None = None
+    cover_image: str | None = None
+    format: str | None = None
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> Self:
+        """Build from a raw AniList ``Media`` dict (``{}`` on a miss).
+
+        Reads the nested ``title``/``coverImage`` sub-objects null-safely,
+        mirroring the former chained ``.get(...) or {}`` walks: an English title
+        is preferred with a romaji fallback handled by the caller, and the
+        ``large`` cover variant is the one downstream reads.
+        """
+
+        title = raw.get("title") or {}
+        cover = raw.get("coverImage") or {}
+        return cls(
+            id=raw.get("id"),
+            title_english=title.get("english"),
+            title_romaji=title.get("romaji"),
+            episodes=raw.get("episodes"),
+            cover_image=cover.get("large"),
+            format=raw.get("format"),
+        )

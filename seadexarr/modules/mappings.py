@@ -24,7 +24,8 @@ from typing import Any, cast
 from urllib.request import urlretrieve
 from xml.etree import ElementTree
 
-from .anibridge import AniBridge
+from .anibridge import AniBridge, AniBridgeLookup
+from .seadex_types import TvdbMappings
 
 
 class TmdbType(StrEnum):
@@ -64,7 +65,7 @@ class MappingEntry:
     tvdb_id: int | None = None
     tvdb_season: int = -1
     tvdb_epoffset: int = 0
-    tvdb_mappings: dict[int, list] | None = None
+    tvdb_mappings: TvdbMappings | None = None
     tmdb_movie_id: int | None = None
     imdb_id: str | None = None
     anidb_id: int | None = None
@@ -574,7 +575,7 @@ class MappingResolver:
 
         # Add any AniList IDs the indexes resolve for the supplied ids, without
         # clobbering matches an earlier id already produced (tvdb > tmdb > imdb).
-        def merge(found: dict) -> None:
+        def merge(found: AniBridgeLookup) -> None:
             for anilist_id, entry in found.items():
                 if anilist_id not in anilist_mappings:
                     anilist_mappings[anilist_id] = _entry_from_raw(anilist_id, entry)

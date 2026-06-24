@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 
 from .anilist import (
     ANILIST_BATCH_SIZE,
+    AniListCache,
     get_anilist_thumb,
     get_anilist_title,
     get_query_batch,
@@ -49,7 +50,7 @@ class AniListGateway:
 
         self._cache = cache_store
         self.logger = logger
-        self.al_cache: dict = {}
+        self.al_cache: AniListCache = {}
 
     def load_cache(self) -> None:
         """Seed the in-memory AniList cache from the persisted store

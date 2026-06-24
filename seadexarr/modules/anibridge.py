@@ -18,7 +18,44 @@ filtering in Sonarr needs.
 
 import logging
 from collections import defaultdict
+from dataclasses import dataclass, field
 from typing import Any
+
+from .seadex_types import TvdbMappings
+
+type AniBridgeGraph = dict[str, dict[str, dict[str, str]]]
+"""Raw anibridge-mappings JSON: descriptor -> {target_descriptor -> {src: tgt}}."""
+
+type AniBridgeEntry = dict[str, Any]
+"""One consumer-facing mapping entry (mixed-typed; ``mappings`` reads it via
+``_entry_from_raw``). Stays a loose ``dict`` - it is the raw->typed boundary,
+not the typed domain."""
+
+type AniBridgeLookup = dict[int, AniBridgeEntry]
+"""A ``lookup_by_*`` result: AniList id -> its consumer entry."""
+
+
+@dataclass
+class AniBridgeRecord:
+    """The per-AniList record built incrementally while parsing the graph.
+
+    One record accumulates every external id and season->episode-range map an
+    ``anilist:*`` entry points to. It is *mutable and built up* by
+    :meth:`AniBridge._add_target` (appending to the list/dict fields as targets
+    are folded in), so the collection fields default-construct empty rather than
+    being passed at once; ``_consumer_entry`` then reads attributes off it.
+
+    ``tvdb_shows`` / ``tmdb_shows`` are keyed by external id and hold a
+    :data:`TvdbMappings` (season -> inclusive ``(start, end)`` ranges) per id.
+    """
+
+    anidb_id: int | None = None
+    mal_ids: list[int] = field(default_factory=list)
+    tvdb_shows: dict[int, TvdbMappings] = field(default_factory=dict)
+    tmdb_shows: dict[int, TvdbMappings] = field(default_factory=dict)
+    tmdb_movie_ids: list[int] = field(default_factory=list)
+    tvdb_movie_ids: list[int] = field(default_factory=list)
+    imdb_ids: list[str] = field(default_factory=list)
 
 
 def _parse_descriptor(descriptor: str) -> tuple[str, str | None, str | None]:
@@ -101,7 +138,7 @@ def _parse_ranges(target: str) -> list[tuple[int, int | None]]:
     return ranges
 
 
-def _first(values: list) -> Any:
+def _first[T](values: list[T]) -> T | None:
     """Return the first value of a sequence, or None when empty.
 
     Args:
@@ -118,22 +155,22 @@ class AniBridge:
     sets of ids needed to filter a Sonarr/Radarr library down to anime.
 
     Args:
-        graph (dict): Raw anibridge mappings JSON (descriptor -> targets)
+        graph (AniBridgeGraph): Raw anibridge mappings JSON (descriptor -> targets)
         logger (logging.Logger | None): Optional logger for skipped descriptors
     """
 
-    def __init__(self, graph: dict, logger: logging.Logger | None = None) -> None:
+    def __init__(self, graph: AniBridgeGraph, logger: logging.Logger | None = None) -> None:
 
         self.logger = logger
 
-        # AniList id (int) -> record dict of the ids/episode-maps it points to
-        self.by_anilist = {}
+        # AniList id (int) -> the record of the ids/episode-maps it points to
+        self.by_anilist: dict[int, AniBridgeRecord] = {}
 
         # Reverse indexes: external id -> set of AniList ids
-        self.tvdb_index = defaultdict(set)
-        self.tmdb_show_index = defaultdict(set)
-        self.tmdb_movie_index = defaultdict(set)
-        self.imdb_index = defaultdict(set)
+        self.tvdb_index: dict[int, set[int]] = defaultdict(set)
+        self.tmdb_show_index: dict[int, set[int]] = defaultdict(set)
+        self.tmdb_movie_index: dict[int, set[int]] = defaultdict(set)
+        self.imdb_index: dict[str, set[int]] = defaultdict(set)
 
         self._parse(graph or {})
 
@@ -148,11 +185,11 @@ class AniBridge:
     def __len__(self) -> int:
         return len(self.by_anilist)
 
-    def _parse(self, graph: dict) -> None:
+    def _parse(self, graph: AniBridgeGraph) -> None:
         """Build per-AniList records and reverse indexes from the graph.
 
         Args:
-            graph (dict): Raw anibridge mappings JSON
+            graph (AniBridgeGraph): Raw anibridge mappings JSON
         """
 
         for key, targets in graph.items():
@@ -168,26 +205,24 @@ class AniBridge:
             except ValueError:
                 continue
 
-            record = {
-                "anidb_id": None,
-                "mal_ids": [],
-                "tvdb_shows": {},  # tvdb_id -> {season -> [(start, end|None)]}
-                "tmdb_shows": {},  # tmdb_id -> {season -> [(start, end|None)]}
-                "tmdb_movie_ids": [],
-                "tvdb_movie_ids": [],
-                "imdb_ids": [],
-            }
+            record = AniBridgeRecord()
 
             for target, ep_map in targets.items():
                 self._add_target(record, anilist_id, target, ep_map)
 
             self.by_anilist[anilist_id] = record
 
-    def _add_target(self, record: dict, anilist_id: int, target: str, ep_map: dict) -> None:
+    def _add_target(
+        self,
+        record: AniBridgeRecord,
+        anilist_id: int,
+        target: str,
+        ep_map: dict[str, str],
+    ) -> None:
         """Fold a single target descriptor into an AniList record.
 
         Args:
-            record (dict): The AniList record being built
+            record (AniBridgeRecord): The AniList record being built
             anilist_id (int): AniList id owning this record
             target (str): Target descriptor (e.g. "tvdb_show:74796:s2")
             ep_map (dict): {source_range: target_range} for this target
@@ -196,21 +231,21 @@ class AniBridge:
         provider, pid, scope = _parse_descriptor(target)
 
         if provider == "anidb":
-            if record["anidb_id"] is None:
+            if record.anidb_id is None:
                 anidb_id = self._as_int(pid)
                 if anidb_id is not None:
-                    record["anidb_id"] = anidb_id
+                    record.anidb_id = anidb_id
 
         elif provider == "mal":
             mal_id = self._as_int(pid)
             if mal_id is not None:
-                record["mal_ids"].append(mal_id)
+                record.mal_ids.append(mal_id)
 
         elif provider in ("tvdb_show", "tmdb_show"):
             ext_id = self._as_int(pid)
             if ext_id is None:
                 return
-            shows = record["tvdb_shows"] if provider == "tvdb_show" else record["tmdb_shows"]
+            shows = record.tvdb_shows if provider == "tvdb_show" else record.tmdb_shows
             index = self.tvdb_index if provider == "tvdb_show" else self.tmdb_show_index
 
             seasons = shows.setdefault(ext_id, {})
@@ -230,17 +265,17 @@ class AniBridge:
         elif provider == "tmdb_movie":
             movie_id = self._as_int(pid)
             if movie_id is not None:
-                record["tmdb_movie_ids"].append(movie_id)
+                record.tmdb_movie_ids.append(movie_id)
                 self.tmdb_movie_index[movie_id].add(anilist_id)
 
         elif provider == "tvdb_movie":
             movie_id = self._as_int(pid)
             if movie_id is not None:
-                record["tvdb_movie_ids"].append(movie_id)
+                record.tvdb_movie_ids.append(movie_id)
 
         elif provider in ("imdb_movie", "imdb_show"):
             if pid:
-                record["imdb_ids"].append(pid)
+                record.imdb_ids.append(pid)
                 self.imdb_index[pid].add(anilist_id)
 
     def _as_int(self, value: str | None) -> int | None:
@@ -266,7 +301,7 @@ class AniBridge:
         anilist_id: int,
         tvdb_id: int | None = None,
         tmdb_show_id: int | None = None,
-    ) -> dict:
+    ) -> AniBridgeEntry:
         """Build the mapping dict consumed by the Sonarr/Radarr pipeline.
 
         The entry mirrors the field names the rest of the code already reads.
@@ -285,22 +320,22 @@ class AniBridge:
 
         record = self.by_anilist[anilist_id]
 
-        entry = {
-            "tvdb_id": tvdb_id if tvdb_id is not None else next(iter(record["tvdb_shows"]), None),
-            "anidb_id": record["anidb_id"],
-            "imdb_id": _first(record["imdb_ids"]),
-            "tmdb_show_id": tmdb_show_id if tmdb_show_id is not None else next(iter(record["tmdb_shows"]), None),
-            "tmdb_movie_id": _first(record["tmdb_movie_ids"]),
-            "mal_id": _first(record["mal_ids"]),
+        entry: dict[str, Any] = {
+            "tvdb_id": tvdb_id if tvdb_id is not None else next(iter(record.tvdb_shows), None),
+            "anidb_id": record.anidb_id,
+            "imdb_id": _first(record.imdb_ids),
+            "tmdb_show_id": tmdb_show_id if tmdb_show_id is not None else next(iter(record.tmdb_shows), None),
+            "tmdb_movie_id": _first(record.tmdb_movie_ids),
+            "mal_id": _first(record.mal_ids),
             "source": "anibridge",
         }
 
-        if tvdb_id is not None and tvdb_id in record["tvdb_shows"]:
-            entry["tvdb_mappings"] = record["tvdb_shows"][tvdb_id]
+        if tvdb_id is not None and tvdb_id in record.tvdb_shows:
+            entry["tvdb_mappings"] = record.tvdb_shows[tvdb_id]
 
         return entry
 
-    def lookup_by_tvdb(self, tvdb_id: int) -> dict:
+    def lookup_by_tvdb(self, tvdb_id: int) -> AniBridgeLookup:
         """Return "{anilist_id: entry}" for AniList ids mapped to a tvdb id.
 
         Args:
@@ -312,7 +347,7 @@ class AniBridge:
             for anilist_id in self.tvdb_index.get(tvdb_id, ())
         }
 
-    def lookup_by_tmdb(self, tmdb_id: int, tmdb_type: str = "movie") -> dict:
+    def lookup_by_tmdb(self, tmdb_id: int, tmdb_type: str = "movie") -> AniBridgeLookup:
         """Return "{anilist_id: entry}" for AniList ids mapped to a tmdb id.
 
         Callers pass ``mappings.TmdbType`` (a ``StrEnum``); its str value drives
@@ -335,7 +370,7 @@ class AniBridge:
             for anilist_id in self.tmdb_movie_index.get(tmdb_id, ())
         }
 
-    def lookup_by_imdb(self, imdb_id: str) -> dict:
+    def lookup_by_imdb(self, imdb_id: str) -> AniBridgeLookup:
         """Return "{anilist_id: entry}" for AniList ids mapped to an IMDb id.
 
         Args:
