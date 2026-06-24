@@ -1,7 +1,7 @@
 from .cache import CacheRecord
 from .config import Arr
 from .log import indent_string
-from .manual_import import ImportReadiness, PendingImport
+from .manual_import import ImportProbe, ImportReadiness, PendingImport
 from .mappings import MappingEntry, TmdbType
 from .protocols import ArrSync
 from .radarr_client import collect_anime_movies, make_radarr_client
@@ -170,22 +170,34 @@ class RadarrSync(ArrSync[RadarrItem]):
             release_group=radarr_release_group,
         )
 
+    def pending_import_series_id(self, item: RadarrItem) -> int | None:
+        """No-op: Radarr movies record no pending imports (out of scope).
+
+        Returns ``None`` so the engine's per-item snapshot hook short-circuits for
+        every Radarr movie - there are no carried-over import records to report.
+        """
+
+        del item
+        return None
+
     def import_completed(
         self,
         pending: PendingImport,
         content_path: str,
         *,
         force: bool = False,
-    ) -> ImportReadiness:
+        at_deadline: bool = False,
+    ) -> ImportProbe:
         """No-op: the series-pinned manual import is Sonarr-only (out of scope).
 
         Radarr never records a pending import (``grab_and_cache`` passes no
-        ``pending_seeds``), so this is never reached in practice; it returns
-        ``LEAVE`` (the safest terminal value - never drops a record) to satisfy
-        the :class:`~.protocols.ArrSync` contract.
+        ``pending_seeds``), so this is never reached in practice; it returns a
+        ``LEAVE`` probe (the safest terminal value - never drops a record, no files
+        verified) to satisfy the :class:`~.protocols.ArrSync` contract.
         """
 
-        return ImportReadiness.LEAVE
+        del pending, content_path, force, at_deadline
+        return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
 
     # --- Radarr domain logic ------------------------------------------------
 

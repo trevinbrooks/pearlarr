@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Protocol
 
 from .config import Arr
-from .manual_import import ImportReadiness, PendingImport
+from .manual_import import ImportProbe, PendingImport
 from .mappings import MappingEntry
 from .seadex_types import ArrItem
 
@@ -23,7 +23,8 @@ class ImportCompleter(Protocol):
         content_path: str,
         *,
         force: bool = False,
-    ) -> ImportReadiness: ...
+        at_deadline: bool = False,
+    ) -> ImportProbe: ...
 
 
 class ArrSync[ItemT: ArrItem](ABC):
@@ -73,16 +74,28 @@ class ArrSync[ItemT: ArrItem](ABC):
         """Process one AniList id for one Arr item; True if it grabbed."""
 
     @abstractmethod
+    def pending_import_series_id(self, item: ItemT) -> int | None:
+        """The Arr series id whose carried-over pending records this item owns.
+
+        The key for the engine's per-item non-blocking snapshot hook: after all
+        of an item's AniList ids are processed, the engine reconciles+reports any
+        carried-over pending records for this series id inline. Sonarr returns
+        ``item.id``; Radarr returns ``None`` (movies record no pending imports),
+        which short-circuits the snapshot entirely.
+        """
+
+    @abstractmethod
     def import_completed(
         self,
         pending: PendingImport,
         content_path: str,
         *,
         force: bool = False,
-    ) -> ImportReadiness:
+        at_deadline: bool = False,
+    ) -> ImportProbe:
         """Reconcile one completed download with Sonarr (one poll).
 
-        Called repeatedly by the engine's blocking wait loop once qBittorrent
+        Called repeatedly by the engine's monitor/snapshot once qBittorrent
         reports the torrent complete. Reads Sonarr's (refreshed) queue and the
         current episode files as the source of truth: lets Sonarr finish when it
         is actively importing, treats target episodes that already hold the
@@ -97,11 +110,18 @@ class ArrSync[ItemT: ArrItem](ABC):
                 download (the folder/file the manual import reads from disk).
             force (bool): When True, stop deferring to Sonarr on a clean
                 ``importPending`` and drive our manual import now. The engine sets
-                this on the reconcile pass and on the final in-bound blocking poll,
-                so a download Sonarr will never import (e.g. Completed Download
-                Handling off) is still imported rather than waited on forever.
+                this on the snapshot/reconcile passes and on the final in-bound
+                monitor poll, so a download Sonarr will never import (e.g.
+                Completed Download Handling off) is still imported rather than
+                waited on forever.
+            at_deadline (bool): When True, this is the final attempt for the
+                record, so an intended file still not visible is terminal -> warn
+                loudly. Off the deadline a still-missing file is expected (an
+                early poll) and only logged at debug. Distinct from ``force``: the
+                snapshot/reconcile force without being at a deadline (no warning).
 
         Returns:
-            ImportReadiness: ``IMPORTED`` (drop the record), ``RETRY`` (not ready;
-            poll again), or ``LEAVE`` (give up this run; leave it pending).
+            ImportProbe: the readiness (drop / retry / leave) plus whether the
+            intended episode files are verified present (``files_present``) and
+            whether an import command was just accepted (``command_issued``).
         """

@@ -4,6 +4,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Optional, final
 
 import qbittorrentapi
 import requests
@@ -22,10 +23,13 @@ from .log import (
     setup_logger,
 )
 from .manual_import import (
+    ImportProbe,
     ImportReadiness,
     ImportWaitMode,
     PendingImport,
+    PendingState,
     WaitOutcome,
+    classify_pending,
     resolve_wait_mode,
 )
 from .mappings import MappingEntry, MappingResolver, TmdbType
@@ -182,7 +186,7 @@ class RunDeps:
             ),
         )
 
-
+@final
 class SeaDexArr:
     """The Arr-agnostic run machinery (the strategy's :class:`~.protocols.RunServices`).
 
@@ -820,13 +824,13 @@ class SeaDexArr:
 
         # Tend the durable pending-import store at run start (never on a preview,
         # since waiting/importing needs a real qBittorrent client). The TTL prune
-        # runs for EVERY active mode - including pure blocking, which never
-        # reconciles - so aged-out records can't accumulate forever. The
-        # poll-once-and-import reconcile is deferred/hybrid only.
+        # runs for EVERY active mode - including pure blocking - so aged-out records
+        # can't accumulate forever. The reconcile/snapshot/monitor that actually
+        # report and import carried-over records run AFTER the per-item loop (the
+        # inline per-series snapshot) and in _finalize_run (deferred reconcile +
+        # the post-summary blocking monitor), never before the banner.
         if self._import_wait_mode is not ImportWaitMode.OFF and not self._is_preview():
             self._prune_expired_pending()
-            if self._import_wait_mode in (ImportWaitMode.DEFERRED, ImportWaitMode.HYBRID):
-                self._reconcile_pending_imports()
 
         all_items: list[ItemT] = strategy.get_items()
 
@@ -889,6 +893,20 @@ class SeaDexArr:
                         mapping=mapping,
                     ):
                         return True
+
+                # Non-blocking per-item snapshot of this series' CARRIED-OVER
+                # pending records (grabbed in a prior run). Runs after all of an
+                # item's AniList ids so it covers the cached/grabbed/no-entry paths
+                # uniformly, and reports each carried-over record inline inside the
+                # series block. Sonarr returns its series id; Radarr returns None
+                # (no pending records), short-circuiting the snapshot.
+                sid = strategy.pending_import_series_id(item)
+                if (
+                    sid is not None
+                    and self._import_wait_mode is not ImportWaitMode.OFF
+                    and not self._is_preview()
+                ):
+                    self._snapshot_pending_for_series(sid)
 
             except Exception as e:
                 title = getattr(item, "title", "unknown title")
@@ -1248,179 +1266,314 @@ class SeaDexArr:
             nap(poll_s)
 
     def _try_import_completed(
-        self, pending: PendingImport, path: str, *, force: bool = False,
-    ) -> ImportReadiness:
+        self,
+        pending: PendingImport,
+        path: str,
+        *,
+        force: bool = False,
+        at_deadline: bool = False,
+    ) -> ImportProbe:
         """Drive the strategy's ``import_completed``, swallowing any error.
 
         The import does live Sonarr HTTP work; a malformed response (a 200 with
         a non-JSON body, a candidate missing ``path``, ...) must not abort the
         run and skip the end-of-run ``cache_store.save`` in :meth:`_finalize_run`.
-        On any exception the record is left pending (returns ``LEAVE``) and the run
-        continues; a real terminal failure is just retried next run / TTL'd out.
+        On any exception the record is left pending (returns a ``LEAVE`` probe) and
+        the run continues; a real terminal failure is just retried next run / TTL'd.
 
         ``force`` is threaded through so the engine can tell the strategy to stop
-        deferring to Sonarr on a clean ``importPending`` (reconcile, and the final
-        in-bound blocking poll).
+        deferring to Sonarr on a clean ``importPending`` (the snapshot/reconcile
+        passes and the final in-bound monitor poll); ``at_deadline`` flags the final
+        attempt so a still-missing file warns loudly rather than at debug.
         """
 
         if self._active_strategy is None:
-            return ImportReadiness.LEAVE
+            return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
         try:
-            return self._active_strategy.import_completed(pending, path, force=force)
+            return self._active_strategy.import_completed(
+                pending, path, force=force, at_deadline=at_deadline,
+            )
         except Exception:
             self.logger.error(
                 f"Manual import for pending {pending.infohash} raised; "
                 "leaving it pending for a later run",
                 exc_info=True,
             )
-            return ImportReadiness.LEAVE
+            return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
 
-    def _run_blocking_imports(self) -> None:
-        """Wait on each record added this run, then drive it to import.
+    def _this_run_infohashes(self) -> set[str]:
+        """Infohashes grabbed THIS run - excluded from the carried-over passes.
 
-        For every :class:`PendingImport` recorded this run, run the two-phase
-        wait+import (download, then Sonarr import) via :meth:`_wait_and_import_one`,
-        driving a :class:`~.wait_view.WaitView` so the wait shows live per-torrent
-        progress on a TTY (and concise heartbeats on Docker), then logging one
-        house-style tally of the outcomes.
+        A this-run grab is reported as ``added``; the snapshot / reconcile / tally
+        skip these so a record is never double-reported as queued/importing/imported.
+        """
+
+        return {p.infohash for p in self._ctx.pending_imports}
+
+    def _reconcile_one(
+        self, infohash: str, raw: dict,
+    ) -> tuple[PendingImport, PendingState]:
+        """Poll one carried-over record once and fold it to a :class:`PendingState`.
+
+        Shared by the inline snapshot and the deferred reconcile: one non-blocking
+        :meth:`_poll_torrent`; on COMPLETE drive one forced (CDH-off safe),
+        non-deadline import attempt (so a still-missing file never warns). The
+        outcome + the probe's verified-files flag fold through
+        :func:`classify_pending` into one state, stashed per infohash for the
+        pre-summary tally; a terminal IMPORTED is dropped + counted, a MISSING is
+        dropped. Returns the rehydrated record (for the caller's inline report) and
+        its classified state.
+        """
+
+        pending = PendingImport.from_json(raw)
+        outcome, path, _ = self._poll_torrent(infohash)
+        probe = ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
+        if outcome is WaitOutcome.COMPLETE and path:
+            probe = self._try_import_completed(pending, path, force=True, at_deadline=False)
+
+        state = classify_pending(outcome, probe.files_present)
+        self._ctx.pending_states[infohash] = state
+        if state is PendingState.IMPORTED:
+            self._drop_pending(infohash)
+            self._ctx.stats.imported += 1
+        elif state is PendingState.MISSING:
+            self._drop_pending(infohash)
+        return pending, state
+
+    def _snapshot_pending_for_series(self, series_id: int) -> None:
+        """Reconcile + report this series' CARRIED-OVER pending records inline.
+
+        For each durable record for ``series_id`` that is NOT a this-run grab (its
+        infohash is absent from ``_ctx.pending_imports`` - those are already shown
+        as ``added``, so including them here would double-report), do one
+        non-blocking :meth:`_poll_torrent`; on COMPLETE drive one forced (CDH-off
+        safe) import attempt with ``at_deadline=False`` (so a still-missing file
+        never warns). The poll's outcome + the probe's verified-files flag fold
+        through :func:`classify_pending` into one :class:`PendingState`, which is
+        rendered inline (``log_pending_snapshot``) and stashed per infohash for the
+        pre-summary tally. On IMPORTED the record is dropped and ``stats.imported``
+        bumped (the inline-reconciled case); other states are left pending and
+        counted by the tally.
         """
 
         if self._active_strategy is None:
             return
 
-        pending_list = list(self._ctx.pending_imports)
-        if not pending_list:
+        run_grabs = self._this_run_infohashes()
+        for infohash, raw in list(self._pending_store().items()):
+            if not (isinstance(raw, dict) and raw.get("series_id") == series_id):
+                continue
+            # Skip this-run grabs: they're already reported as `added`, so a
+            # `queued`/`importing`/`imported` row here would be a double report.
+            if infohash in run_grabs:
+                continue
+            pending, state = self._reconcile_one(infohash, raw)
+            self._reporter.log_pending_snapshot(
+                self._ctx, state, pending.title or infohash, pending.coverage, pending.url,
+            )
+
+    def _reconcile_remaining(self) -> None:
+        """Non-blocking force-poll of carried-over records NOT snapshotted this run.
+
+        The deferred-mode pre-summary step (relocated from the old startup
+        reconcile): one non-blocking poll per durable record whose infohash wasn't
+        already touched by the per-series inline snapshot and isn't a this-run grab
+        (those stay ``added``). COMPLETE drives one forced, non-deadline import
+        attempt - the download finished a prior cycle, so a still-absent target
+        means Sonarr won't import on its own (CDH off) and we step in. The ready
+        ones are dropped + counted; the rest record their status for the tally.
+        Quiet (no live region; deferred never blocks).
+        """
+
+        if self._active_strategy is None:
             return
 
-        view = make_wait_view(
-            self.logger, poll_s=self._config.import_poll_interval,
-        )
-        view.start([(p.infohash, p.title or p.infohash) for p in pending_list])
-        tally: dict[str, int] = {}
-        try:
-            for pending in pending_list:
-                outcome = self._wait_and_import_one(pending, view=view)
-                tally[outcome] = tally.get(outcome, 0) + 1
-        finally:
-            view.close()
+        run_grabs = self._this_run_infohashes()
+        for infohash, raw in list(self._pending_store().items()):
+            if infohash in self._ctx.pending_states:
+                continue
+            if infohash in run_grabs:
+                continue
+            self._reconcile_one(infohash, raw)
 
-        self._log_import_tally(tally)
+    def _tally_carried_over_into_stats(self) -> None:
+        """Bump queued/importing from each carried-over record's known status.
 
-    @staticmethod
-    def _log_import_tally_parts(tally: dict[str, int]) -> str:
-        """Render an import-outcome tally as "3 imported, 1 left" (zeros dropped)."""
+        ``imported`` is bumped at the point a record is reconciled+dropped (in the
+        snapshot / reconcile), so here we only fold the records still in the store
+        into ``queued`` / ``importing``: a record touched this run uses its known
+        :class:`PendingState`; an un-touched store record (e.g. another series, in
+        pure blocking where no reconcile ran) defaults to ``QUEUED`` without an
+        extra poll. This-run grabs are excluded throughout (they're ``added``), so
+        no record is ever double-counted.
+        """
 
-        order = [
-            ("imported", "imported"),
-            ("left", "left for a later run"),
-            ("dropped", "dropped"),
-        ]
-        parts = [f"{tally[key]} {label}" for key, label in order if tally.get(key)]
-        return ", ".join(parts)
+        run_grabs = self._this_run_infohashes()
+        for infohash in self._pending_store():
+            if infohash in run_grabs:
+                continue
+            state = self._ctx.pending_states.get(infohash, PendingState.QUEUED)
+            if state is PendingState.IMPORTING:
+                self._ctx.stats.importing += 1
+            elif state is PendingState.QUEUED:
+                self._ctx.stats.queued += 1
 
-    def _log_import_tally(self, tally: dict[str, int]) -> None:
-        """Log one house-style summary line for the blocking import pass."""
-
-        summary = self._log_import_tally_parts(tally)
-        if summary:
-            self.log_fmt.kv("imports", summary, value_style="green")
-
-    def _wait_and_import_one(
+    def _run_monitor(
         self,
-        pending: PendingImport,
         *,
-        view: WaitView | None = None,
         now: Callable[[], float] | None = None,
         sleep: Callable[[float], None] | None = None,
-    ) -> str:
-        """Wait for one torrent to download, then for Sonarr to import it.
+        view: Optional[WaitView] = None,
+    ) -> None:
+        """Interleaved, copy-aware wait+import over ALL pending, after the summary.
 
-        Phase A waits for qBittorrent to finish (the view shows the download
-        percentage); Phase B then waits for Sonarr to import the files - its own
-        import, or ours when Sonarr can't / won't - up to ``import_ready_timeout``.
-        MISSING drops the record; a download that never completes leaves it pending.
-        The clock and sleep are injectable for tests.
-
-        Returns:
-            str: A short outcome category for the run tally - ``imported`` /
-            ``left`` / ``dropped``.
+        The blocking/hybrid end-of-run pass, run dead last (after the scoreboard is
+        printed). The working set is every pending record - this run's grabs
+        (``_ctx.pending_imports``) AND carried-over store records, deduped by
+        infohash - so a single-series run still finishes other-series carried-over
+        downloads (the user's "monitor ALL" choice). Each cycle advances every
+        active torrent once (so a fast torrent isn't stuck behind a slow one);
+        ``imported`` is reported ONLY when the episode files are verified present
+        (``probe.files_present``), so an in-flight remote-mount copy reads
+        ``importing`` until it lands. Per-torrent timeouts: ``import_wait_timeout``
+        for the download, ``import_ready_timeout`` for the import (from the first
+        COMPLETE). The clock / sleep / view are injectable for tests.
         """
+
+        if self._active_strategy is None:
+            return
+
+        records = self._monitor_working_set()
+        if not records:
+            return
 
         clock = now if now is not None else time.monotonic
         nap = sleep if sleep is not None else time.sleep
-        key = pending.infohash
+        own_view = view is None
+        if view is None:
+            view = make_wait_view(self.logger, poll_s=self._config.import_poll_interval)
 
-        # Phase A: wait for qBittorrent to finish the download.
-        outcome, path = self._wait_for_completion(
-            pending.infohash,
-            timeout_s=self._config.import_wait_timeout,
-            poll_s=self._config.import_poll_interval,
-            now=clock,
-            sleep=nap,
-            on_wait=lambda elapsed, progress: self._notify_download(
-                view, key, progress, elapsed, self._config.import_wait_timeout,
-            ),
-        )
-
-        if outcome is WaitOutcome.MISSING:
-            self._notify_done(view, key, "gone from qBittorrent")
-            self._drop_pending(pending.infohash)
-            return "dropped"
-        if outcome is not WaitOutcome.COMPLETE or not path:
-            self._notify_done(view, key, f"download {outcome.name.lower()}")
-            return "left"
-
-        # Phase B: wait for Sonarr to import (its own import, or ours on a block).
-        return self._wait_for_import(pending, path, view=view, now=clock, sleep=nap)
-
-    def _wait_for_import(
-        self,
-        pending: PendingImport,
-        path: str,
-        *,
-        view: WaitView | None = None,
-        now: Callable[[], float] | None = None,
-        sleep: Callable[[float], None] | None = None,
-    ) -> str:
-        """Poll the Sonarr import until it's done, unimportable, or times out.
-
-        Calls :meth:`_try_import_completed` on the ``import_poll_interval`` cadence
-        against an ``import_ready_timeout`` deadline: ``IMPORTED`` drops the record;
-        ``RETRY`` heartbeats and polls again, deferring to Sonarr on a clean pending
-        until the deadline, where one FORCED attempt drives our own import (so a
-        download Sonarr will never import doesn't wait forever); a final ``LEAVE``
-        or a timed-out forced attempt leaves the record for a later run.
-
-        Returns:
-            str: ``imported`` when the files were placed, else ``left``.
-        """
-
-        clock = now if now is not None else time.monotonic
-        nap = sleep if sleep is not None else time.sleep
-        key = pending.infohash
-        timeout_s = self._config.import_ready_timeout
+        dl_timeout = self._config.import_wait_timeout
+        import_timeout = self._config.import_ready_timeout
         poll_s = self._config.import_poll_interval
 
         start = clock()
-        while True:
-            elapsed = clock() - start
-            at_deadline = elapsed >= timeout_s
+        dl_start: dict[str, float] = {r.infohash: start for r in records}
+        import_start: dict[str, float] = {}
+        active: set[str] = {r.infohash for r in records}
 
-            readiness = self._try_import_completed(pending, path, force=at_deadline)
-            if readiness is ImportReadiness.IMPORTED:
-                self._notify_done(view, key, "imported")
-                self._drop_pending(pending.infohash)
-                return "imported"
-            if at_deadline:
-                self._notify_done(view, key, "not ready; left for a later run")
-                return "left"
-            if readiness is ImportReadiness.LEAVE:
-                self._notify_done(view, key, "nothing to import; left for a later run")
-                return "left"
+        try:
+            view.start([(r.infohash, r.title or r.infohash) for r in records])
+            while active:
+                for record in records:
+                    h = record.infohash
+                    if h not in active:
+                        continue
+                    self._monitor_advance_one(
+                        record,
+                        view=view,
+                        now=clock,
+                        active=active,
+                        dl_start=dl_start,
+                        import_start=import_start,
+                        dl_timeout=dl_timeout,
+                        import_timeout=import_timeout,
+                    )
+                if active:
+                    nap(poll_s)
+        finally:
+            if own_view:
+                view.close()
 
-            # RETRY: Sonarr still scanning / importing / mount cold.
-            self._notify_sonarr(view, key, elapsed, timeout_s)
-            nap(poll_s)
+    def _monitor_working_set(self) -> list[PendingImport]:
+        """Dedup ``_ctx.pending_imports`` + rehydrated store records by infohash.
+
+        This-run grabs first (so their richer in-memory record wins a collision),
+        then every durable store record not already present - the union the monitor
+        waits on so ALL pending (this run's + carried-over) is monitored.
+        """
+
+        records: list[PendingImport] = []
+        seen: set[str] = set()
+        for pending in self._ctx.pending_imports:
+            if pending.infohash and pending.infohash not in seen:
+                seen.add(pending.infohash)
+                records.append(pending)
+        for infohash, raw in self._pending_store().items():
+            if infohash in seen:
+                continue
+            seen.add(infohash)
+            records.append(PendingImport.from_json(raw))
+        return records
+
+    def _monitor_advance_one(
+        self,
+        record: PendingImport,
+        *,
+        view: WaitView,
+        now: Callable[[], float],
+        active: set[str],
+        dl_start: dict[str, float],
+        import_start: dict[str, float],
+        dl_timeout: int,
+        import_timeout: int,
+    ) -> None:
+        """Advance one torrent one monitor cycle (download or drive/verify import).
+
+        Mutates ``active`` (discarding a torrent that reached a terminal outcome)
+        and ``import_start`` (stamped on the first COMPLETE). ``imported`` is gated
+        on verified episode files, so a freshly-issued import command reads
+        ``importing`` until the copy lands; the final in-bound attempt
+        (``at_deadline``) both forces and warns.
+        """
+
+        h = record.infohash
+        outcome, path, progress = self._poll_torrent(h)
+
+        if outcome is None:
+            if now() - dl_start[h] >= dl_timeout:
+                self._notify_done(view, h, "download timed out; left")
+                active.discard(h)
+            else:
+                self._notify_download(view, h, progress, now() - dl_start[h], dl_timeout)
+            return
+        if outcome is WaitOutcome.MISSING:
+            self._notify_done(view, h, "gone from qBittorrent")
+            self._drop_pending(h)
+            active.discard(h)
+            return
+        if outcome is WaitOutcome.ERRORED:
+            self._notify_done(view, h, "download errored; left")
+            active.discard(h)
+            return
+        if outcome is not WaitOutcome.COMPLETE or not path:
+            self._notify_done(view, h, "download timed out; left")
+            active.discard(h)
+            return
+
+        # COMPLETE: drive / verify our import, gating `imported` on verified files.
+        import_start.setdefault(h, now())
+        at_deadline = now() - import_start[h] >= import_timeout
+        probe = self._try_import_completed(
+            record, path, force=at_deadline, at_deadline=at_deadline,
+        )
+        if probe.files_present:
+            self._notify_done(view, h, "imported")
+            self._drop_pending(h)
+            active.discard(h)
+        elif at_deadline:
+            self._notify_done(
+                view, h,
+                "still importing; left" if probe.command_issued else "not ready; left",
+            )
+            active.discard(h)
+        elif probe.readiness is ImportReadiness.LEAVE:
+            self._notify_done(view, h, "nothing to import; left")
+            active.discard(h)
+        else:
+            # RETRY / copy in flight: the command was accepted but the files
+            # haven't landed yet (or Sonarr is still scanning).
+            self._notify_importing(view, h, now() - import_start[h], import_timeout)
 
     @staticmethod
     def _notify_download(
@@ -1435,12 +1588,12 @@ class SeaDexArr:
             view.download(key, progress, elapsed, timeout)
 
     @staticmethod
-    def _notify_sonarr(
+    def _notify_importing(
         view: WaitView | None, key: str, elapsed: float, timeout: float,
     ) -> None:
-        """Forward a Sonarr-import heartbeat to the view (no-op if none)."""
+        """Forward an import-wait heartbeat to the view (no-op if none)."""
         if view is not None:
-            view.phase_sonarr(key, elapsed, timeout)
+            view.importing(key, elapsed, timeout)
 
     @staticmethod
     def _notify_done(view: WaitView | None, key: str, outcome: str) -> None:
@@ -1480,63 +1633,6 @@ class SeaDexArr:
                 )
                 self._drop_pending(infohash)
 
-    def _reconcile_pending_imports(self) -> None:
-        """Poll-once each persisted record at run start, import the ready ones.
-
-        Iterates a copy of the durable store (so dropping during the loop is
-        safe; :meth:`_prune_expired_pending` has already removed aged-out
-        records). A single non-blocking poll per record: COMPLETE drives one
-        FORCED import attempt - the download finished in a prior run, so Sonarr has
-        had a full inter-run cycle; a still-absent target means it won't import on
-        its own (e.g. Completed Download Handling off), so we step in. ``IMPORTED``
-        drops the record, MISSING drops it, anything else is left for a later run.
-        The per-record detail is quiet (debug); one house-style tally line is
-        logged when there were records, so a stuck instance doesn't carpet startup.
-        """
-
-        if self._active_strategy is None:
-            return
-
-        tally: dict[str, int] = {}
-        for infohash, raw in list(self._pending_store().items()):
-            pending = PendingImport.from_json(raw)
-            outcome, path, _ = self._poll_torrent(infohash)
-            if outcome is WaitOutcome.COMPLETE and path:
-                readiness = self._try_import_completed(pending, path, force=True)
-                if readiness is ImportReadiness.IMPORTED:
-                    self._drop_pending(infohash)
-                    tally["imported"] = tally.get("imported", 0) + 1
-                else:
-                    tally["waiting"] = tally.get("waiting", 0) + 1
-            elif outcome is WaitOutcome.MISSING:
-                self.logger.debug(
-                    f"Pending import {infohash} gone from qBittorrent; dropping",
-                )
-                self._drop_pending(infohash)
-                tally["dropped"] = tally.get("dropped", 0) + 1
-            else:
-                tally["waiting"] = tally.get("waiting", 0) + 1
-
-        self._log_reconcile_tally(tally)
-
-    def _log_reconcile_tally(self, tally: dict[str, int]) -> None:
-        """Log one house-style line for the reconcile pass (only when non-empty)."""
-
-        total = sum(tally.values())
-        if total == 0:
-            return
-        order = [
-            ("imported", "imported"),
-            ("dropped", "dropped"),
-            ("waiting", "waiting"),
-        ]
-        parts = [f"{tally[key]} {label}" for key, label in order if tally.get(key)]
-        self.log_fmt.kv(
-            "pending imports",
-            f"{total}  ({', '.join(parts)})",
-            value_style="green" if tally.get("imported") else "grey50",
-        )
-
     def _drop_pending(self, infohash: str) -> None:
         """Remove a pending record from both the durable store and the run list."""
 
@@ -1546,27 +1642,54 @@ class SeaDexArr:
         ]
 
     def _finalize_run(self, arr: Arr) -> None:
-        """Shared run tail: blocking import pass (if any), save, log summary.
+        """Shared run tail: reconcile + tally, print the summary, THEN block.
 
-        Mirrors the former inline end-of-run block, hoisted so both the normal
-        run end and the ``_grab`` max-torrents early break run it identically.
-        The blocking/hybrid wait+import pass runs first (never on a preview),
-        then the cache is persisted and the end-of-run summary is logged.
+        The ordering corrects the old "exited right away" + detached-tally
+        behaviour. In order:
+
+          1. deferred-mode pre-summary reconcile of any carried-over records not
+             already snapshotted inline (non-blocking; feeds the counters);
+          2. fold every still-pending carried-over record into the
+             ``queued``/``importing``/``imported`` counters (this-run grabs stay
+             ``added``);
+          3. print the scoreboard - so the summary reflects the pre-monitor state
+             and never reports completion for this-run grabs;
+          4. ONLY for blocking/hybrid, run the interleaved monitor + live region
+             dead last, after the summary, so the wait/import is the live report;
+          5. save the cache last, so the store reflects both the inline-snapshot
+             and the monitor drops.
+
+        Every wait/import path is skipped on a preview (no client / dry run).
         """
 
-        if (
-            self._import_wait_mode in (ImportWaitMode.BLOCKING, ImportWaitMode.HYBRID)
-            and not self._is_preview()
-        ):
-            self._run_blocking_imports()
+        preview = self._is_preview()
+        active = self._import_wait_mode is not ImportWaitMode.OFF and not preview
 
-        self.cache_store.save(preview=self._is_preview())
+        if active and self._import_wait_mode is ImportWaitMode.DEFERRED:
+            self._reconcile_remaining()
+        if active:
+            self._tally_carried_over_into_stats()
+
         self._reporter.log_run_summary(
             self._ctx,
             arr,
-            is_preview=self._is_preview(),
+            is_preview=preview,
             has_client=self.qbit is not None,
+            import_wait_mode=self._import_wait_mode,
         )
+
+        # The monitor is the only post-summary step that mutates the store
+        # (dropping records it imports); guard the save in a finally so an
+        # unexpected monitor error can't lose this run's grabs or drops from the
+        # durable cache (the old order saved before the wait pass for the same
+        # reason - here the save runs after, to also capture the monitor's drops).
+        try:
+            if active and self._import_wait_mode in (
+                ImportWaitMode.BLOCKING, ImportWaitMode.HYBRID,
+            ):
+                self._run_monitor()
+        finally:
+            self.cache_store.save(preview=preview)
 
     # --- Presentation seam (RunServices) ------------------------------------
     #

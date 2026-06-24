@@ -95,62 +95,6 @@ def _build_shared(
 
     return app_config, resolver
 
-
-def _run_arr(
-    arr_name: Arr,
-    app_config: AppConfig,
-    *,
-    config: str,
-    cache: str,
-    logger: logging.Logger,
-    mappings: MappingResolver,
-    item_id: int | None = None,
-    dry_run: bool = False,
-    import_wait_mode: ImportWaitMode | None = None,
-) -> None:
-    """Compose one arr run from the injected deps, run it, and always close it.
-
-    This is the composition root for a single arr: build the shared collaborators
-    (``RunDeps.build``), inject them into the ``SeaDexArr`` run machinery and the
-    strategy, then drive ``run_sync``. Any error is logged (so one arr crashing
-    doesn't abort the other or the scheduled loop) and the HTTP session is
-    released in a ``finally``. Each arr's id (TMDB for Radarr, TVDB for Sonarr) is
-    passed as ``item_id``. ``import_wait_mode`` is the resolved CLI override (None
-    in scheduled mode, where the config setting wins).
-    """
-
-    services = None
-    try:
-        deps = RunDeps.build(
-            arr_name,
-            config,
-            cache,
-            logger,
-            mappings=mappings,
-            app_config=app_config.for_arr(arr_name),
-        )
-        services = SeaDexArr(deps, arr_name)
-        match arr_name:
-            case Arr.SONARR:
-                services.run_sync(
-                    SonarrSync(deps, services),
-                    arr=arr_name, item_id=item_id, dry_run=dry_run,
-                    import_wait_mode=import_wait_mode,
-                )
-            case Arr.RADARR:
-                services.run_sync(
-                    RadarrSync(deps, services),
-                    arr=arr_name, item_id=item_id, dry_run=dry_run,
-                    import_wait_mode=import_wait_mode,
-                )
-            case _ as unreachable:
-                assert_never(unreachable)
-    except Exception:
-        logger.error(f"Unexpected error during {arr_name.capitalize()} run", exc_info=True)
-    finally:
-        if services is not None:
-            services.close()
-
 def _run_arrs(
     arrs: list[tuple[Arr, int | None]],
     *,
@@ -181,11 +125,41 @@ def _run_arrs(
 
     app_config, mappings = shared
     for arr_name, item_id in arrs:
-        _run_arr(
-            arr_name, app_config,
-            config=config, cache=cache, logger=logger, mappings=mappings,
-            item_id=item_id, dry_run=dry_run, import_wait_mode=import_wait_mode,
-        )
+        services = None
+        try:
+            deps = RunDeps.build(
+                arr_name,
+                config,
+                cache,
+                logger,
+                mappings=mappings,
+                app_config=app_config.for_arr(arr_name),
+            )
+            services = SeaDexArr(deps, arr_name)
+            match arr_name:
+                case Arr.SONARR:
+                    services.run_sync(
+                        SonarrSync(deps, services),
+                        arr=arr_name,
+                        item_id=item_id,
+                        dry_run=dry_run,
+                        import_wait_mode=import_wait_mode,
+                    )
+                case Arr.RADARR:
+                    services.run_sync(
+                        RadarrSync(deps, services),
+                        arr=arr_name,
+                        item_id=item_id,
+                        dry_run=dry_run,
+                        import_wait_mode=import_wait_mode,
+                    )
+                case _ as unreachable:
+                    assert_never(unreachable)
+        except Exception:
+            logger.error(f"Unexpected error during {arr_name.capitalize()} run", exc_info=True)
+        finally:
+            if services is not None:
+                services.close()
 
     return True
 

@@ -432,6 +432,9 @@ class EntryState(StrEnum):
     NO_MAPPING = "no mapping"
     IGNORED = "ignored"
     NO_ENTRY = "no entry"
+    QUEUED = "queued"
+    IMPORTING = "importing"
+    IMPORTED = "imported"
 
 
 def entry_string(state: EntryState, label: str) -> str:

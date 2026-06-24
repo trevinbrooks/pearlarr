@@ -104,6 +104,86 @@ class ImportReadiness(Enum):
     LEAVE = auto()
 
 
+class PendingState(StrEnum):
+    """The current status of one carried-over pending import, for reporting.
+
+    A ``StrEnum`` (so each member IS its rendered word) shared by the inline
+    snapshot ledger row, the WaitView live region, and the end-of-run scoreboard
+    counters, so one vocabulary describes a carried-over record everywhere:
+
+    ``QUEUED`` -> still downloading (or never reached completion this poll); it
+    waits.
+    ``IMPORTING`` -> the download finished and an import command was accepted, but
+    the episode files haven't landed yet (a remote-mount copy is in flight).
+    ``IMPORTED`` -> the episode files are verified present; the record is dropped.
+    ``ERRORED`` -> the download errored in qBittorrent; left for a later run.
+    ``MISSING`` -> the torrent is gone from qBittorrent; the record is dropped.
+    """
+
+    QUEUED = "queued"
+    IMPORTING = "importing"
+    IMPORTED = "imported"
+    ERRORED = "errored"
+    MISSING = "missing"
+
+
+def classify_pending(
+    wait_outcome: "WaitOutcome | None",
+    files_present: bool,
+) -> PendingState:
+    """Map a poll's outcome to a single carried-over :class:`PendingState`.
+
+    Pure, no I/O (mirrors :func:`classify_queue`): the engine reads the torrent's
+    completion outcome and the strategy's import probe, and this folds them into
+    one status word. The verified-files check dominates the completed case, so a
+    finished-but-not-yet-copied import always reads ``IMPORTING`` until the files
+    actually land.
+
+    Args:
+        wait_outcome (WaitOutcome | None): The torrent's terminal outcome this
+            poll, or ``None`` while it is still downloading.
+        files_present (bool): Whether every intended episode file is verified
+            present in Sonarr (the only signal that promotes to ``IMPORTED``).
+
+    Returns:
+        PendingState: ``MISSING`` / ``ERRORED`` for those terminal outcomes; while
+        not COMPLETE -> ``QUEUED``; COMPLETE with files present -> ``IMPORTED``;
+        COMPLETE without files present -> ``IMPORTING``.
+    """
+
+    if wait_outcome is WaitOutcome.MISSING:
+        return PendingState.MISSING
+    if wait_outcome is WaitOutcome.ERRORED:
+        return PendingState.ERRORED
+    if wait_outcome is not WaitOutcome.COMPLETE:
+        return PendingState.QUEUED
+    if files_present:
+        return PendingState.IMPORTED
+    return PendingState.IMPORTING
+
+
+@dataclass(frozen=True)
+class ImportProbe:
+    """The outcome of one ``import_completed`` poll, richer than readiness alone.
+
+    Lets the engine tell ``imported`` (every intended episode file is verified
+    present) from ``importing`` (an import command was accepted but the copy is
+    still running) - a distinction the bare :class:`ImportReadiness` collapses.
+
+    Args:
+        readiness (ImportReadiness): What the engine should do (drop / retry /
+            leave), as before.
+        files_present (bool): Whether every intended episode file is verified
+            present in Sonarr. Only this promotes a record to ``imported``.
+        command_issued (bool): Whether a manual-import command was accepted this
+            poll (its copy may still be in flight - so not yet ``files_present``).
+    """
+
+    readiness: ImportReadiness
+    files_present: bool
+    command_issued: bool
+
+
 class QueueVerdict(Enum):
     """What Sonarr's queue says to do with a tracked download THIS poll.
 
@@ -243,6 +323,11 @@ class PendingImport:
         title (str | None): Display title (logging only).
         added_at (str): When the record was written, in
             :data:`UPDATED_AT_STR_FORMAT`, used for the TTL drop.
+        coverage (str | None): The entry's season/episode coverage at grab time
+            (e.g. ``"S01 E01-E13"``), so a carried-over record can render its
+            ``files`` line inline next run without re-deriving it. Logging only.
+        url (str | None): The SeaDex entry URL at grab time, for the carried-over
+            record's inline ``link`` line. Logging only.
     """
 
     infohash: str
@@ -256,6 +341,8 @@ class PendingImport:
     seadex_sizes: list[int]
     title: str | None
     added_at: str
+    coverage: str | None = None
+    url: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         """Serialize to the plain dict persisted under ``pending_imports``.
@@ -287,6 +374,8 @@ class PendingImport:
             seadex_sizes=raw.get("seadex_sizes", []),
             title=raw.get("title"),
             added_at=raw.get("added_at", ""),
+            coverage=raw.get("coverage"),
+            url=raw.get("url"),
         )
 
 

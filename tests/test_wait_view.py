@@ -53,7 +53,7 @@ def test_heartbeat_view_drives_without_raising() -> None:
 
     view.start([("h1", "Show A"), ("h2", "Show B")])
     view.download("h1", 0.5, 12.0, 60.0)
-    view.phase_sonarr("h1", 5.0, 30.0)
+    view.importing("h1", 5.0, 30.0)
     view.done("h1", "imported")
     view.done("h2", "left for a later run")
     view.close()
@@ -69,7 +69,7 @@ def test_live_view_drives_and_writes() -> None:
 
     view.start([("h1", "Show A")])
     view.download("h1", 0.25, 10.0, 60.0)
-    view.phase_sonarr("h1", 2.0, 30.0)
+    view.importing("h1", 2.0, 30.0)
     view.done("h1", "imported")
     view.close()
 

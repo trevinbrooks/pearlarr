@@ -4,15 +4,15 @@ The engine drives a :class:`WaitView` while it waits on each grabbed torrent to
 download and then import. On an attached terminal the view is a live region of
 per-torrent progress bars - a download percentage plus an elapsed/timeout
 countdown; on a non-TTY (Docker, a pipe) it degrades to concise, throttled
-heartbeat log lines so container logs stay clean. :func:`make_wait_view` picks
+heartbeat log lines, so container logs stay clean. :func:`make_wait_view` picks
 the right one once, so the engine drives a single small interface either way and
 stays free of any rich/presentation detail. The plain-text file log is untouched
 (a live region only ever touches the console handler's Console).
 """
-
 import logging
 import time
-from typing import Protocol
+from abc import ABC, abstractmethod
+from typing import final, override
 
 from rich.console import Console
 from rich.live import Live
@@ -21,7 +21,7 @@ from rich.progress import BarColumn, Progress, TaskID, TextColumn
 from .log import LogFormatter, RichConsoleHandler, indent_string
 
 
-class WaitView(Protocol):
+class WaitView(ABC):
     """The small interface the engine drives while waiting on downloads/imports.
 
     Every method is keyed by a stable ``key`` (the torrent infohash); the display
@@ -29,18 +29,23 @@ class WaitView(Protocol):
     unknown key (a no-op) so the engine never has to guard its calls.
     """
 
+    @abstractmethod
     def start(self, torrents: list[tuple[str, str]]) -> None:
         """Register the torrents to wait on, as ``(key, label)`` pairs."""
 
+    @abstractmethod
     def download(self, key: str, pct: float, elapsed: float, timeout: float) -> None:
         """Update one torrent's download progress (``pct`` is 0.0-1.0)."""
 
-    def phase_sonarr(self, key: str, elapsed: float, timeout: float) -> None:
-        """Mark a torrent downloaded and now waiting on Sonarr to import."""
+    @abstractmethod
+    def importing(self, key: str, elapsed: float, timeout: float) -> None:
+        """Mark a torrent downloaded and now waiting on the import to land."""
 
+    @abstractmethod
     def done(self, key: str, outcome: str) -> None:
         """Mark a torrent terminal with a short outcome word."""
 
+    @abstractmethod
     def close(self) -> None:
         """Tear the view down (restore the terminal / stop refreshing)."""
 
@@ -78,7 +83,8 @@ def _countdown(elapsed: float, timeout: float) -> str:
     )
 
 
-class _LiveWaitView:
+@final
+class _LiveWaitView(WaitView):
     """A ``rich.Live`` region of per-torrent progress bars (TTY only).
 
     Single-threaded by contract: the engine's poll loop calls these methods and we
@@ -108,6 +114,7 @@ class _LiveWaitView:
         )
         self._tasks: dict[str, TaskID] = {}
 
+    @override
     def start(self, torrents: list[tuple[str, str]]) -> None:
         self._live.start()
         for key, label in torrents:
@@ -116,6 +123,7 @@ class _LiveWaitView:
             )
         self._live.refresh()
 
+    @override
     def download(self, key: str, pct: float, elapsed: float, timeout: float) -> None:
         task = self._tasks.get(key)
         if task is None:
@@ -127,7 +135,8 @@ class _LiveWaitView:
         )
         self._live.refresh()
 
-    def phase_sonarr(self, key: str, elapsed: float, timeout: float) -> None:
+    @override
+    def importing(self, key: str, elapsed: float, timeout: float) -> None:
         task = self._tasks.get(key)
         if task is None:
             return
@@ -136,6 +145,7 @@ class _LiveWaitView:
         )
         self._live.refresh()
 
+    @override
     def done(self, key: str, outcome: str) -> None:
         task = self._tasks.get(key)
         if task is None:
@@ -143,14 +153,15 @@ class _LiveWaitView:
         self._progress.update(task, completed=100.0, note=outcome)
         self._live.refresh()
 
+    @override
     def close(self) -> None:
         self._live.stop()
 
-
-class _HeartbeatWaitView:
+@final
+class _HeartbeatWaitView(WaitView):
     """Concise, throttled heartbeat log lines for non-TTY output (Docker / pipe).
 
-    Each terminal ``done`` always logs; the per-poll ``download``/``phase_sonarr``
+    Each terminal ``done`` always logs; the per-poll ``download``/``importing``
     lines are throttled to at most one per torrent per ``max(poll_s, 30)`` seconds,
     so a short poll interval can't carpet container logs.
     """
@@ -161,6 +172,7 @@ class _HeartbeatWaitView:
         self._min_gap = max(float(poll_s), 30.0)
         self._last: dict[str, float] = {}
 
+    @override
     def start(self, torrents: list[tuple[str, str]]) -> None:
         self._labels = dict(torrents)
         self._logger.info(
@@ -175,6 +187,7 @@ class _HeartbeatWaitView:
         self._last[key] = now
         return True
 
+    @override
     def download(self, key: str, pct: float, elapsed: float, timeout: float) -> None:
         if not self._should_emit(key):
             return
@@ -185,7 +198,8 @@ class _HeartbeatWaitView:
             ),
         )
 
-    def phase_sonarr(self, key: str, elapsed: float, timeout: float) -> None:
+    @override
+    def importing(self, key: str, elapsed: float, timeout: float) -> None:
         if not self._should_emit(key):
             return
         label = self._labels.get(key, key)
@@ -193,10 +207,12 @@ class _HeartbeatWaitView:
             indent_string(f"{label}: importing  ({_countdown(elapsed, timeout)})"),
         )
 
+    @override
     def done(self, key: str, outcome: str) -> None:
         label = self._labels.get(key, key)
         self._logger.info(indent_string(f"{label}: {outcome}"))
-        self._last.pop(key, None)
+        _ = self._last.pop(key, None)
 
+    @override
     def close(self) -> None:
         pass

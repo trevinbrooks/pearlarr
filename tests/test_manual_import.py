@@ -15,9 +15,11 @@ from typing import cast
 from seadexarr.modules.manual_import import (
     CandidateFile,
     EpisodeFileStatus,
+    ImportProbe,
     ImportReadiness,
     ImportWaitMode,
     PendingImport,
+    PendingState,
     QualitySelection,
     QueueRecordView,
     QueueVerdict,
@@ -25,6 +27,7 @@ from seadexarr.modules.manual_import import (
     all_targets_done,
     build_authoritative_map,
     build_episode_id_map,
+    classify_pending,
     classify_queue,
     derive_languages,
     episode_file_statuses,
@@ -289,6 +292,8 @@ class TestPendingImportRoundTrip:
             seadex_sizes=[1000, 2000],
             title="Some Show",
             added_at="2026-06-24 12:00:00",
+            coverage="S02 E01-E12",
+            url="https://releases.moe/1",
         )
         assert PendingImport.from_json(pending.to_json()) == pending
 
@@ -314,6 +319,79 @@ class TestPendingImportRoundTrip:
             "added_at": "2026-06-24 00:00:00",
         }
         assert PendingImport.from_json(raw).seadex_sizes == []
+
+    def test_old_record_without_coverage_url_defaults_to_none(self) -> None:
+        # Migration-safe: a record persisted before coverage/url existed loads with
+        # both defaulting to None (via from_json's .get).
+        raw = {"infohash": "h", "series_id": 1}
+        rebuilt = PendingImport.from_json(raw)
+        assert rebuilt.coverage is None
+        assert rebuilt.url is None
+
+    def test_coverage_url_default_none_on_dataclass(self) -> None:
+        # The dataclass defaults coverage/url to None so callers (and old records)
+        # need not supply them.
+        pending = PendingImport(
+            infohash="h",
+            series_id=1,
+            file_episode_map={},
+            episode_ids=[],
+            release_group="RG",
+            is_dual_audio=False,
+            season_number=None,
+            seadex_files=[],
+            seadex_sizes=[],
+            title=None,
+            added_at="2026-06-24 00:00:00",
+        )
+        assert pending.coverage is None
+        assert pending.url is None
+
+
+class TestPendingStateAndProbe:
+    """The shared carried-over status vocabulary + the import probe value object."""
+
+    def test_pending_state_members(self) -> None:
+        assert {s.name for s in PendingState} == {
+            "QUEUED", "IMPORTING", "IMPORTED", "ERRORED", "MISSING",
+        }
+
+    def test_pending_state_is_its_string(self) -> None:
+        assert PendingState.IMPORTING == "importing"
+        assert PendingState.QUEUED == "queued"
+
+    def test_import_probe_holds_readiness_and_flags(self) -> None:
+        probe = ImportProbe(
+            readiness=ImportReadiness.RETRY, files_present=False, command_issued=True,
+        )
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.files_present is False
+        assert probe.command_issued is True
+
+
+class TestClassifyPending:
+    """classify_pending folds a poll's outcome + the files-present flag into a state."""
+
+    def test_missing(self) -> None:
+        assert classify_pending(WaitOutcome.MISSING, False) is PendingState.MISSING
+
+    def test_errored(self) -> None:
+        assert classify_pending(WaitOutcome.ERRORED, False) is PendingState.ERRORED
+
+    def test_still_downloading_is_queued(self) -> None:
+        assert classify_pending(None, False) is PendingState.QUEUED
+
+    def test_timed_out_is_queued(self) -> None:
+        # A non-COMPLETE terminal that isn't missing/errored still reads queued.
+        assert classify_pending(WaitOutcome.TIMED_OUT, False) is PendingState.QUEUED
+
+    def test_complete_and_files_present_is_imported(self) -> None:
+        assert classify_pending(WaitOutcome.COMPLETE, True) is PendingState.IMPORTED
+
+    def test_complete_without_files_is_importing(self) -> None:
+        # The copy is still in flight -> importing, never imported, until the
+        # files are verified present.
+        assert classify_pending(WaitOutcome.COMPLETE, False) is PendingState.IMPORTING
 
 
 def test_wait_outcome_members_exist() -> None:

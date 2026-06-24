@@ -19,7 +19,7 @@ from .log import (
     indent_string,
     rule_string,
 )
-from .manual_import import PendingImport
+from .manual_import import ImportWaitMode, PendingImport, PendingState
 from .seadex_types import SeadexDict
 from .torrents import ReleaseOutcome
 
@@ -81,6 +81,12 @@ class RunStats:
     no_mappings: int = 0
     needs_action: list[NeedsActionRecord] = field(default_factory=list)
     unmonitored: int = 0
+    # Carried-over pending-import counts by current status (NEVER this-run grabs -
+    # those stay `added`). Distinct int fields so a typo fails to compile instead
+    # of silently birthing a key, and so the summary can render each on its own row.
+    queued: int = 0
+    importing: int = 0
+    imported: int = 0
 
 
 @dataclass
@@ -114,6 +120,12 @@ class RunContext:
     # end-of-run blocking pass; the durable copies live in cache_store under
     # ``pending_imports``, so this is just the fast in-memory list to wait on.
     pending_imports: list[PendingImport] = field(default_factory=list)
+    # The classified status of each CARRIED-OVER record touched this run (by the
+    # per-series inline snapshot or the deferred reconcile), keyed by infohash.
+    # Read by the pre-summary tally so each carried-over record is counted exactly
+    # once by its known status (un-touched store records default to QUEUED). Never
+    # holds a this-run grab (those stay `added`).
+    pending_states: dict[str, PendingState] = field(default_factory=dict)
 
 
 class RunReporter:
@@ -145,6 +157,7 @@ class RunReporter:
         *,
         is_preview: bool,
         has_client: bool,
+        import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
     ) -> bool:
         """Log the end-of-run scoreboard for an Arr run
 
@@ -154,6 +167,10 @@ class RunReporter:
             is_preview (bool): The run grabbed nothing (dry run or no client).
             has_client (bool): A qBittorrent client is configured (distinguishes
                 the dry-run note wording).
+            import_wait_mode (ImportWaitMode): The run's resolved wait mode; the
+                carried-over ``queued`` / ``importing`` / ``imported`` rows render
+                only when this is not OFF (so they never clutter a run with the
+                feature off). Defaults to OFF.
         """
 
         stats = ctx.stats
@@ -294,6 +311,18 @@ class RunReporter:
         for item in stats.added:
             added_detail(item)
 
+        # Carried-over pending-import statuses (NEVER this-run grabs - those are the
+        # `added` block above). Each row renders only when the feature is on AND the
+        # value is non-zero, so a feature-off run is unchanged and there's never an
+        # `added`+`queued` double line for a single torrent.
+        if import_wait_mode is not ImportWaitMode.OFF:
+            if stats.queued:
+                summary_kv("queued", str(stats.queued), value_style="grey50")
+            if stats.importing:
+                summary_kv("importing", str(stats.importing), value_style="yellow")
+            if stats.imported:
+                summary_kv("imported", str(stats.imported), value_style="green")
+
         summary_kv("up to date", str(stats.up_to_date))
         summary_kv(
             "unchanged",
@@ -347,6 +376,51 @@ class RunReporter:
             extra={"rule_char": "="},
         )
 
+        return True
+
+    # The carried-over pending states that get an inline ledger row + a scoreboard
+    # counter. MISSING / ERRORED are handled (drop / leave) by the engine but have
+    # no ledger vocabulary, so they render nothing inline.
+    _PENDING_ENTRY_STATES: dict[PendingState, EntryState] = {
+        PendingState.QUEUED: EntryState.QUEUED,
+        PendingState.IMPORTING: EntryState.IMPORTING,
+        PendingState.IMPORTED: EntryState.IMPORTED,
+    }
+
+    def log_pending_snapshot(
+        self,
+        ctx: RunContext,
+        state: PendingState,
+        title: str,
+        coverage: str | None,
+        url: str | None,
+    ) -> bool:
+        """Render a carried-over pending record's status inline in the series block.
+
+        Emits the same titled ledger row + coverage/link continuation as the other
+        entry rows (so the carried-over record reads inside the series block and is
+        self-attributed by its release title), for the three reportable states
+        (``queued`` / ``importing`` / ``imported``). MISSING / ERRORED render
+        nothing (no ledger vocabulary; the engine logs them at debug). This bumps
+        NO counter - the engine owns the drop/count bookkeeping - so a record is
+        never double-counted.
+
+        Args:
+            ctx (RunContext): The run's state (unused for counting; accepted for a
+                uniform reporter signature).
+            state (PendingState): The record's classified status this poll.
+            title (str): The release title (or infohash) the row is attributed to.
+            coverage (str | None): The record's season/episode coverage, if known.
+            url (str | None): The record's SeaDex link, if known.
+        """
+
+        del ctx
+        entry_state = self._PENDING_ENTRY_STATES.get(state)
+        if entry_state is None:
+            return False
+        style = "green" if entry_state is EntryState.IMPORTED else "grey50"
+        self.log_entry_status(entry_state, title, style=style)
+        self.log_entry_coverage(coverage, url)
         return True
 
     def log_arr_start(

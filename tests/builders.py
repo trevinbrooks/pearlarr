@@ -17,7 +17,7 @@ from unittest import mock
 from seadex import Tag
 
 from seadexarr.modules.config import AppConfig, Arr
-from seadexarr.modules.manual_import import PendingImport
+from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, PendingImport
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.seadex_arr import SeaDexArr
 from seadexarr.modules.seadex_sonarr import SonarrSync
@@ -295,6 +295,27 @@ def pending_import(**overrides: Any) -> PendingImport:
     }
     defaults.update(overrides)
     return PendingImport(**defaults)
+
+
+def import_probe(
+    readiness: ImportReadiness = ImportReadiness.IMPORTED,
+    *,
+    files_present: bool = True,
+    command_issued: bool = False,
+) -> ImportProbe:
+    """An :class:`ImportProbe` with the common "files verified imported" defaults.
+
+    The default is the verified-import outcome (``IMPORTED`` + ``files_present``);
+    pass ``readiness=RETRY, files_present=False, command_issued=True`` for the
+    "command accepted, copy in flight" case, or ``files_present=False`` for a not-
+    yet-ready poll.
+    """
+
+    return ImportProbe(
+        readiness=readiness,
+        files_present=files_present,
+        command_issued=command_issued,
+    )
 
 
 def manual_candidate(

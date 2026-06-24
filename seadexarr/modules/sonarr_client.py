@@ -11,6 +11,7 @@ import requests
 from arrapi import SonarrAPI
 
 from .log import indent_string
+from .manual_import import PendingImport
 from .seadex_types import SonarrEpisode
 
 # Per-request timeout (seconds) for the manual-import folder scan. Sonarr walks
@@ -145,10 +146,8 @@ class SonarrClient:
     def manual_import_candidates(
         self,
         *,
-        folder: str,
-        series_id: int,
-        season_number: int | None = None,
-        filter_existing_files: bool = False,
+        pending: PendingImport,
+        filter_existing_files = False,
     ) -> list[dict] | None:
         """List Sonarr's manual-import candidates for a folder, series-pinned.
 
@@ -163,9 +162,7 @@ class SonarrClient:
         distinction keeps the intent clear.
 
         Args:
-            folder (str): Folder on disk to scan (URL-encoded into the query).
-            series_id (int): Series ID in Sonarr to pin the parse to.
-            season_number (int | None): Optional season to scope candidates to.
+            pending (PendingImport): The pending import record to scan for
             filter_existing_files (bool): If True, Sonarr drops files it already
                 has imported. Sent lowercase ``true``/``false``.
 
@@ -176,13 +173,10 @@ class SonarrClient:
         """
 
         params: dict[str, str] = {
-            "folder": folder,
-            "seriesId": str(series_id),
+            "downloadId": pending.infohash.upper(),
             "filterExistingFiles": "true" if filter_existing_files else "false",
+            "apikey": self._api_key,
         }
-        if season_number is not None:
-            params["seasonNumber"] = str(season_number)
-        params["apikey"] = self._api_key
         params_enc = urlencode(params)
 
         candidates_req_url = f"{self._url}/api/v3/manualimport?{params_enc}"
@@ -193,7 +187,7 @@ class SonarrClient:
         except requests.RequestException as e:
             self._logger.warning(
                 indent_string(
-                    f"Manual-import scan of {folder} did not respond ({e}); "
+                    f"Manual-import scan of {pending.title} did not respond ({e}); "
                     f"will retry",
                 ),
             )
@@ -202,8 +196,8 @@ class SonarrClient:
         if candidates_req.status_code != 200:
             self._logger.warning(
                 indent_string(
-                    f"Could not fetch manual-import candidates for folder "
-                    f"{folder} (status code {candidates_req.status_code}); "
+                    f"Could not fetch manual-import candidates for "
+                    f"{pending.title} (status code {candidates_req.status_code}); "
                     f"will retry",
                 ),
             )
@@ -302,7 +296,6 @@ class SonarrClient:
         Returns:
             list[dict]: Raw QueueResource record dicts; empty on failure.
         """
-
         params = urlencode(
             {
                 "pageSize": "1000",

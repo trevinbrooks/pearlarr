@@ -14,6 +14,7 @@ from typing import Any
 from seadexarr.modules.cache import CacheField
 from seadexarr.modules.config import Arr
 from seadexarr.modules.log import LogFormatter
+from seadexarr.modules.manual_import import ImportWaitMode, PendingState
 from seadexarr.modules.reporter import (
     GrabRecord,
     NeedsActionRecord,
@@ -154,3 +155,112 @@ class TestRunSummary:
         assert _make_reporter().log_run_summary(
             self._ctx_with_data(), Arr.SONARR, is_preview=True, has_client=False,
         )
+
+
+def _summary_messages(reporter: RunReporter, ctx: RunContext, **kwargs: Any) -> list[str]:
+    """Capture every log message log_run_summary emits, for row assertions."""
+
+    import logging
+
+    records: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = _Capture()
+    reporter.logger.addHandler(handler)
+    reporter.logger.setLevel(logging.DEBUG)
+    try:
+        reporter.log_run_summary(
+            ctx, Arr.SONARR, is_preview=False, has_client=True, **kwargs,
+        )
+    finally:
+        reporter.logger.removeHandler(handler)
+    return [r.getMessage() for r in records]
+
+
+class TestPendingSnapshot:
+    """log_pending_snapshot renders the inline carried-over row + bumps NO counter."""
+
+    def test_renders_and_bumps_no_counter(self) -> None:
+        reporter = _make_reporter()
+        ctx = RunContext(arr=Arr.SONARR)
+
+        rendered = reporter.log_pending_snapshot(
+            ctx, PendingState.IMPORTED, "My Show", "S01 E01-E13", "https://releases.moe/1",
+        )
+
+        assert rendered is True
+        # The reporter never touches the counters - the engine owns drop/count.
+        assert ctx.stats.imported == 0
+        assert ctx.stats.queued == 0
+        assert ctx.stats.importing == 0
+
+    def test_missing_state_renders_nothing(self) -> None:
+        reporter = _make_reporter()
+        ctx = RunContext(arr=Arr.SONARR)
+
+        assert reporter.log_pending_snapshot(
+            ctx, PendingState.MISSING, "Gone", None, None,
+        ) is False
+
+
+class TestSummaryPendingCounters:
+    """The carried-over counters render only when feature-on and non-zero."""
+
+    def test_counters_render_when_feature_on_and_non_zero(self) -> None:
+        ctx = RunContext(arr=Arr.SONARR)
+        ctx.stats.queued = 2
+        ctx.stats.importing = 1
+        ctx.stats.imported = 3
+
+        messages = _summary_messages(
+            _make_reporter(), ctx, import_wait_mode=ImportWaitMode.BLOCKING,
+        )
+        joined = "\n".join(messages)
+
+        assert any("queued" in m for m in messages)
+        assert any("importing" in m for m in messages)
+        assert "imported" in joined
+
+    def test_counters_hidden_when_feature_off(self) -> None:
+        ctx = RunContext(arr=Arr.SONARR)
+        ctx.stats.queued = 2
+        ctx.stats.importing = 1
+        ctx.stats.imported = 3
+
+        messages = _summary_messages(
+            _make_reporter(), ctx, import_wait_mode=ImportWaitMode.OFF,
+        )
+
+        assert not any("queued" in m for m in messages)
+        assert not any("importing" in m for m in messages)
+
+    def test_zero_counters_not_rendered_even_when_on(self) -> None:
+        ctx = RunContext(arr=Arr.SONARR)  # all counters zero
+
+        messages = _summary_messages(
+            _make_reporter(), ctx, import_wait_mode=ImportWaitMode.BLOCKING,
+        )
+
+        assert not any("queued" in m for m in messages)
+        assert not any("importing" in m for m in messages)
+
+    def test_this_run_grab_shows_added_only_no_queued(self) -> None:
+        # REGRESSION (double-report): a this-run grab is `added`; with the counters
+        # left at 0 (the engine never bumps them for this-run grabs), the summary
+        # shows `added` but no `queued` row for the same torrent.
+        ctx = RunContext(arr=Arr.SONARR)
+        ctx.torrents_added = 1
+        ctx.stats.added = [
+            GrabRecord(title="A", coverage="S01", url="u", name="A.mkv", group="G"),
+        ]
+        # counters stay 0 -> no queued/importing rows
+
+        messages = _summary_messages(
+            _make_reporter(), ctx, import_wait_mode=ImportWaitMode.BLOCKING,
+        )
+
+        assert any("added" in m for m in messages)
+        assert not any("queued" in m for m in messages)

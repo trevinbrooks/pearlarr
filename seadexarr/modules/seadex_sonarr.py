@@ -3,6 +3,7 @@ import time
 from datetime import datetime, timedelta
 from xml.etree import ElementTree
 
+from seadexarr.modules.manual_import import QueueRecordView
 from . import coverage as _coverage
 from .anilist import (
     get_anilist_format,
@@ -14,6 +15,7 @@ from .log import EntryState, indent_string
 from .manual_import import (
     CandidateFile,
     ImportDecision,
+    ImportProbe,
     ImportReadiness,
     ImportWaitMode,
     PendingImport,
@@ -621,6 +623,8 @@ class SonarrSync(ArrSync[SonarrItem]):
                 ep_list=ep_list,
                 sonarr_series_id=sonarr_series_id,
                 anilist_title=anilist_title,
+                coverage=coverage,
+                url=sd_url,
             )
 
         return run.grab_and_cache(
@@ -635,6 +639,15 @@ class SonarrSync(ArrSync[SonarrItem]):
             release_group=sonarr_release_groups,
             pending_seeds=pending_seeds,
         )
+
+    def pending_import_series_id(self, item: SonarrItem) -> int | None:
+        """The Sonarr series id whose carried-over pending records this item owns.
+
+        The engine's per-item snapshot hook keys off this; a Sonarr series owns
+        its pending records by ``series_id``, which is the Sonarr series id.
+        """
+
+        return item.id
 
     @staticmethod
     def _is_video_candidate(basename: str) -> bool:
@@ -656,6 +669,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         ep_list: list[SonarrEpisode],
         sonarr_series_id: int,
         anilist_title: str,
+        coverage: str | None = None,
+        url: str | None = None,
     ) -> dict[str, PendingImport]:
         """Build ``infohash -> PendingImport`` for every release marked to grab.
 
@@ -673,6 +688,11 @@ class SonarrSync(ArrSync[SonarrItem]):
             ep_list (list[SonarrEpisode]): The relevant Sonarr episodes (carry ids).
             sonarr_series_id (int): The Sonarr series id the files belong to.
             anilist_title (str): Display title for the record (logging only).
+            coverage (str | None): The entry's season/episode coverage, persisted
+                so a carried-over record can render its inline ``files`` line next
+                run without re-deriving it.
+            url (str | None): The SeaDex entry URL, persisted for the carried-over
+                record's inline ``link`` line.
 
         Returns:
             dict[str, PendingImport]: Seeds keyed by infohash (empty when nothing
@@ -744,6 +764,8 @@ class SonarrSync(ArrSync[SonarrItem]):
                     seadex_sizes=video_sizes,
                     title=anilist_title,
                     added_at=added_at,
+                    coverage=coverage,
+                    url=url,
                 )
 
         return pending_seeds
@@ -754,20 +776,21 @@ class SonarrSync(ArrSync[SonarrItem]):
         content_path: str,
         *,
         force: bool = False,
-    ) -> ImportReadiness:
+        at_deadline: bool = False,
+    ) -> ImportProbe:
         """One reconcile/import poll for a completed download.
 
         Reads the current episode files and Sonarr's (refreshed) queue as the
         source of truth - never the cache:
 
           * every intended episode already holds the recommended release ->
-            ``IMPORTED`` (drop the record).
+            ``IMPORTED`` + ``files_present`` (drop the record).
           * Sonarr is genuinely importing right now -> ``RETRY`` (don't race it).
           * a clean ``importPending`` -> ``RETRY`` until ``force`` (the engine
-            forces on reconcile and on the final in-bound blocking poll, so a
-            download Sonarr will never import - e.g. Completed Download Handling
-            off, which parks it in ``importPending`` forever - is still imported
-            rather than waited on indefinitely).
+            forces on the snapshot/reconcile passes and on the final in-bound
+            monitor poll, so a download Sonarr will never import - e.g. Completed
+            Download Handling off, which parks it in ``importPending`` forever -
+            is still imported rather than waited on indefinitely).
           * otherwise (``importBlocked`` / ``failed`` / not tracked / forced clean
             pending) -> drive our authoritative series-pinned manual import.
 
@@ -775,6 +798,8 @@ class SonarrSync(ArrSync[SonarrItem]):
             pending (PendingImport): The durable record for the completed torrent.
             content_path (str): The qBittorrent ``content_path`` to import from.
             force (bool): Stop deferring to Sonarr on a clean ``importPending``.
+            at_deadline (bool): The final attempt - a still-missing intended file
+                is terminal, so warn loudly (off the deadline it's debug).
         """
 
         label = pending.title or pending.infohash
@@ -799,39 +824,43 @@ class SonarrSync(ArrSync[SonarrItem]):
                 self.logger.debug(
                     indent_string(f"{label}: already imported (recommended files present)"),
                 )
-                return ImportReadiness.IMPORTED
+                return ImportProbe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
 
-        verdict = classify_queue(self._queue_record_views(pending.infohash))
+        download_id, queue_records = self._queue_record_views(pending.infohash)
+        verdict = classify_queue(queue_records)
         if verdict is QueueVerdict.WAIT:
             self.logger.debug(indent_string(f"{label}: Sonarr is importing; waiting"))
-            return ImportReadiness.RETRY
+            return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
         if verdict is QueueVerdict.PENDING_CLEAN and not force:
             self.logger.debug(indent_string(f"{label}: Sonarr has it pending; waiting"))
-            return ImportReadiness.RETRY
+            return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         # STEP_IN, an empty queue, or a forced clean-pending: drive our import.
         return self._manual_import(
             pending,
             content_path,
-            label,
             episodes_by_id=episodes_by_id,
             recommended_groups=recommended,
+            at_deadline=at_deadline,
         )
 
     def _episodes_for_series(self, series_id: int) -> list[SonarrEpisode]:
-        """The series' episodes, reusing the per-run cache or fetching on a miss.
+        """Fetch the series' episodes FRESH for each import poll.
 
-        A reconcile / blocking pass may not have run ``process_al_id`` for this
-        series, so the cache can be cold; a transient fetch failure returns an
-        empty list (not cached) so a later poll retries.
+        Import verification reads the episode files as the source of truth for
+        "already imported", and that state changes as Sonarr (or our own manual
+        import) places files. A per-run cache would go stale across the monitor's
+        repeated polls and never observe the import landing - the record would time
+        out as "still importing" (or, in ``move`` mode where the file leaves the
+        download folder, never be confirmed at all). So this fetches fresh every
+        call and refreshes the per-run cache for any later reader; a transient
+        fetch failure falls back to the last-known list (or empty) so a later poll
+        simply retries.
         """
 
-        cached = self._ep_list_cache.get(series_id)
-        if cached is not None:
-            return cached
         fetched = self.sonarr.episodes(series_id)
         if fetched is None:
-            return []
+            return self._ep_list_cache.get(series_id, [])
         self._ep_list_cache[series_id] = fetched
         return fetched
 
@@ -921,7 +950,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 return
             time.sleep(_REFRESH_COMMAND_POLL_S)
 
-    def _queue_record_views(self, infohash: str) -> list[QueueRecordView]:
+    def _queue_record_views(self, infohash: str) -> tuple[str, list[QueueRecordView]]:
         """Reduce this download's queue records to what :func:`classify_queue` needs.
 
         Matches records to the torrent by ``downloadId`` (case-insensitively;
@@ -936,16 +965,18 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         target = infohash.casefold()
         views: list[QueueRecordView] = []
+        download_id = ""
         for record in self.sonarr.queue():
             if not isinstance(record, dict):
                 continue
-            download_id = record.get("downloadId")
-            if not isinstance(download_id, str) or download_id.casefold() != target:
+            dl_id = record.get("downloadId")
+            if not isinstance(dl_id, str) or dl_id.casefold() != target:
                 continue
             state = record.get("trackedDownloadState")
             if not isinstance(state, str) or not state:
                 continue
             status = record.get("trackedDownloadStatus")
+            download_id = dl_id
             views.append(
                 QueueRecordView(
                     state=state,
@@ -953,17 +984,17 @@ class SonarrSync(ArrSync[SonarrItem]):
                     has_messages=bool(record.get("statusMessages")),
                 ),
             )
-        return views
+        return download_id if download_id else infohash, views
 
     def _manual_import(
         self,
         pending: PendingImport,
-        content_path: str,
         label: str,
         *,
         episodes_by_id: dict[int, SonarrEpisode],
         recommended_groups: set[str],
-    ) -> ImportReadiness:
+        at_deadline: bool = False,
+    ) -> ImportProbe:
         """Drive our authoritative series-pinned manual import for one download.
 
         Scans ``content_path`` for candidates (pinned to ``pending.series_id``),
@@ -976,8 +1007,11 @@ class SonarrSync(ArrSync[SonarrItem]):
         torrent is never imported here). An intended file Sonarr can't see yet is
         retried, never silently skipped.
 
-        Returns ``RETRY`` when the scan failed or an intended file isn't on disk
-        yet, ``IMPORTED`` when every intended episode is satisfied.
+        Returns an :class:`ImportProbe`. A manual-import command's copy is async, so
+        accepting the command is NOT ``files_present`` - the probe reads
+        ``RETRY`` + ``command_issued`` until a later poll verifies the episode files
+        actually landed. ``files_present`` is set only when every intended episode
+        already holds a recommended file (nothing left to copy).
 
         Args:
             pending (PendingImport): The durable record for the completed torrent.
@@ -985,17 +1019,18 @@ class SonarrSync(ArrSync[SonarrItem]):
             label (str): Display label for the log lines.
             episodes_by_id (dict[int, SonarrEpisode]): Current series episodes by id.
             recommended_groups (set[str]): Normalized recommended-group guard set.
+            at_deadline (bool): The final attempt - a still-missing intended file
+                is terminal, so warn loudly; otherwise it's an expected early-poll
+                gap and only logged at debug.
         """
 
         candidates = self.sonarr.manual_import_candidates(
-            folder=content_path,
-            series_id=pending.series_id,
-            season_number=pending.season_number,
+            pending=pending,
             filter_existing_files=False,
         )
         if candidates is None:
             # Transient (timeout / non-200); the client already warned. Ask again.
-            return ImportReadiness.RETRY
+            return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         candidates_by_basename = self._candidate_files(candidates)
         ep_id_map = build_episode_id_map(list(episodes_by_id.values()))
@@ -1005,9 +1040,9 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         if not authoritative_map:
             self.logger.debug(
-                indent_string(f"{label}: no mappable files at {content_path} yet"),
+                indent_string(f"{label}: no mappable files for {pending.title} yet"),
             )
-            return ImportReadiness.RETRY
+            return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         # Done-check against the COMPLETE (repaired) intended set, from the files.
         target_ids = sorted({i for ids in authoritative_map.values() for i in ids})
@@ -1016,7 +1051,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             self.logger.debug(
                 indent_string(f"{label}: already imported (recommended files present)"),
             )
-            return ImportReadiness.IMPORTED
+            return ImportProbe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
 
         needing = targets_needing_import(statuses)
         decisions = plan_import_files(authoritative_map, candidates_by_basename, needing)
@@ -1036,20 +1071,26 @@ class SonarrSync(ArrSync[SonarrItem]):
             # "sample" / "already" / "skip_done" -> nothing to import for this file.
 
         if missing:
-            # Intended files our map covers but Sonarr can't see yet: never drop
-            # them silently. Warn (loud) and retry; the engine's deadline bounds the
-            # wait and leaves the record pending for a later run.
-            self.logger.warning(
-                indent_string(
-                    f"{label}: {len(missing)} intended file(s) not visible to Sonarr "
-                    f"yet under {content_path}; will retry",
-                ),
+            # Intended files our map covers but Sonarr can't see yet. An early poll
+            # finding them absent is expected (the copy hasn't landed), so it's only
+            # noisy at the deadline, where a still-missing file is terminal: warn
+            # loudly only then, debug otherwise. Either way the record is retried,
+            # never dropped silently.
+            message = indent_string(
+                f"{label}: {len(missing)} intended file(s) not visible to Sonarr "
+                f"for {pending.title}; will retry",
             )
+            if at_deadline:
+                self.logger.warning(message)
+            else:
+                self.logger.debug(message)
 
         if not files:
             # Nothing to queue this poll: retry if files are merely missing, else
             # everything intended is already satisfied (already/sample/skip_done).
-            return ImportReadiness.RETRY if missing else ImportReadiness.IMPORTED
+            if missing:
+                return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
+            return ImportProbe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
 
         cmd_id = self.sonarr.manual_import_execute(
             files=files,
@@ -1059,16 +1100,16 @@ class SonarrSync(ArrSync[SonarrItem]):
             self.logger.debug(
                 indent_string(f"{label}: Sonarr rejected the import command; will retry"),
             )
-            return ImportReadiness.RETRY
+            return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
-        self.log_fmt.detail(
-            "imported",
-            f"{label}: {len(files)} file(s) (command {cmd_id})",
-            value_style="green",
+        # The command was accepted, but its copy is async - the episode files may
+        # not have landed yet (a remote-mount copy isn't instant). Do NOT declare
+        # the files imported on command acceptance: report RETRY + command_issued,
+        # so the next monitor cycle flips to files_present once they appear.
+        self.logger.debug(
+            indent_string(f"{label}: queued {len(files)} file(s) for import (command {cmd_id})"),
         )
-        # Keep the record if some intended files are still missing (so they import
-        # on a later poll / run); otherwise we've placed everything we intended.
-        return ImportReadiness.RETRY if missing else ImportReadiness.IMPORTED
+        return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=True)
 
     def _candidate_files(self, candidates: list[dict]) -> dict[str, CandidateFile]:
         """Index on-disk manual-import candidates by normalized basename."""
