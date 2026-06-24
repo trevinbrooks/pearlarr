@@ -533,12 +533,12 @@ class SeaDexArr:
         for srg, srg_item in torrent_dict.items():
             for url, url_item in srg_item.urls.items():
 
-                outcome = self._add_one_url(srg, url, url_item)
-                if outcome is None:
+                add_result = self._add_one_url(srg, url, url_item)
+                if add_result is None:
                     continue
 
-                results.append(outcome)
-                if outcome.outcome is not AddOutcome.ADDED:
+                results.append(add_result)
+                if add_result.outcome is not AddOutcome.ADDED:
                     continue
 
                 # Stop once max_torrents_to_add is reached
@@ -607,9 +607,7 @@ class SeaDexArr:
             # per-torrent grabs); fall back to the entry-level coverage we
             # mapped from the Arr so the summary's "files" is never blank
             # when a release's filenames couldn't be parsed (e.g. an OVA).
-            coverage_str = _coverage.coverage_string(
-                url_item.episodes,
-            ) or self._ctx.current_coverage
+            coverage_str = _coverage.coverage_string(url_item.episodes) or self._ctx.current_coverage
             self._ctx.stats.added.append(
                 GrabRecord(
                     title=self._ctx.current_title,

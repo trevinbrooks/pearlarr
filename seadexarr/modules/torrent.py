@@ -11,6 +11,7 @@ RUTRACKER_MAGNET_ANNOUNCE = "http://bt2.t-ru.org/ann?magnet"
 # these helpers gets keep-alive connection pooling. The main code path threads
 # in SeaDexArr.session instead.
 _DEFAULT_SESSION = requests.Session()
+_NYAA_SESSION = pynyaa.Nyaa()
 
 
 def get_nyaa_torrent(url: str) -> tuple[str, str]:
@@ -24,7 +25,7 @@ def get_nyaa_torrent(url: str) -> tuple[str, str]:
             the human-readable release title
     """
 
-    release = pynyaa.get(url)
+    release = _NYAA_SESSION.get(url)
 
     return release.torrent.url, release.title
 
