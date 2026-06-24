@@ -12,14 +12,26 @@ from seadexarr.modules.config import Arr
 from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.seadex_radarr import RadarrSync
 from seadexarr.modules.seadex_sonarr import SonarrSync
+from seadexarr.modules.seadex_types import RadarrItem, SonarrItem
 
 from .builders import make_bare_instance, make_logger
 
 
 class _Item:
-    """A stand-in Arr item exposing whatever id attributes a test sets."""
+    """A stand-in Arr item exposing whatever id attributes a test sets.
 
-    def __init__(self, **kw):
+    Declares the full ``ArrItem`` surface so it structurally satisfies the
+    ``SonarrItem`` / ``RadarrItem`` protocols; each test sets only the attributes
+    the hook under test actually reads.
+    """
+
+    id: int
+    title: str
+    imdbId: str | None
+    tvdbId: int
+    tmdbId: int
+
+    def __init__(self, **kw: object) -> None:
         self.__dict__.update(kw)
 
 
@@ -54,14 +66,14 @@ class TestFilterToSingle:
 
     def test_radarr_matches_tmdb_id(self) -> None:
         strat = make_bare_instance(RadarrSync, logger=make_logger())
-        items = [_Item(tmdbId=1), _Item(tmdbId=2)]
+        items: list[RadarrItem] = [_Item(tmdbId=1), _Item(tmdbId=2)]
 
         assert strat.filter_to_single(items, 2) == [items[1]]
         assert strat.filter_to_single(items, 7) == []
 
     def test_sonarr_matches_tvdb_id(self) -> None:
         strat = make_bare_instance(SonarrSync, logger=make_logger())
-        items = [_Item(tvdbId=10), _Item(tvdbId=20)]
+        items: list[SonarrItem] = [_Item(tvdbId=10), _Item(tvdbId=20)]
 
         assert strat.filter_to_single(items, 10) == [items[0]]
 

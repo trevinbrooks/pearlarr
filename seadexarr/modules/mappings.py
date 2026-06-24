@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, StrEnum
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 from urllib.request import urlretrieve
 from xml.etree import ElementTree
 
@@ -150,19 +150,16 @@ ANIBRIDGE_MAPPINGS_FILE = f"anibridge_mappings_{ANIBRIDGE_RELEASE}.json"
 # the plain dict needs no locking.
 _PARSED_MAPPING_CACHE: dict[str, tuple[float, object]] = {}
 
-_T = TypeVar("_T")
-
-
-def _load_mapping_by_mtime(
+def _load_mapping_by_mtime[T](
     path: str,
-    parse: Callable[[str], _T],
+    parse: Callable[[str], T],
     cache_key: str | None = None,
-) -> _T:
+) -> T:
     """Return ``parse(path)``, reusing a cached result while the mtime is unchanged.
 
     Args:
         path (str): File whose modification time gates the cache
-        parse (Callable[[str], _T]): Builds the parsed value from the path
+        parse (Callable[[str], T]): Builds the parsed value from the path
         cache_key (str | None): Cache slot to use; defaults to ``path``. Pass a
             distinct key when more than one product is derived from one file
             (e.g. the Anime-IDs map and its reverse index).
@@ -174,8 +171,8 @@ def _load_mapping_by_mtime(
     cached = _PARSED_MAPPING_CACHE.get(key)
     if cached is not None and cached[0] == mtime:
         # The slot is type-erased across keys (each holds whatever its parse fn
-        # produced); the call's _T is recovered from ``parse``'s return type.
-        return cast(_T, cached[1])
+        # produced); the call's T is recovered from ``parse``'s return type.
+        return cast(T, cached[1])
 
     value = parse(path)
     _PARSED_MAPPING_CACHE[key] = (mtime, value)

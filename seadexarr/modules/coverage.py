@@ -8,7 +8,7 @@ thin delegating methods so subclasses can still call them via ``self``.
 
 from collections.abc import Iterable
 
-from .seadex_types import EpisodeRecord
+from .seadex_types import EpisodeRecord, SonarrEpisode
 
 
 def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
@@ -43,7 +43,7 @@ def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
     )
 
 
-def format_episode_coverage(episodes: list[EpisodeRecord]) -> list | None:
+def format_episode_coverage(episodes: list[EpisodeRecord]) -> list[tuple[str, str]] | None:
     """Summarize the Sonarr season/episode coverage of a torrent, per season
 
     Returns a list of (season_label, episode_ranges) tuples, one per season
@@ -96,7 +96,7 @@ def coverage_string(episodes: list[EpisodeRecord]) -> str:
 
 
 def episodes_from_ep_list(
-    ep_list: list | None,
+    ep_list: list[SonarrEpisode] | None,
     missing_only: bool = False,
 ) -> list[EpisodeRecord]:
     """Convert a Sonarr ep_list into ``EpisodeRecord`` coverage records
@@ -112,12 +112,12 @@ def episodes_from_ep_list(
 
     episodes = []
     for ep in ep_list or []:
-        if missing_only and ep.get("episodeFileId", 0) != 0:
+        if missing_only and ep.episode_file_id != 0:
             continue
         episodes.append(
             EpisodeRecord(
-                season=ep.get("seasonNumber"),
-                episode=ep.get("episodeNumber"),
+                season=ep.season_number,
+                episode=ep.episode_number,
             ),
         )
     return episodes

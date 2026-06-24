@@ -1,7 +1,6 @@
 import os
 import time
 from datetime import datetime, timedelta
-from typing import Any
 from xml.etree import ElementTree
 
 from . import coverage as _coverage
@@ -22,7 +21,14 @@ from .radarr_client import (
     make_radarr_client,
 )
 from .seadex_arr import RunDeps, SeaDexArr
-from .seadex_types import EpisodeRecord
+from .seadex_types import (
+    ArrReleaseDict,
+    EpisodeRecord,
+    SeadexDict,
+    SonarrEpisode,
+    SonarrItem,
+    TvdbMappings,
+)
 from .sonarr_client import SonarrClient
 
 TORRENT_FILENAMES_TO_SKIP = [
@@ -116,7 +122,7 @@ def _parse_anidb_mapping_dict(
     return result
 
 
-def get_overlapping_results(seadex_dict: dict) -> bool:
+def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
     """See if SeaDex releases have overlapping episodes
 
     Args:
@@ -150,7 +156,7 @@ def get_overlapping_results(seadex_dict: dict) -> bool:
 
 
 def check_ep_by_anime_ids(
-    ep: dict,
+    ep: SonarrEpisode,
     tvdb_season: int,
 ) -> bool:
     """Check whether to include an episode by Anime ID style
@@ -161,7 +167,7 @@ def check_ep_by_anime_ids(
     """
 
     # First, check by season
-    season_number = ep.get("seasonNumber")
+    season_number = ep.season_number
 
     # If the TVDB season is -1, this is anything but specials
     if tvdb_season == -1 and season_number == 0:
@@ -172,8 +178,8 @@ def check_ep_by_anime_ids(
 
 
 def check_ep_by_anibridge(
-    ep: dict,
-    tvdb_mappings: dict,
+    ep: SonarrEpisode,
+    tvdb_mappings: TvdbMappings,
 ) -> bool:
     """Check whether a Sonarr episode is covered by an AniBridge mapping.
 
@@ -184,8 +190,8 @@ def check_ep_by_anibridge(
             end of None is open-ended.
     """
 
-    ep_season = ep.get("seasonNumber", -1)
-    ep_episode = ep.get("episodeNumber", -1)
+    ep_season = ep.season_number if ep.season_number is not None else -1
+    ep_episode = ep.episode_number if ep.episode_number is not None else -1
 
     ranges = tvdb_mappings.get(ep_season)
 
@@ -261,7 +267,7 @@ class SonarrSync(ArrSync):
         # otherwise re-fetch the same whole-series episode list; cache it for the
         # run so the network round-trip happens once per series. Cleared at the
         # top of each run (in get_items, the run-start hook).
-        self._ep_list_cache: dict[int, list] = {}
+        self._ep_list_cache: dict[int, list[SonarrEpisode]] = {}
 
         self.ignore_movies_in_radarr = self._config.ignore_movies_in_radarr
 
@@ -293,7 +299,7 @@ class SonarrSync(ArrSync):
 
     # --- ArrSync hooks ------------------------------------------------------
 
-    def get_items(self) -> list:
+    def get_items(self) -> list[SonarrItem]:
         """Every Sonarr series with AniList mapping info.
 
         Also the run-start hook: drop any episode lists cached from a previous
@@ -304,7 +310,7 @@ class SonarrSync(ArrSync):
         self._ep_list_cache = {}
         return self.get_all_sonarr_series()
 
-    def filter_to_single(self, items: list, item_id: int) -> list:
+    def filter_to_single(self, items: list[SonarrItem], item_id: int) -> list[SonarrItem]:
         """Narrow the series list to a single TVDB ID."""
 
         filtered = [s for s in items if s.tvdbId == item_id]
@@ -316,7 +322,7 @@ class SonarrSync(ArrSync):
 
     def item_anilist_ids(
         self,
-        item: Any,
+        item: SonarrItem,
         log_ignored: bool = True,
     ) -> dict[int, MappingEntry]:
         """Resolve AniList ids for a Sonarr series (by TVDB / IMDb id)."""
@@ -330,7 +336,7 @@ class SonarrSync(ArrSync):
     def process_al_id(
         self,
         arr: Arr,
-        item: Any,
+        item: SonarrItem,
         item_title: str,
         al_id: int,
         mapping: MappingEntry,
@@ -452,7 +458,7 @@ class SonarrSync(ArrSync):
             return False
 
         # If all episodes are unmonitored, then skip if ignore_unmonitored is switched on
-        ep_list_monitored = [x.get("monitored", True) for x in ep_list]
+        ep_list_monitored = [ep.monitored for ep in ep_list]
         if not any(ep_list_monitored) and self._config.ignore_unmonitored:
             run.log_anilist_item_unmonitored(
                 item_title=anilist_title,
@@ -479,7 +485,7 @@ class SonarrSync(ArrSync):
 
         self.logger.debug(
             indent_string(
-                f"Sonarr release group(s): {', '.join(sonarr_release_groups)}",
+                f"Sonarr release group(s): {', '.join(str(rg) for rg in sonarr_release_groups)}",
             ),
         )
 
@@ -530,7 +536,7 @@ class SonarrSync(ArrSync):
 
     # --- Sonarr domain logic ------------------------------------------------
 
-    def get_all_sonarr_series(self) -> list:
+    def get_all_sonarr_series(self) -> list[SonarrItem]:
         """Get all series in Sonarr with AniList mapping info"""
 
         return collect_anime_items(
@@ -543,7 +549,7 @@ class SonarrSync(ArrSync):
             ),
         )
 
-    def get_sonarr_series(self, tvdb_id: int):
+    def get_sonarr_series(self, tvdb_id: int) -> SonarrItem | None:
         """Get Sonarr series for a given TVDB ID
 
         Args:
@@ -557,7 +563,7 @@ class SonarrSync(ArrSync):
         sonarr_series_id: int,
         al_id: int,
         mapping: MappingEntry,
-    ) -> list | None:
+    ) -> list[SonarrEpisode] | None:
         """Get a list of relevant episodes for an AniList mapping
 
         Args:
@@ -647,8 +653,10 @@ class SonarrSync(ArrSync):
             # See if we have the mapping for each entry
             for ep in final_ep_list:
 
-                season_number = ep.get("seasonNumber", None)
-                episode_number = ep.get("episodeNumber", None)
+                season_number = ep.season_number
+                episode_number = ep.episode_number
+                if season_number is None or episode_number is None:
+                    continue
 
                 anidb_mapping_dict_entry = anidb_mapping_dict.get(
                     season_number, {},
@@ -675,11 +683,11 @@ class SonarrSync(ArrSync):
 
     def _apply_anime_id_offsets(
         self,
-        final_ep_list: list,
+        final_ep_list: list[SonarrEpisode],
         al_id: int,
         mapping: MappingEntry,
         tvdb_season: int,
-    ) -> list:
+    ) -> list[SonarrEpisode]:
         """Slice an anime-id episode list down by its TVDB offset / AniList count.
 
         Args:
@@ -706,40 +714,38 @@ class SonarrSync(ArrSync):
             return [
                 ep
                 for ep in final_ep_list
-                if 1 <= ep.get("episodeNumber", None) - ep_offset <= n_eps
+                if 1 <= (ep.episode_number or 0) - ep_offset <= n_eps
             ]
 
         return final_ep_list[ep_offset : n_eps + ep_offset]
 
     def get_sonarr_release_dict(
         self,
-        ep_list: list,
-    ) -> dict:
+        ep_list: list[SonarrEpisode],
+    ) -> ArrReleaseDict:
         """Get a dictionary of useful info for a series in Sonarr
 
         Args:
-            ep_list (list): List of episodes
+            ep_list: List of Sonarr episodes
         """
 
         # Look through, get release groups from the existing Sonarr files
         # and note any potential missing files
-        sonarr_release_dict = {}
+        sonarr_release_dict: ArrReleaseDict = {}
         missing_eps = 0
         n_eps = len(ep_list)
         for ep in ep_list:
 
-            if ep.get("episodeFileId", 0) == 0:
+            if ep.episode_file_id == 0:
                 missing_eps += 1
                 continue
 
-            release_group = ep.get("episodeFile", {}).get("releaseGroup", None)
+            release_group = ep.episode_file.release_group if ep.episode_file else None
             if release_group is None or release_group == "":
                 continue
 
-            if release_group not in sonarr_release_dict:
-                sonarr_release_dict[release_group] = {"size": []}
-            size = ep.get("episodeFile", {}).get("size", None)
-            sonarr_release_dict[release_group]["size"].append(size)
+            size = ep.episode_file.size if ep.episode_file else None
+            sonarr_release_dict.setdefault(release_group, []).append(size)
 
         if missing_eps > 0:
             # Show which episodes are missing as ranges (e.g. "S04 E12"), not just
@@ -774,7 +780,7 @@ class SonarrSync(ArrSync):
 
     def parse_episodes_from_seadex(
         self,
-        seadex_dict: dict,
+        seadex_dict: SeadexDict,
     ) -> dict:
         """For files in a SeaDex release, parse this through Sonarr to get season/episode numbers
 

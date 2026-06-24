@@ -1,8 +1,9 @@
 """Builders and a bare-instance factory for the characterization tests.
 
 These tests pin the *current* behaviour of ``seadex_arr.py`` before the planned
-decomposition (see ``REFACTOR_PLAN.md``). The decision engine operates on plain
-dicts, so the planner tests build those dicts directly. ``make_arr`` builds a
+decomposition (see ``REFACTOR_PLAN.md``). The planner tests build the engine's
+inputs (typed episode records, flat release dicts) via the helpers here, and
+``make_arr`` builds a
 ``SeaDexArr`` without running its heavy ``__init__`` (network downloads,
 qBittorrent login, disk I/O), assigning only the attributes the methods under
 test actually read.
@@ -10,7 +11,7 @@ test actually read.
 
 import logging
 from functools import cached_property
-from typing import Any, TypeVar
+from typing import Any
 from unittest import mock
 
 from seadex import Tag
@@ -22,6 +23,7 @@ from seadexarr.modules.seadex_types import (
     EpisodeRecord,
     SeadexReleaseGroupItem,
     SeadexUrlItem,
+    SonarrEpisode,
 )
 
 # The override keys make_arr routes into self._config, derived from AppConfig's
@@ -36,10 +38,7 @@ _CONFIG_SETTING_NAMES = frozenset(
 )
 
 
-T = TypeVar("T")
-
-
-def make_bare_instance(cls: type[T], **attrs: Any) -> T:
+def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
     """An instance with ``__init__`` bypassed and only the given attrs set.
 
     ``object.__new__`` skips the real, heavy ``__init__`` (network downloads,
@@ -201,15 +200,17 @@ def sonarr_ep(
     size: int | None = None,
     release_group: str | None = None,
     episode_file_id: int = 1,
-) -> dict:
-    """One Sonarr episode dict, matching the fields the engine reads."""
+) -> SonarrEpisode:
+    """One ``SonarrEpisode``, parsed from the raw fields the engine reads."""
 
-    return {
-        "seasonNumber": season,
-        "episodeNumber": episode,
-        "episodeFileId": episode_file_id,
-        "episodeFile": {"size": size, "releaseGroup": release_group},
-    }
+    return SonarrEpisode.from_api(
+        {
+            "seasonNumber": season,
+            "episodeNumber": episode,
+            "episodeFileId": episode_file_id,
+            "episodeFile": {"size": size, "releaseGroup": release_group},
+        },
+    )
 
 
 class FakeTracker:

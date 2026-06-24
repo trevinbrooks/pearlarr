@@ -13,6 +13,7 @@ Extracted from ``SeaDexSonarr`` in Phase 5a of the refactor (see
 """
 
 import logging
+from typing import cast
 from urllib.parse import urlencode
 
 import arrapi.exceptions
@@ -20,6 +21,7 @@ import requests
 from arrapi import SonarrAPI
 
 from .log import indent_string
+from .seadex_types import SonarrEpisode, SonarrItem
 
 
 class SonarrClient:
@@ -55,19 +57,26 @@ class SonarrClient:
 
         return self._api.all_series()
 
-    def get_series(self, tvdb_id: int):
+    def get_series(self, tvdb_id: int) -> SonarrItem | None:
         """Get the Sonarr series for a TVDB id, or None if not found.
+
+        ``arrapi`` ships no ``py.typed``; its ``Series`` is the untyped-boundary
+        object we read a fixed id surface off, so this is where we pin it to the
+        ``SonarrItem`` view the rest of the code relies on.
 
         Args:
             tvdb_id (int): TVDB ID.
         """
 
         try:
-            return self._api.get_series(tvdb_id=tvdb_id)
+            # arrapi's Series carries the SonarrItem id surface but, being
+            # untyped, resolves to wide-union attrs no checker can match to the
+            # protocol; pin the view here (mirrors mappings._load_mapping_by_mtime).
+            return cast(SonarrItem, self._api.get_series(tvdb_id=tvdb_id))
         except arrapi.exceptions.NotFound:
             return None
 
-    def episodes(self, series_id: int) -> list | None:
+    def episodes(self, series_id: int) -> list[SonarrEpisode] | None:
         """All episodes for a series, season/episode-sorted (``/api/v3/episode``).
 
         Returns None (with a warning) if Sonarr is unreachable, so the caller can
@@ -92,14 +101,16 @@ class SonarrClient:
             )
             return None
 
-        # Sort by season/episode number for slicing later
-        return sorted(
+        # Sort by season/episode number for slicing later, then parse each raw
+        # record into a SonarrEpisode at this client boundary.
+        raw_eps = sorted(
             eps_req.json(),
             key=lambda x: (
                 x.get("seasonNumber", None),
                 x.get("episodeNumber", None),
             ),
         )
+        return [SonarrEpisode.from_api(ep) for ep in raw_eps]
 
     def parse(self, filename: str) -> list:
         """Ask Sonarr to parse a single filename into season/episode numbers.

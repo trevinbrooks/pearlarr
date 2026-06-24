@@ -20,10 +20,12 @@ from itertools import compress
 from .log import indent_string
 from .seadex_types import (
     SONARR_MISSING_KEY,
+    ArrReleaseDict,
     EpisodeRecord,
     SeadexDict,
     SeadexReleaseGroupItem,
     SeadexUrlItem,
+    SonarrEpisode,
     as_size_list,
 )
 
@@ -149,8 +151,8 @@ def get_same_files_groups(seadex_dict: SeadexDict) -> list:
 
 def get_all_seadex_rgs_per_episode(
     seadex_dict: SeadexDict,
-    sonarr_by_key: dict,
-) -> dict:
+    sonarr_by_key: dict[tuple[int, int], SonarrEpisode],
+) -> dict[str, set[str | None]]:
     """Get a list of all SeaDex releases per-episode
 
     Args:
@@ -161,7 +163,7 @@ def get_all_seadex_rgs_per_episode(
             with the per-episode match loop in filter_by_release_group.
     """
 
-    all_seadex_rgs_per_episode: dict[str, set] = {"all": set()}
+    all_seadex_rgs_per_episode: dict[str, set[str | None]] = {"all": set()}
 
     if len(seadex_dict) > 1:
         for seadex_rg, seadex_rg_item in seadex_dict.items():
@@ -223,9 +225,9 @@ class DownloadPlanner:
         *,
         seadex_dict: SeadexDict,
         arr: str,
-        arr_release_dict: dict,
-        cached_hashes: list,
-        ep_list: list | None = None,
+        arr_release_dict: ArrReleaseDict,
+        cached_hashes: list[str | None],
+        ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
         """Flip the download flags and return the full plan for an entry.
 
@@ -328,8 +330,8 @@ class DownloadPlanner:
         self,
         seadex_dict: SeadexDict,
         arr: str,
-        arr_release_dict: dict,
-        ep_list: list | None = None,
+        arr_release_dict: ArrReleaseDict,
+        ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
         """Filter torrents by release group
 
@@ -360,12 +362,14 @@ class DownloadPlanner:
         # parsed SeaDex (season, episode) is then an O(1) dict op rather than a
         # fresh scan of the whole list. First entry wins on a duplicate key
         # (Sonarr episodes are unique by season+episode).
-        sonarr_by_key: dict = {}
+        sonarr_by_key: dict[tuple[int, int], SonarrEpisode] = {}
         for sonarr_ep in ep_list or []:
+            season = sonarr_ep.season_number
+            episode = sonarr_ep.episode_number
             sonarr_by_key.setdefault(
                 (
-                    sonarr_ep.get("seasonNumber", SONARR_MISSING_KEY),
-                    sonarr_ep.get("episodeNumber", SONARR_MISSING_KEY),
+                    season if season is not None else SONARR_MISSING_KEY,
+                    episode if episode is not None else SONARR_MISSING_KEY,
                 ),
                 sonarr_ep,
             )
@@ -449,8 +453,8 @@ class DownloadPlanner:
         url: str,
         url_item: SeadexUrlItem,
         arr: str,
-        arr_release_dict: dict,
-        arr_release_groups: Iterable[str],
+        arr_release_dict: ArrReleaseDict,
+        arr_release_groups: Iterable[str | None],
         overlapping_results: bool,
     ) -> None:
         """Decide a single url with no parsed episodes, by release group + size.
@@ -475,9 +479,7 @@ class DownloadPlanner:
         if seadex_rg in arr_release_groups:
 
             seadex_file_sizes = url_item.size
-            arr_file_sizes = as_size_list(
-                arr_release_dict[seadex_rg].get("size"),
-            )
+            arr_file_sizes = as_size_list(arr_release_dict[seadex_rg])
 
             # If we have no overlaps at all, then add
             if set(seadex_file_sizes).isdisjoint(arr_file_sizes):
@@ -505,9 +507,9 @@ class DownloadPlanner:
         url: str,
         url_item: SeadexUrlItem,
         arr: str,
-        seadex_episodes: list,
-        sonarr_by_key: dict,
-        all_seadex_rgs_per_episode: dict,
+        seadex_episodes: list[EpisodeRecord],
+        sonarr_by_key: dict[tuple[int, int], SonarrEpisode],
+        all_seadex_rgs_per_episode: dict[str, set[str | None]],
         has_ep_list: bool,
         debug_on: bool,
     ) -> None:
@@ -542,6 +544,12 @@ class DownloadPlanner:
             seadex_ep_episode = seadex_ep.episode
             seadex_ep_size = seadex_ep.size
 
+            # A parsed episode with no season/episode can't key into the Sonarr
+            # index (its keys are always concrete ints), and the SxxExx label
+            # below needs both anyway, so skip it.
+            if seadex_ep_season is None or seadex_ep_episode is None:
+                continue
+
             # O(1) lookup into the indexed Sonarr episodes instead of
             # re-scanning the whole list for every parsed episode
             sonarr_ep = sonarr_by_key.get(
@@ -551,9 +559,7 @@ class DownloadPlanner:
                 continue
 
             # Get the matched Sonarr episode's file size
-            sonarr_ep_size = sonarr_ep.get("episodeFile", {}).get(
-                "size", None,
-            )
+            sonarr_ep_size = sonarr_ep.episode_file.size if sonarr_ep.episode_file else None
 
             # Do the sizes match? A missing Sonarr file reports no
             # size, so guard against None == None reading as a match
@@ -568,9 +574,7 @@ class DownloadPlanner:
             )
 
             # Check SeaDex release group matches the episode release group in Sonarr
-            sonarr_rg = sonarr_ep.get("episodeFile", {}).get(
-                "releaseGroup", None,
-            )
+            sonarr_rg = sonarr_ep.episode_file.release_group if sonarr_ep.episode_file else None
             sonarr_rg_normalized = normalize_rg(sonarr_rg)
             seadex_rg_normalized = normalize_rg(seadex_rg)
             # If not, flag as should be downloaded if it's not
