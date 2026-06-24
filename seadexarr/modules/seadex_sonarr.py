@@ -213,7 +213,7 @@ def check_ep_by_anibridge(
     return False
 
 
-class SonarrSync(ArrSync):
+class SonarrSync(ArrSync[SonarrItem]):
     """Sonarr sync strategy: owns the Sonarr REST client + episode domain logic.
 
     Implements the :class:`~.protocols.ArrSync` hooks the run machinery drives.

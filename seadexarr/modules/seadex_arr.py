@@ -3,6 +3,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import qbittorrentapi
 import requests
@@ -26,7 +27,7 @@ from .planner import DownloadPlanner
 from .protocols import ArrSync
 from .reporter import GrabRecord, NeedsActionRecord, RunContext, RunReporter
 from .seadex_gateway import SeaDexGateway
-from .seadex_types import SeadexDict
+from .seadex_types import ArrItem, ArrReleaseDict, SeadexDict, SonarrEpisode
 from .torrents import AddOutcome, ReleaseOutcome, TorrentService
 
 
@@ -395,9 +396,9 @@ class SeaDexArr:
 
     def filter_seadex_interactive(
         self,
-        seadex_dict: dict,
+        seadex_dict: SeadexDict,
         sd_entry: EntryRecord,
-    ) -> dict:
+    ) -> SeadexDict:
         """If multiple matches are found, let the user filter them interactively
 
         Args:
@@ -457,11 +458,11 @@ class SeaDexArr:
     def filter_seadex_downloads(
         self,
         al_id: int,
-        seadex_dict: dict,
+        seadex_dict: SeadexDict,
         arr: Arr,
-        arr_release_dict: dict,
-        ep_list: list | None = None,
-    ) -> tuple[list, dict]:
+        arr_release_dict: ArrReleaseDict,
+        ep_list: list[SonarrEpisode] | None = None,
+    ) -> tuple[list[str | None], SeadexDict]:
         """Flip the switch on whether we're downloading this torrent or not
 
         Thin orchestrator seam over the DownloadPlanner: pass it the entry's
@@ -720,7 +721,7 @@ class SeaDexArr:
 
     def run_sync(
         self,
-        strategy: ArrSync,
+        strategy: ArrSync[Any],
         *,
         arr: Arr,
         item_id: int | None,
@@ -729,8 +730,12 @@ class SeaDexArr:
         """Shared run scaffolding for both Arr syncers
 
         Args:
-            strategy (ArrSync): The Arr-specific strategy to drive (injected by
-                the composition root). It already holds this object as its
+            strategy (ArrSync[Any]): The Arr-specific strategy to drive (injected
+                by the composition root, which picks Sonarr/Radarr at runtime).
+                ``ArrSync`` is invariant in its item type, so this agnostic run
+                machinery - which only ever reads the shared ``ArrItem`` surface -
+                holds it as ``ArrSync[Any]``; the per-item loop re-pins the items
+                to ``list[ArrItem]``. It already holds this object as its
                 RunServices, so its hooks are called without passing self.
             arr (Arr): Which Arr is being run
             item_id (int | None): If set, only run for the single item with this
@@ -745,7 +750,7 @@ class SeaDexArr:
         # Start a fresh run context (stats tally + clock + counter snapshot)
         self.reset_run_stats(arr=arr, dry_run=dry_run)
 
-        all_items = strategy.get_items()
+        all_items: list[ArrItem] = strategy.get_items()
 
         # If we're targeting a single item, filter down to it
         if item_id is not None:
@@ -903,9 +908,9 @@ class SeaDexArr:
         anilist_title: str,
         sd_url: str,
         seadex_dict: SeadexDict,
-        torrent_hashes: list,
+        torrent_hashes: list[str | None],
         cache_details: CacheRecord,
-        release_group: list | str | None,
+        release_group: str | list[str | None] | None,
     ) -> bool:
         """Shared per-id tail: add torrents, notify, then cache the outcome
 
@@ -1000,7 +1005,7 @@ class SeaDexArr:
         anilist_title: str,
         sd_url: str,
         seadex_dict: SeadexDict,
-        release_group: list | str | None,
+        release_group: str | list[str | None] | None,
     ) -> bool:
         """Add this title's torrents, notify, and honour the run-wide cap.
 

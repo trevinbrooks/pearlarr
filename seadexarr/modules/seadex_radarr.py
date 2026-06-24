@@ -8,7 +8,7 @@ from .seadex_arr import RunDeps, SeaDexArr
 from .seadex_types import ArrReleaseDict, RadarrItem
 
 
-class RadarrSync(ArrSync):
+class RadarrSync(ArrSync[RadarrItem]):
     """Radarr sync strategy: owns the Radarr REST client + movie domain logic.
 
     Implements the :class:`~.protocols.ArrSync` hooks the run machinery drives.

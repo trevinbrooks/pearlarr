@@ -28,6 +28,7 @@ class _Item:
     id: int
     title: str
     imdbId: str | None
+    monitored: bool
     tvdbId: int
     tmdbId: int
 

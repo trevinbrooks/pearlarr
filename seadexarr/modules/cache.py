@@ -105,7 +105,9 @@ class CacheRecord(TypedDict, total=False):
     url: str
     coverage: str
     updated_at: "str | datetime"
-    torrent_hashes: list[str]
+    # A SeaDex url's infohash is ``str | None`` and is appended unconditionally
+    # (planner.filter_by_torrent_hash), so a remembered list can carry ``None``.
+    torrent_hashes: list[str | None]
 
 
 def save_json(

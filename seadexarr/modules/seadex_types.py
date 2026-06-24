@@ -121,8 +121,9 @@ def as_size_list(size: int | list[int | None] | None) -> list[int]:
 # --- Arr items (Sonarr series / Radarr movies) ------------------------------
 #
 # ``arrapi`` returns attribute-objects (``item.tvdbId``), never dicts, so these
-# are Protocols rather than TypedDicts. The common surface is ``id``/``title``/
-# ``imdbId``; the per-arr external id splits the two leaf protocols (Sonarr keys
+# are Protocols rather than TypedDicts. The common surface is
+# ``id``/``title``/``imdbId``/``monitored`` (the run loop reads ``monitored`` off
+# every item); the per-arr external id splits the two leaf protocols (Sonarr keys
 # on ``tvdbId``, Radarr on ``tmdbId``).
 
 
@@ -133,6 +134,7 @@ class ArrItem(Protocol):
     id: int
     title: str
     imdbId: str | None
+    monitored: bool
 
 
 @runtime_checkable
