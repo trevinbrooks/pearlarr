@@ -8,7 +8,7 @@ def discord_push(
     arr_title: str,
     al_title: str,
     seadex_url: str,
-    fields: list,
+    fields: list[dict[str, str]],
     thumb_url: str | None,
 ) -> bool:
     """Post a message to Discord

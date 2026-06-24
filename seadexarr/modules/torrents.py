@@ -64,7 +64,7 @@ class TorrentService:
         qbit: qbittorrentapi.Client | None,
         session: requests.Session,
         category: str | None,
-        tags: list | None,
+        tags: list[str] | None,
         logger: logging.Logger,
     ) -> None:
         """Wire the adapter to the client and the shared HTTP session.
@@ -75,7 +75,7 @@ class TorrentService:
             session (requests.Session): Shared keep-alive session for the
                 tracker page scrapes.
             category (str | None): qBittorrent category for added torrents.
-            tags (list | None): qBittorrent tags for added torrents.
+            tags (list[str] | None): qBittorrent tags for added torrents.
             logger (logging.Logger): For the "already in qBittorrent" debug line.
         """
 

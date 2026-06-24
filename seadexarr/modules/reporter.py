@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+from rich.text import Text
 from seadex import EntryRecord
 
 from .anilist import get_anilist_title
@@ -39,6 +40,17 @@ from .log import (
 )
 from .seadex_types import SeadexDict
 from .torrents import ReleaseOutcome
+
+type SummaryRow = tuple[str, str | Text | None, str]
+"""One labeled row in a summary per-entry block: ``(label, value, accent)``.
+
+``value`` is the already-resolved field text (``None``/empty rows are dropped by
+:func:`_summary_block` before rendering); ``accent`` is the row's rich style. It
+admits a rich :class:`~rich.text.Text` as well as ``str``: the "torrent" row of
+an "added" block carries the ``group_highlight`` Text whose inline group span the
+console keeps (the file log stringifies it). The ``log_fmt.kv`` consumer accepts
+exactly ``str | Text``.
+"""
 
 
 @dataclass
@@ -208,7 +220,11 @@ class RunReporter:
         # group IS named here. The whole block is yellow - it's the one section
         # asking the user to do something. The title is shown in full; it sits on
         # its own line above the fixed fields, so its length can't break the column.
-        def _summary_block(title: str, title_style: str | None, rows: list) -> None:
+        def _summary_block(
+            title: str,
+            title_style: str | None,
+            rows: list[SummaryRow],
+        ) -> None:
             # Shared layout for the summary's per-entry blocks: the title hangs
             # at indent 2, then labeled gutter fields sit beneath it at indent 3,
             # their values landing in the same column as the live "checking"
@@ -230,7 +246,7 @@ class RunReporter:
                 )
 
         def needs_detail(item: NeedsActionRecord) -> None:
-            rows = [
+            rows: list[SummaryRow] = [
                 ("files", item.coverage, "grey50"),
                 ("group", item.group, "yellow"),
                 ("reason", item.reason, "yellow"),
@@ -258,7 +274,7 @@ class RunReporter:
             # A dry run dims the torrent value too (matching the dimmed title line
             # and the already-dim files/link) so the would-be grabs don't read as
             # real; files and link are dim either way.
-            rows = [
+            rows: list[SummaryRow] = [
                 ("files", item.coverage, "grey50"),
                 ("link", item.url, "grey50"),
                 ("torrent", torrent_value, "grey50" if is_dry_run else "green"),

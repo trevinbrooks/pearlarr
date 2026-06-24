@@ -36,7 +36,7 @@ class Notifier:
         self,
         *,
         arr: str,
-        release_group: list | str | None,
+        release_group: str | list[str | None] | None,
         seadex_dict: SeadexDict,
     ) -> list[dict[str, str]]:
         """Build the Discord embed fields for a grab.
@@ -49,7 +49,7 @@ class Notifier:
 
         Args:
             arr (str): Type of arr instance
-            release_group (list | str | None): Arr release group(s)
+            release_group (str | list[str | None] | None): Arr release group(s)
             seadex_dict (dict): Dictionary of SeaDex releases
         """
 
@@ -63,7 +63,9 @@ class Notifier:
         elif isinstance(release_group, str):
             names = [release_group]
         else:
-            names = list(release_group)
+            # The list can statically carry None entries (the Arr release dict
+            # keys typed str | None); drop them so the joined value is str-only.
+            names = [group for group in release_group if group is not None]
 
         fields.append(
             EmbedField(

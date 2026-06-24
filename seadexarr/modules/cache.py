@@ -265,11 +265,17 @@ class CacheStore:
             .get(field)
         )
 
-    def torrent_hashes(self, arr: Arr, al_id: int) -> list:
+    def torrent_hashes(self, arr: Arr, al_id: int) -> list[str | None]:
         """Torrent hashes already remembered for an entry (empty if none).
 
         Used by the download planner to skip releases already grabbed in a past
         run; returns a list even for a missing record or a stored ``None``.
+
+        The stored hashes are always concrete strings, but the element type is
+        widened to ``str | None`` to match the planner's ``cached_hashes:
+        list[str | None]`` parameter (an invariant ``list``, so ``list[str]``
+        wouldn't be assignable). See the Phase 2 follow-up to make that parameter
+        covariant and tighten this to ``list[str]``.
 
         Args:
             arr (Arr): Arr instance the entry is cached under

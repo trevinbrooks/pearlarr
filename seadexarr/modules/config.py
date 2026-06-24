@@ -218,7 +218,14 @@ class AppConfig:
         return self.data.get(f"{self.arr}_ignore_unmonitored", False)
 
     @property
-    def qbit_info(self) -> dict | None:
+    def qbit_info(self) -> dict[str, Any] | None:
+        # The qBittorrent connection-kwargs bag, splatted as
+        # ``qbittorrentapi.Client(**qbit_info)`` at the composition root. The
+        # values are all strings (host/username/password), but the splat target
+        # is a precisely-typed third-party constructor whose keyword params
+        # include bools; a ``dict[str, str]`` makes that ``**`` splat a static
+        # type error against those bool params. ``Any`` keeps the genuinely
+        # dynamic constructor-splat boundary checkable (see Phase 2 follow-up).
         return self.data.get("qbit_info", None)
 
     @property
@@ -234,7 +241,7 @@ class AppConfig:
         return self.data.get(f"{self.arr}_torrent_category", None)
 
     @property
-    def torrent_tags(self) -> list | None:
+    def torrent_tags(self) -> list[str] | None:
         return self.data.get("torrent_tags", None)
 
     @property
@@ -258,7 +265,7 @@ class AppConfig:
         return self.data.get("want_best", True)
 
     @property
-    def ignore_tags(self) -> list:
+    def ignore_tags(self) -> list[str]:
         ignore_tags = self.data.get("ignore_tags", None)
         if ignore_tags is None:
             ignore_tags = []
