@@ -16,7 +16,7 @@ class KvRecord(TypedDict):
     """Schema for the ``kv`` record carried on a LogRecord via ``extra=``.
 
     Locks the producer (``LogFormatter.kv``) and consumer
-    (``RichConsoleHandler._render_kv``) to the same key names and value types
+    (``RichConsoleHandler._render_kv``) to the same key names and value types,
     so the two sides can't silently drift. ``value`` is a plain string or a
     pre-styled ``Text`` (the only non-str path, from ``group_highlight``).
     """
@@ -35,7 +35,7 @@ class RichConsoleHandler(logging.Handler):
     """Console log handler that renders records through ``rich``.
 
     Routine INFO/DEBUG lines print with no level prefix, so the output reads
-    as clean text. Plain WARNING/ERROR messages get a coloured level badge so
+    as clean text. Plain WARNING/ERROR messages get a colored level badge so
     problems stand out (aligned "key : value" lines never do - see ``kv``).
 
     Presentation is driven by ``extra=`` attributes on the record, so the
@@ -49,26 +49,26 @@ class RichConsoleHandler(logging.Handler):
       light rule ("─", per-title headers) is drawn. Used for the run banner and
       per-title headers.
     * ``rule_char`` ("=" or "-") -> a full-width separator rule (heavy cyan for
-      "=", light grey for "-"), distinguishable without colour. Unmarked ASCII
+      "=", light gray for "-"), distinguishable without color. Unmarked ASCII
       separators (a message of only "=" / "-") are still detected as a fallback.
     * ``kv`` (a dict with ``key`` / ``value`` and optional ``value_style`` /
-      ``indent`` / ``key_width``) -> an aligned, lightly coloured "key : value"
+      ``indent`` / ``key_width``) -> an aligned, lightly colored "key : value"
       detail line whose layout matches ``kv_string`` exactly. Labels are a fixed
-      dim grey so the value reads first; pass ``value_style`` to accent an
-      outcome (e.g. green "added"). No level badge is drawn even for WARNING+ kv
+      dim grey, so the value reads first; pass ``value_style`` to accent an
+      outcome (e.g., green "added"). No level badge is drawn even for WARNING+ kv
       lines, so the value stays in its aligned column; LogCounter still tallies
       the severity for the run summary.
     * ``line_style`` -> a style applied to an otherwise plain message, used to
       dim no-op lines such as the collapsed "cached" one-liner.
-    * ``tail`` (+ optional ``tail_style``) -> an emphasised suffix appended to
-      the message, e.g. a "(marked incomplete)" note.
+    * ``tail`` (+ optional ``tail_style``) -> an emphasized suffix appended to
+      the message, e.g., a "(marked incomplete)" note.
 
     Messages are rendered as literal text rather than ``rich`` markup, so
     bracketed content such as "[1/1]" or "[MARKED INCOMPLETE]" is never
     mistaken for a style tag.
     """
 
-    # Level -> (badge label, rich style). INFO/DEBUG are deliberately absent
+    # Level -> (badge label, rich style). INFO/DEBUG are deliberately absent,
     # so they print without a prefix.
     LEVEL_BADGES = {
         logging.WARNING: ("WARNING", "yellow"),
@@ -92,7 +92,7 @@ class RichConsoleHandler(logging.Handler):
 
         The leading "<indent><key><sep>" segment comes from the shared _kv_prefix
         helper, so this matches kv_string (the file log) exactly. Labels are a
-        fixed dim grey50 so the value reads first. An optional ``tail`` (e.g. a
+        fixed dim grey50 so the value reads first. An optional ``tail`` (e.g., a
         "(marked incomplete)" note) is appended console-side only, mirroring the
         plain-message tail.
         """
@@ -105,7 +105,7 @@ class RichConsoleHandler(logging.Handler):
         line = Text(prefix, style="grey50")
         value = kv["value"]
         if isinstance(value, Text):
-            # A pre-styled value (e.g. a torrent name with its release group
+            # A pre-styled value (e.g., a torrent name with its release group
             # highlighted) already carries its own spans, so append it as-is and
             # let those stand - value_style here would flatten them.
             if len(value):
@@ -142,7 +142,7 @@ class RichConsoleHandler(logging.Handler):
 
             message = record.getMessage()
 
-            # An unexpected exception (logged with exc_info): show a coloured
+            # An unexpected exception (logged with exc_info): show a colored
             # level badge + message, then a rich traceback with locals and a
             # capped frame count so a crash is legible at a glance. The file
             # handler still records the full plain-text traceback (the formatter
@@ -165,11 +165,11 @@ class RichConsoleHandler(logging.Handler):
                     )
                 return
 
-            # A separator rule. The preferred form is an explicit ``rule_char``
+            # A separator rule. The preferred form is an explicit "rule_char"
             # marker; we also fall back to detecting a hand-drawn ASCII rule (a
             # message of only "=" or "-"). A heavy line marks section ("=")
-            # breaks and a light line marks sub ("-") breaks, so the two stay
-            # distinguishable even without colour (piped to a file/Docker logs).
+            # breaks, and a light line marks sub ("-") breaks, so the two stay
+            # distinguishable even without color (piped to a file/Docker logs).
             rule_char = getattr(record, "rule_char", None)
             if rule_char is None:
                 stripped = message.strip()
@@ -209,7 +209,7 @@ class RichConsoleHandler(logging.Handler):
                 line = Text(f"{label:<8} ", style=style)
                 line.append(message)
 
-            # An optional emphasised suffix (e.g. an "incomplete" note)
+            # An optional emphasized suffix (e.g., an "incomplete" note)
             tail = getattr(record, "tail", None)
             if tail is not None:
                 line.append(" ")
@@ -259,8 +259,8 @@ class _CountingLogger(Protocol):
     seadex_counter: LogCounter
 
 
-# The level names the file logger honours; any other value (including ERROR or a
-# typo) warns and falls back to INFO. Kept as an explicit table so the string
+# The level names the file logger honors; any other value (including ERROR or a
+# typo) warns and falls back to INFO. Kept as an explicit table, so the string
 # ladder isn't reinvented for both the logger and the console handler below.
 _LOG_LEVELS = {
     "DEBUG": logging.DEBUG,
@@ -322,7 +322,7 @@ def setup_logger(
 
     # Resolve the configured level once through the name->constant table instead
     # of a hand-rolled string ladder. Only the four names the logger has always
-    # honoured are accepted; anything else (including ERROR or a typo) warns and
+    # honored are accepted; anything else (including ERROR or a typo) warns and
     # falls back to INFO, exactly as before.
     level = _LOG_LEVELS.get(log_level.upper())
     if level is None:
@@ -344,16 +344,16 @@ def setup_logger(
     )
     handler.setFormatter(logfile_formatter)
 
-    # Configure console logging through rich. Routine lines print with no
-    # level prefix; warnings and errors get a coloured badge (see
+    # Configure console logging through the rich. Routine lines print with no
+    # level prefix; warnings and errors get a colored badge (see
     # RichConsoleHandler). rich auto-detects non-interactive output (pipes,
     # Docker logs) and drops ANSI styling there.
     console = Console(file=sys.stdout)
     console_handler = RichConsoleHandler(console)
     # The console always shows INFO+ so routine progress stays visible even when
     # the file logger is raised - except DEBUG, which lowers the threshold, and
-    # CRITICAL, which raises it to match the file logger (the original
-    # DEBUG/CRITICAL/else split, preserved exactly).
+    # CRITICAL, which raises it to match the file logger. (The original
+    # DEBUG/CRITICAL/else split, preserved exactly.)
     if level == logging.DEBUG:
         console_handler.setLevel(logging.DEBUG)
     elif level == logging.CRITICAL:
@@ -381,7 +381,7 @@ def setup_logger(
 # Number of spaces each level of the flat layout is indented by
 INDENT = "  "
 
-# Default key-column width for "key : value" detail lines, with comfortable room
+# Default key-column width for "key: value" detail lines, with comfortable room
 # for the longest key in use ("already have"), so the colons line up.
 KEY_WIDTH = 16
 
@@ -407,7 +407,7 @@ ENTRY_LABEL_OFFSET = STATE_WIDTH + 1
 # at indent level DETAIL_INDENT; the value lands at the title column
 # (len(INDENT) + ENTRY_LABEL_OFFSET). kv adds one space between the padded key
 # and the value, so subtract it here. Derived from the same constants as the
-# title column so the two can't drift.
+# title column, so the two can't drift.
 DETAIL_INDENT = 2
 DETAIL_KEY_WIDTH = (
     (len(INDENT) + ENTRY_LABEL_OFFSET) - (DETAIL_INDENT * len(INDENT)) - 1
@@ -505,7 +505,7 @@ def kv_string(
             colon-less gutter "label value" entry-detail format
     """
 
-    # Built from the shared _kv_prefix helper so the file log matches the
+    # Built from the shared _kv_prefix helper, so the file log matches the
     # console handler (_render_kv) exactly.
     line = _kv_prefix(indent, key, key_width, sep)
 
@@ -531,7 +531,7 @@ def group_highlight(
     group is prepended in brackets so it always reads at the front - a match
     buried mid-name doesn't count. Returns a styled rich ``Text`` for the console;
     the file log sees its plain text via ``str()`` (so a prepended "[group] "
-    still shows, just without colour).
+    still shows, just without color).
 
     With no group (or no name), the plain name is returned unchanged, so the
     caller's own ``value_style`` applies as before.
@@ -540,7 +540,7 @@ def group_highlight(
         name: The torrent name as reported by the client / scraped from source
         group: The recommended SeaDex release group, or None
         group_style: Rich style for the group span/prefix. Defaults to "cyan"
-            (the live log's group colour)
+            (the live log's group color)
         base_style: Rich style for the rest of the name. Defaults to "" (none)
     """
 
@@ -570,7 +570,7 @@ def group_highlight(
         # Not at the front - prepend it so the group always leads. Only the group
         # name takes the accent; the brackets stay in base_style so a prepended
         # "[group]" matches the "[group]" already in a name (brackets base, name
-        # accented) rather than colouring the whole wrapper.
+        # accented) rather than coloring the whole wrapper.
         text.append("[")
         text.append(group, style=group_style)
         text.append("] ")
@@ -584,7 +584,7 @@ def pluralize(n: int, singular: str, plural: str | None = None) -> str:
     Args:
         n: The count
         singular: The singular form, used when n == 1
-        plural: The plural form. Defaults to None, i.e. singular + "s"
+        plural: The plural form. Defaults to None, i.e., singular + "s"
     """
 
     if n == 1:
@@ -593,12 +593,12 @@ def pluralize(n: int, singular: str, plural: str | None = None) -> str:
 
 
 def count_noun(n: int, singular: str, plural: str | None = None) -> str:
-    """Format a count with its correctly pluralised noun, e.g. "3 movies"
+    """Format a count with its correctly pluralized noun, e.g. "3 movies"
 
     Args:
         n: The count
         singular: The singular noun
-        plural: The plural noun. Defaults to None, i.e. singular + "s"
+        plural: The plural noun. Defaults to None, i.e., singular + "s"
     """
 
     return f"{n} {pluralize(n, singular, plural)}"

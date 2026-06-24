@@ -1,16 +1,4 @@
-"""Radarr REST client: the HTTP surface the Radarr syncer talks to.
-
-``RadarrClient`` wraps the high-level ``arrapi`` client (``all_movies``)
-and the one raw endpoint the syncer needs (``/api/v3/moviefile``)
-behind a small, independently-testable adapter, so the syncer's hook bodies stop
-mixing HTTP concerns with domain logic. ``collect_anime_movies`` is the shared
-"keep the movies that have an AniList mapping" scan, reused by the Radarr syncer
-and by Sonarr's ``ignore_movies_in_radarr`` cross-check (which used to build a
-whole nested ``SeaDexRadarr`` just to call it).
-
-Extracted from ``SeaDexRadarr`` in Phase 5a of the refactor (see
-``REFACTOR_PLAN.md``); behaviour-preserving.
-"""
+"""Radarr REST client: the HTTP surface the Radarr syncer talks to."""
 
 import logging
 from collections.abc import Callable

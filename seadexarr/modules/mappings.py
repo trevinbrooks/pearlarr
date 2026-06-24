@@ -4,12 +4,6 @@
 Anime-IDs JSON, the AniDB anime-list XML, and the anibridge graph): it
 downloads/refreshes them, parses and indexes them, and resolves an Arr's
 external ids (TVDB / TMDB / IMDb) to the AniList ids they map to.
-
-Extracted from ``SeaDexArr`` in Phase 3 of the refactor (see
-``REFACTOR_PLAN.md``); behaviour-preserving. The module-global parse memo
-(:data:`_PARSED_MAPPING_CACHE`) is deliberately module-level, not instance
-state, so a scheduled Radarr->Sonarr cycle reuses the first instance's parse
-of an unchanged on-disk file.
 """
 
 import json

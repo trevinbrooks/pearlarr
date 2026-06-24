@@ -190,10 +190,7 @@ class SeaDexArr:
         """Receive the shared collaborators and set up per-run state.
 
         Args:
-            deps (RunDeps): The shared collaborators, built and injected by the
-                composition root (``cli.py``). Unpacked into the attribute names
-                the run loop and pipeline already read; the engine does not build
-                any of them.
+            deps (RunDeps): The shared collaborators
             arr (Arr, optional): Which Arr is being run. Defaults to Arr.SONARR.
         """
 

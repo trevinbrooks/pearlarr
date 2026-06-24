@@ -3,11 +3,6 @@
 ``Notifier`` owns the Discord webhook - building the per-release embed fields
 from a shaped ``seadex_dict`` and pushing the message. It's gated on the
 configured webhook url; with none, it's a no-op.
-
-Extracted from ``SeaDexArr`` in Phase 3 of the refactor (see
-``REFACTOR_PLAN.md``); behaviour-preserving. The AniList cover thumbnail is
-resolved by the AniList gateway and passed in, so the notifier stays free of the
-AniList cache.
 """
 
 from .discord import discord_push

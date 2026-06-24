@@ -1,10 +1,4 @@
-"""Pure episode-coverage formatting helpers.
-
-Extracted verbatim from ``seadex_arr.py`` in the Phase 1 decomposition (see
-``REFACTOR_PLAN.md``). These functions are pure -- they format Sonarr / SeaDex
-episode data for display and carry no I/O or shared state. ``SeaDexArr`` keeps
-thin delegating methods so subclasses can still call them via ``self``.
-"""
+"""Pure episode-coverage formatting helpers."""
 
 from collections.abc import Iterable
 

@@ -1,9 +1,5 @@
 """The download-decision engine: which SeaDex releases to grab.
 
-The pure set-logic helpers (``normalize_rg`` .. ``get_all_seadex_rgs_per_episode``)
-were relocated here verbatim in Phase 1; the ``DownloadPlanner`` class that
-consumes them — the heart of the app — landed in Phase 4 (see ``REFACTOR_PLAN.md``).
-
 ``DownloadPlanner`` is near-pure: it consumes the shaped ``seadex_dict``, the
 Arr's current release info, an optional episode list, and the cached torrent
 hashes, and returns a :class:`PlanResult`. It flips the per-url ``download``

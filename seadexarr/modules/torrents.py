@@ -1,14 +1,4 @@
-"""qBittorrent adapter: parse a SeaDex release URL and add it to the client.
-
-``TorrentService`` owns the per-tracker URL parsing and the qBittorrent
-interaction (dedup-by-hash, add, read the name back). It returns the add status
-and the resolved name; the orchestrator keeps the download-flag / public_only /
-tracker filtering and the run-state bookkeeping (stats, counters, the
-max-torrents cap) around it - that knot is untied in Phase 4 behind RunContext.
-
-Extracted from ``SeaDexArr`` in Phase 3 of the refactor (see
-``REFACTOR_PLAN.md``); behaviour-preserving.
-"""
+"""qBittorrent adapter: parse a SeaDex release URL and add it to the client."""
 
 import logging
 from dataclasses import dataclass

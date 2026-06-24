@@ -1,22 +1,3 @@
-"""Per-run state (``RunContext``) and presentation (``RunReporter``).
-
-These two collaborators are the linchpin of the orchestrator's decoupling
-(see ``REFACTOR_PLAN.md`` §6). ``RunContext`` is the per-run state bag that used
-to live as scattered mutable ``self.*`` fields — the stats tally, the running
-torrent count, the title/url/coverage currently being processed, the run clock,
-and the logger-counter snapshot. ``RunReporter`` owns every ``log_*`` method and
-the end-of-run summary; it reads and writes the context rather than reaching into
-the orchestrator.
-
-A fresh ``RunContext`` is built at the top of each run; the reporter is built once
-and takes the context as an argument on the methods that need run state, so it
-stays valid across runs. The orchestrator keeps thin ``log_*`` delegators (which
-inject the current context) so the Sonarr/Radarr adapters call the same surface
-as before.
-
-Extracted from ``SeaDexArr`` in Phase 4b of the refactor; behaviour-preserving.
-"""
-
 import logging
 import time
 from dataclasses import dataclass, field

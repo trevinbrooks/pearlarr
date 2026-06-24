@@ -2,16 +2,8 @@
 
 ``SonarrClient`` wraps the high-level ``arrapi`` client (``all_series``)
 and the two raw endpoints the syncer needs
-(``/api/v3/episode`` and ``/api/v3/parse``) behind a small,
-independently-testable adapter, so the syncer's hook bodies stop mixing HTTP
-concerns with the episode-mapping domain logic. The per-run episode-list memo
-and the persisted parse cache stay on the syncer — they're caching policy, not
-transport.
-
-Extracted from ``SeaDexSonarr`` in Phase 5a of the refactor (see
-``REFACTOR_PLAN.md``); behaviour-preserving.
+(``/api/v3/episode`` and ``/api/v3/parse``)
 """
-
 import logging
 from urllib.parse import urlencode
 

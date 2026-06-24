@@ -6,9 +6,9 @@ seadex_arr.py:368-376) and threaded through the decision engine
 (:mod:`seadexarr.modules.planner`) and the Discord notifier
 (:mod:`seadexarr.modules.notify`). The two keyed levels stay plain ``dict``\\ s
 (release groups keyed by name, urls keyed by url string), but the *value
-records* at each level are modelled as :func:`dataclasses.dataclass`: a real
+records* at each level are modeled as :func:`dataclasses.dataclass`: a real
 domain model with attribute access (``item.download`` rather than
-``item["download"]``) and defaults that make a partially-built record legal. Each
+``item["download"]``) and defaults that make a partially built record legal. Each
 field carries a default because the records are filled in across construction
 stages (``episodes``/``all_episodes`` are appended later by the episode parser,
 ``download`` is flipped per call), so a freshly built record need not pass every
@@ -16,7 +16,7 @@ field.
 
 The defaults also encode one load-bearing distinction:
 ``SeadexReleaseGroupItem.all_episodes`` is ``None`` when no episode parsing ran
-(e.g. Radarr movies) and an empty ``list`` when parsing ran but found nothing -
+(Radarr movies) and an empty ``list`` when parsing ran but found nothing -
 ``get_same_files_groups`` keys off exactly that difference.
 """
 
@@ -119,13 +119,6 @@ def as_size_list(size: int | list[int | None] | None) -> list[int]:
 
 
 # --- Arr items (Sonarr series / Radarr movies) ------------------------------
-#
-# ``arrapi`` returns attribute-objects (``item.tvdbId``), never dicts, so these
-# are Protocols rather than TypedDicts. The common surface is
-# ``id``/``title``/``imdbId``/``monitored`` (the run loop reads ``monitored`` off
-# every item); the per-arr external id splits the two leaf protocols (Sonarr keys
-# on ``tvdbId``, Radarr on ``tmdbId``).
-
 
 @runtime_checkable
 class ArrItem(Protocol):
@@ -152,14 +145,6 @@ class RadarrItem(ArrItem, Protocol):
 
 
 # --- Sonarr episodes (``/api/v3/episode`` JSON) -----------------------------
-#
-# Parsed once at the client boundary (``SonarrClient.episodes`` via
-# ``from_api``); the strategy, coverage helpers and planner then read attributes
-# instead of ``ep.get(key, default)``. Each field carries the default the former
-# ``.get`` reads used, so a record missing a key reduces to a never-matching
-# value (an absent season/episode is ``None``; callers that need the
-# ``SONARR_MISSING_KEY`` sentinel substitute it explicitly).
-
 
 @dataclass(frozen=True, slots=True)
 class SonarrEpisodeFile:
@@ -213,15 +198,6 @@ type TvdbMappings = dict[int, list[tuple[int, int | None]]]
 
 
 # --- AniList Media node (cached GraphQL ``Media`` record) --------------------
-#
-# The AniList cache (``al_cache``) holds the raw GraphQL body
-# ``{"data": {"Media": {...}}}`` keyed by id; the request/response bodies stay
-# dynamic ``dict``\\ s up to the cached-node read path. ``_get_media`` extracts
-# the ``Media`` node once and parses it into this frozen record, so the public
-# ``get_anilist_*`` helpers read attributes (``node.episodes``) instead of
-# chained ``.get()`` walks. Each field carries the default the former ``.get``
-# read produced; a missing node reduces to the ``EMPTY`` all-``None`` record.
-
 
 @dataclass(frozen=True, slots=True)
 class AniListMediaNode:

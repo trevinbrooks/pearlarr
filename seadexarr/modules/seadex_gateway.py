@@ -3,11 +3,6 @@
 ``SeaDexGateway`` wraps the SeaDex client with the connection-error handling the
 orchestrator relies on (a missing entry and a SeaDex outage both degrade to
 ``None`` rather than raising).
-
-Extracted from ``SeaDexArr`` in Phase 3 of the refactor (see
-``REFACTOR_PLAN.md``); behaviour-preserving. The release-shaping
-(``get_seadex_dict``) is config-coupled and stays with the decision engine until
-it moves alongside the planner.
 """
 
 import logging
