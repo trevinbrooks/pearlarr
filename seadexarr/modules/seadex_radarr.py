@@ -171,7 +171,11 @@ class RadarrSync(ArrSync[RadarrItem]):
         )
 
     def import_completed(
-        self, pending: PendingImport, content_path: str,
+        self,
+        pending: PendingImport,
+        content_path: str,
+        *,
+        force: bool = False,
     ) -> ImportReadiness:
         """No-op: the series-pinned manual import is Sonarr-only (out of scope).
 

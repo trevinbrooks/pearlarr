@@ -12,18 +12,28 @@ from .cache import UPDATED_AT_STR_FORMAT, CacheRecord, record_is_fresh
 from .config import Arr
 from .log import EntryState, indent_string
 from .manual_import import (
+    CandidateFile,
+    ImportDecision,
     ImportReadiness,
     ImportWaitMode,
     PendingImport,
+    QueueRecordView,
     QueueVerdict,
-    assign_episode_ids,
+    all_targets_done,
+    build_authoritative_map,
     build_episode_id_map,
-    classify_queue_states,
+    classify_queue,
     derive_languages,
+    episode_file_statuses,
+    episode_ids_for_parsed,
+    normalize_basename,
+    normalize_group,
     parse_quality_from_filename,
+    plan_import_files,
     resolve_language_objects,
     resolve_quality_model,
     select_quality,
+    targets_needing_import,
 )
 from .mappings import MappingEntry, MappingMode
 from .planner import get_episode_keys
@@ -626,6 +636,19 @@ class SonarrSync(ArrSync[SonarrItem]):
             pending_seeds=pending_seeds,
         )
 
+    @staticmethod
+    def _is_video_candidate(basename: str) -> bool:
+        """Whether a filename is an importable video (not a sub/font/NCED/sample).
+
+        Mirrors the skip rules in :meth:`parse_episodes_from_seadex` so the seed,
+        the import-time repair, and the parse all agree on which files are even
+        candidates for an episode.
+        """
+
+        if any(skip in basename for skip in TORRENT_FILENAMES_TO_SKIP):
+            return False
+        return os.path.splitext(basename)[1].lower() not in NON_VIDEO_EXTENSIONS
+
     def _build_pending_seeds(
         self,
         *,
@@ -636,10 +659,13 @@ class SonarrSync(ArrSync[SonarrItem]):
     ) -> dict[str, PendingImport]:
         """Build ``infohash -> PendingImport`` for every release marked to grab.
 
-        For each downloadable url with a hash, map its SeaDex files to
-        authoritative Sonarr episode ids via the cached ``/parse`` results and
-        the ``(season, episode) -> id`` index, so the eventual manual import can
-        override every field Sonarr would otherwise blind-parse.
+        For each downloadable url with a hash, seed our authoritative
+        ``normalized basename -> episode ids`` map from the cached ``/parse``
+        results and the ``(season, episode) -> id`` index. The map is best-effort
+        at grab time (the series may not be fully in Sonarr yet); it self-heals at
+        import time, when the files are on disk and the series exists, so a record
+        is seeded for every grabbed torrent that carries at least one video file -
+        not only the ones already fully mapped.
 
         Args:
             seadex_dict (SeadexDict): The filtered releases; ``url_item.download``
@@ -650,7 +676,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         Returns:
             dict[str, PendingImport]: Seeds keyed by infohash (empty when nothing
-            is downloadable / parseable).
+            downloadable carries a video file).
         """
 
         ep_id_map = build_episode_id_map(ep_list)
@@ -665,49 +691,57 @@ class SonarrSync(ArrSync[SonarrItem]):
                 if not (url_item.download and url_item.hash):
                     continue
 
-                file_episode_map: dict[str, list[int]] = {}
-                flat_ids: list[int] = []
-                seasons: set[int] = set()
+                # The video files this torrent should import (subs / fonts / NCED
+                # dropped), paired with their sizes for the order-based last resort.
+                video_files: list[str] = []
+                video_sizes: list[int] = []
+                for seadex_file, size in zip(
+                    url_item.files, url_item.size, strict=False,
+                ):
+                    base = os.path.basename(seadex_file)
+                    if self._is_video_candidate(base):
+                        video_files.append(base)
+                        video_sizes.append(size)
 
-                for seadex_file in url_item.files:
-                    f = os.path.basename(seadex_file)
-
-                    record = parse_cache.get(f)
-                    if not record:
-                        continue
-
-                    file_ids: list[int] = []
-                    for ep in record.get("episodes", []):
-                        season = ep.get("season")
-                        episode = ep.get("episode")
-                        ep_id = ep_id_map.get((season, episode))
-                        if ep_id is None:
-                            continue
-                        file_ids.append(ep_id)
-                        flat_ids.append(ep_id)
-                        if season is not None:
-                            seasons.add(season)
-
-                    if file_ids:
-                        file_episode_map[f] = file_ids
-
-                # Nothing mapped to a real episode id: persisting a record here
-                # would only re-poll a never-importable download every run until
-                # the TTL drops it, so skip it (the release is still grabbed).
-                if not (file_episode_map or flat_ids):
+                # No importable video files at all -> nothing to track.
+                if not video_files:
                     continue
 
+                # Best-effort grab-time mapping, keyed by NORMALIZED basename so it
+                # matches the on-disk leaves at import time (NFC/NFD-safe).
+                file_episode_map: dict[str, list[int]] = {}
+                seasons: set[int] = set()
+                for base in video_files:
+                    record = parse_cache.get(base)
+                    if not record:
+                        continue
+                    parsed = record.get("episodes", [])
+                    file_ids = episode_ids_for_parsed(parsed, ep_id_map)
+                    if file_ids:
+                        file_episode_map[normalize_basename(base)] = file_ids
+                        seasons.update(
+                            ep["season"] for ep in parsed if ep.get("season") is not None
+                        )
+
                 season_number = seasons.pop() if len(seasons) == 1 else None
+
+                # The flat fallback is a legitimate guess ONLY for a genuine
+                # single-file torrent; a multi-file pack leaves it empty so the
+                # single-file rule can never stamp a whole season onto one file.
+                episode_ids: list[int] = []
+                if len(video_files) == 1 and file_episode_map:
+                    episode_ids = next(iter(file_episode_map.values()))
 
                 pending_seeds[url_item.hash] = PendingImport(
                     infohash=url_item.hash,
                     series_id=sonarr_series_id,
                     file_episode_map=file_episode_map,
-                    episode_ids=flat_ids,
+                    episode_ids=episode_ids,
                     release_group=srg,
                     is_dual_audio=url_item.is_dual_audio,
                     season_number=season_number,
-                    seadex_files=[os.path.basename(f) for f in url_item.files],
+                    seadex_files=video_files,
+                    seadex_sizes=video_sizes,
                     title=anilist_title,
                     added_at=added_at,
                 )
@@ -715,53 +749,145 @@ class SonarrSync(ArrSync[SonarrItem]):
         return pending_seeds
 
     def import_completed(
-        self, pending: PendingImport, content_path: str,
+        self,
+        pending: PendingImport,
+        content_path: str,
+        *,
+        force: bool = False,
     ) -> ImportReadiness:
-        """One reconcile poll for a completed download: rescan, read queue, act.
+        """One reconcile/import poll for a completed download.
 
-        Asks Sonarr to rescan its download clients (throttled), so its queue
-        reflects the finished torrent and the freshly-refreshed remote mount, then
-        reads the queue and branches on the download's aggregate
-        ``trackedDownloadState`` (a season pack is several records sharing the
-        infohash):
+        Reads the current episode files and Sonarr's (refreshed) queue as the
+        source of truth - never the cache:
 
-          * Sonarr already imported it -> ``IMPORTED`` (drop the record).
-          * Sonarr is still downloading / importing -> ``RETRY`` (let it finish).
-          * Sonarr can't auto-import it (``importBlocked`` / ``failed``) or isn't
-            tracking it at all -> drive our authoritative series-pinned manual
-            import.
-
-        Called repeatedly by the engine's blocking wait loop; the return value
-        tells the loop whether to stop (``IMPORTED``/``LEAVE``) or poll again
-        (``RETRY``).
+          * every intended episode already holds the recommended release ->
+            ``IMPORTED`` (drop the record).
+          * Sonarr is genuinely importing right now -> ``RETRY`` (don't race it).
+          * a clean ``importPending`` -> ``RETRY`` until ``force`` (the engine
+            forces on reconcile and on the final in-bound blocking poll, so a
+            download Sonarr will never import - e.g. Completed Download Handling
+            off, which parks it in ``importPending`` forever - is still imported
+            rather than waited on indefinitely).
+          * otherwise (``importBlocked`` / ``failed`` / not tracked / forced clean
+            pending) -> drive our authoritative series-pinned manual import.
 
         Args:
             pending (PendingImport): The durable record for the completed torrent.
             content_path (str): The qBittorrent ``content_path`` to import from.
+            force (bool): Stop deferring to Sonarr on a clean ``importPending``.
         """
 
         label = pending.title or pending.infohash
 
-        # Make Sonarr re-scan its download clients (throttled) so the queue we read
-        # next reflects the completed download and the refreshed mount path.
+        # Rescan (throttled) so the queue we read reflects the finished torrent.
         self._refresh_sonarr_downloads()
 
-        states = self._queue_states(pending.infohash)
-        verdict = classify_queue_states(states)
+        # Episode files are the source of truth for "already imported"; fetch the
+        # series episodes once and reuse them for the manual import below.
+        episodes = self._episodes_for_series(pending.series_id)
+        episodes_by_id = {ep.id: ep for ep in episodes if ep.id}
+        recommended = self._recommended_groups(pending.series_id, pending.release_group)
 
-        if verdict is QueueVerdict.DONE:
-            self.logger.info(indent_string(f"{label}: Sonarr imported it"))
-            return ImportReadiness.IMPORTED
+        # Fast path: when our grab-time map already covers every video file, the
+        # done-check is trustworthy without scanning the folder. An incomplete map
+        # falls through to the manual import, which repairs it from the on-disk
+        # files and re-checks against the complete set.
+        seeded_targets = self._pending_target_ids(pending)
+        if seeded_targets and self._seed_map_is_complete(pending):
+            statuses = episode_file_statuses(seeded_targets, episodes_by_id, recommended)
+            if all_targets_done(statuses):
+                self.logger.debug(
+                    indent_string(f"{label}: already imported (recommended files present)"),
+                )
+                return ImportReadiness.IMPORTED
+
+        verdict = classify_queue(self._queue_record_views(pending.infohash))
         if verdict is QueueVerdict.WAIT:
-            shown = ", ".join(sorted({s.casefold() for s in states})) or "working"
-            self.logger.info(
-                indent_string(f"{label}: Sonarr is handling it ({shown}); waiting"),
-            )
+            self.logger.debug(indent_string(f"{label}: Sonarr is importing; waiting"))
+            return ImportReadiness.RETRY
+        if verdict is QueueVerdict.PENDING_CLEAN and not force:
+            self.logger.debug(indent_string(f"{label}: Sonarr has it pending; waiting"))
             return ImportReadiness.RETRY
 
-        # STEP_IN: Sonarr can't / won't auto-import (importBlocked / failed / not
-        # tracked) - drive our own authoritative manual import.
-        return self._manual_import(pending, content_path, label)
+        # STEP_IN, an empty queue, or a forced clean-pending: drive our import.
+        return self._manual_import(
+            pending,
+            content_path,
+            label,
+            episodes_by_id=episodes_by_id,
+            recommended_groups=recommended,
+        )
+
+    def _episodes_for_series(self, series_id: int) -> list[SonarrEpisode]:
+        """The series' episodes, reusing the per-run cache or fetching on a miss.
+
+        A reconcile / blocking pass may not have run ``process_al_id`` for this
+        series, so the cache can be cold; a transient fetch failure returns an
+        empty list (not cached) so a later poll retries.
+        """
+
+        cached = self._ep_list_cache.get(series_id)
+        if cached is not None:
+            return cached
+        fetched = self.sonarr.episodes(series_id)
+        if fetched is None:
+            return []
+        self._ep_list_cache[series_id] = fetched
+        return fetched
+
+    def _series_pending_records(self, series_id: int) -> list[dict]:
+        """Raw durable pending records for one series (any release group)."""
+
+        store = self.cache_store.data.get("pending_imports", {}).get(
+            Arr.SONARR.value, {},
+        )
+        return [
+            raw
+            for raw in store.values()
+            if isinstance(raw, dict) and raw.get("series_id") == series_id
+        ]
+
+    def _recommended_groups(self, series_id: int, this_group: str) -> set[str]:
+        """Normalized recommended groups for the series (the overwrite-guard set).
+
+        The union of this torrent's group and the group of every other pending
+        record we grabbed for the same series, so an episode our mapping assigned
+        to another preferred torrent is never overwritten by this one.
+        """
+
+        groups: set[str] = set()
+        if this_group:
+            groups.add(normalize_group(this_group))
+        for raw in self._series_pending_records(series_id):
+            group = raw.get("release_group")
+            if group:
+                groups.add(normalize_group(group))
+        return groups
+
+    @staticmethod
+    def _pending_target_ids(pending: PendingImport) -> list[int]:
+        """Our intended episode ids for a record (map values + single-file fallback)."""
+
+        ids: list[int] = []
+        seen: set[int] = set()
+        for file_ids in pending.file_episode_map.values():
+            for ep_id in file_ids:
+                if ep_id and ep_id not in seen:
+                    seen.add(ep_id)
+                    ids.append(ep_id)
+        for ep_id in pending.episode_ids:
+            if ep_id and ep_id not in seen:
+                seen.add(ep_id)
+                ids.append(ep_id)
+        return ids
+
+    @staticmethod
+    def _seed_map_is_complete(pending: PendingImport) -> bool:
+        """Whether the grab-time map already covers every video file we grabbed."""
+
+        return bool(pending.seadex_files) and len(pending.file_episode_map) >= len(
+            pending.seadex_files,
+        )
 
     def _refresh_sonarr_downloads(self) -> None:
         """Queue RefreshMonitoredDownloads (throttled) and wait for it, best-effort.
@@ -795,19 +921,21 @@ class SonarrSync(ArrSync[SonarrItem]):
                 return
             time.sleep(_REFRESH_COMMAND_POLL_S)
 
-    def _queue_states(self, infohash: str) -> list[str]:
-        """The ``trackedDownloadState`` of every queue record for this download.
+    def _queue_record_views(self, infohash: str) -> list[QueueRecordView]:
+        """Reduce this download's queue records to what :func:`classify_queue` needs.
 
         Matches records to the torrent by ``downloadId`` (case-insensitively;
-        Sonarr stores the infohash uppercased). Records with no tracked state are
-        dropped. An empty list means Sonarr isn't tracking the download.
+        Sonarr stores the infohash uppercased) and keeps the state, status, and
+        whether status messages are present - the three signals that tell a healthy
+        pending item from a stuck/blocked one. Records with no tracked state are
+        dropped; an empty result means Sonarr isn't tracking the download.
 
         Args:
             infohash (str): The torrent infohash (the download id).
         """
 
         target = infohash.casefold()
-        states: list[str] = []
+        views: list[QueueRecordView] = []
         for record in self.sonarr.queue():
             if not isinstance(record, dict):
                 continue
@@ -815,32 +943,48 @@ class SonarrSync(ArrSync[SonarrItem]):
             if not isinstance(download_id, str) or download_id.casefold() != target:
                 continue
             state = record.get("trackedDownloadState")
-            if isinstance(state, str) and state:
-                states.append(state)
-        return states
+            if not isinstance(state, str) or not state:
+                continue
+            status = record.get("trackedDownloadStatus")
+            views.append(
+                QueueRecordView(
+                    state=state,
+                    status=status if isinstance(status, str) else "",
+                    has_messages=bool(record.get("statusMessages")),
+                ),
+            )
+        return views
 
     def _manual_import(
-        self, pending: PendingImport, content_path: str, label: str,
+        self,
+        pending: PendingImport,
+        content_path: str,
+        label: str,
+        *,
+        episodes_by_id: dict[int, SonarrEpisode],
+        recommended_groups: set[str],
     ) -> ImportReadiness:
         """Drive our authoritative series-pinned manual import for one download.
 
-        Asks Sonarr for the manual-import candidates under ``content_path`` (pinned
-        to ``pending.series_id`` so the parse runs in the context of the known
-        series), then builds a payload that overrides every field we have
-        authoritative data for - series id, episode ids, release group, download
-        id - and layers the quality (ours -> Sonarr's in-context -> configured
-        default) and languages (dual vs. single).
+        Scans ``content_path`` for candidates (pinned to ``pending.series_id``),
+        repairs our file->episode map from the actual on-disk files (re-parsing
+        whatever the seed didn't cover, mapped through OUR ``(season, episode) ->
+        id`` index - never Sonarr's candidate episode assignment), then imports
+        EXACTLY the files our map intends: each file's episodes that don't already
+        hold a recommended release (so a recommended file is never overwritten) and
+        no file outside our map (so an episode our mapping gave to another preferred
+        torrent is never imported here). An intended file Sonarr can't see yet is
+        retried, never silently skipped.
 
-        Returns ``RETRY`` when nothing is ready yet (the scan failed transiently,
-        or Sonarr can't see the files on its mount); ``IMPORTED`` when the import
-        was queued or every candidate was already imported by Sonarr; ``LEAVE``
-        when candidates exist but none map to one of our episodes (retrying the
-        same files won't help).
+        Returns ``RETRY`` when the scan failed or an intended file isn't on disk
+        yet, ``IMPORTED`` when every intended episode is satisfied.
 
         Args:
             pending (PendingImport): The durable record for the completed torrent.
             content_path (str): The qBittorrent ``content_path`` to import from.
             label (str): Display label for the log lines.
+            episodes_by_id (dict[int, SonarrEpisode]): Current series episodes by id.
+            recommended_groups (set[str]): Normalized recommended-group guard set.
         """
 
         candidates = self.sonarr.manual_import_candidates(
@@ -850,134 +994,229 @@ class SonarrSync(ArrSync[SonarrItem]):
             filter_existing_files=False,
         )
         if candidates is None:
-            # Transient (timeout / non-200) - the scan will likely succeed once
-            # the remote files are cached; the client already warned. Ask again.
+            # Transient (timeout / non-200); the client already warned. Ask again.
             return ImportReadiness.RETRY
-        if not candidates:
-            self.logger.info(
-                indent_string(
-                    f"{label}: Sonarr sees no files at {content_path} yet; waiting",
-                ),
+
+        candidates_by_basename = self._candidate_files(candidates)
+        ep_id_map = build_episode_id_map(list(episodes_by_id.values()))
+        authoritative_map = self._repair_authoritative_map(
+            pending, candidates_by_basename, ep_id_map,
+        )
+
+        if not authoritative_map:
+            self.logger.debug(
+                indent_string(f"{label}: no mappable files at {content_path} yet"),
             )
             return ImportReadiness.RETRY
 
-        # Lazily fetch + cache the quality-definition / language lists for the
-        # run so repeated imports don't re-hit these endpoints.
-        if self._quality_defs_cache is None:
-            self._quality_defs_cache = self.sonarr.quality_definitions()
-        if self._languages_cache is None:
-            self._languages_cache = self.sonarr.languages()
-        quality_defs = self._quality_defs_cache
-        lang_defs = self._languages_cache
+        # Done-check against the COMPLETE (repaired) intended set, from the files.
+        target_ids = sorted({i for ids in authoritative_map.values() for i in ids})
+        statuses = episode_file_statuses(target_ids, episodes_by_id, recommended_groups)
+        if all_targets_done(statuses):
+            self.logger.debug(
+                indent_string(f"{label}: already imported (recommended files present)"),
+            )
+            return ImportReadiness.IMPORTED
 
-        assigned = assign_episode_ids(
-            [os.path.basename(c["path"]) for c in candidates if c.get("path")],
-            pending.file_episode_map,
-            pending.episode_ids,
-        )
+        needing = targets_needing_import(statuses)
+        decisions = plan_import_files(authoritative_map, candidates_by_basename, needing)
 
-        lang_names = derive_languages(
-            pending.is_dual_audio,
-            self._config.import_languages_dual,
-            self._config.import_languages_single,
-        )
-        lang_objs = resolve_language_objects(lang_names, lang_defs)
+        lang_objs = self._import_language_objects(pending)
+        quality_defs = self._quality_definitions()
 
         files: list[dict] = []
-        already_imported = False
-        for c in candidates:
-            path = c.get("path")
-            if not path:
-                continue
-            base = os.path.basename(path)
-
-            # Files Sonarr already has (it imported them itself, or they exist):
-            # not importable, and seeing only these means the download is done.
-            if _rejection_matches(c, _ALREADY_IMPORTED_TOKENS):
-                already_imported = True
-                self.logger.info(
-                    indent_string(f"{label}: {base} already imported by Sonarr"),
+        missing: list[str] = []
+        for decision in decisions:
+            if decision.action == "missing":
+                missing.append(decision.basename)
+            elif decision.action == "import":
+                files.append(
+                    self._build_file_entry(decision, pending, lang_objs, quality_defs, label),
                 )
-                continue
-            if _rejection_matches(c, _SAMPLE_TOKENS):
-                self.logger.info(indent_string(f"{label}: skipping sample {base}"))
-                continue
+            # "sample" / "already" / "skip_done" -> nothing to import for this file.
 
-            ep_ids = assigned.get(base)
-            if not ep_ids:
-                self.logger.info(
-                    indent_string(
-                        f"{label}: no authoritative episode mapping for {base}; skipping",
-                    ),
-                )
-                continue
-
-            file_entry: dict = {
-                "path": path,
-                "seriesId": pending.series_id,
-                "episodeIds": ep_ids,
-                "releaseGroup": pending.release_group,
-                "downloadId": pending.infohash,
-                "languages": lang_objs,
-            }
-
-            our_q = parse_quality_from_filename(base)
-            sel = select_quality(
-                our_q, c.get("quality"), self._config.import_default_quality,
-            )
-            if sel.model is not None:
-                file_entry["quality"] = sel.model
-            elif sel.name is not None:
-                quality_model = resolve_quality_model(sel.name, quality_defs)
-                if quality_model is not None:
-                    file_entry["quality"] = quality_model
-                else:
-                    self.logger.warning(
-                        indent_string(
-                            f"Could not resolve quality '{sel.name}' for {base}; "
-                            f"importing without an explicit quality",
-                        ),
-                    )
-            else:
-                self.logger.warning(
-                    indent_string(
-                        f"Unknown quality for {base}; importing without an "
-                        f"explicit quality (re-grab risk)",
-                    ),
-                )
-
-            files.append(file_entry)
-
-        if not files:
-            if already_imported:
-                self.logger.info(
-                    indent_string(f"{label}: all files already imported by Sonarr"),
-                )
-                return ImportReadiness.IMPORTED
-            self.logger.info(
+        if missing:
+            # Intended files our map covers but Sonarr can't see yet: never drop
+            # them silently. Warn (loud) and retry; the engine's deadline bounds the
+            # wait and leaves the record pending for a later run.
+            self.logger.warning(
                 indent_string(
-                    f"{label}: nothing importable; leaving for a later run",
+                    f"{label}: {len(missing)} intended file(s) not visible to Sonarr "
+                    f"yet under {content_path}; will retry",
                 ),
             )
-            return ImportReadiness.LEAVE
+
+        if not files:
+            # Nothing to queue this poll: retry if files are merely missing, else
+            # everything intended is already satisfied (already/sample/skip_done).
+            return ImportReadiness.RETRY if missing else ImportReadiness.IMPORTED
 
         cmd_id = self.sonarr.manual_import_execute(
             files=files,
             import_mode=self._config.import_mode,
         )
         if cmd_id is None:
-            self.logger.info(
+            self.logger.debug(
                 indent_string(f"{label}: Sonarr rejected the import command; will retry"),
             )
             return ImportReadiness.RETRY
 
-        self.logger.info(
-            indent_string(
-                f"{label}: queued manual import of {len(files)} file(s) "
-                f"(command {cmd_id})",
-            ),
+        self.log_fmt.detail(
+            "imported",
+            f"{label}: {len(files)} file(s) (command {cmd_id})",
+            value_style="green",
         )
-        return ImportReadiness.IMPORTED
+        # Keep the record if some intended files are still missing (so they import
+        # on a later poll / run); otherwise we've placed everything we intended.
+        return ImportReadiness.RETRY if missing else ImportReadiness.IMPORTED
+
+    def _candidate_files(self, candidates: list[dict]) -> dict[str, CandidateFile]:
+        """Index on-disk manual-import candidates by normalized basename."""
+
+        by_basename: dict[str, CandidateFile] = {}
+        for candidate in candidates:
+            path = candidate.get("path")
+            if not path:
+                continue
+            base = normalize_basename(os.path.basename(path))
+            by_basename[base] = CandidateFile(
+                basename=base,
+                path=path,
+                quality=candidate.get("quality"),
+                is_sample=_rejection_matches(candidate, _SAMPLE_TOKENS),
+                is_already_imported=_rejection_matches(candidate, _ALREADY_IMPORTED_TOKENS),
+            )
+        return by_basename
+
+    def _repair_authoritative_map(
+        self,
+        pending: PendingImport,
+        candidates_by_basename: dict[str, CandidateFile],
+        ep_id_map: dict[tuple[int, int], int],
+    ) -> dict[str, list[int]]:
+        """Build the final ``basename -> episode ids`` map, repairing grab-time gaps.
+
+        Starts from our (normalized) seed map, then for every on-disk video file the
+        seed doesn't cover, re-parses the leaf NOW (the series exists, so the parse
+        resolves what it couldn't at grab time), maps it through OUR
+        ``(season, episode) -> id`` index, and persists the hit to the parse cache
+        and the record so it self-heals. Sonarr's candidate episode assignment is
+        never consulted - the mapping stays ours.
+        """
+
+        seeded = {
+            normalize_basename(name): [i for i in ids if i]
+            for name, ids in pending.file_episode_map.items()
+        }
+
+        parse_cache = self.cache_store.data.setdefault("sonarr_parse_cache", {})
+        now_str = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
+        repaired: dict[str, list[int]] = {}
+
+        for norm_base, candidate in candidates_by_basename.items():
+            if norm_base in seeded:
+                continue
+            raw_base = os.path.basename(candidate.path)
+            if not self._is_video_candidate(raw_base):
+                continue
+
+            record = parse_cache.get(raw_base)
+            parsed = record.get("episodes") if record else None
+            if parsed is None:
+                parsed = self.sonarr.parse(raw_base)
+                if parsed:
+                    parse_cache[raw_base] = {"fetched_at": now_str, "episodes": parsed}
+            if not parsed:
+                continue
+
+            ids = episode_ids_for_parsed(parsed, ep_id_map)
+            if ids:
+                repaired[norm_base] = ids
+                # Self-heal: keep the repaired mapping on the record for the run.
+                pending.file_episode_map[norm_base] = ids
+
+        merged = build_authoritative_map(seeded, repaired)
+
+        # Last resort: a genuine single-file torrent whose one file still didn't
+        # resolve -> attach the flat fallback to its single on-disk video candidate.
+        if not merged and pending.episode_ids:
+            video = [
+                base
+                for base, candidate in candidates_by_basename.items()
+                if self._is_video_candidate(os.path.basename(candidate.path))
+            ]
+            if len(video) == 1:
+                merged = {video[0]: [i for i in pending.episode_ids if i]}
+
+        return merged
+
+    def _import_language_objects(self, pending: PendingImport) -> list[dict]:
+        """Resolve the import language objects for a record (lazily cached)."""
+
+        if self._languages_cache is None:
+            self._languages_cache = self.sonarr.languages()
+        lang_names = derive_languages(
+            pending.is_dual_audio,
+            self._config.import_languages_dual,
+            self._config.import_languages_single,
+        )
+        return resolve_language_objects(lang_names, self._languages_cache)
+
+    def _quality_definitions(self) -> list[dict]:
+        """The Sonarr quality definitions (lazily fetched + cached for the run)."""
+
+        if self._quality_defs_cache is None:
+            self._quality_defs_cache = self.sonarr.quality_definitions()
+        return self._quality_defs_cache
+
+    def _build_file_entry(
+        self,
+        decision: ImportDecision,
+        pending: PendingImport,
+        lang_objs: list[dict],
+        quality_defs: list[dict],
+        label: str,
+    ) -> dict:
+        """Build one ManualImport file payload from a planned ``import`` decision.
+
+        The episode ids come straight from our authoritative map (never Sonarr's
+        parse); the quality layers ours -> the candidate's in-context model ->
+        the configured default, warning when none resolves (re-grab risk).
+        """
+
+        entry: dict = {
+            "path": decision.path,
+            "seriesId": pending.series_id,
+            "episodeIds": decision.episode_ids,
+            "releaseGroup": pending.release_group,
+            "downloadId": pending.infohash,
+            "languages": lang_objs,
+        }
+
+        base = os.path.basename(decision.path) if decision.path else decision.basename
+        our_q = parse_quality_from_filename(base)
+        sel = select_quality(our_q, decision.quality, self._config.import_default_quality)
+        if sel.model is not None:
+            entry["quality"] = sel.model
+        elif sel.name is not None:
+            quality_model = resolve_quality_model(sel.name, quality_defs)
+            if quality_model is not None:
+                entry["quality"] = quality_model
+            else:
+                self.logger.warning(
+                    indent_string(
+                        f"{label}: could not resolve quality '{sel.name}' for {base}; "
+                        f"importing without an explicit quality",
+                    ),
+                )
+        else:
+            self.logger.warning(
+                indent_string(
+                    f"{label}: unknown quality for {base}; importing without an "
+                    f"explicit quality (re-grab risk)",
+                ),
+            )
+        return entry
 
     # --- Sonarr domain logic ------------------------------------------------
 
@@ -1217,7 +1456,7 @@ class SonarrSync(ArrSync[SonarrItem]):
     def parse_episodes_from_seadex(
         self,
         seadex_dict: SeadexDict,
-    ) -> dict:
+    ) -> SeadexDict:
         """For files in a SeaDex release, parse this through Sonarr to get season/episode numbers
 
         This gets an overall episode list per-release group, and also episode lists per-torrent,
@@ -1303,19 +1542,14 @@ class SonarrSync(ArrSync[SonarrItem]):
                             ),
                         )
 
-                        episodes.append(
-                            EpisodeRecord(
-                                season=season,
-                                episode=episode,
-                                size=size,
-                            ),
+                        # EpisodeRecord is immutable, so the per-url and the
+                        # release-group-wide lists can share one instance.
+                        ep_record = EpisodeRecord(
+                            season=season,
+                            episode=episode,
+                            size=size,
                         )
-                        all_episodes.append(
-                            EpisodeRecord(
-                                season=season,
-                                episode=episode,
-                                size=size,
-                            ),
-                        )
+                        episodes.append(ep_record)
+                        all_episodes.append(ep_record)
 
         return seadex_dict

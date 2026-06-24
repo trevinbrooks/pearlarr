@@ -1,4 +1,4 @@
-"""Seam tests for the composition split (see ``REFACTOR_PLAN.md``).
+"""Seam tests for the composition split.
 
 These pin the contract between the run machinery and the Arr strategies: each
 ``ArrSync`` hook reaches the shared pipeline only through the injected
@@ -6,6 +6,7 @@ These pin the contract between the run machinery and the Arr strategies: each
 built bare (``object.__new__``) so no live Sonarr/Radarr client is constructed.
 """
 
+import types
 from unittest import mock
 
 from seadexarr.modules.config import Arr
@@ -17,7 +18,7 @@ from seadexarr.modules.manual_import import (
 from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.seadex_radarr import RadarrSync
 from seadexarr.modules.seadex_sonarr import SonarrSync
-from seadexarr.modules.seadex_types import RadarrItem, SonarrItem
+from seadexarr.modules.seadex_types import RadarrItem, SonarrEpisode, SonarrItem
 
 from .builders import (
     make_bare_instance,
@@ -124,10 +125,19 @@ class TestProcessAlIdThreadsServices:
         run.al_id_prologue.assert_called_once_with(5)
 
 
+def _ep_with_file(ep_id: int, *, group: str | None) -> SonarrEpisode:
+    """A current Sonarr episode that already holds a file from ``group``."""
+
+    return SonarrEpisode.from_api(
+        {"id": ep_id, "episodeFileId": ep_id * 10, "episodeFile": {"releaseGroup": group}},
+    )
+
+
 def _make_sonarr_for_import(
     *,
     candidates: list[dict] | None,
     queue: list[dict] | None = None,
+    episodes: list[SonarrEpisode] | None = None,
     quality_defs: list[dict] | None = None,
     languages: list[dict] | None = None,
     cmd_id: int | None = 42,
@@ -135,19 +145,20 @@ def _make_sonarr_for_import(
 ) -> tuple[SonarrSync, mock.MagicMock]:
     """A bare ``SonarrSync`` plus its scripted ``self.sonarr`` MagicMock.
 
-    The mock returns the given queue records, manual-import candidates, quality
-    definitions and languages, and a command id from ``manual_import_execute`` -
-    everything ``import_completed`` reaches over the network - so the test can
-    assert on the payload without a live Sonarr. ``queue`` defaults to empty (so
-    Sonarr isn't tracking the download and the strategy steps in with its own
-    manual import); ``refresh_monitored_downloads`` / ``command_status`` are
-    stubbed to return immediately so the rescan never really waits. The mock is
-    returned alongside the strategy so assertions read it through a
-    ``MagicMock``-typed handle (``strat.sonarr`` is statically a ``SonarrClient``).
+    The mock returns the given queue records, current episodes, manual-import
+    candidates, quality definitions, languages and an execute command id -
+    everything ``import_completed`` reaches over the network. ``episodes`` defaults
+    to empty, so the target episodes have NO file yet (they need importing) and the
+    done-check never short-circuits; pass episodes carrying a file to exercise the
+    "already imported" / never-overwrite paths. ``queue`` defaults to empty (Sonarr
+    isn't tracking the download, so the strategy steps in). ``refresh`` /
+    ``command_status`` resolve immediately so the rescan never really waits.
     """
 
     sonarr = mock.MagicMock()
     sonarr.queue.return_value = queue or []
+    sonarr.episodes.return_value = episodes if episodes is not None else []
+    sonarr.parse.return_value = []
     sonarr.refresh_monitored_downloads.return_value = 7
     sonarr.command_status.return_value = {"status": "completed"}
     sonarr.manual_import_candidates.return_value = candidates
@@ -157,20 +168,30 @@ def _make_sonarr_for_import(
     strat = make_sonarr_sync(
         sonarr=sonarr,
         logger=make_logger(),
+        log_fmt=mock.MagicMock(),
         _config=make_config(**(config_overrides or {})),
         _last_refresh_monotonic=None,
+        _ep_list_cache={},
+        cache_store=types.SimpleNamespace(data={}),
     )
     return strat, sonarr
 
 
-def _queue_record(infohash: str, state: str) -> dict:
+def _queue_record(
+    infohash: str, state: str, *, status: str = "ok", messages: list | None = None,
+) -> dict:
     """One Sonarr queue record matching a download by infohash + tracked state."""
 
-    return {"downloadId": infohash, "trackedDownloadState": state}
+    return {
+        "downloadId": infohash,
+        "trackedDownloadState": state,
+        "trackedDownloadStatus": status,
+        "statusMessages": messages or [],
+    }
 
 
 class TestImportCompletedQueueState:
-    """import_completed branches on Sonarr's queue before stepping in itself."""
+    """import_completed reads the queue + episode files before stepping in."""
 
     def test_sonarr_importing_retries_without_stepping_in(self) -> None:
         # Sonarr is mid-import (importing) -> wait for it, don't double-import.
@@ -186,12 +207,62 @@ class TestImportCompletedQueueState:
         sonarr.manual_import_candidates.assert_not_called()
         sonarr.manual_import_execute.assert_not_called()
 
-    def test_sonarr_imported_drops_record(self) -> None:
-        # Sonarr already imported it -> drop the record, never step in.
+    def test_clean_pending_retries_until_forced(self) -> None:
+        # A clean importPending: defer to Sonarr (RETRY) unless forced.
         pending = pending_import(infohash="abc123")
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[_queue_record("ABC123", "imported")],
+            queue=[_queue_record("ABC123", "importPending", status="ok")],
+        )
+
+        assert strat.import_completed(pending, "/d") is ImportReadiness.RETRY
+        sonarr.manual_import_candidates.assert_not_called()
+
+    def test_clean_pending_forced_steps_in(self) -> None:
+        # force=True (reconcile / final blocking poll): stop deferring, import now.
+        pending = pending_import(
+            infohash="abc123",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            queue=[_queue_record("ABC123", "importPending", status="ok")],
+        )
+
+        result = strat.import_completed(pending, "/d", force=True)
+
+        assert result is ImportReadiness.IMPORTED
+        sonarr.manual_import_execute.assert_called_once()
+
+    def test_pending_with_warning_steps_in(self) -> None:
+        # The forever-wait bug fix: importPending + a warning is stuck, not
+        # progressing, so we step in without waiting on Sonarr.
+        pending = pending_import(
+            infohash="abc123",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            queue=[_queue_record("ABC123", "importPending", status="warning")],
+        )
+
+        assert strat.import_completed(pending, "/d") is ImportReadiness.IMPORTED
+        sonarr.manual_import_execute.assert_called_once()
+
+    def test_target_already_recommended_drops_record(self) -> None:
+        # Episode files are the source of truth for "already imported": the target
+        # episode already holds the recommended group's file -> done, no scan.
+        pending = pending_import(
+            infohash="abc123",
+            release_group="SubGroup",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            episodes=[_ep_with_file(101, group="SubGroup")],
         )
 
         result = strat.import_completed(pending, "/d")
@@ -209,7 +280,7 @@ class TestImportCompletedQueueState:
         )
         strat, sonarr = _make_sonarr_for_import(
             candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
-            queue=[_queue_record("ABC123", "importBlocked")],
+            queue=[_queue_record("ABC123", "importBlocked", status="warning")],
         )
 
         result = strat.import_completed(pending, "/d")
@@ -237,7 +308,7 @@ class TestImportCompletedQueueState:
 
 
 class TestImportCompletedPayload:
-    """import_completed overrides every field from PendingImport, not the parse."""
+    """import_completed assigns episodes from OUR map, never Sonarr's parse."""
 
     def test_payload_uses_pending_fields_not_candidate(self) -> None:
         pending = pending_import(
@@ -281,6 +352,7 @@ class TestImportCompletedPayload:
         pending = pending_import(
             file_episode_map={"Show - 01 [1080p][WEB-DL].mkv": [101]},
             episode_ids=[101],
+            seadex_files=["Show - 01 [1080p][WEB-DL].mkv"],
         )
         candidate = manual_candidate(
             "/d/Show - 01 [1080p][WEB-DL].mkv",
@@ -300,6 +372,43 @@ class TestImportCompletedPayload:
         assert entry["quality"]["quality"]["name"] == "WEBDL-1080p"
         assert entry["quality"]["revision"]["version"] == 1
 
+    def test_matches_disk_name_across_nfd_normalization(self) -> None:
+        # The seed map is keyed by an NFC name; the on-disk leaf arrives NFD
+        # (macOS). Normalization on both sides still matches -> the file imports,
+        # never "no authoritative mapping".
+        nfc = "Café - 01 [1080p].mkv"  # composed e-acute
+        nfd = "Café - 01 [1080p].mkv"  # decomposed
+        pending = pending_import(
+            file_episode_map={nfc: [101]},
+            episode_ids=[101],
+            seadex_files=[nfc],
+        )
+        strat, sonarr = _make_sonarr_for_import(candidates=[manual_candidate(f"/d/{nfd}")])
+
+        assert strat.import_completed(pending, "/d") is ImportReadiness.IMPORTED
+        (_, kwargs) = sonarr.manual_import_execute.call_args
+        assert kwargs["files"][0]["episodeIds"] == [101]
+
+    def test_candidate_not_in_our_map_is_never_imported(self) -> None:
+        # Strict-honor: a file Sonarr found that ISN'T in our map (e.g. an episode
+        # our mapping gave to another preferred torrent) is never imported. Here our
+        # one intended file is also present and IS imported.
+        pending = pending_import(
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        candidates = [
+            manual_candidate("/d/Show - 01 [1080p].mkv"),
+            manual_candidate("/d/Show - 02 [1080p].mkv"),  # not in our map
+        ]
+        strat, sonarr = _make_sonarr_for_import(candidates=candidates)
+
+        strat.import_completed(pending, "/d")
+
+        (_, kwargs) = sonarr.manual_import_execute.call_args
+        paths = [f["path"] for f in kwargs["files"]]
+        assert paths == ["/d/Show - 01 [1080p].mkv"]
+
     def test_sample_candidate_is_skipped(self) -> None:
         pending = pending_import(
             file_episode_map={
@@ -307,6 +416,7 @@ class TestImportCompletedPayload:
                 "Show - 01 [1080p].sample.mkv": [101],
             },
             episode_ids=[],
+            seadex_files=["Show - 01 [1080p].mkv", "Show - 01 [1080p].sample.mkv"],
         )
         good = manual_candidate("/d/Show - 01 [1080p].mkv")
         sample = manual_candidate(
@@ -323,8 +433,8 @@ class TestImportCompletedPayload:
         assert paths == ["/d/Show - 01 [1080p].mkv"]
 
     def test_already_imported_candidate_drops_record(self) -> None:
-        # The only candidate is one Sonarr already imported itself -> nothing for
-        # us to do, but it IS imported, so drop the record (don't re-attempt).
+        # The only candidate is one Sonarr already imported itself -> nothing to
+        # queue, but it IS placed, so the record is dropped (IMPORTED).
         pending = pending_import(
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
             episode_ids=[],
@@ -340,11 +450,18 @@ class TestImportCompletedPayload:
         assert result is ImportReadiness.IMPORTED
         sonarr.manual_import_execute.assert_not_called()
 
-    def test_no_candidates_yet_retries(self) -> None:
-        # Sonarr reports no files at the path yet (mount not visible) -> retry.
-        strat, sonarr = _make_sonarr_for_import(candidates=[])
+    def test_intended_file_missing_from_disk_retries(self) -> None:
+        # Our map intends a file Sonarr can't see yet -> never dropped, retried.
+        pending = pending_import(
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        # A different file is on disk; ours isn't there yet.
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Unrelated.mkv")],
+        )
 
-        assert strat.import_completed(pending_import(), "/d") is ImportReadiness.RETRY
+        assert strat.import_completed(pending, "/d") is ImportReadiness.RETRY
         sonarr.manual_import_execute.assert_not_called()
 
     def test_transient_candidate_scan_retries(self) -> None:
@@ -352,23 +469,6 @@ class TestImportCompletedPayload:
         strat, sonarr = _make_sonarr_for_import(candidates=None)
 
         assert strat.import_completed(pending_import(), "/d") is ImportReadiness.RETRY
-        sonarr.manual_import_execute.assert_not_called()
-
-    def test_unmapped_file_leaves_pending(self) -> None:
-        # Candidate basename isn't in the map and there's no single-file
-        # fallback (two unmatched), so it's skipped -> nothing importable. Retrying
-        # the same files won't help, so leave it for a later run.
-        pending = pending_import(
-            file_episode_map={"Other.mkv": [101]},
-            episode_ids=[],
-        )
-        candidates = [
-            manual_candidate("/d/Mystery A.mkv"),
-            manual_candidate("/d/Mystery B.mkv"),
-        ]
-        strat, sonarr = _make_sonarr_for_import(candidates=candidates)
-
-        assert strat.import_completed(pending, "/d") is ImportReadiness.LEAVE
         sonarr.manual_import_execute.assert_not_called()
 
     def test_languages_follow_dual_audio_flag(self) -> None:
@@ -385,9 +485,7 @@ class TestImportCompletedPayload:
         strat, sonarr = _make_sonarr_for_import(
             candidates=[candidate],
             languages=languages,
-            config_overrides={
-                "import_languages_dual": ["Japanese", "English"],
-            },
+            config_overrides={"import_languages_dual": ["Japanese", "English"]},
         )
 
         strat.import_completed(pending, "/d")

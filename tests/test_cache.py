@@ -1,7 +1,7 @@
 """Characterization tests for ``CacheStore``.
 
 Pins the cache schema, freshness checks, and persistence (incl. the preview
-write-gate) moved out of ``SeaDexArr`` in Phase 2 (see ``REFACTOR_PLAN.md``).
+write-gate) moved out of ``SeaDexArr`` during the refactor.
 """
 
 import json

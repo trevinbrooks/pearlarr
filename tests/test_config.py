@@ -1,7 +1,7 @@
 """Characterization tests for ``AppConfig``.
 
 Pins the config-file lifecycle and the typed-settings normalization moved out of
-``SeaDexArr.__init__`` / ``verify_config`` in Phase 2 (see ``REFACTOR_PLAN.md``).
+``SeaDexArr.__init__`` / ``verify_config`` during the refactor.
 """
 
 import hashlib
@@ -201,3 +201,19 @@ class TestImportSettings:
         cfg = _cfg(import_languages_dual=None, import_languages_single=None)
         assert cfg.import_languages_dual == ["Japanese", "English"]
         assert cfg.import_languages_single == ["Japanese"]
+
+    def test_blank_scalar_knobs_fall_back_to_defaults(self) -> None:
+        # A present-but-blank YAML value parses to None; without coalescing it
+        # would flow into time.sleep(None) / deadline math and crash the wait loop.
+        cfg = _cfg(
+            import_wait_timeout=None,
+            import_poll_interval=None,
+            import_ready_timeout=None,
+            import_mode=None,
+            import_pending_max_age_days=None,
+        )
+        assert cfg.import_wait_timeout == 3600
+        assert cfg.import_poll_interval == 30
+        assert cfg.import_ready_timeout == 600
+        assert cfg.import_mode == "auto"
+        assert cfg.import_pending_max_age_days == 14

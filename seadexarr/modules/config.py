@@ -6,8 +6,8 @@ sync with the template — and exposes the individual settings as typed, normali
 properties so the rest of the package reads ``config.public_only`` instead of
 ``config.get("public_only", True)`` scattered across the codebase.
 
-Extracted from ``SeaDexArr.__init__`` / ``verify_config`` / ``setup_cache`` in
-Phase 2 of the refactor (see ``REFACTOR_PLAN.md``); behaviour-preserving.
+Extracted from ``SeaDexArr.__init__`` / ``verify_config`` / ``setup_cache``
+during the refactor; behaviour-preserving.
 """
 
 import copy
@@ -271,15 +271,26 @@ class AppConfig:
 
     @property
     def import_wait_timeout(self) -> int:
-        """Seconds to block per torrent in the end-of-run blocking pass."""
+        """Seconds to block per torrent in the end-of-run blocking pass.
 
-        return self.data.get("import_wait_timeout", 3600)
+        A present-but-blank YAML value parses to ``None`` (the key is present, so
+        a plain ``.get`` default wouldn't apply); coalesce it to the documented
+        default, mirroring the list knobs, so a blanked-out value can't feed
+        ``None`` into the wait-loop's ``time.sleep`` / deadline math.
+        """
+
+        value = self.data.get("import_wait_timeout")
+        return value if value is not None else 3600
 
     @property
     def import_poll_interval(self) -> int:
-        """Seconds between qBittorrent completion polls while waiting."""
+        """Seconds between qBittorrent completion polls while waiting.
 
-        return self.data.get("import_poll_interval", 30)
+        Blank coalesces to the default; see :meth:`import_wait_timeout`.
+        """
+
+        value = self.data.get("import_poll_interval")
+        return value if value is not None else 30
 
     @property
     def import_ready_timeout(self) -> int:
@@ -289,16 +300,22 @@ class AppConfig:
         Sonarr to rescan and then polls its queue until the files import (Sonarr's
         own import, or our authoritative manual import on an ``importBlocked``).
         This bounds that second phase; the download wait itself is bounded
-        separately by ``import_wait_timeout``.
+        separately by ``import_wait_timeout``. Blank coalesces to the default;
+        see :meth:`import_wait_timeout`.
         """
 
-        return self.data.get("import_ready_timeout", 600)
+        value = self.data.get("import_ready_timeout")
+        return value if value is not None else 600
 
     @property
     def import_mode(self) -> str:
-        """Sonarr ``importMode`` for the manual import (``auto``/``move``/``copy``)."""
+        """Sonarr ``importMode`` for the manual import (``auto``/``move``/``copy``).
 
-        return self.data.get("import_mode", "auto")
+        Blank coalesces to the default; see :meth:`import_wait_timeout`.
+        """
+
+        value = self.data.get("import_mode")
+        return value if value is not None else "auto"
 
     @property
     def import_default_quality(self) -> str | None:
@@ -334,9 +351,13 @@ class AppConfig:
 
     @property
     def import_pending_max_age_days(self) -> int:
-        """Drop pending-import records older than this many days (TTL)."""
+        """Drop pending-import records older than this many days (TTL).
 
-        return self.data.get("import_pending_max_age_days", 14)
+        Blank coalesces to the default; see :meth:`import_wait_timeout`.
+        """
+
+        value = self.data.get("import_pending_max_age_days")
+        return value if value is not None else 14
 
     @property
     def discord_url(self) -> str | None:

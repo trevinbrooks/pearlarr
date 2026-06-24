@@ -1,7 +1,7 @@
 """Builders and a bare-instance factory for the characterization tests.
 
-These tests pin the *current* behaviour of ``seadex_arr.py`` before the planned
-decomposition (see ``REFACTOR_PLAN.md``). The planner tests build the engine's
+These tests pin the *current* behaviour of ``seadex_arr.py``. The planner tests
+build the engine's
 inputs (typed episode records, flat release dicts) via the helpers here, and
 ``make_arr`` builds a
 ``SeaDexArr`` without running its heavy ``__init__`` (network downloads,
@@ -289,6 +289,7 @@ def pending_import(**overrides: Any) -> PendingImport:
         "is_dual_audio": False,
         "season_number": 1,
         "seadex_files": ["Show - 01 [1080p].mkv"],
+        "seadex_sizes": [1000],
         "title": "Show",
         "added_at": "2026-06-24 00:00:00",
     }

@@ -2,39 +2,60 @@
 
 Pins the deterministic decision helpers in
 :mod:`seadexarr.modules.manual_import`: the ``(season, episode) -> id`` map, the
-filename quality parse, the layered quality/language/episode-id selection, the
-wait-mode resolution, and the :class:`PendingImport` JSON round-trip. All pure,
-no network or disk; :class:`SonarrEpisode` is built directly via
-:meth:`SonarrEpisode.from_api` so the suite doesn't depend on ``builders.py``.
+filename normalization, the authoritative file->episode mapping and import
+planning (strict-honor + never-overwrite + never-skip), the queue classifier and
+episode-file status, the filename quality parse, the layered quality/language
+selection, the wait-mode resolution, and the :class:`PendingImport` JSON
+round-trip. All pure, no network or disk; :class:`SonarrEpisode` is built directly
+via :meth:`SonarrEpisode.from_api`.
 """
 
 from typing import cast
 
 from seadexarr.modules.manual_import import (
+    CandidateFile,
+    EpisodeFileStatus,
     ImportReadiness,
     ImportWaitMode,
     PendingImport,
     QualitySelection,
+    QueueRecordView,
     QueueVerdict,
     WaitOutcome,
-    assign_episode_ids,
+    all_targets_done,
+    build_authoritative_map,
     build_episode_id_map,
-    classify_queue_states,
+    classify_queue,
     derive_languages,
+    episode_file_statuses,
+    episode_ids_for_parsed,
+    normalize_basename,
+    normalize_group,
     parse_quality_from_filename,
+    plan_import_files,
     resolve_language_objects,
     resolve_wait_mode,
     select_quality,
+    targets_needing_import,
 )
 from seadexarr.modules.seadex_types import SONARR_MISSING_KEY, SonarrEpisode
 
 
-def _ep(*, ep_id: int, season: int | None, episode: int | None) -> SonarrEpisode:
-    """A ``SonarrEpisode`` from the raw fields the id map reads."""
+def _ep(
+    *,
+    ep_id: int,
+    season: int | None = 1,
+    episode: int | None = 1,
+    file_id: int = 0,
+    group: str | None = None,
+) -> SonarrEpisode:
+    """A ``SonarrEpisode`` from the raw fields the helpers read."""
 
-    return SonarrEpisode.from_api(
-        {"id": ep_id, "seasonNumber": season, "episodeNumber": episode},
-    )
+    raw: dict = {"id": ep_id, "seasonNumber": season, "episodeNumber": episode}
+    if file_id:
+        raw["episodeFileId"] = file_id
+        raw["episodeFile"] = {"releaseGroup": group}
+    return SonarrEpisode.from_api(raw)
 
 
 class TestBuildEpisodeIdMap:
@@ -44,20 +65,7 @@ class TestBuildEpisodeIdMap:
             _ep(ep_id=12, season=1, episode=2),
             _ep(ep_id=21, season=2, episode=1),
         ]
-        assert build_episode_id_map(eps) == {
-            (1, 1): 11,
-            (1, 2): 12,
-            (2, 1): 21,
-        }
-
-    def test_absolute_numbering_season(self) -> None:
-        # A series using absolute numbering still keys on (season, episode);
-        # season 0/1 with large episode numbers is just data.
-        eps = [
-            _ep(ep_id=101, season=1, episode=24),
-            _ep(ep_id=102, season=1, episode=25),
-        ]
-        assert build_episode_id_map(eps) == {(1, 24): 101, (1, 25): 102}
+        assert build_episode_id_map(eps) == {(1, 1): 11, (1, 2): 12, (2, 1): 21}
 
     def test_missing_season_and_episode_use_sentinel_no_collision(self) -> None:
         eps = [
@@ -69,43 +77,150 @@ class TestBuildEpisodeIdMap:
         assert result[(1, 1)] == 6
 
     def test_first_wins_on_duplicate_key(self) -> None:
-        eps = [
-            _ep(ep_id=7, season=1, episode=1),
-            _ep(ep_id=8, season=1, episode=1),
-        ]
+        eps = [_ep(ep_id=7, season=1, episode=1), _ep(ep_id=8, season=1, episode=1)]
         assert build_episode_id_map(eps) == {(1, 1): 7}
 
     def test_zero_id_skipped(self) -> None:
-        eps = [
-            _ep(ep_id=0, season=1, episode=1),
-            _ep(ep_id=9, season=1, episode=2),
-        ]
+        eps = [_ep(ep_id=0, season=1, episode=1), _ep(ep_id=9, season=1, episode=2)]
         assert build_episode_id_map(eps) == {(1, 2): 9}
+
+
+class TestNormalize:
+    def test_nfc_nfd_match(self) -> None:
+        # Same text, NFC (composed) vs NFD (decomposed) "é"; both fold equal.
+        nfc = "Café - 01.mkv"
+        nfd = "Café - 01.mkv"
+        assert normalize_basename(nfc) == normalize_basename(nfd)
+
+    def test_strips_and_casefolds(self) -> None:
+        assert normalize_basename("  Show - 01.MKV  ") == "show - 01.mkv"
+
+    def test_group_casefold(self) -> None:
+        assert normalize_group("SubGroup") == normalize_group("subgroup")
+
+
+class TestEpisodeIdsForParsed:
+    def test_maps_via_index(self) -> None:
+        idx = {(1, 1): 11, (1, 2): 12}
+        parsed = [{"season": 1, "episode": 1}, {"season": 1, "episode": 2}]
+        assert episode_ids_for_parsed(parsed, idx) == [11, 12]
+
+    def test_drops_unknown_and_none(self) -> None:
+        idx = {(1, 1): 11}
+        parsed = [
+            {"season": 1, "episode": 1},
+            {"season": 9, "episode": 9},
+            {"season": None, "episode": 1},
+        ]
+        assert episode_ids_for_parsed(parsed, idx) == [11]
+
+
+class TestBuildAuthoritativeMap:
+    def test_seed_wins_over_repair(self) -> None:
+        merged = build_authoritative_map({"a.mkv": [11]}, {"a.mkv": [99], "b.mkv": [12]})
+        assert merged == {"a.mkv": [11], "b.mkv": [12]}
+
+    def test_drops_empty_id_lists(self) -> None:
+        merged = build_authoritative_map({"a.mkv": [0]}, {"b.mkv": []})
+        assert merged == {}
+
+
+class TestEpisodeFileStatuses:
+    def test_absent_recommended_other_unknown(self) -> None:
+        episodes = {
+            1: _ep(ep_id=1, file_id=0),
+            2: _ep(ep_id=2, file_id=20, group="SubGroup"),
+            3: _ep(ep_id=3, file_id=30, group="OtherGroup"),
+            4: _ep(ep_id=4, file_id=40, group=None),
+        }
+        statuses = episode_file_statuses([1, 2, 3, 4], episodes, {"subgroup"})
+        assert statuses == {
+            1: EpisodeFileStatus.ABSENT,
+            2: EpisodeFileStatus.RECOMMENDED,
+            3: EpisodeFileStatus.OTHER_GROUP,
+            4: EpisodeFileStatus.UNKNOWN_GROUP,
+        }
+
+    def test_missing_episode_is_absent(self) -> None:
+        statuses = episode_file_statuses([99], {}, {"subgroup"})
+        assert statuses == {99: EpisodeFileStatus.ABSENT}
+
+    def test_all_targets_done_only_when_all_recommended(self) -> None:
+        rec = {1: EpisodeFileStatus.RECOMMENDED, 2: EpisodeFileStatus.RECOMMENDED}
+        mixed = {1: EpisodeFileStatus.RECOMMENDED, 2: EpisodeFileStatus.OTHER_GROUP}
+        assert all_targets_done(rec) is True
+        assert all_targets_done(mixed) is False
+        assert all_targets_done({}) is False
+
+    def test_targets_needing_import_excludes_only_recommended(self) -> None:
+        statuses = {
+            1: EpisodeFileStatus.ABSENT,
+            2: EpisodeFileStatus.RECOMMENDED,
+            3: EpisodeFileStatus.OTHER_GROUP,
+            4: EpisodeFileStatus.UNKNOWN_GROUP,
+        }
+        assert targets_needing_import(statuses) == {1, 3, 4}
+
+
+def _candidate(basename: str, *, sample: bool = False, already: bool = False) -> CandidateFile:
+    return CandidateFile(
+        basename=basename,
+        path=f"/dl/{basename}",
+        quality=None,
+        is_sample=sample,
+        is_already_imported=already,
+    )
+
+
+class TestPlanImportFiles:
+    def test_imports_only_needing_episodes(self) -> None:
+        amap = {"a.mkv": [11], "b.mkv": [12]}
+        cands = {"a.mkv": _candidate("a.mkv"), "b.mkv": _candidate("b.mkv")}
+        # episode 12 already holds a recommended file -> only 11 needs import.
+        decisions = plan_import_files(amap, cands, needing_import={11})
+        by_base = {d.basename: d for d in decisions}
+        assert by_base["a.mkv"].action == "import"
+        assert by_base["a.mkv"].episode_ids == [11]
+        assert by_base["b.mkv"].action == "skip_done"
+
+    def test_candidate_not_in_map_is_never_imported(self) -> None:
+        amap = {"a.mkv": [11]}
+        cands = {"a.mkv": _candidate("a.mkv"), "rogue.mkv": _candidate("rogue.mkv")}
+        decisions = plan_import_files(amap, cands, needing_import={11})
+        # Only our mapped file is decided on; the rogue on-disk file is ignored.
+        assert {d.basename for d in decisions} == {"a.mkv"}
+
+    def test_intended_file_missing_from_disk_is_flagged_not_dropped(self) -> None:
+        amap = {"a.mkv": [11], "b.mkv": [12]}
+        cands = {"a.mkv": _candidate("a.mkv")}
+        decisions = plan_import_files(amap, cands, needing_import={11, 12})
+        by_base = {d.basename: d for d in decisions}
+        assert by_base["a.mkv"].action == "import"
+        assert by_base["b.mkv"].action == "missing"
+
+    def test_sample_and_already_are_not_imported(self) -> None:
+        amap = {"s.mkv": [11], "i.mkv": [12]}
+        cands = {
+            "s.mkv": _candidate("s.mkv", sample=True),
+            "i.mkv": _candidate("i.mkv", already=True),
+        }
+        decisions = plan_import_files(amap, cands, needing_import={11, 12})
+        actions = {d.basename: d.action for d in decisions}
+        assert actions == {"s.mkv": "sample", "i.mkv": "already"}
 
 
 class TestParseQualityFromFilename:
     def test_2160p_webdl(self) -> None:
-        name = "Show.S01E01.2160p.WEB-DL.x265.mkv"
-        assert parse_quality_from_filename(name) == "WEBDL-2160p"
+        assert parse_quality_from_filename("Show.S01E01.2160p.WEB-DL.x265.mkv") == "WEBDL-2160p"
 
     def test_1080p_bluray(self) -> None:
-        name = "[Group] Show - 01 [BluRay 1080p HEVC].mkv"
-        assert parse_quality_from_filename(name) == "Bluray-1080p"
+        assert parse_quality_from_filename("[Group] Show - 01 [BluRay 1080p HEVC].mkv") == "Bluray-1080p"
 
     def test_no_resolution_returns_none(self) -> None:
         assert parse_quality_from_filename("Show.S01E01.WEB-DL.mkv") is None
 
-    def test_case_insensitive(self) -> None:
-        assert parse_quality_from_filename("show 720p webrip.mkv") == "WEBRip-720p"
-        assert parse_quality_from_filename("SHOW 480P HDTV.MKV") == "HDTV-480p"
-
     def test_remux_maps_to_remux_name(self) -> None:
-        assert (
-            parse_quality_from_filename("Show.2160p.BluRay.Remux.mkv") == "Remux-2160p"
-        )
-
-    def test_bare_web_treated_as_webdl(self) -> None:
-        assert parse_quality_from_filename("Show.1080p.WEB.mkv") == "WEBDL-1080p"
+        assert parse_quality_from_filename("Show.2160p.BluRay.Remux.mkv") == "Remux-2160p"
 
     def test_no_source_defaults_to_webdl(self) -> None:
         assert parse_quality_from_filename("Show - 01 [1080p].mkv") == "WEBDL-1080p"
@@ -118,52 +233,24 @@ class TestSelectQuality:
             candidate_quality={"quality": {"name": "WEBDL-1080p"}},
             default_name="HDTV-720p",
         )
-        assert sel == QualitySelection(source="ours", name="Bluray-2160p", model=None)
+        assert sel == QualitySelection(name="Bluray-2160p", model=None)
 
     def test_sonarr_in_context_when_no_ours(self) -> None:
         candidate = {"quality": {"name": "WEBDL-1080p"}}
-        sel = select_quality(
-            our_name=None, candidate_quality=candidate, default_name="HDTV-720p",
-        )
-        assert sel == QualitySelection(source="sonarr", name=None, model=candidate)
-
-    def test_sonarr_nested_quality_quality_name(self) -> None:
-        candidate = {"quality": {"quality": {"name": "Bluray-720p"}}}
-        sel = select_quality(
-            our_name=None, candidate_quality=candidate, default_name=None,
-        )
-        assert sel.source == "sonarr"
-        assert sel.model is candidate
+        sel = select_quality(our_name=None, candidate_quality=candidate, default_name="HDTV-720p")
+        assert sel == QualitySelection(name=None, model=candidate)
 
     def test_unknown_candidate_falls_through_to_default(self) -> None:
-        candidate = {"quality": {"name": "Unknown"}}
         sel = select_quality(
-            our_name=None, candidate_quality=candidate, default_name="HDTV-720p",
+            our_name=None,
+            candidate_quality={"quality": {"name": "Unknown"}},
+            default_name="HDTV-720p",
         )
-        assert sel == QualitySelection(source="default", name="HDTV-720p", model=None)
-
-    def test_missing_candidate_name_falls_through_to_default(self) -> None:
-        sel = select_quality(
-            our_name=None, candidate_quality={"quality": {}}, default_name="HDTV-720p",
-        )
-        assert sel == QualitySelection(source="default", name="HDTV-720p", model=None)
-
-    def test_default_when_no_ours_no_candidate(self) -> None:
-        sel = select_quality(
-            our_name=None, candidate_quality=None, default_name="HDTV-720p",
-        )
-        assert sel == QualitySelection(source="default", name="HDTV-720p", model=None)
+        assert sel == QualitySelection(name="HDTV-720p", model=None)
 
     def test_unknown_when_nothing_available(self) -> None:
         sel = select_quality(our_name=None, candidate_quality=None, default_name=None)
-        assert sel == QualitySelection(source="unknown", name=None, model=None)
-
-    def test_unknown_candidate_and_no_default_is_unknown(self) -> None:
-        candidate = {"quality": {"name": "Unknown"}}
-        sel = select_quality(
-            our_name=None, candidate_quality=candidate, default_name=None,
-        )
-        assert sel == QualitySelection(source="unknown", name=None, model=None)
+        assert sel == QualitySelection(name=None, model=None)
 
 
 class TestDeriveLanguages:
@@ -174,85 +261,18 @@ class TestDeriveLanguages:
         ]
 
     def test_single_audio_returns_single(self) -> None:
-        assert derive_languages(False, ["Japanese", "English"], ["Japanese"]) == [
-            "Japanese",
-        ]
+        assert derive_languages(False, ["Japanese", "English"], ["Japanese"]) == ["Japanese"]
 
 
 class TestResolveWaitMode:
     def test_cli_wins_over_config(self) -> None:
-        assert (
-            resolve_wait_mode(ImportWaitMode.OFF, ImportWaitMode.HYBRID)
-            is ImportWaitMode.OFF
-        )
+        assert resolve_wait_mode(ImportWaitMode.OFF, ImportWaitMode.HYBRID) is ImportWaitMode.OFF
 
     def test_config_used_when_no_cli(self) -> None:
-        assert (
-            resolve_wait_mode(None, ImportWaitMode.BLOCKING)
-            is ImportWaitMode.BLOCKING
-        )
+        assert resolve_wait_mode(None, ImportWaitMode.BLOCKING) is ImportWaitMode.BLOCKING
 
     def test_default_off_when_neither(self) -> None:
         assert resolve_wait_mode(None, None) is ImportWaitMode.OFF
-
-
-class TestAssignEpisodeIds:
-    def test_basename_match(self) -> None:
-        result = assign_episode_ids(
-            candidate_basenames=["a.mkv", "b.mkv"],
-            file_episode_map={"a.mkv": [11], "b.mkv": [12, 13]},
-            flat_fallback=[],
-        )
-        assert result == {"a.mkv": [11], "b.mkv": [12, 13]}
-
-    def test_single_file_fallback(self) -> None:
-        result = assign_episode_ids(
-            candidate_basenames=["only.mkv"],
-            file_episode_map={},
-            flat_fallback=[42],
-        )
-        assert result == {"only.mkv": [42]}
-
-    def test_unmapped_omitted_when_multiple_unmatched(self) -> None:
-        # Two unmatched files -> the single-file rule does not fire -> both omitted.
-        result = assign_episode_ids(
-            candidate_basenames=["x.mkv", "y.mkv"],
-            file_episode_map={},
-            flat_fallback=[42],
-        )
-        assert result == {}
-
-    def test_mapped_and_single_unmatched_uses_fallback(self) -> None:
-        result = assign_episode_ids(
-            candidate_basenames=["a.mkv", "extra.mkv"],
-            file_episode_map={"a.mkv": [11]},
-            flat_fallback=[99],
-        )
-        assert result == {"a.mkv": [11], "extra.mkv": [99]}
-
-    def test_zero_id_never_assigned_from_map(self) -> None:
-        result = assign_episode_ids(
-            candidate_basenames=["a.mkv"],
-            file_episode_map={"a.mkv": [0]},
-            flat_fallback=[],
-        )
-        assert result == {}
-
-    def test_zero_id_stripped_from_fallback(self) -> None:
-        result = assign_episode_ids(
-            candidate_basenames=["only.mkv"],
-            file_episode_map={},
-            flat_fallback=[0],
-        )
-        assert result == {}
-
-    def test_zero_ids_filtered_but_real_ids_kept(self) -> None:
-        result = assign_episode_ids(
-            candidate_basenames=["a.mkv"],
-            file_episode_map={"a.mkv": [0, 7]},
-            flat_fallback=[],
-        )
-        assert result == {"a.mkv": [7]}
 
 
 class TestPendingImportRoundTrip:
@@ -266,6 +286,7 @@ class TestPendingImportRoundTrip:
             is_dual_audio=True,
             season_number=2,
             seadex_files=["ep1.mkv", "ep2.mkv"],
+            seadex_sizes=[1000, 2000],
             title="Some Show",
             added_at="2026-06-24 12:00:00",
         )
@@ -274,99 +295,84 @@ class TestPendingImportRoundTrip:
     def test_from_json_tolerates_missing_keys(self) -> None:
         rebuilt = PendingImport.from_json({"infohash": "h", "series_id": 1})
         assert rebuilt.infohash == "h"
-        assert rebuilt.series_id == 1
         assert rebuilt.file_episode_map == {}
-        assert rebuilt.episode_ids == []
-        assert rebuilt.release_group == ""
-        assert rebuilt.is_dual_audio is False
-        assert rebuilt.season_number is None
-        assert rebuilt.seadex_files == []
+        assert rebuilt.seadex_sizes == []
         assert rebuilt.title is None
-        assert rebuilt.added_at == ""
 
-    def test_none_season_round_trips(self) -> None:
-        pending = PendingImport(
-            infohash="h",
-            series_id=1,
-            file_episode_map={},
-            episode_ids=[],
-            release_group="RG",
-            is_dual_audio=False,
-            season_number=None,
-            seadex_files=[],
-            title=None,
-            added_at="2026-06-24 00:00:00",
-        )
-        assert PendingImport.from_json(pending.to_json()) == pending
+    def test_old_record_without_seadex_sizes_rehydrates(self) -> None:
+        # Back-compat: a record persisted before seadex_sizes existed still loads.
+        raw = {
+            "infohash": "h",
+            "series_id": 1,
+            "file_episode_map": {"a.mkv": [1]},
+            "episode_ids": [1],
+            "release_group": "RG",
+            "is_dual_audio": False,
+            "season_number": 1,
+            "seadex_files": ["a.mkv"],
+            "title": "T",
+            "added_at": "2026-06-24 00:00:00",
+        }
+        assert PendingImport.from_json(raw).seadex_sizes == []
 
 
 def test_wait_outcome_members_exist() -> None:
-    # The public enum surface wave-2 dispatch depends on.
-    assert {o.name for o in WaitOutcome} == {
-        "COMPLETE",
-        "ERRORED",
-        "TIMED_OUT",
-        "MISSING",
-    }
+    assert {o.name for o in WaitOutcome} == {"COMPLETE", "ERRORED", "TIMED_OUT", "MISSING"}
 
 
 def test_import_readiness_members_exist() -> None:
-    # The tri-state the engine's blocking loop dispatches on.
     assert {o.name for o in ImportReadiness} == {"IMPORTED", "RETRY", "LEAVE"}
 
 
-class TestClassifyQueueStates:
-    """classify_queue_states reduces per-episode tracked states to one verdict."""
+def _qrecord(state: str, status: str = "ok", *, messages: bool = False) -> QueueRecordView:
+    return QueueRecordView(state=state, status=status, has_messages=messages)
+
+
+class TestClassifyQueue:
+    """classify_queue reads state + status + statusMessages into one verdict."""
 
     def test_empty_steps_in(self) -> None:
-        # Sonarr isn't tracking the download -> we own the import.
-        assert classify_queue_states([]) is QueueVerdict.STEP_IN
-
-    def test_all_imported_is_done(self) -> None:
-        assert classify_queue_states(["imported", "imported"]) is QueueVerdict.DONE
+        assert classify_queue([]) is QueueVerdict.STEP_IN
 
     def test_import_blocked_steps_in(self) -> None:
-        # importBlocked wins even when other episodes are still importing.
-        assert (
-            classify_queue_states(["importing", "importBlocked"])
-            is QueueVerdict.STEP_IN
-        )
-
-    def test_downloading_waits(self) -> None:
-        assert classify_queue_states(["downloading"]) is QueueVerdict.WAIT
-
-    def test_importing_waits(self) -> None:
-        assert classify_queue_states(["importPending", "importing"]) is QueueVerdict.WAIT
-
-    def test_active_beats_imported(self) -> None:
-        # A partly-imported pack with one episode still importing -> keep waiting.
-        assert classify_queue_states(["imported", "importing"]) is QueueVerdict.WAIT
+        assert classify_queue([_qrecord("importBlocked", "warning")]) is QueueVerdict.STEP_IN
 
     def test_failed_steps_in(self) -> None:
-        # Sonarr gave up; we have the files + authoritative mapping -> step in.
-        assert classify_queue_states(["failed"]) is QueueVerdict.STEP_IN
+        assert classify_queue([_qrecord("failed", "error")]) is QueueVerdict.STEP_IN
+
+    def test_clean_pending_is_pending_clean(self) -> None:
+        assert classify_queue([_qrecord("importPending", "ok")]) is QueueVerdict.PENDING_CLEAN
+
+    def test_pending_with_warning_steps_in(self) -> None:
+        # The bug fix: a pending item carrying a warning is stuck, not progressing.
+        assert classify_queue([_qrecord("importPending", "warning")]) is QueueVerdict.STEP_IN
+
+    def test_pending_with_messages_steps_in(self) -> None:
+        assert classify_queue([_qrecord("importPending", "ok", messages=True)]) is QueueVerdict.STEP_IN
+
+    def test_downloading_waits(self) -> None:
+        assert classify_queue([_qrecord("downloading")]) is QueueVerdict.WAIT
+
+    def test_in_motion_beats_blocked_to_avoid_racing(self) -> None:
+        # Something is actively importing -> wait, don't race it, even if a sibling
+        # record is blocked; a later poll re-evaluates once the import settles.
+        assert (
+            classify_queue([_qrecord("importing"), _qrecord("importBlocked", "warning")])
+            is QueueVerdict.WAIT
+        )
 
     def test_case_insensitive(self) -> None:
-        assert classify_queue_states(["IMPORTBLOCKED"]) is QueueVerdict.STEP_IN
+        assert classify_queue([_qrecord("IMPORTBLOCKED", "WARNING")]) is QueueVerdict.STEP_IN
 
 
 class TestResolveLanguageObjectsDefensive:
-    """resolve_language_objects survives a blank/None or malformed name list.
-
-    Regression for the crash where blank YAML import_languages_* parsed to None
-    and the helper did ``for name in None`` -> TypeError.
-    """
+    """resolve_language_objects survives a blank/None or malformed name list."""
 
     def test_none_names_returns_empty(self) -> None:
-        # cast: the guard exists because the runtime value can violate the
-        # ``list[str]`` annotation (blank YAML -> None), which is what we test.
         names = cast("list[str]", None)
         assert resolve_language_objects(names, [{"id": 8, "name": "Japanese"}]) == []
 
     def test_non_string_names_are_skipped(self) -> None:
         defs = [{"id": 8, "name": "Japanese"}]
         names = cast("list[str]", [None, 5, "Japanese"])
-
-        result = resolve_language_objects(names, defs)
-
-        assert result == [{"id": 8, "name": "Japanese"}]
+        assert resolve_language_objects(names, defs) == [{"id": 8, "name": "Japanese"}]

@@ -13,8 +13,7 @@ a scheduled cycle runs Radarr (which saves ``cache.json``) then Sonarr (which
 re-reads it), handing off through the *file*, not shared memory. Do not share a
 single ``CacheStore`` across arrs.
 
-Extracted from ``SeaDexArr`` in Phase 2 of the refactor (see
-``REFACTOR_PLAN.md``); behaviour-preserving.
+Extracted from ``SeaDexArr`` during the refactor; behaviour-preserving.
 """
 
 import json

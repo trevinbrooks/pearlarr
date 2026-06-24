@@ -228,6 +228,7 @@ def make_orchestration_engine(
         SeaDexArr,
         qbit=qbit,
         logger=make_logger(),
+        log_fmt=mock.MagicMock(),
         _config=make_config(**config_overrides),
         _active_strategy=strategy,
         cache_store=types.SimpleNamespace(data={}),
@@ -286,6 +287,21 @@ class TestReconcilePendingImports:
         engine._reconcile_pending_imports()
 
         assert set(engine._pending_store()) == {"h"}
+
+    def test_complete_forces_step_in(self) -> None:
+        # Reconcile runs a prior run's download, so Sonarr has had a full cycle: a
+        # still-absent target means it won't import on its own -> force our import.
+        strategy = mock.MagicMock()
+        strategy.import_completed.return_value = ImportReadiness.IMPORTED
+        qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
+        engine = make_orchestration_engine(
+            qbit=qbit, strategy=strategy,
+            store_records=[pending_import(infohash="h", added_at=_FRESH).to_json()],
+        )
+
+        engine._reconcile_pending_imports()
+
+        assert strategy.import_completed.call_args.kwargs.get("force") is True
 
     def test_missing_drops_record(self) -> None:
         strategy = mock.MagicMock()
@@ -354,6 +370,32 @@ class TestRunBlockingImports:
         assert engine._pending_store() == {}
         assert engine._ctx.pending_imports == []
 
+    def test_forces_import_at_deadline(self) -> None:
+        # Sonarr defers (RETRY) until the readiness deadline, where ONE forced poll
+        # drives our own import - so a download Sonarr won't import (CDH off) still
+        # imports rather than waiting forever.
+        strategy = mock.MagicMock()
+        strategy.import_completed.side_effect = [
+            ImportReadiness.RETRY,
+            ImportReadiness.RETRY,
+            ImportReadiness.IMPORTED,
+        ]
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
+        engine = make_orchestration_engine(
+            qbit=qbit, strategy=strategy,
+            store_records=[pending.to_json()], pending=[pending],
+            import_ready_timeout=60, import_poll_interval=30,
+        )
+        clock = FakeClock(step=30)
+
+        engine._wait_and_import_one(pending, now=clock.now, sleep=clock.sleep)
+
+        calls = strategy.import_completed.call_args_list
+        assert calls[0].kwargs.get("force") is False
+        assert calls[-1].kwargs.get("force") is True
+        assert engine._pending_store() == {}
+
     def test_retry_until_ready_timeout_leaves_record(self) -> None:
         # Sonarr never becomes ready (always RETRY); once the readiness deadline
         # passes the record is left pending for a later run, not dropped.
@@ -406,7 +448,58 @@ class TestRunBlockingImports:
         assert engine._ctx.pending_imports == [pending]
 
 
-class TestImportWaitModeProperty:
+class FakeWaitView:
+    """Records the WaitView calls the engine makes, for assertion."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple] = []
+
+    def start(self, torrents: list[tuple[str, str]]) -> None:
+        self.events.append(("start", torrents))
+
+    def download(self, key: str, pct: float, elapsed: float, timeout: float) -> None:
+        self.events.append(("download", key, pct))
+
+    def phase_sonarr(self, key: str, elapsed: float, timeout: float) -> None:
+        self.events.append(("phase_sonarr", key))
+
+    def done(self, key: str, outcome: str) -> None:
+        self.events.append(("done", key, outcome))
+
+    def close(self) -> None:
+        self.events.append(("close",))
+
+
+class TestWaitViewRouting:
+    """The engine routes download/import progress + outcomes through the view."""
+
+    def test_download_then_import_drives_view(self) -> None:
+        # One downloading poll, then complete; Sonarr imports on the first poll.
+        strategy = mock.MagicMock()
+        strategy.import_completed.return_value = ImportReadiness.IMPORTED
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit(
+            [
+                [FakeTorrent(progress=0.4)],
+                [FakeTorrent(is_complete=True, content_path="/d")],
+            ],
+        )
+        engine = make_orchestration_engine(
+            qbit=qbit, strategy=strategy,
+            store_records=[pending.to_json()], pending=[pending],
+            import_wait_timeout=3600, import_poll_interval=30,
+        )
+        view = FakeWaitView()
+        clock = FakeClock(step=30)
+
+        outcome = engine._wait_and_import_one(
+            pending, view=view, now=clock.now, sleep=clock.sleep,
+        )
+
+        assert outcome == "imported"
+        kinds = [e[0] for e in view.events]
+        assert "download" in kinds  # the downloading poll heartbeat
+        assert ("done", "h", "imported") in view.events
     """The engine exposes the run's RESOLVED wait mode (cli > config).
 
     The Sonarr strategy's seed-building gate reads this instead of the raw config
