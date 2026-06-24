@@ -114,6 +114,7 @@ packages = ["seadexarr"]
 # pyright-compatible settings too, so with the venv resolved it now surfaces a
 # handful of pre-existing latent type errors (to be addressed separately).
 [tool.pyright]
+typeCheckingMode = "standard"
 venvPath = "."
 venv = ".venv"
 

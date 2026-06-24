@@ -9,6 +9,40 @@ on:
       - main
 
 jobs:
+  checks:
+    name: Checks (py ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Versions listed at https://raw.githubusercontent.com/actions/python-versions/main/versions-manifest.json
+        python-version: [
+          "3.12",
+          "3.13",
+        ]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Sync dependencies
+        run: uv sync --group dev --python ${{ matrix.python-version }}
+      - name: Ruff (lint)
+        run: uv run ruff check seadexarr/ tests/
+      # The type gate is vanilla pyright in standard mode (pinned for reproducible
+      # CI). It reads [tool.pyright] in pyproject.toml and resolves third-party
+      # imports against the .venv that `uv sync` just created. Phase of the strict
+      # sweep: this flips to strict once seadexarr/ is clean under strict.
+      - name: Pyright (type check, standard)
+        run: uvx pyright@1.1.410 seadexarr tests
+      - name: Pyrefly (type check)
+        run: uv run pyrefly check seadexarr
+      - name: Pytest
+        run: uv run pytest tests/
+
   build_sdist_and_wheel:
     name: Build source distribution
     runs-on: ubuntu-latest

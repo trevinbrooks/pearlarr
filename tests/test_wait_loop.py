@@ -9,7 +9,7 @@ via ``make_bare_instance``) so no live qBittorrent login or disk I/O happens.
 """
 
 import types
-from typing import cast
+from typing import cast, override
 from unittest import mock
 
 import qbittorrentapi
@@ -23,6 +23,7 @@ from seadexarr.modules.manual_import import (
 )
 from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.seadex_arr import SeaDexArr
+from seadexarr.modules.wait_view import WaitView
 
 from .builders import (
     import_probe,
@@ -271,24 +272,29 @@ class TestPruneExpiredPending:
         assert set(engine._pending_store()) == {"fresh"}
 
 
-class FakeWaitView:
+class FakeWaitView(WaitView):
     """Records the WaitView calls the engine makes, for assertion."""
 
     def __init__(self) -> None:
         self.events: list[tuple] = []
 
+    @override
     def start(self, torrents: list[tuple[str, str]]) -> None:
         self.events.append(("start", torrents))
 
+    @override
     def download(self, key: str, pct: float, elapsed: float, timeout: float) -> None:
         self.events.append(("download", key, pct))
 
+    @override
     def importing(self, key: str, elapsed: float, timeout: float) -> None:
         self.events.append(("importing", key))
 
+    @override
     def done(self, key: str, outcome: str) -> None:
         self.events.append(("done", key, outcome))
 
+    @override
     def close(self) -> None:
         self.events.append(("close",))
 

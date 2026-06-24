@@ -3,7 +3,6 @@ import time
 from datetime import datetime, timedelta
 from xml.etree import ElementTree
 
-from seadexarr.modules.manual_import import QueueRecordView
 from . import coverage as _coverage
 from .anilist import (
     get_anilist_format,
@@ -826,7 +825,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 )
                 return ImportProbe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
 
-        download_id, queue_records = self._queue_record_views(pending.infohash)
+        _download_id, queue_records = self._queue_record_views(pending.infohash)
         verdict = classify_queue(queue_records)
         if verdict is QueueVerdict.WAIT:
             self.logger.debug(indent_string(f"{label}: Sonarr is importing; waiting"))
