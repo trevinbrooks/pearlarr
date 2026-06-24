@@ -11,6 +11,17 @@ from .anilist import (
 from .cache import UPDATED_AT_STR_FORMAT, CacheRecord, record_is_fresh
 from .config import Arr
 from .log import EntryState, indent_string
+from .manual_import import (
+    ImportWaitMode,
+    PendingImport,
+    assign_episode_ids,
+    build_episode_id_map,
+    derive_languages,
+    parse_quality_from_filename,
+    resolve_language_objects,
+    resolve_quality_model,
+    select_quality,
+)
 from .mappings import MappingEntry, MappingMode
 from .planner import get_episode_keys
 from .protocols import ArrSync
@@ -213,6 +224,37 @@ def check_ep_by_anibridge(
     return False
 
 
+# Substrings in a manual-import rejection reason that mean "don't import this
+# file": a sample, an already-imported file, or a file that already exists.
+# Matched case-insensitively against each rejection's reason/message text.
+_REJECTION_SKIP_TOKENS = ("sample", "already", "exist")
+
+
+def _candidate_is_rejected(candidate: dict) -> bool:
+    """True if a manual-import candidate is a sample / already-imported file.
+
+    Best-effort: scans the candidate's ``rejections`` for a reason/message whose
+    text contains any skip token (``sample``/``already``/``exist``), case
+    insensitively. A rejection shape varies by Sonarr version (a bare string, or
+    a dict with ``reason``/``message``), so both are handled.
+
+    Args:
+        candidate (dict): A raw ManualImportResource dict (reads ``rejections``).
+    """
+
+    for rejection in candidate.get("rejections") or []:
+        if isinstance(rejection, str):
+            text = rejection
+        elif isinstance(rejection, dict):
+            text = f"{rejection.get('reason', '')} {rejection.get('message', '')}"
+        else:
+            continue
+        lowered = text.casefold()
+        if any(token in lowered for token in _REJECTION_SKIP_TOKENS):
+            return True
+    return False
+
+
 class SonarrSync(ArrSync[SonarrItem]):
     """Sonarr sync strategy: owns the Sonarr REST client + episode domain logic.
 
@@ -269,6 +311,14 @@ class SonarrSync(ArrSync[SonarrItem]):
         # top of each run (in get_items, the run-start hook).
         self._ep_list_cache: dict[int, list[SonarrEpisode]] = {}
 
+        # Per-run caches of the Sonarr quality-definition / language lists, used
+        # to resolve a quality name / language names into the manual-import
+        # payload objects. Fetched lazily on the first import and then reused for
+        # the rest of the run so repeated imports don't re-hit the endpoints;
+        # None means "not yet fetched" (cleared in get_items, the run-start hook).
+        self._quality_defs_cache: list[dict] | None = None
+        self._languages_cache: list[dict] | None = None
+
         self.ignore_movies_in_radarr = self._config.ignore_movies_in_radarr
 
         # Only when ignore_movies_in_radarr is on do we need Radarr's movie list
@@ -308,6 +358,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         """
 
         self._ep_list_cache = {}
+        self._quality_defs_cache = None
+        self._languages_cache = None
         return self.get_all_sonarr_series()
 
     def filter_to_single(self, items: list[SonarrItem], item_id: int) -> list[SonarrItem]:
@@ -522,6 +574,24 @@ class SonarrSync(ArrSync[SonarrItem]):
             ep_list=ep_list,
         )
 
+        # Build the authoritative per-torrent import seeds the engine will persist
+        # at the add site. Only the releases marked for download (download +
+        # hash) get a seed; each carries our own (basename -> Sonarr episode ids)
+        # mapping so the later manual import never trusts Sonarr's blind parse.
+        # Skipped entirely when the feature is off, to avoid the per-file work.
+        # Gate on the engine's RESOLVED mode (cli > config), not the raw config,
+        # so a CLI override agrees with the engine's persist/reconcile/blocking
+        # gates - otherwise enabling via the CLI over an off config builds no
+        # seeds and the whole pass silently no-ops.
+        pending_seeds: dict[str, PendingImport] | None = None
+        if run.import_wait_mode is not ImportWaitMode.OFF:
+            pending_seeds = self._build_pending_seeds(
+                seadex_dict=seadex_dict,
+                ep_list=ep_list,
+                sonarr_series_id=sonarr_series_id,
+                anilist_title=anilist_title,
+            )
+
         return run.grab_and_cache(
             arr=arr,
             al_id=al_id,
@@ -532,7 +602,239 @@ class SonarrSync(ArrSync[SonarrItem]):
             torrent_hashes=torrent_hashes,
             cache_details=cache_details,
             release_group=sonarr_release_groups,
+            pending_seeds=pending_seeds,
         )
+
+    def _build_pending_seeds(
+        self,
+        *,
+        seadex_dict: SeadexDict,
+        ep_list: list[SonarrEpisode],
+        sonarr_series_id: int,
+        anilist_title: str,
+    ) -> dict[str, PendingImport]:
+        """Build ``infohash -> PendingImport`` for every release marked to grab.
+
+        For each downloadable url with a hash, map its SeaDex files to
+        authoritative Sonarr episode ids via the cached ``/parse`` results and
+        the ``(season, episode) -> id`` index, so the eventual manual import can
+        override every field Sonarr would otherwise blind-parse.
+
+        Args:
+            seadex_dict (SeadexDict): The filtered releases; ``url_item.download``
+                marks the ones the engine will add.
+            ep_list (list[SonarrEpisode]): The relevant Sonarr episodes (carry ids).
+            sonarr_series_id (int): The Sonarr series id the files belong to.
+            anilist_title (str): Display title for the record (logging only).
+
+        Returns:
+            dict[str, PendingImport]: Seeds keyed by infohash (empty when nothing
+            is downloadable / parseable).
+        """
+
+        ep_id_map = build_episode_id_map(ep_list)
+        parse_cache: dict = self.cache_store.data.get("sonarr_parse_cache", {})
+        added_at = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
+
+        pending_seeds: dict[str, PendingImport] = {}
+
+        for srg, srg_item in seadex_dict.items():
+            for url_item in srg_item.urls.values():
+
+                if not (url_item.download and url_item.hash):
+                    continue
+
+                file_episode_map: dict[str, list[int]] = {}
+                flat_ids: list[int] = []
+                seasons: set[int] = set()
+
+                for seadex_file in url_item.files:
+                    f = os.path.basename(seadex_file)
+
+                    record = parse_cache.get(f)
+                    if not record:
+                        continue
+
+                    file_ids: list[int] = []
+                    for ep in record.get("episodes", []):
+                        season = ep.get("season")
+                        episode = ep.get("episode")
+                        ep_id = ep_id_map.get((season, episode))
+                        if ep_id is None:
+                            continue
+                        file_ids.append(ep_id)
+                        flat_ids.append(ep_id)
+                        if season is not None:
+                            seasons.add(season)
+
+                    if file_ids:
+                        file_episode_map[f] = file_ids
+
+                # Nothing mapped to a real episode id: persisting a record here
+                # would only re-poll a never-importable download every run until
+                # the TTL drops it, so skip it (the release is still grabbed).
+                if not (file_episode_map or flat_ids):
+                    continue
+
+                season_number = seasons.pop() if len(seasons) == 1 else None
+
+                pending_seeds[url_item.hash] = PendingImport(
+                    infohash=url_item.hash,
+                    series_id=sonarr_series_id,
+                    file_episode_map=file_episode_map,
+                    episode_ids=flat_ids,
+                    release_group=srg,
+                    is_dual_audio=url_item.is_dual_audio,
+                    season_number=season_number,
+                    seadex_files=[os.path.basename(f) for f in url_item.files],
+                    title=anilist_title,
+                    added_at=added_at,
+                )
+
+        return pending_seeds
+
+    def import_completed(self, pending: PendingImport, content_path: str) -> bool:
+        """Drive the series-pinned manual import for one completed download.
+
+        Asks Sonarr for the manual-import candidates under ``content_path``
+        (pinned to ``pending.series_id`` so the parse runs in the context of the
+        known series), then builds a payload that overrides every field we have
+        authoritative data for - series id, episode ids, release group, download
+        id - and layers the quality (ours -> Sonarr's in-context -> configured
+        default) and languages (dual vs. single). Files Sonarr rejects as a
+        sample / already-imported are skipped; files we can't confidently map to
+        an episode are skipped.
+
+        Returns True only when the ``ManualImport`` command was queued (so the
+        engine may drop the pending record); False to leave it pending for a
+        later retry.
+
+        Args:
+            pending (PendingImport): The durable record for the completed torrent.
+            content_path (str): The qBittorrent ``content_path`` of the finished
+                download (the folder/file the manual import reads from disk).
+        """
+
+        candidates = self.sonarr.manual_import_candidates(
+            folder=content_path,
+            series_id=pending.series_id,
+            season_number=pending.season_number,
+            filter_existing_files=False,
+        )
+        if not candidates:
+            self.logger.info(
+                indent_string(
+                    f"No manual-import candidates for {pending.title or pending.infohash}; "
+                    f"leaving pending",
+                ),
+            )
+            return False
+
+        # Lazily fetch + cache the quality-definition / language lists for the
+        # run so repeated imports don't re-hit these endpoints.
+        if self._quality_defs_cache is None:
+            self._quality_defs_cache = self.sonarr.quality_definitions()
+        if self._languages_cache is None:
+            self._languages_cache = self.sonarr.languages()
+        quality_defs = self._quality_defs_cache
+        lang_defs = self._languages_cache
+
+        assigned = assign_episode_ids(
+            [os.path.basename(c["path"]) for c in candidates if c.get("path")],
+            pending.file_episode_map,
+            pending.episode_ids,
+        )
+
+        lang_names = derive_languages(
+            pending.is_dual_audio,
+            self._config.import_languages_dual,
+            self._config.import_languages_single,
+        )
+        lang_objs = resolve_language_objects(lang_names, lang_defs)
+
+        files: list[dict] = []
+        for c in candidates:
+            path = c.get("path")
+            if not path:
+                continue
+            base = os.path.basename(path)
+
+            ep_ids = assigned.get(base)
+            if not ep_ids:
+                self.logger.info(
+                    indent_string(
+                        f"Skipping {base}: no authoritative episode mapping",
+                    ),
+                )
+                continue
+
+            if _candidate_is_rejected(c):
+                self.logger.info(
+                    indent_string(
+                        f"Skipping {base}: rejected by Sonarr (sample/already imported)",
+                    ),
+                )
+                continue
+
+            file_entry: dict = {
+                "path": path,
+                "seriesId": pending.series_id,
+                "episodeIds": ep_ids,
+                "releaseGroup": pending.release_group,
+                "downloadId": pending.infohash,
+                "languages": lang_objs,
+            }
+
+            our_q = parse_quality_from_filename(base)
+            sel = select_quality(
+                our_q, c.get("quality"), self._config.import_default_quality,
+            )
+            if sel.model is not None:
+                file_entry["quality"] = sel.model
+            elif sel.name is not None:
+                quality_model = resolve_quality_model(sel.name, quality_defs)
+                if quality_model is not None:
+                    file_entry["quality"] = quality_model
+                else:
+                    self.logger.warning(
+                        indent_string(
+                            f"Could not resolve quality '{sel.name}' for {base}; "
+                            f"importing without an explicit quality",
+                        ),
+                    )
+            else:
+                self.logger.warning(
+                    indent_string(
+                        f"Unknown quality for {base}; importing without an "
+                        f"explicit quality (re-grab risk)",
+                    ),
+                )
+
+            files.append(file_entry)
+
+        if not files:
+            self.logger.info(
+                indent_string(
+                    f"Nothing importable for {pending.title or pending.infohash}; "
+                    f"leaving pending",
+                ),
+            )
+            return False
+
+        cmd_id = self.sonarr.manual_import_execute(
+            files=files,
+            import_mode=self._config.import_mode,
+        )
+        if cmd_id is None:
+            return False
+
+        self.logger.info(
+            indent_string(
+                f"Queued manual import of {len(files)} file(s) for "
+                f"{pending.title or pending.infohash} (command {cmd_id})",
+            ),
+        )
+        return True
 
     # --- Sonarr domain logic ------------------------------------------------
 

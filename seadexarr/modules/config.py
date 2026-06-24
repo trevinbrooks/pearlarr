@@ -23,6 +23,8 @@ from xml.etree import ElementTree
 import yaml
 from ruamel.yaml import YAML
 
+from .manual_import import ImportWaitMode
+
 # Tracker name classification. Stored casefolded so membership tests match the
 # casefolded ``trackers`` setting and the casefolded tracker names from SeaDex.
 PUBLIC_TRACKERS = {
@@ -247,6 +249,71 @@ class AppConfig:
     @property
     def max_torrents_to_add(self) -> int | None:
         return self.data.get("max_torrents_to_add", None)
+
+    # --- Wait-for-completion + Sonarr manual import -------------------------
+
+    @property
+    def import_wait_mode(self) -> ImportWaitMode:
+        """How (and whether) to wait for downloads and drive Sonarr import.
+
+        ``off`` (the default) disables the whole feature: no pending records,
+        no waiting, no manual import. The other modes (``deferred``,
+        ``blocking``, ``hybrid``) control *when* the wait/import runs. An
+        unrecognized value falls back to ``ImportWaitMode.OFF`` rather than
+        raising, so a typo in the config can never crash a run.
+        """
+
+        raw = self.data.get("import_wait_mode", "off")
+        try:
+            return ImportWaitMode(raw)
+        except ValueError:
+            return ImportWaitMode.OFF
+
+    @property
+    def import_wait_timeout(self) -> int:
+        """Seconds to block per torrent in the end-of-run blocking pass."""
+
+        return self.data.get("import_wait_timeout", 3600)
+
+    @property
+    def import_poll_interval(self) -> int:
+        """Seconds between qBittorrent completion polls while waiting."""
+
+        return self.data.get("import_poll_interval", 30)
+
+    @property
+    def import_mode(self) -> str:
+        """Sonarr ``importMode`` for the manual import (``auto``/``move``/``copy``)."""
+
+        return self.data.get("import_mode", "auto")
+
+    @property
+    def import_default_quality(self) -> str | None:
+        """Fallback quality name when neither our parse nor Sonarr's is known.
+
+        Recommended on a 4K instance (e.g. ``Bluray-2160p``) to avoid
+        importing files as Unknown quality and triggering re-grabs.
+        """
+
+        return self.data.get("import_default_quality", None)
+
+    @property
+    def import_languages_dual(self) -> list[str]:
+        """Languages applied to imported files from dual-audio releases."""
+
+        return self.data.get("import_languages_dual", ["Japanese", "English"])
+
+    @property
+    def import_languages_single(self) -> list[str]:
+        """Languages applied to imported files from single-audio releases."""
+
+        return self.data.get("import_languages_single", ["Japanese"])
+
+    @property
+    def import_pending_max_age_days(self) -> int:
+        """Drop pending-import records older than this many days (TTL)."""
+
+        return self.data.get("import_pending_max_age_days", 14)
 
     @property
     def discord_url(self) -> str | None:

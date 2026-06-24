@@ -9,6 +9,7 @@ import typer
 
 from .config import AppConfig, Arr
 from .log import setup_logger
+from .manual_import import ImportWaitMode
 from .mappings import MappingResolver
 from .seadex_arr import RunDeps, SeaDexArr
 from .seadex_radarr import RadarrSync
@@ -105,6 +106,7 @@ def _run_arr(
     mappings: MappingResolver,
     item_id: int | None = None,
     dry_run: bool = False,
+    import_wait_mode: ImportWaitMode | None = None,
 ) -> None:
     """Compose one arr run from the injected deps, run it, and always close it.
 
@@ -113,7 +115,8 @@ def _run_arr(
     strategy, then drive ``run_sync``. Any error is logged (so one arr crashing
     doesn't abort the other or the scheduled loop) and the HTTP session is
     released in a ``finally``. Each arr's id (TMDB for Radarr, TVDB for Sonarr) is
-    passed as ``item_id``.
+    passed as ``item_id``. ``import_wait_mode`` is the resolved CLI override (None
+    in scheduled mode, where the config setting wins).
     """
 
     services = None
@@ -132,11 +135,13 @@ def _run_arr(
                 services.run_sync(
                     SonarrSync(deps, services),
                     arr=arr_name, item_id=item_id, dry_run=dry_run,
+                    import_wait_mode=import_wait_mode,
                 )
             case Arr.RADARR:
                 services.run_sync(
                     RadarrSync(deps, services),
                     arr=arr_name, item_id=item_id, dry_run=dry_run,
+                    import_wait_mode=import_wait_mode,
                 )
             case _ as unreachable:
                 assert_never(unreachable)
@@ -153,6 +158,7 @@ def _run_arrs(
     cache: str,
     logger: logging.Logger,
     dry_run: bool = False,
+    import_wait_mode: ImportWaitMode | None = None,
 ) -> bool:
     """Build the shared config + mappings once, then run each requested arr.
 
@@ -162,7 +168,8 @@ def _run_arrs(
     time, and only when at least one arr is requested. Returns True when there was
     nothing to do or the run proceeded; False - after ``_build_shared`` logs the
     cause - when an arr was requested but the shared deps couldn't be built, so a
-    caller can tell a no-op-on-failure from a real run.
+    caller can tell a no-op-on-failure from a real run. ``import_wait_mode`` is the
+    resolved CLI override threaded into each arr (None in scheduled mode).
     """
 
     if not arrs:
@@ -177,7 +184,7 @@ def _run_arrs(
         _run_arr(
             arr_name, app_config,
             config=config, cache=cache, logger=logger, mappings=mappings,
-            item_id=item_id, dry_run=dry_run,
+            item_id=item_id, dry_run=dry_run, import_wait_mode=import_wait_mode,
         )
 
     return True
@@ -242,6 +249,7 @@ def run_single(
     movie_id: int | None = None,
     series_id: int | None = None,
     dry_run: bool = False,
+    import_wait_mode: ImportWaitMode | None = None,
 ) -> bool:
     """Do a single SeaDexArr run
 
@@ -254,6 +262,9 @@ def run_single(
             Implies a Sonarr run. Defaults to None
         dry_run: If set, simulate the run without grabbing torrents, writing
             the cache, or sending notifications. Defaults to False
+        import_wait_mode: Override the configured wait-for-completion + Sonarr
+            manual-import mode (off/deferred/blocking/hybrid) for this run. When
+            unset the config's ``import_wait_mode`` wins (cli > config > default).
     """
 
     # Set up config file location
@@ -274,6 +285,7 @@ def run_single(
     # programmatic caller can tell a no-op-on-failure from a real run.
     return _run_arrs(
         arrs, config=paths.config, cache=paths.cache, logger=logger, dry_run=dry_run,
+        import_wait_mode=import_wait_mode,
     )
 
 

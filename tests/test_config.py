@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from seadexarr.modules.config import PRIVATE_TRACKERS, PUBLIC_TRACKERS, AppConfig, Arr
+from seadexarr.modules.manual_import import ImportWaitMode
 
 
 def _cfg(**data: object) -> AppConfig:
@@ -149,3 +150,43 @@ class TestTypedSettings:
         cfg = _cfg(radarr_url="http://r", radarr_api_key="rk")
         assert cfg.radarr_url_optional == "http://r"
         assert cfg.radarr_api_key_optional == "rk"
+
+
+class TestImportSettings:
+    def test_defaults_when_absent(self) -> None:
+        cfg = _cfg()
+        assert cfg.import_wait_mode is ImportWaitMode.OFF
+        assert cfg.import_wait_timeout == 3600
+        assert cfg.import_poll_interval == 30
+        assert cfg.import_mode == "auto"
+        assert cfg.import_default_quality is None
+        assert cfg.import_languages_dual == ["Japanese", "English"]
+        assert cfg.import_languages_single == ["Japanese"]
+        assert cfg.import_pending_max_age_days == 14
+
+    def test_explicit_values_override(self) -> None:
+        cfg = _cfg(
+            import_wait_timeout=120,
+            import_poll_interval=5,
+            import_mode="copy",
+            import_default_quality="Bluray-2160p",
+            import_languages_dual=["English"],
+            import_languages_single=["German"],
+            import_pending_max_age_days=30,
+        )
+        assert cfg.import_wait_timeout == 120
+        assert cfg.import_poll_interval == 5
+        assert cfg.import_mode == "copy"
+        assert cfg.import_default_quality == "Bluray-2160p"
+        assert cfg.import_languages_dual == ["English"]
+        assert cfg.import_languages_single == ["German"]
+        assert cfg.import_pending_max_age_days == 30
+
+    def test_import_wait_mode_coerces_valid_string(self) -> None:
+        assert _cfg(import_wait_mode="hybrid").import_wait_mode is ImportWaitMode.HYBRID
+        assert _cfg(import_wait_mode="deferred").import_wait_mode is ImportWaitMode.DEFERRED
+        assert _cfg(import_wait_mode="blocking").import_wait_mode is ImportWaitMode.BLOCKING
+        assert _cfg(import_wait_mode="off").import_wait_mode is ImportWaitMode.OFF
+
+    def test_import_wait_mode_invalid_falls_back_to_off(self) -> None:
+        assert _cfg(import_wait_mode="bogus").import_wait_mode is ImportWaitMode.OFF

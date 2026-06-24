@@ -3,6 +3,8 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import cast
 
 import qbittorrentapi
 import requests
@@ -12,13 +14,19 @@ from seadexarr.modules.seadex_types import SeadexReleaseGroupItem, SeadexUrlItem
 
 from . import coverage as _coverage
 from .anilist_gateway import AniListGateway
-from .cache import CacheField, CacheRecord, CacheStore
+from .cache import UPDATED_AT_STR_FORMAT, CacheField, CacheRecord, CacheStore
 from .config import PRIVATE_TRACKERS, AppConfig, Arr
 from .log import (
     EntryState,
     LogFormatter,
     indent_string,
     setup_logger,
+)
+from .manual_import import (
+    ImportWaitMode,
+    PendingImport,
+    WaitOutcome,
+    resolve_wait_mode,
 )
 from .mappings import MappingEntry, MappingResolver, TmdbType
 from .notify import Notifier
@@ -221,6 +229,13 @@ class SeaDexArr:
         # here keeps every method that consults it safe before run_sync is called.
         self.dry_run = False
 
+        # The wait-for-completion mode and the active strategy for the current
+        # run. Both are (re)set at the top of run_sync; OFF here keeps every
+        # pending-import code path a no-op before the first run, and the
+        # placeholder strategy is replaced before any hook is invoked.
+        self._import_wait_mode: ImportWaitMode = ImportWaitMode.OFF
+        self._active_strategy: ArrSync[ArrItem] | None = None
+
         # All per-run state (stats tally, running torrent count, the active
         # title/url/coverage, the run clock, the public_only skip flags) lives on
         # this context, replaced fresh at the start of each run by reset_run_stats.
@@ -369,6 +384,7 @@ class SeaDexArr:
                 size=[f.size for f in t.files],
                 tracker=t.tracker,
                 is_public=t.tracker.is_public() and t.tracker.casefold() not in PRIVATE_TRACKERS,
+                is_dual_audio=t.is_dual_audio,
                 hash=t.infohash,
                 download=False,
             )
@@ -505,6 +521,7 @@ class SeaDexArr:
     def add_torrent(
         self,
         torrent_dict: SeadexDict,
+        pending_seeds: dict[str, PendingImport] | None = None,
     ) -> tuple[int, list[ReleaseOutcome]]:
         """Add torrent(s) to qBittorrent
 
@@ -517,6 +534,9 @@ class SeaDexArr:
 
         Args:
             torrent_dict (dict): Dictionary of torrent info
+            pending_seeds (dict[str, PendingImport] | None): The Sonarr strategy's
+                ``infohash -> PendingImport`` seeds, finalized into a durable
+                record on a successful add. Radarr passes None.
 
         Returns:
             tuple: (n_torrents_added, results), where results is a list of
@@ -530,7 +550,9 @@ class SeaDexArr:
         for srg, srg_item in torrent_dict.items():
             for url, url_item in srg_item.urls.items():
 
-                add_result = self._add_one_url(srg, url, url_item)
+                add_result = self._add_one_url(
+                    srg, url, url_item, pending_seeds=pending_seeds,
+                )
                 if add_result is None:
                     continue
 
@@ -551,6 +573,7 @@ class SeaDexArr:
         srg: str,
         url: str,
         url_item: SeadexUrlItem,
+        pending_seeds: dict[str, PendingImport] | None = None,
     ) -> ReleaseOutcome | None:
         """Resolve a single SeaDex url to an add outcome (or ``None`` to skip).
 
@@ -558,7 +581,9 @@ class SeaDexArr:
         download, private-only under ``public_only``, or an unselected tracker)
         and for a service ``add`` that neither added nor was already present. On
         an ``AddOutcome.ADDED`` the run-summary grab record is appended here; the
-        caller owns the torrents_added/cap bookkeeping.
+        caller owns the torrents_added/cap bookkeeping. When this release matches
+        a ``pending_seeds`` entry (and the feature is on, off-preview), the
+        durable :class:`PendingImport` record is persisted here too.
         """
 
         # If not flagged for download, then skip
@@ -614,6 +639,23 @@ class SeaDexArr:
                     group=srg,
                 ),
             )
+
+            # Persist the durable pending-import record for the wait/import pass.
+            # Only on a real (non-preview) add of a release we have a seed for,
+            # keyed by infohash so a re-add overwrites and a verified import
+            # deletes. The in-memory copy rides the run context for the fast
+            # end-of-run blocking pass.
+            if (
+                self._import_wait_mode is not ImportWaitMode.OFF
+                and not self._is_preview()
+                and url_item.hash
+                and pending_seeds
+                and url_item.hash in pending_seeds
+            ):
+                pending = pending_seeds[url_item.hash]
+                self._pending_store()[url_item.hash] = pending.to_json()
+                self._ctx.pending_imports.append(pending)
+
             return ReleaseOutcome(
                 outcome=AddOutcome.ADDED,
                 name=torrent_name,
@@ -633,6 +675,19 @@ class SeaDexArr:
         """A run is a no-op preview when an explicit dry run was requested OR
         qBittorrent is not configured (nothing can actually be grabbed)."""
         return self.dry_run or self.qbit is None
+
+    @property
+    def import_wait_mode(self) -> ImportWaitMode:
+        """The wait mode resolved for the current run (cli > config > default).
+
+        Set at the top of ``run_sync``; the active strategy reads this (not the
+        raw ``config.import_wait_mode``) so its seed-building gate agrees with the
+        engine's persist/reconcile/blocking gates - otherwise a CLI override that
+        turns the feature on over an ``off`` config would build no seeds and the
+        whole pass would silently no-op.
+        """
+
+        return self._import_wait_mode
 
     def update_cache(
         self,
@@ -720,6 +775,7 @@ class SeaDexArr:
         arr: Arr,
         item_id: int | None,
         dry_run: bool,
+        import_wait_mode: ImportWaitMode | None = None,
     ) -> bool:
         """Shared run scaffolding for both Arr syncers
 
@@ -740,13 +796,36 @@ class SeaDexArr:
                 id (TMDB for Radarr, TVDB for Sonarr)
             dry_run (bool): Simulate the run without grabbing torrents, writing
                 the cache, or sending notifications
+            import_wait_mode (ImportWaitMode | None): The CLI ``--import-wait-mode``
+                override, resolved cli > config > default. None falls back to the
+                configured ``import_wait_mode``.
         """
 
         # Whether this is a no-op preview - consulted by the mutating helpers
         self.dry_run = dry_run
 
+        # Hold the active strategy (so _finalize_run / _grab can call its import
+        # hook) and resolve the effective wait mode (cli > config > default) for
+        # the whole run. ArrSync is invariant in ItemT, but the engine only ever
+        # calls import_completed off it (which reads no item type), so the run is
+        # safe to keep the strategy under the shared ArrItem bound.
+        self._active_strategy = cast("ArrSync[ArrItem]", strategy)
+        self._import_wait_mode = resolve_wait_mode(
+            import_wait_mode, self._config.import_wait_mode,
+        )
+
         # Start a fresh run context (stats tally + clock + counter snapshot)
         self.reset_run_stats(arr=arr, dry_run=dry_run)
+
+        # Tend the durable pending-import store at run start (never on a preview,
+        # since waiting/importing needs a real qBittorrent client). The TTL prune
+        # runs for EVERY active mode - including pure blocking, which never
+        # reconciles - so aged-out records can't accumulate forever. The
+        # poll-once-and-import reconcile is deferred/hybrid only.
+        if self._import_wait_mode is not ImportWaitMode.OFF and not self._is_preview():
+            self._prune_expired_pending()
+            if self._import_wait_mode in (ImportWaitMode.DEFERRED, ImportWaitMode.HYBRID):
+                self._reconcile_pending_imports()
 
         all_items: list[ItemT] = strategy.get_items()
 
@@ -817,12 +896,10 @@ class SeaDexArr:
                 )
                 continue
 
-        # Per-title update_cache calls only mutate memory now, so this end-of-run
-        # save is what actually persists the run (and sorts by id on the way out)
-        self.cache_store.save(preview=self._is_preview())
-        self._reporter.log_run_summary(
-            self._ctx, arr, is_preview=self._is_preview(), has_client=self.qbit is not None,
-        )
+        # Run the end-of-run blocking pass (blocking/hybrid only), then persist
+        # the run and log the summary. Per-title update_cache calls only mutate
+        # memory, so this finalize is what actually saves (and sorts by id).
+        self._finalize_run(arr)
 
         return True
 
@@ -909,6 +986,7 @@ class SeaDexArr:
         torrent_hashes: list[str | None],
         cache_details: CacheRecord,
         release_group: str | list[str | None] | None,
+        pending_seeds: dict[str, PendingImport] | None = None,
     ) -> bool:
         """Shared per-id tail: add torrents, notify, then cache the outcome
 
@@ -928,6 +1006,9 @@ class SeaDexArr:
             cache_details (CacheRecord): Cache record being assembled for this id
             release_group (list | str | None): Arr release group(s) for the
                 Discord fields
+            pending_seeds (dict[str, PendingImport] | None): The Sonarr strategy's
+                ``infohash -> PendingImport`` seeds for this id, finalized into a
+                durable record on a successful add. Radarr passes None.
         """
 
         # Check the release groups are matching, and get a bespoke list of torrents
@@ -953,6 +1034,7 @@ class SeaDexArr:
             sd_url=sd_url,
             seadex_dict=seadex_dict,
             release_group=release_group,
+            pending_seeds=pending_seeds,
         ):
             # max_torrents_to_add reached: cache saved and summary logged inside
             # _grab; stop the whole run.
@@ -1004,6 +1086,7 @@ class SeaDexArr:
         sd_url: str,
         seadex_dict: SeadexDict,
         release_group: str | list[str | None] | None,
+        pending_seeds: dict[str, PendingImport] | None = None,
     ) -> bool:
         """Add this title's torrents, notify, and honour the run-wide cap.
 
@@ -1026,7 +1109,9 @@ class SeaDexArr:
         # (no client / dry run): the service simulates the add, while the
         # download-flag, public_only and tracker filters still apply, so only
         # releases that would actually be grabbed are counted.
-        n_torrents_added, results = self.add_torrent(torrent_dict=seadex_dict)
+        n_torrents_added, results = self.add_torrent(
+            torrent_dict=seadex_dict, pending_seeds=pending_seeds,
+        )
 
         # Log the action block now the outcome is known, so the status reads
         # "adding" only when something was actually grabbed (else "keeping")
@@ -1052,16 +1137,249 @@ class SeaDexArr:
         cap = self._config.max_torrents_to_add
         if cap is not None and self._ctx.torrents_added >= cap:
             self._reporter.log_max_torrents_added()
-            self.cache_store.save(preview=self._is_preview())
-            self._reporter.log_run_summary(
-                self._ctx,
-                arr,
-                is_preview=self._is_preview(),
-                has_client=self.qbit is not None,
-            )
+            # Finalize even on the early break so the blocking/hybrid pass still
+            # imports this run's records before saving and logging the summary.
+            self._finalize_run(arr)
             return True
 
         return False
+
+    # --- Wait-for-completion + series-pinned manual import ------------------
+    #
+    # The engine owns ``self.qbit`` and the completion wait/poll; the active
+    # strategy (held for the run) owns the Sonarr-side ``import_completed``. Every
+    # path below is a no-op under preview (``self._is_preview()``), since waiting
+    # and importing need a real qBittorrent client.
+
+    def _pending_store(self) -> dict[str, dict]:
+        """The per-Arr ``{infohash -> record}`` store inside the cache.
+
+        Lazily creates the ``pending_imports`` block and the per-Arr sub-block
+        (mirroring the ``sonarr_parse_cache`` setdefault pattern), so the first
+        write and every later read share one durable, idempotent map.
+        """
+
+        return self.cache_store.data.setdefault("pending_imports", {}).setdefault(
+            self._ctx.arr.value, {},
+        )
+
+    def _poll_torrent(
+        self, infohash: str,
+    ) -> tuple[WaitOutcome | None, str | None]:
+        """Poll qBittorrent once for a torrent's terminal/in-progress state.
+
+        Returns ``(outcome, content_path)``: a terminal :class:`WaitOutcome`
+        (COMPLETE carries the ``content_path``; ERRORED/MISSING carry None), or
+        ``(None, None)`` for "still waiting" - either the torrent is still
+        downloading or the qBittorrent call failed transiently (auto-reauth /
+        connection drop), which the wait loop treats as keep-waiting.
+
+        Args:
+            infohash (str): The qBittorrent tracking key to poll.
+        """
+
+        if self.qbit is None:
+            return None, None
+        try:
+            info = self.qbit.torrents_info(torrent_hashes=infohash)
+        except (qbittorrentapi.APIError, qbittorrentapi.APIConnectionError):
+            # Transient: a dropped connection or a re-auth in flight. Treat as
+            # still-waiting so the caller keeps polling until the deadline.
+            return None, None
+
+        if not info:
+            return WaitOutcome.MISSING, None
+
+        t = info[0]
+        if t.state_enum.is_errored:
+            return WaitOutcome.ERRORED, None
+        if t.state_enum.is_complete or t.progress >= 1.0:
+            return WaitOutcome.COMPLETE, t.content_path
+        return None, None
+
+    def _wait_for_completion(
+        self,
+        infohash: str,
+        *,
+        timeout_s: int,
+        poll_s: int,
+        now: Callable[[], float] | None = None,
+        sleep: Callable[[float], None] | None = None,
+    ) -> tuple[WaitOutcome, str | None]:
+        """Block until a torrent reaches a terminal state or the deadline.
+
+        Polls :meth:`_poll_torrent` on a ``poll_s`` cadence against a monotonic
+        deadline. A terminal outcome (COMPLETE/ERRORED/MISSING) returns
+        immediately; otherwise once ``now() - start >= timeout_s`` it returns
+        ``(TIMED_OUT, None)``. The clock and sleep are injectable so unit tests
+        never actually wait (foreground ``sleep`` is blocked in this env).
+
+        Args:
+            infohash (str): The qBittorrent tracking key to wait on.
+            timeout_s (int): Max seconds to wait before timing out.
+            poll_s (int): Seconds to sleep between polls.
+            now (Callable[[], float] | None): Monotonic clock; defaults to
+                ``time.monotonic``.
+            sleep (Callable[[float], None] | None): Sleep fn; defaults to
+                ``time.sleep``.
+        """
+
+        clock = now if now is not None else time.monotonic
+        nap = sleep if sleep is not None else time.sleep
+
+        start = clock()
+        while True:
+            outcome, path = self._poll_torrent(infohash)
+            if outcome is not None:
+                return outcome, path
+            if clock() - start >= timeout_s:
+                return WaitOutcome.TIMED_OUT, None
+            nap(poll_s)
+
+    def _try_import_completed(self, pending: PendingImport, path: str) -> bool:
+        """Drive the strategy's ``import_completed``, swallowing any error.
+
+        The import does live Sonarr HTTP work; a malformed response (a 200 with
+        a non-JSON body, a candidate missing ``path``, ...) must not abort the
+        run and skip the end-of-run ``cache_store.save`` in :meth:`_finalize_run`.
+        On any exception the record is left pending (returns False) and the run
+        continues; a real terminal failure is just retried next run / TTL'd out.
+        """
+
+        if self._active_strategy is None:
+            return False
+        try:
+            return self._active_strategy.import_completed(pending, path)
+        except Exception:
+            self.logger.error(
+                f"Manual import for pending {pending.infohash} raised; "
+                "leaving it pending for a later run",
+                exc_info=True,
+            )
+            return False
+
+    def _run_blocking_imports(self) -> None:
+        """Block on each record added this run, then drive its import.
+
+        For every :class:`PendingImport` recorded this run, wait up to
+        ``import_wait_timeout`` for completion. On COMPLETE drive the strategy's
+        ``import_completed`` and drop the record if it verified; on MISSING drop
+        it (gone from qBittorrent); on ERRORED/TIMED_OUT leave it pending for a
+        later run (the next reconcile/prune eventually drops it).
+        """
+
+        if self._active_strategy is None:
+            return
+
+        for pending in list(self._ctx.pending_imports):
+            outcome, path = self._wait_for_completion(
+                pending.infohash,
+                timeout_s=self._config.import_wait_timeout,
+                poll_s=self._config.import_poll_interval,
+            )
+
+            if outcome is WaitOutcome.COMPLETE and path:
+                if self._try_import_completed(pending, path):
+                    self._drop_pending(pending.infohash)
+            elif outcome is WaitOutcome.MISSING:
+                self.logger.debug(
+                    f"Pending import {pending.infohash} gone from qBittorrent; "
+                    "dropping",
+                )
+                self._drop_pending(pending.infohash)
+            else:
+                self.logger.info(
+                    f"Pending import {pending.infohash} not ready "
+                    f"({outcome.name.lower()}); leaving for a later run",
+                )
+
+    def _prune_expired_pending(self) -> None:
+        """Drop durable pending records past their TTL (or with a bad stamp).
+
+        Runs at the start of every non-off, non-preview run - including pure
+        ``blocking``, which never reconciles - so a never-completing torrent
+        can't pile up in the cache forever. A record past
+        ``import_pending_max_age_days`` (or with an unparseable ``added_at``) is
+        dropped from the durable store.
+        """
+
+        cutoff = datetime.now() - timedelta(
+            days=self._config.import_pending_max_age_days,
+        )
+
+        for infohash, raw in list(self._pending_store().items()):
+            pending = PendingImport.from_json(raw)
+            try:
+                added_at = datetime.strptime(pending.added_at, UPDATED_AT_STR_FORMAT)
+            except (TypeError, ValueError):
+                self.logger.debug(
+                    f"Pending import {infohash} has an unparseable timestamp; "
+                    "dropping as expired",
+                )
+                self._drop_pending(infohash)
+                continue
+            if added_at < cutoff:
+                self.logger.info(
+                    f"Pending import {infohash} older than "
+                    f"{self._config.import_pending_max_age_days} days; dropping",
+                )
+                self._drop_pending(infohash)
+
+    def _reconcile_pending_imports(self) -> None:
+        """Poll-once each persisted record at run start, import the ready ones.
+
+        Iterates a copy of the durable store (so dropping during the loop is
+        safe; :meth:`_prune_expired_pending` has already removed aged-out
+        records). A single non-blocking poll per record: COMPLETE drives the
+        import (drop on verify), MISSING drops the record, anything else is left
+        for a later run / the end-of-run blocking pass.
+        """
+
+        if self._active_strategy is None:
+            return
+
+        for infohash, raw in list(self._pending_store().items()):
+            pending = PendingImport.from_json(raw)
+            outcome, path = self._poll_torrent(infohash)
+            if outcome is WaitOutcome.COMPLETE and path:
+                if self._try_import_completed(pending, path):
+                    self._drop_pending(infohash)
+            elif outcome is WaitOutcome.MISSING:
+                self.logger.debug(
+                    f"Pending import {infohash} gone from qBittorrent; dropping",
+                )
+                self._drop_pending(infohash)
+
+    def _drop_pending(self, infohash: str) -> None:
+        """Remove a pending record from both the durable store and the run list."""
+
+        self._pending_store().pop(infohash, None)
+        self._ctx.pending_imports = [
+            p for p in self._ctx.pending_imports if p.infohash != infohash
+        ]
+
+    def _finalize_run(self, arr: Arr) -> None:
+        """Shared run tail: blocking import pass (if any), save, log summary.
+
+        Mirrors the former inline end-of-run block, hoisted so both the normal
+        run end and the ``_grab`` max-torrents early break run it identically.
+        The blocking/hybrid wait+import pass runs first (never on a preview),
+        then the cache is persisted and the end-of-run summary is logged.
+        """
+
+        if (
+            self._import_wait_mode in (ImportWaitMode.BLOCKING, ImportWaitMode.HYBRID)
+            and not self._is_preview()
+        ):
+            self._run_blocking_imports()
+
+        self.cache_store.save(preview=self._is_preview())
+        self._reporter.log_run_summary(
+            self._ctx,
+            arr,
+            is_preview=self._is_preview(),
+            has_client=self.qbit is not None,
+        )
 
     # --- Presentation seam (RunServices) ------------------------------------
     #

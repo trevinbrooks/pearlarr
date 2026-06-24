@@ -1,6 +1,7 @@
 from .cache import CacheRecord
 from .config import Arr
 from .log import indent_string
+from .manual_import import PendingImport
 from .mappings import MappingEntry, TmdbType
 from .protocols import ArrSync
 from .radarr_client import collect_anime_movies, make_radarr_client
@@ -168,6 +169,16 @@ class RadarrSync(ArrSync[RadarrItem]):
             cache_details=cache_details,
             release_group=radarr_release_group,
         )
+
+    def import_completed(self, pending: PendingImport, content_path: str) -> bool:
+        """No-op: the series-pinned manual import is Sonarr-only (out of scope).
+
+        Radarr never records a pending import (``grab_and_cache`` passes no
+        ``pending_seeds``), so this is never reached in practice; it returns
+        False to satisfy the :class:`~.protocols.ArrSync` contract.
+        """
+
+        return False
 
     # --- Radarr domain logic ------------------------------------------------
 

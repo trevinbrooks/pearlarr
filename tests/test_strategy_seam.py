@@ -9,12 +9,23 @@ built bare (``object.__new__``) so no live Sonarr/Radarr client is constructed.
 from unittest import mock
 
 from seadexarr.modules.config import Arr
+from seadexarr.modules.manual_import import (
+    resolve_language_objects,
+    resolve_quality_model,
+)
 from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.seadex_radarr import RadarrSync
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import RadarrItem, SonarrItem
 
-from .builders import make_bare_instance, make_logger
+from .builders import (
+    make_bare_instance,
+    make_config,
+    make_logger,
+    make_sonarr_sync,
+    manual_candidate,
+    pending_import,
+)
 
 
 class _Item:
@@ -110,3 +121,275 @@ class TestProcessAlIdThreadsServices:
 
         assert strat.process_al_id(Arr.SONARR, _Item(id=1), "Title", 5, MappingEntry(anilist_id=5)) is False
         run.al_id_prologue.assert_called_once_with(5)
+
+
+def _make_sonarr_for_import(
+    *,
+    candidates: list[dict],
+    quality_defs: list[dict] | None = None,
+    languages: list[dict] | None = None,
+    cmd_id: int | None = 42,
+    config_overrides: dict | None = None,
+) -> tuple[SonarrSync, mock.MagicMock]:
+    """A bare ``SonarrSync`` plus its scripted ``self.sonarr`` MagicMock.
+
+    The mock returns the given manual-import candidates, quality definitions and
+    languages, and a command id from ``manual_import_execute`` - everything
+    ``import_completed`` reaches over the network - so the test can assert on the
+    payload without a live Sonarr. The mock is returned alongside the strategy so
+    assertions read it through a ``MagicMock``-typed handle (``strat.sonarr`` is
+    statically a ``SonarrClient``, which has no mock-assertion surface).
+    """
+
+    sonarr = mock.MagicMock()
+    sonarr.manual_import_candidates.return_value = candidates
+    sonarr.quality_definitions.return_value = quality_defs or []
+    sonarr.languages.return_value = languages or []
+    sonarr.manual_import_execute.return_value = cmd_id
+    strat = make_sonarr_sync(
+        sonarr=sonarr,
+        logger=make_logger(),
+        _config=make_config(**(config_overrides or {})),
+    )
+    return strat, sonarr
+
+
+class TestImportCompletedPayload:
+    """import_completed overrides every field from PendingImport, not the parse."""
+
+    def test_payload_uses_pending_fields_not_candidate(self) -> None:
+        pending = pending_import(
+            series_id=7,
+            release_group="SubGroup",
+            infohash="HASH",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+            season_number=1,
+        )
+        # The candidate carries a *different* in-context quality and no
+        # authoritative episode/series info; the payload must ignore those.
+        candidate = manual_candidate(
+            "/downloads/Show - 01 [1080p].mkv",
+            quality={"quality": {"name": "HDTV-720p"}},
+        )
+        strat, sonarr = _make_sonarr_for_import(candidates=[candidate])
+
+        result = strat.import_completed(pending, "/downloads/Show")
+
+        assert result is True
+        sonarr.manual_import_candidates.assert_called_once_with(
+            folder="/downloads/Show",
+            series_id=7,
+            season_number=1,
+            filter_existing_files=False,
+        )
+        (_, kwargs) = sonarr.manual_import_execute.call_args
+        files = kwargs["files"]
+        assert len(files) == 1
+        entry = files[0]
+        assert entry["seriesId"] == 7
+        assert entry["episodeIds"] == [101]
+        assert entry["releaseGroup"] == "SubGroup"
+        assert entry["downloadId"] == "HASH"
+        assert entry["path"] == "/downloads/Show - 01 [1080p].mkv"
+
+    def test_our_regex_quality_wins_over_candidate(self) -> None:
+        # Filename says 1080p WEB-DL -> our parse yields "WEBDL-1080p"; the
+        # candidate's in-context "HDTV-720p" must lose.
+        pending = pending_import(
+            file_episode_map={"Show - 01 [1080p][WEB-DL].mkv": [101]},
+            episode_ids=[101],
+        )
+        candidate = manual_candidate(
+            "/d/Show - 01 [1080p][WEB-DL].mkv",
+            quality={"quality": {"name": "HDTV-720p"}},
+        )
+        quality_defs = [
+            {"quality": {"id": 3, "name": "WEBDL-1080p", "resolution": 1080}},
+        ]
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[candidate], quality_defs=quality_defs,
+        )
+
+        strat.import_completed(pending, "/d")
+
+        (_, kwargs) = sonarr.manual_import_execute.call_args
+        entry = kwargs["files"][0]
+        assert entry["quality"]["quality"]["name"] == "WEBDL-1080p"
+        assert entry["quality"]["revision"]["version"] == 1
+
+    def test_sample_candidate_is_skipped(self) -> None:
+        pending = pending_import(
+            file_episode_map={
+                "Show - 01 [1080p].mkv": [101],
+                "Show - 01 [1080p].sample.mkv": [101],
+            },
+            episode_ids=[],
+        )
+        good = manual_candidate("/d/Show - 01 [1080p].mkv")
+        sample = manual_candidate(
+            "/d/Show - 01 [1080p].sample.mkv",
+            rejections=[{"reason": "Sample"}],
+        )
+        strat, sonarr = _make_sonarr_for_import(candidates=[good, sample])
+
+        result = strat.import_completed(pending, "/d")
+
+        assert result is True
+        (_, kwargs) = sonarr.manual_import_execute.call_args
+        paths = [f["path"] for f in kwargs["files"]]
+        assert paths == ["/d/Show - 01 [1080p].mkv"]
+
+    def test_already_imported_candidate_is_skipped(self) -> None:
+        pending = pending_import(
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[],
+        )
+        candidate = manual_candidate(
+            "/d/Show - 01 [1080p].mkv",
+            rejections=["Episode file already imported"],
+        )
+        strat, sonarr = _make_sonarr_for_import(candidates=[candidate])
+
+        result = strat.import_completed(pending, "/d")
+
+        # Everything skipped -> nothing importable -> leave pending.
+        assert result is False
+        sonarr.manual_import_execute.assert_not_called()
+
+    def test_no_candidates_leaves_pending(self) -> None:
+        strat, sonarr = _make_sonarr_for_import(candidates=[])
+
+        assert strat.import_completed(pending_import(), "/d") is False
+        sonarr.manual_import_execute.assert_not_called()
+
+    def test_unmapped_file_is_skipped(self) -> None:
+        # Candidate basename isn't in the map and there's no single-file
+        # fallback (two unmatched), so it's skipped -> nothing importable.
+        pending = pending_import(
+            file_episode_map={"Other.mkv": [101]},
+            episode_ids=[],
+        )
+        candidates = [
+            manual_candidate("/d/Mystery A.mkv"),
+            manual_candidate("/d/Mystery B.mkv"),
+        ]
+        strat, sonarr = _make_sonarr_for_import(candidates=candidates)
+
+        assert strat.import_completed(pending, "/d") is False
+        sonarr.manual_import_execute.assert_not_called()
+
+    def test_languages_follow_dual_audio_flag(self) -> None:
+        pending = pending_import(
+            is_dual_audio=True,
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
+        languages = [
+            {"id": 1, "name": "English"},
+            {"id": 8, "name": "Japanese"},
+        ]
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[candidate],
+            languages=languages,
+            config_overrides={
+                "import_languages_dual": ["Japanese", "English"],
+            },
+        )
+
+        strat.import_completed(pending, "/d")
+
+        (_, kwargs) = sonarr.manual_import_execute.call_args
+        names = [lang["name"] for lang in kwargs["files"][0]["languages"]]
+        assert names == ["Japanese", "English"]
+
+    def test_failed_execute_returns_false(self) -> None:
+        pending = pending_import(
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
+        strat, _ = _make_sonarr_for_import(candidates=[candidate], cmd_id=None)
+
+        assert strat.import_completed(pending, "/d") is False
+
+    def test_quality_defs_and_languages_cached_per_run(self) -> None:
+        pending = pending_import(
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
+        strat, sonarr = _make_sonarr_for_import(candidates=[candidate])
+
+        strat.import_completed(pending, "/d")
+        strat.import_completed(pending, "/d")
+
+        # Fetched lazily once and reused for the rest of the run.
+        assert sonarr.quality_definitions.call_count == 1
+        assert sonarr.languages.call_count == 1
+
+
+class TestRadarrImportCompletedNoOp:
+    """Radarr is out of scope: its import_completed is a no-op returning False."""
+
+    def test_returns_false(self) -> None:
+        strat = make_bare_instance(RadarrSync, logger=make_logger())
+
+        assert strat.import_completed(pending_import(), "/d") is False
+
+
+class TestResolveQualityModel:
+    """resolve_quality_model maps a name to a QualityModel, case-insensitively."""
+
+    def test_matches_case_insensitively(self) -> None:
+        defs = [
+            {"quality": {"id": 1, "name": "HDTV-720p"}},
+            {"quality": {"id": 3, "name": "WEBDL-1080p"}},
+        ]
+
+        model = resolve_quality_model("webdl-1080p", defs)
+
+        assert model is not None
+        assert model["quality"]["id"] == 3
+        assert model["quality"]["name"] == "WEBDL-1080p"
+        assert model["revision"] == {"version": 1, "real": 0, "isRepack": False}
+
+    def test_no_match_returns_none(self) -> None:
+        defs = [{"quality": {"id": 1, "name": "HDTV-720p"}}]
+
+        assert resolve_quality_model("Bluray-2160p", defs) is None
+
+    def test_empty_defs_returns_none(self) -> None:
+        assert resolve_quality_model("WEBDL-1080p", []) is None
+
+
+class TestResolveLanguageObjects:
+    """resolve_language_objects maps names to {id,name}, dropping unknowns."""
+
+    def test_resolves_in_request_order(self) -> None:
+        defs = [
+            {"id": 1, "name": "English"},
+            {"id": 8, "name": "Japanese"},
+        ]
+
+        result = resolve_language_objects(["Japanese", "English"], defs)
+
+        assert result == [
+            {"id": 8, "name": "Japanese"},
+            {"id": 1, "name": "English"},
+        ]
+
+    def test_skips_unknown_names(self) -> None:
+        defs = [{"id": 8, "name": "Japanese"}]
+
+        result = resolve_language_objects(["Japanese", "Klingon"], defs)
+
+        assert result == [{"id": 8, "name": "Japanese"}]
+
+    def test_matches_case_insensitively(self) -> None:
+        defs = [{"id": 8, "name": "Japanese"}]
+
+        result = resolve_language_objects(["japanese"], defs)
+
+        assert result == [{"id": 8, "name": "Japanese"}]

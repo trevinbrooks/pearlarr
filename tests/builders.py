@@ -17,8 +17,10 @@ from unittest import mock
 from seadex import Tag
 
 from seadexarr.modules.config import AppConfig, Arr
+from seadexarr.modules.manual_import import PendingImport
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.seadex_arr import SeaDexArr
+from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
     EpisodeRecord,
     SeadexReleaseGroupItem,
@@ -268,3 +270,68 @@ class FakeEntry:
 
     def __init__(self, torrents: list[FakeTorrent]) -> None:
         self.torrents = torrents
+
+
+def pending_import(**overrides: Any) -> PendingImport:
+    """A ``PendingImport`` carrying sane manual-import defaults.
+
+    Defaults wire one mapped file to a single episode id with a matching flat
+    fallback, dual-audio off, and a single season; pass keyword overrides to vary
+    any field (e.g. ``pending_import(is_dual_audio=True)``).
+    """
+
+    defaults: dict[str, Any] = {
+        "infohash": "abc123",
+        "series_id": 7,
+        "file_episode_map": {"Show - 01 [1080p].mkv": [101]},
+        "episode_ids": [101],
+        "release_group": "SubGroup",
+        "is_dual_audio": False,
+        "season_number": 1,
+        "seadex_files": ["Show - 01 [1080p].mkv"],
+        "title": "Show",
+        "added_at": "2026-06-24 00:00:00",
+    }
+    defaults.update(overrides)
+    return PendingImport(**defaults)
+
+
+def manual_candidate(
+    path: str,
+    *,
+    quality: dict | None = None,
+    languages: list[dict] | None = None,
+    rejections: list[Any] | None = None,
+) -> dict[str, Any]:
+    """One raw Sonarr ManualImportResource dict, as ``import_completed`` reads it.
+
+    Only the keys ``import_completed`` consults are populated: ``path`` (basename
+    drives the episode-id lookup), the in-context ``quality`` fallback, and
+    ``rejections`` (sample / already-imported skips). ``languages`` is included
+    for completeness even though the import overrides it.
+    """
+
+    return {
+        "path": path,
+        "quality": quality,
+        "languages": languages or [],
+        "rejections": rejections or [],
+    }
+
+
+def make_sonarr_sync(**attrs: Any) -> SonarrSync:
+    """A bare ``SonarrSync`` with ``__init__`` bypassed and only ``attrs`` set.
+
+    Mirrors ``make_arr`` / ``make_bare_instance``: no live Sonarr client is built,
+    so the tests assign just the collaborators the method under test reads
+    (``sonarr``, ``logger``, ``_config``, and the per-run caches). The two
+    per-run quality/language caches default to None (not yet fetched) so the
+    lazy-fetch path runs unless a test pre-seeds them.
+    """
+
+    defaults: dict[str, Any] = {
+        "_quality_defs_cache": None,
+        "_languages_cache": None,
+    }
+    defaults.update(attrs)
+    return make_bare_instance(SonarrSync, **defaults)

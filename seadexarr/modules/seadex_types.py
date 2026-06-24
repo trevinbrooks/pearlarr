@@ -54,6 +54,7 @@ class SeadexUrlItem:
     size: list[int] = field(default_factory=list)
     tracker: Tracker = Tracker.OTHER
     is_public: bool = True
+    is_dual_audio: bool = False
     hash: str | None = None
     download: bool = False
     episodes: list[EpisodeRecord] = field(default_factory=list)
@@ -164,6 +165,7 @@ class SonarrEpisodeFile:
 class SonarrEpisode:
     """One Sonarr ``/api/v3/episode`` record, parsed at the client boundary."""
 
+    id: int = 0
     season_number: int | None = None
     episode_number: int | None = None
     episode_file_id: int = 0
@@ -176,6 +178,7 @@ class SonarrEpisode:
 
         raw_file = raw.get("episodeFile")
         return cls(
+            id=raw.get("id", 0),
             season_number=raw.get("seasonNumber"),
             episode_number=raw.get("episodeNumber"),
             episode_file_id=raw.get("episodeFileId", 0),

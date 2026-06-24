@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
 from .config import Arr
+from .manual_import import PendingImport
 from .mappings import MappingEntry
 from .seadex_types import ArrItem
 
@@ -50,3 +51,22 @@ class ArrSync[ItemT: ArrItem](ABC):
         mapping: MappingEntry,
     ) -> bool:
         """Process one AniList id for one Arr item; True if it grabbed."""
+
+    @abstractmethod
+    def import_completed(self, pending: PendingImport, content_path: str) -> bool:
+        """Drive the series-pinned manual import for one completed download.
+
+        Sonarr drives the series-pinned manual import for the finished files at
+        ``content_path``, overriding every authoritative field carried on
+        ``pending`` (series id, episode ids, release group) so Sonarr never
+        trusts its own blind title parse. Radarr is a no-op (out of scope).
+
+        Args:
+            pending (PendingImport): The durable record for the completed torrent.
+            content_path (str): The qBittorrent ``content_path`` of the finished
+                download (the folder/file the manual import reads from disk).
+
+        Returns:
+            bool: True iff the import was queued/verified (so the engine may drop
+            the pending record); False to leave it pending for a later retry.
+        """

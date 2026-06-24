@@ -134,3 +134,188 @@ class SonarrClient:
             parsed.append({"season": season, "episode": episode})
 
         return parsed
+
+    def manual_import_candidates(
+        self,
+        *,
+        folder: str,
+        series_id: int,
+        season_number: int | None = None,
+        filter_existing_files: bool = False,
+    ) -> list[dict]:
+        """List Sonarr's manual-import candidates for a folder, series-pinned.
+
+        Passing ``seriesId`` makes Sonarr parse the files *in the context of the
+        known series* (PR #7727), which is far more reliable than a blind parse.
+
+        Returns an empty list (with a warning) on a non-200, so the caller can
+        leave the import pending and retry later.
+
+        Args:
+            folder (str): Folder on disk to scan (URL-encoded into the query).
+            series_id (int): Series ID in Sonarr to pin the parse to.
+            season_number (int | None): Optional season to scope candidates to.
+            filter_existing_files (bool): If True, Sonarr drops files it already
+                has imported. Sent lowercase ``true``/``false``.
+
+        Returns:
+            list[dict]: Raw ManualImportResource dicts (keys like ``path``,
+                ``episodes``, ``quality``, ``languages``, ``releaseGroup``,
+                ``rejections``); empty on failure.
+        """
+
+        params: dict[str, str] = {
+            "folder": folder,
+            "seriesId": str(series_id),
+            "filterExistingFiles": "true" if filter_existing_files else "false",
+        }
+        if season_number is not None:
+            params["seasonNumber"] = str(season_number)
+        params["apikey"] = self._api_key
+        params_enc = urlencode(params)
+
+        candidates_req_url = f"{self._url}/api/v3/manualimport?{params_enc}"
+        candidates_req = self._session.get(candidates_req_url)
+
+        if candidates_req.status_code != 200:
+            self._logger.warning(
+                indent_string(
+                    f"Could not fetch manual-import candidates for folder "
+                    f"{folder} (status code {candidates_req.status_code}); "
+                    f"leaving import pending",
+                ),
+            )
+            return []
+
+        return candidates_req.json()
+
+    def manual_import_execute(
+        self,
+        *,
+        files: list[dict],
+        import_mode: str = "auto",
+    ) -> int | None:
+        """Queue a ``ManualImport`` command for the given files (no title parse).
+
+        Each entry in ``files`` carries the authoritative mapping we computed
+        (``seriesId``, ``episodeIds``, ``releaseGroup``, ``quality`` ...), so
+        Sonarr imports without re-deriving anything from the release title.
+
+        Returns the command ``id`` (for optional completion verification) or
+        None (with a warning) on failure, so the caller can leave the import
+        pending and retry later.
+
+        Args:
+            files (list[dict]): ManualImport file payloads to import.
+            import_mode (str): Sonarr ``importMode``: ``auto`` (default; respects
+                the copy/hardlink setting and preserves seeding), ``move`` or
+                ``copy``.
+
+        Returns:
+            int | None: The queued command's id, or None on failure.
+        """
+
+        d = {"apikey": self._api_key}
+        d_enc = urlencode(d)
+
+        command_req_url = f"{self._url}/api/v3/command?{d_enc}"
+        command_body = {
+            "name": "ManualImport",
+            "importMode": import_mode,
+            "files": files,
+        }
+        command_req = self._session.post(command_req_url, json=command_body)
+
+        if command_req.status_code not in (200, 201):
+            self._logger.warning(
+                indent_string(
+                    f"Could not queue ManualImport command "
+                    f"(status code {command_req.status_code}); "
+                    f"leaving import pending",
+                ),
+            )
+            return None
+
+        return command_req.json().get("id")
+
+    def quality_definitions(self) -> list[dict]:
+        """All Sonarr quality definitions (``/api/v3/qualitydefinition``).
+
+        Used to resolve a quality NAME (e.g. ``Bluray-2160p``) to a Sonarr
+        QualityModel for the manual-import payload.
+
+        Returns an empty list (with a warning) on a non-200, so the caller can
+        fall back to other quality sources.
+
+        Returns:
+            list[dict]: Raw QualityDefinitionResource dicts; empty on failure.
+        """
+
+        defs_req_url = f"{self._url}/api/v3/qualitydefinition?apikey={self._api_key}"
+        defs_req = self._session.get(defs_req_url)
+
+        if defs_req.status_code != 200:
+            self._logger.warning(
+                "Could not fetch quality definitions from Sonarr; "
+                "it may be unreachable",
+            )
+            return []
+
+        return defs_req.json()
+
+    def languages(self) -> list[dict]:
+        """All Sonarr languages (``/api/v3/language``).
+
+        Used to resolve language names to ``{id, name}`` objects for the
+        manual-import payload.
+
+        Returns an empty list (with a warning) on a non-200, so the caller can
+        fall back to the candidate's languages.
+
+        Returns:
+            list[dict]: Raw LanguageResource dicts; empty on failure.
+        """
+
+        langs_req_url = f"{self._url}/api/v3/language?apikey={self._api_key}"
+        langs_req = self._session.get(langs_req_url)
+
+        if langs_req.status_code != 200:
+            self._logger.warning(
+                "Could not fetch languages from Sonarr; it may be unreachable",
+            )
+            return []
+
+        return langs_req.json()
+
+    def command_status(self, command_id: int) -> dict:
+        """Current state of a Sonarr command (``/api/v3/command/{id}``).
+
+        Used to optionally verify a ``ManualImport`` completed before the caller
+        removes the pending record.
+
+        Returns an empty dict (with a warning) on a non-200, so the caller can
+        treat the import as unverified and leave it pending.
+
+        Args:
+            command_id (int): Command ID returned by ``manual_import_execute``.
+
+        Returns:
+            dict: Raw CommandResource dict (keys like ``status``, ``result``);
+                empty on failure.
+        """
+
+        status_req_url = (
+            f"{self._url}/api/v3/command/{command_id}?apikey={self._api_key}"
+        )
+        status_req = self._session.get(status_req_url)
+
+        if status_req.status_code != 200:
+            self._logger.warning(
+                indent_string(
+                    f"Could not fetch status for command {command_id} "
+                    f"(status code {status_req.status_code})",
+                ),
+            )
+            return {}
+
+        return status_req.json()

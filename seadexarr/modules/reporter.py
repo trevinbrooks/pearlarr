@@ -19,6 +19,7 @@ from .log import (
     indent_string,
     rule_string,
 )
+from .manual_import import PendingImport
 from .seadex_types import SeadexDict
 from .torrents import ReleaseOutcome
 
@@ -109,6 +110,10 @@ class RunContext:
     # the logger-counter snapshot taken at the start, diffed for the summary.
     started_monotonic: float | None = None
     log_counts_at_start: dict[int, int] = field(default_factory=dict)
+    # PendingImport records written THIS run (on a successful add), for the
+    # end-of-run blocking pass; the durable copies live in cache_store under
+    # ``pending_imports``, so this is just the fast in-memory list to wait on.
+    pending_imports: list[PendingImport] = field(default_factory=list)
 
 
 class RunReporter:
