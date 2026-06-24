@@ -10,6 +10,7 @@ from unittest import mock
 
 from seadexarr.modules.config import Arr
 from seadexarr.modules.manual_import import (
+    ImportReadiness,
     resolve_language_objects,
     resolve_quality_model,
 )
@@ -125,7 +126,8 @@ class TestProcessAlIdThreadsServices:
 
 def _make_sonarr_for_import(
     *,
-    candidates: list[dict],
+    candidates: list[dict] | None,
+    queue: list[dict] | None = None,
     quality_defs: list[dict] | None = None,
     languages: list[dict] | None = None,
     cmd_id: int | None = 42,
@@ -133,15 +135,21 @@ def _make_sonarr_for_import(
 ) -> tuple[SonarrSync, mock.MagicMock]:
     """A bare ``SonarrSync`` plus its scripted ``self.sonarr`` MagicMock.
 
-    The mock returns the given manual-import candidates, quality definitions and
-    languages, and a command id from ``manual_import_execute`` - everything
-    ``import_completed`` reaches over the network - so the test can assert on the
-    payload without a live Sonarr. The mock is returned alongside the strategy so
-    assertions read it through a ``MagicMock``-typed handle (``strat.sonarr`` is
-    statically a ``SonarrClient``, which has no mock-assertion surface).
+    The mock returns the given queue records, manual-import candidates, quality
+    definitions and languages, and a command id from ``manual_import_execute`` -
+    everything ``import_completed`` reaches over the network - so the test can
+    assert on the payload without a live Sonarr. ``queue`` defaults to empty (so
+    Sonarr isn't tracking the download and the strategy steps in with its own
+    manual import); ``refresh_monitored_downloads`` / ``command_status`` are
+    stubbed to return immediately so the rescan never really waits. The mock is
+    returned alongside the strategy so assertions read it through a
+    ``MagicMock``-typed handle (``strat.sonarr`` is statically a ``SonarrClient``).
     """
 
     sonarr = mock.MagicMock()
+    sonarr.queue.return_value = queue or []
+    sonarr.refresh_monitored_downloads.return_value = 7
+    sonarr.command_status.return_value = {"status": "completed"}
     sonarr.manual_import_candidates.return_value = candidates
     sonarr.quality_definitions.return_value = quality_defs or []
     sonarr.languages.return_value = languages or []
@@ -150,8 +158,82 @@ def _make_sonarr_for_import(
         sonarr=sonarr,
         logger=make_logger(),
         _config=make_config(**(config_overrides or {})),
+        _last_refresh_monotonic=None,
     )
     return strat, sonarr
+
+
+def _queue_record(infohash: str, state: str) -> dict:
+    """One Sonarr queue record matching a download by infohash + tracked state."""
+
+    return {"downloadId": infohash, "trackedDownloadState": state}
+
+
+class TestImportCompletedQueueState:
+    """import_completed branches on Sonarr's queue before stepping in itself."""
+
+    def test_sonarr_importing_retries_without_stepping_in(self) -> None:
+        # Sonarr is mid-import (importing) -> wait for it, don't double-import.
+        pending = pending_import(infohash="abc123")
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            queue=[_queue_record("ABC123", "importing")],
+        )
+
+        result = strat.import_completed(pending, "/d")
+
+        assert result is ImportReadiness.RETRY
+        sonarr.manual_import_candidates.assert_not_called()
+        sonarr.manual_import_execute.assert_not_called()
+
+    def test_sonarr_imported_drops_record(self) -> None:
+        # Sonarr already imported it -> drop the record, never step in.
+        pending = pending_import(infohash="abc123")
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            queue=[_queue_record("ABC123", "imported")],
+        )
+
+        result = strat.import_completed(pending, "/d")
+
+        assert result is ImportReadiness.IMPORTED
+        sonarr.manual_import_candidates.assert_not_called()
+
+    def test_import_blocked_steps_in_with_our_mapping(self) -> None:
+        # Sonarr can't auto-import (importBlocked) -> our authoritative manual
+        # import takes over and queues the command.
+        pending = pending_import(
+            infohash="abc123",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            queue=[_queue_record("ABC123", "importBlocked")],
+        )
+
+        result = strat.import_completed(pending, "/d")
+
+        assert result is ImportReadiness.IMPORTED
+        sonarr.manual_import_candidates.assert_called_once()
+        sonarr.manual_import_execute.assert_called_once()
+
+    def test_not_in_queue_steps_in(self) -> None:
+        # Sonarr isn't tracking the download (our holding category) -> step in.
+        pending = pending_import(
+            infohash="abc123",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            queue=[],
+        )
+
+        result = strat.import_completed(pending, "/d")
+
+        assert result is ImportReadiness.IMPORTED
+        sonarr.manual_import_candidates.assert_called_once()
 
 
 class TestImportCompletedPayload:
@@ -176,7 +258,7 @@ class TestImportCompletedPayload:
 
         result = strat.import_completed(pending, "/downloads/Show")
 
-        assert result is True
+        assert result is ImportReadiness.IMPORTED
         sonarr.manual_import_candidates.assert_called_once_with(
             folder="/downloads/Show",
             series_id=7,
@@ -235,12 +317,14 @@ class TestImportCompletedPayload:
 
         result = strat.import_completed(pending, "/d")
 
-        assert result is True
+        assert result is ImportReadiness.IMPORTED
         (_, kwargs) = sonarr.manual_import_execute.call_args
         paths = [f["path"] for f in kwargs["files"]]
         assert paths == ["/d/Show - 01 [1080p].mkv"]
 
-    def test_already_imported_candidate_is_skipped(self) -> None:
+    def test_already_imported_candidate_drops_record(self) -> None:
+        # The only candidate is one Sonarr already imported itself -> nothing for
+        # us to do, but it IS imported, so drop the record (don't re-attempt).
         pending = pending_import(
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
             episode_ids=[],
@@ -253,19 +337,27 @@ class TestImportCompletedPayload:
 
         result = strat.import_completed(pending, "/d")
 
-        # Everything skipped -> nothing importable -> leave pending.
-        assert result is False
+        assert result is ImportReadiness.IMPORTED
         sonarr.manual_import_execute.assert_not_called()
 
-    def test_no_candidates_leaves_pending(self) -> None:
+    def test_no_candidates_yet_retries(self) -> None:
+        # Sonarr reports no files at the path yet (mount not visible) -> retry.
         strat, sonarr = _make_sonarr_for_import(candidates=[])
 
-        assert strat.import_completed(pending_import(), "/d") is False
+        assert strat.import_completed(pending_import(), "/d") is ImportReadiness.RETRY
         sonarr.manual_import_execute.assert_not_called()
 
-    def test_unmapped_file_is_skipped(self) -> None:
+    def test_transient_candidate_scan_retries(self) -> None:
+        # A None candidates result (timeout / non-200) is transient -> retry.
+        strat, sonarr = _make_sonarr_for_import(candidates=None)
+
+        assert strat.import_completed(pending_import(), "/d") is ImportReadiness.RETRY
+        sonarr.manual_import_execute.assert_not_called()
+
+    def test_unmapped_file_leaves_pending(self) -> None:
         # Candidate basename isn't in the map and there's no single-file
-        # fallback (two unmatched), so it's skipped -> nothing importable.
+        # fallback (two unmatched), so it's skipped -> nothing importable. Retrying
+        # the same files won't help, so leave it for a later run.
         pending = pending_import(
             file_episode_map={"Other.mkv": [101]},
             episode_ids=[],
@@ -276,7 +368,7 @@ class TestImportCompletedPayload:
         ]
         strat, sonarr = _make_sonarr_for_import(candidates=candidates)
 
-        assert strat.import_completed(pending, "/d") is False
+        assert strat.import_completed(pending, "/d") is ImportReadiness.LEAVE
         sonarr.manual_import_execute.assert_not_called()
 
     def test_languages_follow_dual_audio_flag(self) -> None:
@@ -304,7 +396,8 @@ class TestImportCompletedPayload:
         names = [lang["name"] for lang in kwargs["files"][0]["languages"]]
         assert names == ["Japanese", "English"]
 
-    def test_failed_execute_returns_false(self) -> None:
+    def test_failed_execute_retries(self) -> None:
+        # Sonarr rejected the import command (busy / locked) -> retry, not give up.
         pending = pending_import(
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
             episode_ids=[101],
@@ -312,7 +405,7 @@ class TestImportCompletedPayload:
         candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
         strat, _ = _make_sonarr_for_import(candidates=[candidate], cmd_id=None)
 
-        assert strat.import_completed(pending, "/d") is False
+        assert strat.import_completed(pending, "/d") is ImportReadiness.RETRY
 
     def test_quality_defs_and_languages_cached_per_run(self) -> None:
         pending = pending_import(
@@ -331,12 +424,12 @@ class TestImportCompletedPayload:
 
 
 class TestRadarrImportCompletedNoOp:
-    """Radarr is out of scope: its import_completed is a no-op returning False."""
+    """Radarr is out of scope: its import_completed is a no-op returning LEAVE."""
 
-    def test_returns_false(self) -> None:
+    def test_returns_leave(self) -> None:
         strat = make_bare_instance(RadarrSync, logger=make_logger())
 
-        assert strat.import_completed(pending_import(), "/d") is False
+        assert strat.import_completed(pending_import(), "/d") is ImportReadiness.LEAVE
 
 
 class TestResolveQualityModel:

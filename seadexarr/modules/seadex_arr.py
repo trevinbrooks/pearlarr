@@ -23,6 +23,7 @@ from .log import (
     setup_logger,
 )
 from .manual_import import (
+    ImportReadiness,
     ImportWaitMode,
     PendingImport,
     WaitOutcome,
@@ -1165,37 +1166,40 @@ class SeaDexArr:
 
     def _poll_torrent(
         self, infohash: str,
-    ) -> tuple[WaitOutcome | None, str | None]:
+    ) -> tuple[WaitOutcome | None, str | None, float]:
         """Poll qBittorrent once for a torrent's terminal/in-progress state.
 
-        Returns ``(outcome, content_path)``: a terminal :class:`WaitOutcome`
-        (COMPLETE carries the ``content_path``; ERRORED/MISSING carry None), or
-        ``(None, None)`` for "still waiting" - either the torrent is still
-        downloading or the qBittorrent call failed transiently (auto-reauth /
-        connection drop), which the wait loop treats as keep-waiting.
+        Returns ``(outcome, content_path, progress)``: a terminal
+        :class:`WaitOutcome` (COMPLETE carries the ``content_path``;
+        ERRORED/MISSING carry None), or ``(None, None, progress)`` for "still
+        waiting" - either the torrent is still downloading or the qBittorrent call
+        failed transiently (auto-reauth / connection drop), which the wait loop
+        treats as keep-waiting. ``progress`` is the torrent's 0.0-1.0 completion
+        fraction (0.0 when unknown), surfaced so the wait loop can show it.
 
         Args:
             infohash (str): The qBittorrent tracking key to poll.
         """
 
         if self.qbit is None:
-            return None, None
+            return None, None, 0.0
         try:
             info = self.qbit.torrents_info(torrent_hashes=infohash)
         except (qbittorrentapi.APIError, qbittorrentapi.APIConnectionError):
             # Transient: a dropped connection or a re-auth in flight. Treat as
             # still-waiting so the caller keeps polling until the deadline.
-            return None, None
+            return None, None, 0.0
 
         if not info:
-            return WaitOutcome.MISSING, None
+            return WaitOutcome.MISSING, None, 0.0
 
         t = info[0]
+        progress = float(getattr(t, "progress", 0.0) or 0.0)
         if t.state_enum.is_errored:
-            return WaitOutcome.ERRORED, None
+            return WaitOutcome.ERRORED, None, progress
         if t.state_enum.is_complete or t.progress >= 1.0:
-            return WaitOutcome.COMPLETE, t.content_path
-        return None, None
+            return WaitOutcome.COMPLETE, t.content_path, progress
+        return None, None, progress
 
     def _wait_for_completion(
         self,
@@ -1205,12 +1209,13 @@ class SeaDexArr:
         poll_s: int,
         now: Callable[[], float] | None = None,
         sleep: Callable[[float], None] | None = None,
+        on_wait: Callable[[float, float], None] | None = None,
     ) -> tuple[WaitOutcome, str | None]:
         """Block until a torrent reaches a terminal state or the deadline.
 
         Polls :meth:`_poll_torrent` on a ``poll_s`` cadence against a monotonic
         deadline. A terminal outcome (COMPLETE/ERRORED/MISSING) returns
-        immediately; otherwise once ``now() - start >= timeout_s`` it returns
+        immediately; otherwise once ``elapsed >= timeout_s`` it returns
         ``(TIMED_OUT, None)``. The clock and sleep are injectable so unit tests
         never actually wait (foreground ``sleep`` is blocked in this env).
 
@@ -1222,6 +1227,9 @@ class SeaDexArr:
                 ``time.monotonic``.
             sleep (Callable[[float], None] | None): Sleep fn; defaults to
                 ``time.sleep``.
+            on_wait (Callable[[float, float], None] | None): Called once per poll
+                while still downloading, with ``(elapsed_seconds, progress)``, so
+                the caller can show a heartbeat. Not called on a terminal poll.
         """
 
         clock = now if now is not None else time.monotonic
@@ -1229,25 +1237,30 @@ class SeaDexArr:
 
         start = clock()
         while True:
-            outcome, path = self._poll_torrent(infohash)
+            outcome, path, progress = self._poll_torrent(infohash)
             if outcome is not None:
                 return outcome, path
-            if clock() - start >= timeout_s:
+            elapsed = clock() - start
+            if elapsed >= timeout_s:
                 return WaitOutcome.TIMED_OUT, None
+            if on_wait is not None:
+                on_wait(elapsed, progress)
             nap(poll_s)
 
-    def _try_import_completed(self, pending: PendingImport, path: str) -> bool:
+    def _try_import_completed(
+        self, pending: PendingImport, path: str,
+    ) -> ImportReadiness:
         """Drive the strategy's ``import_completed``, swallowing any error.
 
         The import does live Sonarr HTTP work; a malformed response (a 200 with
         a non-JSON body, a candidate missing ``path``, ...) must not abort the
         run and skip the end-of-run ``cache_store.save`` in :meth:`_finalize_run`.
-        On any exception the record is left pending (returns False) and the run
+        On any exception the record is left pending (returns ``LEAVE``) and the run
         continues; a real terminal failure is just retried next run / TTL'd out.
         """
 
         if self._active_strategy is None:
-            return False
+            return ImportReadiness.LEAVE
         try:
             return self._active_strategy.import_completed(pending, path)
         except Exception:
@@ -1256,42 +1269,154 @@ class SeaDexArr:
                 "leaving it pending for a later run",
                 exc_info=True,
             )
-            return False
+            return ImportReadiness.LEAVE
 
     def _run_blocking_imports(self) -> None:
-        """Block on each record added this run, then drive its import.
+        """Wait on each record added this run, then drive it to import.
 
-        For every :class:`PendingImport` recorded this run, wait up to
-        ``import_wait_timeout`` for completion. On COMPLETE drive the strategy's
-        ``import_completed`` and drop the record if it verified; on MISSING drop
-        it (gone from qBittorrent); on ERRORED/TIMED_OUT leave it pending for a
-        later run (the next reconcile/prune eventually drops it).
+        For every :class:`PendingImport` recorded this run, run the two-phase
+        wait+import (download, then Sonarr import) via :meth:`_wait_and_import_one`,
+        emitting progress so a long wait is visibly alive rather than a silent hang.
         """
 
         if self._active_strategy is None:
             return
 
-        for pending in list(self._ctx.pending_imports):
-            outcome, path = self._wait_for_completion(
-                pending.infohash,
-                timeout_s=self._config.import_wait_timeout,
-                poll_s=self._config.import_poll_interval,
-            )
+        pending_list = list(self._ctx.pending_imports)
+        if not pending_list:
+            return
 
-            if outcome is WaitOutcome.COMPLETE and path:
-                if self._try_import_completed(pending, path):
-                    self._drop_pending(pending.infohash)
-            elif outcome is WaitOutcome.MISSING:
-                self.logger.debug(
-                    f"Pending import {pending.infohash} gone from qBittorrent; "
-                    "dropping",
-                )
+        self.logger.info(
+            f"Waiting for {len(pending_list)} download(s) to complete and import...",
+        )
+        for pending in pending_list:
+            self._wait_and_import_one(pending)
+
+    def _wait_and_import_one(
+        self,
+        pending: PendingImport,
+        *,
+        now: Callable[[], float] | None = None,
+        sleep: Callable[[float], None] | None = None,
+    ) -> None:
+        """Wait for one torrent to download, then for Sonarr to import it.
+
+        Phase A waits for qBittorrent to finish (heartbeating the download
+        percentage); Phase B then waits for Sonarr to import the files - its own
+        import, or ours when Sonarr is ``importBlocked`` - up to
+        ``import_ready_timeout``. MISSING drops the record; a download that never
+        completes, or a Sonarr side that never readies, leaves it pending for a
+        later run. The clock and sleep are injectable for tests.
+
+        Args:
+            pending (PendingImport): The record to wait on and import.
+            now (Callable[[], float] | None): Monotonic clock; defaults to
+                ``time.monotonic``.
+            sleep (Callable[[float], None] | None): Sleep fn; defaults to
+                ``time.sleep``.
+        """
+
+        clock = now if now is not None else time.monotonic
+        nap = sleep if sleep is not None else time.sleep
+        label = pending.title or pending.infohash
+
+        # Phase A: wait for qBittorrent to finish the download.
+        outcome, path = self._wait_for_completion(
+            pending.infohash,
+            timeout_s=self._config.import_wait_timeout,
+            poll_s=self._config.import_poll_interval,
+            now=clock,
+            sleep=nap,
+            on_wait=lambda elapsed, progress: self._log_download_wait(
+                label, elapsed, progress,
+            ),
+        )
+
+        if outcome is WaitOutcome.MISSING:
+            self.logger.info(f"  {label}: gone from qBittorrent; dropping")
+            self._drop_pending(pending.infohash)
+            return
+        if outcome is not WaitOutcome.COMPLETE or not path:
+            self.logger.info(
+                f"  {label}: download not ready ({outcome.name.lower()}); "
+                "leaving for a later run",
+            )
+            return
+
+        self.logger.info(f"  {label}: download complete; handing off to Sonarr")
+
+        # Phase B: wait for Sonarr to import (its own import, or ours on a block).
+        self._wait_for_import(pending, path, label, now=clock, sleep=nap)
+
+    def _wait_for_import(
+        self,
+        pending: PendingImport,
+        path: str,
+        label: str,
+        *,
+        now: Callable[[], float] | None = None,
+        sleep: Callable[[float], None] | None = None,
+    ) -> None:
+        """Poll the Sonarr import until it's done, unimportable, or times out.
+
+        Calls :meth:`_try_import_completed` on the ``import_poll_interval`` cadence
+        against an ``import_ready_timeout`` deadline: ``IMPORTED`` drops the record,
+        ``LEAVE`` stops (nothing to import this run), ``RETRY`` heartbeats and polls
+        again. The strategy logs the specific Sonarr state; this logs the elapsed
+        heartbeat so a slow rescan/parse is visibly alive.
+
+        Args:
+            pending (PendingImport): The completed record to import.
+            path (str): The qBittorrent ``content_path`` to import from.
+            label (str): Display label for the log lines.
+            now (Callable[[], float] | None): Monotonic clock; defaults to
+                ``time.monotonic``.
+            sleep (Callable[[float], None] | None): Sleep fn; defaults to
+                ``time.sleep``.
+        """
+
+        clock = now if now is not None else time.monotonic
+        nap = sleep if sleep is not None else time.sleep
+        timeout_s = self._config.import_ready_timeout
+        poll_s = self._config.import_poll_interval
+
+        start = clock()
+        while True:
+            readiness = self._try_import_completed(pending, path)
+            if readiness is ImportReadiness.IMPORTED:
                 self._drop_pending(pending.infohash)
-            else:
+                return
+            if readiness is ImportReadiness.LEAVE:
                 self.logger.info(
-                    f"Pending import {pending.infohash} not ready "
-                    f"({outcome.name.lower()}); leaving for a later run",
+                    f"  {label}: nothing to import yet; leaving for a later run",
                 )
+                return
+
+            # RETRY: not ready (Sonarr still scanning / importing / mount cold).
+            elapsed = clock() - start
+            if elapsed >= timeout_s:
+                self.logger.info(
+                    f"  {label}: Sonarr not ready after "
+                    f"{LogFormatter.format_elapsed(elapsed)}; leaving for a later run",
+                )
+                return
+            self.logger.info(
+                f"  {label}: waiting for Sonarr "
+                f"({LogFormatter.format_elapsed(elapsed)} / "
+                f"{LogFormatter.format_elapsed(timeout_s)} max)",
+            )
+            nap(poll_s)
+
+    def _log_download_wait(
+        self, label: str, elapsed: float, progress: float,
+    ) -> None:
+        """Heartbeat one download-wait poll (percentage + elapsed / max)."""
+
+        self.logger.info(
+            f"  {label}: downloading {progress * 100:.0f}% "
+            f"({LogFormatter.format_elapsed(elapsed)} / "
+            f"{LogFormatter.format_elapsed(self._config.import_wait_timeout)} max)",
+        )
 
     def _prune_expired_pending(self) -> None:
         """Drop durable pending records past their TTL (or with a bad stamp).
@@ -1330,9 +1455,11 @@ class SeaDexArr:
 
         Iterates a copy of the durable store (so dropping during the loop is
         safe; :meth:`_prune_expired_pending` has already removed aged-out
-        records). A single non-blocking poll per record: COMPLETE drives the
-        import (drop on verify), MISSING drops the record, anything else is left
-        for a later run / the end-of-run blocking pass.
+        records). A single non-blocking poll per record: COMPLETE drives one
+        import attempt (drop only when it reports ``IMPORTED``), MISSING drops the
+        record, anything else is left for a later run / the end-of-run blocking
+        pass. This is the non-blocking path, so a one-shot ``RETRY`` (Sonarr not
+        ready yet) just leaves the record - the next run reconciles it again.
         """
 
         if self._active_strategy is None:
@@ -1340,9 +1467,9 @@ class SeaDexArr:
 
         for infohash, raw in list(self._pending_store().items()):
             pending = PendingImport.from_json(raw)
-            outcome, path = self._poll_torrent(infohash)
+            outcome, path, _ = self._poll_torrent(infohash)
             if outcome is WaitOutcome.COMPLETE and path:
-                if self._try_import_completed(pending, path):
+                if self._try_import_completed(pending, path) is ImportReadiness.IMPORTED:
                     self._drop_pending(infohash)
             elif outcome is WaitOutcome.MISSING:
                 self.logger.debug(

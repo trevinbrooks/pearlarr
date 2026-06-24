@@ -31,17 +31,20 @@ max_torrents_to_add:
 
 # Wait-for-completion + Sonarr manual import (Sonarr only; Radarr is a no-op)
 # After a torrent is added, optionally wait for qBittorrent to finish it, then
-# drive a series-pinned Sonarr manual import using our authoritative mapping
-# instead of trusting Sonarr's title parse.
-# import_wait_mode enables the feature; "off" disables it entirely (no waiting,
-# no pending records, no manual import). Other modes control *when* it runs:
+# ask Sonarr to rescan (RefreshMonitoredDownloads) and watch its queue: let Sonarr
+# import the files itself, and only step in with a series-pinned manual import
+# (our authoritative mapping) when Sonarr can't auto-import them (importBlocked) or
+# isn't tracking the download. import_wait_mode enables the feature; "off" disables
+# it entirely (no waiting, no pending records, no manual import). Other modes
+# control *when* it runs:
 #   off       - disabled (default)
 #   deferred  - never block; import already-complete downloads on a later run
 #   blocking  - block at end of run (and on early-break) until complete, then import
 #   hybrid    - recommended: deferred reconcile at start + blocking pass at end
 import_wait_mode: "off"     # off (disabled) / deferred / blocking / hybrid
-import_wait_timeout: 3600   # Seconds to block per torrent in the end-of-run pass
-import_poll_interval: 30    # Seconds between qBittorrent completion polls
+import_wait_timeout: 3600   # Seconds to wait per torrent for qBittorrent to finish
+import_ready_timeout: 600   # Seconds to then wait for Sonarr to rescan + import
+import_poll_interval: 30    # Seconds between polls (qBittorrent + Sonarr queue)
 import_mode: auto           # Sonarr importMode: auto/move/copy
 # Fallback quality when neither our parse nor Sonarr's is known (e.g. Bluray-2160p).
 # Recommended on a 4K instance to avoid Unknown-quality re-grabs.

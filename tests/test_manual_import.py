@@ -8,15 +8,21 @@ no network or disk; :class:`SonarrEpisode` is built directly via
 :meth:`SonarrEpisode.from_api` so the suite doesn't depend on ``builders.py``.
 """
 
+from typing import cast
+
 from seadexarr.modules.manual_import import (
+    ImportReadiness,
     ImportWaitMode,
     PendingImport,
     QualitySelection,
+    QueueVerdict,
     WaitOutcome,
     assign_episode_ids,
     build_episode_id_map,
+    classify_queue_states,
     derive_languages,
     parse_quality_from_filename,
+    resolve_language_objects,
     resolve_wait_mode,
     select_quality,
 )
@@ -302,3 +308,65 @@ def test_wait_outcome_members_exist() -> None:
         "TIMED_OUT",
         "MISSING",
     }
+
+
+def test_import_readiness_members_exist() -> None:
+    # The tri-state the engine's blocking loop dispatches on.
+    assert {o.name for o in ImportReadiness} == {"IMPORTED", "RETRY", "LEAVE"}
+
+
+class TestClassifyQueueStates:
+    """classify_queue_states reduces per-episode tracked states to one verdict."""
+
+    def test_empty_steps_in(self) -> None:
+        # Sonarr isn't tracking the download -> we own the import.
+        assert classify_queue_states([]) is QueueVerdict.STEP_IN
+
+    def test_all_imported_is_done(self) -> None:
+        assert classify_queue_states(["imported", "imported"]) is QueueVerdict.DONE
+
+    def test_import_blocked_steps_in(self) -> None:
+        # importBlocked wins even when other episodes are still importing.
+        assert (
+            classify_queue_states(["importing", "importBlocked"])
+            is QueueVerdict.STEP_IN
+        )
+
+    def test_downloading_waits(self) -> None:
+        assert classify_queue_states(["downloading"]) is QueueVerdict.WAIT
+
+    def test_importing_waits(self) -> None:
+        assert classify_queue_states(["importPending", "importing"]) is QueueVerdict.WAIT
+
+    def test_active_beats_imported(self) -> None:
+        # A partly-imported pack with one episode still importing -> keep waiting.
+        assert classify_queue_states(["imported", "importing"]) is QueueVerdict.WAIT
+
+    def test_failed_steps_in(self) -> None:
+        # Sonarr gave up; we have the files + authoritative mapping -> step in.
+        assert classify_queue_states(["failed"]) is QueueVerdict.STEP_IN
+
+    def test_case_insensitive(self) -> None:
+        assert classify_queue_states(["IMPORTBLOCKED"]) is QueueVerdict.STEP_IN
+
+
+class TestResolveLanguageObjectsDefensive:
+    """resolve_language_objects survives a blank/None or malformed name list.
+
+    Regression for the crash where blank YAML import_languages_* parsed to None
+    and the helper did ``for name in None`` -> TypeError.
+    """
+
+    def test_none_names_returns_empty(self) -> None:
+        # cast: the guard exists because the runtime value can violate the
+        # ``list[str]`` annotation (blank YAML -> None), which is what we test.
+        names = cast("list[str]", None)
+        assert resolve_language_objects(names, [{"id": 8, "name": "Japanese"}]) == []
+
+    def test_non_string_names_are_skipped(self) -> None:
+        defs = [{"id": 8, "name": "Japanese"}]
+        names = cast("list[str]", [None, 5, "Japanese"])
+
+        result = resolve_language_objects(names, defs)
+
+        assert result == [{"id": 8, "name": "Japanese"}]

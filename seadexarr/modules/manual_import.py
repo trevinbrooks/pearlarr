@@ -51,6 +51,87 @@ class WaitOutcome(Enum):
     MISSING = auto()
 
 
+class ImportReadiness(Enum):
+    """The result of one Sonarr import attempt, telling the engine what to do.
+
+    The strategy's ``import_completed`` returns this each poll so the engine's
+    blocking wait loop knows whether to stop or keep polling:
+
+    ``IMPORTED`` -> the files are imported (we queued a ManualImport, or Sonarr
+    already handled them); drop the durable record.
+    ``RETRY`` -> not ready yet (Sonarr hasn't seen/parsed the files, is mid-import,
+    or a call failed transiently); poll again until the readiness deadline.
+    ``LEAVE`` -> nothing we can import right now (no candidate maps to one of our
+    episodes, or the attempt raised); leave the record pending for a later run.
+    """
+
+    IMPORTED = auto()
+    RETRY = auto()
+    LEAVE = auto()
+
+
+class QueueVerdict(Enum):
+    """What Sonarr's queue says to do with a tracked download.
+
+    Derived purely from the aggregate ``trackedDownloadState`` of the queue
+    records sharing a ``downloadId`` (a season pack has one record per episode):
+
+    ``DONE`` -> Sonarr already imported every record; drop the pending record.
+    ``WAIT`` -> Sonarr is still downloading or actively importing; keep polling.
+    ``STEP_IN`` -> Sonarr can't / won't auto-import (``importBlocked``, ``failed``,
+    ``ignored``) or isn't tracking the download at all; drive our authoritative
+    manual import.
+    """
+
+    DONE = auto()
+    WAIT = auto()
+    STEP_IN = auto()
+
+
+# trackedDownloadState values (camelCase from Sonarr, compared case-folded) that
+# mean Sonarr is still working the download and we should keep waiting rather than
+# step in. ``queued``/``delay``/``paused`` are QueueStatus-ish transients Sonarr
+# may surface in the same field; treat them as "still working" too.
+_QUEUE_ACTIVE_STATES = frozenset(
+    {"downloading", "importpending", "importing", "queued", "delay", "paused"},
+)
+
+
+def classify_queue_states(states: list[str]) -> QueueVerdict:
+    """Reduce the per-episode ``trackedDownloadState`` list to a single verdict.
+
+    Side-effect free so the queue decision can be unit-tested without any HTTP.
+    Priority, highest first:
+
+      1. any ``importBlocked`` -> ``STEP_IN`` (Sonarr gave up; our authoritative
+         mapping is exactly what unblocks it).
+      2. any still-active state (downloading / importPending / importing / ...) ->
+         ``WAIT`` (let Sonarr finish; it may still flip to importBlocked, which a
+         later poll re-evaluates).
+      3. all ``imported`` -> ``DONE``.
+      4. otherwise (``failed`` / ``failedPending`` / ``ignored`` / unknown, or an
+         empty list because Sonarr isn't tracking the download) -> ``STEP_IN``.
+
+    Args:
+        states (list[str]): The ``trackedDownloadState`` of every queue record
+            sharing the download's infohash (any case; missing values dropped by
+            the caller).
+
+    Returns:
+        QueueVerdict: The action the strategy should take this poll.
+    """
+
+    folded = [s.casefold() for s in states]
+
+    if any(s == "importblocked" for s in folded):
+        return QueueVerdict.STEP_IN
+    if any(s in _QUEUE_ACTIVE_STATES for s in folded):
+        return QueueVerdict.WAIT
+    if folded and all(s == "imported" for s in folded):
+        return QueueVerdict.DONE
+    return QueueVerdict.STEP_IN
+
+
 @dataclass(frozen=True)
 class PendingImport:
     """A durable record of one added torrent awaiting a series-pinned import.
@@ -437,7 +518,12 @@ def resolve_language_objects(names: list[str], lang_defs: list[dict]) -> list[di
         if isinstance(definition.get("name"), str)
     }
     resolved: list[dict] = []
-    for name in names:
+    # ``names or []`` and the str guard keep a blank/None or malformed configured
+    # language list from raising (a blank YAML value parses to None, which would
+    # otherwise blow up on ``for name in None`` / ``None.casefold()``).
+    for name in names or []:
+        if not isinstance(name, str):
+            continue
         definition = by_name.get(name.casefold())
         if definition is not None:
             resolved.append({"id": definition.get("id"), "name": definition.get("name")})

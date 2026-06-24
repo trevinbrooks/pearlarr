@@ -13,6 +13,13 @@ from arrapi import SonarrAPI
 from .log import indent_string
 from .seadex_types import SonarrEpisode
 
+# Per-request timeout (seconds) for the manual-import folder scan. Sonarr walks
+# and parses every file under the folder, which is slow - and can hang - over a
+# remote mount; bounding it lets a hung scan surface as a transient miss (retry)
+# instead of blocking the whole run. Generous so a legitimately slow first scan
+# (uncached remote files) still completes.
+MANUAL_IMPORT_TIMEOUT_S = 120
+
 
 class SonarrClient:
     """Thin wrapper over the Sonarr API (``arrapi`` + two raw endpoints)."""
@@ -142,14 +149,18 @@ class SonarrClient:
         series_id: int,
         season_number: int | None = None,
         filter_existing_files: bool = False,
-    ) -> list[dict]:
+    ) -> list[dict] | None:
         """List Sonarr's manual-import candidates for a folder, series-pinned.
 
         Passing ``seriesId`` makes Sonarr parse the files *in the context of the
         known series* (PR #7727), which is far more reliable than a blind parse.
 
-        Returns an empty list (with a warning) on a non-200, so the caller can
-        leave the import pending and retry later.
+        Returns ``None`` (with a warning) on a non-200 *or* a transient request
+        error (timeout / connection drop) - both mean "ask again", e.g. Sonarr is
+        still building the parse over a slow remote mount. Returns an empty list
+        only when Sonarr genuinely reports no candidates (the files aren't visible
+        on its mount yet). The caller treats both as keep-waiting, but the
+        distinction keeps the intent clear.
 
         Args:
             folder (str): Folder on disk to scan (URL-encoded into the query).
@@ -159,9 +170,9 @@ class SonarrClient:
                 has imported. Sent lowercase ``true``/``false``.
 
         Returns:
-            list[dict]: Raw ManualImportResource dicts (keys like ``path``,
+            list[dict] | None: Raw ManualImportResource dicts (keys like ``path``,
                 ``episodes``, ``quality``, ``languages``, ``releaseGroup``,
-                ``rejections``); empty on failure.
+                ``rejections``); ``None`` on a transient failure.
         """
 
         params: dict[str, str] = {
@@ -175,17 +186,28 @@ class SonarrClient:
         params_enc = urlencode(params)
 
         candidates_req_url = f"{self._url}/api/v3/manualimport?{params_enc}"
-        candidates_req = self._session.get(candidates_req_url)
+        try:
+            candidates_req = self._session.get(
+                candidates_req_url, timeout=MANUAL_IMPORT_TIMEOUT_S,
+            )
+        except requests.RequestException as e:
+            self._logger.warning(
+                indent_string(
+                    f"Manual-import scan of {folder} did not respond ({e}); "
+                    f"will retry",
+                ),
+            )
+            return None
 
         if candidates_req.status_code != 200:
             self._logger.warning(
                 indent_string(
                     f"Could not fetch manual-import candidates for folder "
                     f"{folder} (status code {candidates_req.status_code}); "
-                    f"leaving import pending",
+                    f"will retry",
                 ),
             )
-            return []
+            return None
 
         return candidates_req.json()
 
@@ -215,28 +237,92 @@ class SonarrClient:
             int | None: The queued command's id, or None on failure.
         """
 
-        d = {"apikey": self._api_key}
-        d_enc = urlencode(d)
+        return self._post_command(
+            {"name": "ManualImport", "importMode": import_mode, "files": files},
+            label="ManualImport",
+        )
 
+    def refresh_monitored_downloads(self) -> int | None:
+        """Queue Sonarr's ``RefreshMonitoredDownloads`` command.
+
+        Makes Sonarr re-scan its download clients (picking up our completed
+        torrent and refreshing the remote mount path) and re-evaluate its queue,
+        so the queue's ``trackedDownloadState`` reflects reality before we read it.
+
+        Returns the command ``id`` (poll :meth:`command_status` to wait for it) or
+        None on failure.
+        """
+
+        return self._post_command(
+            {"name": "RefreshMonitoredDownloads"},
+            label="RefreshMonitoredDownloads",
+        )
+
+    def _post_command(self, body: dict, *, label: str) -> int | None:
+        """POST a command to ``/api/v3/command`` and return its queued id.
+
+        Shared by :meth:`manual_import_execute` and
+        :meth:`refresh_monitored_downloads`. Returns the command ``id`` or None
+        (with a warning) on a non-2xx.
+
+        Args:
+            body (dict): The command body (must carry ``name``).
+            label (str): Command name for the warning message.
+        """
+
+        d_enc = urlencode({"apikey": self._api_key})
         command_req_url = f"{self._url}/api/v3/command?{d_enc}"
-        command_body = {
-            "name": "ManualImport",
-            "importMode": import_mode,
-            "files": files,
-        }
-        command_req = self._session.post(command_req_url, json=command_body)
+        command_req = self._session.post(command_req_url, json=body)
 
         if command_req.status_code not in (200, 201):
             self._logger.warning(
                 indent_string(
-                    f"Could not queue ManualImport command "
-                    f"(status code {command_req.status_code}); "
-                    f"leaving import pending",
+                    f"Could not queue {label} command "
+                    f"(status code {command_req.status_code})",
                 ),
             )
             return None
 
         return command_req.json().get("id")
+
+    def queue(self) -> list[dict]:
+        """All Sonarr queue records (``/api/v3/queue``).
+
+        Used to see what Sonarr is doing with a download we added directly to
+        qBittorrent: each record carries ``downloadId`` (the infohash, matched
+        case-insensitively) and ``trackedDownloadState``. A season pack has one
+        record per episode sharing the ``downloadId``. ``includeUnknownSeriesItems``
+        is on because an ``importBlocked`` item whose title didn't match a series
+        can surface as an unknown-series record. A large ``pageSize`` pulls the
+        whole queue in one request.
+
+        Returns an empty list (with a warning) on a non-200, so the caller treats
+        "couldn't read the queue" as "not tracked" and falls back to its own scan.
+
+        Returns:
+            list[dict]: Raw QueueResource record dicts; empty on failure.
+        """
+
+        params = urlencode(
+            {
+                "pageSize": "1000",
+                "includeUnknownSeriesItems": "true",
+                "apikey": self._api_key,
+            },
+        )
+        queue_req_url = f"{self._url}/api/v3/queue?{params}"
+        queue_req = self._session.get(queue_req_url)
+
+        if queue_req.status_code != 200:
+            self._logger.warning(
+                indent_string(
+                    f"Could not fetch the Sonarr queue "
+                    f"(status code {queue_req.status_code})",
+                ),
+            )
+            return []
+
+        return queue_req.json().get("records", [])
 
     def quality_definitions(self) -> list[dict]:
         """All Sonarr quality definitions (``/api/v3/qualitydefinition``).

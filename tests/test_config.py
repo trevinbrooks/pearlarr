@@ -157,6 +157,7 @@ class TestImportSettings:
         cfg = _cfg()
         assert cfg.import_wait_mode is ImportWaitMode.OFF
         assert cfg.import_wait_timeout == 3600
+        assert cfg.import_ready_timeout == 600
         assert cfg.import_poll_interval == 30
         assert cfg.import_mode == "auto"
         assert cfg.import_default_quality is None
@@ -190,3 +191,13 @@ class TestImportSettings:
 
     def test_import_wait_mode_invalid_falls_back_to_off(self) -> None:
         assert _cfg(import_wait_mode="bogus").import_wait_mode is ImportWaitMode.OFF
+
+    def test_import_ready_timeout_override(self) -> None:
+        assert _cfg(import_ready_timeout=120).import_ready_timeout == 120
+
+    def test_blank_language_lists_fall_back_to_defaults(self) -> None:
+        # A blank YAML value parses to None; the key is present, so a plain .get
+        # default wouldn't apply. Coalescing keeps the import from crashing.
+        cfg = _cfg(import_languages_dual=None, import_languages_single=None)
+        assert cfg.import_languages_dual == ["Japanese", "English"]
+        assert cfg.import_languages_single == ["Japanese"]

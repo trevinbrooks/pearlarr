@@ -12,10 +12,13 @@ from .cache import UPDATED_AT_STR_FORMAT, CacheRecord, record_is_fresh
 from .config import Arr
 from .log import EntryState, indent_string
 from .manual_import import (
+    ImportReadiness,
     ImportWaitMode,
     PendingImport,
+    QueueVerdict,
     assign_episode_ids,
     build_episode_id_map,
+    classify_queue_states,
     derive_languages,
     parse_quality_from_filename,
     resolve_language_objects,
@@ -224,22 +227,32 @@ def check_ep_by_anibridge(
     return False
 
 
-# Substrings in a manual-import rejection reason that mean "don't import this
-# file": a sample, an already-imported file, or a file that already exists.
-# Matched case-insensitively against each rejection's reason/message text.
-_REJECTION_SKIP_TOKENS = ("sample", "already", "exist")
+# Rejection-reason substrings, matched case-insensitively against each
+# rejection's reason/message text. ``ALREADY_IMPORTED`` means Sonarr already has
+# the file (it imported it itself, or it exists) - seeing only these means the
+# download is effectively done. ``SAMPLE`` is just a file to skip, not a sign the
+# real episode imported, so the two are kept apart.
+_ALREADY_IMPORTED_TOKENS = ("already", "exist")
+_SAMPLE_TOKENS = ("sample",)
+
+# RefreshMonitoredDownloads is quick (Sonarr re-scans its clients); poll its
+# command status up to this many times, sleeping this long between, before
+# proceeding regardless. Waiting means the queue we read next reflects the
+# rescan; the bound means a stuck command never blocks the run.
+_REFRESH_COMMAND_MAX_POLLS = 30
+_REFRESH_COMMAND_POLL_S = 1
+_COMMAND_TERMINAL_STATES = frozenset({"completed", "failed", "aborted", "cancelled"})
 
 
-def _candidate_is_rejected(candidate: dict) -> bool:
-    """True if a manual-import candidate is a sample / already-imported file.
+def _rejection_matches(candidate: dict, tokens: tuple[str, ...]) -> bool:
+    """True if any of a candidate's rejections contains one of ``tokens``.
 
-    Best-effort: scans the candidate's ``rejections`` for a reason/message whose
-    text contains any skip token (``sample``/``already``/``exist``), case
-    insensitively. A rejection shape varies by Sonarr version (a bare string, or
-    a dict with ``reason``/``message``), so both are handled.
+    Best-effort and case-insensitive. A rejection shape varies by Sonarr version
+    (a bare string, or a dict with ``reason``/``message``), so both are handled.
 
     Args:
         candidate (dict): A raw ManualImportResource dict (reads ``rejections``).
+        tokens (tuple[str, ...]): Lowercase substrings to look for.
     """
 
     for rejection in candidate.get("rejections") or []:
@@ -250,7 +263,7 @@ def _candidate_is_rejected(candidate: dict) -> bool:
         else:
             continue
         lowered = text.casefold()
-        if any(token in lowered for token in _REJECTION_SKIP_TOKENS):
+        if any(token in lowered for token in tokens):
             return True
     return False
 
@@ -319,6 +332,13 @@ class SonarrSync(ArrSync[SonarrItem]):
         self._quality_defs_cache: list[dict] | None = None
         self._languages_cache: list[dict] | None = None
 
+        # Monotonic time of the last RefreshMonitoredDownloads we asked Sonarr for,
+        # used to throttle the rescan: the blocking pass calls import_completed
+        # every poll and may walk several torrents back-to-back, so we re-issue the
+        # (global) refresh at most once per import_poll_interval rather than on
+        # every call. None means "not refreshed yet this run" (reset in get_items).
+        self._last_refresh_monotonic: float | None = None
+
         self.ignore_movies_in_radarr = self._config.ignore_movies_in_radarr
 
         # Only when ignore_movies_in_radarr is on do we need Radarr's movie list
@@ -360,6 +380,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         self._ep_list_cache = {}
         self._quality_defs_cache = None
         self._languages_cache = None
+        self._last_refresh_monotonic = None
         return self.get_all_sonarr_series()
 
     def filter_to_single(self, items: list[SonarrItem], item_id: int) -> list[SonarrItem]:
@@ -693,26 +714,133 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         return pending_seeds
 
-    def import_completed(self, pending: PendingImport, content_path: str) -> bool:
-        """Drive the series-pinned manual import for one completed download.
+    def import_completed(
+        self, pending: PendingImport, content_path: str,
+    ) -> ImportReadiness:
+        """One reconcile poll for a completed download: rescan, read queue, act.
 
-        Asks Sonarr for the manual-import candidates under ``content_path``
-        (pinned to ``pending.series_id`` so the parse runs in the context of the
-        known series), then builds a payload that overrides every field we have
-        authoritative data for - series id, episode ids, release group, download
-        id - and layers the quality (ours -> Sonarr's in-context -> configured
-        default) and languages (dual vs. single). Files Sonarr rejects as a
-        sample / already-imported are skipped; files we can't confidently map to
-        an episode are skipped.
+        Asks Sonarr to rescan its download clients (throttled), so its queue
+        reflects the finished torrent and the freshly-refreshed remote mount, then
+        reads the queue and branches on the download's aggregate
+        ``trackedDownloadState`` (a season pack is several records sharing the
+        infohash):
 
-        Returns True only when the ``ManualImport`` command was queued (so the
-        engine may drop the pending record); False to leave it pending for a
-        later retry.
+          * Sonarr already imported it -> ``IMPORTED`` (drop the record).
+          * Sonarr is still downloading / importing -> ``RETRY`` (let it finish).
+          * Sonarr can't auto-import it (``importBlocked`` / ``failed``) or isn't
+            tracking it at all -> drive our authoritative series-pinned manual
+            import.
+
+        Called repeatedly by the engine's blocking wait loop; the return value
+        tells the loop whether to stop (``IMPORTED``/``LEAVE``) or poll again
+        (``RETRY``).
 
         Args:
             pending (PendingImport): The durable record for the completed torrent.
-            content_path (str): The qBittorrent ``content_path`` of the finished
-                download (the folder/file the manual import reads from disk).
+            content_path (str): The qBittorrent ``content_path`` to import from.
+        """
+
+        label = pending.title or pending.infohash
+
+        # Make Sonarr re-scan its download clients (throttled) so the queue we read
+        # next reflects the completed download and the refreshed mount path.
+        self._refresh_sonarr_downloads()
+
+        states = self._queue_states(pending.infohash)
+        verdict = classify_queue_states(states)
+
+        if verdict is QueueVerdict.DONE:
+            self.logger.info(indent_string(f"{label}: Sonarr imported it"))
+            return ImportReadiness.IMPORTED
+        if verdict is QueueVerdict.WAIT:
+            shown = ", ".join(sorted({s.casefold() for s in states})) or "working"
+            self.logger.info(
+                indent_string(f"{label}: Sonarr is handling it ({shown}); waiting"),
+            )
+            return ImportReadiness.RETRY
+
+        # STEP_IN: Sonarr can't / won't auto-import (importBlocked / failed / not
+        # tracked) - drive our own authoritative manual import.
+        return self._manual_import(pending, content_path, label)
+
+    def _refresh_sonarr_downloads(self) -> None:
+        """Queue RefreshMonitoredDownloads (throttled) and wait for it, best-effort.
+
+        RefreshMonitoredDownloads is global and the blocking pass polls often (and
+        may walk several torrents back-to-back), so it's re-issued at most once per
+        ``import_poll_interval``. Waiting for the command to finish means the queue
+        read that follows reflects the rescan; the poll bound means a stuck command
+        can never block the run, and a failure to queue/confirm just leaves the
+        next queue read slightly stale (a later poll corrects it).
+        """
+
+        now = time.monotonic()
+        interval = self._config.import_poll_interval
+        if (
+            self._last_refresh_monotonic is not None
+            and now - self._last_refresh_monotonic < interval
+        ):
+            return
+        self._last_refresh_monotonic = now
+
+        cmd_id = self.sonarr.refresh_monitored_downloads()
+        if cmd_id is None:
+            return
+        self.logger.debug(indent_string("Asked Sonarr to rescan its downloads"))
+
+        for _ in range(_REFRESH_COMMAND_MAX_POLLS):
+            status = self.sonarr.command_status(cmd_id)
+            state = status.get("status", "") if isinstance(status, dict) else ""
+            if state.casefold() in _COMMAND_TERMINAL_STATES:
+                return
+            time.sleep(_REFRESH_COMMAND_POLL_S)
+
+    def _queue_states(self, infohash: str) -> list[str]:
+        """The ``trackedDownloadState`` of every queue record for this download.
+
+        Matches records to the torrent by ``downloadId`` (case-insensitively;
+        Sonarr stores the infohash uppercased). Records with no tracked state are
+        dropped. An empty list means Sonarr isn't tracking the download.
+
+        Args:
+            infohash (str): The torrent infohash (the download id).
+        """
+
+        target = infohash.casefold()
+        states: list[str] = []
+        for record in self.sonarr.queue():
+            if not isinstance(record, dict):
+                continue
+            download_id = record.get("downloadId")
+            if not isinstance(download_id, str) or download_id.casefold() != target:
+                continue
+            state = record.get("trackedDownloadState")
+            if isinstance(state, str) and state:
+                states.append(state)
+        return states
+
+    def _manual_import(
+        self, pending: PendingImport, content_path: str, label: str,
+    ) -> ImportReadiness:
+        """Drive our authoritative series-pinned manual import for one download.
+
+        Asks Sonarr for the manual-import candidates under ``content_path`` (pinned
+        to ``pending.series_id`` so the parse runs in the context of the known
+        series), then builds a payload that overrides every field we have
+        authoritative data for - series id, episode ids, release group, download
+        id - and layers the quality (ours -> Sonarr's in-context -> configured
+        default) and languages (dual vs. single).
+
+        Returns ``RETRY`` when nothing is ready yet (the scan failed transiently,
+        or Sonarr can't see the files on its mount); ``IMPORTED`` when the import
+        was queued or every candidate was already imported by Sonarr; ``LEAVE``
+        when candidates exist but none map to one of our episodes (retrying the
+        same files won't help).
+
+        Args:
+            pending (PendingImport): The durable record for the completed torrent.
+            content_path (str): The qBittorrent ``content_path`` to import from.
+            label (str): Display label for the log lines.
         """
 
         candidates = self.sonarr.manual_import_candidates(
@@ -721,14 +849,17 @@ class SonarrSync(ArrSync[SonarrItem]):
             season_number=pending.season_number,
             filter_existing_files=False,
         )
+        if candidates is None:
+            # Transient (timeout / non-200) - the scan will likely succeed once
+            # the remote files are cached; the client already warned. Ask again.
+            return ImportReadiness.RETRY
         if not candidates:
             self.logger.info(
                 indent_string(
-                    f"No manual-import candidates for {pending.title or pending.infohash}; "
-                    f"leaving pending",
+                    f"{label}: Sonarr sees no files at {content_path} yet; waiting",
                 ),
             )
-            return False
+            return ImportReadiness.RETRY
 
         # Lazily fetch + cache the quality-definition / language lists for the
         # run so repeated imports don't re-hit these endpoints.
@@ -753,25 +884,30 @@ class SonarrSync(ArrSync[SonarrItem]):
         lang_objs = resolve_language_objects(lang_names, lang_defs)
 
         files: list[dict] = []
+        already_imported = False
         for c in candidates:
             path = c.get("path")
             if not path:
                 continue
             base = os.path.basename(path)
 
+            # Files Sonarr already has (it imported them itself, or they exist):
+            # not importable, and seeing only these means the download is done.
+            if _rejection_matches(c, _ALREADY_IMPORTED_TOKENS):
+                already_imported = True
+                self.logger.info(
+                    indent_string(f"{label}: {base} already imported by Sonarr"),
+                )
+                continue
+            if _rejection_matches(c, _SAMPLE_TOKENS):
+                self.logger.info(indent_string(f"{label}: skipping sample {base}"))
+                continue
+
             ep_ids = assigned.get(base)
             if not ep_ids:
                 self.logger.info(
                     indent_string(
-                        f"Skipping {base}: no authoritative episode mapping",
-                    ),
-                )
-                continue
-
-            if _candidate_is_rejected(c):
-                self.logger.info(
-                    indent_string(
-                        f"Skipping {base}: rejected by Sonarr (sample/already imported)",
+                        f"{label}: no authoritative episode mapping for {base}; skipping",
                     ),
                 )
                 continue
@@ -813,28 +949,35 @@ class SonarrSync(ArrSync[SonarrItem]):
             files.append(file_entry)
 
         if not files:
+            if already_imported:
+                self.logger.info(
+                    indent_string(f"{label}: all files already imported by Sonarr"),
+                )
+                return ImportReadiness.IMPORTED
             self.logger.info(
                 indent_string(
-                    f"Nothing importable for {pending.title or pending.infohash}; "
-                    f"leaving pending",
+                    f"{label}: nothing importable; leaving for a later run",
                 ),
             )
-            return False
+            return ImportReadiness.LEAVE
 
         cmd_id = self.sonarr.manual_import_execute(
             files=files,
             import_mode=self._config.import_mode,
         )
         if cmd_id is None:
-            return False
+            self.logger.info(
+                indent_string(f"{label}: Sonarr rejected the import command; will retry"),
+            )
+            return ImportReadiness.RETRY
 
         self.logger.info(
             indent_string(
-                f"Queued manual import of {len(files)} file(s) for "
-                f"{pending.title or pending.infohash} (command {cmd_id})",
+                f"{label}: queued manual import of {len(files)} file(s) "
+                f"(command {cmd_id})",
             ),
         )
-        return True
+        return ImportReadiness.IMPORTED
 
     # --- Sonarr domain logic ------------------------------------------------
 

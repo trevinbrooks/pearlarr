@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 
 from .config import Arr
-from .manual_import import PendingImport
+from .manual_import import ImportReadiness, PendingImport
 from .mappings import MappingEntry
 from .seadex_types import ArrItem
 
@@ -53,13 +53,17 @@ class ArrSync[ItemT: ArrItem](ABC):
         """Process one AniList id for one Arr item; True if it grabbed."""
 
     @abstractmethod
-    def import_completed(self, pending: PendingImport, content_path: str) -> bool:
-        """Drive the series-pinned manual import for one completed download.
+    def import_completed(
+        self, pending: PendingImport, content_path: str,
+    ) -> ImportReadiness:
+        """Reconcile one completed download with Sonarr (one poll).
 
-        Sonarr drives the series-pinned manual import for the finished files at
-        ``content_path``, overriding every authoritative field carried on
-        ``pending`` (series id, episode ids, release group) so Sonarr never
-        trusts its own blind title parse. Radarr is a no-op (out of scope).
+        Called repeatedly by the engine's blocking wait loop once qBittorrent
+        reports the torrent complete. Sonarr asks its own download tracker to
+        rescan, then either lets Sonarr import the files or drives a series-pinned
+        manual import (overriding every authoritative field carried on ``pending``
+        - series id, episode ids, release group - so Sonarr never trusts its own
+        blind title parse) when Sonarr can't. Radarr is a no-op (out of scope).
 
         Args:
             pending (PendingImport): The durable record for the completed torrent.
@@ -67,6 +71,6 @@ class ArrSync[ItemT: ArrItem](ABC):
                 download (the folder/file the manual import reads from disk).
 
         Returns:
-            bool: True iff the import was queued/verified (so the engine may drop
-            the pending record); False to leave it pending for a later retry.
+            ImportReadiness: ``IMPORTED`` (drop the record), ``RETRY`` (not ready;
+            poll again), or ``LEAVE`` (give up this run; leave it pending).
         """

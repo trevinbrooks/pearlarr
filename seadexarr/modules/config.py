@@ -282,6 +282,19 @@ class AppConfig:
         return self.data.get("import_poll_interval", 30)
 
     @property
+    def import_ready_timeout(self) -> int:
+        """Seconds to wait for Sonarr to import a completed download.
+
+        After qBittorrent reports the torrent complete, the blocking pass asks
+        Sonarr to rescan and then polls its queue until the files import (Sonarr's
+        own import, or our authoritative manual import on an ``importBlocked``).
+        This bounds that second phase; the download wait itself is bounded
+        separately by ``import_wait_timeout``.
+        """
+
+        return self.data.get("import_ready_timeout", 600)
+
+    @property
     def import_mode(self) -> str:
         """Sonarr ``importMode`` for the manual import (``auto``/``move``/``copy``)."""
 
@@ -299,15 +312,25 @@ class AppConfig:
 
     @property
     def import_languages_dual(self) -> list[str]:
-        """Languages applied to imported files from dual-audio releases."""
+        """Languages applied to imported files from dual-audio releases.
 
-        return self.data.get("import_languages_dual", ["Japanese", "English"])
+        A blank YAML value parses to ``None`` (the key is present, so a plain
+        ``.get`` default wouldn't apply); coalesce it to the documented default,
+        mirroring ``ignore_tags`` / ``trackers``.
+        """
+
+        value = self.data.get("import_languages_dual")
+        return value if value else ["Japanese", "English"]
 
     @property
     def import_languages_single(self) -> list[str]:
-        """Languages applied to imported files from single-audio releases."""
+        """Languages applied to imported files from single-audio releases.
 
-        return self.data.get("import_languages_single", ["Japanese"])
+        Blank coalesces to the default; see :meth:`import_languages_dual`.
+        """
+
+        value = self.data.get("import_languages_single")
+        return value if value else ["Japanese"]
 
     @property
     def import_pending_max_age_days(self) -> int:

@@ -14,7 +14,7 @@ from unittest import mock
 import qbittorrentapi
 
 from seadexarr.modules.config import Arr
-from seadexarr.modules.manual_import import ImportWaitMode, WaitOutcome
+from seadexarr.modules.manual_import import ImportReadiness, ImportWaitMode, WaitOutcome
 from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.seadex_arr import SeaDexArr
 
@@ -73,46 +73,46 @@ def make_engine(qbit: FakeQbit) -> SeaDexArr:
 
 
 class TestPollTorrent:
-    """_poll_torrent maps a single qBittorrent read to a WaitOutcome."""
+    """_poll_torrent maps a single qBittorrent read to (outcome, path, progress)."""
 
     def test_missing_on_empty_list(self) -> None:
         engine = make_engine(FakeQbit([[]]))
 
-        assert engine._poll_torrent("h") == (WaitOutcome.MISSING, None)
+        assert engine._poll_torrent("h") == (WaitOutcome.MISSING, None, 0.0)
 
     def test_errored(self) -> None:
         engine = make_engine(FakeQbit([[FakeTorrent(is_errored=True)]]))
 
-        assert engine._poll_torrent("h") == (WaitOutcome.ERRORED, None)
+        assert engine._poll_torrent("h") == (WaitOutcome.ERRORED, None, 0.0)
 
     def test_complete_carries_content_path(self) -> None:
         torrent = FakeTorrent(is_complete=True, content_path="/data/show")
         engine = make_engine(FakeQbit([[torrent]]))
 
-        assert engine._poll_torrent("h") == (WaitOutcome.COMPLETE, "/data/show")
+        assert engine._poll_torrent("h") == (WaitOutcome.COMPLETE, "/data/show", 0.0)
 
     def test_complete_on_full_progress_without_flag(self) -> None:
         # progress == 1.0 counts as complete even if the state flag is unset.
         torrent = FakeTorrent(progress=1.0, content_path="/data/movie")
         engine = make_engine(FakeQbit([[torrent]]))
 
-        assert engine._poll_torrent("h") == (WaitOutcome.COMPLETE, "/data/movie")
+        assert engine._poll_torrent("h") == (WaitOutcome.COMPLETE, "/data/movie", 1.0)
 
-    def test_none_while_downloading(self) -> None:
+    def test_none_while_downloading_carries_progress(self) -> None:
         engine = make_engine(FakeQbit([[FakeTorrent(progress=0.5)]]))
 
-        assert engine._poll_torrent("h") == (None, None)
+        assert engine._poll_torrent("h") == (None, None, 0.5)
 
     def test_none_on_transient_api_error(self) -> None:
         # A dropped connection / re-auth in flight is "still waiting", not terminal.
         engine = make_engine(FakeQbit([qbittorrentapi.APIConnectionError("boom")]))
 
-        assert engine._poll_torrent("h") == (None, None)
+        assert engine._poll_torrent("h") == (None, None, 0.0)
 
     def test_none_when_no_client(self) -> None:
         engine = make_bare_instance(SeaDexArr, qbit=None)
 
-        assert engine._poll_torrent("h") == (None, None)
+        assert engine._poll_torrent("h") == (None, None, 0.0)
 
 
 class FakeClock:
@@ -262,7 +262,7 @@ class TestReconcilePendingImports:
 
     def test_complete_and_verified_drops_record(self) -> None:
         strategy = mock.MagicMock()
-        strategy.import_completed.return_value = True
+        strategy.import_completed.return_value = ImportReadiness.IMPORTED
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
         engine = make_orchestration_engine(
             qbit=qbit, strategy=strategy,
@@ -274,9 +274,9 @@ class TestReconcilePendingImports:
         strategy.import_completed.assert_called_once()
         assert engine._pending_store() == {}
 
-    def test_complete_but_unverified_leaves_record(self) -> None:
+    def test_complete_but_not_ready_leaves_record(self) -> None:
         strategy = mock.MagicMock()
-        strategy.import_completed.return_value = False
+        strategy.import_completed.return_value = ImportReadiness.RETRY
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
         engine = make_orchestration_engine(
             qbit=qbit, strategy=strategy,
@@ -317,7 +317,7 @@ class TestRunBlockingImports:
 
     def test_complete_and_verified_drops_from_store_and_ctx(self) -> None:
         strategy = mock.MagicMock()
-        strategy.import_completed.return_value = True
+        strategy.import_completed.return_value = ImportReadiness.IMPORTED
         pending = pending_import(infohash="h", added_at=_FRESH)
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
         engine = make_orchestration_engine(
@@ -329,6 +329,49 @@ class TestRunBlockingImports:
 
         assert engine._pending_store() == {}
         assert engine._ctx.pending_imports == []
+
+    def test_retry_then_imported_drops_record(self) -> None:
+        # Phase B keeps polling Sonarr while it's not ready (RETRY), then drops the
+        # record once the import lands (IMPORTED). The injected clock/sleep mean no
+        # real waiting; FakeQbit reports the download already complete.
+        strategy = mock.MagicMock()
+        strategy.import_completed.side_effect = [
+            ImportReadiness.RETRY,
+            ImportReadiness.IMPORTED,
+        ]
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
+        engine = make_orchestration_engine(
+            qbit=qbit, strategy=strategy,
+            store_records=[pending.to_json()], pending=[pending],
+            import_ready_timeout=600, import_poll_interval=30,
+        )
+        clock = FakeClock(step=30)
+
+        engine._wait_and_import_one(pending, now=clock.now, sleep=clock.sleep)
+
+        assert strategy.import_completed.call_count == 2
+        assert engine._pending_store() == {}
+        assert engine._ctx.pending_imports == []
+
+    def test_retry_until_ready_timeout_leaves_record(self) -> None:
+        # Sonarr never becomes ready (always RETRY); once the readiness deadline
+        # passes the record is left pending for a later run, not dropped.
+        strategy = mock.MagicMock()
+        strategy.import_completed.return_value = ImportReadiness.RETRY
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
+        engine = make_orchestration_engine(
+            qbit=qbit, strategy=strategy,
+            store_records=[pending.to_json()], pending=[pending],
+            import_ready_timeout=60, import_poll_interval=30,
+        )
+        clock = FakeClock(step=30)
+
+        engine._wait_and_import_one(pending, now=clock.now, sleep=clock.sleep)
+
+        assert set(engine._pending_store()) == {"h"}
+        assert engine._ctx.pending_imports == [pending]
 
     def test_errored_leaves_record(self) -> None:
         strategy = mock.MagicMock()
