@@ -17,9 +17,10 @@ import logging
 import os
 from collections import defaultdict
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
-from typing import Any, Required, TypedDict, TypeVar, cast
+from enum import Enum, StrEnum
+from typing import Any, TypeVar, cast
 from urllib.request import urlretrieve
 from xml.etree import ElementTree
 
@@ -33,27 +34,80 @@ class TmdbType(StrEnum):
     SHOW = "show"
 
 
-class MappingEntry(TypedDict, total=False):
-    """The fields the sync strategies read off one resolved AniList mapping.
+class MappingMode(Enum):
+    """The two closed kinds of episode mapping a SeaDex mapping can carry.
 
-    ``total=False`` because the two producers emit different subsets: the
-    AniBridge graph attaches ``tvdb_mappings`` (season -> episode ranges) only
-    on a TVDB lookup, while the Kometa Anime-IDs index carries the flat
-    ``tvdb_id`` / ``tvdb_season`` / ``tvdb_epoffset`` fields. The mapping is a
-    plain ``dict`` at the JSON boundary (both producers yield raw dicts that may
-    carry extra keys this shape doesn't enumerate), so this is a structural
-    view over those dicts rather than a constructed record - reads stay
-    ``.get(...)`` but are now typed.
+    A mapping either ships explicit AniBridge ``tvdb_mappings`` (season ->
+    episode ranges) or it doesn't, in which case the Sonarr path falls back to
+    Anime-ID season/offset logic. There is no third kind, so dispatch on this
+    enum needs no defensive default arm.
     """
 
-    anilist_id: Required[int]
-    tvdb_id: int | None
-    tvdb_season: int
-    tvdb_mappings: dict[int, list]
-    tvdb_epoffset: int
-    tmdb_movie_id: int | None
-    imdb_id: str | None
-    anidb_id: int | None
+    ANIME_IDS = "anime_ids"
+    ANIBRIDGE = "anibridge"
+
+
+@dataclass(frozen=True, slots=True)
+class MappingEntry:
+    """One resolved AniList mapping, as the sync strategies consume it.
+
+    Built at a single raw->typed boundary (:func:`_entry_from_raw`) from the two
+    producers' loosely-shaped dicts: the AniBridge graph attaches
+    ``tvdb_mappings`` (season -> episode ranges) only on a TVDB lookup, while the
+    Kometa Anime-IDs index carries the flat ``tvdb_season`` / ``tvdb_epoffset``
+    fields. The dataclass normalises both into one typed record with attribute
+    reads; the ``tvdb_mappings``-present-or-not distinction becomes the typed
+    :attr:`mode` discriminant.
+    """
+
+    anilist_id: int
+    tvdb_id: int | None = None
+    tvdb_season: int = -1
+    tvdb_epoffset: int = 0
+    tvdb_mappings: dict[int, list] | None = None
+    tmdb_movie_id: int | None = None
+    imdb_id: str | None = None
+    anidb_id: int | None = None
+
+    @property
+    def mode(self) -> MappingMode:
+        """Which episode-mapping mode this entry drives.
+
+        ANIBRIDGE iff ``tvdb_mappings`` was attached. Tested with ``is not
+        None`` (not truthiness) on purpose: an *empty* ``tvdb_mappings`` dict is
+        still ANIBRIDGE, exactly as the former ``"tvdb_mappings" in mapping``
+        key-presence check was.
+        """
+
+        return MappingMode.ANIBRIDGE if self.tvdb_mappings is not None else MappingMode.ANIME_IDS
+
+
+def _entry_from_raw(anilist_id: int, raw: dict) -> MappingEntry:
+    """Build a :class:`MappingEntry` from a producer's raw dict.
+
+    The one place loosely-typed producer dicts (Kometa Anime-IDs records and
+    AniBridge ``_consumer_entry`` dicts) become a typed record. Defaults mirror
+    the former ``.get(..., default)`` reads exactly, so an AniBridge entry
+    (which carries no ``tvdb_season`` / ``tvdb_epoffset``) lands on ``-1`` / ``0``
+    and a Kometa entry (which carries no ``tvdb_mappings``) lands on ``None`` ->
+    :attr:`MappingMode.ANIME_IDS`.
+
+    Args:
+        anilist_id (int): AniList id for this entry (the dict key for AniBridge,
+            an in-record field for Kometa).
+        raw (dict): Producer dict; only the enumerated keys are read.
+    """
+
+    return MappingEntry(
+        anilist_id=anilist_id,
+        tvdb_id=raw.get("tvdb_id"),
+        tvdb_season=raw.get("tvdb_season", -1),
+        tvdb_epoffset=raw.get("tvdb_epoffset", 0),
+        tvdb_mappings=raw.get("tvdb_mappings"),
+        tmdb_movie_id=raw.get("tmdb_movie_id"),
+        imdb_id=raw.get("imdb_id"),
+        anidb_id=raw.get("anidb_id"),
+    )
 
 
 def _validate_ids(
@@ -480,10 +534,9 @@ class MappingResolver:
         # "don't clobber an id another query already produced" behaviour
         def merge(field: str, value: Any) -> None:
             for m in index[field].get(value, ()):
-                entry = cast("MappingEntry", m)
-                anilist_id = entry["anilist_id"]
+                anilist_id = m["anilist_id"]
                 if anilist_id not in anilist_mappings:
-                    anilist_mappings[anilist_id] = entry
+                    anilist_mappings[anilist_id] = _entry_from_raw(anilist_id, m)
 
         if tvdb_id is not None:
             merge("tvdb_id", tvdb_id)
@@ -527,7 +580,7 @@ class MappingResolver:
         def merge(found: dict) -> None:
             for anilist_id, entry in found.items():
                 if anilist_id not in anilist_mappings:
-                    anilist_mappings[anilist_id] = cast("MappingEntry", entry)
+                    anilist_mappings[anilist_id] = _entry_from_raw(anilist_id, entry)
 
         if tvdb_id is not None:
             merge(anibridge.lookup_by_tvdb(tvdb_id))

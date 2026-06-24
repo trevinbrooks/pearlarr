@@ -1,7 +1,6 @@
 import os
 import time
 from datetime import datetime, timedelta
-from enum import Enum
 from typing import Any
 from xml.etree import ElementTree
 
@@ -13,7 +12,7 @@ from .anilist import (
 from .cache import UPDATED_AT_STR_FORMAT, CacheRecord, record_is_fresh
 from .config import Arr
 from .log import EntryState, indent_string
-from .mappings import MappingEntry
+from .mappings import MappingEntry, MappingMode
 from .planner import get_episode_keys
 from .protocols import ArrSync
 from .radarr_client import (
@@ -79,27 +78,6 @@ NON_VIDEO_EXTENSIONS = {
 SONARR_PARSE_CACHE_TTL_DAYS = 30
 
 
-class MappingMode(Enum):
-    """The two closed kinds of episode mapping a SeaDex mapping can carry.
-
-    A mapping either ships explicit AniBridge ``tvdb_mappings`` (season ->
-    episode ranges) or it doesn't, in which case we fall back to Anime-ID
-    season/offset logic. There is no third kind, so dispatch on this enum
-    needs no defensive default arm.
-    """
-
-    ANIME_IDS = "anime_ids"
-    ANIBRIDGE = "anibridge"
-
-
-def _mapping_mode(mapping: MappingEntry) -> MappingMode:
-    """Classify a SeaDex mapping into its closed :class:`MappingMode`."""
-
-    if "tvdb_mappings" in mapping:
-        return MappingMode.ANIBRIDGE
-    return MappingMode.ANIME_IDS
-
-
 def _parse_anidb_mapping_dict(
     anidb_item: ElementTree.Element,
     tvdb_season: int,
@@ -136,32 +114,6 @@ def _parse_anidb_mapping_dict(
             result[anidb_tvdbseason] = {int(x[1]): int(x[0]) for x in i_split}
 
     return result
-
-
-def get_tvdb_id(mapping: MappingEntry) -> int | None:
-    """Get TVDB ID for a particular mapping
-
-    Args:
-        mapping (MappingEntry): SeaDex mapping for one AniList id
-
-    Returns:
-        int: TVDB ID
-    """
-
-    return mapping.get("tvdb_id")
-
-
-def get_tvdb_season(mapping: MappingEntry) -> int:
-    """Get TVDB season for a particular mapping
-
-    Args:
-        mapping (MappingEntry): SeaDex mapping for one AniList id
-
-    Returns:
-        int: TVDB season
-    """
-
-    return mapping.get("tvdb_season", -1)
 
 
 def get_overlapping_results(seadex_dict: dict) -> bool:
@@ -454,11 +406,11 @@ class SonarrSync(ArrSync):
 
             # Make sure these are flagged as specials since sometimes shows and
             # movies are all lumped together
-            mapping_season = mapping.get("tvdb_season", -1)
+            mapping_season = mapping.tvdb_season
             if mapping_season == 0:
 
-                mapping_tmdb_id = mapping.get("tmdb_movie_id")
-                mapping_imdb_id = mapping.get("imdb_id")
+                mapping_tmdb_id = mapping.tmdb_movie_id
+                mapping_imdb_id = mapping.imdb_id
 
                 for m in self.all_radarr_movies:
 
@@ -615,18 +567,18 @@ class SonarrSync(ArrSync):
         """
 
         # If we have any season info, pull that out now
-        tvdb_season = get_tvdb_season(mapping)
+        tvdb_season = mapping.tvdb_season
 
         # Check we have a sensible AL ID
         if al_id == -1:
             raise ValueError("AniList ID not defined!")
 
         # Get the AniDB ID
-        anidb_id = mapping.get("anidb_id")
+        anidb_id = mapping.anidb_id
 
         # Check what kind of mode we're in here,
         # it's either AniBridge or Anime IDs
-        mode = _mapping_mode(mapping)
+        mode = mapping.mode
 
         # Get all the episodes for the whole series. The fetch is per-series (not
         # per-AniList-id), so a multi-season series resolving to several ids would
@@ -649,7 +601,7 @@ class SonarrSync(ArrSync):
                 if check_ep_by_anime_ids(ep=ep, tvdb_season=tvdb_season)
             ]
         else:
-            tvdb_mappings = mapping.get("tvdb_mappings", {})
+            tvdb_mappings = mapping.tvdb_mappings or {}
             final_ep_list = [
                 ep
                 for ep in ep_list
@@ -738,7 +690,7 @@ class SonarrSync(ArrSync):
         """
 
         # Slice the list to get the correct episodes, so any potential offsets
-        ep_offset = mapping.get("tvdb_epoffset", 0)
+        ep_offset = mapping.tvdb_epoffset
         n_eps, self._anilist.al_cache = get_anilist_n_eps(
             al_id,
             al_cache=self._anilist.al_cache,
