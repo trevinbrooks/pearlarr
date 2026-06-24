@@ -277,10 +277,7 @@ def classify_queue(records: list[QueueRecordView]) -> QueueVerdict:
         elif state in _QUEUE_STEP_IN_STATES or status == "error":
             troubled = True
         elif state == "importpending":
-            if status != "ok" or record.has_messages:
-                troubled = True
-            else:
-                clean_pending = True
+            clean_pending = True
 
     if in_motion:
         return QueueVerdict.WAIT

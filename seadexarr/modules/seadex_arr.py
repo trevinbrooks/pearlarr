@@ -4,7 +4,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional, final
+from typing import final
 
 import qbittorrentapi
 import requests
@@ -1423,7 +1423,7 @@ class SeaDexArr:
         *,
         now: Callable[[], float] | None = None,
         sleep: Callable[[float], None] | None = None,
-        view: Optional[WaitView] = None,
+        view: WaitView | None = None,
     ) -> None:
         """Interleaved, copy-aware wait+import over ALL pending, after the summary.
 

@@ -45,7 +45,7 @@ classifiers = [
 
 dependencies = [
     "arrapi == 1.4.14",
-#    "basedpyright>=1.39.8",
+    "basedpyright>=1.39.8",
     "beautifulsoup4 == 4.14.3",
     "discordwebhook == 1.0.3",
     "httpx == 0.28.1",
