@@ -1,7 +1,7 @@
 """Sonarr REST client: the HTTP surface the Sonarr syncer talks to.
 
-``SonarrClient`` wraps the high-level ``arrapi`` client (``all_series`` /
-``get_series``) and the two raw endpoints the syncer needs
+``SonarrClient`` wraps the high-level ``arrapi`` client (``all_series``)
+and the two raw endpoints the syncer needs
 (``/api/v3/episode`` and ``/api/v3/parse``) behind a small,
 independently-testable adapter, so the syncer's hook bodies stop mixing HTTP
 concerns with the episode-mapping domain logic. The per-run episode-list memo
@@ -13,15 +13,13 @@ Extracted from ``SeaDexSonarr`` in Phase 5a of the refactor (see
 """
 
 import logging
-from typing import cast
 from urllib.parse import urlencode
 
-import arrapi.exceptions
 import requests
 from arrapi import SonarrAPI
 
 from .log import indent_string
-from .seadex_types import SonarrEpisode, SonarrItem
+from .seadex_types import SonarrEpisode
 
 
 class SonarrClient:
@@ -56,25 +54,6 @@ class SonarrClient:
         """Every series in Sonarr (unfiltered)."""
 
         return self._api.all_series()
-
-    def get_series(self, tvdb_id: int) -> SonarrItem | None:
-        """Get the Sonarr series for a TVDB id, or None if not found.
-
-        ``arrapi`` ships no ``py.typed``; its ``Series`` is the untyped-boundary
-        object we read a fixed id surface off, so this is where we pin it to the
-        ``SonarrItem`` view the rest of the code relies on.
-
-        Args:
-            tvdb_id (int): TVDB ID.
-        """
-
-        try:
-            # arrapi's Series carries the SonarrItem id surface but, being
-            # untyped, resolves to wide-union attrs no checker can match to the
-            # protocol; pin the view here (mirrors mappings._load_mapping_by_mtime).
-            return cast(SonarrItem, self._api.get_series(tvdb_id=tvdb_id))
-        except arrapi.exceptions.NotFound:
-            return None
 
     def episodes(self, series_id: int) -> list[SonarrEpisode] | None:
         """All episodes for a series, season/episode-sorted (``/api/v3/episode``).

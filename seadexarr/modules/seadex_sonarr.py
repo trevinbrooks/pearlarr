@@ -549,15 +549,6 @@ class SonarrSync(ArrSync):
             ),
         )
 
-    def get_sonarr_series(self, tvdb_id: int) -> SonarrItem | None:
-        """Get Sonarr series for a given TVDB ID
-
-        Args:
-            tvdb_id (int): TVDB ID
-        """
-
-        return self.sonarr.get_series(tvdb_id=tvdb_id)
-
     def get_ep_list(
         self,
         sonarr_series_id: int,

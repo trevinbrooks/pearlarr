@@ -180,18 +180,6 @@ class RadarrSync(ArrSync):
             self.anibridge,
         )
 
-    def get_radarr_movie(
-        self, tmdb_id: int | None = None, imdb_id: str | None = None,
-    ) -> RadarrItem | None:
-        """Get Radarr movie for a given TMDB ID or IMDb ID
-
-        Args:
-            tmdb_id (int): TMDB movie ID
-            imdb_id (str): IMDb movie ID
-        """
-
-        return self.radarr.get_movie(tmdb_id=tmdb_id, imdb_id=imdb_id)
-
     def get_radarr_release_dict(
         self,
         radarr_movie_id: int,
