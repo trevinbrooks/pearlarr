@@ -3,7 +3,6 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 import qbittorrentapi
 import requests
@@ -719,9 +718,9 @@ class SeaDexArr:
     # the shared per-id head/tail (al_id_prologue / cached_entry_skip /
     # grab_and_cache) through it.
 
-    def run_sync(
+    def run_sync[ItemT: ArrItem](
         self,
-        strategy: ArrSync[Any],
+        strategy: ArrSync[ItemT],
         *,
         arr: Arr,
         item_id: int | None,
@@ -729,14 +728,18 @@ class SeaDexArr:
     ) -> bool:
         """Shared run scaffolding for both Arr syncers
 
+        Generic in ``ItemT`` (the strategy's item protocol), so the body sees a
+        precise ``list[ItemT]`` / ``item: ItemT`` - the same concrete type the
+        strategy's hooks consume and produce - rather than the loose ``Any`` the
+        run machinery used to carry. ``ArrSync`` is invariant in its item type, so
+        a concrete (non-union) strategy must reach this call: the composition root
+        (``cli.py``) branches per Arr so each call binds one ``ItemT`` cleanly.
+
         Args:
-            strategy (ArrSync[Any]): The Arr-specific strategy to drive (injected
-                by the composition root, which picks Sonarr/Radarr at runtime).
-                ``ArrSync`` is invariant in its item type, so this agnostic run
-                machinery - which only ever reads the shared ``ArrItem`` surface -
-                holds it as ``ArrSync[Any]``; the per-item loop re-pins the items
-                to ``list[ArrItem]``. It already holds this object as its
-                RunServices, so its hooks are called without passing self.
+            strategy (ArrSync[ItemT]): The Arr-specific strategy to drive (injected
+                by the composition root, which picks Sonarr/Radarr at runtime). It
+                already holds this object as its RunServices, so its hooks are
+                called without passing self.
             arr (Arr): Which Arr is being run
             item_id (int | None): If set, only run for the single item with this
                 id (TMDB for Radarr, TVDB for Sonarr)
@@ -750,7 +753,7 @@ class SeaDexArr:
         # Start a fresh run context (stats tally + clock + counter snapshot)
         self.reset_run_stats(arr=arr, dry_run=dry_run)
 
-        all_items: list[ArrItem] = strategy.get_items()
+        all_items: list[ItemT] = strategy.get_items()
 
         # If we're targeting a single item, filter down to it
         if item_id is not None:

@@ -17,8 +17,11 @@ class ArrSync[ItemT: ArrItem](ABC):
 
     Generic in ``ItemT`` (the Arr's item protocol — :class:`~.seadex_types.SonarrItem`
     or :class:`~.seadex_types.RadarrItem`) so each subclass binds its own item
-    type without the loose ``list``/``Any`` the base used to carry; the run loop
-    holds an ``ArrSync[ArrItem]`` and only touches the shared ``ArrItem`` surface.
+    type without the loose ``list``/``Any`` the base used to carry. ``ArrSync`` is
+    invariant in ``ItemT`` (it appears in both inputs and outputs), so a concrete
+    strategy must reach the generic ``run_sync[ItemT]``: the composition root
+    branches per Arr to bind one item type per call, and the run loop only ever
+    touches the shared ``ArrItem`` surface (``.monitored``/``.title``) off items.
     """
 
     @abstractmethod

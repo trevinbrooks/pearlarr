@@ -3,7 +3,7 @@ import os
 import shutil
 import time
 from datetime import datetime, timedelta
-from typing import NamedTuple
+from typing import NamedTuple, assert_never
 
 import typer
 
@@ -22,11 +22,6 @@ seadexarr_cache = typer.Typer(name="cache")
 seadexarr_cli.add_typer(seadexarr_run)
 seadexarr_cli.add_typer(seadexarr_config)
 seadexarr_cli.add_typer(seadexarr_cache)
-
-# Which sync strategy drives each arr. Replaces the old stringly-typed ternary;
-# membership is exhaustive over the two-valued Arr enum, so an unhandled arr is a
-# static type error rather than a runtime fall-through.
-_STRATEGY_BY_ARR = {Arr.SONARR: SonarrSync, Arr.RADARR: RadarrSync}
 
 
 class _Paths(NamedTuple):
@@ -132,14 +127,24 @@ def _run_arr(
             app_config=app_config.for_arr(arr_name),
         )
         services = SeaDexArr(deps, arr_name)
-        strategy = _STRATEGY_BY_ARR[arr_name](deps, services)
-        services.run_sync(strategy, arr=arr_name, item_id=item_id, dry_run=dry_run)
+        match arr_name:
+            case Arr.SONARR:
+                services.run_sync(
+                    SonarrSync(deps, services),
+                    arr=arr_name, item_id=item_id, dry_run=dry_run,
+                )
+            case Arr.RADARR:
+                services.run_sync(
+                    RadarrSync(deps, services),
+                    arr=arr_name, item_id=item_id, dry_run=dry_run,
+                )
+            case _ as unreachable:
+                assert_never(unreachable)
     except Exception:
         logger.error(f"Unexpected error during {arr_name.capitalize()} run", exc_info=True)
     finally:
         if services is not None:
             services.close()
-
 
 def _run_arrs(
     arrs: list[tuple[Arr, int | None]],
