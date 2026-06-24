@@ -244,9 +244,10 @@ class TestImportCompletedQueueState:
         assert probe.files_present is False
         sonarr.manual_import_execute.assert_called_once()
 
-    def test_pending_with_warning_steps_in(self) -> None:
-        # The forever-wait bug fix: importPending + a warning is stuck, not
-        # progressing, so we step in without waiting on Sonarr.
+    def test_pending_with_warning_waits(self) -> None:
+        # importPending waits (PENDING_CLEAN) even with a warning: stepping in on a
+        # still-pending record races Sonarr's own import and double-imports. So we
+        # retry without issuing a command and let Sonarr settle.
         pending = pending_import(
             infohash="abc123",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
@@ -259,8 +260,8 @@ class TestImportCompletedQueueState:
 
         probe = strat.import_completed(pending, "/d")
         assert probe.readiness is ImportReadiness.RETRY
-        assert probe.command_issued is True
-        sonarr.manual_import_execute.assert_called_once()
+        assert probe.command_issued is False
+        sonarr.manual_import_execute.assert_not_called()
 
     def test_target_already_recommended_drops_record(self) -> None:
         # Episode files are the source of truth for "already imported": the target
@@ -386,9 +387,7 @@ class TestImportCompletedPayload:
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
         sonarr.manual_import_candidates.assert_called_once_with(
-            folder="/downloads/Show",
-            series_id=7,
-            season_number=1,
+            pending=pending,
             filter_existing_files=False,
         )
         (_, kwargs) = sonarr.manual_import_execute.call_args

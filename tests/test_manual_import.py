@@ -421,12 +421,13 @@ class TestClassifyQueue:
     def test_clean_pending_is_pending_clean(self) -> None:
         assert classify_queue([_qrecord("importPending", "ok")]) is QueueVerdict.PENDING_CLEAN
 
-    def test_pending_with_warning_steps_in(self) -> None:
-        # The bug fix: a pending item carrying a warning is stuck, not progressing.
-        assert classify_queue([_qrecord("importPending", "warning")]) is QueueVerdict.STEP_IN
+    def test_pending_with_warning_is_pending_clean(self) -> None:
+        # Any importPending waits (PENDING_CLEAN), even with a warning: stepping in
+        # on a still-pending record races Sonarr's import and double-imports.
+        assert classify_queue([_qrecord("importPending", "warning")]) is QueueVerdict.PENDING_CLEAN
 
-    def test_pending_with_messages_steps_in(self) -> None:
-        assert classify_queue([_qrecord("importPending", "ok", messages=True)]) is QueueVerdict.STEP_IN
+    def test_pending_with_messages_is_pending_clean(self) -> None:
+        assert classify_queue([_qrecord("importPending", "ok", messages=True)]) is QueueVerdict.PENDING_CLEAN
 
     def test_downloading_waits(self) -> None:
         assert classify_queue([_qrecord("downloading")]) is QueueVerdict.WAIT

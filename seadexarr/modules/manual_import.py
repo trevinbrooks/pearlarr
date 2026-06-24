@@ -251,9 +251,11 @@ def classify_queue(records: list[QueueRecordView]) -> QueueVerdict:
       1. anything in motion (downloading / importing / ...) -> ``WAIT`` (never race
          an in-flight Sonarr import; re-evaluate next poll).
       2. any troubled record (``importBlocked`` / ``failed`` / ``ignored`` / status
-         ``error`` / an ``importPending`` carrying a warning or status messages) ->
-         ``STEP_IN``.
-      3. any clean ``importPending`` (status ok, no messages) -> ``PENDING_CLEAN``.
+         ``error``) -> ``STEP_IN``.
+      3. any ``importPending`` -> ``PENDING_CLEAN``, regardless of its status or
+         status messages. Sonarr is mid-import, so we wait for it to settle rather
+         than step in - stepping in on a still-pending record races Sonarr's own
+         import and double-imports the torrent.
       4. otherwise (empty because Sonarr isn't tracking it, all ``imported``, or an
          unknown state) -> ``STEP_IN``.
 
