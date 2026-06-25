@@ -109,15 +109,32 @@ include = [
 packages = ["seadexarr"]
 
 # Point the type checkers at the project virtualenv so third-party imports
-# resolve. Without it, Pyright/Pylance launched outside the repo root can't find
-# .venv and flags every third-party import as unresolved. pyrefly reads these
-# pyright-compatible settings too, so with the venv resolved it now surfaces a
-# handful of pre-existing latent type errors (to be addressed separately).
+# resolve (pyrefly reads these pyright-compatible settings too). The package
+# code is gated at strict (0 findings); tests stay at standard via the
+# executionEnvironments override below, since their mock/fixture-heavy code is
+# not worth fully strict-typing. stubPath supplies local stubs for the two
+# un-stubbed dependencies (arrapi, discordwebhook).
 [tool.pyright]
-typeCheckingMode = "standard"
+typeCheckingMode = "strict"
 stubPath = "stubs"
 venvPath = "."
 venv = ".venv"
+
+# Tests are checked at standard, not strict (mock/fixture-heavy test code that
+# reads private members and untyped mocks). pyright doesn't support overriding
+# the typeCheckingMode preset per execution environment, so the strict-only
+# rules are disabled here individually to emulate "standard" for tests/.
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+reportPrivateUsage = false
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownParameterType = false
+reportUnknownArgumentType = false
+reportUnknownVariableType = false
+reportUnknownLambdaType = false
+reportMissingParameterType = false
+reportMissingTypeArgument = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

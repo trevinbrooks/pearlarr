@@ -32,11 +32,11 @@ jobs:
         run: uv sync --group dev --python ${{ matrix.python-version }}
       - name: Ruff (lint)
         run: uv run ruff check seadexarr/ tests/
-      # The type gate is vanilla pyright in standard mode (pinned for reproducible
-      # CI). It reads [tool.pyright] in pyproject.toml and resolves third-party
-      # imports against the .venv that `uv sync` just created. Phase of the strict
-      # sweep: this flips to strict once seadexarr/ is clean under strict.
-      - name: Pyright (type check, standard)
+      # The type gate is vanilla pyright (pinned for reproducible CI). It reads
+      # [tool.pyright] in pyproject.toml (typeCheckingMode = strict, with a per-rule
+      # tests/ override emulating standard) and resolves imports against the .venv
+      # that `uv sync` just created, plus the local stubs/ for arrapi/discordwebhook.
+      - name: Pyright (type check, strict)
         run: uvx pyright@1.1.410 seadexarr tests
       - name: Pyrefly (type check)
         run: uv run pyrefly check seadexarr
