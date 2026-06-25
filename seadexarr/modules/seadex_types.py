@@ -20,6 +20,7 @@ The defaults also encode one load-bearing distinction:
 ``get_same_files_groups`` keys off exactly that difference.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import (
     Any,
@@ -30,7 +31,6 @@ from typing import (
     TypedDict,
     cast,
     runtime_checkable,
-    Mapping,
 )
 
 from seadex import Tag, Tracker
@@ -507,6 +507,39 @@ class CommandBody(TypedDict):
 
 
 @dataclass(frozen=True, slots=True)
+class CommandFile:
+    """One file of a ``ManualImport`` command's ``body.files[]`` (read back).
+
+    Surfaced from the ``/api/v3/command`` list so the in-flight guard can tell
+    whether an accepted-but-still-running ManualImport already covers a download:
+    ``download_id`` is the primary match key (the infohash a queue-driven import
+    carries, ``string | null`` in the schema - absent for a folder/season-pack
+    import), with ``path`` and ``episode_ids`` as the fallback signals. Parsed at
+    the client boundary via :meth:`from_api`.
+    """
+
+    path: str | None = None
+    download_id: str | None = None
+    series_id: int = 0
+    episode_ids: tuple[int, ...] = ()
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> Self:
+        """Build from one raw command ``body.files[]`` entry (filters unknown keys)."""
+
+        path = raw.get("path")
+        download_id = raw.get("downloadId")
+        raw_ids: list[Any] = raw.get("episodeIds") or []
+        episode_ids = tuple(i for i in raw_ids if isinstance(i, int))
+        return cls(
+            path=path if isinstance(path, str) else None,
+            download_id=download_id if isinstance(download_id, str) else None,
+            series_id=raw.get("seriesId", 0),
+            episode_ids=episode_ids,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CommandResource:
     """A Sonarr ``CommandResource`` (schema), reduced to the fields read back.
 
@@ -514,24 +547,53 @@ class CommandResource:
     poll reads ``status`` (the ``CommandStatus`` enum: ``queued`` / ``started`` /
     ``completed`` / ...) to know when a rescan has settled. ``id`` is a non-null
     schema int (``0`` when absent so the caller drops it); ``status`` /
-    ``result`` are the ``string | null`` rendering of their schema enums. Parsed
-    at the client boundary via :meth:`from_api`, mirroring :class:`SonarrEpisode`.
+    ``result`` are the ``string | null`` rendering of their schema enums.
+
+    The ``/api/v3/command`` LIST poll reads the extra fields for the in-flight
+    ManualImport guard: ``name`` (the command name, e.g. ``ManualImport``),
+    ``message`` (the progress text, e.g. ``"Processing file 4 of 8"`` /
+    ``"Manually imported 10 files"`` - kept for a later wait-view enrichment) and
+    ``files`` (the per-file rows from ``body.files``, each a :class:`CommandFile`
+    carrying the download id / path / episode ids that say which download a
+    still-running import covers). All default to empty so the POST/status callers
+    that only read ``id``/``status``/``result`` are unaffected. Parsed at the
+    client boundary via :meth:`from_api`, mirroring :class:`SonarrEpisode`.
     """
 
     id: int = 0
     status: str | None = None
     result: str | None = None
+    name: str | None = None
+    message: str | None = None
+    files: tuple[CommandFile, ...] = ()
 
     @classmethod
     def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Build from one raw ``CommandResource`` dict (filters unknown keys)."""
+        """Build from one raw ``CommandResource`` dict (filters unknown keys).
+
+        ``files`` lives under the nested ``body`` object (the original command
+        request Sonarr echoes back), so it is read from ``body.files`` when present;
+        the POST/status responses omit it, leaving ``files`` empty.
+        """
 
         status = raw.get("status")
         result = raw.get("result")
+        name = raw.get("name")
+        message = raw.get("message")
+        body: dict[str, Any] = raw.get("body") or {}
+        raw_files: list[Any] = body.get("files") or []
+        files = tuple(
+            CommandFile.from_api(cast("dict[str, Any]", f))
+            for f in raw_files
+            if isinstance(f, dict)
+        )
         return cls(
             id=raw.get("id", 0),
             status=status if isinstance(status, str) else None,
             result=result if isinstance(result, str) else None,
+            name=name if isinstance(name, str) else None,
+            message=message if isinstance(message, str) else None,
+            files=files,
         )
 
 

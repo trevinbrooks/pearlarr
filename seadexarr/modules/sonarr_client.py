@@ -505,3 +505,41 @@ class SonarrClient:
         # CommandResource JSON object, so cast at the parse boundary and narrow it
         # to the consumed fields.
         return CommandResource.from_api(cast("dict[str, Any]", status_req.json()))
+
+    def list_commands(self) -> list[CommandResource]:
+        """All Sonarr commands (``/api/v3/command``).
+
+        Used by the in-flight ManualImport guard to see whether a ManualImport we
+        (or a prior run) POSTed for a download is still ``queued``/``started`` -
+        so we don't stack a duplicate while Sonarr is already importing it. Each
+        raw ``CommandResource`` is narrowed via its
+        :meth:`~.seadex_types.CommandResource.from_api` (``name`` / ``status`` /
+        ``message`` / ``body.files``) at this client boundary, mirroring
+        :meth:`queue`.
+
+        Returns an empty list (with a warning) on a non-200, so the caller treats
+        "couldn't read the commands" as "nothing in flight" and proceeds (a false
+        step-in is bounded by the import deadline, a missed read just re-checks
+        next poll).
+
+        Returns:
+            list[CommandResource]: The parsed commands; empty on failure.
+        """
+
+        commands_req_url = f"{self._url}/api/v3/command?apikey={self._api_key}"
+        commands_req = self._session.get(commands_req_url)
+
+        if commands_req.status_code != 200:
+            self._logger.warning(
+                indent_string(
+                    f"Could not fetch the Sonarr command list "
+                    f"(status code {commands_req.status_code})",
+                ),
+            )
+            return []
+
+        # response.json() is untyped; the command endpoint returns a JSON array of
+        # CommandResource objects, so cast at the parse boundary, then narrow each
+        # to the fields the guard reads via from_api.
+        raw_commands = cast("list[dict[str, Any]]", commands_req.json())
+        return [CommandResource.from_api(command) for command in raw_commands]

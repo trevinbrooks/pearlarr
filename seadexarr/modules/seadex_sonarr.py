@@ -28,6 +28,7 @@ from .manual_import import (
     derive_languages,
     episode_file_statuses,
     episode_ids_for_parsed,
+    manual_import_in_flight,
     normalize_basename,
     normalize_group,
     parse_quality_from_filename,
@@ -50,6 +51,7 @@ from .radarr_client import (
 from .seadex_arr import RunDeps, SeaDexArr
 from .seadex_types import (
     ArrReleaseDict,
+    CommandResource,
     EpisodeRecord,
     Language,
     ManualImportCandidate,
@@ -871,6 +873,24 @@ class SonarrSync(ArrSync[SonarrItem]):
             self.logger.debug(indent_string(f"{label}: Sonarr has it pending; waiting"))
             return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
+        # A ManualImport we (or a prior run) already POSTed may still be running
+        # server-side after Sonarr dropped the torrent from the regular queue - so
+        # the queue reads "empty -> step in" and we'd stack a duplicate every poll.
+        # NOT gated on ``force``: the carried-over reconcile path always forces, and
+        # that is exactly the path that loops; an in-flight command must suppress a
+        # re-issue regardless (``force`` overrides Sonarr's clean-pending deferral,
+        # a different state). A false positive only waits (bounded by the deadline).
+        if manual_import_in_flight(
+            self._list_commands(),
+            pending.infohash,
+            content_path,
+            set(self._pending_target_ids(pending)),
+        ):
+            self.logger.debug(
+                indent_string(f"{label}: a ManualImport is already in flight; waiting"),
+            )
+            return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
+
         # STEP_IN, an empty queue, or a forced clean-pending: drive our import.
         return self._manual_import(
             pending,
@@ -1027,6 +1047,17 @@ class SonarrSync(ArrSync[SonarrItem]):
                 ),
             )
         return download_id if download_id else infohash, views
+
+    def _list_commands(self) -> list[CommandResource]:
+        """The current Sonarr command list, for the in-flight ManualImport guard.
+
+        A thin pass-through to :meth:`SonarrClient.list_commands` (mirrors
+        :meth:`_queue_record_views`' delegation to ``self.sonarr``). Fetched fresh
+        every poll - never cached - since an in-flight command's status changes as
+        Sonarr finishes the import.
+        """
+
+        return self.sonarr.list_commands()
 
     def _manual_import(
         self,

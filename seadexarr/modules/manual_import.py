@@ -23,6 +23,7 @@ from typing import Any, cast
 
 from .seadex_types import (
     SONARR_MISSING_KEY,
+    CommandResource,
     Language,
     ParsedFileInfo,
     QualityDefinition,
@@ -297,6 +298,86 @@ def classify_queue(records: list[QueueRecordView]) -> QueueVerdict:
     if clean_pending:
         return QueueVerdict.PENDING_CLEAN
     return QueueVerdict.STEP_IN
+
+
+# A command counts as a ManualImport only under this name (Sonarr's command
+# ``name``, compared case-folded), and only these statuses mean it is still
+# running - a terminal command (completed / failed / aborted / cancelled /
+# orphaned) is no longer in flight, so it never wedges a re-import.
+_MANUAL_IMPORT_COMMAND_NAME = "manualimport"
+_COMMAND_IN_FLIGHT_STATES = frozenset({"queued", "started"})
+
+
+def _norm_path(path: str) -> str:
+    """Normalize a path for a pure (no-disk) prefix compare: ``\\`` -> ``/``, folded."""
+
+    return path.replace("\\", "/").casefold()
+
+
+def manual_import_in_flight(
+    commands: list[CommandResource],
+    infohash: str,
+    content_path: str,
+    target_ep_ids: set[int],
+) -> bool:
+    """Whether a ManualImport already in flight covers THIS download.
+
+    Pure, no I/O (mirrors :func:`classify_queue`): the strategy reads the
+    ``/api/v3/command`` list and asks this whether to re-issue our import. A
+    ManualImport command's copy is async and Sonarr drops the torrent from the
+    regular queue while importing it server-side, so the queue alone reads
+    "empty -> step in" and we'd stack a duplicate every poll. Matching the durable
+    ``infohash`` against the still-running commands closes that loop, and because
+    the match key lives in the command (not an in-memory id) it also survives a
+    process restart - so a carried-over record re-driven on a LATER run won't
+    re-stack a command run A POSTed that is still running.
+
+    A command qualifies only when its ``name`` is ``ManualImport`` and its
+    ``status`` is ``queued``/``started`` (a terminal command is not in flight).
+    Such a command is taken to cover this download when:
+
+      * PRIMARY: any of its files' ``download_id`` equals ``infohash``
+        (case-insensitively) - the infohash a queue-driven import carries; this is
+        the common, robust case.
+      * FALLBACK (a folder / season-pack import whose files carry NO download id):
+        any file path sits under ``content_path``, OR any file's episode id is one
+        of ``target_ep_ids`` (our intended set). This is deliberately broad: a
+        false positive only makes us WAIT (bounded by the import deadline, which
+        forces through), whereas a missed match re-opens the duplicate-import loop.
+
+    Args:
+        commands (list[CommandResource]): The parsed ``/api/v3/command`` list.
+        infohash (str): This download's infohash (the Sonarr download id).
+        content_path (str): The qBittorrent ``content_path`` we import from, used
+            for the no-download-id folder-import fallback.
+        target_ep_ids (set[int]): Our intended episode ids, for the same fallback.
+
+    Returns:
+        bool: True when a still-running ManualImport already covers this download.
+    """
+
+    target_hash = infohash.casefold()
+    content_prefix = _norm_path(content_path)
+    for command in commands:
+        name = (command.name or "").casefold()
+        status = (command.status or "").casefold()
+        if name != _MANUAL_IMPORT_COMMAND_NAME or status not in _COMMAND_IN_FLIGHT_STATES:
+            continue
+        for file in command.files:
+            file_hash = file.download_id
+            if file_hash is not None and file_hash.casefold() == target_hash:
+                return True
+        # Fallback only for a command whose files carry no download id at all (a
+        # folder / season-pack import); a command that DOES carry download ids but
+        # for a different torrent must not be swept up by a path/episode overlap.
+        if any(file.download_id for file in command.files):
+            continue
+        for file in command.files:
+            if file.path is not None and _norm_path(file.path).startswith(content_prefix):
+                return True
+            if any(ep_id in target_ep_ids for ep_id in file.episode_ids):
+                return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -767,6 +848,19 @@ def plan_import_files(
     ``skip_done`` (not overwritten); otherwise it is imported for exactly its
     needing-import episodes.
 
+    ``needing_import`` (derived from the EPISODE FILES via
+    :func:`episode_file_statuses`) - not Sonarr's per-candidate already-imported
+    rejection - is authoritative for whether we still want a file. Sonarr raises
+    that rejection whenever the episode already holds *any* file on disk, including
+    a non-recommended or unidentifiable-group one we flagged as still-needing
+    replacement; honoring it as a skip there is the grab-then-skip bug (we grab a
+    missing-group replacement, then Sonarr's "already imported" makes us skip
+    importing it). So ``is_already_imported`` only yields ``already`` when NONE of
+    the file's episodes still need us (every target already holds a recommended
+    file - Sonarr and our episode-file check agree); when a target still needs us
+    we import over it, as the never-skip invariant requires. ``is_sample`` still
+    wins (a sample is never our intended file).
+
     Args:
         authoritative_map (dict[str, list[int]]): normalized basename -> our ids.
         candidates_by_basename (dict[str, CandidateFile]): on-disk files by key.
@@ -786,15 +880,19 @@ def plan_import_files(
         if candidate.is_sample:
             decisions.append(ImportDecision(basename, "sample", candidate.path, None, []))
             continue
-        if candidate.is_already_imported:
-            decisions.append(ImportDecision(basename, "already", candidate.path, None, []))
-            continue
         import_ids = [i for i in ep_ids if i in needing_import]
         if not import_ids:
+            # Nothing of ours still needs this file. Sonarr's already-imported
+            # rejection and our episode-file done-check agree here, so report the
+            # more specific ``already`` when Sonarr flagged it, else ``skip_done``.
+            action = "already" if candidate.is_already_imported else "skip_done"
             decisions.append(
-                ImportDecision(basename, "skip_done", candidate.path, None, ep_ids),
+                ImportDecision(basename, action, candidate.path, None, ep_ids),
             )
             continue
+        # A target still needs our file: import it over whatever is there, even
+        # when Sonarr raised an already-imported rejection (that on-disk file is
+        # the non-recommended / unidentifiable one we grabbed to replace).
         decisions.append(
             ImportDecision(
                 basename, "import", candidate.path, candidate.quality, import_ids,

@@ -151,6 +151,7 @@ def _make_sonarr_for_import(
     episodes: list[SonarrEpisode] | None = None,
     quality_defs: list[QualityDefinition] | None = None,
     languages: list[Language] | None = None,
+    commands: list[CommandResource] | None = None,
     cmd_id: int | None = 42,
     config_overrides: dict | None = None,
 ) -> tuple[SonarrSync, mock.MagicMock]:
@@ -162,12 +163,14 @@ def _make_sonarr_for_import(
     to empty, so the target episodes have NO file yet (they need importing) and the
     done-check never short-circuits; pass episodes carrying a file to exercise the
     "already imported" / never-overwrite paths. ``queue`` defaults to empty (Sonarr
-    isn't tracking the download, so the strategy steps in). ``refresh`` /
+    isn't tracking the download, so the strategy steps in). ``commands`` defaults to
+    empty (no in-flight ManualImport, so the dedup guard never trips). ``refresh`` /
     ``command_status`` resolve immediately so the rescan never really waits.
     """
 
     sonarr = mock.MagicMock()
     sonarr.queue.return_value = queue or []
+    sonarr.list_commands.return_value = commands or []
     sonarr.episodes.return_value = episodes if episodes is not None else []
     sonarr.parse.return_value = []
     sonarr.refresh_monitored_downloads.return_value = 7
@@ -377,6 +380,103 @@ class TestImportCompletedQueueState:
         sonarr.manual_import_candidates.assert_called_once()
 
 
+def _inflight_manual_import(infohash: str, *, status: str = "started") -> CommandResource:
+    """A ManualImport command whose one file carries ``infohash`` as downloadId."""
+
+    return CommandResource.from_api(
+        {
+            "name": "ManualImport",
+            "status": status,
+            "body": {"files": [{"downloadId": infohash, "episodeIds": [101]}]},
+        },
+    )
+
+
+class TestInFlightManualImportGuard:
+    """A ManualImport already running for this download must not be re-issued."""
+
+    def test_in_flight_command_suppresses_reissue(self) -> None:
+        # Queue empty (Sonarr dropped the torrent while importing server-side), but
+        # a started ManualImport for this infohash is still running -> wait, don't
+        # stack a duplicate.
+        pending = pending_import(
+            infohash="abc123",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            queue=[],
+            commands=[_inflight_manual_import("abc123")],
+        )
+
+        probe = strat.import_completed(pending, "/d")
+
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.command_issued is False
+        sonarr.manual_import_execute.assert_not_called()
+        sonarr.manual_import_candidates.assert_not_called()
+
+    def test_in_flight_guard_holds_even_when_forced(self) -> None:
+        # Cross-run regression: the carried-over reconcile path always forces, and
+        # that is the path that loops. force=True overrides Sonarr's clean-pending
+        # deferral, NOT an already-running command -> still suppress the re-issue.
+        pending = pending_import(
+            infohash="abc123",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            queue=[],
+            commands=[_inflight_manual_import("abc123")],
+        )
+
+        probe = strat.import_completed(pending, "/d", force=True)
+
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.command_issued is False
+        sonarr.manual_import_execute.assert_not_called()
+
+    def test_completed_command_does_not_suppress(self) -> None:
+        # A finished ManualImport is not in flight, so it must never wedge us: with
+        # the queue empty we step in and issue our import as before.
+        pending = pending_import(
+            infohash="abc123",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            queue=[],
+            commands=[_inflight_manual_import("abc123", status="completed")],
+        )
+
+        probe = strat.import_completed(pending, "/d")
+
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.command_issued is True
+        sonarr.manual_import_execute.assert_called_once()
+
+    def test_in_flight_for_other_download_does_not_suppress(self) -> None:
+        # An in-flight ManualImport for a DIFFERENT torrent must not block ours.
+        pending = pending_import(
+            infohash="abc123",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[manual_candidate("/d/Show - 01 [1080p].mkv")],
+            queue=[],
+            commands=[_inflight_manual_import("OTHERHASH")],
+        )
+
+        probe = strat.import_completed(pending, "/d")
+
+        assert probe.command_issued is True
+        sonarr.manual_import_execute.assert_called_once()
+
+
 class TestImportCompletedPayload:
     """import_completed assigns episodes from OUR map, never Sonarr's parse."""
 
@@ -508,25 +608,64 @@ class TestImportCompletedPayload:
         paths = [f["path"] for f in kwargs["files"]]
         assert paths == ["/d/Show - 01 [1080p].mkv"]
 
-    def test_already_imported_candidate_drops_record(self) -> None:
-        # The only candidate is one Sonarr already imported itself -> nothing to
-        # queue, but it IS placed, so the files are verified present and the record
-        # is dropped (IMPORTED + files_present).
+    def test_already_imported_rejection_does_not_skip_missing_group_file(self) -> None:
+        # Bug fix (grab-then-skip): the episode already holds a MISSING-GROUP file
+        # (UNKNOWN_GROUP -> still needing our recommended import), and Sonarr offers
+        # the candidate WITH an "already imported" rejection (it fires whenever the
+        # episode has any file on disk). That rejection must NOT veto our import:
+        # we grabbed this exactly to replace the unidentifiable file, so we step in
+        # and ISSUE the command (RETRY + command_issued; the copy is async).
         pending = pending_import(
+            release_group="SubGroup",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
-            episode_ids=[],
+            episode_ids=[101],
         )
         candidate = manual_candidate(
             "/d/Show - 01 [1080p].mkv",
             rejections=["Episode file already imported"],
         )
-        strat, sonarr = _make_sonarr_for_import(candidates=[candidate])
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[candidate],
+            episodes=[_ep_with_file(101, group=None)],
+        )
 
         probe = strat.import_completed(pending, "/d")
 
-        assert probe.readiness is ImportReadiness.IMPORTED
-        assert probe.files_present is True
-        sonarr.manual_import_execute.assert_not_called()
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.command_issued is True
+        assert probe.files_present is False
+        sonarr.manual_import_execute.assert_called_once()
+
+    def test_missing_group_import_then_recognized_terminates(self) -> None:
+        # Loop-termination regression (mirrors the import->recognize round-trip):
+        # poll 1 imports over a missing-group file (RETRY + command_issued); the
+        # imported file now carries OUR group, so poll 2 reads it as RECOMMENDED ->
+        # nothing needed -> IMPORTED, with NO re-issue. Proves the fix can't loop.
+        pending = pending_import(
+            release_group="SubGroup",
+            file_episode_map={"Show - 01 [1080p].mkv": [101]},
+            episode_ids=[101],
+        )
+        candidate = manual_candidate(
+            "/d/Show - 01 [1080p].mkv",
+            rejections=["Episode file already imported"],
+        )
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[candidate],
+            episodes=[_ep_with_file(101, group=None)],
+        )
+
+        first = strat.import_completed(pending, "/d")
+        assert first.command_issued is True
+        assert first.files_present is False
+
+        # The import landed: episode 101 now holds our recommended group's file.
+        sonarr.episodes.return_value = [_ep_with_file(101, group="SubGroup")]
+
+        second = strat.import_completed(pending, "/d")
+        assert second.readiness is ImportReadiness.IMPORTED
+        assert second.files_present is True
+        sonarr.manual_import_execute.assert_called_once()
 
     def test_intended_file_missing_from_disk_retries(self) -> None:
         # Our map intends a file Sonarr can't see yet -> never dropped, retried

@@ -1,0 +1,132 @@
+[
+    {
+        "name": "ManualImport",
+        "commandName": "Manual Import",
+        "message": "Processing file 4 of 8",
+        "body": {
+            "files": [
+                {
+                    "path": "/downloads/[sam] Sword Art Online Alicization - War of Underworld Part 1 [BD 1080p FLAC]/[sam] Sword Art Online Alicization - War of Underworld - 05 [BD 1080p FLAC] [B1169357].mkv",
+                    "seriesId": 169,
+                    "episodeIds": [
+                        6605
+                    ],
+                    "releaseGroup": "sam",
+                    "downloadId": "3333333333333333333333333333333333333333"
+                },
+                {
+                    "path": "/downloads/[sam] Sword Art Online Alicization - War of Underworld Part 1 [BD 1080p FLAC]/[sam] Sword Art Online Alicization - War of Underworld - 06 [BD 1080p FLAC] [6B91C60D].mkv",
+                    "seriesId": 169,
+                    "episodeIds": [
+                        6606
+                    ],
+                    "releaseGroup": "sam",
+                    "downloadId": "3333333333333333333333333333333333333333"
+                }
+            ],
+            "name": "ManualImport",
+            "trigger": "manual"
+        },
+        "priority": "high",
+        "status": "started",
+        "result": "unknown",
+        "queued": "2026-06-25T08:09:55Z",
+        "started": "2026-06-25T08:24:46Z",
+        "trigger": "manual",
+        "id": 3732160
+    },
+    {
+        "name": "ManualImport",
+        "commandName": "Manual Import",
+        "body": {
+            "files": [
+                {
+                    "path": "/downloads/[sam] Sword Art Online Alicization - War of Underworld Part 1 [BD 1080p FLAC]/[sam] Sword Art Online Alicization - War of Underworld - 07 [BD 1080p FLAC] [E68F80AC].mkv",
+                    "seriesId": 169,
+                    "episodeIds": [
+                        6607
+                    ],
+                    "releaseGroup": "sam",
+                    "downloadId": "3333333333333333333333333333333333333333"
+                }
+            ],
+            "name": "ManualImport",
+            "trigger": "manual"
+        },
+        "priority": "high",
+        "status": "queued",
+        "result": "unknown",
+        "queued": "2026-06-25T08:13:02Z",
+        "trigger": "manual",
+        "id": 3732166
+    },
+    {
+        "name": "ProcessMonitoredDownloads",
+        "commandName": "Process Monitored Downloads",
+        "body": {
+            "isLongRunning": true,
+            "name": "ProcessMonitoredDownloads",
+            "trigger": "unspecified"
+        },
+        "priority": "high",
+        "status": "queued",
+        "result": "unknown",
+        "queued": "2026-06-25T08:17:06Z",
+        "trigger": "unspecified",
+        "id": 3732185
+    },
+    {
+        "name": "ManualImport",
+        "commandName": "Manual Import",
+        "body": {
+            "files": [
+                {
+                    "path": "/downloads/Tensei shitara Slime Datta Ken S01 (BD 1080p HEVC) [Dual-Audio] [Vodes]/Tensei shitara Slime Datta Ken - S01E01 (BD 1080p HEVC) [Vodes].mkv",
+                    "folderName": "Tensei shitara Slime Datta Ken S01 (BD 1080p HEVC) [Dual-Audio] [Vodes]",
+                    "seriesId": 153,
+                    "episodeIds": [
+                        5645
+                    ],
+                    "releaseGroup": "Vodes",
+                    "releaseType": "seasonPack"
+                }
+            ],
+            "name": "ManualImport",
+            "trigger": "manual"
+        },
+        "priority": "high",
+        "status": "queued",
+        "result": "unknown",
+        "queued": "2026-06-25T08:17:52Z",
+        "trigger": "manual",
+        "id": 3732187
+    },
+    {
+        "name": "ManualImport",
+        "commandName": "Manual Import",
+        "message": "Manually imported 10 files",
+        "body": {
+            "files": [
+                {
+                    "path": "/downloads/[sam] Sword Art Online Alicization - War of Underworld Part 1 [BD 1080p FLAC]/[sam] Sword Art Online Alicization - War of Underworld - 03 [BD 1080p FLAC] [9CD5824A].mkv",
+                    "seriesId": 169,
+                    "episodeIds": [
+                        6603
+                    ],
+                    "releaseGroup": "sam",
+                    "downloadId": "3333333333333333333333333333333333333333"
+                }
+            ],
+            "name": "ManualImport",
+            "trigger": "manual"
+        },
+        "priority": "high",
+        "status": "completed",
+        "result": "successful",
+        "queued": "2026-06-25T08:08:00Z",
+        "started": "2026-06-25T08:08:05Z",
+        "ended": "2026-06-25T08:09:10Z",
+        "trigger": "manual",
+        "id": 3732150
+    }
+]

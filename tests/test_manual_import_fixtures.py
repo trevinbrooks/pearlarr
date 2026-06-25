@@ -27,9 +27,11 @@ from seadexarr.modules.manual_import import (
     QueueVerdict,
     assign_episode_ids,
     classify_queue,
+    manual_import_in_flight,
     parse_se_from_filename,
 )
 from seadexarr.modules.seadex_types import (
+    CommandResource,
     ManualImportCandidate,
     ParsedFileInfo,
     SonarrEpisode,
@@ -330,6 +332,81 @@ class TestPendingImportOrderedIds:
         raw = pending_import().to_json()
         del raw["ordered_episode_ids"]
         assert PendingImport.from_json(raw).ordered_episode_ids == []
+
+
+# --------------------------------------------------------------------------- #
+# CommandResource.from_api on the real captured /api/v3/command list
+# --------------------------------------------------------------------------- #
+# The capture is the bug-2 evidence: stacked ManualImport commands sharing one
+# downloadId (a duplicate-import loop), plus a folder import with no downloadId
+# and a non-ManualImport command. Scrubbed for the public fixture (infohash +
+# server path root), matching the rest of tests/fixtures/sonarr/.
+_SAO_DOWNLOAD_ID = "3333333333333333333333333333333333333333"
+
+
+class TestCommandResourceFixture:
+    """CommandResource.from_api parses name / status / message / body.files."""
+
+    @staticmethod
+    def _commands() -> list[CommandResource]:
+        return [CommandResource.from_api(c) for c in load_fixture("command_list.json")]
+
+    def test_started_manual_import_parses_message_and_files(self) -> None:
+        started = next(
+            c for c in self._commands() if c.name == "ManualImport" and c.status == "started"
+        )
+        assert started.message == "Processing file 4 of 8"
+        assert started.files  # body.files were parsed
+        first = started.files[0]
+        assert first.download_id == _SAO_DOWNLOAD_ID
+        assert first.series_id == 169
+        assert first.episode_ids == (6605,)
+
+    def test_completed_manual_import_parses(self) -> None:
+        completed = next(c for c in self._commands() if c.status == "completed")
+        assert completed.name == "ManualImport"
+        assert completed.message == "Manually imported 10 files"
+        assert completed.result == "successful"
+
+    def test_folder_import_has_no_download_id(self) -> None:
+        # The Tensei Vodes season-pack import is folder-based: its files carry a
+        # folderName + path but NO downloadId, so the guard must fall back to path.
+        folder = next(
+            c for c in self._commands() if c.files and c.files[0].series_id == 153
+        )
+        assert folder.files[0].download_id is None
+        assert "Vodes" in (folder.files[0].path or "")
+
+    def test_non_manual_import_command_parsed_without_files(self) -> None:
+        proc = next(c for c in self._commands() if c.name == "ProcessMonitoredDownloads")
+        assert proc.files == ()
+
+
+class TestManualImportInFlightFixture:
+    """manual_import_in_flight reads the real command list to close the loop."""
+
+    @staticmethod
+    def _commands() -> list[CommandResource]:
+        return [CommandResource.from_api(c) for c in load_fixture("command_list.json")]
+
+    def test_matching_download_id_is_in_flight(self) -> None:
+        # The SAO download has a started + queued ManualImport sharing its
+        # downloadId -> a fresh import for it would stack a duplicate.
+        assert manual_import_in_flight(
+            self._commands(), _SAO_DOWNLOAD_ID, "/downloads", set(),
+        )
+
+    def test_unrelated_download_id_is_not_in_flight(self) -> None:
+        # A different infohash with no path/episode overlap -> proceed.
+        assert not manual_import_in_flight(
+            self._commands(), "ffffffffffffffffffffffffffffffffffffffff", "/nowhere", set(),
+        )
+
+    def test_folder_import_matches_by_episode_id(self) -> None:
+        # The Vodes folder import carries no downloadId; episode 5645 is ours.
+        assert manual_import_in_flight(
+            self._commands(), "no-such-hash", "/nowhere", {5645},
+        )
 
 
 # --------------------------------------------------------------------------- #

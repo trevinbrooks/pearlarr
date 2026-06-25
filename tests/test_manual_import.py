@@ -31,6 +31,7 @@ from seadexarr.modules.manual_import import (
     derive_languages,
     episode_file_statuses,
     episode_ids_for_parsed,
+    manual_import_in_flight,
     normalize_basename,
     normalize_group,
     parse_quality_from_filename,
@@ -42,6 +43,7 @@ from seadexarr.modules.manual_import import (
 )
 from seadexarr.modules.seadex_types import (
     SONARR_MISSING_KEY,
+    CommandResource,
     Language,
     QualityModel,
     SonarrEpisode,
@@ -195,15 +197,93 @@ class TestPlanImportFiles:
         assert by_base["a.mkv"].action == "import"
         assert by_base["b.mkv"].action == "missing"
 
-    def test_sample_and_already_are_not_imported(self) -> None:
-        amap = {"s.mkv": [11], "i.mkv": [12]}
-        cands = {
-            "s.mkv": _candidate("s.mkv", sample=True),
-            "i.mkv": _candidate("i.mkv", already=True),
-        }
-        decisions = plan_import_files(amap, cands, needing_import={11, 12})
-        actions = {d.basename: d.action for d in decisions}
-        assert actions == {"s.mkv": "sample", "i.mkv": "already"}
+    def test_sample_is_not_imported(self) -> None:
+        # A sample is never our intended file regardless of need.
+        amap = {"s.mkv": [11]}
+        cands = {"s.mkv": _candidate("s.mkv", sample=True)}
+        decisions = plan_import_files(amap, cands, needing_import={11})
+        assert decisions[0].action == "sample"
+
+    def test_already_imported_does_not_skip_a_needed_target(self) -> None:
+        # Bug fix: Sonarr's "already imported" rejection fires whenever the episode
+        # already holds ANY file (including a missing-group one we grabbed to
+        # replace). It must NOT veto importing a target that still needs our file.
+        amap = {"i.mkv": [12]}
+        cands = {"i.mkv": _candidate("i.mkv", already=True)}
+        decisions = plan_import_files(amap, cands, needing_import={12})
+        assert decisions[0].action == "import"
+        assert decisions[0].episode_ids == [12]
+
+    def test_already_imported_skips_only_when_no_target_needs_us(self) -> None:
+        # When every target already holds a recommended file (none in needing),
+        # Sonarr's rejection and our episode-file check agree -> the more specific
+        # ``already`` (never overwrite).
+        amap = {"i.mkv": [12]}
+        cands = {"i.mkv": _candidate("i.mkv", already=True)}
+        decisions = plan_import_files(amap, cands, needing_import=set())
+        assert decisions[0].action == "already"
+
+    def test_not_needed_without_rejection_is_skip_done(self) -> None:
+        amap = {"i.mkv": [12]}
+        cands = {"i.mkv": _candidate("i.mkv")}
+        decisions = plan_import_files(amap, cands, needing_import=set())
+        assert decisions[0].action == "skip_done"
+
+
+def _command(
+    *,
+    name: str = "ManualImport",
+    status: str = "started",
+    files: list[dict] | None = None,
+) -> CommandResource:
+    """A ``CommandResource`` from the raw command fields the guard reads."""
+
+    return CommandResource.from_api(
+        {"name": name, "status": status, "body": {"files": files or []}},
+    )
+
+
+class TestManualImportInFlight:
+    """The pure in-flight guard over the /api/v3/command list."""
+
+    def test_matching_download_id_is_in_flight(self) -> None:
+        cmds = [_command(files=[{"downloadId": "ABC", "episodeIds": [1]}])]
+        # Case-insensitive match on the infohash.
+        assert manual_import_in_flight(cmds, "abc", "/d", set())
+
+    def test_completed_command_is_not_in_flight(self) -> None:
+        cmds = [_command(status="completed", files=[{"downloadId": "ABC"}])]
+        assert not manual_import_in_flight(cmds, "abc", "/d", set())
+
+    def test_non_manual_import_command_ignored(self) -> None:
+        cmds = [_command(name="ProcessMonitoredDownloads", files=[{"downloadId": "ABC"}])]
+        assert not manual_import_in_flight(cmds, "abc", "/d", set())
+
+    def test_unrelated_download_id_not_in_flight(self) -> None:
+        cmds = [_command(files=[{"downloadId": "OTHER"}])]
+        assert not manual_import_in_flight(cmds, "abc", "/d", set())
+
+    def test_queued_status_counts_as_in_flight(self) -> None:
+        cmds = [_command(status="queued", files=[{"downloadId": "ABC"}])]
+        assert manual_import_in_flight(cmds, "abc", "/d", set())
+
+    def test_folder_import_matches_by_path_prefix(self) -> None:
+        # No downloadId on the files -> fall back to the content_path prefix.
+        cmds = [_command(files=[{"path": "/d/folder/ep.mkv", "episodeIds": [9]}])]
+        assert manual_import_in_flight(cmds, "no-hash", "/d/folder", set())
+
+    def test_folder_import_matches_by_episode_overlap(self) -> None:
+        cmds = [_command(files=[{"path": "/elsewhere/ep.mkv", "episodeIds": [9]}])]
+        assert manual_import_in_flight(cmds, "no-hash", "/other", {9})
+
+    def test_download_id_command_not_swept_by_path_overlap(self) -> None:
+        # A command that DOES carry a (different) downloadId is never matched by
+        # path/episode overlap - only the no-downloadId folder case falls back.
+        cmds = [_command(files=[{"downloadId": "OTHER", "path": "/d/x.mkv", "episodeIds": [9]}])]
+        assert not manual_import_in_flight(cmds, "abc", "/d", {9})
+
+    def test_empty_command_list_not_in_flight(self) -> None:
+        assert not manual_import_in_flight([], "abc", "/d", {9})
 
 
 class TestParseQualityFromFilename:
