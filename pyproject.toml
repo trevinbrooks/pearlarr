@@ -115,6 +115,7 @@ packages = ["seadexarr"]
 # handful of pre-existing latent type errors (to be addressed separately).
 [tool.pyright]
 typeCheckingMode = "standard"
+stubPath = "stubs"
 venvPath = "."
 venv = ".venv"
 

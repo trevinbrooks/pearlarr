@@ -4,7 +4,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, final
+from typing import Any, cast, final
 
 import qbittorrentapi
 import requests
@@ -254,8 +254,9 @@ class SeaDexArr:
 
     def close(self) -> None:
         """Close the shared HTTP session (release pooled connections)."""
-        if self.session is not None:
-            self.session.close()
+        # self.session is the injected RunDeps.session (a requests.Session, never
+        # None), so it can be closed unconditionally.
+        self.session.close()
 
     def check_al_id_in_cache(
         self,
@@ -1175,21 +1176,26 @@ class SeaDexArr:
     # path below is a no-op under preview (``self._is_preview()``), since waiting
     # and importing need a real qBittorrent client.
 
-    def _pending_store(self) -> dict[str, dict[str, Any]]:
+    def _pending_store(self) -> dict[str, Any]:
         """The per-Arr ``{infohash -> record}`` store inside the cache.
 
         Lazily creates the ``pending_imports`` block and the per-Arr sub-block
         (mirroring the ``sonarr_parse_cache`` setdefault pattern), so the first
         write and every later read share one durable, idempotent map.
 
-        Each record is the JSON form of a :class:`PendingImport`
+        Each value is the JSON form of a :class:`PendingImport`
         (``to_json()``/``from_json(raw: dict[str, Any])``), i.e. genuinely-open
-        cache JSON, so the inner value is ``dict[str, Any]``.
+        cache JSON. The map is typed ``dict[str, Any]`` (values ``Any``, not
+        ``dict[str, Any]``) precisely because the cache is untyped on disk: a
+        hand-edited or legacy file can carry a non-dict value, so consumers
+        defensively ``isinstance(raw, dict)``-narrow each value before reading
+        it (see :meth:`_snapshot_pending_for_series`, mirroring
+        ``_series_pending_records``).
         """
 
         # ``cache_store.data`` is ``dict[str, Any]``, so ``setdefault`` returns
         # ``Any``; the inner block is the persisted PendingImport JSON map.
-        store: dict[str, dict[str, Any]] = self.cache_store.data.setdefault(
+        store: dict[str, Any] = self.cache_store.data.setdefault(
             "pending_imports", {},
         ).setdefault(self._ctx.arr.value, {})
         return store
@@ -1373,13 +1379,19 @@ class SeaDexArr:
 
         run_grabs = self._this_run_infohashes()
         for infohash, raw in list(self._pending_store().items()):
-            if not (isinstance(raw, dict) and raw.get("series_id") == series_id):
+            # Cache values are genuinely-open JSON (Any): defensively narrow each
+            # to a dict record (cast to the open cache-JSON shape) before reading
+            # it, mirroring ``_series_pending_records``.
+            if not isinstance(raw, dict):
+                continue
+            record = cast("dict[str, Any]", raw)
+            if record.get("series_id") != series_id:
                 continue
             # Skip this-run grabs: they're already reported as `added`, so a
             # `queued`/`importing`/`imported` row here would be a double report.
             if infohash in run_grabs:
                 continue
-            pending, state = self._reconcile_one(infohash, raw)
+            pending, state = self._reconcile_one(infohash, record)
             self._reporter.log_pending_snapshot(
                 self._ctx, state, pending.title or infohash, pending.coverage, pending.url,
             )

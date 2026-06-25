@@ -137,7 +137,7 @@ class AniListGateway:
         """
 
         missing = sorted(
-            {i for i in al_ids if i is not None and i not in self.al_cache},
+            {i for i in al_ids if i not in self.al_cache},
         )
         if not missing:
             return

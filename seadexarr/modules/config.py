@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from functools import cached_property
 from hashlib import md5
-from typing import Any
+from typing import IO, Any, Protocol, cast
 from xml.etree import ElementTree
 
 import yaml
@@ -67,6 +67,21 @@ class Arr(StrEnum):
 
     SONARR = "sonarr"
     RADARR = "radarr"
+
+
+class _Yaml(Protocol):
+    """Structural view of the ``ruamel.yaml.YAML`` surface this module uses.
+
+    ruamel ships ``py.typed`` but leaves ``load``/``dump`` loosely typed, so
+    their results/parameters come back ``Unknown`` under strict checking. Casting
+    a ``YAML()`` instance to this protocol (the sanctioned cast-to-Protocol
+    pattern, mirroring ``log.py``'s ``_CountingLogger``) types just the two
+    methods we call - reading the template (``load``) and rewriting the file in
+    template key order (``dump``) - without otherwise constraining ruamel.
+    """
+
+    def load(self, stream: IO[str]) -> dict[str, Any]: ...
+    def dump(self, data: dict[str, Any], stream: IO[str]) -> None: ...
 
 
 def _template_path() -> str:
@@ -137,7 +152,9 @@ class AppConfig:
         with open(template_path) as f:
             # Narrow the parsed template mapping (genuinely open YAML our code
             # only reads by key) so the downstream keys/index reads are typed.
-            config_template: dict[str, Any] = YAML().load(f)
+            # ruamel's load/dump are loosely typed (Unknown under strict), so the
+            # YAML() instance is cast to the _Yaml protocol that types both.
+            config_template: dict[str, Any] = cast("_Yaml", YAML()).load(f)
 
         if list(self.data.keys()) != list(config_template.keys()):
             # Start from the template (template key order + any newly added
@@ -151,7 +168,7 @@ class AppConfig:
             self.data = new_config
 
             with open(self.path, "w+") as f:
-                YAML().dump(self.data, f)
+                cast("_Yaml", YAML()).dump(self.data, f)
 
     def checksum(self) -> str:
         """MD5 hex digest of the config file's current bytes (cache descriptor)."""

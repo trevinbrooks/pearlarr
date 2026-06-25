@@ -16,6 +16,7 @@ the rules they share, so the rules can be unit-tested without any I/O.
 
 import re
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from enum import Enum, StrEnum, auto
 from typing import Any, cast
@@ -874,7 +875,7 @@ def resolve_quality_model(
 
 
 def resolve_language_objects(
-    names: list[str],
+    names: Sequence[object],
     lang_defs: list[Language],
 ) -> list[Language]:
     """Resolve language names to Sonarr ``{id, name}`` language objects.
@@ -884,8 +885,16 @@ def resolve_language_objects(
     in request order, skipping any name with no match (so an unknown configured
     language is simply dropped rather than failing the import).
 
+    ``names`` is typed ``Sequence[object]`` rather than ``list[str]`` because the
+    contract is "configured language names" but the *runtime* value is sourced
+    from open YAML: a blank/malformed ``import_languages_*`` key can hand this a
+    ``None`` or a non-string entry (a bare int, etc.). The per-entry ``isinstance``
+    guard below is therefore live, not dead - the honest looser type is what keeps
+    it necessary while still accepting the documented ``list[str]`` callers pass.
+
     Args:
-        names (list[str]): Language names to resolve (e.g. ``["Japanese"]``).
+        names (Sequence[object]): Language names to resolve (e.g. ``["Japanese"]``);
+            non-string entries from a malformed config are skipped.
         lang_defs (list[Language]): The ``/api/v3/language`` list; each entry has
             ``id`` and ``name`` (a ``LanguageResource`` ``{id, name}``).
 
