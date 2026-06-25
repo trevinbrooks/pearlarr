@@ -1,0 +1,172 @@
+{
+    "title": "Saijaku Muhai no Bahamut - S01E01 [BDRip 1920x1080 x264 FLAC] [Exp] [1E0164AA]",
+    "parsedEpisodeInfo": {
+        "releaseTitle": "Saijaku Muhai no Bahamut - S01E01 [BDRip 1920x1080 x264 FLAC] [Exp] [1E0164AA]",
+        "seriesTitle": "Saijaku Muhai no Bahamut",
+        "seriesTitleInfo": {
+            "title": "Saijaku Muhai no Bahamut",
+            "titleWithoutYear": "Saijaku Muhai no Bahamut",
+            "year": 0
+        },
+        "quality": {
+            "quality": {
+                "id": 7,
+                "name": "Bluray-1080p",
+                "source": "bluray",
+                "resolution": 1080
+            },
+            "revision": {
+                "version": 1,
+                "real": 0,
+                "isRepack": false
+            }
+        },
+        "seasonNumber": 1,
+        "episodeNumbers": [
+            1
+        ],
+        "absoluteEpisodeNumbers": [],
+        "specialAbsoluteEpisodeNumbers": [],
+        "languages": [
+            {
+                "id": 0,
+                "name": "Unknown"
+            }
+        ],
+        "fullSeason": false,
+        "isPartialSeason": false,
+        "isMultiSeason": false,
+        "isSeasonExtra": false,
+        "isSplitEpisode": false,
+        "isMiniSeries": false,
+        "special": false,
+        "releaseHash": "",
+        "seasonPart": 0,
+        "releaseTokens": " [BDRip 1920x1080 x264 FLAC] [Exp] [1E0164AA]",
+        "isDaily": false,
+        "isAbsoluteNumbering": false,
+        "isPossibleSpecialEpisode": false,
+        "isPossibleSceneSeasonSpecial": false,
+        "releaseType": "singleEpisode"
+    },
+    "series": {
+        "title": "Undefeated Bahamut Chronicle",
+        "sortTitle": "undefeated bahamut chronicle",
+        "status": "ended",
+        "ended": true,
+        "overview": "Lux, a former prince of an empire named Arcadia that was overthrown via a rebellion five years earlier. Lux accidentally trespasses in a female dormitory's bathing area, sees the kingdom's new princess Lisesharte naked, and incurs her wrath. Lisesharte then challenges Lux to a Drag-Ride duel. Drag-Rides are ancient armored mechanical weapons that have been excavated from ruins all around the world. Lux used to be called the strongest Drag-Knight, but now he's known as the \"undefeated weakest\" Drag-Knight because he will absolutely not attack in battle. After his duel with Lisesharte, Lux ends up attending the female-only academy that trains royals to be Drag-Knights.",
+        "network": "AT-X",
+        "airTime": "22:30",
+        "images": [
+            {
+                "coverType": "banner",
+                "remoteUrl": "https://artworks.thetvdb.com/banners/graphical/299502-g4.jpg"
+            },
+            {
+                "coverType": "poster",
+                "remoteUrl": "https://artworks.thetvdb.com/banners/posters/299502-4.jpg"
+            },
+            {
+                "coverType": "fanart",
+                "remoteUrl": "https://artworks.thetvdb.com/banners/fanart/original/299502-1.jpg"
+            },
+            {
+                "coverType": "clearlogo",
+                "remoteUrl": "https://artworks.thetvdb.com/banners/v4/series/299502/clearlogo/611d5c55a17e1.png"
+            }
+        ],
+        "originalLanguage": {
+            "id": 8,
+            "name": "Japanese"
+        },
+        "seasons": [
+            {
+                "seasonNumber": 0,
+                "monitored": false
+            },
+            {
+                "seasonNumber": 1,
+                "monitored": false
+            }
+        ],
+        "year": 2016,
+        "path": "/tv/Undefeated Bahamut Chronicle (2016)",
+        "qualityProfileId": 6,
+        "seasonFolder": true,
+        "monitored": true,
+        "monitorNewItems": "none",
+        "useSceneNumbering": false,
+        "runtime": 25,
+        "tvdbId": 299502,
+        "tvRageId": 10604,
+        "tvMazeId": 10771,
+        "tmdbId": 65816,
+        "firstAired": "2016-01-11T00:00:00Z",
+        "lastAired": "2016-03-28T00:00:00Z",
+        "seriesType": "standard",
+        "cleanTitle": "undefeatedbahamutchronicle",
+        "imdbId": "tt5334364",
+        "titleSlug": "undefeated-bahamut-chronicle",
+        "certification": "MA15+",
+        "genres": [
+            "Action",
+            "Animation",
+            "Anime",
+            "Fantasy",
+            "Romance"
+        ],
+        "tags": [],
+        "added": "2025-12-28T07:36:34Z",
+        "ratings": {
+            "votes": 1234,
+            "value": 6.3
+        },
+        "languageProfileId": 1,
+        "id": 228
+    },
+    "episodes": [
+        {
+            "seriesId": 228,
+            "tvdbId": 5308221,
+            "episodeFileId": 14648,
+            "seasonNumber": 1,
+            "episodeNumber": 1,
+            "title": "The Crimson War Princess",
+            "airDate": "2016-01-11",
+            "airDateUtc": "2016-01-11T13:30:00Z",
+            "lastSearchTime": "2025-12-28T07:38:08Z",
+            "runtime": 25,
+            "overview": "Lux Arcadia falls into the baths of the all-girls Royal Knight Academy, and right on top of the naked Princess Lisesharte Atismata, who challenges him to a duel as penance.",
+            "hasFile": true,
+            "monitored": false,
+            "absoluteEpisodeNumber": 1,
+            "unverifiedSceneNumbering": false,
+            "id": 8476
+        }
+    ],
+    "languages": [
+        {
+            "id": 8,
+            "name": "Japanese"
+        }
+    ],
+    "customFormats": [
+        {
+            "id": 222,
+            "name": "1080p"
+        },
+        {
+            "id": 104,
+            "name": "Anime BD Tier 04"
+        },
+        {
+            "id": 127,
+            "name": "FLAC"
+        },
+        {
+            "id": 184,
+            "name": "x264"
+        }
+    ],
+    "customFormatScore": 1375
+}

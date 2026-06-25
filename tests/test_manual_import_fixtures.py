@@ -1,0 +1,448 @@
+"""Real-API-fixture tests for the resolved-mapping manual import.
+
+These pin the behaviour the *old* code got wrong, using JSON captured verbatim
+from a live Sonarr (``tests/fixtures/sonarr/``). The headline failure that
+motivated the rewrite: a specials/alias release Sonarr can't match to a series
+(``Yamada-kun and the Seven Witches`` vs ``... (2015)``) returns an empty
+series-*matched* ``episodes`` array, so the import silently mapped nothing. The
+fix reads the series-*agnostic* ``parsedEpisodeInfo`` and assigns it into OUR
+resolved episode set - so identity comes from the same mapping the add flow
+already trusts, never from Sonarr's title match.
+
+The pure :func:`assign_episode_ids` tests encode the three cases the user raised
+(correctly-named specials, mis-numbered specials, multi-season "To Love-Ru"); the
+end-to-end test drives the real Yamada fixtures through ``import_completed``.
+"""
+
+import json
+import types
+from pathlib import Path
+from typing import Any
+from unittest import mock
+
+from seadexarr.modules.manual_import import (
+    EpisodeAssignment,
+    ImportReadiness,
+    QueueRecordView,
+    QueueVerdict,
+    assign_episode_ids,
+    classify_queue,
+    parse_se_from_filename,
+)
+from seadexarr.modules.seadex_types import (
+    ManualImportCandidate,
+    ParsedFileInfo,
+    SonarrEpisode,
+)
+
+from .builders import make_config, make_logger, make_sonarr_sync, pending_import
+
+_FIXTURES = Path(__file__).parent / "fixtures" / "sonarr"
+
+
+def load_fixture(name: str) -> Any:
+    """Parse one captured Sonarr response from ``tests/fixtures/sonarr``."""
+
+    return json.loads((_FIXTURES / name).read_text())
+
+
+def _pinfo(
+    *,
+    season: int | None = None,
+    episodes: tuple[int, ...] = (),
+    absolutes: tuple[int, ...] = (),
+) -> ParsedFileInfo:
+    """Shorthand ParsedFileInfo for the pure-assignment tests."""
+
+    return ParsedFileInfo(
+        season_number=season,
+        episode_numbers=episodes,
+        absolute_episode_numbers=absolutes,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# ParsedFileInfo.from_parse_resource - the series-agnostic field, on real bodies
+# --------------------------------------------------------------------------- #
+class TestParsedFileInfoFromRealBodies:
+    """The fix's load-bearing claim: parsedEpisodeInfo is populated when the
+    series-matched ``episodes`` array is empty."""
+
+    def test_yamada_special_has_season_episode_despite_no_series_match(self) -> None:
+        body = load_fixture("parse_yamada_s00e01.json")
+        # The OLD code read this (series-matched) array and got nothing:
+        assert body["episodes"] == []
+
+        info = ParsedFileInfo.from_parse_resource(body)
+        assert info.season_number == 0
+        assert info.episode_numbers == (1,)
+        assert info.absolute_episode_numbers == ()
+
+    def test_absolute_numbered_file_reports_absolute_not_season_episode(self) -> None:
+        info = ParsedFileInfo.from_parse_resource(load_fixture("parse_toloveru_abs14.json"))
+        assert info.episode_numbers == ()
+        assert info.absolute_episode_numbers == (14,)
+
+    def test_missing_parsed_info_is_all_empty(self) -> None:
+        info = ParsedFileInfo.from_parse_resource({})
+        assert info == ParsedFileInfo()
+
+
+# --------------------------------------------------------------------------- #
+# parse_se_from_filename - the offline SxxExx fallback
+# --------------------------------------------------------------------------- #
+class TestParseSeFromFilename:
+    def test_sxxexx_extracted(self) -> None:
+        info = parse_se_from_filename("Show.Name.S00E05.480p.mkv")
+        assert info is not None
+        assert info.season_number == 0
+        assert info.episode_numbers == (5,)
+
+    def test_dash_separated_sxxexx(self) -> None:
+        info = parse_se_from_filename("Show - S2E3 [1080p].mkv")
+        assert info is not None
+        assert (info.season_number, info.episode_numbers) == (2, (3,))
+
+    def test_bare_absolute_number_is_not_guessed(self) -> None:
+        # "01" alone is NOT an SxxExx - left to Sonarr's parse / the absolute leg,
+        # never guessed as S?E01 here.
+        assert parse_se_from_filename("Show - 01 [1080p].mkv") is None
+
+
+# --------------------------------------------------------------------------- #
+# assign_episode_ids - the three cases the user raised, plus guards
+# --------------------------------------------------------------------------- #
+class TestAssignExactSeason:
+    """Leg 1: a correctly-named file Sonarr just couldn't match to the series."""
+
+    def test_yamada_specials_assigned_by_exact_season_episode(self) -> None:
+        # Resolved set is the entry's S00 episodes (ids 8030..8032); the two files
+        # carry S00E01 / S00E02 and land on 8030 / 8031.
+        files = ["s00e01.mkv", "s00e02.mkv"]
+        parsed = {
+            "s00e01.mkv": _pinfo(season=0, episodes=(1,)),
+            "s00e02.mkv": _pinfo(season=0, episodes=(2,)),
+        }
+        ep_id_map = {(0, 1): 8030, (0, 2): 8031, (0, 3): 8032, (1, 1): 8033}
+
+        result = assign_episode_ids(files, parsed, [8030, 8031, 8032], ep_id_map)
+
+        assert result == EpisodeAssignment(
+            assigned={"s00e01.mkv": [8030], "s00e02.mkv": [8031]},
+            skipped=[],
+        )
+
+    def test_exact_parse_outside_resolved_set_is_skipped(self) -> None:
+        # File parses to S01E01 (id 8033) but the resolved set is only S00 -> never
+        # imported (the over-grab guard: identity must land INSIDE our set).
+        parsed = {"x.mkv": _pinfo(season=1, episodes=(1,))}
+        ep_id_map = {(0, 1): 8030, (1, 1): 8033}
+
+        result = assign_episode_ids(["x.mkv"], parsed, [8030], ep_id_map)
+
+        assert result.assigned == {}
+        assert result.skipped == ["x.mkv"]
+
+    def test_empty_resolved_set_places_correctly_named_specials(self) -> None:
+        # The stuck-record case: NO resolved set (an empty ordered_episode_ids, e.g.
+        # a record whose grab-time specials resolution found nothing). The exact leg
+        # falls back to the live series map, so a correctly-named file lands on its
+        # real episode instead of sticking forever.
+        files = ["s00e01.mkv", "s00e02.mkv"]
+        parsed = {
+            "s00e01.mkv": _pinfo(season=0, episodes=(1,)),
+            "s00e02.mkv": _pinfo(season=0, episodes=(2,)),
+        }
+        ep_id_map = {(0, 1): 8030, (0, 2): 8031, (0, 3): 8032}
+
+        result = assign_episode_ids(files, parsed, [], ep_id_map)
+
+        assert result == EpisodeAssignment(
+            assigned={"s00e01.mkv": [8030], "s00e02.mkv": [8031]},
+            skipped=[],
+        )
+
+
+class TestAssignAbsolute:
+    """Leg 2: absolute-number index onto the resolved set."""
+
+    def test_mis_numbered_specials_map_positionally(self) -> None:
+        # The user's case: files on disk are "01".."05" but are really S00E05..E09.
+        # The release numbers never decide identity - they only ORDER the files onto
+        # the resolved set, so "01" -> the first resolved episode (8034 = S00E05).
+        files = [f"{n:02d}.mkv" for n in range(1, 6)]
+        parsed = {name: _pinfo(absolutes=(i + 1,)) for i, name in enumerate(files)}
+        resolved = [8034, 8035, 8036, 8037, 8038]  # S00E05..E09 ids
+
+        result = assign_episode_ids(files, parsed, resolved, {})
+
+        assert result.skipped == []
+        assert result.assigned == {
+            "01.mkv": [8034],
+            "02.mkv": [8035],
+            "03.mkv": [8036],
+            "04.mkv": [8037],
+            "05.mkv": [8038],
+        }
+
+    def test_continuous_absolute_batch_spans_seasons(self) -> None:
+        # A continuous absolute batch (1..4) maps cleanly onto a season-sorted
+        # multi-season resolved set - this is the only multi-season pack we trust.
+        files = ["e1.mkv", "e2.mkv", "e3.mkv", "e4.mkv"]
+        parsed = {f"e{i}.mkv": _pinfo(absolutes=(i,)) for i in range(1, 5)}
+        resolved = [501, 502, 601, 602]  # S05E01-02, S06E01-02
+
+        result = assign_episode_ids(files, parsed, resolved, {})
+
+        assert result.assigned == {
+            "e1.mkv": [501],
+            "e2.mkv": [502],
+            "e3.mkv": [601],
+            "e4.mkv": [602],
+        }
+
+    def test_overlord_absolute_ova_pack_maps_onto_resolved_set(self) -> None:
+        # releases.moe/101083 ("Overlord II - Ple Ple Pleiades 2"): 13 OVA files
+        # named "- 01".."- 13", all parsed season 0 / absolute-only. The add flow
+        # resolves this entry (anibridge tvdb_mappings {0: [(16, 28)]}) to the 13
+        # season-0 episodes S00E16..E28 (live ids 2090..2102), so the absolute leg
+        # places each file onto its season-sorted id (count-matched 13:13, no-dup) -
+        # "- 01" -> S00E16, "- 13" -> S00E28. No grab-time change needed.
+        files = [f"{n:02d}.mkv" for n in range(1, 14)]
+        parsed = {name: _pinfo(season=0, absolutes=(i + 1,)) for i, name in enumerate(files)}
+        resolved = list(range(2090, 2103))  # S00E16..E28 ids, season order
+
+        result = assign_episode_ids(files, parsed, resolved, {})
+
+        assert result.skipped == []
+        assert result.assigned == {f"{n:02d}.mkv": [2089 + n] for n in range(1, 14)}
+
+
+class TestAssignGuards:
+    """Leg 3: refuse to guess - skip + warn instead."""
+
+    def test_toloveru_per_title_restart_is_refused(self) -> None:
+        # One torrent spanning two sub-series whose numbering BOTH restart at 1:
+        # the shared absolutes are the tell of a season-boundary scramble, so the
+        # whole absolute leg is refused rather than mis-assigned.
+        main = {f"main-{i:02d}.mkv": _pinfo(absolutes=(i,)) for i in range(1, 4)}
+        dark = {f"dark-{i:02d}.mkv": _pinfo(absolutes=(i,)) for i in range(1, 4)}
+        parsed = {**main, **dark}
+        files = list(parsed)
+        resolved = [501, 502, 503, 601, 602, 603]
+
+        result = assign_episode_ids(files, parsed, resolved, {})
+
+        assert result.assigned == {}
+        assert sorted(result.skipped) == sorted(files)
+
+    def test_count_mismatch_skips(self) -> None:
+        # Two absolute files but three resolved ids -> not a clean 1:1 -> skip both.
+        parsed = {"a.mkv": _pinfo(absolutes=(1,)), "b.mkv": _pinfo(absolutes=(2,))}
+
+        result = assign_episode_ids(["a.mkv", "b.mkv"], parsed, [1, 2, 3], {})
+
+        assert result.assigned == {}
+        assert sorted(result.skipped) == ["a.mkv", "b.mkv"]
+
+    def test_empty_resolved_set_skips_absolute_only_files(self) -> None:
+        # With NO resolved set, the absolute leg has nothing to index into, so an
+        # absolute-only pack (Overlord-style "- 01".."- 03") is left for the user
+        # rather than guessed - absolute numbers are never trusted to decide identity
+        # on their own (the To Love-Ru safety posture).
+        files = [f"{n:02d}.mkv" for n in range(1, 4)]
+        parsed = {name: _pinfo(season=0, absolutes=(i + 1,)) for i, name in enumerate(files)}
+
+        result = assign_episode_ids(files, parsed, [], {})
+
+        assert result.assigned == {}
+        assert sorted(result.skipped) == sorted(files)
+
+    def test_single_unparseable_file_single_target_is_placed(self) -> None:
+        # Degenerate positional: one leftover file, one leftover episode -> it's that
+        # one even with no usable parse (the single-file fallback, resolved-set form).
+        result = assign_episode_ids(["only.mkv"], {"only.mkv": None}, [900], {})
+
+        assert result.assigned == {"only.mkv": [900]}
+        assert result.skipped == []
+
+    def test_mixed_exact_then_leftover_absolute(self) -> None:
+        # One file names its season (placed by leg 1); the remaining absolute file
+        # maps onto the one leftover id.
+        parsed = {
+            "s01e01.mkv": _pinfo(season=1, episodes=(1,)),
+            "extra.mkv": _pinfo(absolutes=(2,)),
+        }
+        ep_id_map = {(1, 1): 8033}
+
+        result = assign_episode_ids(
+            ["s01e01.mkv", "extra.mkv"], parsed, [8033, 8044], ep_id_map,
+        )
+
+        assert result.assigned == {"s01e01.mkv": [8033], "extra.mkv": [8044]}
+        assert result.skipped == []
+
+
+# --------------------------------------------------------------------------- #
+# classify_queue on the real captured queue
+# --------------------------------------------------------------------------- #
+class TestClassifyRealQueue:
+    """The real queue had a paused download (wait) + two importBlocked (step in)."""
+
+    @staticmethod
+    def _views_by_download() -> dict[str, list[QueueRecordView]]:
+        views: dict[str, list[QueueRecordView]] = {}
+        for rec in load_fixture("queue.json")["records"]:
+            view = QueueRecordView(
+                state=rec.get("trackedDownloadState", ""),
+                status=rec.get("trackedDownloadStatus", ""),
+                has_messages=bool(rec.get("statusMessages")),
+            )
+            views.setdefault(rec["downloadId"], []).append(view)
+        return views
+
+    def test_import_blocked_steps_in(self) -> None:
+        views = self._views_by_download()
+        yamada = views["1111111111111111111111111111111111111111"]
+        assert classify_queue(yamada) is QueueVerdict.STEP_IN
+
+    def test_paused_download_waits(self) -> None:
+        views = self._views_by_download()
+        paused = views["B7640FF13A2ADCA981B821D03CEBD1B569798459"]
+        assert classify_queue(paused) is QueueVerdict.WAIT
+
+
+# --------------------------------------------------------------------------- #
+# PendingImport round-trip carries the new resolved set (with back-compat)
+# --------------------------------------------------------------------------- #
+class TestPendingImportOrderedIds:
+    def test_round_trip_preserves_ordered_episode_ids(self) -> None:
+        rec = pending_import(ordered_episode_ids=[8030, 8031, 8032])
+        from seadexarr.modules.manual_import import PendingImport
+
+        again = PendingImport.from_json(rec.to_json())
+        assert again.ordered_episode_ids == [8030, 8031, 8032]
+        assert again == rec
+
+    def test_legacy_record_without_ordered_ids_rehydrates_empty(self) -> None:
+        from seadexarr.modules.manual_import import PendingImport
+
+        raw = pending_import().to_json()
+        del raw["ordered_episode_ids"]
+        assert PendingImport.from_json(raw).ordered_episode_ids == []
+
+
+# --------------------------------------------------------------------------- #
+# End-to-end: the real Yamada failure now imports to the resolved S00 ids
+# --------------------------------------------------------------------------- #
+def _yamada_parse_side_effect(raw_base: str) -> ParsedFileInfo | None:
+    """Replay the captured /parse bodies for the two Yamada specials by basename."""
+
+    if "S00E01" in raw_base:
+        return ParsedFileInfo.from_parse_resource(load_fixture("parse_yamada_s00e01.json"))
+    if "S00E02" in raw_base:
+        return ParsedFileInfo.from_parse_resource(load_fixture("parse_yamada_s00e02.json"))
+    return None
+
+
+def _yamada_strat() -> tuple[Any, mock.MagicMock, list[str]]:
+    """The real Yamada fixtures wired into a bare SonarrSync + its scripted mock.
+
+    Returns the strategy, its ``sonarr`` MagicMock (replaying the captured episode
+    list / manual-import candidates / per-file parse), and the on-disk basenames.
+    """
+
+    episodes = [SonarrEpisode.from_api(e) for e in load_fixture("episodes_213_yamada.json")]
+    candidates = [
+        ManualImportCandidate.from_api(c)
+        for c in load_fixture("manualimport_yamada.json")
+    ]
+    seadex_files = [c.path.rsplit("/", 1)[-1] for c in candidates if c.path]
+
+    sonarr = mock.MagicMock()
+    sonarr.queue.return_value = []  # not tracked -> STEP_IN
+    sonarr.episodes.return_value = episodes
+    sonarr.manual_import_candidates.return_value = candidates
+    sonarr.parse_episode_info.side_effect = _yamada_parse_side_effect
+    sonarr.refresh_monitored_downloads.return_value = 7
+    sonarr.command_status.return_value = types.SimpleNamespace(status="completed")
+    sonarr.quality_definitions.return_value = []
+    sonarr.languages.return_value = []
+    sonarr.manual_import_execute.return_value = 99
+
+    strat = make_sonarr_sync(
+        sonarr=sonarr,
+        logger=make_logger(),
+        log_fmt=mock.MagicMock(),
+        _config=make_config(),
+        _last_refresh_monotonic=None,
+        _ep_list_cache={},
+        _parse_info_cache={},
+        _warned_unplaceable=set(),
+        cache_store=types.SimpleNamespace(data={}),
+    )
+    return strat, sonarr, seadex_files
+
+
+class TestYamadaEndToEnd:
+    """Drive import_completed with the real fixtures for the failing queue item."""
+
+    def test_specials_import_to_resolved_episode_ids(self) -> None:
+        strat, sonarr, seadex_files = _yamada_strat()
+
+        # Resolved set = the entry's S00 episodes (8030, 8031, 8032); the torrent
+        # only carries E01/E02, so only those two get placed.
+        pending = pending_import(
+            infohash="1111111111111111111111111111111111111111",
+            series_id=213,
+            title="Yamada-kun and the Seven Witches",
+            release_group="Headpatter",
+            file_episode_map={},  # the real grab-time failure: nothing seeded
+            episode_ids=[],
+            ordered_episode_ids=[8030, 8031, 8032],
+            seadex_files=seadex_files,
+            seadex_sizes=[0] * len(seadex_files),
+        )
+
+        probe = strat.import_completed(pending, "/downloads/yamada")
+
+        # The command was issued (copy is async -> RETRY + command_issued).
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.command_issued is True
+        sonarr.manual_import_execute.assert_called_once()
+
+        files = sonarr.manual_import_execute.call_args.kwargs["files"]
+        assigned = {f["episodeIds"][0]: f for f in files}
+        assert set(assigned) == {8030, 8031}
+        assert all(f["seriesId"] == 213 for f in files)
+
+    def test_specials_import_with_empty_resolved_set(self) -> None:
+        # THE headline regression: the ACTUAL on-disk stuck record is pre-fix - EMPTY
+        # everything (no ordered_episode_ids, no seed map). Before the fix this fell
+        # to the legacy path, mapped nothing (Sonarr's series-matched episodes are
+        # empty), and retried forever. Now the empty-set exact fallback places the
+        # two specials onto the live series episodes, so it imports with no re-grab.
+        strat, sonarr, seadex_files = _yamada_strat()
+
+        pending = pending_import(
+            infohash="1111111111111111111111111111111111111111",
+            series_id=213,
+            title="Yamada and the Seven Witches (OVA)",
+            release_group="Headpatter",
+            file_episode_map={},
+            episode_ids=[],
+            ordered_episode_ids=[],  # the pre-fix stuck record
+            seadex_files=seadex_files,
+            seadex_sizes=[0] * len(seadex_files),
+        )
+
+        probe = strat.import_completed(pending, "/downloads/yamada")
+
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.command_issued is True
+        sonarr.manual_import_execute.assert_called_once()
+
+        files = sonarr.manual_import_execute.call_args.kwargs["files"]
+        assigned = {f["episodeIds"][0]: f for f in files}
+        assert set(assigned) == {8030, 8031}
+        assert all(f["seriesId"] == 213 for f in files)

@@ -16,14 +16,15 @@ the rules they share, so the rules can be unit-tested without any I/O.
 
 import re
 import unicodedata
-from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, dataclass, field
 from enum import Enum, StrEnum, auto
 from typing import Any, cast
 
 from .seadex_types import (
     SONARR_MISSING_KEY,
     Language,
+    ParsedFileInfo,
     QualityDefinition,
     QualityModel,
     Revision,
@@ -319,6 +320,14 @@ class PendingImport:
             at grab time, so the map self-heals.
         episode_ids (list[int]): Flat fallback ids, used ONLY for a genuine
             single-file torrent whose one file our parse couldn't resolve.
+        ordered_episode_ids (list[int]): The resolved episode ids for this entry,
+            in season order - the authoritative set the import assigns into. Lifted
+            straight from the add-flow ``ep_list`` (which already applied the
+            specials/offset mapping), so import-time assignment never has to trust
+            Sonarr's title parse: a file's parsed ``(season, episode)`` is honored
+            only when it lands in this set, and an absolute-numbered pack is mapped
+            positionally onto it. Empty for records written before this field
+            existed (such a record falls back to the seeded ``file_episode_map``).
         release_group (str): The SeaDex release group (authoritative).
         is_dual_audio (bool): Whether the SeaDex release is dual-audio; selects
             the dual vs. single language list.
@@ -350,6 +359,7 @@ class PendingImport:
     added_at: str
     coverage: str | None = None
     url: str | None = None
+    ordered_episode_ids: list[int] = field(default_factory=list[int])
 
     def to_json(self) -> dict[str, Any]:
         """Serialize to the plain dict persisted under ``pending_imports``.
@@ -383,6 +393,7 @@ class PendingImport:
             added_at=raw.get("added_at", ""),
             coverage=raw.get("coverage"),
             url=raw.get("url"),
+            ordered_episode_ids=raw.get("ordered_episode_ids", []),
         )
 
 
@@ -528,33 +539,184 @@ def episode_ids_for_parsed(
     return ids
 
 
-def build_authoritative_map(
-    seeded_map: dict[str, list[int]],
-    repaired: dict[str, list[int]],
-) -> dict[str, list[int]]:
-    """Merge our grab-time map with import-time repairs into the final map.
+_SXXEXX: re.Pattern[str] = re.compile(r"[Ss](\d{1,2})[\s._-]*[Ee](\d{1,3})")
 
-    Both inputs are keyed by NORMALIZED basename (:func:`normalize_basename`) ->
-    episode-id lists. ``seeded_map`` is what we computed at grab time; ``repaired``
-    is what an import-time re-parse resolved for files the seed didn't cover. The
-    seed wins on a key collision (it reflects the original per-torrent partition),
-    and only non-empty id lists survive.
 
-    Returns:
-        dict[str, list[int]]: ``normalized_basename -> [episode_id]`` for every
-        intended file we can authoritatively place.
+def parse_se_from_filename(name: str) -> ParsedFileInfo | None:
+    """Offline ``SxxExx`` fallback for when Sonarr's ``/parse`` is unreachable.
+
+    Pure + regex-only: pulls a single ``SxxExx`` out of a leaf and returns it as a
+    :class:`ParsedFileInfo` (season + episode). Returns None when the name carries
+    no ``SxxExx`` (an absolute-numbered or unparseable leaf) - those are left to
+    Sonarr's parse or the absolute-index leg, never guessed from a bare number.
     """
 
-    merged: dict[str, list[int]] = {}
-    for basename, ids in repaired.items():
-        clean = [i for i in ids if i]
-        if clean:
-            merged[basename] = clean
-    for basename, ids in seeded_map.items():
-        clean = [i for i in ids if i]
-        if clean:
-            merged[basename] = clean
-    return merged
+    m = _SXXEXX.search(name)
+    if not m:
+        return None
+    return ParsedFileInfo(
+        season_number=int(m.group(1)),
+        episode_numbers=(int(m.group(2)),),
+    )
+
+
+@dataclass(frozen=True)
+class EpisodeAssignment:
+    """The outcome of assigning a torrent's on-disk files to resolved episode ids.
+
+    ``assigned`` is ``normalized basename -> [episode id]`` for every file we could
+    place with confidence (each id is in the resolved set and used exactly once).
+    ``skipped`` lists the files we could NOT place - the caller warns on these and
+    leaves them, rather than risk a wrong assignment (the chosen safe posture).
+    """
+
+    assigned: dict[str, list[int]]
+    skipped: list[str]
+
+
+def _exact_episode_ids(
+    info: ParsedFileInfo | None,
+    ep_id_map: Mapping[tuple[int, int], int],
+    resolved_set: set[int],
+    allow_unscoped: bool = False,
+) -> list[int]:
+    """The ids for a file's exact ``(season, episode)`` parse.
+
+    Honors a file only when EVERY parsed episode resolves to a real series episode
+    id (a partial hit means the file spans an episode we can't place, so it is
+    treated as unplaced and skipped rather than half-imported). A missing season
+    collapses to :data:`SONARR_MISSING_KEY`, matching :func:`build_episode_id_map`.
+
+    Normally an id must also be inside ``resolved_set`` (our per-entry scope, which
+    keeps an episode another preferred torrent owns out). When ``allow_unscoped`` is
+    set - only when we have NO resolved set to scope against (an empty
+    ``ordered_episode_ids``, e.g. a record grabbed before specials resolution
+    populated it) - the membership check is dropped so a correctly-named file still
+    lands on its real series episode instead of sticking forever. This trusts Sonarr
+    for an UNAMBIGUOUS ``(season, episode)`` only; absolute numbers never reach here.
+    """
+
+    if info is None or not info.episode_numbers:
+        return []
+    season = info.season_number if info.season_number is not None else SONARR_MISSING_KEY
+    ids: list[int] = []
+    for episode in info.episode_numbers:
+        ep_id = ep_id_map.get((season, episode))
+        if ep_id and (allow_unscoped or ep_id in resolved_set):
+            ids.append(ep_id)
+    if len(ids) != len(info.episode_numbers):
+        return []
+    return ids
+
+
+def _has_no_signal(info: ParsedFileInfo | None) -> bool:
+    """Whether a file carries no usable episode number at all (parse miss)."""
+
+    return info is None or (
+        not info.episode_numbers and not info.absolute_episode_numbers
+    )
+
+
+def assign_episode_ids(
+    ordered_files: Sequence[str],
+    parsed_by_file: Mapping[str, ParsedFileInfo | None],
+    ordered_episode_ids: Sequence[int],
+    ep_id_map: Mapping[tuple[int, int], int],
+) -> EpisodeAssignment:
+    """Map a torrent's on-disk files to OUR resolved episode ids - names never override.
+
+    The resolved set (``ordered_episode_ids``, season-sorted, lifted from the
+    add-flow ``ep_list``) is authoritative; a release's own numbering is only ever
+    used to *index into* it, never to decide identity. Two legs, in strict
+    precedence, then skip:
+
+    1. **Exact (season, episode):** a file whose parsed ``(season, episode)``
+       resolves to an id *inside* the resolved set is placed there (handles
+       correctly-named files Sonarr just couldn't match to the series, and
+       per-season multi-season packs). With NO resolved set (an empty
+       ``ordered_episode_ids``), this leg places against the live series episode
+       map directly, so a correctly-named file still imports rather than sticking.
+    2. **Absolute index:** the leftover files are mapped onto the leftover resolved
+       ids by absolute number - but ONLY when every leftover file carries a single
+       absolute number, the counts match 1:1, and no two files share an absolute
+       (a shared absolute is the tell of per-title-restart numbering across a
+       season boundary, e.g. a "... - 01" from two different sub-series, and is
+       refused rather than scrambled). Handles mis-numbered specials and
+       continuous absolute batches.
+    3. **Skip:** anything still unplaced is returned in ``skipped`` for the caller
+       to warn on - never guessed.
+
+    Args:
+        ordered_files (Sequence[str]): On-disk video files (normalized basenames)
+            in SeaDex order - the order only fixes deterministic output.
+        parsed_by_file (Mapping[str, ParsedFileInfo | None]): Series-agnostic parse
+            per file (None when Sonarr's parse was unavailable and no SxxExx fell
+            out of the name).
+        ordered_episode_ids (Sequence[int]): The resolved episode ids, season-order.
+        ep_id_map (Mapping[tuple[int, int], int]): ``(season, episode) -> id`` over
+            ALL the series' episodes; membership in the resolved set does the
+            scoping, so an exact parse outside our entry is rejected.
+
+    Returns:
+        EpisodeAssignment: the placed files and the skipped ones.
+    """
+
+    resolved = [i for i in ordered_episode_ids if i]
+    resolved_set = set(resolved)
+    # With NO resolved set to scope against, the exact leg falls back to the live
+    # series episode map (a correctly-named file still lands on its real episode);
+    # the absolute/positional legs stay disabled below (no leftover ids), so an
+    # ambiguous file is skipped, never guessed.
+    allow_unscoped = not resolved_set
+
+    assigned: dict[str, list[int]] = {}
+    used: set[int] = set()
+    deferred: list[str] = []
+
+    # Leg 1: exact (season, episode) - inside the resolved set, or against the live
+    # series map when there is no set to scope against.
+    for name in ordered_files:
+        ids = _exact_episode_ids(
+            parsed_by_file.get(name), ep_id_map, resolved_set, allow_unscoped,
+        )
+        if ids and not any(i in used for i in ids):
+            assigned[name] = ids
+            used.update(ids)
+        else:
+            deferred.append(name)
+
+    # Leg 2: absolute index over the leftovers, only on a clean 1:1.
+    leftover_ids = [i for i in resolved if i not in used]
+    abs_by_file: dict[str, int] = {}
+    for name in deferred:
+        info = parsed_by_file.get(name)
+        if info is not None and len(info.absolute_episode_numbers) == 1:
+            abs_by_file[name] = info.absolute_episode_numbers[0]
+
+    absolutes = list(abs_by_file.values())
+    clean_absolute = (
+        bool(abs_by_file)
+        and len(abs_by_file) == len(deferred)        # every leftover has one absolute
+        and len(abs_by_file) == len(leftover_ids)    # 1:1 with the leftover ids
+        and len(set(absolutes)) == len(absolutes)    # no shared absolute (restart numbering)
+    )
+
+    skipped: list[str] = []
+    if clean_absolute:
+        for name, _abs in sorted(abs_by_file.items(), key=lambda kv: kv[1]):
+            assigned[name] = [leftover_ids.pop(0)]
+    elif len(deferred) == 1 and len(leftover_ids) == 1 and _has_no_signal(
+        parsed_by_file.get(deferred[0]),
+    ):
+        # Degenerate positional: one leftover file, one leftover episode, and the
+        # file carries NO usable number - it is that episode (the single-file
+        # fallback). A file that parsed to a concrete episode OUTSIDE our set is
+        # not swept up here; it stays skipped.
+        assigned[deferred[0]] = [leftover_ids[0]]
+    else:
+        skipped = list(deferred)
+
+    return EpisodeAssignment(assigned=assigned, skipped=skipped)
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,80 @@
+[
+    {
+        "path": "/downloads/Yamada-kun.and.the.Seven.Witches.S00.480p.DVDRip.Opus2.0.x264-Headpatter/Yamada-kun.and.the.Seven.Witches.S00E01.480p.DVDRip.Opus2.0.x264-Headpatter.mkv",
+        "relativePath": "Yamada-kun.and.the.Seven.Witches.S00E01.480p.DVDRip.Opus2.0.x264-Headpatter.mkv",
+        "name": "Yamada-kun.and.the.Seven.Witches.S00E01.480p.DVDRip.Opus2.0.x264-Headpatter",
+        "size": 348926877,
+        "releaseGroup": "Headpatter",
+        "quality": {
+            "quality": {
+                "id": 2,
+                "name": "DVD",
+                "source": "dvd",
+                "resolution": 480
+            },
+            "revision": {
+                "version": 1,
+                "real": 0,
+                "isRepack": false
+            }
+        },
+        "languages": [
+            {
+                "id": 0,
+                "name": "Unknown"
+            }
+        ],
+        "qualityWeight": 5,
+        "downloadId": "1111111111111111111111111111111111111111",
+        "customFormats": [],
+        "customFormatScore": 0,
+        "indexerFlags": 0,
+        "releaseType": "unknown",
+        "rejections": [
+            {
+                "reason": "Unknown Series",
+                "type": "permanent"
+            }
+        ],
+        "id": 1088723771
+    },
+    {
+        "path": "/downloads/Yamada-kun.and.the.Seven.Witches.S00.480p.DVDRip.Opus2.0.x264-Headpatter/Yamada-kun.and.the.Seven.Witches.S00E02.480p.DVDRip.Opus2.0.x264-Headpatter.mkv",
+        "relativePath": "Yamada-kun.and.the.Seven.Witches.S00E02.480p.DVDRip.Opus2.0.x264-Headpatter.mkv",
+        "name": "Yamada-kun.and.the.Seven.Witches.S00E02.480p.DVDRip.Opus2.0.x264-Headpatter",
+        "size": 325565207,
+        "releaseGroup": "Headpatter",
+        "quality": {
+            "quality": {
+                "id": 2,
+                "name": "DVD",
+                "source": "dvd",
+                "resolution": 480
+            },
+            "revision": {
+                "version": 1,
+                "real": 0,
+                "isRepack": false
+            }
+        },
+        "languages": [
+            {
+                "id": 0,
+                "name": "Unknown"
+            }
+        ],
+        "qualityWeight": 5,
+        "downloadId": "1111111111111111111111111111111111111111",
+        "customFormats": [],
+        "customFormatScore": 0,
+        "indexerFlags": 0,
+        "releaseType": "unknown",
+        "rejections": [
+            {
+                "reason": "Unknown Series",
+                "type": "permanent"
+            }
+        ],
+        "id": 1028134089
+    }
+]

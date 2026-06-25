@@ -1,0 +1,330 @@
+[
+  {
+    "title": "To LOVE-Ru",
+    "alternateTitles": [
+      {
+        "title": "To Love-Ru",
+        "sceneSeasonNumber": -1
+      },
+      {
+        "title": "Motto To Love-Ru",
+        "sceneSeasonNumber": 2
+      },
+      {
+        "title": "Motto To Love-Ru Trouble",
+        "sceneSeasonNumber": 2
+      },
+      {
+        "title": "To Love-Ru Darkness",
+        "sceneSeasonNumber": 3
+      },
+      {
+        "title": "To Love Ru",
+        "sceneSeasonNumber": 1
+      },
+      {
+        "title": "To Love-Ru Trouble Darkness",
+        "sceneSeasonNumber": 3
+      },
+      {
+        "title": "To Love-Ru Darkness 2nd",
+        "sceneSeasonNumber": 4
+      },
+      {
+        "title": "To Love-Ru Trouble Darkness 2nd",
+        "sceneSeasonNumber": 4
+      }
+    ],
+    "sortTitle": "to loveru",
+    "status": "ended",
+    "ended": true,
+    "overview": "When an alien from the planet Deviluke runs away and goes into hiding on earth, she meets a human named Yuuki Rito. Watch as she wants to get married to him while he wants no part of it",
+    "network": "Tokyo MX",
+    "airTime": "00:00",
+    "originalLanguage": {
+      "id": 8,
+      "name": "Japanese"
+    },
+    "seasons": [
+      {
+        "seasonNumber": 0,
+        "monitored": false,
+        "statistics": {
+          "episodeFileCount": 16,
+          "episodeCount": 16,
+          "totalEpisodeCount": 17,
+          "sizeOnDisk": 25718479756,
+          "releaseGroups": [
+            "KH",
+            "Kitsune"
+          ],
+          "percentOfEpisodes": 100
+        }
+      },
+      {
+        "seasonNumber": 1,
+        "monitored": false,
+        "statistics": {
+          "episodeFileCount": 26,
+          "episodeCount": 26,
+          "totalEpisodeCount": 26,
+          "sizeOnDisk": 23738862230,
+          "releaseGroups": [
+            "Holomux"
+          ],
+          "percentOfEpisodes": 100
+        }
+      },
+      {
+        "seasonNumber": 2,
+        "monitored": true,
+        "statistics": {
+          "episodeFileCount": 12,
+          "episodeCount": 12,
+          "totalEpisodeCount": 12,
+          "sizeOnDisk": 87464403221,
+          "releaseGroups": [
+            "ZR"
+          ],
+          "percentOfEpisodes": 100
+        }
+      },
+      {
+        "seasonNumber": 3,
+        "monitored": false,
+        "statistics": {
+          "episodeFileCount": 12,
+          "episodeCount": 12,
+          "totalEpisodeCount": 12,
+          "sizeOnDisk": 31974677509,
+          "releaseGroups": [
+            "Holomux"
+          ],
+          "percentOfEpisodes": 100
+        }
+      },
+      {
+        "seasonNumber": 4,
+        "monitored": false,
+        "statistics": {
+          "episodeFileCount": 14,
+          "episodeCount": 14,
+          "totalEpisodeCount": 14,
+          "sizeOnDisk": 31317016197,
+          "releaseGroups": [
+            "Holomux"
+          ],
+          "percentOfEpisodes": 100
+        }
+      }
+    ],
+    "year": 2008,
+    "path": "/tv/To LOVE-Ru (2008)",
+    "qualityProfileId": 6,
+    "seasonFolder": true,
+    "monitored": true,
+    "monitorNewItems": "all",
+    "useSceneNumbering": true,
+    "runtime": 25,
+    "tvdbId": 81831,
+    "tvRageId": 18569,
+    "tvMazeId": 5196,
+    "tmdbId": 34742,
+    "firstAired": "2008-04-04T00:00:00Z",
+    "lastAired": "2015-10-29T00:00:00Z",
+    "seriesType": "standard",
+    "cleanTitle": "toloveru",
+    "imdbId": "tt1216222",
+    "titleSlug": "to-love-ru",
+    "rootFolderPath": "/tv",
+    "certification": "TV-MA",
+    "genres": [
+      "Action",
+      "Animation",
+      "Anime",
+      "Comedy",
+      "Fantasy",
+      "Romance"
+    ],
+    "tags": [
+      2
+    ],
+    "added": "2023-03-07T02:47:09Z",
+    "ratings": {
+      "votes": 2117,
+      "value": 6.5
+    },
+    "languageProfileId": 1,
+    "id": 72
+  },
+  {
+    "title": "Yamada-kun and the Seven Witches (2015)",
+    "alternateTitles": [
+      {
+        "title": "Yamada-kun to 7-nin no Majo",
+        "sceneSeasonNumber": -1
+      },
+      {
+        "title": "Yamada-kun to 7-nin no Majo (2015)",
+        "sceneSeasonNumber": -1
+      },
+      {
+        "title": "Yamada-kun and the 7 Witches",
+        "seasonNumber": -1
+      }
+    ],
+    "sortTitle": "yamadakun and the seven witches 2015",
+    "status": "ended",
+    "ended": true,
+    "overview": "One day, high-school boy Yamada bumps into the beautiful girl Shiraishi on the stairs (literally), and their lips touch as they fall. When they regain their wits, they realize that they have swapped bodies. As time progresses, the two realize that this is not the only mysterious happening in the school.",
+    "network": "Tokyo MX",
+    "airTime": "23:30",
+    "originalLanguage": {
+      "id": 8,
+      "name": "Japanese"
+    },
+    "seasons": [
+      {
+        "seasonNumber": 0,
+        "monitored": false,
+        "statistics": {
+          "episodeFileCount": 0,
+          "episodeCount": 0,
+          "totalEpisodeCount": 3,
+          "sizeOnDisk": 0,
+          "releaseGroups": [],
+          "percentOfEpisodes": 0
+        }
+      },
+      {
+        "seasonNumber": 1,
+        "monitored": false,
+        "statistics": {
+          "episodeFileCount": 12,
+          "episodeCount": 12,
+          "totalEpisodeCount": 12,
+          "sizeOnDisk": 74917508237,
+          "releaseGroups": [
+            "LazyRemux"
+          ],
+          "percentOfEpisodes": 100
+        }
+      }
+    ],
+    "year": 2015,
+    "path": "/tv/Yamada-kun and the Seven Witches (2015)",
+    "qualityProfileId": 6,
+    "seasonFolder": true,
+    "monitored": true,
+    "monitorNewItems": "all",
+    "useSceneNumbering": false,
+    "runtime": 25,
+    "tvdbId": 289744,
+    "tvRageId": 22339,
+    "tvMazeId": 15895,
+    "tmdbId": 62568,
+    "firstAired": "2015-04-12T00:00:00Z",
+    "lastAired": "2015-06-28T00:00:00Z",
+    "seriesType": "standard",
+    "cleanTitle": "yamadakunsevenwitches2015",
+    "imdbId": "tt4623042",
+    "titleSlug": "yamada-kun-and-the-seven-witches-2015",
+    "rootFolderPath": "/tv",
+    "certification": "TV-14",
+    "genres": [
+      "Anime",
+      "Comedy",
+      "Fantasy"
+    ],
+    "tags": [],
+    "added": "2025-10-25T20:18:30Z",
+    "ratings": {
+      "votes": 3366,
+      "value": 7.2
+    },
+    "languageProfileId": 1,
+    "id": 213
+  },
+  {
+    "title": "Undefeated Bahamut Chronicle",
+    "alternateTitles": [
+      {
+        "title": "Saijaku Muhai no Bahamut",
+        "sceneSeasonNumber": -1
+      }
+    ],
+    "sortTitle": "undefeated bahamut chronicle",
+    "status": "ended",
+    "ended": true,
+    "overview": "Lux, a former prince of an empire named Arcadia that was overthrown via a rebellion five years earlier. Lux accidentally trespasses in a female dormitory's bathing area, sees the kingdom's new princess Lisesharte naked, and incurs her wrath. Lisesharte then challenges Lux to a Drag-Ride duel. Drag-Rides are ancient armored mechanical weapons that have been excavated from ruins all around the world. Lux used to be called the strongest Drag-Knight, but now he's known as the \"undefeated weakest\" Drag-Knight because he will absolutely not attack in battle. After his duel with Lisesharte, Lux ends up attending the female-only academy that trains royals to be Drag-Knights.",
+    "network": "AT-X",
+    "airTime": "22:30",
+    "originalLanguage": {
+      "id": 8,
+      "name": "Japanese"
+    },
+    "seasons": [
+      {
+        "seasonNumber": 0,
+        "monitored": false,
+        "statistics": {
+          "episodeFileCount": 0,
+          "episodeCount": 0,
+          "totalEpisodeCount": 1,
+          "sizeOnDisk": 0,
+          "releaseGroups": [],
+          "percentOfEpisodes": 0
+        }
+      },
+      {
+        "seasonNumber": 1,
+        "monitored": false,
+        "statistics": {
+          "episodeFileCount": 12,
+          "episodeCount": 12,
+          "totalEpisodeCount": 12,
+          "sizeOnDisk": 21751633822,
+          "releaseGroups": [
+            "Exp"
+          ],
+          "percentOfEpisodes": 100
+        }
+      }
+    ],
+    "year": 2016,
+    "path": "/tv/Undefeated Bahamut Chronicle (2016)",
+    "qualityProfileId": 6,
+    "seasonFolder": true,
+    "monitored": true,
+    "monitorNewItems": "none",
+    "useSceneNumbering": false,
+    "runtime": 25,
+    "tvdbId": 299502,
+    "tvRageId": 10604,
+    "tvMazeId": 10771,
+    "tmdbId": 65816,
+    "firstAired": "2016-01-11T00:00:00Z",
+    "lastAired": "2016-03-28T00:00:00Z",
+    "seriesType": "standard",
+    "cleanTitle": "undefeatedbahamutchronicle",
+    "imdbId": "tt5334364",
+    "titleSlug": "undefeated-bahamut-chronicle",
+    "rootFolderPath": "/tv",
+    "certification": "MA15+",
+    "genres": [
+      "Action",
+      "Animation",
+      "Anime",
+      "Fantasy",
+      "Romance"
+    ],
+    "tags": [],
+    "added": "2025-12-28T07:36:34Z",
+    "ratings": {
+      "votes": 1234,
+      "value": 6.3
+    },
+    "languageProfileId": 1,
+    "id": 228
+  }
+]

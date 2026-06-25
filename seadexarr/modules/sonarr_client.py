@@ -20,6 +20,7 @@ from .seadex_types import (
     ManualImportCandidate,
     ManualImportFile,
     ParsedEpisode,
+    ParsedFileInfo,
     QualityDefinition,
     QueueRecord,
     SonarrEpisode,
@@ -166,16 +167,64 @@ class SonarrClient:
 
         return parsed
 
+    def parse_episode_info(self, filename: str) -> ParsedFileInfo | None:
+        """Parse a filename into SERIES-AGNOSTIC season / episode / absolute numbers.
+
+        Reads the ``/api/v3/parse`` response's ``parsedEpisodeInfo`` - the numbers
+        Sonarr lifts straight from the release NAME - rather than its ``episodes``
+        array (Sonarr's series-*matched* episodes, which is empty whenever the
+        title can't be matched to a library series). That field is what lets the
+        import place a specials / alias-titled release Sonarr can't match: the
+        season+episode (or absolute) numbers are still present, and OUR resolved
+        mapping turns them into episode ids.
+
+        Returns the parsed info, or None (with a warning) on a non-200 or a
+        transient request error, so the caller can retry.
+
+        Args:
+            filename (str): Filename to parse (basename, not full path).
+        """
+
+        d_enc = urlencode({"title": filename, "apikey": self._api_key})
+        parse_req_url = f"{self._url}/api/v3/parse?{d_enc}"
+        try:
+            parse_req = self._session.get(parse_req_url, timeout=MANUAL_IMPORT_TIMEOUT_S)
+        except requests.RequestException as e:
+            self._logger.warning(
+                indent_string(f"Could not parse {filename} via Sonarr ({e}); will retry"),
+            )
+            return None
+
+        if parse_req.status_code != 200:
+            self._logger.warning(
+                indent_string(
+                    f"Could not parse {filename} via Sonarr "
+                    f"(status code {parse_req.status_code}); will retry",
+                ),
+            )
+            return None
+
+        # response.json() is untyped; the parse endpoint returns a ParseResource
+        # whose parsedEpisodeInfo carries the series-agnostic numbers - narrow it
+        # to ParsedFileInfo at this client boundary.
+        parse_body = cast("dict[str, Any]", parse_req.json())
+        return ParsedFileInfo.from_parse_resource(parse_body)
+
     def manual_import_candidates(
         self,
         *,
         pending: PendingImport,
         filter_existing_files: bool = False,
     ) -> list[ManualImportCandidate] | None:
-        """List Sonarr's manual-import candidates for a folder, series-pinned.
+        """List Sonarr's manual-import candidates for a completed download folder.
 
-        Passing ``seriesId`` makes Sonarr parse the files *in the context of the
-        known series* (PR #7727), which is far more reliable than a blind parse.
+        Scans by ``downloadId`` only (no ``seriesId``): we consume the candidates'
+        on-disk ``path`` + ``quality`` and assign episode identity ourselves from
+        OUR resolved mapping, so Sonarr's own title parse is irrelevant here - a
+        candidate Sonarr rejects as "Unknown Series" still gives us its path, which
+        is all this call is for. (``seriesId`` is deliberately NOT sent: pinning it
+        makes Sonarr scan the *library* folder rather than the download, returning
+        the wrong files.)
 
         Returns ``None`` (with a warning) on a non-200 *or* a transient request
         error (timeout / connection drop) - both mean "ask again", e.g. Sonarr is

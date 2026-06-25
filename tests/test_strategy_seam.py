@@ -183,6 +183,8 @@ def _make_sonarr_for_import(
         _config=make_config(**(config_overrides or {})),
         _last_refresh_monotonic=None,
         _ep_list_cache={},
+        _parse_info_cache={},
+        _warned_unplaceable=set(),
         cache_store=types.SimpleNamespace(data={}),
     )
     return strat, sonarr

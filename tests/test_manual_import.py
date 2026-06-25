@@ -25,7 +25,6 @@ from seadexarr.modules.manual_import import (
     QueueVerdict,
     WaitOutcome,
     all_targets_done,
-    build_authoritative_map,
     build_episode_id_map,
     classify_pending,
     classify_queue,
@@ -121,16 +120,6 @@ class TestEpisodeIdsForParsed:
             {"season": None, "episode": 1},
         ]
         assert episode_ids_for_parsed(parsed, idx) == [11]
-
-
-class TestBuildAuthoritativeMap:
-    def test_seed_wins_over_repair(self) -> None:
-        merged = build_authoritative_map({"a.mkv": [11]}, {"a.mkv": [99], "b.mkv": [12]})
-        assert merged == {"a.mkv": [11], "b.mkv": [12]}
-
-    def test_drops_empty_id_lists(self) -> None:
-        merged = build_authoritative_map({"a.mkv": [0]}, {"b.mkv": []})
-        assert merged == {}
 
 
 class TestEpisodeFileStatuses:

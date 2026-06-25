@@ -1,0 +1,178 @@
+{
+    "title": "[Group] To Love-Ru - 14 [BDRip 1920x1080].mkv",
+    "parsedEpisodeInfo": {
+        "releaseTitle": "[Group] To Love-Ru - 14 [BDRip 1920x1080]",
+        "seriesTitle": "To Love-Ru",
+        "seriesTitleInfo": {
+            "title": "To Love-Ru",
+            "titleWithoutYear": "To Love-Ru",
+            "year": 0
+        },
+        "quality": {
+            "quality": {
+                "id": 7,
+                "name": "Bluray-1080p",
+                "source": "bluray",
+                "resolution": 1080
+            },
+            "revision": {
+                "version": 1,
+                "real": 0,
+                "isRepack": false
+            }
+        },
+        "seasonNumber": 0,
+        "episodeNumbers": [],
+        "absoluteEpisodeNumbers": [
+            14
+        ],
+        "specialAbsoluteEpisodeNumbers": [],
+        "languages": [
+            {
+                "id": 0,
+                "name": "Unknown"
+            }
+        ],
+        "fullSeason": false,
+        "isPartialSeason": false,
+        "isMultiSeason": false,
+        "isSeasonExtra": false,
+        "isSplitEpisode": false,
+        "isMiniSeries": false,
+        "special": false,
+        "releaseGroup": "Group",
+        "releaseHash": "",
+        "seasonPart": 0,
+        "releaseTokens": " [BDRip 1920x1080]",
+        "isDaily": false,
+        "isAbsoluteNumbering": true,
+        "isPossibleSpecialEpisode": false,
+        "isPossibleSceneSeasonSpecial": false,
+        "releaseType": "singleEpisode"
+    },
+    "series": {
+        "title": "To LOVE-Ru",
+        "sortTitle": "to loveru",
+        "status": "ended",
+        "ended": true,
+        "overview": "When an alien from the planet Deviluke runs away and goes into hiding on earth, she meets a human named Yuuki Rito. Watch as she wants to get married to him while he wants no part of it",
+        "network": "Tokyo MX",
+        "airTime": "00:00",
+        "images": [
+            {
+                "coverType": "banner",
+                "remoteUrl": "https://artworks.thetvdb.com/banners/graphical/81831-g2.jpg"
+            },
+            {
+                "coverType": "poster",
+                "remoteUrl": "https://artworks.thetvdb.com/banners/posters/81831-4.jpg"
+            },
+            {
+                "coverType": "fanart",
+                "remoteUrl": "https://artworks.thetvdb.com/banners/fanart/original/81831-11.jpg"
+            },
+            {
+                "coverType": "clearlogo",
+                "remoteUrl": "https://artworks.thetvdb.com/banners/v4/series/81831/clearlogo/611bc324bac7c.png"
+            }
+        ],
+        "originalLanguage": {
+            "id": 8,
+            "name": "Japanese"
+        },
+        "seasons": [
+            {
+                "seasonNumber": 0,
+                "monitored": false
+            },
+            {
+                "seasonNumber": 1,
+                "monitored": false
+            },
+            {
+                "seasonNumber": 2,
+                "monitored": true
+            },
+            {
+                "seasonNumber": 3,
+                "monitored": false
+            },
+            {
+                "seasonNumber": 4,
+                "monitored": false
+            }
+        ],
+        "year": 2008,
+        "path": "/tv/To LOVE-Ru (2008)",
+        "qualityProfileId": 6,
+        "seasonFolder": true,
+        "monitored": true,
+        "monitorNewItems": "all",
+        "useSceneNumbering": true,
+        "runtime": 25,
+        "tvdbId": 81831,
+        "tvRageId": 18569,
+        "tvMazeId": 5196,
+        "tmdbId": 34742,
+        "firstAired": "2008-04-04T00:00:00Z",
+        "lastAired": "2015-10-29T00:00:00Z",
+        "seriesType": "standard",
+        "cleanTitle": "toloveru",
+        "imdbId": "tt1216222",
+        "titleSlug": "to-love-ru",
+        "certification": "TV-MA",
+        "genres": [
+            "Action",
+            "Animation",
+            "Anime",
+            "Comedy",
+            "Fantasy",
+            "Romance"
+        ],
+        "tags": [
+            2
+        ],
+        "added": "2023-03-07T02:47:09Z",
+        "ratings": {
+            "votes": 2117,
+            "value": 6.5
+        },
+        "languageProfileId": 1,
+        "id": 72
+    },
+    "episodes": [
+        {
+            "seriesId": 72,
+            "tvdbId": 381150,
+            "episodeFileId": 14402,
+            "seasonNumber": 1,
+            "episodeNumber": 14,
+            "title": "A Secret Between the Two of Us",
+            "airDate": "2008-07-04",
+            "airDateUtc": "2008-07-03T15:00:00Z",
+            "runtime": 25,
+            "overview": "After thinking about what Lala's father said to him, and the challenge that lies ahead, he brainstorms ideas on how to become the number one man in the universe. He starts training and meets Haruna, walking her dog, Maron, during his first run. After explaining to Haruna that he must change, she decides to cheer him on, meeting everyday during his runs. His goal to change also affects Haruna, who eventually asks him on date to eat lunch together at the river bank. During that time, Haruna's dog chased a bird and eventually lands into the river. After Rito saves him, the two go to Haruna's house to clean Rito's wet clothes. While waiting for his clothes to dry (Rito ended up wearing a towel), the two talked about their middle school days. When Haruna was about to go to check if Rito's clothes were dry, she trips. They almost kiss, only to have Haruna's older sister walk in on them, and it turns into another awkward situation when Rito's towel falls off.",
+            "hasFile": true,
+            "monitored": false,
+            "absoluteEpisodeNumber": 14,
+            "sceneAbsoluteEpisodeNumber": 14,
+            "sceneEpisodeNumber": 14,
+            "sceneSeasonNumber": 1,
+            "unverifiedSceneNumbering": false,
+            "id": 2886
+        }
+    ],
+    "languages": [
+        {
+            "id": 8,
+            "name": "Japanese"
+        }
+    ],
+    "customFormats": [
+        {
+            "id": 222,
+            "name": "1080p"
+        }
+    ],
+    "customFormatScore": 50
+}

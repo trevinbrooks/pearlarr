@@ -1,0 +1,1178 @@
+[
+    {
+        "seriesId": 213,
+        "tvdbId": 5081030,
+        "episodeFileId": 0,
+        "seasonNumber": 0,
+        "episodeNumber": 1,
+        "title": "Second Coming of the Suzaku Fest: A Hot Springs Resort! Everyone Gather Up!",
+        "airDate": "2014-12-17",
+        "airDateUtc": "2014-12-17T14:30:00Z",
+        "runtime": 30,
+        "overview": "Shiraishi Urara is the top student in her school. One day, due to an accidental kiss, Urara finds herself in the body of the school delinquent, Yamada Ryuu! In trying to switch back to their own bodies, Urara and Ryuu discover that kissing causes them to switch bodies, which leads to their discovery that there are 7 witches in their school. They soon try to uncover the identities of the 7 witches...",
+        "hasFile": false,
+        "monitored": false,
+        "unverifiedSceneNumbering": false,
+        "id": 8030
+    },
+    {
+        "seriesId": 213,
+        "tvdbId": 5119394,
+        "episodeFileId": 0,
+        "seasonNumber": 0,
+        "episodeNumber": 2,
+        "title": "Second Coming of the Suzaku Fest: Sing! Dance! Supernatural Studies Club!",
+        "airDate": "2015-05-15",
+        "airDateUtc": "2015-05-15T14:30:00Z",
+        "runtime": 30,
+        "hasFile": false,
+        "monitored": false,
+        "unverifiedSceneNumbering": false,
+        "id": 8031
+    },
+    {
+        "seriesId": 213,
+        "tvdbId": 6496965,
+        "episodeFileId": 0,
+        "seasonNumber": 0,
+        "episodeNumber": 3,
+        "title": "Yankee-kun na Yamada-kun to Megane-chan to Majo",
+        "airDate": "2015-08-26",
+        "airDateUtc": "2015-08-26T14:30:00Z",
+        "runtime": 7,
+        "finaleType": "season",
+        "hasFile": false,
+        "monitored": false,
+        "unverifiedSceneNumbering": false,
+        "id": 8032
+    },
+    {
+        "seriesId": 213,
+        "tvdbId": 5081222,
+        "episodeFileId": 9123,
+        "seasonNumber": 1,
+        "episodeNumber": 1,
+        "title": "I've Turned Into Her!",
+        "airDate": "2015-04-12",
+        "airDateUtc": "2015-04-12T14:30:00Z",
+        "lastSearchTime": "2025-10-25T20:19:11Z",
+        "runtime": 25,
+        "overview": "Yamada Ryu, a second year student who attends the prestigious Suzaku Private High School, is a problem child who comes to school late and leaves early, is prone to fighting all over the place, and even nods off in class. One day, he falls down the stairs with the honor student Shiraishi Urara. They faint, and when he wakes up in the infirmary he's turned into her!",
+        "episodeFile": {
+            "seriesId": 213,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Yamada-kun and the Seven Witches (2015) - S01E01 - Ive Turned Into Her! [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "path": "/tv/Yamada-kun and the Seven Witches (2015)/Season 01/Yamada-kun and the Seven Witches (2015) - S01E01 - Ive Turned Into Her! [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "size": 7392018235,
+            "dateAdded": "2025-10-26T00:33:25Z",
+            "releaseGroup": "LazyRemux",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                },
+                {
+                    "id": 1,
+                    "name": "English"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 20,
+                    "name": "Bluray-1080p Remux",
+                    "source": "blurayRaw",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 196,
+                    "name": "Season Pack"
+                }
+            ],
+            "customFormatScore": 1385,
+            "indexerFlags": 1,
+            "releaseType": "seasonPack",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn/eng",
+                "audioStreamCount": 2,
+                "videoBitDepth": 8,
+                "videoBitrate": 0,
+                "videoCodec": "h264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "24:07",
+                "scanType": "Progressive",
+                "subtitles": "eng/eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 9123
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 1,
+        "unverifiedSceneNumbering": false,
+        "id": 8033
+    },
+    {
+        "seriesId": 213,
+        "tvdbId": 5185671,
+        "episodeFileId": 9124,
+        "seasonNumber": 1,
+        "episodeNumber": 2,
+        "title": "Kiss Me, Okay?",
+        "airDate": "2015-04-19",
+        "airDateUtc": "2015-04-19T14:30:00Z",
+        "lastSearchTime": "2025-10-25T20:19:11Z",
+        "runtime": 25,
+        "overview": "Ito Miyabi, who loves supernatural phenomena, appears just as Yamada, Urara, and Miyamura restart Supernatural Studies Club activities. Miyabi shows off her supernatural paraphernalia so proudly that Yamada and the others can't tell her the truth: that they only want to use the clubroom to kiss.",
+        "episodeFile": {
+            "seriesId": 213,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Yamada-kun and the Seven Witches (2015) - S01E02 - Kiss Me Okay [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "path": "/tv/Yamada-kun and the Seven Witches (2015)/Season 01/Yamada-kun and the Seven Witches (2015) - S01E02 - Kiss Me Okay [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "size": 6504061782,
+            "dateAdded": "2025-10-26T00:41:13Z",
+            "releaseGroup": "LazyRemux",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                },
+                {
+                    "id": 1,
+                    "name": "English"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 20,
+                    "name": "Bluray-1080p Remux",
+                    "source": "blurayRaw",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 196,
+                    "name": "Season Pack"
+                }
+            ],
+            "customFormatScore": 1385,
+            "indexerFlags": 1,
+            "releaseType": "seasonPack",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn/eng",
+                "audioStreamCount": 2,
+                "videoBitDepth": 8,
+                "videoBitrate": 0,
+                "videoCodec": "h264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "24:07",
+                "scanType": "Progressive",
+                "subtitles": "eng/eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 9124
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 2,
+        "unverifiedSceneNumbering": false,
+        "id": 8034
+    },
+    {
+        "seriesId": 213,
+        "tvdbId": 5185672,
+        "episodeFileId": 9125,
+        "seasonNumber": 1,
+        "episodeNumber": 3,
+        "title": "Will You Accept? Or Won't You?",
+        "airDate": "2015-04-26",
+        "airDateUtc": "2015-04-26T14:30:00Z",
+        "lastSearchTime": "2025-10-25T20:19:11Z",
+        "runtime": 25,
+        "overview": "\"They won't give us a club budget?\" Miyabi is unhappy the Supernatural Studies Club can't move forward with their research because the student council won't give them funding. Yamada isn't interested initially, but quickly changes his mind once he learns he could buy a microwave to warm up his beloved yakisoba bread.",
+        "episodeFile": {
+            "seriesId": 213,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Yamada-kun and the Seven Witches (2015) - S01E03 - Will You Accept Or Wont You [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "path": "/tv/Yamada-kun and the Seven Witches (2015)/Season 01/Yamada-kun and the Seven Witches (2015) - S01E03 - Will You Accept Or Wont You [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "size": 5613232165,
+            "dateAdded": "2025-10-26T00:48:09Z",
+            "releaseGroup": "LazyRemux",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                },
+                {
+                    "id": 1,
+                    "name": "English"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 20,
+                    "name": "Bluray-1080p Remux",
+                    "source": "blurayRaw",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 196,
+                    "name": "Season Pack"
+                }
+            ],
+            "customFormatScore": 1385,
+            "indexerFlags": 1,
+            "releaseType": "seasonPack",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn/eng",
+                "audioStreamCount": 2,
+                "videoBitDepth": 8,
+                "videoBitrate": 0,
+                "videoCodec": "h264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "24:07",
+                "scanType": "Progressive",
+                "subtitles": "eng/eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 9125
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 3,
+        "unverifiedSceneNumbering": false,
+        "id": 8035
+    },
+    {
+        "seriesId": 213,
+        "tvdbId": 5185673,
+        "episodeFileId": 9126,
+        "seasonNumber": 1,
+        "episodeNumber": 4,
+        "title": "It Looks Like I've Fallen for Yamada!",
+        "airDate": "2015-05-03",
+        "airDateUtc": "2015-05-03T14:30:00Z",
+        "lastSearchTime": "2025-10-25T20:19:11Z",
+        "runtime": 25,
+        "overview": "\"We're going on the school camping trip today, huh?\" Yamada is less than thrilled, but gets his fill of all he wants to do after switching bodies with Urara and thinks, \"Looks like this'll be sorta fun now!\" However, Urara has never really fit in with the other girls.",
+        "episodeFile": {
+            "seriesId": 213,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Yamada-kun and the Seven Witches (2015) - S01E04 - It Looks Like Ive Fallen for Yamada! [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "path": "/tv/Yamada-kun and the Seven Witches (2015)/Season 01/Yamada-kun and the Seven Witches (2015) - S01E04 - It Looks Like Ive Fallen for Yamada! [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "size": 7422315289,
+            "dateAdded": "2025-10-26T00:54:01Z",
+            "releaseGroup": "LazyRemux",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                },
+                {
+                    "id": 1,
+                    "name": "English"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 20,
+                    "name": "Bluray-1080p Remux",
+                    "source": "blurayRaw",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 196,
+                    "name": "Season Pack"
+                }
+            ],
+            "customFormatScore": 1385,
+            "indexerFlags": 1,
+            "releaseType": "seasonPack",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn/eng",
+                "audioStreamCount": 2,
+                "videoBitDepth": 8,
+                "videoBitrate": 0,
+                "videoCodec": "h264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "24:07",
+                "scanType": "Progressive",
+                "subtitles": "eng/eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 9126
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 4,
+        "unverifiedSceneNumbering": false,
+        "id": 8036
+    },
+    {
+        "seriesId": 213,
+        "tvdbId": 5185674,
+        "episodeFileId": 9127,
+        "seasonNumber": 1,
+        "episodeNumber": 5,
+        "title": "You Mustn't Kiss Her, Okay?",
+        "airDate": "2015-05-10",
+        "airDateUtc": "2015-05-10T14:30:00Z",
+        "lastSearchTime": "2025-10-25T20:19:11Z",
+        "runtime": 25,
+        "overview": "\"Keep this a secret from Shiraishi!\" Just as Yamada decides to keep the fact his kiss' power has changed to \"Charm\" a secret from Urara, she urges him to switch bodies. He'd better go see Odagiri Nene and get his power back to normal in a hurry! Elsewhere, Nene is irritated that Yamada hasn't become charmed by her kiss and shown up like he's supposed to.",
+        "episodeFile": {
+            "seriesId": 213,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Yamada-kun and the Seven Witches (2015) - S01E05 - You Mustnt Kiss Her Okay [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "path": "/tv/Yamada-kun and the Seven Witches (2015)/Season 01/Yamada-kun and the Seven Witches (2015) - S01E05 - You Mustnt Kiss Her Okay [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "size": 5617610107,
+            "dateAdded": "2025-10-26T01:01:47Z",
+            "releaseGroup": "LazyRemux",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                },
+                {
+                    "id": 1,
+                    "name": "English"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 20,
+                    "name": "Bluray-1080p Remux",
+                    "source": "blurayRaw",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 196,
+                    "name": "Season Pack"
+                }
+            ],
+            "customFormatScore": 1385,
+            "indexerFlags": 1,
+            "releaseType": "seasonPack",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn/eng",
+                "audioStreamCount": 2,
+                "videoBitDepth": 8,
+                "videoBitrate": 0,
+                "videoCodec": "h264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "24:06",
+                "scanType": "Progressive",
+                "subtitles": "eng/eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 9127
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 5,
+        "unverifiedSceneNumbering": false,
+        "id": 8037
+    },
+    {
+        "seriesId": 213,
+        "tvdbId": 5194786,
+        "episodeFileId": 9128,
+        "seasonNumber": 1,
+        "episodeNumber": 6,
+        "title": "Respond!",
+        "airDate": "2015-05-17",
+        "airDateUtc": "2015-05-17T14:30:00Z",
+        "lastSearchTime": "2025-10-25T20:19:11Z",
+        "runtime": 25,
+        "overview": "\"It's summer! It's the beach! It's a summer retreat!\" The Supernatural Studies Club holds a summer retreat at the club house to find volume two of the notebook containing the legend of the witches, but Yamada's spirits plummet as he is forced to take supplementary lessons and exams with Otsuka Meiko, Tsurukawa Hideaki, and Kameda Mitsuru from the Manga Research Club.",
+        "episodeFile": {
+            "seriesId": 213,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Yamada-kun and the Seven Witches (2015) - S01E06 - Respond! [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "path": "/tv/Yamada-kun and the Seven Witches (2015)/Season 01/Yamada-kun and the Seven Witches (2015) - S01E06 - Respond! [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "size": 5614289403,
+            "dateAdded": "2025-10-26T01:07:39Z",
+            "releaseGroup": "LazyRemux",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                },
+                {
+                    "id": 1,
+                    "name": "English"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 20,
+                    "name": "Bluray-1080p Remux",
+                    "source": "blurayRaw",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 196,
+                    "name": "Season Pack"
+                }
+            ],
+            "customFormatScore": 1385,
+            "indexerFlags": 1,
+            "releaseType": "seasonPack",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn/eng",
+                "audioStreamCount": 2,
+                "videoBitDepth": 8,
+                "videoBitrate": 0,
+                "videoCodec": "h264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "24:07",
+                "scanType": "Progressive",
+                "subtitles": "eng/eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 9128
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 6,
+        "unverifiedSceneNumbering": false,
+        "id": 8038
+    },
+    {
+        "seriesId": 213,
+        "tvdbId": 5194787,
+        "episodeFileId": 9129,
+        "seasonNumber": 1,
+        "episodeNumber": 7,
+        "title": "Anything but Tempura!",
+        "airDate": "2015-05-24",
+        "airDateUtc": "2015-05-24T14:30:00Z",
+        "lastSearchTime": "2025-10-25T20:19:11Z",
+        "runtime": 25,
+        "overview": "Yamada begins searching for the witches and visits the home of the fourth witch, Sarushima Maria, who is a shut-in taking a break from school. When they're alone, she tells him that her power is to see the future of the person she kisses.",
+        "episodeFile": {
+            "seriesId": 213,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Yamada-kun and the Seven Witches (2015) - S01E07 - Anything but Tempura! [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "path": "/tv/Yamada-kun and the Seven Witches (2015)/Season 01/Yamada-kun and the Seven Witches (2015) - S01E07 - Anything but Tempura! [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "size": 5961212435,
+            "dateAdded": "2025-10-26T01:13:32Z",
+            "releaseGroup": "LazyRemux",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                },
+                {
+                    "id": 1,
+                    "name": "English"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 20,
+                    "name": "Bluray-1080p Remux",
+                    "source": "blurayRaw",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 196,
+                    "name": "Season Pack"
+                }
+            ],
+            "customFormatScore": 1385,
+            "indexerFlags": 1,
+            "releaseType": "seasonPack",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn/eng",
+                "audioStreamCount": 2,
+                "videoBitDepth": 8,
+                "videoBitrate": 0,
+                "videoCodec": "h264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "25:37",
+                "scanType": "Progressive",
+                "subtitles": "eng/eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 9129
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 7,
+        "unverifiedSceneNumbering": false,
+        "id": 8039
+    },
+    {
+        "seriesId": 213,
+        "tvdbId": 5194788,
+        "episodeFileId": 9130,
+        "seasonNumber": 1,
+        "episodeNumber": 8,
+        "title": "You're So Annoying",
+        "airDate": "2015-05-31",
+        "airDateUtc": "2015-05-31T14:30:00Z",
+        "lastSearchTime": "2025-10-25T20:19:11Z",
+        "runtime": 25,
+        "overview": "Yamada's group gets roped into making the group of first-year problem students lead by Takigawa Noa behave in order to open a yakisoba bread stand at the cultural festival. Noa is a witch, and appears to see the past of the person she kisses and latch onto their shortcomings. Worst yet, she seems to have volume two of the notebook containing the legend of the witches!",
+        "episodeFile": {
+            "seriesId": 213,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Yamada-kun and the Seven Witches (2015) - S01E08 - Youre So Annoying [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "path": "/tv/Yamada-kun and the Seven Witches (2015)/Season 01/Yamada-kun and the Seven Witches (2015) - S01E08 - Youre So Annoying [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "size": 6290075135,
+            "dateAdded": "2025-10-26T01:19:46Z",
+            "releaseGroup": "LazyRemux",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                },
+                {
+                    "id": 1,
+                    "name": "English"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 20,
+                    "name": "Bluray-1080p Remux",
+                    "source": "blurayRaw",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 196,
+                    "name": "Season Pack"
+                }
+            ],
+            "customFormatScore": 1385,
+            "indexerFlags": 1,
+            "releaseType": "seasonPack",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn/eng",
+                "audioStreamCount": 2,
+                "videoBitDepth": 8,
+                "videoBitrate": 0,
+                "videoCodec": "h264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "27:07",
+                "scanType": "Progressive",
+                "subtitles": "eng/eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 9130
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 8,
+        "unverifiedSceneNumbering": false,
+        "id": 8040
+    },
+    {
+        "seriesId": 213,
+        "tvdbId": 5194790,
+        "episodeFileId": 9131,
+        "seasonNumber": 1,
+        "episodeNumber": 9,
+        "title": "I'll Definitely Change the Future",
+        "airDate": "2015-06-07",
+        "airDateUtc": "2015-06-07T14:30:00Z",
+        "lastSearchTime": "2025-10-25T20:19:11Z",
+        "runtime": 25,
+        "overview": "Suzaku Fest is here! Thanks to copying Maria's power to predict the future, Yamada's fortunes guaranteed to strike home make the Supernatural Studies Club's yakisoba bread shop a huge success. Meanwhile, Maria confides in Yamada and tells him she wants to erase her witch power. \"I want to kiss and fall in love like a normal person.\"",
+        "episodeFile": {
+            "seriesId": 213,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Yamada-kun and the Seven Witches (2015) - S01E09 - Ill Definitely Change the Future [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "path": "/tv/Yamada-kun and the Seven Witches (2015)/Season 01/Yamada-kun and the Seven Witches (2015) - S01E09 - Ill Definitely Change the Future [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "size": 7190839578,
+            "dateAdded": "2025-10-26T01:26:18Z",
+            "releaseGroup": "LazyRemux",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                },
+                {
+                    "id": 1,
+                    "name": "English"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 20,
+                    "name": "Bluray-1080p Remux",
+                    "source": "blurayRaw",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 196,
+                    "name": "Season Pack"
+                }
+            ],
+            "customFormatScore": 1385,
+            "indexerFlags": 1,
+            "releaseType": "seasonPack",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn/eng",
+                "audioStreamCount": 2,
+                "videoBitDepth": 8,
+                "videoBitrate": 0,
+                "videoCodec": "h264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "24:07",
+                "scanType": "Progressive",
+                "subtitles": "eng/eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 9131
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 9,
+        "unverifiedSceneNumbering": false,
+        "id": 8041
+    },
+    {
+        "seriesId": 213,
+        "tvdbId": 5194792,
+        "episodeFileId": 9132,
+        "seasonNumber": 1,
+        "episodeNumber": 10,
+        "title": "Please Go Out With Me!",
+        "airDate": "2015-06-14",
+        "airDateUtc": "2015-06-14T14:30:00Z",
+        "lastSearchTime": "2025-10-25T20:19:11Z",
+        "runtime": 25,
+        "overview": "The Supernatural Studies Club meets Miyamura's sister, Leona, in their search for the seventh witch. She has dropped out of school in order to escape from that witch's power to erase memories. The instant one learns her name, all of their memories related to witches will be erased.",
+        "episodeFile": {
+            "seriesId": 213,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Yamada-kun and the Seven Witches (2015) - S01E10 - Please Go Out With Me! [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "path": "/tv/Yamada-kun and the Seven Witches (2015)/Season 01/Yamada-kun and the Seven Witches (2015) - S01E10 - Please Go Out With Me! [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "size": 5575574069,
+            "dateAdded": "2025-10-26T01:33:36Z",
+            "releaseGroup": "LazyRemux",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                },
+                {
+                    "id": 1,
+                    "name": "English"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 20,
+                    "name": "Bluray-1080p Remux",
+                    "source": "blurayRaw",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 196,
+                    "name": "Season Pack"
+                }
+            ],
+            "customFormatScore": 1385,
+            "indexerFlags": 1,
+            "releaseType": "seasonPack",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn/eng",
+                "audioStreamCount": 2,
+                "videoBitDepth": 8,
+                "videoBitrate": 0,
+                "videoCodec": "h264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "24:07",
+                "scanType": "Progressive",
+                "subtitles": "eng/eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 9132
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 10,
+        "unverifiedSceneNumbering": false,
+        "id": 8042
+    },
+    {
+        "seriesId": 213,
+        "tvdbId": 5194793,
+        "episodeFileId": 9133,
+        "seasonNumber": 1,
+        "episodeNumber": 11,
+        "title": "What Did You Do With Shiraishi?!",
+        "airDate": "2015-06-21",
+        "airDateUtc": "2015-06-21T14:30:00Z",
+        "lastSearchTime": "2025-10-25T20:19:11Z",
+        "runtime": 25,
+        "overview": "Unable to stand by and do nothing after seeing Urara's tears, Yamada tries to kiss her to prove she's really a witch, but she refuses. Yamada and Tamaki, unwilling to give up, continue trying to find a way to restore everyone's lost memories.",
+        "episodeFile": {
+            "seriesId": 213,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Yamada-kun and the Seven Witches (2015) - S01E11 - What Did You Do With Shiraishi!! [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "path": "/tv/Yamada-kun and the Seven Witches (2015)/Season 01/Yamada-kun and the Seven Witches (2015) - S01E11 - What Did You Do With Shiraishi!! [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "size": 5912455193,
+            "dateAdded": "2025-10-26T01:39:28Z",
+            "releaseGroup": "LazyRemux",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                },
+                {
+                    "id": 1,
+                    "name": "English"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 20,
+                    "name": "Bluray-1080p Remux",
+                    "source": "blurayRaw",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 196,
+                    "name": "Season Pack"
+                }
+            ],
+            "customFormatScore": 1385,
+            "indexerFlags": 1,
+            "releaseType": "seasonPack",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn/eng",
+                "audioStreamCount": 2,
+                "videoBitDepth": 8,
+                "videoBitrate": 0,
+                "videoCodec": "h264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "25:36",
+                "scanType": "Progressive",
+                "subtitles": "eng/eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 9133
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 11,
+        "unverifiedSceneNumbering": false,
+        "id": 8043
+    },
+    {
+        "seriesId": 213,
+        "tvdbId": 5194794,
+        "episodeFileId": 9134,
+        "seasonNumber": 1,
+        "episodeNumber": 12,
+        "title": "I Love You, Shiraishi!",
+        "airDate": "2015-06-28",
+        "airDateUtc": "2015-06-28T14:30:00Z",
+        "lastSearchTime": "2025-10-25T20:19:11Z",
+        "runtime": 25,
+        "finaleType": "series",
+        "overview": "Yamada must get all the witches together to conduct the seven witches' ceremony, and the last three needed are Urara, Mikoto, and Rika. Hoping to at least save Urara, Yamada heads for Mikoto's house along with the student council president Miyamura, but they're stopped by Miyamura's sister Leona.",
+        "episodeFile": {
+            "seriesId": 213,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Yamada-kun and the Seven Witches (2015) - S01E12 - I Love You Shiraishi! [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "path": "/tv/Yamada-kun and the Seven Witches (2015)/Season 01/Yamada-kun and the Seven Witches (2015) - S01E12 - I Love You Shiraishi! [Bluray-1080p Remux][FLAC 2.0][h264]-LazyRemux.mkv",
+            "size": 5823824846,
+            "dateAdded": "2025-10-26T01:45:42Z",
+            "releaseGroup": "LazyRemux",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                },
+                {
+                    "id": 1,
+                    "name": "English"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 20,
+                    "name": "Bluray-1080p Remux",
+                    "source": "blurayRaw",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 196,
+                    "name": "Season Pack"
+                }
+            ],
+            "customFormatScore": 1385,
+            "indexerFlags": 1,
+            "releaseType": "seasonPack",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn/eng",
+                "audioStreamCount": 2,
+                "videoBitDepth": 8,
+                "videoBitrate": 0,
+                "videoCodec": "h264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "25:22",
+                "scanType": "Progressive",
+                "subtitles": "eng/eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 9134
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 12,
+        "unverifiedSceneNumbering": false,
+        "id": 8044
+    }
+]

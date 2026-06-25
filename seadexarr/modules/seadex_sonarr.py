@@ -22,7 +22,7 @@ from .manual_import import (
     QueueRecordView,
     QueueVerdict,
     all_targets_done,
-    build_authoritative_map,
+    assign_episode_ids,
     build_episode_id_map,
     classify_queue,
     derive_languages,
@@ -31,6 +31,7 @@ from .manual_import import (
     normalize_basename,
     normalize_group,
     parse_quality_from_filename,
+    parse_se_from_filename,
     plan_import_files,
     resolve_language_objects,
     resolve_quality_model,
@@ -53,6 +54,7 @@ from .seadex_types import (
     Language,
     ManualImportCandidate,
     ManualImportFile,
+    ParsedFileInfo,
     QualityDefinition,
     RadarrItem,
     SeadexDict,
@@ -348,6 +350,17 @@ class SonarrSync(ArrSync[SonarrItem]):
         self._quality_defs_cache: list[QualityDefinition] | None = None
         self._languages_cache: list[Language] | None = None
 
+        # Per-run, in-memory cache of the series-agnostic ``/parse`` of an on-disk
+        # leaf (raw basename -> ParsedFileInfo | None), so the import poll loop sends
+        # a given filename to Sonarr's parser at most once a run rather than every
+        # poll. A None value caches a confirmed "Sonarr can't parse this" miss.
+        self._parse_info_cache: dict[str, ParsedFileInfo | None] = {}
+
+        # Infohashes for which we've already warned that some on-disk files could
+        # not be placed in the resolved set, so the loud "left these for you" line
+        # is logged once a run rather than every poll until the record clears.
+        self._warned_unplaceable: set[str] = set()
+
         # Monotonic time of the last RefreshMonitoredDownloads we asked Sonarr for,
         # used to throttle the rescan: the blocking pass calls import_completed
         # every poll and may walk several torrents back-to-back, so we re-issue the
@@ -397,6 +410,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         self._ep_list_cache = {}
         self._quality_defs_cache = None
         self._languages_cache = None
+        self._parse_info_cache = {}
+        self._warned_unplaceable = set()
         self._last_refresh_monotonic = None
         return self.get_all_sonarr_series()
 
@@ -709,6 +724,11 @@ class SonarrSync(ArrSync[SonarrItem]):
         """
 
         ep_id_map = build_episode_id_map(ep_list)
+        # The resolved episode ids for this entry, in season order - persisted onto
+        # every record so import-time assignment maps files into OUR set (the same
+        # mapping the add flow resolved) instead of re-deriving identity from
+        # Sonarr's title parse.
+        ordered_episode_ids = [ep.id for ep in ep_list if ep.id]
         # Genuinely-open cache JSON: each record is the persisted parse entry
         # ``{"fetched_at": str, "episodes": [...]}`` written by
         # ``parse_episodes_from_seadex``, so the record value is ``dict[str, Any]``.
@@ -780,6 +800,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                     added_at=added_at,
                     coverage=coverage,
                     url=url,
+                    ordered_episode_ids=ordered_episode_ids,
                 )
 
         return pending_seeds
@@ -1055,9 +1076,11 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         candidates_by_basename = self._candidate_files(candidates)
         ep_id_map = build_episode_id_map(list(episodes_by_id.values()))
-        authoritative_map = self._repair_authoritative_map(
+        authoritative_map, unplaceable = self._repair_authoritative_map(
             pending, candidates_by_basename, ep_id_map,
         )
+        if unplaceable:
+            self._warn_unplaceable_files(pending, unplaceable)
 
         if not authoritative_map:
             self.logger.debug(
@@ -1163,62 +1186,135 @@ class SonarrSync(ArrSync[SonarrItem]):
         pending: PendingImport,
         candidates_by_basename: dict[str, CandidateFile],
         ep_id_map: dict[tuple[int, int], int],
-    ) -> dict[str, list[int]]:
-        """Build the final ``basename -> episode ids`` map, repairing grab-time gaps.
+    ) -> tuple[dict[str, list[int]], list[str]]:
+        """Build the final ``basename -> episode ids`` map from OUR resolved set.
 
-        Starts from our (normalized) seed map, then for every on-disk video file the
-        seed doesn't cover, re-parses the leaf NOW (the series exists, so the parse
-        resolves what it couldn't at grab time), maps it through OUR
-        ``(season, episode) -> id`` index, and persists the hit to the parse cache
-        and the record so it self-heals. Sonarr's candidate episode assignment is
-        never consulted - the mapping stays ours.
+        Identity is assigned by :func:`assign_episode_ids` off each file's
+        series-agnostic parse against the live series episode map: a file's
+        ``(season, episode)`` is honored only *inside* our resolved set, an
+        absolute-numbered pack is mapped positionally onto it, and anything ambiguous
+        is returned as skipped (the caller warns and leaves it - the chosen safe
+        posture). Sonarr's series-matched title parse is never consulted.
+
+        Returns ``(merged_map, unplaceable_basenames)``.
         """
 
-        seeded = {
-            normalize_basename(name): [i for i in ids if i]
-            for name, ids in pending.file_episode_map.items()
+        return self._assign_from_resolved(pending, candidates_by_basename, ep_id_map)
+
+    def _assign_from_resolved(
+        self,
+        pending: PendingImport,
+        candidates_by_basename: dict[str, CandidateFile],
+        ep_id_map: dict[tuple[int, int], int],
+    ) -> tuple[dict[str, list[int]], list[str]]:
+        """Assign the on-disk video files to our resolved episode set.
+
+        Files our grab-time ``file_episode_map`` already covers (the add-time
+        assignment) are taken as-is - no need to re-parse what we resolved at grab
+        time. Every other on-disk video leaf is parsed series-agnostically and handed
+        to the pure :func:`assign_episode_ids`, which places it into our resolved set
+        (``ordered_episode_ids``, the add-flow's season-sorted episodes - or, for a
+        record predating that field, one synthesized from its seeds). When there is
+        no set to scope against (an on-disk specials record whose grab-time parse
+        found nothing), :func:`assign_episode_ids` falls back to the live series map
+        for exactly named files (see ``allow_unscoped``). Fresh placements self-heal
+        onto the record; SeaDex order keeps output and the absolute leg stable.
+        """
+
+        on_disk = {
+            norm_base: candidate
+            for norm_base, candidate in candidates_by_basename.items()
+            if self._is_video_candidate(os.path.basename(candidate.path))
         }
 
-        parse_cache = self.cache_store.data.setdefault("sonarr_parse_cache", {})
-        now_str = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
-        repaired: dict[str, list[int]] = {}
+        # SeaDex order first (so output is stable and the absolute leg's input is
+        # deterministic), then any on-disk leaf the SeaDex list didn't name.
+        ordered = [
+            norm
+            for norm in (normalize_basename(name) for name in pending.seadex_files)
+            if norm in on_disk
+        ]
+        placed = set(ordered)
+        ordered += [norm_base for norm_base in on_disk if norm_base not in placed]
 
-        for norm_base, candidate in candidates_by_basename.items():
-            if norm_base in seeded:
-                continue
-            raw_base = os.path.basename(candidate.path)
-            if not self._is_video_candidate(raw_base):
-                continue
+        # Honor our grab-time map (OUR add-time assignment) - no need to re-parse
+        # what we resolved at grab time. Intended files not yet on disk stay in the
+        # map so the planner detects them missing and retries (never silent-drops);
+        # only the on-disk leftovers the seed doesn't cover (e.g. a specials pack
+        # whose grab-time parse found nothing) are resolved from their parse.
+        seeded: dict[str, list[int]] = {}
+        for name, ids in pending.file_episode_map.items():
+            clean = [i for i in ids if i]
+            if clean:
+                seeded[normalize_basename(name)] = clean
+        seeded_ids = {i for ids in seeded.values() for i in ids}
 
-            record = parse_cache.get(raw_base)
-            parsed = record.get("episodes") if record else None
-            if parsed is None:
-                parsed = self.sonarr.parse(raw_base)
-                if parsed:
-                    parse_cache[raw_base] = {"fetched_at": now_str, "episodes": parsed}
-            if not parsed:
-                continue
+        leftover = [norm for norm in ordered if norm not in seeded]
+        parsed_by_file = {
+            norm_base: self._parsed_file_info(os.path.basename(on_disk[norm_base].path))
+            for norm_base in leftover
+        }
 
-            ids = episode_ids_for_parsed(parsed, ep_id_map)
-            if ids:
-                repaired[norm_base] = ids
-                # Self-heal: keep the repaired mapping on the record for the run.
-                pending.file_episode_map[norm_base] = ids
+        # The set the leftovers assign into: ordered_episode_ids, or - for a record
+        # predating that field - one synthesized from its seeds (so the old
+        # seed/single-file scoping survives). Ids the seed already owns are removed,
+        # so a leftover file can't be handed an episode that's already placed.
+        resolved_ids = pending.ordered_episode_ids or sorted(
+            seeded_ids | {i for i in pending.episode_ids if i},
+        )
+        leftover_resolved = [i for i in resolved_ids if i not in seeded_ids]
 
-        merged = build_authoritative_map(seeded, repaired)
+        result = assign_episode_ids(
+            leftover, parsed_by_file, leftover_resolved, ep_id_map,
+        )
 
-        # Last resort: a genuine single-file torrent whose one file still didn't
-        # resolve -> attach the flat fallback to its single on-disk video candidate.
-        if not merged and pending.episode_ids:
-            video = [
-                base
-                for base, candidate in candidates_by_basename.items()
-                if self._is_video_candidate(os.path.basename(candidate.path))
-            ]
-            if len(video) == 1:
-                merged = {video[0]: [i for i in pending.episode_ids if i]}
+        # Self-heal: keep every fresh placement on the record for the run.
+        for norm_base, ids in result.assigned.items():
+            pending.file_episode_map[norm_base] = ids
 
-        return merged
+        return {**seeded, **result.assigned}, result.skipped
+
+    def _parsed_file_info(self, raw_base: str) -> ParsedFileInfo | None:
+        """Series-agnostic parse of one on-disk leaf, cached per run.
+
+        Prefers Sonarr's ``/parse`` ``parsedEpisodeInfo`` (it handles absolute
+        numbering); on a transient parse failure (None) falls back to an offline
+        ``SxxExx`` regex - without caching - so a momentary Sonarr hiccup neither
+        strands a correctly-named file nor sticks for the rest of the run.
+        """
+
+        if raw_base in self._parse_info_cache:
+            return self._parse_info_cache[raw_base]
+        info = self.sonarr.parse_episode_info(raw_base)
+        if info is None:
+            return parse_se_from_filename(raw_base)
+        self._parse_info_cache[raw_base] = info
+        return info
+
+    def _warn_unplaceable_files(
+        self,
+        pending: PendingImport,
+        unplaceable: list[str],
+    ) -> None:
+        """Warn (once a run per download) about on-disk files we couldn't place.
+
+        These are files Sonarr sees but our resolved mapping can't confidently
+        assign (ambiguous numbering, an extra that slipped the skip list, a pack
+        that doesn't line up 1:1). We import what we can and leave these - surfacing
+        them loudly so they're never silently dropped.
+        """
+
+        if pending.infohash in self._warned_unplaceable:
+            return
+        self._warned_unplaceable.add(pending.infohash)
+        label = pending.title or pending.infohash
+        coverage = f" ({pending.coverage})" if pending.coverage else ""
+        self.logger.warning(
+            indent_string(
+                f"{label}{coverage}: {len(unplaceable)} file(s) could not be mapped "
+                f"to a resolved episode and were left unimported",
+            ),
+        )
 
     def _import_language_objects(self, pending: PendingImport) -> list[Language]:
         """Resolve the import language objects for a record (lazily cached)."""

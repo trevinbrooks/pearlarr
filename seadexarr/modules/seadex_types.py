@@ -30,6 +30,7 @@ from typing import (
     TypedDict,
     cast,
     runtime_checkable,
+    Mapping,
 )
 
 from seadex import Tag, Tracker
@@ -185,7 +186,7 @@ class SonarrEpisode:
     def from_api(cls, raw: dict[str, Any]) -> Self:
         """Build from one raw Sonarr episode dict (filters unknown keys)."""
 
-        raw_file = raw.get("episodeFile")
+        raw_file: dict[str, Any] | None = raw.get("episodeFile")
         return cls(
             id=raw.get("id", 0),
             season_number=raw.get("seasonNumber"),
@@ -398,10 +399,10 @@ class ManualImportCandidate:
         # The candidate's in-context QualityModel is re-emitted verbatim into the
         # outgoing payload, so it is passed through as the raw mapping; narrow it
         # to QualityModel at this parse boundary.
-        quality = raw.get("quality")
+        quality: Mapping[str, Any] | None = raw.get("quality")
         return cls(
             path=raw.get("path"),
-            quality=cast("QualityModel", quality) if isinstance(quality, dict) else None,
+            quality=cast(QualityModel, quality) if quality else None,
             rejections=tuple(rejections),
         )
 
@@ -581,3 +582,54 @@ class ParsedEpisode(TypedDict):
 
     seasonNumber: NotRequired[int]
     episodeNumber: NotRequired[int]
+
+
+class ParsedEpisodeInfo(TypedDict):
+    """The ``parsedEpisodeInfo`` object of a Sonarr ``/api/v3/parse`` response.
+
+    Unlike the response's ``episodes`` array (Sonarr's *series-matched* episodes,
+    which is empty whenever the release title can't be matched to a series in the
+    library), this object carries the numbers Sonarr parsed straight from the
+    release NAME, independent of any series match: the season + episode numbers
+    for an ``SxxExx`` name, and the absolute episode numbers for an
+    absolute-numbered anime release. Every field is ``NotRequired`` because a name
+    Sonarr couldn't parse may omit them.
+    """
+
+    seasonNumber: NotRequired[int]
+    episodeNumbers: NotRequired[list[int]]
+    absoluteEpisodeNumbers: NotRequired[list[int]]
+    special: NotRequired[bool]
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedFileInfo:
+    """Sonarr's series-AGNOSTIC parse of one filename, narrowed to what assignment reads.
+
+    Built from a ``/api/v3/parse`` ``parsedEpisodeInfo`` at the Sonarr client
+    boundary. ``episode_numbers`` (paired with ``season_number``) drives the exact
+    ``(season, episode)`` assignment; ``absolute_episode_numbers`` drives the
+    absolute-index fallback. Both are read straight from the release name, so they
+    are populated even when Sonarr can't match the title to a series - which is
+    exactly the case (specials, alias titles) the old series-matched parse failed.
+
+    ``season_number`` is whatever Sonarr reported and is meaningful only when
+    ``episode_numbers`` is non-empty (an absolute-numbered name reports season 0).
+    """
+
+    season_number: int | None = None
+    episode_numbers: tuple[int, ...] = ()
+    absolute_episode_numbers: tuple[int, ...] = ()
+    special: bool = False
+
+    @classmethod
+    def from_parse_resource(cls, body: dict[str, Any]) -> Self:
+        """Build from a raw ``/api/v3/parse`` response body (``parsedEpisodeInfo``)."""
+
+        info = cast("ParsedEpisodeInfo", body.get("parsedEpisodeInfo") or {})
+        return cls(
+            season_number=info.get("seasonNumber"),
+            episode_numbers=tuple(info.get("episodeNumbers") or ()),
+            absolute_episode_numbers=tuple(info.get("absoluteEpisodeNumbers") or ()),
+            special=bool(info.get("special", False)),
+        )

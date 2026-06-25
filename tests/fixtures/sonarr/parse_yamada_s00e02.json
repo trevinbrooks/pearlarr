@@ -1,0 +1,79 @@
+{
+    "title": "Yamada-kun.and.the.Seven.Witches.S00E02.480p.DVDRip.Opus2.0.x264-Headpatter",
+    "parsedEpisodeInfo": {
+        "releaseTitle": "Yamada-kun.and.the.Seven.Witches.S00E02.480p.DVDRip.Opus2.0.x264-Headpatter",
+        "seriesTitle": "Yamada-kun and the Seven Witches",
+        "seriesTitleInfo": {
+            "title": "Yamada-kun and the Seven Witches",
+            "titleWithoutYear": "Yamada-kun and the Seven Witches",
+            "year": 0
+        },
+        "quality": {
+            "quality": {
+                "id": 2,
+                "name": "DVD",
+                "source": "dvd",
+                "resolution": 480
+            },
+            "revision": {
+                "version": 1,
+                "real": 0,
+                "isRepack": false
+            }
+        },
+        "seasonNumber": 0,
+        "episodeNumbers": [
+            2
+        ],
+        "absoluteEpisodeNumbers": [],
+        "specialAbsoluteEpisodeNumbers": [],
+        "languages": [
+            {
+                "id": 0,
+                "name": "Unknown"
+            }
+        ],
+        "fullSeason": false,
+        "isPartialSeason": false,
+        "isMultiSeason": false,
+        "isSeasonExtra": false,
+        "isSplitEpisode": false,
+        "isMiniSeries": false,
+        "special": false,
+        "releaseGroup": "Headpatter",
+        "releaseHash": "",
+        "seasonPart": 0,
+        "releaseTokens": ".480p.DVDRip.Opus2.0.x264-Headpatter",
+        "isDaily": false,
+        "isAbsoluteNumbering": false,
+        "isPossibleSpecialEpisode": false,
+        "isPossibleSceneSeasonSpecial": false,
+        "releaseType": "singleEpisode"
+    },
+    "episodes": [],
+    "languages": [
+        {
+            "id": 0,
+            "name": "Unknown"
+        }
+    ],
+    "customFormats": [
+        {
+            "id": 132,
+            "name": "2.0 Stereo"
+        },
+        {
+            "id": 103,
+            "name": "Anime BD Tier 03"
+        },
+        {
+            "id": 129,
+            "name": "Opus"
+        },
+        {
+            "id": 184,
+            "name": "x264"
+        }
+    ],
+    "customFormatScore": 0
+}

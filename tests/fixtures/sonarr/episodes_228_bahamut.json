@@ -1,0 +1,1099 @@
+[
+    {
+        "seriesId": 228,
+        "tvdbId": 8210627,
+        "episodeFileId": 0,
+        "seasonNumber": 0,
+        "episodeNumber": 1,
+        "title": "TBA",
+        "airDate": "2016-03-28",
+        "airDateUtc": "2016-03-28T13:30:00Z",
+        "runtime": 4,
+        "finaleType": "season",
+        "hasFile": false,
+        "monitored": false,
+        "unverifiedSceneNumbering": false,
+        "id": 8475
+    },
+    {
+        "seriesId": 228,
+        "tvdbId": 5308221,
+        "episodeFileId": 14648,
+        "seasonNumber": 1,
+        "episodeNumber": 1,
+        "title": "The Crimson War Princess",
+        "airDate": "2016-01-11",
+        "airDateUtc": "2016-01-11T13:30:00Z",
+        "lastSearchTime": "2025-12-28T07:38:08Z",
+        "runtime": 25,
+        "overview": "Lux Arcadia falls into the baths of the all-girls Royal Knight Academy, and right on top of the naked Princess Lisesharte Atismata, who challenges him to a duel as penance.",
+        "episodeFile": {
+            "seriesId": 228,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Undefeated Bahamut Chronicle (2016) - S01E01 - The Crimson War Princess [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "path": "/tv/Undefeated Bahamut Chronicle (2016)/Season 01/Undefeated Bahamut Chronicle (2016) - S01E01 - The Crimson War Princess [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "size": 2008619399,
+            "dateAdded": "2026-06-24T22:00:49Z",
+            "releaseGroup": "Exp",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 7,
+                    "name": "Bluray-1080p",
+                    "source": "bluray",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 184,
+                    "name": "x264"
+                }
+            ],
+            "customFormatScore": 1375,
+            "indexerFlags": 0,
+            "releaseType": "singleEpisode",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn",
+                "audioStreamCount": 1,
+                "videoBitDepth": 10,
+                "videoBitrate": 0,
+                "videoCodec": "x264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "23:40",
+                "scanType": "Progressive",
+                "subtitles": "eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 14648
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 1,
+        "unverifiedSceneNumbering": false,
+        "id": 8476
+    },
+    {
+        "seriesId": 228,
+        "tvdbId": 5451678,
+        "episodeFileId": 14597,
+        "seasonNumber": 1,
+        "episodeNumber": 2,
+        "title": "The Weakest Drag-Knight",
+        "airDate": "2016-01-18",
+        "airDateUtc": "2016-01-18T13:30:00Z",
+        "lastSearchTime": "2025-12-28T07:38:08Z",
+        "runtime": 25,
+        "overview": "Lux begins his life at the academy and meets an old childhood friend, much to Lisesharte's chagrin. Later, Lux and Lisesharte face old, dark memories of the recent past.",
+        "episodeFile": {
+            "seriesId": 228,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Undefeated Bahamut Chronicle (2016) - S01E02 - The Weakest Drag-Knight [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "path": "/tv/Undefeated Bahamut Chronicle (2016)/Season 01/Undefeated Bahamut Chronicle (2016) - S01E02 - The Weakest Drag-Knight [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "size": 1949713022,
+            "dateAdded": "2026-06-24T21:50:24Z",
+            "releaseGroup": "Exp",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 7,
+                    "name": "Bluray-1080p",
+                    "source": "bluray",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 184,
+                    "name": "x264"
+                }
+            ],
+            "customFormatScore": 1375,
+            "indexerFlags": 0,
+            "releaseType": "singleEpisode",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn",
+                "audioStreamCount": 1,
+                "videoBitDepth": 10,
+                "videoBitrate": 0,
+                "videoCodec": "x264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "23:40",
+                "scanType": "Progressive",
+                "subtitles": "eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 14597
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 2,
+        "unverifiedSceneNumbering": false,
+        "id": 8477
+    },
+    {
+        "seriesId": 228,
+        "tvdbId": 5451679,
+        "episodeFileId": 14608,
+        "seasonNumber": 1,
+        "episodeNumber": 3,
+        "title": "The Lady of the North's Engagement Conditions",
+        "airDate": "2016-01-25",
+        "airDateUtc": "2016-01-25T13:30:00Z",
+        "lastSearchTime": "2025-12-28T07:38:08Z",
+        "runtime": 25,
+        "overview": "When Lisha throws Lux a party, a week of Lux's time is offered as a game prize! The outcome could be worse, but his new position lands him in an awkward and dangerous place.",
+        "episodeFile": {
+            "seriesId": 228,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Undefeated Bahamut Chronicle (2016) - S01E03 - The Lady of the Norths Engagement Conditions [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "path": "/tv/Undefeated Bahamut Chronicle (2016)/Season 01/Undefeated Bahamut Chronicle (2016) - S01E03 - The Lady of the Norths Engagement Conditions [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "size": 1733333914,
+            "dateAdded": "2026-06-24T21:52:51Z",
+            "releaseGroup": "Exp",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 7,
+                    "name": "Bluray-1080p",
+                    "source": "bluray",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 184,
+                    "name": "x264"
+                }
+            ],
+            "customFormatScore": 1375,
+            "indexerFlags": 0,
+            "releaseType": "singleEpisode",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn",
+                "audioStreamCount": 1,
+                "videoBitDepth": 10,
+                "videoBitrate": 0,
+                "videoCodec": "x264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "23:41",
+                "scanType": "Progressive",
+                "subtitles": "eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 14608
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 3,
+        "unverifiedSceneNumbering": false,
+        "id": 8478
+    },
+    {
+        "seriesId": 228,
+        "tvdbId": 5451680,
+        "episodeFileId": 14618,
+        "seasonNumber": 1,
+        "episodeNumber": 4,
+        "title": "The Sixth Ruin -Miniature Garden-",
+        "airDate": "2016-02-01",
+        "airDateUtc": "2016-02-01T13:30:00Z",
+        "lastSearchTime": "2025-12-28T07:38:08Z",
+        "runtime": 25,
+        "overview": "Lux mentally prepares for his duel with Lord Barzeride. Meanwhile, the nobles of the New Kingdom order an investigation of some ancient ruins which may hide a powerful Abyss.",
+        "episodeFile": {
+            "seriesId": 228,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Undefeated Bahamut Chronicle (2016) - S01E04 - The Sixth Ruin -Miniature Garden- [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "path": "/tv/Undefeated Bahamut Chronicle (2016)/Season 01/Undefeated Bahamut Chronicle (2016) - S01E04 - The Sixth Ruin -Miniature Garden- [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "size": 1872839980,
+            "dateAdded": "2026-06-24T21:54:54Z",
+            "releaseGroup": "Exp",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 7,
+                    "name": "Bluray-1080p",
+                    "source": "bluray",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 184,
+                    "name": "x264"
+                }
+            ],
+            "customFormatScore": 1375,
+            "indexerFlags": 0,
+            "releaseType": "singleEpisode",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn",
+                "audioStreamCount": 1,
+                "videoBitDepth": 10,
+                "videoBitrate": 0,
+                "videoCodec": "x264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "23:40",
+                "scanType": "Progressive",
+                "subtitles": "eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 14618
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 4,
+        "unverifiedSceneNumbering": false,
+        "id": 8479
+    },
+    {
+        "seriesId": 228,
+        "tvdbId": 5451681,
+        "episodeFileId": 14619,
+        "seasonNumber": 1,
+        "episodeNumber": 5,
+        "title": "A Girl's Wish",
+        "airDate": "2016-02-08",
+        "airDateUtc": "2016-02-08T13:30:00Z",
+        "lastSearchTime": "2025-12-28T07:38:08Z",
+        "runtime": 25,
+        "overview": "Krulcifer reveals her painful past to Lux. In an act of sympathy, she decides to release him from their agreement and begins to prepare for her duel against Barzeride.",
+        "episodeFile": {
+            "seriesId": 228,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Undefeated Bahamut Chronicle (2016) - S01E05 - A Girls Wish [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "path": "/tv/Undefeated Bahamut Chronicle (2016)/Season 01/Undefeated Bahamut Chronicle (2016) - S01E05 - A Girls Wish [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "size": 1948164260,
+            "dateAdded": "2026-06-24T21:55:10Z",
+            "releaseGroup": "Exp",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 7,
+                    "name": "Bluray-1080p",
+                    "source": "bluray",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 184,
+                    "name": "x264"
+                }
+            ],
+            "customFormatScore": 1375,
+            "indexerFlags": 0,
+            "releaseType": "singleEpisode",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn",
+                "audioStreamCount": 1,
+                "videoBitDepth": 10,
+                "videoBitrate": 0,
+                "videoCodec": "x264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "23:41",
+                "scanType": "Progressive",
+                "subtitles": "eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 14619
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 5,
+        "unverifiedSceneNumbering": false,
+        "id": 8480
+    },
+    {
+        "seriesId": 228,
+        "tvdbId": 5451682,
+        "episodeFileId": 14627,
+        "seasonNumber": 1,
+        "episodeNumber": 6,
+        "title": "The Homecoming of the Strongest",
+        "airDate": "2016-02-15",
+        "airDateUtc": "2016-02-15T13:30:00Z",
+        "lastSearchTime": "2025-12-28T07:38:08Z",
+        "runtime": 25,
+        "overview": "When Lux meets a high ranking noble girl under false pretenses, he\u2019s put in a tight spot. It gets worse; she has a reputation for misandry and wants him out of the school!",
+        "episodeFile": {
+            "seriesId": 228,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Undefeated Bahamut Chronicle (2016) - S01E06 - The Homecoming of the Strongest [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "path": "/tv/Undefeated Bahamut Chronicle (2016)/Season 01/Undefeated Bahamut Chronicle (2016) - S01E06 - The Homecoming of the Strongest [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "size": 1571263909,
+            "dateAdded": "2026-06-24T21:56:42Z",
+            "releaseGroup": "Exp",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 7,
+                    "name": "Bluray-1080p",
+                    "source": "bluray",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 184,
+                    "name": "x264"
+                }
+            ],
+            "customFormatScore": 1375,
+            "indexerFlags": 0,
+            "releaseType": "singleEpisode",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn",
+                "audioStreamCount": 1,
+                "videoBitDepth": 10,
+                "videoBitrate": 0,
+                "videoCodec": "x264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "23:40",
+                "scanType": "Progressive",
+                "subtitles": "eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 14627
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 6,
+        "unverifiedSceneNumbering": false,
+        "id": 8481
+    },
+    {
+        "seriesId": 228,
+        "tvdbId": 5451683,
+        "episodeFileId": 14634,
+        "seasonNumber": 1,
+        "episodeNumber": 7,
+        "title": "A Girl's Truth",
+        "airDate": "2016-02-22",
+        "airDateUtc": "2016-02-22T13:30:00Z",
+        "lastSearchTime": "2025-12-28T07:38:08Z",
+        "runtime": 25,
+        "overview": "The students head to a training session on the beach. However, it's not all fun in the sun as the prowler from campus is revealed and mysteries abound as a new ruin appears.",
+        "episodeFile": {
+            "seriesId": 228,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Undefeated Bahamut Chronicle (2016) - S01E07 - A Girls Truth [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "path": "/tv/Undefeated Bahamut Chronicle (2016)/Season 01/Undefeated Bahamut Chronicle (2016) - S01E07 - A Girls Truth [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "size": 1798016391,
+            "dateAdded": "2026-06-24T21:58:05Z",
+            "releaseGroup": "Exp",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 7,
+                    "name": "Bluray-1080p",
+                    "source": "bluray",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 184,
+                    "name": "x264"
+                }
+            ],
+            "customFormatScore": 1375,
+            "indexerFlags": 0,
+            "releaseType": "singleEpisode",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn",
+                "audioStreamCount": 1,
+                "videoBitDepth": 10,
+                "videoBitrate": 0,
+                "videoCodec": "x264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "23:41",
+                "scanType": "Progressive",
+                "subtitles": "eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 14634
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 7,
+        "unverifiedSceneNumbering": false,
+        "id": 8482
+    },
+    {
+        "seriesId": 228,
+        "tvdbId": 5451684,
+        "episodeFileId": 14635,
+        "seasonNumber": 1,
+        "episodeNumber": 8,
+        "title": "Awakening of the Phantom Divine Beast",
+        "airDate": "2016-02-29",
+        "airDateUtc": "2016-02-29T13:30:00Z",
+        "lastSearchTime": "2025-12-28T07:38:08Z",
+        "runtime": 25,
+        "overview": "Exploring the new ruin yields a fascinating find, but Philuffy begins to feel ill. As she and Lux are thrown into a site from their past, Lux recovers some ghastly memories.",
+        "episodeFile": {
+            "seriesId": 228,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Undefeated Bahamut Chronicle (2016) - S01E08 - Awakening of the Phantom Divine Beast [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "path": "/tv/Undefeated Bahamut Chronicle (2016)/Season 01/Undefeated Bahamut Chronicle (2016) - S01E08 - Awakening of the Phantom Divine Beast [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "size": 1577895601,
+            "dateAdded": "2026-06-24T21:58:17Z",
+            "releaseGroup": "Exp",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 7,
+                    "name": "Bluray-1080p",
+                    "source": "bluray",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 184,
+                    "name": "x264"
+                }
+            ],
+            "customFormatScore": 1375,
+            "indexerFlags": 0,
+            "releaseType": "singleEpisode",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn",
+                "audioStreamCount": 1,
+                "videoBitDepth": 10,
+                "videoBitrate": 0,
+                "videoCodec": "x264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "23:40",
+                "scanType": "Progressive",
+                "subtitles": "eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 14635
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 8,
+        "unverifiedSceneNumbering": false,
+        "id": 8483
+    },
+    {
+        "seriesId": 228,
+        "tvdbId": 5451685,
+        "episodeFileId": 14640,
+        "seasonNumber": 1,
+        "episodeNumber": 9,
+        "title": "The Promise",
+        "airDate": "2016-03-07",
+        "airDateUtc": "2016-03-07T13:30:00Z",
+        "lastSearchTime": "2025-12-28T07:38:08Z",
+        "runtime": 25,
+        "overview": "Lux faces off against Hayes in a fight to save Philuffy's life. With Hayes' nefarious plans already in motion, another dark figure emerges from the shadows of the old Empire.",
+        "episodeFile": {
+            "seriesId": 228,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Undefeated Bahamut Chronicle (2016) - S01E09 - The Promise [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "path": "/tv/Undefeated Bahamut Chronicle (2016)/Season 01/Undefeated Bahamut Chronicle (2016) - S01E09 - The Promise [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "size": 1739506120,
+            "dateAdded": "2026-06-24T21:59:25Z",
+            "releaseGroup": "Exp",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 7,
+                    "name": "Bluray-1080p",
+                    "source": "bluray",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 184,
+                    "name": "x264"
+                }
+            ],
+            "customFormatScore": 1375,
+            "indexerFlags": 0,
+            "releaseType": "singleEpisode",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn",
+                "audioStreamCount": 1,
+                "videoBitDepth": 10,
+                "videoBitrate": 0,
+                "videoCodec": "x264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "23:41",
+                "scanType": "Progressive",
+                "subtitles": "eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 14640
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 9,
+        "unverifiedSceneNumbering": false,
+        "id": 8484
+    },
+    {
+        "seriesId": 228,
+        "tvdbId": 5451686,
+        "episodeFileId": 14644,
+        "seasonNumber": 1,
+        "episodeNumber": 10,
+        "title": "The Young Girls' Reward",
+        "airDate": "2016-03-14",
+        "airDateUtc": "2016-03-14T13:30:00Z",
+        "lastSearchTime": "2025-12-28T07:38:08Z",
+        "runtime": 25,
+        "overview": "Lux has to choose not one, but three, dates for the National Foundation Festival. While Lisha nurses hurt feelings, a supporter of the old Empire emerges from the shadows.",
+        "episodeFile": {
+            "seriesId": 228,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Undefeated Bahamut Chronicle (2016) - S01E10 - The Young Girls Reward [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "path": "/tv/Undefeated Bahamut Chronicle (2016)/Season 01/Undefeated Bahamut Chronicle (2016) - S01E10 - The Young Girls Reward [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "size": 1578230146,
+            "dateAdded": "2026-06-24T22:00:05Z",
+            "releaseGroup": "Exp",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 7,
+                    "name": "Bluray-1080p",
+                    "source": "bluray",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 184,
+                    "name": "x264"
+                }
+            ],
+            "customFormatScore": 1375,
+            "indexerFlags": 0,
+            "releaseType": "singleEpisode",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn",
+                "audioStreamCount": 1,
+                "videoBitDepth": 10,
+                "videoBitrate": 0,
+                "videoCodec": "x264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "23:40",
+                "scanType": "Progressive",
+                "subtitles": "eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 14644
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 10,
+        "unverifiedSceneNumbering": false,
+        "id": 8485
+    },
+    {
+        "seriesId": 228,
+        "tvdbId": 5451687,
+        "episodeFileId": 14647,
+        "seasonNumber": 1,
+        "episodeNumber": 11,
+        "title": "The Imperial Assassin's Dagger",
+        "airDate": "2016-03-21",
+        "airDateUtc": "2016-03-21T13:30:00Z",
+        "lastSearchTime": "2025-12-28T07:38:08Z",
+        "runtime": 25,
+        "overview": "Lux discovers that a rebellion is being plotted by a group from the old Empire, and Airi is worried as he agrees to conditions he may be unable to meet.",
+        "episodeFile": {
+            "seriesId": 228,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Undefeated Bahamut Chronicle (2016) - S01E11 - The Imperial Assassins Dagger [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "path": "/tv/Undefeated Bahamut Chronicle (2016)/Season 01/Undefeated Bahamut Chronicle (2016) - S01E11 - The Imperial Assassins Dagger [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "size": 1904123342,
+            "dateAdded": "2026-06-24T22:00:38Z",
+            "releaseGroup": "Exp",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 7,
+                    "name": "Bluray-1080p",
+                    "source": "bluray",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 184,
+                    "name": "x264"
+                }
+            ],
+            "customFormatScore": 1375,
+            "indexerFlags": 0,
+            "releaseType": "singleEpisode",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn",
+                "audioStreamCount": 1,
+                "videoBitDepth": 10,
+                "videoBitrate": 0,
+                "videoCodec": "x264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "23:41",
+                "scanType": "Progressive",
+                "subtitles": "eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 14647
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 11,
+        "unverifiedSceneNumbering": false,
+        "id": 8486
+    },
+    {
+        "seriesId": 228,
+        "tvdbId": 5451688,
+        "episodeFileId": 14585,
+        "seasonNumber": 1,
+        "episodeNumber": 12,
+        "title": "The Young Girl's Cherished Desire",
+        "airDate": "2016-03-28",
+        "airDateUtc": "2016-03-28T13:30:00Z",
+        "lastSearchTime": "2025-12-28T07:38:08Z",
+        "runtime": 25,
+        "finaleType": "series",
+        "overview": "With the fate of their country and its people hanging in the balance, Lux and Lisha fight against their toughest foe yet; an enemy born of their pasts.",
+        "episodeFile": {
+            "seriesId": 228,
+            "seasonNumber": 1,
+            "relativePath": "Season 01/Undefeated Bahamut Chronicle (2016) - S01E12 - The Young Girls Cherished Desire [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "path": "/tv/Undefeated Bahamut Chronicle (2016)/Season 01/Undefeated Bahamut Chronicle (2016) - S01E12 - The Young Girls Cherished Desire [Bluray-1080p][FLAC 2.0][x264]-Exp.mkv",
+            "size": 2069927738,
+            "dateAdded": "2026-06-24T21:45:41Z",
+            "releaseGroup": "Exp",
+            "languages": [
+                {
+                    "id": 8,
+                    "name": "Japanese"
+                }
+            ],
+            "quality": {
+                "quality": {
+                    "id": 7,
+                    "name": "Bluray-1080p",
+                    "source": "bluray",
+                    "resolution": 1080
+                },
+                "revision": {
+                    "version": 1,
+                    "real": 0,
+                    "isRepack": false
+                }
+            },
+            "customFormats": [
+                {
+                    "id": 222,
+                    "name": "1080p"
+                },
+                {
+                    "id": 132,
+                    "name": "2.0 Stereo"
+                },
+                {
+                    "id": 104,
+                    "name": "Anime BD Tier 04"
+                },
+                {
+                    "id": 127,
+                    "name": "FLAC"
+                },
+                {
+                    "id": 184,
+                    "name": "x264"
+                }
+            ],
+            "customFormatScore": 1375,
+            "indexerFlags": 0,
+            "releaseType": "singleEpisode",
+            "mediaInfo": {
+                "audioBitrate": 0,
+                "audioChannels": 2,
+                "audioCodec": "FLAC",
+                "audioLanguages": "jpn",
+                "audioStreamCount": 1,
+                "videoBitDepth": 10,
+                "videoBitrate": 0,
+                "videoCodec": "x264",
+                "videoFps": 23.976,
+                "videoDynamicRange": "",
+                "videoDynamicRangeType": "",
+                "resolution": "1920x1080",
+                "runTime": "23:41",
+                "scanType": "Progressive",
+                "subtitles": "eng"
+            },
+            "qualityCutoffNotMet": false,
+            "id": 14585
+        },
+        "hasFile": true,
+        "monitored": false,
+        "absoluteEpisodeNumber": 12,
+        "unverifiedSceneNumbering": false,
+        "id": 8487
+    }
+]
