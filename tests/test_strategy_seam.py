@@ -20,7 +20,12 @@ from seadexarr.modules.manual_import import (
 from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.seadex_radarr import RadarrSync
 from seadexarr.modules.seadex_sonarr import SonarrSync
-from seadexarr.modules.seadex_types import RadarrItem, SonarrEpisode, SonarrItem
+from seadexarr.modules.seadex_types import (
+    ManualImportCandidate,
+    RadarrItem,
+    SonarrEpisode,
+    SonarrItem,
+)
 
 from .builders import (
     make_bare_instance,
@@ -137,7 +142,7 @@ def _ep_with_file(ep_id: int, *, group: str | None) -> SonarrEpisode:
 
 def _make_sonarr_for_import(
     *,
-    candidates: list[dict] | None,
+    candidates: list[ManualImportCandidate] | None,
     queue: list[dict] | None = None,
     episodes: list[SonarrEpisode] | None = None,
     quality_defs: list[dict] | None = None,
@@ -674,9 +679,11 @@ class TestResolveQualityModel:
         model = resolve_quality_model("webdl-1080p", defs)
 
         assert model is not None
-        assert model["quality"]["id"] == 3
-        assert model["quality"]["name"] == "WEBDL-1080p"
-        assert model["revision"] == {"version": 1, "real": 0, "isRepack": False}
+        quality = model.get("quality")
+        assert quality is not None
+        assert quality.get("id") == 3
+        assert quality.get("name") == "WEBDL-1080p"
+        assert model.get("revision") == {"version": 1, "real": 0, "isRepack": False}
 
     def test_no_match_returns_none(self) -> None:
         defs = [{"quality": {"id": 1, "name": "HDTV-720p"}}]

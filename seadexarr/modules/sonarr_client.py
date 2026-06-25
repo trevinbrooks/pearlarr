@@ -13,7 +13,12 @@ from arrapi import SonarrAPI
 
 from .log import indent_string
 from .manual_import import PendingImport
-from .seadex_types import SonarrEpisode, SonarrItem
+from .seadex_types import (
+    ManualImportCandidate,
+    ManualImportFile,
+    SonarrEpisode,
+    SonarrItem,
+)
 
 # Per-request timeout (seconds) for the manual-import folder scan. Sonarr walks
 # and parses every file under the folder, which is slow - and can hang - over a
@@ -159,7 +164,7 @@ class SonarrClient:
         *,
         pending: PendingImport,
         filter_existing_files: bool = False,
-    ) -> list[dict[str, Any]] | None:
+    ) -> list[ManualImportCandidate] | None:
         """List Sonarr's manual-import candidates for a folder, series-pinned.
 
         Passing ``seriesId`` makes Sonarr parse the files *in the context of the
@@ -172,18 +177,19 @@ class SonarrClient:
         on its mount yet). The caller treats both as keep-waiting, but the
         distinction keeps the intent clear.
 
+        Each raw ManualImportResource is narrowed to a
+        :class:`~.seadex_types.ManualImportCandidate` (``path`` / ``quality`` /
+        ``rejections``) via its ``from_api`` at this client boundary, so the
+        decision path never touches the raw DTO.
+
         Args:
             pending (PendingImport): The pending import record to scan for
             filter_existing_files (bool): If True, Sonarr drops files it already
                 has imported. Sent lowercase ``true``/``false``.
 
         Returns:
-            list[dict[str, Any]] | None: Raw ManualImportResource dicts (keys like
-                ``path``, ``episodes``, ``quality``, ``languages``,
-                ``releaseGroup``, ``rejections``); ``None`` on a transient failure.
-                The resource is a heterogeneous Sonarr DTO (primitives, nested
-                ``SeriesResource``/``QualityModel`` objects, and lists), read
-                key-by-key by the caller, so it stays an open JSON object.
+            list[ManualImportCandidate] | None: The parsed candidates; ``None`` on
+                a transient failure.
         """
 
         params: dict[str, str] = {
@@ -218,14 +224,15 @@ class SonarrClient:
             return None
 
         # response.json() is untyped; the manualimport endpoint returns a JSON
-        # array of (heterogeneous) ManualImportResource objects, so cast at the
-        # parse boundary.
-        return cast("list[dict[str, Any]]", candidates_req.json())
+        # array of ManualImportResource objects, so cast at the parse boundary,
+        # then narrow each to the fields planning reads via from_api.
+        raw_candidates = cast("list[dict[str, Any]]", candidates_req.json())
+        return [ManualImportCandidate.from_api(c) for c in raw_candidates]
 
     def manual_import_execute(
         self,
         *,
-        files: list[dict[str, Any]],
+        files: list[ManualImportFile],
         import_mode: str = "auto",
     ) -> int | None:
         """Queue a ``ManualImport`` command for the given files (no title parse).
@@ -239,7 +246,7 @@ class SonarrClient:
         pending and retry later.
 
         Args:
-            files (list[dict[str, Any]]): ManualImport file payloads to import.
+            files (list[ManualImportFile]): ManualImport file payloads to import.
             import_mode (str): Sonarr ``importMode``: ``auto`` (default; respects
                 the copy/hardlink setting and preserves seeding), ``move`` or
                 ``copy``.

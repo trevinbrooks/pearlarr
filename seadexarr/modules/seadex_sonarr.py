@@ -1,6 +1,7 @@
 import os
 import time
 from datetime import datetime, timedelta
+from typing import Any
 from xml.etree import ElementTree
 
 from . import coverage as _coverage
@@ -49,6 +50,9 @@ from .seadex_arr import RunDeps, SeaDexArr
 from .seadex_types import (
     ArrReleaseDict,
     EpisodeRecord,
+    Language,
+    ManualImportCandidate,
+    ManualImportFile,
     SeadexDict,
     SonarrEpisode,
     SonarrItem,
@@ -255,25 +259,24 @@ _REFRESH_COMMAND_POLL_S = 1
 _COMMAND_TERMINAL_STATES = frozenset({"completed", "failed", "aborted", "cancelled"})
 
 
-def _rejection_matches(candidate: dict, tokens: tuple[str, ...]) -> bool:
+def _rejection_matches(candidate: ManualImportCandidate, tokens: tuple[str, ...]) -> bool:
     """True if any of a candidate's rejections contains one of ``tokens``.
 
-    Best-effort and case-insensitive. A rejection shape varies by Sonarr version
-    (a bare string, or a dict with ``reason``/``message``), so both are handled.
+    Best-effort and case-insensitive. Each rejection is an
+    :class:`~.seadex_types.ImportRejection` view whose ``reason`` carries the
+    human text (a bare-string rejection from an older Sonarr is folded into the
+    same ``reason`` field at the client boundary).
 
     Args:
-        candidate (dict): A raw ManualImportResource dict (reads ``rejections``).
+        candidate (ManualImportCandidate): The parsed candidate (reads
+            ``rejections``).
         tokens (tuple[str, ...]): Lowercase substrings to look for.
     """
 
-    for rejection in candidate.get("rejections") or []:
-        if isinstance(rejection, str):
-            text = rejection
-        elif isinstance(rejection, dict):
-            text = f"{rejection.get('reason', '')} {rejection.get('message', '')}"
-        else:
+    for rejection in candidate.rejections:
+        if not rejection.reason:
             continue
-        lowered = text.casefold()
+        lowered = rejection.reason.casefold()
         if any(token in lowered for token in tokens):
             return True
     return False
@@ -340,8 +343,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         # payload objects. Fetched lazily on the first import and then reused for
         # the rest of the run so repeated imports don't re-hit the endpoints;
         # None means "not yet fetched" (cleared in get_items, the run-start hook).
-        self._quality_defs_cache: list[dict] | None = None
-        self._languages_cache: list[dict] | None = None
+        self._quality_defs_cache: list[dict[str, Any]] | None = None
+        self._languages_cache: list[dict[str, Any]] | None = None
 
         # Monotonic time of the last RefreshMonitoredDownloads we asked Sonarr for,
         # used to throttle the rescan: the blocking pass calls import_completed
@@ -1058,7 +1061,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         lang_objs = self._import_language_objects(pending)
         quality_defs = self._quality_definitions()
 
-        files: list[dict] = []
+        files: list[ManualImportFile] = []
         missing: list[str] = []
         for decision in decisions:
             if decision.action == "missing":
@@ -1110,19 +1113,27 @@ class SonarrSync(ArrSync[SonarrItem]):
         )
         return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=True)
 
-    def _candidate_files(self, candidates: list[dict]) -> dict[str, CandidateFile]:
-        """Index on-disk manual-import candidates by normalized basename."""
+    def _candidate_files(
+        self,
+        candidates: list[ManualImportCandidate],
+    ) -> dict[str, CandidateFile]:
+        """Index on-disk manual-import candidates by normalized basename.
+
+        The candidates arrive already parsed at the Sonarr client boundary
+        (:meth:`SonarrClient.manual_import_candidates`), so each is read by
+        attribute and the raw DTO never reaches the decision path.
+        """
 
         by_basename: dict[str, CandidateFile] = {}
         for candidate in candidates:
-            path = candidate.get("path")
+            path = candidate.path
             if not path:
                 continue
             base = normalize_basename(os.path.basename(path))
             by_basename[base] = CandidateFile(
                 basename=base,
                 path=path,
-                quality=candidate.get("quality"),
+                quality=candidate.quality,
                 is_sample=_rejection_matches(candidate, _SAMPLE_TOKENS),
                 is_already_imported=_rejection_matches(candidate, _ALREADY_IMPORTED_TOKENS),
             )
@@ -1190,7 +1201,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         return merged
 
-    def _import_language_objects(self, pending: PendingImport) -> list[dict]:
+    def _import_language_objects(self, pending: PendingImport) -> list[Language]:
         """Resolve the import language objects for a record (lazily cached)."""
 
         if self._languages_cache is None:
@@ -1202,7 +1213,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         )
         return resolve_language_objects(lang_names, self._languages_cache)
 
-    def _quality_definitions(self) -> list[dict]:
+    def _quality_definitions(self) -> list[dict[str, Any]]:
         """The Sonarr quality definitions (lazily fetched + cached for the run)."""
 
         if self._quality_defs_cache is None:
@@ -1213,19 +1224,24 @@ class SonarrSync(ArrSync[SonarrItem]):
         self,
         decision: ImportDecision,
         pending: PendingImport,
-        lang_objs: list[dict],
-        quality_defs: list[dict],
+        lang_objs: list[Language],
+        quality_defs: list[dict[str, Any]],
         label: str,
-    ) -> dict:
+    ) -> ManualImportFile:
         """Build one ManualImport file payload from a planned ``import`` decision.
 
         The episode ids come straight from our authoritative map (never Sonarr's
         parse); the quality layers ours -> the candidate's in-context model ->
         the configured default, warning when none resolves (re-grab risk).
+
+        Only ``import`` decisions reach here, so ``decision.path`` is the on-disk
+        candidate path (always set); the ``or decision.basename`` keeps the
+        payload ``path`` a non-null ``str`` for the type.
         """
 
-        entry: dict = {
-            "path": decision.path,
+        path = decision.path or decision.basename
+        entry: ManualImportFile = {
+            "path": path,
             "seriesId": pending.series_id,
             "episodeIds": decision.episode_ids,
             "releaseGroup": pending.release_group,
@@ -1233,7 +1249,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             "languages": lang_objs,
         }
 
-        base = os.path.basename(decision.path) if decision.path else decision.basename
+        base = os.path.basename(path)
         our_q = parse_quality_from_filename(base)
         sel = select_quality(our_q, decision.quality, self._config.import_default_quality)
         if sel.model is not None:

@@ -41,7 +41,11 @@ from seadexarr.modules.manual_import import (
     select_quality,
     targets_needing_import,
 )
-from seadexarr.modules.seadex_types import SONARR_MISSING_KEY, SonarrEpisode
+from seadexarr.modules.seadex_types import (
+    SONARR_MISSING_KEY,
+    QualityModel,
+    SonarrEpisode,
+)
 
 
 def _ep(
@@ -239,7 +243,7 @@ class TestSelectQuality:
         assert sel == QualitySelection(name="Bluray-2160p", model=None)
 
     def test_sonarr_in_context_when_no_ours(self) -> None:
-        candidate = {"quality": {"name": "WEBDL-1080p"}}
+        candidate: QualityModel = {"quality": {"name": "WEBDL-1080p"}}
         sel = select_quality(our_name=None, candidate_quality=candidate, default_name="HDTV-720p")
         assert sel == QualitySelection(name=None, model=candidate)
 

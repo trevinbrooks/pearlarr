@@ -23,6 +23,8 @@ from seadexarr.modules.seadex_arr import SeaDexArr
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
     EpisodeRecord,
+    ManualImportCandidate,
+    QualityModel,
     SeadexReleaseGroupItem,
     SeadexUrlItem,
     SonarrEpisode,
@@ -321,24 +323,22 @@ def import_probe(
 def manual_candidate(
     path: str,
     *,
-    quality: dict | None = None,
-    languages: list[dict] | None = None,
+    quality: QualityModel | None = None,
     rejections: list[Any] | None = None,
-) -> dict[str, Any]:
-    """One raw Sonarr ManualImportResource dict, as ``import_completed`` reads it.
+) -> ManualImportCandidate:
+    """One parsed Sonarr manual-import candidate, as ``import_completed`` reads it.
 
-    Only the keys ``import_completed`` consults are populated: ``path`` (basename
-    drives the episode-id lookup), the in-context ``quality`` fallback, and
-    ``rejections`` (sample / already-imported skips). ``languages`` is included
-    for completeness even though the import overrides it.
+    Mirrors the typed value ``SonarrClient.manual_import_candidates`` returns:
+    only the fields the import decision consults are populated - ``path``
+    (basename drives the episode-id lookup), the in-context ``quality`` fallback,
+    and ``rejections`` (sample / already-imported skips). Built through
+    ``ManualImportCandidate.from_api`` so the raw rejection shapes (a bare string
+    or an ``{"reason": ...}`` dict) are folded exactly as in production.
     """
 
-    return {
-        "path": path,
-        "quality": quality,
-        "languages": languages or [],
-        "rejections": rejections or [],
-    }
+    return ManualImportCandidate.from_api(
+        {"path": path, "quality": quality, "rejections": rejections or []},
+    )
 
 
 def make_sonarr_sync(**attrs: Any) -> SonarrSync:

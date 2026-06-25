@@ -21,7 +21,16 @@ The defaults also encode one load-bearing distinction:
 """
 
 from dataclasses import dataclass, field
-from typing import Any, NamedTuple, Protocol, Self, runtime_checkable
+from typing import (
+    Any,
+    NamedTuple,
+    NotRequired,
+    Protocol,
+    Self,
+    TypedDict,
+    cast,
+    runtime_checkable,
+)
 
 from seadex import Tag, Tracker
 
@@ -258,3 +267,158 @@ class AniListMediaNode:
             cover_image=cover.get("large"),
             format=raw.get("format"),
         )
+
+
+# --- Sonarr manual-import (candidate read views + outgoing file payload) -----
+#
+# Derived from the Sonarr v3 OpenAPI ``ManualImportResource`` (and its nested
+# ``QualityModel`` / ``Quality`` / ``Revision`` / ``Language`` /
+# ``ImportRejectionResource``) in ``schemas/sonarr.schema``. Nullability mirrors
+# the schema exactly (a schema ``string | null`` field -> ``str | None``).
+#
+# Two kinds of model live here, per the repo's hybrid rule:
+#   * ``Quality`` / ``Revision`` / ``QualityModel`` / ``Language`` are TypedDicts:
+#     a candidate's in-context ``QualityModel`` is read for a name AND re-emitted
+#     verbatim into the outgoing payload, and a resolved ``Language`` is built as
+#     a dict and POSTed, so a TypedDict types the JSON shape without forcing a
+#     round-trip through a dataclass. The ``Quality`` / ``Revision`` /
+#     ``QualityModel`` keys are ``NotRequired`` because the helpers build and read
+#     *partial* objects (a candidate ``QualityModel`` carrying only ``quality``
+#     and no ``revision``, a quality dict with just ``id``/``name``); ``Language``
+#     always carries both ``id`` and ``name`` (nullable values from a ``.get()``).
+#   * ``ManualImportCandidate`` / ``ImportRejection`` are frozen dataclass VIEWS
+#     with a defensive ``from_api``: they are READ into the import decision, so
+#     they follow the ``SonarrEpisode`` precedent (attribute access, ``.get()``
+#     defaults).
+
+
+class Quality(TypedDict):
+    """The nested ``quality`` object of a Sonarr ``QualityModel``.
+
+    Schema ``Quality``: ``id``/``resolution`` are non-null ints, ``name`` is
+    ``string | null``, ``source`` is the ``QualitySource`` enum (a string). Every
+    key is ``NotRequired`` because the helpers build and read partial quality
+    dicts (``resolve_quality_model`` copies only the keys a definition carries).
+    """
+
+    id: NotRequired[int]
+    name: NotRequired[str | None]
+    source: NotRequired[str]
+    resolution: NotRequired[int]
+
+
+class Revision(TypedDict):
+    """The nested ``revision`` object of a Sonarr ``QualityModel`` (schema ``Revision``)."""
+
+    version: NotRequired[int]
+    real: NotRequired[int]
+    isRepack: NotRequired[bool]
+
+
+class QualityModel(TypedDict):
+    """A Sonarr ``QualityModel`` (schema): ``{quality, revision}``.
+
+    Used two ways on the manual-import path: a candidate's in-context model is
+    read for its nested quality name and, when it wins the layered decision,
+    re-emitted verbatim into the outgoing file payload; and
+    ``resolve_quality_model`` builds one from a quality definition. Both keys are
+    ``NotRequired`` because a built model may omit ``revision`` and a candidate
+    model may carry only ``quality``.
+    """
+
+    quality: NotRequired[Quality]
+    revision: NotRequired[Revision]
+
+
+class Language(TypedDict):
+    """A Sonarr ``Language`` (schema): ``{id, name}``.
+
+    Read+passthrough: ``resolve_language_objects`` builds these from the
+    ``/api/v3/language`` list and they are POSTed verbatim in the file payload.
+    ``id``/``name`` come from a defensive ``.get()``, so both are nullable.
+    """
+
+    id: int | None
+    name: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ImportRejection:
+    """One entry of a candidate's ``rejections`` array (schema ``ImportRejectionResource``).
+
+    Only ``reason`` (``string | null``) is read - it carries the human text the
+    sample / already-imported classifier matches against.
+    """
+
+    reason: str | None = None
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> Self:
+        """Build from one raw ``ImportRejectionResource`` dict."""
+
+        return cls(reason=raw.get("reason"))
+
+
+@dataclass(frozen=True, slots=True)
+class ManualImportCandidate:
+    """A Sonarr ``ManualImportResource``, reduced to the fields planning reads.
+
+    The decision path consults only ``path`` (the on-disk file to import,
+    ``string | null`` in the schema), ``quality`` (the in-context ``QualityModel``
+    re-emitted verbatim when it wins) and ``rejections`` (the per-file
+    sample/already-imported flags). Parsed at the client boundary via
+    :meth:`from_api`, mirroring :class:`SonarrEpisode`.
+    """
+
+    path: str | None = None
+    quality: QualityModel | None = None
+    rejections: tuple[ImportRejection, ...] = ()
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> Self:
+        """Build from one raw ``ManualImportResource`` dict (filters unknown keys).
+
+        ``rejections`` may be ``null`` (schema) and, on older Sonarr versions, a
+        bare string per entry rather than an ``ImportRejectionResource`` object;
+        both are folded to an :class:`ImportRejection` so the classifier reads one
+        shape. ``quality`` is kept as the raw ``QualityModel`` mapping (re-emitted
+        verbatim), so it is passed through unchanged.
+        """
+
+        rejections: list[ImportRejection] = []
+        raw_rejections: list[Any] = raw.get("rejections") or []
+        for rejection in raw_rejections:
+            if isinstance(rejection, str):
+                rejections.append(ImportRejection(reason=rejection))
+            elif isinstance(rejection, dict):
+                rejections.append(
+                    ImportRejection.from_api(cast("dict[str, Any]", rejection)),
+                )
+
+        # The candidate's in-context QualityModel is re-emitted verbatim into the
+        # outgoing payload, so it is passed through as the raw mapping; narrow it
+        # to QualityModel at this parse boundary.
+        quality = raw.get("quality")
+        return cls(
+            path=raw.get("path"),
+            quality=cast("QualityModel", quality) if isinstance(quality, dict) else None,
+            rejections=tuple(rejections),
+        )
+
+
+class ManualImportFile(TypedDict):
+    """One outgoing ``ManualImport`` command file entry (the POST payload).
+
+    Built by the Sonarr strategy from a planned ``import`` decision and POSTed as
+    JSON, so a ``TypedDict`` types the constructed dict without a round-trip.
+    ``quality`` is the only optional key (omitted, not sent as ``None``, when no
+    quality resolves - Sonarr then falls back to Unknown).
+    """
+
+    path: str
+    seriesId: int
+    episodeIds: list[int]
+    releaseGroup: str
+    downloadId: str
+    languages: list[Language]
+    quality: NotRequired[QualityModel]

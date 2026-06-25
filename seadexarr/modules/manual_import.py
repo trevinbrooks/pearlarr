@@ -18,9 +18,16 @@ import re
 import unicodedata
 from dataclasses import asdict, dataclass
 from enum import Enum, StrEnum, auto
-from typing import Any
+from typing import Any, cast
 
-from .seadex_types import SONARR_MISSING_KEY, SonarrEpisode
+from .seadex_types import (
+    SONARR_MISSING_KEY,
+    Language,
+    Quality,
+    QualityModel,
+    Revision,
+    SonarrEpisode,
+)
 
 
 def normalize_basename(name: str) -> str:
@@ -561,7 +568,7 @@ class CandidateFile:
 
     basename: str
     path: str
-    quality: dict | None
+    quality: QualityModel | None
     is_sample: bool
     is_already_imported: bool
 
@@ -578,7 +585,7 @@ class ImportDecision:
     basename: str
     action: str
     path: str | None
-    quality: dict | None
+    quality: QualityModel | None
     episode_ids: list[int]
 
 
@@ -729,33 +736,55 @@ class QualitySelection:
     """
 
     name: str | None
-    model: dict | None
+    model: QualityModel | None
 
 
-def _candidate_quality_name(candidate_quality: dict | None) -> str | None:
-    """Pull the nested quality name out of a Sonarr candidate quality dict.
+def _quality_name(blob: object) -> str | None:
+    """The ``name`` of a quality-ish object, or None when absent/non-str.
 
-    Sonarr nests the name at either ``quality.name`` or ``quality.quality.name``
-    depending on the endpoint; read both null-safely.
+    Reads ``name`` off an arbitrary JSON object null-safely; used to walk the
+    schema ``QualityModel.quality.name`` path and its cross-version variants.
+    """
+
+    if isinstance(blob, dict):
+        name: object = cast("dict[str, Any]", blob).get("name")
+        if isinstance(name, str) and name:
+            return name
+    return None
+
+
+def _candidate_quality_name(candidate_quality: QualityModel | None) -> str | None:
+    """Pull the nested quality name out of a Sonarr candidate quality model.
+
+    The schema path is ``QualityModel.quality.name``, but Sonarr nests the name
+    differently across endpoints/versions (``quality.quality.name``, or a bare
+    ``name`` on the model itself). The model is therefore probed as an open
+    mapping for these variant paths, which the strict ``QualityModel`` schema
+    does not cover.
     """
 
     if not candidate_quality:
         return None
     quality = candidate_quality.get("quality")
+    # Schema path + the ``quality.quality.name`` variant: ``quality`` is the
+    # nested ``Quality`` whose ``name`` is canonical, but a variant double-nests
+    # another quality object under it. ``Quality`` is read as an open mapping
+    # here because that inner ``quality`` key is outside the schema.
     if isinstance(quality, dict):
-        inner = quality.get("quality")
-        if isinstance(inner, dict) and inner.get("name"):
-            return inner.get("name")
-        if quality.get("name"):
-            return quality.get("name")
-    if candidate_quality.get("name"):
-        return candidate_quality.get("name")
-    return None
+        inner_name = _quality_name(cast("dict[str, Any]", quality).get("quality"))
+        if inner_name is not None:
+            return inner_name
+        direct = _quality_name(quality)
+        if direct is not None:
+            return direct
+    # Variant: a bare ``name`` on the model itself (outside the schema, which puts
+    # ``name`` on the nested ``Quality``), so probe the model as an open mapping.
+    return _quality_name(cast("dict[str, Any]", candidate_quality))
 
 
 def select_quality(
     our_name: str | None,
-    candidate_quality: dict | None,
+    candidate_quality: QualityModel | None,
     default_name: str | None,
 ) -> QualitySelection:
     """Choose a quality with precedence ours > sonarr-in-context > default.
@@ -769,7 +798,7 @@ def select_quality(
 
     Args:
         our_name (str | None): Our parsed Sonarr quality name, if any.
-        candidate_quality (dict | None): The candidate's in-context quality model.
+        candidate_quality (QualityModel | None): The candidate's in-context model.
         default_name (str | None): The configured default quality name.
 
     Returns:
@@ -808,8 +837,11 @@ def derive_languages(
     return dual if is_dual_audio else single
 
 
-def resolve_quality_model(name: str, quality_defs: list[dict]) -> dict | None:
-    """Resolve a Sonarr quality NAME to a manual-import ``QualityModel`` dict.
+def resolve_quality_model(
+    name: str,
+    quality_defs: list[dict[str, Any]],
+) -> QualityModel | None:
+    """Resolve a Sonarr quality NAME to a manual-import ``QualityModel``.
 
     Looks the name up (case-insensitive) against the nested ``quality.name`` of
     each ``/api/v3/qualitydefinition`` entry and wraps the matched quality dict
@@ -819,29 +851,35 @@ def resolve_quality_model(name: str, quality_defs: list[dict]) -> dict | None:
 
     Args:
         name (str): A Sonarr quality name (e.g. ``"WEBDL-1080p"``).
-        quality_defs (list[dict]): The raw ``/api/v3/qualitydefinition`` list;
-            each entry nests a ``quality`` dict with ``id``/``name``/``source``/
-            ``resolution``.
+        quality_defs (list[dict[str, Any]]): The raw ``/api/v3/qualitydefinition``
+            list; each entry nests a ``quality`` dict with
+            ``id``/``name``/``source``/``resolution`` (the unmodeled
+            ``QualityDefinitionResource``, read key-by-key here).
 
     Returns:
-        dict | None: A ``QualityModel`` dict, or None when no definition matches.
+        QualityModel | None: A ``QualityModel``, or None when no definition matches.
     """
 
     target = name.casefold()
     for definition in quality_defs:
-        quality = definition.get("quality")
-        if not isinstance(quality, dict):
+        # The matched definition's nested quality dict is the schema ``Quality``
+        # re-emitted verbatim; it is an open JSON object from an unmodeled
+        # endpoint, so narrow it to ``Quality`` at this boundary.
+        raw_quality = definition.get("quality")
+        if not isinstance(raw_quality, dict):
             continue
+        quality = cast("Quality", raw_quality)
         quality_name = quality.get("name")
         if isinstance(quality_name, str) and quality_name.casefold() == target:
-            return {
-                "quality": quality,
-                "revision": {"version": 1, "real": 0, "isRepack": False},
-            }
+            revision: Revision = {"version": 1, "real": 0, "isRepack": False}
+            return {"quality": quality, "revision": revision}
     return None
 
 
-def resolve_language_objects(names: list[str], lang_defs: list[dict]) -> list[dict]:
+def resolve_language_objects(
+    names: list[str],
+    lang_defs: list[dict[str, Any]],
+) -> list[Language]:
     """Resolve language names to Sonarr ``{id, name}`` language objects.
 
     Matches each requested name (case-insensitive) against the
@@ -851,20 +889,20 @@ def resolve_language_objects(names: list[str], lang_defs: list[dict]) -> list[di
 
     Args:
         names (list[str]): Language names to resolve (e.g. ``["Japanese"]``).
-        lang_defs (list[dict]): The raw ``/api/v3/language`` list; each entry has
-            ``id`` and ``name``.
+        lang_defs (list[dict[str, Any]]): The raw ``/api/v3/language`` list; each
+            entry has ``id`` and ``name`` (the unmodeled ``LanguageResource``).
 
     Returns:
-        list[dict]: The matched ``{"id", "name"}`` objects (unknown names
+        list[Language]: The matched ``{"id", "name"}`` objects (unknown names
         omitted).
     """
 
-    by_name = {
+    by_name: dict[str, dict[str, Any]] = {
         definition["name"].casefold(): definition
         for definition in lang_defs
         if isinstance(definition.get("name"), str)
     }
-    resolved: list[dict] = []
+    resolved: list[Language] = []
     # ``names or []`` and the str guard keep a blank/None or malformed configured
     # language list from raising (a blank YAML value parses to None, which would
     # otherwise blow up on ``for name in None`` / ``None.casefold()``).
