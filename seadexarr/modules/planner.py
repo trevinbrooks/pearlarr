@@ -50,8 +50,8 @@ class PublicOnlySkips:
     """
 
     skipped: bool = False
-    groups: list[str] = field(default_factory=list)
-    notices: list[SkipNotice] = field(default_factory=list)
+    groups: list[str] = field(default_factory=list[str])
+    notices: list[SkipNotice] = field(default_factory=list[SkipNotice])
 
 
 @dataclass
@@ -71,8 +71,8 @@ class PlanResult:
     # release-group path filters those out, but the type must cover both).
     torrent_hashes: list[str | None]
     public_only_skipped: bool = False
-    public_only_groups: list[str] = field(default_factory=list)
-    skip_notices: list[SkipNotice] = field(default_factory=list)
+    public_only_groups: list[str] = field(default_factory=list[str])
+    skip_notices: list[SkipNotice] = field(default_factory=list[SkipNotice])
 
 
 def normalize_rg(name: str | None) -> str | None:
@@ -91,7 +91,9 @@ def normalize_rg(name: str | None) -> str | None:
     return name.strip().strip("-").casefold()
 
 
-def get_episode_keys(all_episodes: Iterable[EpisodeRecord]) -> set:
+def get_episode_keys(
+    all_episodes: Iterable[EpisodeRecord],
+) -> set[tuple[int | None, int | None]]:
     """Build the set of (season, episode) keys an episode list covers
 
     Reduces a release's parsed episode list to the set of (season, episode)
@@ -105,7 +107,7 @@ def get_episode_keys(all_episodes: Iterable[EpisodeRecord]) -> set:
     return {(ep.season, ep.episode) for ep in all_episodes}
 
 
-def get_same_files_groups(seadex_dict: SeadexDict) -> list:
+def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
     """Group SeaDex release groups that cover exactly the same files
 
     Release groups are grouped by their parsed episode coverage: two groups are
@@ -125,10 +127,17 @@ def get_same_files_groups(seadex_dict: SeadexDict) -> list:
         seadex_dict (dict): Dictionary of SeaDex releases
     """
 
-    grouped = {}
+    # The grouping key is one of three shapes: a shared "all cover one movie"
+    # sentinel str, a per-group "couldn't parse" sentinel tuple, or the parsed
+    # episode-coverage frozenset that equates groups covering identical files.
+    grouped: dict[
+        str | tuple[str, str] | frozenset[tuple[int | None, int | None]],
+        list[str],
+    ] = {}
     for rg, rg_item in seadex_dict.items():
         all_episodes = rg_item.all_episodes
 
+        key: str | tuple[str, str] | frozenset[tuple[int | None, int | None]]
         if all_episodes is None:
             # No episode parsing for this Arr (e.g., Radarr): treat as one movie
             key = "__no_episode_parsing__"
@@ -263,7 +272,7 @@ class DownloadPlanner:
     def filter_by_torrent_hash(
         self,
         seadex_dict: SeadexDict,
-        cached_hashes: list,
+        cached_hashes: list[str | None],
     ) -> PlanResult:
         """Select downloads if the torrent hash is not already in the cache
 
@@ -276,7 +285,7 @@ class DownloadPlanner:
             cached_hashes: Torrent hashes already remembered for this entry
         """
 
-        torrent_hashes = []
+        torrent_hashes: list[str | None] = []
 
         for seadex_rg, seadex_rg_item in seadex_dict.items():
 

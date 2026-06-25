@@ -73,13 +73,15 @@ class RunStats:
     """
 
     checked: int = 0
-    added: list[GrabRecord] = field(default_factory=list)
+    added: list[GrabRecord] = field(default_factory=list[GrabRecord])
     up_to_date: int = 0
     cached: int = 0
     no_seadex_entry: int = 0
     no_releases: int = 0
     no_mappings: int = 0
-    needs_action: list[NeedsActionRecord] = field(default_factory=list)
+    needs_action: list[NeedsActionRecord] = field(
+        default_factory=list[NeedsActionRecord],
+    )
     unmonitored: int = 0
     # Carried-over pending-import counts by current status (NEVER this-run grabs -
     # those stay `added`). Distinct int fields so a typo fails to compile instead
@@ -111,21 +113,25 @@ class RunContext:
     # the caller knows not to cache the title as done; the group names ride along
     # for the run summary's "needs action" list.
     public_only_skipped: bool = False
-    public_only_groups: list[str] = field(default_factory=list)
+    public_only_groups: list[str] = field(default_factory=list[str])
     # Run clock (monotonic, so an NTP/DST step can't yield negative elapsed) and
     # the logger-counter snapshot taken at the start, diffed for the summary.
     started_monotonic: float | None = None
-    log_counts_at_start: dict[int, int] = field(default_factory=dict)
+    log_counts_at_start: dict[int, int] = field(default_factory=dict[int, int])
     # PendingImport records written THIS run (on a successful add), for the
     # end-of-run blocking pass; the durable copies live in cache_store under
     # ``pending_imports``, so this is just the fast in-memory list to wait on.
-    pending_imports: list[PendingImport] = field(default_factory=list)
+    pending_imports: list[PendingImport] = field(
+        default_factory=list[PendingImport],
+    )
     # The classified status of each CARRIED-OVER record touched this run (by the
     # per-series inline snapshot or the deferred reconcile), keyed by infohash.
     # Read by the pre-summary tally so each carried-over record is counted exactly
     # once by its known status (un-touched store records default to QUEUED). Never
     # holds a this-run grab (those stay `added`).
-    pending_states: dict[str, PendingState] = field(default_factory=dict)
+    pending_states: dict[str, PendingState] = field(
+        default_factory=dict[str, PendingState],
+    )
 
 
 class RunReporter:
@@ -178,7 +184,7 @@ class RunReporter:
         # Warning/error counts come from the logger-level counter, diffed
         # against the snapshot taken when the run started
         counter = getattr(self.logger, "seadex_counter", None)
-        now_counts = counter.snapshot() if counter else {}
+        now_counts: dict[int, int] = counter.snapshot() if counter else {}
         start_counts = ctx.log_counts_at_start
 
         def _delta(level: int) -> int:

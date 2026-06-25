@@ -21,7 +21,7 @@ def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
 
     # Walk the sorted episodes, breaking into runs wherever they aren't
     # consecutive
-    runs = []
+    runs: list[tuple[int, int]] = []
     run_start = run_end = episodes[0]
     for episode in episodes[1:]:
         if episode == run_end + 1:
@@ -57,7 +57,7 @@ def format_episode_coverage(episodes: list[EpisodeRecord]) -> list[tuple[str, st
         return None
 
     # Collect the episode numbers seen for each season
-    episodes_by_season = {}
+    episodes_by_season: dict[int, set[int]] = {}
     for ep in episodes:
         season = ep.season
         episode = ep.episode
@@ -104,7 +104,7 @@ def episodes_from_ep_list(
         missing_only (bool): Keep only episodes with no file. Defaults to False
     """
 
-    episodes = []
+    episodes: list[EpisodeRecord] = []
     for ep in ep_list or []:
         if missing_only and ep.episode_file_id != 0:
             continue

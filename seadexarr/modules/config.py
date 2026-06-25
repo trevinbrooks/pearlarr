@@ -23,7 +23,9 @@ from xml.etree import ElementTree
 import yaml
 from ruamel.yaml import YAML
 
+from .anibridge import AniBridgeGraph
 from .manual_import import ImportWaitMode
+from .mappings import AnimeIdsMap
 
 # Tracker name classification. Stored casefolded so membership tests match the
 # casefolded ``trackers`` setting and the casefolded tracker names from SeaDex.
@@ -133,7 +135,9 @@ class AppConfig:
         """
 
         with open(template_path) as f:
-            config_template = YAML().load(f)
+            # Narrow the parsed template mapping (genuinely open YAML our code
+            # only reads by key) so the downstream keys/index reads are typed.
+            config_template: dict[str, Any] = YAML().load(f)
 
         if list(self.data.keys()) != list(config_template.keys()):
             # Start from the template (template key order + any newly added
@@ -379,7 +383,7 @@ class AppConfig:
     def ignore_tags(self) -> list[str]:
         ignore_tags = self.data.get("ignore_tags", None)
         if ignore_tags is None:
-            ignore_tags = []
+            ignore_tags = list[str]()
         return ignore_tags
 
     # cached_property, not property: these two normalize into a fresh ``set`` on
@@ -392,7 +396,7 @@ class AppConfig:
     def ignore_anilist_ids(self) -> set[int]:
         ignore_anilist_ids = self.data.get("ignore_anilist_ids", None)
         if ignore_anilist_ids is None:
-            ignore_anilist_ids = set()
+            ignore_anilist_ids = set[int]()
         return {int(x) for x in ignore_anilist_ids}
 
     @cached_property
@@ -422,7 +426,7 @@ class AppConfig:
         return self.data.get("log_level", "INFO")
 
     @property
-    def anime_mappings_cfg(self) -> dict | bool | None:
+    def anime_mappings_cfg(self) -> AnimeIdsMap | bool | None:
         return self.data.get("anime_mappings", None)
 
     @property
@@ -430,5 +434,5 @@ class AppConfig:
         return self.data.get("anidb_mappings", None)
 
     @property
-    def anibridge_mappings_cfg(self) -> dict | bool | None:
+    def anibridge_mappings_cfg(self) -> AniBridgeGraph | bool | None:
         return self.data.get("anibridge_mappings", None)

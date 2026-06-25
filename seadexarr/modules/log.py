@@ -236,13 +236,13 @@ class LogCounter(logging.Filter):
 
     def __init__(self) -> None:
         super().__init__()
-        self.counts = {}
+        self.counts: dict[int, int] = {}
 
     def filter(self, record: logging.LogRecord) -> bool:
         self.counts[record.levelno] = self.counts.get(record.levelno, 0) + 1
         return True
 
-    def snapshot(self) -> dict:
+    def snapshot(self) -> dict[int, int]:
         """Return a copy of the current per-level counts"""
         return dict(self.counts)
 
