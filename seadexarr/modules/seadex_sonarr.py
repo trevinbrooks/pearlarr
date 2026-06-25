@@ -1,6 +1,7 @@
 import os
 import time
 from datetime import datetime, timedelta
+from typing import Any, cast
 from xml.etree import ElementTree
 
 from . import coverage as _coverage
@@ -53,6 +54,7 @@ from .seadex_types import (
     ManualImportCandidate,
     ManualImportFile,
     QualityDefinition,
+    RadarrItem,
     SeadexDict,
     SonarrEpisode,
     SonarrItem,
@@ -163,12 +165,12 @@ def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
     # assumed to overlap (we can't prove it doesn't), whereas get_same_files_groups
     # keeps it separate (so we never drop content we couldn't verify). Keep both
     # consistent if the coverage semantics change.
-    episode_sets = {}
+    episode_sets: dict[str, set[tuple[int | None, int | None]]] = {}
     for rg, rg_item in seadex_dict.items():
         all_episodes = rg_item.all_episodes or []
         episode_sets[rg] = get_episode_keys(all_episodes)
 
-    release_groups = list(episode_sets.keys())
+    release_groups: list[str] = list(episode_sets.keys())
     for i, rg1 in enumerate(release_groups):
         for rg2 in release_groups[i + 1:]:
 
@@ -495,7 +497,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             and self.all_radarr_movies is not None
         ):
 
-            radarr_movies = []
+            radarr_movies: list[RadarrItem] = []
 
             # Make sure these are flagged as specials since sometimes shows and
             # movies are all lumped together
@@ -702,7 +704,12 @@ class SonarrSync(ArrSync[SonarrItem]):
         """
 
         ep_id_map = build_episode_id_map(ep_list)
-        parse_cache: dict = self.cache_store.data.get("sonarr_parse_cache", {})
+        # Genuinely-open cache JSON: each record is the persisted parse entry
+        # ``{"fetched_at": str, "episodes": [...]}`` written by
+        # ``parse_episodes_from_seadex``, so the record value is ``dict[str, Any]``.
+        parse_cache: dict[str, dict[str, Any]] = self.cache_store.data.get(
+            "sonarr_parse_cache", {},
+        )
         added_at = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
 
         pending_seeds: dict[str, PendingImport] = {}
@@ -737,7 +744,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                     record = parse_cache.get(base)
                     if not record:
                         continue
-                    parsed = record.get("episodes", [])
+                    parsed: list[dict[str, Any]] = record.get("episodes", [])
                     file_ids = episode_ids_for_parsed(parsed, ep_id_map)
                     if file_ids:
                         file_episode_map[normalize_basename(base)] = file_ids
@@ -866,17 +873,27 @@ class SonarrSync(ArrSync[SonarrItem]):
         self._ep_list_cache[series_id] = fetched
         return fetched
 
-    def _series_pending_records(self, series_id: int) -> list[dict]:
-        """Raw durable pending records for one series (any release group)."""
+    def _series_pending_records(self, series_id: int) -> list[dict[str, Any]]:
+        """Raw durable pending records for one series (any release group).
 
-        store = self.cache_store.data.get("pending_imports", {}).get(
+        Each record is the genuinely-open cache JSON form of a
+        :class:`PendingImport` (``to_json``/``from_json``), so it is typed
+        ``dict[str, Any]``.
+        """
+
+        # ``cache_store.data`` is ``dict[str, Any]``, so the per-Arr store walk is
+        # ``Any``; the ``isinstance`` below defensively narrows each value to a
+        # dict record (cast to the open cache-JSON shape) before reading it.
+        store: dict[str, Any] = self.cache_store.data.get("pending_imports", {}).get(
             Arr.SONARR.value, {},
         )
-        return [
-            raw
-            for raw in store.values()
-            if isinstance(raw, dict) and raw.get("series_id") == series_id
-        ]
+        records: list[dict[str, Any]] = []
+        for raw in store.values():
+            if isinstance(raw, dict):
+                record = cast("dict[str, Any]", raw)
+                if record.get("series_id") == series_id:
+                    records.append(record)
+        return records
 
     def _recommended_groups(self, series_id: int, this_group: str) -> set[str]:
         """Normalized recommended groups for the series (the overwrite-guard set).
@@ -1375,7 +1392,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         # Prefer the AniDB mapping dict over any offsets
         if len(anidb_mapping_dict) > 0:
-            anidb_final_ep_list = []
+            anidb_final_ep_list: list[SonarrEpisode] = []
 
             # See if we have the mapping for each entry
             for ep in final_ep_list:
@@ -1490,7 +1507,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         return sonarr_release_dict
 
     @staticmethod
-    def _sonarr_parse_is_fresh(record: dict | None, cutoff: datetime) -> bool:
+    def _sonarr_parse_is_fresh(record: dict[str, Any] | None, cutoff: datetime) -> bool:
         """True if a persisted parse record has episodes and is within TTL
 
         Legacy list-form entries (pre-TTL, no timestamp) are treated as stale so

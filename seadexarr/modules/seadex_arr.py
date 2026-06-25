@@ -4,13 +4,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import final
+from typing import Any, final
 
 import qbittorrentapi
 import requests
 from seadex import EntryRecord
-
-from seadexarr.modules.seadex_types import SeadexReleaseGroupItem, SeadexUrlItem
 
 from . import coverage as _coverage
 from .anilist_gateway import AniListGateway
@@ -38,7 +36,14 @@ from .planner import DownloadPlanner
 from .protocols import ArrSync, ImportCompleter
 from .reporter import GrabRecord, NeedsActionRecord, RunContext, RunReporter
 from .seadex_gateway import SeaDexGateway
-from .seadex_types import ArrItem, ArrReleaseDict, SeadexDict, SonarrEpisode
+from .seadex_types import (
+    ArrItem,
+    ArrReleaseDict,
+    SeadexDict,
+    SeadexReleaseGroupItem,
+    SeadexUrlItem,
+    SonarrEpisode,
+)
 from .torrents import AddOutcome, ReleaseOutcome, TorrentService
 from .wait_view import WaitView, make_wait_view
 
@@ -846,7 +851,7 @@ class SeaDexArr:
         # fetched, then batch-fetch (id_in pages) everything still missing, so the
         # loop rarely hits AniList one id at a time and trips its rate limit.
         self._anilist.load_cache()
-        prefetch_ids = set()
+        prefetch_ids: set[int] = set()
         for item in all_items:
             if not item.monitored and self._config.ignore_unmonitored:
                 continue
@@ -1170,17 +1175,24 @@ class SeaDexArr:
     # path below is a no-op under preview (``self._is_preview()``), since waiting
     # and importing need a real qBittorrent client.
 
-    def _pending_store(self) -> dict[str, dict]:
+    def _pending_store(self) -> dict[str, dict[str, Any]]:
         """The per-Arr ``{infohash -> record}`` store inside the cache.
 
         Lazily creates the ``pending_imports`` block and the per-Arr sub-block
         (mirroring the ``sonarr_parse_cache`` setdefault pattern), so the first
         write and every later read share one durable, idempotent map.
+
+        Each record is the JSON form of a :class:`PendingImport`
+        (``to_json()``/``from_json(raw: dict[str, Any])``), i.e. genuinely-open
+        cache JSON, so the inner value is ``dict[str, Any]``.
         """
 
-        return self.cache_store.data.setdefault("pending_imports", {}).setdefault(
-            self._ctx.arr.value, {},
-        )
+        # ``cache_store.data`` is ``dict[str, Any]``, so ``setdefault`` returns
+        # ``Any``; the inner block is the persisted PendingImport JSON map.
+        store: dict[str, dict[str, Any]] = self.cache_store.data.setdefault(
+            "pending_imports", {},
+        ).setdefault(self._ctx.arr.value, {})
+        return store
 
     def _poll_torrent(
         self, infohash: str,
@@ -1311,7 +1323,7 @@ class SeaDexArr:
         return {p.infohash for p in self._ctx.pending_imports}
 
     def _reconcile_one(
-        self, infohash: str, raw: dict,
+        self, infohash: str, raw: dict[str, Any],
     ) -> tuple[PendingImport, PendingState]:
         """Poll one carried-over record once and fold it to a :class:`PendingState`.
 
