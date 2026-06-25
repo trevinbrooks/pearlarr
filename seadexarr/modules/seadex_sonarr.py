@@ -14,6 +14,7 @@ from .config import Arr
 from .log import EntryState, indent_string
 from .manual_import import (
     CandidateFile,
+    ImportAction,
     ImportDecision,
     ImportProbe,
     ImportReadiness,
@@ -884,7 +885,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             self._list_commands(),
             pending.infohash,
             content_path,
-            set(self._pending_target_ids(pending)),
+            set(seeded_targets),
         ):
             self.logger.debug(
                 indent_string(f"{label}: a ManualImport is already in flight; waiting"),
@@ -1137,13 +1138,16 @@ class SonarrSync(ArrSync[SonarrItem]):
         files: list[ManualImportFile] = []
         missing: list[str] = []
         for decision in decisions:
-            if decision.action == "missing":
-                missing.append(decision.basename)
-            elif decision.action == "import":
-                files.append(
-                    self._build_file_entry(decision, pending, lang_objs, quality_defs, label),
-                )
-            # "sample" / "already" / "skip_done" -> nothing to import for this file.
+            match decision.action:
+                case ImportAction.MISSING:
+                    missing.append(decision.basename)
+                case ImportAction.IMPORT:
+                    files.append(
+                        self._build_file_entry(decision, pending, lang_objs, quality_defs, label),
+                    )
+                case _:
+                    # SAMPLE / ALREADY / SKIP_DONE -> nothing to import for this file.
+                    continue
 
         if missing:
             # Intended files our map covers but Sonarr can't see yet. An early poll

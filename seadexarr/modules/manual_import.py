@@ -22,7 +22,6 @@ from enum import Enum, StrEnum, auto
 from typing import Any, cast
 
 from .seadex_types import (
-    SONARR_MISSING_KEY,
     CommandResource,
     Language,
     ParsedFileInfo,
@@ -30,6 +29,7 @@ from .seadex_types import (
     QualityModel,
     Revision,
     SonarrEpisode,
+    season_episode_key,
 )
 
 
@@ -363,14 +363,13 @@ def manual_import_in_flight(
         status = (command.status or "").casefold()
         if name != _MANUAL_IMPORT_COMMAND_NAME or status not in _COMMAND_IN_FLIGHT_STATES:
             continue
-        for file in command.files:
-            file_hash = file.download_id
-            if file_hash is not None and file_hash.casefold() == target_hash:
-                return True
+        file_hashes = {f.download_id.casefold() for f in command.files if f.download_id is not None}
+        if target_hash in file_hashes:
+            return True
         # Fallback only for a command whose files carry no download id at all (a
         # folder / season-pack import); a command that DOES carry download ids but
         # for a different torrent must not be swept up by a path/episode overlap.
-        if any(file.download_id for file in command.files):
+        if file_hashes:
             continue
         for file in command.files:
             if file.path is not None and _norm_path(file.path).startswith(content_prefix):
@@ -499,11 +498,7 @@ def build_episode_id_map(ep_list: list[SonarrEpisode]) -> dict[tuple[int, int], 
     for ep in ep_list:
         if not ep.id:
             continue
-        season = ep.season_number if ep.season_number is not None else SONARR_MISSING_KEY
-        episode = (
-            ep.episode_number if ep.episode_number is not None else SONARR_MISSING_KEY
-        )
-        by_key.setdefault((season, episode), ep.id)
+        by_key.setdefault(season_episode_key(ep.season_number, ep.episode_number), ep.id)
     return by_key
 
 
@@ -679,10 +674,9 @@ def _exact_episode_ids(
 
     if info is None or not info.episode_numbers:
         return []
-    season = info.season_number if info.season_number is not None else SONARR_MISSING_KEY
     ids: list[int] = []
     for episode in info.episode_numbers:
-        ep_id = ep_id_map.get((season, episode))
+        ep_id = ep_id_map.get(season_episode_key(info.season_number, episode))
         if ep_id and (allow_unscoped or ep_id in resolved_set):
             ids.append(ep_id)
     if len(ids) != len(info.episode_numbers):
@@ -774,12 +768,11 @@ def assign_episode_ids(
         if info is not None and len(info.absolute_episode_numbers) == 1:
             abs_by_file[name] = info.absolute_episode_numbers[0]
 
-    absolutes = list(abs_by_file.values())
     clean_absolute = (
         bool(abs_by_file)
         and len(abs_by_file) == len(deferred)        # every leftover has one absolute
         and len(abs_by_file) == len(leftover_ids)    # 1:1 with the leftover ids
-        and len(set(absolutes)) == len(absolutes)    # no shared absolute (restart numbering)
+        and len(set(abs_by_file.values())) == len(abs_by_file)  # no shared absolute (restart numbering)
     )
 
     skipped: list[str] = []
@@ -817,17 +810,42 @@ class CandidateFile:
     is_already_imported: bool
 
 
+class ImportAction(StrEnum):
+    """What :func:`plan_import_files` decided for one entry in OUR map.
+
+    A ``StrEnum`` (so each member IS its rendered word, matching the
+    :class:`PendingState` / :class:`QueueVerdict` / :class:`EpisodeFileStatus`
+    style) - the consumer branches on a typed value instead of a magic string.
+    Only ``IMPORT`` and ``MISSING`` drive behavior; the three "nothing to import
+    for this file" members are kept distinct purely for reporting:
+
+    ``IMPORT`` -> POST a manual import for this file.
+    ``MISSING`` -> our map intends this file but it isn't on disk (surfaced, never
+    silently skipped).
+    ``SAMPLE`` -> a sample (never our intended file).
+    ``ALREADY`` -> not needed, and Sonarr flagged an already-imported rejection.
+    ``SKIP_DONE`` -> not needed (every target already holds a recommended file),
+    with no Sonarr rejection.
+    """
+
+    IMPORT = "import"
+    SKIP_DONE = "skip_done"
+    SAMPLE = "sample"
+    ALREADY = "already"
+    MISSING = "missing"
+
+
 @dataclass(frozen=True)
 class ImportDecision:
     """One decision per entry in OUR authoritative map (the source of truth).
 
     Candidates only supply the on-disk ``path`` + rejection flags; the episode
-    assignment is strictly ``episode_ids`` from our map. ``action`` is one of
-    ``import`` / ``skip_done`` / ``sample`` / ``already`` / ``missing``.
+    assignment is strictly ``episode_ids`` from our map. ``action`` is an
+    :class:`ImportAction`.
     """
 
     basename: str
-    action: str
+    action: ImportAction
     path: str | None
     quality: QualityModel | None
     episode_ids: list[int]
@@ -875,17 +893,17 @@ def plan_import_files(
     for basename, ep_ids in authoritative_map.items():
         candidate = candidates_by_basename.get(basename)
         if candidate is None:
-            decisions.append(ImportDecision(basename, "missing", None, None, ep_ids))
+            decisions.append(ImportDecision(basename, ImportAction.MISSING, None, None, ep_ids))
             continue
         if candidate.is_sample:
-            decisions.append(ImportDecision(basename, "sample", candidate.path, None, []))
+            decisions.append(ImportDecision(basename, ImportAction.SAMPLE, candidate.path, None, []))
             continue
         import_ids = [i for i in ep_ids if i in needing_import]
         if not import_ids:
             # Nothing of ours still needs this file. Sonarr's already-imported
             # rejection and our episode-file done-check agree here, so report the
-            # more specific ``already`` when Sonarr flagged it, else ``skip_done``.
-            action = "already" if candidate.is_already_imported else "skip_done"
+            # more specific ``ALREADY`` when Sonarr flagged it, else ``SKIP_DONE``.
+            action = ImportAction.ALREADY if candidate.is_already_imported else ImportAction.SKIP_DONE
             decisions.append(
                 ImportDecision(basename, action, candidate.path, None, ep_ids),
             )
@@ -895,7 +913,7 @@ def plan_import_files(
         # the non-recommended / unidentifiable one we grabbed to replace).
         decisions.append(
             ImportDecision(
-                basename, "import", candidate.path, candidate.quality, import_ids,
+                basename, ImportAction.IMPORT, candidate.path, candidate.quality, import_ids,
             ),
         )
     return decisions
@@ -973,15 +991,14 @@ def parse_quality_from_filename(filename: str) -> str | None:
         return None
     resolution = res_match.group(1).lower()
 
-    source_token: str | None = None
+    # Default to a WEBDL-style name (the most common case for anime releases that
+    # omit an explicit source tag); the first matching pattern overrides it. Every
+    # ``_SOURCE_PATTERNS`` token is a ``_SOURCE_TO_NAME`` key, so the lookup is total.
+    source_name = "WEBDL"
     for token, pattern in _SOURCE_PATTERNS:
         if pattern.search(filename):
-            source_token = token
+            source_name = _SOURCE_TO_NAME[token]
             break
-
-    # No recognizable source: fall back to a WEBDL-style name (the most common
-    # case for anime releases that omit an explicit source tag).
-    source_name = _SOURCE_TO_NAME.get(source_token, "WEBDL") if source_token else "WEBDL"
     return f"{source_name}-{resolution}"
 
 
@@ -1070,7 +1087,7 @@ def select_quality(
         return QualitySelection(name=our_name, model=None)
 
     candidate_name = _candidate_quality_name(candidate_quality)
-    if candidate_quality and candidate_name and candidate_name != "Unknown":
+    if candidate_name and candidate_name != "Unknown":
         return QualitySelection(name=None, model=candidate_quality)
 
     if default_name:
@@ -1127,8 +1144,8 @@ def resolve_quality_model(
         quality = definition.get("quality")
         if quality is None:
             continue
-        quality_name = quality.get("name")
-        if isinstance(quality_name, str) and quality_name.casefold() == target:
+        quality_name = _quality_name(quality)
+        if quality_name is not None and quality_name.casefold() == target:
             revision: Revision = {"version": 1, "real": 0, "isRepack": False}
             return {"quality": quality, "revision": revision}
     return None

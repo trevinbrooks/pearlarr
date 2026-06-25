@@ -113,6 +113,23 @@ a real key, so an episode with a missing key simply fails to match.
 """
 
 
+def season_episode_key(season: int | None, episode: int | None) -> tuple[int, int]:
+    """The ``(season, episode)`` index key, collapsing a missing number to the sentinel.
+
+    A missing ``season``/``episode`` collapses to :data:`SONARR_MISSING_KEY` (an
+    out-of-range value that never collides with a real key), so our SeaDex
+    ``(season, episode)`` and Sonarr's episode list key the same way. Shared by
+    every ``(season, episode) -> ...`` index and lookup (the planner's episode
+    index, ``build_episode_id_map``, the exact-parse lookup) so the sentinel
+    convention lives in exactly one place.
+    """
+
+    return (
+        season if season is not None else SONARR_MISSING_KEY,
+        episode if episode is not None else SONARR_MISSING_KEY,
+    )
+
+
 def as_size_list(size: int | list[int | None] | None) -> list[int]:
     """Normalize a size value to a list of concrete sizes.
 

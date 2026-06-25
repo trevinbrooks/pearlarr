@@ -15,7 +15,6 @@ from itertools import compress
 
 from .log import indent_string
 from .seadex_types import (
-    SONARR_MISSING_KEY,
     ArrReleaseDict,
     EpisodeRecord,
     SeadexDict,
@@ -23,6 +22,7 @@ from .seadex_types import (
     SeadexUrlItem,
     SonarrEpisode,
     as_size_list,
+    season_episode_key,
 )
 
 
@@ -365,17 +365,12 @@ class DownloadPlanner:
         # Index the Sonarr episodes by (season, episode) once, shared by both
         # the overlap map below and the per-episode match loop: looking up a
         # parsed SeaDex (season, episode) is then an O(1) dict op rather than a
-        # fresh scan of the whole list. First entry wins on a duplicate key
+        # fresh scan of the whole list. The first entry wins on a duplicate key
         # (Sonarr episodes are unique by season+episode).
         sonarr_by_key: dict[tuple[int, int], SonarrEpisode] = {}
         for sonarr_ep in ep_list or []:
-            season = sonarr_ep.season_number
-            episode = sonarr_ep.episode_number
             sonarr_by_key.setdefault(
-                (
-                    season if season is not None else SONARR_MISSING_KEY,
-                    episode if episode is not None else SONARR_MISSING_KEY,
-                ),
+                season_episode_key(sonarr_ep.season_number, sonarr_ep.episode_number),
                 sonarr_ep,
             )
 
