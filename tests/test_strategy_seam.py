@@ -21,7 +21,11 @@ from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.seadex_radarr import RadarrSync
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
+    CommandResource,
+    Language,
     ManualImportCandidate,
+    QualityDefinition,
+    QueueRecord,
     RadarrItem,
     SonarrEpisode,
     SonarrItem,
@@ -143,10 +147,10 @@ def _ep_with_file(ep_id: int, *, group: str | None) -> SonarrEpisode:
 def _make_sonarr_for_import(
     *,
     candidates: list[ManualImportCandidate] | None,
-    queue: list[dict] | None = None,
+    queue: list[QueueRecord] | None = None,
     episodes: list[SonarrEpisode] | None = None,
-    quality_defs: list[dict] | None = None,
-    languages: list[dict] | None = None,
+    quality_defs: list[QualityDefinition] | None = None,
+    languages: list[Language] | None = None,
     cmd_id: int | None = 42,
     config_overrides: dict | None = None,
 ) -> tuple[SonarrSync, mock.MagicMock]:
@@ -167,7 +171,7 @@ def _make_sonarr_for_import(
     sonarr.episodes.return_value = episodes if episodes is not None else []
     sonarr.parse.return_value = []
     sonarr.refresh_monitored_downloads.return_value = 7
-    sonarr.command_status.return_value = {"status": "completed"}
+    sonarr.command_status.return_value = CommandResource(status="completed")
     sonarr.manual_import_candidates.return_value = candidates
     sonarr.quality_definitions.return_value = quality_defs or []
     sonarr.languages.return_value = languages or []
@@ -186,15 +190,21 @@ def _make_sonarr_for_import(
 
 def _queue_record(
     infohash: str, state: str, *, status: str = "ok", messages: list | None = None,
-) -> dict:
-    """One Sonarr queue record matching a download by infohash + tracked state."""
+) -> QueueRecord:
+    """One Sonarr queue record matching a download by infohash + tracked state.
 
-    return {
-        "downloadId": infohash,
-        "trackedDownloadState": state,
-        "trackedDownloadStatus": status,
-        "statusMessages": messages or [],
-    }
+    Built through ``QueueRecord.from_api`` from the raw API field names so the
+    record mirrors exactly what ``SonarrClient.queue`` parses at the boundary.
+    """
+
+    return QueueRecord.from_api(
+        {
+            "downloadId": infohash,
+            "trackedDownloadState": state,
+            "trackedDownloadStatus": status,
+            "statusMessages": messages or [],
+        },
+    )
 
 
 class TestImportCompletedQueueState:
@@ -417,7 +427,7 @@ class TestImportCompletedPayload:
             "/d/Show - 01 [1080p][WEB-DL].mkv",
             quality={"quality": {"name": "HDTV-720p"}},
         )
-        quality_defs = [
+        quality_defs: list[QualityDefinition] = [
             {"quality": {"id": 3, "name": "WEBDL-1080p", "resolution": 1080}},
         ]
         strat, sonarr = _make_sonarr_for_import(
@@ -549,7 +559,7 @@ class TestImportCompletedPayload:
             episode_ids=[101],
         )
         candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
-        languages = [
+        languages: list[Language] = [
             {"id": 1, "name": "English"},
             {"id": 8, "name": "Japanese"},
         ]
@@ -671,7 +681,7 @@ class TestResolveQualityModel:
     """resolve_quality_model maps a name to a QualityModel, case-insensitively."""
 
     def test_matches_case_insensitively(self) -> None:
-        defs = [
+        defs: list[QualityDefinition] = [
             {"quality": {"id": 1, "name": "HDTV-720p"}},
             {"quality": {"id": 3, "name": "WEBDL-1080p"}},
         ]
@@ -686,7 +696,7 @@ class TestResolveQualityModel:
         assert model.get("revision") == {"version": 1, "real": 0, "isRepack": False}
 
     def test_no_match_returns_none(self) -> None:
-        defs = [{"quality": {"id": 1, "name": "HDTV-720p"}}]
+        defs: list[QualityDefinition] = [{"quality": {"id": 1, "name": "HDTV-720p"}}]
 
         assert resolve_quality_model("Bluray-2160p", defs) is None
 
@@ -698,7 +708,7 @@ class TestResolveLanguageObjects:
     """resolve_language_objects maps names to {id,name}, dropping unknowns."""
 
     def test_resolves_in_request_order(self) -> None:
-        defs = [
+        defs: list[Language] = [
             {"id": 1, "name": "English"},
             {"id": 8, "name": "Japanese"},
         ]
@@ -711,14 +721,14 @@ class TestResolveLanguageObjects:
         ]
 
     def test_skips_unknown_names(self) -> None:
-        defs = [{"id": 8, "name": "Japanese"}]
+        defs: list[Language] = [{"id": 8, "name": "Japanese"}]
 
         result = resolve_language_objects(["Japanese", "Klingon"], defs)
 
         assert result == [{"id": 8, "name": "Japanese"}]
 
     def test_matches_case_insensitively(self) -> None:
-        defs = [{"id": 8, "name": "Japanese"}]
+        defs: list[Language] = [{"id": 8, "name": "Japanese"}]
 
         result = resolve_language_objects(["japanese"], defs)
 

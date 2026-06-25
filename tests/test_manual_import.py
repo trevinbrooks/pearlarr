@@ -43,6 +43,7 @@ from seadexarr.modules.manual_import import (
 )
 from seadexarr.modules.seadex_types import (
     SONARR_MISSING_KEY,
+    Language,
     QualityModel,
     SonarrEpisode,
 )
@@ -452,10 +453,11 @@ class TestResolveLanguageObjectsDefensive:
     """resolve_language_objects survives a blank/None or malformed name list."""
 
     def test_none_names_returns_empty(self) -> None:
+        defs: list[Language] = [{"id": 8, "name": "Japanese"}]
         names = cast("list[str]", None)
-        assert resolve_language_objects(names, [{"id": 8, "name": "Japanese"}]) == []
+        assert resolve_language_objects(names, defs) == []
 
     def test_non_string_names_are_skipped(self) -> None:
-        defs = [{"id": 8, "name": "Japanese"}]
+        defs: list[Language] = [{"id": 8, "name": "Japanese"}]
         names = cast("list[str]", [None, 5, "Japanese"])
         assert resolve_language_objects(names, defs) == [{"id": 8, "name": "Japanese"}]

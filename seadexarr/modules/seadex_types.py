@@ -422,3 +422,129 @@ class ManualImportFile(TypedDict):
     downloadId: str
     languages: list[Language]
     quality: NotRequired[QualityModel]
+
+
+# --- Sonarr queue (``/api/v3/queue`` records) -------------------------------
+#
+# Derived from the Sonarr v3 OpenAPI ``QueueResource`` in ``schemas/sonarr.schema``.
+# The endpoint pages its records under a wrapper object's ``records`` array.
+
+
+@dataclass(frozen=True, slots=True)
+class QueueRecord:
+    """One Sonarr ``QueueResource`` record, reduced to the fields the wait reads.
+
+    The wait/import decision consults only ``download_id`` (the infohash Sonarr
+    stores uppercased, matched case-insensitively to pick a torrent's records -
+    ``string | null`` in the schema), ``state``
+    (``trackedDownloadState``: ``downloading`` / ``importPending`` / ...),
+    ``status`` (``trackedDownloadStatus``: ``ok`` / ``warning`` / ``error``) and
+    whether ``statusMessages`` is populated (a message array on a pending item
+    signals trouble, not progress). ``state``/``status`` are the ``string | null``
+    rendering of their schema enums. Parsed at the client boundary via
+    :meth:`from_api`, mirroring :class:`SonarrEpisode`.
+    """
+
+    download_id: str | None = None
+    state: str | None = None
+    status: str | None = None
+    has_messages: bool = False
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> Self:
+        """Build from one raw ``QueueResource`` dict (filters unknown keys).
+
+        ``statusMessages`` is folded to a single ``has_messages`` bool here (a
+        non-empty array means trouble), so the decision path never walks the
+        message objects.
+        """
+
+        download_id = raw.get("downloadId")
+        state = raw.get("trackedDownloadState")
+        status = raw.get("trackedDownloadStatus")
+        return cls(
+            download_id=download_id if isinstance(download_id, str) else None,
+            state=state if isinstance(state, str) else None,
+            status=status if isinstance(status, str) else None,
+            has_messages=bool(raw.get("statusMessages")),
+        )
+
+
+# --- Sonarr quality definitions (``/api/v3/qualitydefinition``) --------------
+
+
+class QualityDefinition(TypedDict):
+    """One Sonarr ``QualityDefinitionResource`` (schema), reduced to ``quality``.
+
+    Read-and-re-emit: ``resolve_quality_model`` looks a name up against the nested
+    ``quality.name`` and re-emits the matched :class:`Quality` verbatim into the
+    outgoing ``QualityModel``, so a ``TypedDict`` types the JSON shape without a
+    round-trip. Only the nested ``quality`` is consumed; ``quality`` is
+    ``NotRequired`` because a malformed/partial definition may omit it (the
+    resolver skips such entries).
+    """
+
+    quality: NotRequired[Quality]
+
+
+# --- Sonarr commands (``/api/v3/command``) -----------------------------------
+
+
+class CommandBody(TypedDict):
+    """One outgoing ``/api/v3/command`` POST body (a Sonarr command request).
+
+    Constructed by the strategy and POSTed as JSON, so a ``TypedDict`` types the
+    body without a round-trip. ``name`` is the command name (always sent);
+    ``importMode`` / ``files`` are the extra keys the ``ManualImport`` command
+    carries, so both are ``NotRequired`` (``RefreshMonitoredDownloads`` sends only
+    ``name``).
+    """
+
+    name: str
+    importMode: NotRequired[str]
+    files: NotRequired[list[ManualImportFile]]
+
+
+@dataclass(frozen=True, slots=True)
+class CommandResource:
+    """A Sonarr ``CommandResource`` (schema), reduced to the fields read back.
+
+    A command POST returns this with the queued command ``id``, and the status
+    poll reads ``status`` (the ``CommandStatus`` enum: ``queued`` / ``started`` /
+    ``completed`` / ...) to know when a rescan has settled. ``id`` is a non-null
+    schema int (``0`` when absent so the caller drops it); ``status`` /
+    ``result`` are the ``string | null`` rendering of their schema enums. Parsed
+    at the client boundary via :meth:`from_api`, mirroring :class:`SonarrEpisode`.
+    """
+
+    id: int = 0
+    status: str | None = None
+    result: str | None = None
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> Self:
+        """Build from one raw ``CommandResource`` dict (filters unknown keys)."""
+
+        status = raw.get("status")
+        result = raw.get("result")
+        return cls(
+            id=raw.get("id", 0),
+            status=status if isinstance(status, str) else None,
+            result=result if isinstance(result, str) else None,
+        )
+
+
+# --- Sonarr parse (``/api/v3/parse`` ``episodes`` array) ---------------------
+
+
+class ParsedEpisode(TypedDict):
+    """One entry of a Sonarr ``ParseResource`` ``episodes`` array (schema ``EpisodeResource``).
+
+    The ``/api/v3/parse`` response nests an ``episodes`` array; only the
+    season/episode numbers are read out of each entry (the file size comes from
+    the SeaDex file list, not Sonarr). Both are ``NotRequired`` because a parse
+    that couldn't resolve an entry may omit them (the reader drops such entries).
+    """
+
+    seasonNumber: NotRequired[int]
+    episodeNumber: NotRequired[int]

@@ -23,7 +23,7 @@ from typing import Any, cast
 from .seadex_types import (
     SONARR_MISSING_KEY,
     Language,
-    Quality,
+    QualityDefinition,
     QualityModel,
     Revision,
     SonarrEpisode,
@@ -839,7 +839,7 @@ def derive_languages(
 
 def resolve_quality_model(
     name: str,
-    quality_defs: list[dict[str, Any]],
+    quality_defs: list[QualityDefinition],
 ) -> QualityModel | None:
     """Resolve a Sonarr quality NAME to a manual-import ``QualityModel``.
 
@@ -851,10 +851,9 @@ def resolve_quality_model(
 
     Args:
         name (str): A Sonarr quality name (e.g. ``"WEBDL-1080p"``).
-        quality_defs (list[dict[str, Any]]): The raw ``/api/v3/qualitydefinition``
+        quality_defs (list[QualityDefinition]): The ``/api/v3/qualitydefinition``
             list; each entry nests a ``quality`` dict with
-            ``id``/``name``/``source``/``resolution`` (the unmodeled
-            ``QualityDefinitionResource``, read key-by-key here).
+            ``id``/``name``/``source``/``resolution`` (re-emitted verbatim).
 
     Returns:
         QualityModel | None: A ``QualityModel``, or None when no definition matches.
@@ -862,13 +861,11 @@ def resolve_quality_model(
 
     target = name.casefold()
     for definition in quality_defs:
-        # The matched definition's nested quality dict is the schema ``Quality``
-        # re-emitted verbatim; it is an open JSON object from an unmodeled
-        # endpoint, so narrow it to ``Quality`` at this boundary.
-        raw_quality = definition.get("quality")
-        if not isinstance(raw_quality, dict):
+        # The matched definition's nested quality is the schema ``Quality`` the
+        # outgoing QualityModel re-emits verbatim.
+        quality = definition.get("quality")
+        if quality is None:
             continue
-        quality = cast("Quality", raw_quality)
         quality_name = quality.get("name")
         if isinstance(quality_name, str) and quality_name.casefold() == target:
             revision: Revision = {"version": 1, "real": 0, "isRepack": False}
@@ -878,7 +875,7 @@ def resolve_quality_model(
 
 def resolve_language_objects(
     names: list[str],
-    lang_defs: list[dict[str, Any]],
+    lang_defs: list[Language],
 ) -> list[Language]:
     """Resolve language names to Sonarr ``{id, name}`` language objects.
 
@@ -889,18 +886,18 @@ def resolve_language_objects(
 
     Args:
         names (list[str]): Language names to resolve (e.g. ``["Japanese"]``).
-        lang_defs (list[dict[str, Any]]): The raw ``/api/v3/language`` list; each
-            entry has ``id`` and ``name`` (the unmodeled ``LanguageResource``).
+        lang_defs (list[Language]): The ``/api/v3/language`` list; each entry has
+            ``id`` and ``name`` (a ``LanguageResource`` ``{id, name}``).
 
     Returns:
         list[Language]: The matched ``{"id", "name"}`` objects (unknown names
         omitted).
     """
 
-    by_name: dict[str, dict[str, Any]] = {
-        definition["name"].casefold(): definition
+    by_name: dict[str, Language] = {
+        name.casefold(): definition
         for definition in lang_defs
-        if isinstance(definition.get("name"), str)
+        if isinstance((name := definition.get("name")), str)
     }
     resolved: list[Language] = []
     # ``names or []`` and the str guard keep a blank/None or malformed configured

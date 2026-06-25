@@ -1,7 +1,6 @@
 import os
 import time
 from datetime import datetime, timedelta
-from typing import Any
 from xml.etree import ElementTree
 
 from . import coverage as _coverage
@@ -53,6 +52,7 @@ from .seadex_types import (
     Language,
     ManualImportCandidate,
     ManualImportFile,
+    QualityDefinition,
     SeadexDict,
     SonarrEpisode,
     SonarrItem,
@@ -343,8 +343,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         # payload objects. Fetched lazily on the first import and then reused for
         # the rest of the run so repeated imports don't re-hit the endpoints;
         # None means "not yet fetched" (cleared in get_items, the run-start hook).
-        self._quality_defs_cache: list[dict[str, Any]] | None = None
-        self._languages_cache: list[dict[str, Any]] | None = None
+        self._quality_defs_cache: list[QualityDefinition] | None = None
+        self._languages_cache: list[Language] | None = None
 
         # Monotonic time of the last RefreshMonitoredDownloads we asked Sonarr for,
         # used to throttle the rescan: the blocking pass calls import_completed
@@ -946,8 +946,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         self.logger.debug(indent_string("Asked Sonarr to rescan its downloads"))
 
         for _ in range(_REFRESH_COMMAND_MAX_POLLS):
-            status = self.sonarr.command_status(cmd_id)
-            state = status.get("status", "") if isinstance(status, dict) else ""
+            command = self.sonarr.command_status(cmd_id)
+            state = command.status or ""
             if state.casefold() in _COMMAND_TERMINAL_STATES:
                 return
             time.sleep(_REFRESH_COMMAND_POLL_S)
@@ -969,21 +969,17 @@ class SonarrSync(ArrSync[SonarrItem]):
         views: list[QueueRecordView] = []
         download_id = ""
         for record in self.sonarr.queue():
-            if not isinstance(record, dict):
+            dl_id = record.download_id
+            if dl_id is None or dl_id.casefold() != target:
                 continue
-            dl_id = record.get("downloadId")
-            if not isinstance(dl_id, str) or dl_id.casefold() != target:
+            if not record.state:
                 continue
-            state = record.get("trackedDownloadState")
-            if not isinstance(state, str) or not state:
-                continue
-            status = record.get("trackedDownloadStatus")
             download_id = dl_id
             views.append(
                 QueueRecordView(
-                    state=state,
-                    status=status if isinstance(status, str) else "",
-                    has_messages=bool(record.get("statusMessages")),
+                    state=record.state,
+                    status=record.status or "",
+                    has_messages=record.has_messages,
                 ),
             )
         return download_id if download_id else infohash, views
@@ -1213,7 +1209,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         )
         return resolve_language_objects(lang_names, self._languages_cache)
 
-    def _quality_definitions(self) -> list[dict[str, Any]]:
+    def _quality_definitions(self) -> list[QualityDefinition]:
         """The Sonarr quality definitions (lazily fetched + cached for the run)."""
 
         if self._quality_defs_cache is None:
@@ -1225,7 +1221,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         decision: ImportDecision,
         pending: PendingImport,
         lang_objs: list[Language],
-        quality_defs: list[dict[str, Any]],
+        quality_defs: list[QualityDefinition],
         label: str,
     ) -> ManualImportFile:
         """Build one ManualImport file payload from a planned ``import`` decision.

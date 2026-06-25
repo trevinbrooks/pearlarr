@@ -14,8 +14,14 @@ from arrapi import SonarrAPI
 from .log import indent_string
 from .manual_import import PendingImport
 from .seadex_types import (
+    CommandBody,
+    CommandResource,
+    Language,
     ManualImportCandidate,
     ManualImportFile,
+    ParsedEpisode,
+    QualityDefinition,
+    QueueRecord,
     SonarrEpisode,
     SonarrItem,
 )
@@ -135,10 +141,11 @@ class SonarrClient:
             )
             return []
 
-        # response.json() is untyped; the parse endpoint returns a JSON object,
-        # so cast at the parse boundary before reading its "episodes" array.
-        parse_body = cast("dict[str, Any]", parse_req.json())
-        episode_info: list[dict[str, Any]] = parse_body.get("episodes", [])
+        # response.json() is untyped; the parse endpoint returns a ParseResource
+        # JSON object whose "episodes" is an array of EpisodeResource objects, so
+        # cast at the parse boundary before reading their season/episode numbers.
+        parse_body = cast("dict[str, list[ParsedEpisode]]", parse_req.json())
+        episode_info: list[ParsedEpisode] = parse_body.get("episodes", [])
 
         parsed: list[dict[str, int]] = []
         for ep in episode_info:
@@ -255,10 +262,12 @@ class SonarrClient:
             int | None: The queued command's id, or None on failure.
         """
 
-        return self._post_command(
-            {"name": "ManualImport", "importMode": import_mode, "files": files},
-            label="ManualImport",
-        )
+        body: CommandBody = {
+            "name": "ManualImport",
+            "importMode": import_mode,
+            "files": files,
+        }
+        return self._post_command(body, label="ManualImport")
 
     def refresh_monitored_downloads(self) -> int | None:
         """Queue Sonarr's ``RefreshMonitoredDownloads`` command.
@@ -271,12 +280,10 @@ class SonarrClient:
         None on failure.
         """
 
-        return self._post_command(
-            {"name": "RefreshMonitoredDownloads"},
-            label="RefreshMonitoredDownloads",
-        )
+        body: CommandBody = {"name": "RefreshMonitoredDownloads"}
+        return self._post_command(body, label="RefreshMonitoredDownloads")
 
-    def _post_command(self, body: dict[str, Any], *, label: str) -> int | None:
+    def _post_command(self, body: CommandBody, *, label: str) -> int | None:
         """POST a command to ``/api/v3/command`` and return its queued id.
 
         Shared by :meth:`manual_import_execute` and
@@ -284,7 +291,7 @@ class SonarrClient:
         (with a warning) on a non-2xx.
 
         Args:
-            body (dict[str, Any]): The command body (must carry ``name``).
+            body (CommandBody): The outgoing command body (must carry ``name``).
             label (str): Command name for the warning message.
         """
 
@@ -302,11 +309,12 @@ class SonarrClient:
             return None
 
         # response.json() is untyped; the command POST returns a CommandResource
-        # JSON object whose "id" is the queued command id (or absent), so cast at
-        # the parse boundary before reading it.
-        return cast("dict[str, Any]", command_req.json()).get("id")
+        # JSON object whose "id" is the queued command id (0 when absent), so cast
+        # at the parse boundary and narrow it to the consumed fields.
+        command = CommandResource.from_api(cast("dict[str, Any]", command_req.json()))
+        return command.id or None
 
-    def queue(self) -> list[dict[str, Any]]:
+    def queue(self) -> list[QueueRecord]:
         """All Sonarr queue records (``/api/v3/queue``).
 
         Used to see what Sonarr is doing with a download we added directly to
@@ -317,13 +325,16 @@ class SonarrClient:
         can surface as an unknown-series record. A large ``pageSize`` pulls the
         whole queue in one request.
 
+        Each raw ``QueueResource`` is narrowed to a
+        :class:`~.seadex_types.QueueRecord` (``download_id`` / ``state`` /
+        ``status`` / ``has_messages``) via its ``from_api`` at this client
+        boundary, so the wait decision never touches the raw DTO.
+
         Returns an empty list (with a warning) on a non-200, so the caller treats
         "couldn't read the queue" as "not tracked" and falls back to its own scan.
 
         Returns:
-            list[dict[str, Any]]: Raw QueueResource record dicts; empty on
-                failure. Each record is a heterogeneous Sonarr DTO read key-by-key
-                by the caller, so it stays an open JSON object.
+            list[QueueRecord]: The parsed queue records; empty on failure.
         """
         params = urlencode(
             {
@@ -346,10 +357,12 @@ class SonarrClient:
 
         # response.json() is untyped; the queue endpoint returns a paged object
         # whose "records" is the array of QueueResource objects, so cast at the
-        # parse boundary before reading it.
-        return cast("dict[str, Any]", queue_req.json()).get("records", [])
+        # parse boundary, then narrow each to the fields the wait reads via
+        # from_api.
+        paged = cast("dict[str, list[dict[str, Any]]]", queue_req.json())
+        return [QueueRecord.from_api(record) for record in paged.get("records", [])]
 
-    def quality_definitions(self) -> list[dict[str, Any]]:
+    def quality_definitions(self) -> list[QualityDefinition]:
         """All Sonarr quality definitions (``/api/v3/qualitydefinition``).
 
         Used to resolve a quality NAME (e.g. ``Bluray-2160p``) to a Sonarr
@@ -359,9 +372,9 @@ class SonarrClient:
         fall back to other quality sources.
 
         Returns:
-            list[dict[str, Any]]: Raw QualityDefinitionResource dicts (each wraps
-                a nested ``quality`` object), read key-by-key by the caller, so
-                they stay open JSON objects; empty on failure.
+            list[QualityDefinition]: Raw QualityDefinitionResource dicts (each
+                wraps a nested ``quality`` object the resolver re-emits verbatim);
+                empty on failure.
         """
 
         defs_req_url = f"{self._url}/api/v3/qualitydefinition?apikey={self._api_key}"
@@ -375,10 +388,11 @@ class SonarrClient:
             return []
 
         # response.json() is untyped; the endpoint returns a JSON array of
-        # QualityDefinitionResource objects, so cast at the parse boundary.
-        return cast("list[dict[str, Any]]", defs_req.json())
+        # QualityDefinitionResource objects whose nested "quality" the resolver
+        # re-emits verbatim, so cast at the parse boundary.
+        return cast("list[QualityDefinition]", defs_req.json())
 
-    def languages(self) -> list[dict[str, Any]]:
+    def languages(self) -> list[Language]:
         """All Sonarr languages (``/api/v3/language``).
 
         Used to resolve language names to ``{id, name}`` objects for the
@@ -388,7 +402,8 @@ class SonarrClient:
         fall back to the candidate's languages.
 
         Returns:
-            list[dict[str, Any]]: Raw LanguageResource dicts; empty on failure.
+            list[Language]: Raw LanguageResource dicts (the ``{id, name}`` the
+                resolver matches by name and re-emits verbatim); empty on failure.
         """
 
         langs_req_url = f"{self._url}/api/v3/language?apikey={self._api_key}"
@@ -401,24 +416,26 @@ class SonarrClient:
             return []
 
         # response.json() is untyped; the endpoint returns a JSON array of
-        # LanguageResource objects, so cast at the parse boundary.
-        return cast("list[dict[str, Any]]", langs_req.json())
+        # LanguageResource objects ({id, name}) the resolver re-emits verbatim, so
+        # cast at the parse boundary.
+        return cast("list[Language]", langs_req.json())
 
-    def command_status(self, command_id: int) -> dict[str, Any]:
+    def command_status(self, command_id: int) -> CommandResource:
         """Current state of a Sonarr command (``/api/v3/command/{id}``).
 
         Used to optionally verify a ``ManualImport`` completed before the caller
         removes the pending record.
 
-        Returns an empty dict (with a warning) on a non-200, so the caller can
-        treat the import as unverified and leave it pending.
+        Returns a default :class:`~.seadex_types.CommandResource` (with a warning)
+        on a non-200, so the caller can treat the import as unverified and leave it
+        pending.
 
         Args:
             command_id (int): Command ID returned by ``manual_import_execute``.
 
         Returns:
-            dict[str, Any]: Raw CommandResource dict (keys like ``status``,
-                ``result``); empty on failure.
+            CommandResource: The command's parsed state (``status`` / ``result``);
+                a default (``status`` None) on failure.
         """
 
         status_req_url = (
@@ -433,8 +450,9 @@ class SonarrClient:
                     f"(status code {status_req.status_code})",
                 ),
             )
-            return {}
+            return CommandResource()
 
         # response.json() is untyped; the endpoint returns a single
-        # CommandResource JSON object, so cast at the parse boundary.
-        return cast("dict[str, Any]", status_req.json())
+        # CommandResource JSON object, so cast at the parse boundary and narrow it
+        # to the consumed fields.
+        return CommandResource.from_api(cast("dict[str, Any]", status_req.json()))
