@@ -18,8 +18,29 @@ from typing import Any, cast
 from urllib.request import urlretrieve
 from xml.etree import ElementTree
 
-from .anibridge import AniBridge, AniBridgeLookup
+from .anibridge import AniBridge, AniBridgeEntry, AniBridgeGraph, AniBridgeLookup
 from .seadex_types import TvdbMappings
+
+type AnimeIdsRecord = dict[str, Any]
+"""One Kometa Anime-IDs record (``{field: value}``).
+
+A loosely-shaped producer dict: a flat record carrying mixed-typed fields
+(``anilist_id``/``tvdb_id``/``tmdb_movie_id``/``imdb_id`` ints or strs,
+``tvdb_season``/``tvdb_epoffset`` ints). It is read at the raw->typed boundary
+(:func:`_entry_from_raw`) and never modeled as a domain object, so it stays a
+loose ``dict[str, Any]`` like :data:`~seadexarr.modules.anibridge.AniBridgeEntry`.
+"""
+
+type AnimeIdsMap = dict[str, AnimeIdsRecord]
+"""The parsed Kometa Anime-IDs JSON: ``{name -> record}`` (~16k entries)."""
+
+type AnimeIdsIndex = dict[str, dict[object, list[AnimeIdsRecord]]]
+"""Reverse index over the Anime-IDs map: field name -> {external id -> [record]}.
+
+The external-id key is ``object`` because the index buckets records by whatever
+each field carries verbatim (ints for ``tvdb_id``/``tmdb_*_id``, strs for
+``imdb_id``); lookups pass the matching id type back in.
+"""
 
 
 class TmdbType(StrEnum):
@@ -77,7 +98,7 @@ class MappingEntry:
         return MappingMode.ANIBRIDGE if self.tvdb_mappings is not None else MappingMode.ANIME_IDS
 
 
-def _entry_from_raw(anilist_id: int, raw: dict) -> MappingEntry:
+def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> MappingEntry:
     """Build a :class:`MappingEntry` from a producer's raw dict.
 
     The one place loosely-typed producer dicts (Kometa Anime-IDs records and
@@ -90,7 +111,8 @@ def _entry_from_raw(anilist_id: int, raw: dict) -> MappingEntry:
     Args:
         anilist_id (int): AniList id for this entry (the dict key for AniBridge,
             an in-record field for Kometa).
-        raw (dict): Producer dict; only the enumerated keys are read.
+        raw (AnimeIdsRecord | AniBridgeEntry): Producer dict; only the enumerated
+            keys are read.
     """
 
     return MappingEntry(
@@ -174,14 +196,15 @@ def _load_mapping_by_mtime[T](
     return value
 
 
-def _parse_anime_mappings(path: str) -> dict:
+def _parse_anime_mappings(path: str) -> AnimeIdsMap:
     """Load the Kometa Anime-IDs JSON map from disk."""
 
     with open(path) as f:
-        return json.load(f)
+        # Raw JSON boundary: json.load returns Any; narrow to the known map shape.
+        return cast("AnimeIdsMap", json.load(f))
 
 
-def _build_anime_mappings_index(anime_mappings: dict) -> dict[str, dict]:
+def _build_anime_mappings_index(anime_mappings: AnimeIdsMap) -> AnimeIdsIndex:
     """Build reverse indexes over the Kometa Anime-IDs map for fast lookups
 
     Anime-IDs is a flat {name: mapping} dict of ~16k entries. Querying it by
@@ -190,30 +213,30 @@ def _build_anime_mappings_index(anime_mappings: dict) -> dict[str, dict]:
     so get_mappings_from_anime_mappings becomes a dict lookup.
 
     Args:
-        anime_mappings (dict): Parsed Anime-IDs map ({name: mapping})
+        anime_mappings (AnimeIdsMap): Parsed Anime-IDs map ({name: mapping})
 
     Returns:
-        dict: field name -> {external id -> [mapping, ...]}, for the
+        AnimeIdsIndex: field name -> {external id -> [mapping, ...]}, for the
             "tvdb_id", "tmdb_movie_id", "tmdb_show_id" and "imdb_id" fields
     """
 
-    index: dict[str, dict] = {
-        "tvdb_id": defaultdict(list),
-        "tmdb_movie_id": defaultdict(list),
-        "tmdb_show_id": defaultdict(list),
-        "imdb_id": defaultdict(list),
+    index: AnimeIdsIndex = {
+        "tvdb_id": defaultdict(list[AnimeIdsRecord]),
+        "tmdb_movie_id": defaultdict(list[AnimeIdsRecord]),
+        "tmdb_show_id": defaultdict(list[AnimeIdsRecord]),
+        "imdb_id": defaultdict(list[AnimeIdsRecord]),
     }
     for m in anime_mappings.values():
         if m.get("anilist_id") is None:
             continue
         for field, bucket in index.items():
-            value = m.get(field)
+            value: object = m.get(field)
             if value is not None:
                 bucket[value].append(m)
     return index
 
 
-def _parse_anime_mappings_index(path: str) -> dict[str, dict]:
+def _parse_anime_mappings_index(path: str) -> AnimeIdsIndex:
     """Build the Anime-IDs reverse index over the memoized parse of ``path``."""
 
     return _build_anime_mappings_index(_load_mapping_by_mtime(path, _parse_anime_mappings))
@@ -249,9 +272,9 @@ class MappingResolver:
         *,
         cache_time: int,
         ignore_anilist_ids: set[int],
-        anime_mappings_cfg: dict | bool | None,
+        anime_mappings_cfg: AnimeIdsMap | bool | None,
         anidb_mappings_cfg: ElementTree.Element | bool | None,
-        anibridge_mappings_cfg: dict | bool | None,
+        anibridge_mappings_cfg: AniBridgeGraph | bool | None,
     ) -> None:
         """Load and index the mapping sources.
 
@@ -272,8 +295,13 @@ class MappingResolver:
 
         # Memoize get_anilist_ids mapping computation per identifying key, so
         # the prefetch pass and the main loop don't compute it twice per item
-        self._anilist_ids_cache: dict = {}
+        self._anilist_ids_cache: dict[
+            tuple[int | None, int | None, str | None, TmdbType],
+            tuple[dict[int, MappingEntry], list[int]],
+        ] = {}
 
+        anime_mappings: AnimeIdsMap
+        anime_mappings_index: AnimeIdsIndex | None
         if anime_mappings_cfg is False:
             anime_mappings = {}
             anime_mappings_index = None
@@ -306,7 +334,7 @@ class MappingResolver:
             assert isinstance(anibridge_mappings_cfg, dict)
             anibridge = AniBridge(anibridge_mappings_cfg, logger=None)
 
-        self.anime_mappings = anime_mappings
+        self.anime_mappings: AnimeIdsMap = anime_mappings
         # Reverse indexes over the (large, ~16k-entry) Kometa Anime-IDs map so
         # get_mappings_from_anime_mappings is an O(matches) dict lookup instead of
         # three full scans of every mapping per series. Shared across instances
@@ -316,10 +344,10 @@ class MappingResolver:
         # Lazily-built {anidbid -> [element]} index over the AniDB XML, so the
         # specials/movie path in get_ep_list does a dict lookup instead of an
         # XPath scan of every <anime> element. Populated on first use.
-        self._anidb_index: dict[str, list] | None = None
+        self._anidb_index: dict[str, list[ElementTree.Element]] | None = None
         self.anibridge = anibridge
 
-    def get_anime_mappings(self) -> dict:
+    def get_anime_mappings(self) -> AnimeIdsMap:
         """Get the anime IDs file"""
 
         self.get_external_mappings(
@@ -329,7 +357,7 @@ class MappingResolver:
 
         return _load_mapping_by_mtime(ANIME_IDS_FILE, _parse_anime_mappings)
 
-    def _get_anime_mappings_index(self) -> dict[str, dict]:
+    def _get_anime_mappings_index(self) -> AnimeIdsIndex:
         """Reverse index over the on-disk Anime-IDs map, shared via the mtime memo.
 
         Must follow get_anime_mappings (which downloads/refreshes the file); it
@@ -352,7 +380,7 @@ class MappingResolver:
 
         return _load_mapping_by_mtime(ANIDB_MAPPINGS_FILE, _parse_anidb_mappings)
 
-    def anidb_anime_by_id(self, anidb_id: int) -> list:
+    def anidb_anime_by_id(self, anidb_id: int) -> list[ElementTree.Element]:
         """Return the AniDB XML <anime> element(s) for an AniDB id
 
         Builds (once, lazily) an "{anidbid -> [element]}" index over the parsed
@@ -368,7 +396,7 @@ class MappingResolver:
             return []
 
         if self._anidb_index is None:
-            index: dict[str, list] = defaultdict(list)
+            index: dict[str, list[ElementTree.Element]] = defaultdict(list[ElementTree.Element])
             for anime in self.anidb_mappings.findall("anime"):
                 anidbid = anime.get("anidbid")
                 if anidbid is not None:
@@ -429,7 +457,7 @@ class MappingResolver:
         tmdb_id: int | None = None,
         imdb_id: str | None = None,
         tmdb_type: TmdbType = TmdbType.MOVIE,
-    ) -> tuple[dict[int, MappingEntry], list]:
+    ) -> tuple[dict[int, MappingEntry], list[int]]:
         """Resolve external ids to a sorted {AniList id -> mapping} dict
 
         Args:
@@ -453,7 +481,7 @@ class MappingResolver:
         if key in self._anilist_ids_cache:
             anilist_mappings, ids_to_drop = self._anilist_ids_cache[key]
         else:
-            anilist_mappings = {}
+            anilist_mappings: dict[int, MappingEntry] = {}
 
             # AniBridge is the primary source: its richer per-season episode
             # offsets win, so query it first and key results by AniList ID
@@ -524,9 +552,9 @@ class MappingResolver:
 
         # Add the first mapping seen for each AniList id, matching the previous
         # "don't clobber an id another query already produced" behaviour
-        def merge(field: str, value: Any) -> None:
+        def merge(field: str, value: object) -> None:
             for m in index[field].get(value, ()):
-                anilist_id = m["anilist_id"]
+                anilist_id: int = m["anilist_id"]
                 if anilist_id not in anilist_mappings:
                     anilist_mappings[anilist_id] = _entry_from_raw(anilist_id, m)
 
