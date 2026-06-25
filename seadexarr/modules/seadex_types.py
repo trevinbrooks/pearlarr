@@ -50,14 +50,14 @@ class SeadexUrlItem:
     """
 
     url: str = ""
-    files: list[str] = field(default_factory=list)
-    size: list[int] = field(default_factory=list)
+    files: list[str] = field(default_factory=list[str])
+    size: list[int] = field(default_factory=list[int])
     tracker: Tracker = Tracker.OTHER
     is_public: bool = True
     is_dual_audio: bool = False
     hash: str | None = None
     download: bool = False
-    episodes: list[EpisodeRecord] = field(default_factory=list)
+    episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
 
 
 @dataclass
@@ -69,8 +69,8 @@ class SeadexReleaseGroupItem:
     parsing, e.g. Radarr) from an empty list (parsing ran but found nothing).
     """
 
-    urls: dict[str, SeadexUrlItem] = field(default_factory=dict)
-    tags: frozenset[Tag] = field(default_factory=frozenset)
+    urls: dict[str, SeadexUrlItem] = field(default_factory=dict[str, SeadexUrlItem])
+    tags: frozenset[Tag] = field(default_factory=frozenset[Tag])
     all_episodes: list[EpisodeRecord] | None = None
 
 
@@ -200,6 +200,31 @@ type TvdbMappings = dict[int, list[tuple[int, int | None]]]
 """AniBridge TVDB season -> inclusive ``(start, end)`` episode ranges."""
 
 
+# --- AniList GraphQL errors (the ``errors`` array of a response body) --------
+
+@dataclass(frozen=True, slots=True)
+class AniListError:
+    """One entry of an AniList GraphQL ``errors`` array, parsed at the boundary.
+
+    AniList follows the GraphQL error shape and adds a numeric ``status`` (an
+    HTTP-style code, e.g. ``429`` when soft-throttling). Only ``status`` and
+    ``message`` drive the retry decision, so those are the fields modeled here.
+    """
+
+    message: str = ""
+    status: int | None = None
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> Self:
+        """Build from one raw GraphQL error dict (missing keys default)."""
+
+        status = raw.get("status")
+        return cls(
+            message=str(raw.get("message") or ""),
+            status=status if isinstance(status, int) else None,
+        )
+
+
 # --- AniList Media node (cached GraphQL ``Media`` record) --------------------
 
 @dataclass(frozen=True, slots=True)
@@ -223,8 +248,8 @@ class AniListMediaNode:
         ``large`` cover variant is the one downstream reads.
         """
 
-        title = raw.get("title") or {}
-        cover = raw.get("coverImage") or {}
+        title: dict[str, Any] = raw.get("title") or {}
+        cover: dict[str, Any] = raw.get("coverImage") or {}
         return cls(
             id=raw.get("id"),
             title_english=title.get("english"),

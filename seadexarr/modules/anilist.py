@@ -1,10 +1,10 @@
 import contextlib
 import time
-from typing import Any
+from typing import Any, cast
 
 import requests
 
-from .seadex_types import AniListMediaNode
+from .seadex_types import AniListError, AniListMediaNode
 
 API_URL = "https://graphql.anilist.co"
 
@@ -74,7 +74,7 @@ query ($ids: [Int]) {
 """
 
 
-def _errors_are_retryable(body: dict | None) -> bool:
+def _errors_are_retryable(body: dict[str, Any] | None) -> bool:
     """True if a GraphQL body carries a throttle/rate-limit or 5xx-style error
 
     AniList sometimes soft-throttles with HTTP 200 and a non-empty "errors"
@@ -85,29 +85,46 @@ def _errors_are_retryable(body: dict | None) -> bool:
     here - the caller's null-safe extraction handles it as an ordinary miss.
 
     Args:
-        body (dict): The parsed JSON response body
+        body (dict[str, Any] | None): The parsed JSON response body
     """
 
-    errors = (body or {}).get("errors")
-    if not errors or not isinstance(errors, list):
-        return False
-
-    for err in errors:
-        if not isinstance(err, dict):
-            continue
+    for err in _parse_errors(body):
         # A 429 or 5xx status carried in the error entry is retryable.
-        status = err.get("status")
-        if status in RETRYABLE_STATUS:
+        if err.status in RETRYABLE_STATUS:
             return True
         # Otherwise match the message (case-insensitive) for throttle wording.
-        message = str(err.get("message") or "").lower()
+        message = err.message.lower()
         if any(s in message for s in RETRYABLE_ERROR_SUBSTRINGS):
             return True
 
     return False
 
 
-def _extract(body: dict | None, *path: str) -> dict:
+def _parse_errors(body: dict[str, Any] | None) -> list[AniListError]:
+    """Parse a GraphQL body's ``errors`` array into typed :class:`AniListError`.
+
+    The ``errors`` array is the dynamic GraphQL boundary; this maps each raw
+    entry into the typed domain (skipping any non-object entry), so the caller
+    reads ``err.status`` / ``err.message`` rather than untyped ``dict`` keys.
+
+    Args:
+        body (dict[str, Any] | None): The parsed JSON response body
+    """
+
+    raw_errors = (body or {}).get("errors")
+    if not isinstance(raw_errors, list):
+        return []
+    # response.json() is untyped; map each GraphQL error OBJECT into the typed
+    # AniListError, skipping any non-object entry (a soft-throttle or malformed
+    # body can carry non-dict junk in the errors array).
+    return [
+        AniListError.from_api(cast("dict[str, Any]", err))
+        for err in cast("list[Any]", raw_errors)
+        if isinstance(err, dict)
+    ]
+
+
+def _extract(body: dict[str, Any] | None, *path: str) -> dict[str, Any]:
     """Walk a null-safe key path through a GraphQL body, yielding {} on any miss
 
     AniList returns {"data": null} or {"data": {"Media": null}} for an unknown
@@ -116,17 +133,17 @@ def _extract(body: dict | None, *path: str) -> dict:
     "'NoneType' object has no attribute 'get'".
 
     Args:
-        body (dict | None): The parsed JSON response body
+        body (dict[str, Any] | None): The parsed JSON response body
         *path (str): The keys to walk, e.g. "data", "Media"
     """
 
-    node = body or {}
+    node: dict[str, Any] = body or {}
     for key in path:
         node = node.get(key) or {}
     return node
 
 
-def _media_from(body: dict | None) -> AniListMediaNode:
+def _media_from(body: dict[str, Any] | None) -> AniListMediaNode:
     """Parse the Media node from a single-id body into an AniListMediaNode
 
     The raw ``{"data": {"Media": {...}}}`` body is the dynamic GraphQL boundary;
@@ -134,13 +151,13 @@ def _media_from(body: dict | None) -> AniListMediaNode:
     null) yields an all-``None`` node via ``from_api({})``.
 
     Args:
-        body (dict | None): The parsed JSON response body
+        body (dict[str, Any] | None): The parsed JSON response body
     """
 
     return AniListMediaNode.from_api(_extract(body, "data", "Media"))
 
 
-def _post_with_retry(query: str, variables: dict) -> dict:
+def _post_with_retry(query: str, variables: dict[str, Any]) -> dict[str, Any]:
     """POST a GraphQL query to AniList, retrying politely on rate-limits / 5xx
 
     On a rate-limit (HTTP 429) or a transient 5xx, AniList returns
@@ -172,9 +189,11 @@ def _post_with_retry(query: str, variables: dict) -> dict:
 
         # Parse the body so a soft-throttle (HTTP 200 + throttle error payload)
         # can take the same retry path as a 429 status. A non-JSON body yields
-        # {} here and falls through to the return below.
+        # {} here and falls through to the return below. response.json() is
+        # untyped (the GraphQL body is an open JSON object), so cast at the parse
+        # boundary; a non-dict body is rejected by the isinstance guards below.
         try:
-            body = resp.json()
+            body: dict[str, Any] | None = cast("dict[str, Any]", resp.json())
         except ValueError:
             body = None
 
@@ -199,7 +218,7 @@ def _post_with_retry(query: str, variables: dict) -> dict:
     return {}
 
 
-def get_query(al_id: int) -> dict:
+def get_query(al_id: int) -> dict[str, Any]:
     """Fetch one AniList Media by id (see _post_with_retry for the retry policy)
 
     Args:
@@ -221,13 +240,18 @@ def get_query_batch(al_ids: list[int]) -> AniListCache:
     """
 
     j = _post_with_retry(BATCH_QUERY, {"ids": list(al_ids)})
-    media_list = _extract(j, "data", "Page").get("media") or []
-
-    return {
-        m["id"]: {"data": {"Media": m}}
-        for m in media_list
-        if isinstance(m, dict) and m.get("id") is not None
-    }
+    # response.json() is untyped and the cache stores each Media body verbatim
+    # (re-parsed on read via AniListMediaNode.from_api). Keep each Media OBJECT
+    # carrying an id, skipping any non-object entry in the array.
+    out: AniListCache = {}
+    for raw in cast("list[Any]", _extract(j, "data", "Page").get("media") or []):
+        if not isinstance(raw, dict):
+            continue
+        media = cast("dict[str, Any]", raw)
+        media_id = media.get("id")
+        if media_id is not None:
+            out[media_id] = {"data": {"Media": media}}
+    return out
 
 
 def _get_media(

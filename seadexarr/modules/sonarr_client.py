@@ -5,6 +5,7 @@ and the two raw endpoints the syncer needs
 (``/api/v3/episode`` and ``/api/v3/parse``)
 """
 import logging
+from typing import Any, cast
 from urllib.parse import urlencode
 
 import requests
@@ -12,7 +13,7 @@ from arrapi import SonarrAPI
 
 from .log import indent_string
 from .manual_import import PendingImport
-from .seadex_types import SonarrEpisode
+from .seadex_types import SonarrEpisode, SonarrItem
 
 # Per-request timeout (seconds) for the manual-import folder scan. Sonarr walks
 # and parses every file under the folder, which is slow - and can hang - over a
@@ -50,10 +51,13 @@ class SonarrClient:
         self._logger = logger
         self._api = SonarrAPI(url=url, apikey=api_key)
 
-    def all_series(self) -> list:
+    def all_series(self) -> list[SonarrItem]:
         """Every series in Sonarr (unfiltered)."""
 
-        return self._api.all_series()
+        # arrapi ships no py.typed, so all_series() is Unknown; the series
+        # objects expose the attribute surface of SonarrItem, so cast at this
+        # client boundary into the project's typed shape.
+        return cast("list[SonarrItem]", self._api.all_series())
 
     def episodes(self, series_id: int) -> list[SonarrEpisode] | None:
         """All episodes for a series, season/episode-sorted (``/api/v3/episode``).
@@ -80,10 +84,14 @@ class SonarrClient:
             )
             return None
 
+        # response.json() is untyped; the episode endpoint returns a JSON array
+        # of objects, so cast at the parse boundary before sorting/parsing.
+        raw_json = cast("list[dict[str, Any]]", eps_req.json())
+
         # Sort by season/episode number for slicing later, then parse each raw
         # record into a SonarrEpisode at this client boundary.
         raw_eps = sorted(
-            eps_req.json(),
+            raw_json,
             key=lambda x: (
                 x.get("seasonNumber", None),
                 x.get("episodeNumber", None),
@@ -91,7 +99,7 @@ class SonarrClient:
         )
         return [SonarrEpisode.from_api(ep) for ep in raw_eps]
 
-    def parse(self, filename: str) -> list:
+    def parse(self, filename: str) -> list[dict[str, int]]:
         """Ask Sonarr to parse a single filename into season/episode numbers.
 
         Only the season/episode mapping is returned - the file size is filled in
@@ -102,8 +110,8 @@ class SonarrClient:
             filename (str): Filename to parse (basename, not full path).
 
         Returns:
-            list: List of {"season", "episode"} dicts (empty if Sonarr couldn't
-                parse the filename).
+            list[dict[str, int]]: List of {"season", "episode"} dicts (empty if
+                Sonarr couldn't parse the filename).
         """
 
         d = {"title": filename, "apikey": self._api_key}
@@ -122,9 +130,12 @@ class SonarrClient:
             )
             return []
 
-        episode_info = parse_req.json().get("episodes", [])
+        # response.json() is untyped; the parse endpoint returns a JSON object,
+        # so cast at the parse boundary before reading its "episodes" array.
+        parse_body = cast("dict[str, Any]", parse_req.json())
+        episode_info: list[dict[str, Any]] = parse_body.get("episodes", [])
 
-        parsed = []
+        parsed: list[dict[str, int]] = []
         for ep in episode_info:
 
             season = ep.get("seasonNumber", None)
@@ -147,8 +158,8 @@ class SonarrClient:
         self,
         *,
         pending: PendingImport,
-        filter_existing_files = False,
-    ) -> list[dict] | None:
+        filter_existing_files: bool = False,
+    ) -> list[dict[str, Any]] | None:
         """List Sonarr's manual-import candidates for a folder, series-pinned.
 
         Passing ``seriesId`` makes Sonarr parse the files *in the context of the
@@ -167,9 +178,12 @@ class SonarrClient:
                 has imported. Sent lowercase ``true``/``false``.
 
         Returns:
-            list[dict] | None: Raw ManualImportResource dicts (keys like ``path``,
-                ``episodes``, ``quality``, ``languages``, ``releaseGroup``,
-                ``rejections``); ``None`` on a transient failure.
+            list[dict[str, Any]] | None: Raw ManualImportResource dicts (keys like
+                ``path``, ``episodes``, ``quality``, ``languages``,
+                ``releaseGroup``, ``rejections``); ``None`` on a transient failure.
+                The resource is a heterogeneous Sonarr DTO (primitives, nested
+                ``SeriesResource``/``QualityModel`` objects, and lists), read
+                key-by-key by the caller, so it stays an open JSON object.
         """
 
         params: dict[str, str] = {
@@ -203,12 +217,15 @@ class SonarrClient:
             )
             return None
 
-        return candidates_req.json()
+        # response.json() is untyped; the manualimport endpoint returns a JSON
+        # array of (heterogeneous) ManualImportResource objects, so cast at the
+        # parse boundary.
+        return cast("list[dict[str, Any]]", candidates_req.json())
 
     def manual_import_execute(
         self,
         *,
-        files: list[dict],
+        files: list[dict[str, Any]],
         import_mode: str = "auto",
     ) -> int | None:
         """Queue a ``ManualImport`` command for the given files (no title parse).
@@ -222,7 +239,7 @@ class SonarrClient:
         pending and retry later.
 
         Args:
-            files (list[dict]): ManualImport file payloads to import.
+            files (list[dict[str, Any]]): ManualImport file payloads to import.
             import_mode (str): Sonarr ``importMode``: ``auto`` (default; respects
                 the copy/hardlink setting and preserves seeding), ``move`` or
                 ``copy``.
@@ -252,7 +269,7 @@ class SonarrClient:
             label="RefreshMonitoredDownloads",
         )
 
-    def _post_command(self, body: dict, *, label: str) -> int | None:
+    def _post_command(self, body: dict[str, Any], *, label: str) -> int | None:
         """POST a command to ``/api/v3/command`` and return its queued id.
 
         Shared by :meth:`manual_import_execute` and
@@ -260,7 +277,7 @@ class SonarrClient:
         (with a warning) on a non-2xx.
 
         Args:
-            body (dict): The command body (must carry ``name``).
+            body (dict[str, Any]): The command body (must carry ``name``).
             label (str): Command name for the warning message.
         """
 
@@ -277,9 +294,12 @@ class SonarrClient:
             )
             return None
 
-        return command_req.json().get("id")
+        # response.json() is untyped; the command POST returns a CommandResource
+        # JSON object whose "id" is the queued command id (or absent), so cast at
+        # the parse boundary before reading it.
+        return cast("dict[str, Any]", command_req.json()).get("id")
 
-    def queue(self) -> list[dict]:
+    def queue(self) -> list[dict[str, Any]]:
         """All Sonarr queue records (``/api/v3/queue``).
 
         Used to see what Sonarr is doing with a download we added directly to
@@ -294,7 +314,9 @@ class SonarrClient:
         "couldn't read the queue" as "not tracked" and falls back to its own scan.
 
         Returns:
-            list[dict]: Raw QueueResource record dicts; empty on failure.
+            list[dict[str, Any]]: Raw QueueResource record dicts; empty on
+                failure. Each record is a heterogeneous Sonarr DTO read key-by-key
+                by the caller, so it stays an open JSON object.
         """
         params = urlencode(
             {
@@ -315,9 +337,12 @@ class SonarrClient:
             )
             return []
 
-        return queue_req.json().get("records", [])
+        # response.json() is untyped; the queue endpoint returns a paged object
+        # whose "records" is the array of QueueResource objects, so cast at the
+        # parse boundary before reading it.
+        return cast("dict[str, Any]", queue_req.json()).get("records", [])
 
-    def quality_definitions(self) -> list[dict]:
+    def quality_definitions(self) -> list[dict[str, Any]]:
         """All Sonarr quality definitions (``/api/v3/qualitydefinition``).
 
         Used to resolve a quality NAME (e.g. ``Bluray-2160p``) to a Sonarr
@@ -327,7 +352,9 @@ class SonarrClient:
         fall back to other quality sources.
 
         Returns:
-            list[dict]: Raw QualityDefinitionResource dicts; empty on failure.
+            list[dict[str, Any]]: Raw QualityDefinitionResource dicts (each wraps
+                a nested ``quality`` object), read key-by-key by the caller, so
+                they stay open JSON objects; empty on failure.
         """
 
         defs_req_url = f"{self._url}/api/v3/qualitydefinition?apikey={self._api_key}"
@@ -340,9 +367,11 @@ class SonarrClient:
             )
             return []
 
-        return defs_req.json()
+        # response.json() is untyped; the endpoint returns a JSON array of
+        # QualityDefinitionResource objects, so cast at the parse boundary.
+        return cast("list[dict[str, Any]]", defs_req.json())
 
-    def languages(self) -> list[dict]:
+    def languages(self) -> list[dict[str, Any]]:
         """All Sonarr languages (``/api/v3/language``).
 
         Used to resolve language names to ``{id, name}`` objects for the
@@ -352,7 +381,7 @@ class SonarrClient:
         fall back to the candidate's languages.
 
         Returns:
-            list[dict]: Raw LanguageResource dicts; empty on failure.
+            list[dict[str, Any]]: Raw LanguageResource dicts; empty on failure.
         """
 
         langs_req_url = f"{self._url}/api/v3/language?apikey={self._api_key}"
@@ -364,9 +393,11 @@ class SonarrClient:
             )
             return []
 
-        return langs_req.json()
+        # response.json() is untyped; the endpoint returns a JSON array of
+        # LanguageResource objects, so cast at the parse boundary.
+        return cast("list[dict[str, Any]]", langs_req.json())
 
-    def command_status(self, command_id: int) -> dict:
+    def command_status(self, command_id: int) -> dict[str, Any]:
         """Current state of a Sonarr command (``/api/v3/command/{id}``).
 
         Used to optionally verify a ``ManualImport`` completed before the caller
@@ -379,8 +410,8 @@ class SonarrClient:
             command_id (int): Command ID returned by ``manual_import_execute``.
 
         Returns:
-            dict: Raw CommandResource dict (keys like ``status``, ``result``);
-                empty on failure.
+            dict[str, Any]: Raw CommandResource dict (keys like ``status``,
+                ``result``); empty on failure.
         """
 
         status_req_url = (
@@ -397,4 +428,6 @@ class SonarrClient:
             )
             return {}
 
-        return status_req.json()
+        # response.json() is untyped; the endpoint returns a single
+        # CommandResource JSON object, so cast at the parse boundary.
+        return cast("dict[str, Any]", status_req.json())

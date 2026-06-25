@@ -50,12 +50,12 @@ class AniBridgeRecord:
     """
 
     anidb_id: int | None = None
-    mal_ids: list[int] = field(default_factory=list)
-    tvdb_shows: dict[int, TvdbMappings] = field(default_factory=dict)
-    tmdb_shows: dict[int, TvdbMappings] = field(default_factory=dict)
-    tmdb_movie_ids: list[int] = field(default_factory=list)
-    tvdb_movie_ids: list[int] = field(default_factory=list)
-    imdb_ids: list[str] = field(default_factory=list)
+    mal_ids: list[int] = field(default_factory=list[int])
+    tvdb_shows: dict[int, TvdbMappings] = field(default_factory=dict[int, TvdbMappings])
+    tmdb_shows: dict[int, TvdbMappings] = field(default_factory=dict[int, TvdbMappings])
+    tmdb_movie_ids: list[int] = field(default_factory=list[int])
+    tvdb_movie_ids: list[int] = field(default_factory=list[int])
+    imdb_ids: list[str] = field(default_factory=list[str])
 
 
 def _parse_descriptor(descriptor: str) -> tuple[str, str | None, str | None]:
@@ -107,7 +107,7 @@ def _parse_ranges(target: str) -> list[tuple[int, int | None]]:
         list[tuple[int, int | None]]: (start, end); the end is None for open-ended
     """
 
-    ranges = []
+    ranges: list[tuple[int, int | None]] = []
     target = str(target).split("|")[0]
 
     for piece in target.split(","):

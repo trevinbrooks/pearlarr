@@ -34,7 +34,7 @@ UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def record_is_fresh(
-    record: dict | None,
+    record: dict[str, Any] | None,
     *,
     payload_key: str,
     ttl_days: int,
@@ -49,9 +49,9 @@ def record_is_fresh(
     to keep vs. refresh) sides never disagree about what "still good" means.
 
     Args:
-        record (dict | None): The raw cache record, or None / a non-dict (treated
-            as not fresh, subsuming both the ``(record or {})`` and ``isinstance``
-            guards at the call sites).
+        record (dict[str, Any] | None): The raw cache record, or None / a non-dict
+            (treated as not fresh, subsuming both the ``(record or {})`` and
+            ``isinstance`` guards at the call sites).
         payload_key (str): Key whose presence (and truthiness) marks a usable
             payload (e.g. ``"data"`` for AniList, ``"episodes"`` for Sonarr).
         ttl_days (int): TTL window in days, used to derive ``cutoff`` when one
@@ -110,21 +110,26 @@ class CacheRecord(TypedDict, total=False):
 
 
 def save_json(
-    data: dict,
+    data: dict[str, Any],
     out_file: str,
     sort_cache: bool = False,
 ) -> None:
     """Save JSON prettily
 
     Args:
-        data (dict): Data to be saved
+        data (dict[str, Any]): Data to be saved
         out_file (str): Path to JSON file
         sort_cache (bool, optional): Whether to sort cache files by AniList ID. Defaults to False.
     """
 
     if sort_cache:
 
-        anilist_entries = data.get("anilist_entries")
+        # The persisted cache nests anilist_entries as arr -> al_id_str ->
+        # record; the in-memory dict is untyped JSON, so narrow that block to its
+        # known shape here before sorting each arr's records by numeric id.
+        anilist_entries: dict[str, dict[str, dict[str, Any]]] | None = data.get(
+            "anilist_entries",
+        )
         if anilist_entries is not None:
             for arr, arr_item in anilist_entries.items():
                 keys = list(arr_item.keys())
@@ -284,7 +289,12 @@ class CacheStore:
         """
 
         value = self.get_cached_field(arr, al_id, CacheField.TORRENT_HASHES)
-        return value if isinstance(value, list) else []
+        if not isinstance(value, list):
+            return []
+        # The stored field is read off the untyped cache JSON; the persisted
+        # shape is the planner's list[str | None] (see docstring), so cast the
+        # narrowed list to that element type at this read boundary.
+        return cast("list[str | None]", value)
 
     def update_cache(
         self,
