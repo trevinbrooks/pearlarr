@@ -534,6 +534,39 @@ class CommandResource:
         )
 
 
+# --- Radarr movie files (``/api/v3/moviefile`` records) ----------------------
+#
+# Derived from the Radarr v3 OpenAPI ``MovieFileResource`` in
+# ``schemas/radarr.schema``. Nullability mirrors the schema exactly (a schema
+# ``string | null`` field -> ``str | None``).
+
+
+@dataclass(frozen=True, slots=True)
+class MovieFile:
+    """A Radarr ``MovieFileResource``, reduced to the fields the syncer reads.
+
+    ``get_radarr_release_dict`` reads each movie file into the shared
+    :data:`ArrReleaseDict` decision (release group -> existing-file sizes), so a
+    movie file is READ into a decision, not re-emitted: it follows the
+    :class:`SonarrEpisode` precedent (a frozen dataclass VIEW with a defensive
+    :meth:`from_api`). Only ``release_group`` (``string | null`` in the schema)
+    and ``size`` (a non-null ``int64``) are consumed. Parsed at the client
+    boundary.
+    """
+
+    release_group: str | None = None
+    size: int | None = None
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> Self:
+        """Build from one raw ``MovieFileResource`` dict (filters unknown keys)."""
+
+        return cls(
+            release_group=raw.get("releaseGroup"),
+            size=raw.get("size"),
+        )
+
+
 # --- Sonarr parse (``/api/v3/parse`` ``episodes`` array) ---------------------
 
 

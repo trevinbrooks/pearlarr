@@ -9,7 +9,7 @@ import requests
 from arrapi import RadarrAPI
 
 from .anibridge import AniBridge
-from .seadex_types import ArrItem, RadarrItem
+from .seadex_types import ArrItem, MovieFile, RadarrItem
 
 
 def make_radarr_client(
@@ -76,8 +76,11 @@ class RadarrClient:
         # client boundary into the project's typed shape.
         return cast("list[RadarrItem]", self._api.all_movies())
 
-    def movie_files(self, movie_id: int) -> list[dict[str, Any]]:
-        """Raw movie-file records for a movie (``/api/v3/moviefile``).
+    def movie_files(self, movie_id: int) -> list[MovieFile]:
+        """Movie-file records for a movie (``/api/v3/moviefile``).
+
+        Each ``MovieFileResource`` is parsed into a :class:`~.seadex_types.MovieFile`
+        view at this client boundary.
 
         Args:
             movie_id (int): ID for the movie in Radarr.
@@ -89,8 +92,10 @@ class RadarrClient:
             f"apikey={self._api_key}"
         )
         # response.json() is untyped; the moviefile endpoint returns a JSON
-        # array of objects, so cast at the parse boundary.
-        return cast("list[dict[str, Any]]", self._session.get(mov_req_url).json())
+        # array of objects, so cast at the parse boundary, then parse each raw
+        # record into the typed MovieFile view.
+        raw = cast("list[dict[str, Any]]", self._session.get(mov_req_url).json())
+        return [MovieFile.from_api(record) for record in raw]
 
 
 @dataclass(frozen=True)

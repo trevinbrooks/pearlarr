@@ -1,3 +1,5 @@
+from typing import Any
+
 from .cache import CacheRecord
 from .config import Arr
 from .log import indent_string
@@ -32,7 +34,10 @@ class RadarrSync(ArrSync[RadarrItem]):
         self._config = deps.config
         self.session = deps.session
         self.logger = deps.logger
-        self.anime_mappings = deps.mappings.anime_mappings
+        # ``Mappings.anime_mappings`` is an untyped bare ``dict``; narrow it here
+        # to the Kometa Anime-IDs shape ``collect_anime_movies`` consumes
+        # ({anilist_id: mapping}), so the movie collector sees a precise type.
+        self.anime_mappings: dict[str, dict[str, Any]] = deps.mappings.anime_mappings
         self.anibridge = deps.mappings.anibridge
 
         radarr_url = self._config.radarr_url
@@ -224,8 +229,8 @@ class RadarrSync(ArrSync[RadarrItem]):
         # one-element list so the value matches the shared ArrReleaseDict shape
         # (Sonarr accumulates a per-episode list).
         radarr_release_dict: ArrReleaseDict = {
-            r.get("releaseGroup", None): [r.get("size", None)]
-            for r in self.radarr.movie_files(radarr_movie_id)
+            mf.release_group: [mf.size]
+            for mf in self.radarr.movie_files(radarr_movie_id)
         }
 
         # If we have multiple options, throw up an error
