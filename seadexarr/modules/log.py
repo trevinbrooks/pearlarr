@@ -4,7 +4,7 @@ import shutil
 import sys
 from enum import StrEnum
 from logging.handlers import RotatingFileHandler
-from typing import Any, Protocol, TypedDict, cast
+from typing import Any, Protocol, TypedDict, cast, override
 
 from rich.console import Console
 from rich.rule import Rule
@@ -120,6 +120,7 @@ class RichConsoleHandler(logging.Handler):
             line.append(Text(str(tail), style=kv["tail_style"] or "yellow"))
         return line
 
+    @override
     def emit(self, record: logging.LogRecord) -> None:
         try:
             # A titled section: a full-width rule, then the title text
@@ -238,6 +239,7 @@ class LogCounter(logging.Filter):
         super().__init__()
         self.counts: dict[int, int] = {}
 
+    @override
     def filter(self, record: logging.LogRecord) -> bool:
         self.counts[record.levelno] = self.counts.get(record.levelno, 0) + 1
         return True

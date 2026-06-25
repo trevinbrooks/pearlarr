@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, override
 
 from .cache import CacheRecord
 from .config import Arr
@@ -52,11 +52,13 @@ class RadarrSync(ArrSync[RadarrItem]):
 
     # --- ArrSync hooks ------------------------------------------------------
 
+    @override
     def get_items(self) -> list[RadarrItem]:
         """Every Radarr movie that has an associated AniList ID."""
 
         return self.get_all_radarr_movies()
 
+    @override
     def filter_to_single(
         self, items: list[RadarrItem], item_id: int,
     ) -> list[RadarrItem]:
@@ -69,6 +71,7 @@ class RadarrSync(ArrSync[RadarrItem]):
             )
         return filtered
 
+    @override
     def item_anilist_ids(
         self,
         item: RadarrItem,
@@ -83,6 +86,7 @@ class RadarrSync(ArrSync[RadarrItem]):
             log_ignored=log_ignored,
         )
 
+    @override
     def process_al_id(
         self,
         arr: Arr,
@@ -175,6 +179,7 @@ class RadarrSync(ArrSync[RadarrItem]):
             release_group=radarr_release_group,
         )
 
+    @override
     def pending_import_series_id(self, item: RadarrItem) -> int | None:
         """No-op: Radarr movies record no pending imports (out of scope).
 
@@ -185,6 +190,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         del item
         return None
 
+    @override
     def import_completed(
         self,
         pending: PendingImport,

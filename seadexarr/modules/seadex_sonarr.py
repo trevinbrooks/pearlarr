@@ -1,7 +1,7 @@
 import os
 import time
 from datetime import datetime, timedelta
-from typing import Any, cast
+from typing import Any, cast, override
 from xml.etree import ElementTree
 
 from . import coverage as _coverage
@@ -362,7 +362,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         # RadarrClient and reuse the already-built shared mappings - no nested
         # SeaDexRadarr (which would re-run the whole engine __init__: mapping
         # parse, cache load, and a qBittorrent login, all unused here).
-        self.all_radarr_movies = None
+        self.all_radarr_movies: list[RadarrItem] | None = None
         radarr_url = self._config.radarr_url_optional
         radarr_api_key = self._config.radarr_api_key_optional
 
@@ -385,6 +385,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
     # --- ArrSync hooks ------------------------------------------------------
 
+    @override
     def get_items(self) -> list[SonarrItem]:
         """Every Sonarr series with AniList mapping info.
 
@@ -399,6 +400,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         self._last_refresh_monotonic = None
         return self.get_all_sonarr_series()
 
+    @override
     def filter_to_single(self, items: list[SonarrItem], item_id: int) -> list[SonarrItem]:
         """Narrow the series list to a single TVDB ID."""
 
@@ -409,6 +411,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             )
         return filtered
 
+    @override
     def item_anilist_ids(
         self,
         item: SonarrItem,
@@ -422,6 +425,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             log_ignored=log_ignored,
         )
 
+    @override
     def process_al_id(
         self,
         arr: Arr,
@@ -644,6 +648,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             pending_seeds=pending_seeds,
         )
 
+    @override
     def pending_import_series_id(self, item: SonarrItem) -> int | None:
         """The Sonarr series id whose carried-over pending records this item owns.
 
@@ -779,6 +784,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         return pending_seeds
 
+    @override
     def import_completed(
         self,
         pending: PendingImport,
