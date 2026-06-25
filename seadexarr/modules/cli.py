@@ -38,7 +38,9 @@ def _paths() -> _Paths:
     command shares one definition instead of re-joining them inline.
     """
 
-    config_dir = os.getenv("CONFIG_DIR", os.getcwd())
+    # TODO: Switch to pathlib and use user_data_dir() for config/cache location
+    file_dir = os.path.dirname(str(os.path.realpath(__file__)))
+    config_dir = os.getenv("SEADEX_ARR_DATA_DIR", os.path.abspath(os.path.join(file_dir, "..", "..")))
     return _Paths(
         config=os.path.join(config_dir, "config.yml"),
         cache=os.path.join(config_dir, "cache.json"),
