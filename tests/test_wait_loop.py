@@ -1,10 +1,10 @@
 """Unit tests for the engine's qBittorrent completion wait/poll machinery.
 
 These pin :meth:`SeaDexArr._poll_torrent` (the single-shot state read) and
-:meth:`SeaDexArr._wait_for_completion` (the poll loop) against a scripted
-``FakeQbit``. The clock and sleep are injected into the wait loop so it never
-actually waits - real foreground ``sleep`` is blocked in this env, so the fakes
-are mandatory, not just a speed-up. The engine is built bare (``object.__new__``
+:meth:`SeaDexArr._run_monitor` (the poll loop) against a scripted ``FakeQbit``.
+The clock and sleep are injected into the monitor loop so it never actually
+waits - real foreground ``sleep`` is blocked in this env, so the fakes are
+mandatory, not just a speed-up. The engine is built bare (``object.__new__``
 via ``make_bare_instance``) so no live qBittorrent login or disk I/O happens.
 """
 
@@ -142,77 +142,6 @@ class FakeClock:
         # Ignore the requested duration; advance our own clock so the loop's
         # deadline arithmetic is exercised without ever really sleeping.
         self.t += self._step
-
-
-class TestWaitForCompletion:
-    """_wait_for_completion loops _poll_torrent against an injected clock."""
-
-    def test_returns_complete_immediately(self) -> None:
-        torrent = FakeTorrent(is_complete=True, content_path="/data/show")
-        engine = make_engine(FakeQbit([[torrent]]))
-        clock = FakeClock(step=10)
-
-        outcome, path = engine._wait_for_completion(
-            "h", timeout_s=3600, poll_s=30, now=clock.now, sleep=clock.sleep,
-        )
-
-        assert (outcome, path) == (WaitOutcome.COMPLETE, "/data/show")
-
-    def test_returns_errored_immediately(self) -> None:
-        engine = make_engine(FakeQbit([[FakeTorrent(is_errored=True)]]))
-        clock = FakeClock(step=10)
-
-        outcome, path = engine._wait_for_completion(
-            "h", timeout_s=3600, poll_s=30, now=clock.now, sleep=clock.sleep,
-        )
-
-        assert (outcome, path) == (WaitOutcome.ERRORED, None)
-
-    def test_returns_missing_immediately(self) -> None:
-        engine = make_engine(FakeQbit([[]]))
-        clock = FakeClock(step=10)
-
-        outcome, path = engine._wait_for_completion(
-            "h", timeout_s=3600, poll_s=30, now=clock.now, sleep=clock.sleep,
-        )
-
-        assert (outcome, path) == (WaitOutcome.MISSING, None)
-
-    def test_times_out_after_deadline_while_downloading(self) -> None:
-        # Always downloading -> the loop keeps polling/sleeping until the injected
-        # clock crosses the deadline, then returns TIMED_OUT (never really sleeps).
-        qbit = FakeQbit([[FakeTorrent(progress=0.5)]])
-        engine = make_engine(qbit)
-        clock = FakeClock(step=30)
-
-        outcome, path = engine._wait_for_completion(
-            "h", timeout_s=60, poll_s=30, now=clock.now, sleep=clock.sleep,
-        )
-
-        assert (outcome, path) == (WaitOutcome.TIMED_OUT, None)
-        # Polls at t=0 (sleep->30) and t=30 (sleep->60), then the t=60 poll sees
-        # 60 >= the 60s deadline -> timed out: three polls in all.
-        assert qbit.calls == 3
-
-    def test_completes_after_some_downloading_polls(self) -> None:
-        # First two polls show downloading, the third shows complete; the loop
-        # should return COMPLETE rather than timing out.
-        qbit = FakeQbit(
-            [
-                [FakeTorrent(progress=0.3)],
-                [FakeTorrent(progress=0.7)],
-                [FakeTorrent(is_complete=True, content_path="/data/done")],
-            ],
-        )
-        engine = make_engine(qbit)
-        clock = FakeClock(step=30)
-
-        outcome, path = engine._wait_for_completion(
-            "h", timeout_s=3600, poll_s=30, now=clock.now, sleep=clock.sleep,
-        )
-
-        assert (outcome, path) == (WaitOutcome.COMPLETE, "/data/done")
-        assert qbit.calls == 3
 
 
 # A timestamp far enough in the past/future that the TTL verdict is fixed no

@@ -3,7 +3,7 @@ import os
 import shutil
 import time
 from datetime import datetime, timedelta
-from typing import NamedTuple, assert_never
+from typing import NamedTuple
 
 import typer
 
@@ -155,8 +155,6 @@ def _run_arrs(
                         dry_run=dry_run,
                         import_wait_mode=import_wait_mode,
                     )
-                case _ as unreachable:
-                    assert_never(unreachable)
         except Exception:
             logger.error(f"Unexpected error during {arr_name.capitalize()} run", exc_info=True)
         finally:

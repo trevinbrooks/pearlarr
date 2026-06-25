@@ -1237,52 +1237,6 @@ class SeaDexArr:
             return WaitOutcome.COMPLETE, t.content_path, progress
         return None, None, progress
 
-    def _wait_for_completion(
-        self,
-        infohash: str,
-        *,
-        timeout_s: int,
-        poll_s: int,
-        now: Callable[[], float] | None = None,
-        sleep: Callable[[float], None] | None = None,
-        on_wait: Callable[[float, float], None] | None = None,
-    ) -> tuple[WaitOutcome, str | None]:
-        """Block until a torrent reaches a terminal state or the deadline.
-
-        Polls :meth:`_poll_torrent` on a ``poll_s`` cadence against a monotonic
-        deadline. A terminal outcome (COMPLETE/ERRORED/MISSING) returns
-        immediately; otherwise once ``elapsed >= timeout_s`` it returns
-        ``(TIMED_OUT, None)``. The clock and sleep are injectable so unit tests
-        never actually wait (foreground ``sleep`` is blocked in this env).
-
-        Args:
-            infohash (str): The qBittorrent tracking key to wait on.
-            timeout_s (int): Max seconds to wait before timing out.
-            poll_s (int): Seconds to sleep between polls.
-            now (Callable[[], float] | None): Monotonic clock; defaults to
-                ``time.monotonic``.
-            sleep (Callable[[float], None] | None): Sleep fn; defaults to
-                ``time.sleep``.
-            on_wait (Callable[[float, float], None] | None): Called once per poll
-                while still downloading, with ``(elapsed_seconds, progress)``, so
-                the caller can show a heartbeat. Not called on a terminal poll.
-        """
-
-        clock = now if now is not None else time.monotonic
-        nap = sleep if sleep is not None else time.sleep
-
-        start = clock()
-        while True:
-            outcome, path, progress = self._poll_torrent(infohash)
-            if outcome is not None:
-                return outcome, path
-            elapsed = clock() - start
-            if elapsed >= timeout_s:
-                return WaitOutcome.TIMED_OUT, None
-            if on_wait is not None:
-                on_wait(elapsed, progress)
-            nap(poll_s)
-
     def _try_import_completed(
         self,
         pending: PendingImport,
