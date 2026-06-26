@@ -22,6 +22,7 @@ from seadexarr.modules.reporter import (
     RunReporter,
     RunStats,
 )
+from seadexarr.modules.torrents import AddOutcome, ReleaseOutcome
 from tests.builders import make_logger
 
 
@@ -264,3 +265,105 @@ class TestSummaryPendingCounters:
 
         assert any("added" in m for m in messages)
         assert not any("queued" in m for m in messages)
+
+
+def _action_messages(
+    reporter: RunReporter,
+    results: list[ReleaseOutcome],
+    **kwargs: Any,
+) -> tuple[bool, list[str]]:
+    """Capture the status + per-release rows log_seadex_action emits.
+
+    Passes an empty ``seadex_dict`` so the recommended-group rows are skipped and
+    the assertions key only on the status line and the per-release outcome rows.
+    """
+
+    import logging
+
+    records: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = _Capture()
+    reporter.logger.addHandler(handler)
+    reporter.logger.setLevel(logging.DEBUG)
+    try:
+        logged = reporter.log_seadex_action({}, results, **kwargs)
+    finally:
+        reporter.logger.removeHandler(handler)
+    return logged, [r.getMessage() for r in records]
+
+
+class TestLogSeadexAction:
+    """log_seadex_action renders adding / already-downloading / keeping distinctly."""
+
+    def test_added_status_and_label(self) -> None:
+        logged, messages = _action_messages(
+            _make_reporter(),
+            [ReleaseOutcome(outcome=AddOutcome.ADDED, name="Show-NAN0", group="NAN0")],
+        )
+        joined = "\n".join(messages)
+
+        assert logged is True
+        assert "adding a better release" in joined
+        assert "added" in joined
+        assert "Show-NAN0" in joined
+
+    def test_already_downloading_status_monitor_active(self) -> None:
+        logged, messages = _action_messages(
+            _make_reporter(),
+            [ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="Show-NAN0", group="NAN0")],
+            monitor_active=True,
+        )
+        joined = "\n".join(messages)
+
+        assert logged is True
+        assert "already downloading" in joined
+        assert "waiting to import" in joined
+        assert "downloading" in joined and "Show-NAN0" in joined
+        # The misleading "keeping it" / "kept" wording is gone for this case.
+        assert "keeping it" not in joined
+        assert "kept" not in joined
+
+    def test_already_downloading_status_monitor_inactive(self) -> None:
+        # Feature off / preview: state the fact, but don't promise an import.
+        _, messages = _action_messages(
+            _make_reporter(),
+            [ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="X", group="G")],
+            monitor_active=False,
+        )
+        joined = "\n".join(messages)
+
+        assert "already downloading" in joined
+        assert "waiting to import" not in joined
+
+    def test_mixed_added_and_already_added_reads_adding(self) -> None:
+        # A fresh grab happened, so the headline is "adding"; the per-release rows
+        # disambiguate (one added, one still downloading).
+        _, messages = _action_messages(
+            _make_reporter(),
+            [
+                ReleaseOutcome(outcome=AddOutcome.ADDED, name="new", group="G"),
+                ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="old", group="G"),
+            ],
+            monitor_active=True,
+        )
+        joined = "\n".join(messages)
+
+        assert "adding a better release" in joined
+        assert "already downloading" not in joined
+        assert "new" in joined and "old" in joined
+
+    def test_dry_run_reads_adding(self) -> None:
+        logged, messages = _action_messages(_make_reporter(), [], dry_run=True)
+
+        assert logged is True
+        assert "adding a better release" in "\n".join(messages)
+
+    def test_all_skipped_returns_false_and_emits_nothing(self) -> None:
+        logged, messages = _action_messages(_make_reporter(), [])
+
+        assert logged is False
+        assert messages == []

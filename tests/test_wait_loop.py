@@ -13,17 +13,21 @@ from typing import cast, override
 from unittest import mock
 
 import qbittorrentapi
+from seadex import Tracker
 
 from seadexarr.modules.config import Arr
 from seadexarr.modules.manual_import import (
     ImportReadiness,
     ImportWaitMode,
+    Outcome,
     PendingState,
+    TorrentProbe,
     WaitOutcome,
 )
 from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.seadex_arr import SeaDexArr
-from seadexarr.modules.wait_view import WaitView
+from seadexarr.modules.torrents import AddOutcome
+from seadexarr.modules.wait_view import Phase, TorrentView, WaitSnapshot, WaitView
 
 from .builders import (
     import_probe,
@@ -31,6 +35,8 @@ from .builders import (
     make_config,
     make_logger,
     pending_import,
+    rg_group,
+    url_item,
 )
 
 
@@ -43,7 +49,12 @@ class FakeStateEnum:
 
 
 class FakeTorrent:
-    """Mimics one qBittorrent torrent info row (the fields ``_poll_torrent`` reads)."""
+    """Mimics one qBittorrent torrent info row (the fields ``_poll_torrent`` reads).
+
+    The telemetry fields (``dlspeed`` / ``eta`` / ``completed`` / ``size``) default
+    to None so the common monitor tests don't have to set them; ``_poll_torrent``
+    reads them via ``getattr`` and sanitizes None to None.
+    """
 
     def __init__(
         self,
@@ -52,10 +63,18 @@ class FakeTorrent:
         is_errored: bool = False,
         progress: float = 0.0,
         content_path: str | None = None,
+        dlspeed: int | None = None,
+        eta: int | None = None,
+        completed: int | None = None,
+        size: int | None = None,
     ) -> None:
         self.state_enum = FakeStateEnum(is_complete=is_complete, is_errored=is_errored)
         self.progress = progress
         self.content_path = content_path
+        self.dlspeed = dlspeed
+        self.eta = eta
+        self.completed = completed
+        self.size = size
 
 
 class FakeQbit:
@@ -86,46 +105,69 @@ def make_engine(qbit: FakeQbit) -> SeaDexArr:
 
 
 class TestPollTorrent:
-    """_poll_torrent maps a single qBittorrent read to (outcome, path, progress)."""
+    """_poll_torrent maps a single qBittorrent read to a sanitized TorrentProbe."""
 
     def test_missing_on_empty_list(self) -> None:
         engine = make_engine(FakeQbit([[]]))
 
-        assert engine._poll_torrent("h") == (WaitOutcome.MISSING, None, 0.0)
+        assert engine._poll_torrent("h") == TorrentProbe(WaitOutcome.MISSING, None, 0.0)
 
     def test_errored(self) -> None:
         engine = make_engine(FakeQbit([[FakeTorrent(is_errored=True)]]))
 
-        assert engine._poll_torrent("h") == (WaitOutcome.ERRORED, None, 0.0)
+        assert engine._poll_torrent("h") == TorrentProbe(WaitOutcome.ERRORED, None, 0.0)
 
     def test_complete_carries_content_path(self) -> None:
         torrent = FakeTorrent(is_complete=True, content_path="/data/show")
         engine = make_engine(FakeQbit([[torrent]]))
 
-        assert engine._poll_torrent("h") == (WaitOutcome.COMPLETE, "/data/show", 0.0)
+        assert engine._poll_torrent("h") == TorrentProbe(
+            WaitOutcome.COMPLETE, "/data/show", 0.0,
+        )
 
     def test_complete_on_full_progress_without_flag(self) -> None:
         # progress == 1.0 counts as complete even if the state flag is unset.
         torrent = FakeTorrent(progress=1.0, content_path="/data/movie")
         engine = make_engine(FakeQbit([[torrent]]))
 
-        assert engine._poll_torrent("h") == (WaitOutcome.COMPLETE, "/data/movie", 1.0)
+        assert engine._poll_torrent("h") == TorrentProbe(
+            WaitOutcome.COMPLETE, "/data/movie", 1.0,
+        )
 
     def test_none_while_downloading_carries_progress(self) -> None:
         engine = make_engine(FakeQbit([[FakeTorrent(progress=0.5)]]))
 
-        assert engine._poll_torrent("h") == (None, None, 0.5)
+        assert engine._poll_torrent("h") == TorrentProbe(None, None, 0.5)
 
     def test_none_on_transient_api_error(self) -> None:
         # A dropped connection / re-auth in flight is "still waiting", not terminal.
         engine = make_engine(FakeQbit([qbittorrentapi.APIConnectionError("boom")]))
 
-        assert engine._poll_torrent("h") == (None, None, 0.0)
+        assert engine._poll_torrent("h") == TorrentProbe(None, None, 0.0)
 
     def test_none_when_no_client(self) -> None:
         engine = make_bare_instance(SeaDexArr, qbit=None)
 
-        assert engine._poll_torrent("h") == (None, None, 0.0)
+        assert engine._poll_torrent("h") == TorrentProbe(None, None, 0.0)
+
+    def test_carries_live_download_telemetry(self) -> None:
+        torrent = FakeTorrent(
+            progress=0.64, dlspeed=3_200_000, eta=130,
+            completed=1_800_000_000, size=2_900_000_000,
+        )
+        engine = make_engine(FakeQbit([[torrent]]))
+
+        assert engine._poll_torrent("h") == TorrentProbe(
+            None, None, 0.64, 3_200_000, 130, 1_800_000_000, 2_900_000_000,
+        )
+
+    def test_sanitizes_junk_telemetry(self) -> None:
+        # qB's "∞" eta sentinel, an idle (0) speed and a zero size all sanitize to
+        # None so the wait view never renders a nonsense countdown / negative bar.
+        torrent = FakeTorrent(progress=0.5, dlspeed=0, eta=8_640_000, completed=0, size=0)
+        engine = make_engine(FakeQbit([[torrent]]))
+
+        assert engine._poll_torrent("h") == TorrentProbe(None, None, 0.5)
 
 
 class FakeClock:
@@ -201,31 +243,39 @@ class TestPruneExpiredPending:
         assert set(engine._pending_store()) == {"fresh"}
 
 
-class FakeWaitView(WaitView):
-    """Records the WaitView calls the engine makes, for assertion."""
+class RecordingWaitView(WaitView):
+    """Records every snapshot the engine pushes, for assertion.
+
+    Replaces the old call-tuple FakeWaitView: the view is now a pure function of
+    the pushed :class:`WaitSnapshot`, so the tests assert on the recorded snapshot
+    state (each torrent's phase / outcome) rather than imperative method calls.
+    """
 
     def __init__(self) -> None:
-        self.events: list[tuple] = []
+        self.snapshots: list[WaitSnapshot] = []
+        self.closed = False
 
     @override
-    def start(self, torrents: list[tuple[str, str]]) -> None:
-        self.events.append(("start", torrents))
-
-    @override
-    def download(self, key: str, pct: float, elapsed: float, timeout: float) -> None:
-        self.events.append(("download", key, pct))
-
-    @override
-    def importing(self, key: str, elapsed: float, timeout: float) -> None:
-        self.events.append(("importing", key))
-
-    @override
-    def done(self, key: str, outcome: str) -> None:
-        self.events.append(("done", key, outcome))
+    def update(self, snapshot: WaitSnapshot) -> None:
+        self.snapshots.append(snapshot)
 
     @override
     def close(self) -> None:
-        self.events.append(("close",))
+        self.closed = True
+
+    def final(self, key: str) -> TorrentView:
+        """The torrent's row in the last recorded snapshot."""
+
+        return next(t for t in self.snapshots[-1].torrents if t.key == key)
+
+    def saw(self, key: str, phase: Phase) -> bool:
+        """Whether any recorded snapshot showed ``key`` in ``phase``."""
+
+        return any(
+            t.key == key and t.phase is phase
+            for snap in self.snapshots
+            for t in snap.torrents
+        )
 
 
 class TestSnapshotPendingForSeries:
@@ -423,17 +473,21 @@ class TestRunMonitor:
             pending=[fast, slow],
             import_wait_timeout=3600, import_ready_timeout=600, import_poll_interval=30,
         )
-        view = FakeWaitView()
+        view = RecordingWaitView()
         clock = FakeClock(step=30)
 
         engine._run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         # Both ultimately imported and dropped.
         assert engine._pending_store() == {}
-        assert ("done", "fast", "imported") in view.events
-        assert ("done", "slow", "imported") in view.events
-        # slow showed a downloading heartbeat before it completed.
-        assert ("download", "slow", 0.5) in view.events
+        assert view.final("fast").outcome is Outcome.IMPORTED
+        assert view.final("slow").outcome is Outcome.IMPORTED
+        # slow showed a downloading heartbeat (fraction 0.5) before it completed.
+        assert any(
+            t.key == "slow" and t.phase is Phase.DOWNLOADING and t.fraction == 0.5
+            for snap in view.snapshots
+            for t in snap.torrents
+        )
 
     def test_imported_only_when_files_present_two_cycles(self) -> None:
         # The copy is async: cycle 1 issues the command (RETRY + command_issued,
@@ -451,14 +505,14 @@ class TestRunMonitor:
             store_records=[pending.to_json()], pending=[pending],
             import_wait_timeout=3600, import_ready_timeout=600, import_poll_interval=30,
         )
-        view = FakeWaitView()
+        view = RecordingWaitView()
         clock = FakeClock(step=30)
 
         engine._run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert strategy.import_completed.call_count == 2
-        assert ("importing", "h") in view.events  # cycle 1, copy in flight
-        assert ("done", "h", "imported") in view.events  # cycle 2, files landed
+        assert view.saw("h", Phase.IMPORTING)  # cycle 1, copy in flight
+        assert view.final("h").outcome is Outcome.IMPORTED  # cycle 2, files landed
         assert engine._pending_store() == {}
 
     def test_importing_at_deadline_left_without_warning(self) -> None:
@@ -475,12 +529,12 @@ class TestRunMonitor:
             store_records=[pending.to_json()], pending=[pending],
             import_wait_timeout=3600, import_ready_timeout=60, import_poll_interval=30,
         )
-        view = FakeWaitView()
+        view = RecordingWaitView()
         clock = FakeClock(step=30)
 
         engine._run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
-        assert ("done", "h", "still importing; left") in view.events
+        assert view.final("h").outcome is Outcome.STILL_IMPORTING
         assert set(engine._pending_store()) == {"h"}  # left, not dropped
         # The final in-bound poll forces AND flags the deadline.
         last = strategy.import_completed.call_args_list[-1]
@@ -495,13 +549,13 @@ class TestRunMonitor:
             store_records=[pending.to_json()], pending=[pending],
             import_wait_timeout=3600, import_ready_timeout=600, import_poll_interval=30,
         )
-        view = FakeWaitView()
+        view = RecordingWaitView()
         clock = FakeClock(step=30)
 
         engine._run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         strategy.import_completed.assert_not_called()
-        assert ("done", "h", "gone from qBittorrent") in view.events
+        assert view.final("h").outcome is Outcome.MISSING
         assert engine._pending_store() == {}
 
     def test_errored_leaves_record(self) -> None:
@@ -512,13 +566,13 @@ class TestRunMonitor:
             store_records=[pending.to_json()], pending=[pending],
             import_wait_timeout=3600, import_ready_timeout=600, import_poll_interval=30,
         )
-        view = FakeWaitView()
+        view = RecordingWaitView()
         clock = FakeClock(step=30)
 
         engine._run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         strategy.import_completed.assert_not_called()
-        assert ("done", "h", "download errored; left") in view.events
+        assert view.final("h").outcome is Outcome.DOWNLOAD_ERRORED
         assert set(engine._pending_store()) == {"h"}
 
     def test_wait_scope_all_includes_store_only_carried_over(self) -> None:
@@ -536,14 +590,38 @@ class TestRunMonitor:
             pending=[],  # nothing grabbed this run
             import_wait_timeout=3600, import_ready_timeout=600, import_poll_interval=30,
         )
-        view = FakeWaitView()
+        view = RecordingWaitView()
         clock = FakeClock(step=30)
 
         engine._run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         strategy.import_completed.assert_called()
-        assert ("done", "carried", "imported") in view.events
+        assert view.final("carried").outcome is Outcome.IMPORTED
         assert engine._pending_store() == {}
+
+    def test_keyboard_interrupt_breaks_and_leaves_records(self) -> None:
+        # Ctrl-C during the poll nap must break the loop (not propagate), so the
+        # caller's finally still restores the terminal + saves the cache; the
+        # in-flight record is left pending and a WaitResult is still returned.
+        strategy = mock.MagicMock()
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        engine = make_orchestration_engine(
+            qbit=FakeQbit([[FakeTorrent(progress=0.3)]]), strategy=strategy,
+            store_records=[pending.to_json()], pending=[pending],
+            import_wait_timeout=3600, import_ready_timeout=600, import_poll_interval=30,
+        )
+        view = RecordingWaitView()
+
+        def interrupt(_seconds: float) -> None:
+            raise KeyboardInterrupt
+
+        result = engine._run_monitor(  # must not raise
+            now=lambda: 0.0, sleep=interrupt, view=view,
+        )
+
+        assert result is not None and result.waited == 0
+        assert set(engine._pending_store()) == {"h"}  # left pending for next run
+        assert view.saw("h", Phase.DOWNLOADING)
 
     def test_import_exception_is_swallowed_and_record_left(self) -> None:
         # A failing import (e.g. malformed Sonarr response) must NOT propagate and
@@ -557,11 +635,12 @@ class TestRunMonitor:
             store_records=[pending.to_json()], pending=[pending],
             import_wait_timeout=3600, import_ready_timeout=60, import_poll_interval=30,
         )
-        view = FakeWaitView()
+        view = RecordingWaitView()
         clock = FakeClock(step=30)
 
         engine._run_monitor(now=clock.now, sleep=clock.sleep, view=view)  # must not raise
 
+        assert view.final("h").outcome is Outcome.NOTHING_TO_IMPORT
         assert set(engine._pending_store()) == {"h"}
 
 
@@ -672,3 +751,187 @@ class TestDropPending:
 
         assert set(engine._pending_store()) == {"keep"}
         assert engine._ctx.pending_imports == [keep]
+
+
+# A truthy stand-in for a logged-in qBittorrent client, so _is_preview() is
+# False without a real login (the actual add is faked by FakeTorrents).
+_CLIENT = object()
+
+
+class FakeTorrents:
+    """Mimics ``TorrentService.add``: a per-hash scripted ``(outcome, name)``.
+
+    Keyed by infohash (not call order) so a multi-release add can return a
+    different outcome per release regardless of dict iteration order.
+    """
+
+    def __init__(self, by_hash: dict[str | None, tuple[AddOutcome, str | None]]) -> None:
+        self._by_hash = by_hash
+        self.calls: list[str | None] = []
+
+    def add(
+        self, *, url: str, tracker: object, torrent_hash: str | None, preview: bool,
+    ) -> tuple[AddOutcome, str | None]:
+        del url, tracker, preview
+        self.calls.append(torrent_hash)
+        return self._by_hash[torrent_hash]
+
+
+def make_add_engine(
+    *,
+    torrents: FakeTorrents,
+    mode: ImportWaitMode = ImportWaitMode.BLOCKING,
+    qbit: object = _CLIENT,
+    dry_run: bool = False,
+    **config_overrides: object,
+) -> SeaDexArr:
+    """A bare ``SeaDexArr`` wired for the ``add_torrent`` / ``_add_one_url`` path.
+
+    Fakes the qBittorrent ``add`` (``_torrents``), seeds an empty durable cache,
+    and defaults to a non-preview blocking run so the pending-import registration
+    is reachable. ``_active_strategy`` / ``_reporter`` are stubbed so the same
+    engine can be driven through ``_snapshot_pending_for_series`` afterwards.
+    """
+
+    engine = make_bare_instance(
+        SeaDexArr,
+        qbit=qbit,
+        dry_run=dry_run,
+        logger=make_logger(),
+        log_fmt=mock.MagicMock(),
+        _config=make_config(**config_overrides),
+        _import_wait_mode=mode,
+        _torrents=torrents,
+        _active_strategy=mock.MagicMock(),
+        _reporter=mock.MagicMock(),
+        cache_store=types.SimpleNamespace(data={}),
+    )
+    engine._ctx = RunContext(arr=Arr.SONARR)
+    return engine
+
+
+def _one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/view/1") -> dict:
+    """A one-release ``SeadexDict`` flagged for download on a public tracker.
+
+    The builder defaults the tracker to ``OTHER`` (not in the selected set), so
+    pin it to ``NYAA`` to clear ``_add_one_url``'s tracker filter.
+    """
+
+    item = url_item(url=url, infohash=infohash, download=True)
+    item.tracker = Tracker.NYAA
+    return {srg: rg_group({url: item})}
+
+
+class TestAddOneUrlRegistersPending:
+    """_add_one_url registers a PendingImport for a fresh AND an already-present
+    torrent, but records a grab / counts toward the cap only for a fresh add."""
+
+    def test_already_added_registers_pending_import(self) -> None:
+        # The recommended release is already in qBittorrent (a prior run grabbed
+        # it, still downloading): register it for the monitor, but don't count it
+        # as a this-run grab.
+        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "Show-NAN0")})
+        engine = make_add_engine(torrents=torrents)
+        seeds = {"h1": pending_import(infohash="h1", series_id=7)}
+
+        n_added, results = engine.add_torrent(
+            _one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds,
+        )
+
+        assert set(engine._pending_store()) == {"h1"}
+        assert [p.infohash for p in engine._ctx.pending_imports] == ["h1"]
+        assert n_added == 0
+        assert engine._ctx.torrents_added == 0
+        assert engine._ctx.stats.added == []
+        assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED]
+
+    def test_added_registers_and_counts(self) -> None:
+        torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-NAN0")})
+        engine = make_add_engine(torrents=torrents)
+        seeds = {"h1": pending_import(infohash="h1")}
+
+        n_added, _ = engine.add_torrent(
+            _one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds,
+        )
+
+        assert set(engine._pending_store()) == {"h1"}
+        assert [p.infohash for p in engine._ctx.pending_imports] == ["h1"]
+        assert n_added == 1
+        assert engine._ctx.torrents_added == 1
+        assert len(engine._ctx.stats.added) == 1
+
+    def test_already_added_does_not_count_toward_cap(self) -> None:
+        # One already-present + one fresh, cap 1: only the fresh add counts.
+        torrents = FakeTorrents({
+            "already": (AddOutcome.ALREADY_ADDED, "old"),
+            "fresh": (AddOutcome.ADDED, "new"),
+        })
+        engine = make_add_engine(torrents=torrents, max_torrents_to_add=1)
+        seadex_dict = {
+            **_one_release_dict(srg="OLD", infohash="already", url="https://nyaa.si/view/1"),
+            **_one_release_dict(srg="NEW", infohash="fresh", url="https://nyaa.si/view/2"),
+        }
+        seeds = {
+            "already": pending_import(infohash="already"),
+            "fresh": pending_import(infohash="fresh"),
+        }
+
+        n_added, _ = engine.add_torrent(seadex_dict, pending_seeds=seeds)
+
+        assert n_added == 1
+        assert engine._ctx.torrents_added == 1
+
+    def test_no_seed_does_not_register(self) -> None:
+        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "x")})
+        engine = make_add_engine(torrents=torrents)
+
+        engine.add_torrent(
+            _one_release_dict(srg="NAN0", infohash="h1"), pending_seeds={},
+        )
+
+        assert engine._pending_store() == {}
+        assert engine._ctx.pending_imports == []
+
+    def test_off_mode_does_not_register(self) -> None:
+        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "x")})
+        engine = make_add_engine(torrents=torrents, mode=ImportWaitMode.OFF)
+        seeds = {"h1": pending_import(infohash="h1")}
+
+        engine.add_torrent(
+            _one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds,
+        )
+
+        assert engine._pending_store() == {}
+        assert engine._ctx.pending_imports == []
+
+    def test_preview_does_not_register_but_returns_outcome(self) -> None:
+        # No client -> preview: nothing persisted, but the outcome still surfaces.
+        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "x")})
+        engine = make_add_engine(torrents=torrents, qbit=None)
+        seeds = {"h1": pending_import(infohash="h1")}
+
+        _, results = engine.add_torrent(
+            _one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds,
+        )
+
+        assert engine._pending_store() == {}
+        assert engine._ctx.pending_imports == []
+        assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED]
+
+    def test_registered_already_added_survives_snapshot(self) -> None:
+        # Integration: an ALREADY_ADDED registered THIS run is a this-run grab, so
+        # the per-series snapshot skips it (no re-poll, no drop) and the end-of-run
+        # monitor owns it via the working set.
+        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "Show")})
+        engine = make_add_engine(torrents=torrents)
+        seeds = {"h1": pending_import(infohash="h1", series_id=7, added_at=_FRESH)}
+
+        engine.add_torrent(
+            _one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds,
+        )
+        engine._snapshot_pending_for_series(7)
+
+        strategy = cast("mock.MagicMock", engine._active_strategy)
+        strategy.import_completed.assert_not_called()
+        assert set(engine._pending_store()) == {"h1"}
+        assert [p.infohash for p in engine._monitor_working_set()] == ["h1"]

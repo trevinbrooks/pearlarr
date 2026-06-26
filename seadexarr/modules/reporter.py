@@ -21,7 +21,7 @@ from .log import (
 )
 from .manual_import import ImportWaitMode, PendingImport, PendingState
 from .seadex_types import SeadexDict
-from .torrents import ReleaseOutcome
+from .torrents import AddOutcome, ReleaseOutcome
 
 type SummaryRow = tuple[str, str | Text | None, str]
 """One labeled row in a summary per-entry block: ``(label, value, accent)``.
@@ -768,15 +768,19 @@ class RunReporter:
         seadex_dict: SeadexDict,
         results: list[ReleaseOutcome],
         dry_run: bool = False,
+        monitor_active: bool = False,
     ) -> bool:
         """Log the action block for a title that differs from SeaDex's pick
 
         Called after the adding has run, so the status reflects what actually
-        happened rather than what we set out to do: if a better release was
-         grabbed, it reads "adding"; if every recommended release was already
-        present, it reads "matches - keeping it". The block is, in order: the
-        status line, then each recommended release group, then the per-release
-        outcome (added / kept).
+        happened rather than what we set out to do. Three outcomes: a fresh (or
+        dry-run) grab reads "adding"; a recommended release already in the client
+        from a PRIOR run - still downloading, not yet imported - reads "already
+        downloading" (and, when the end-of-run monitor is active this session,
+        "waiting to import"); the genuine "you already own it" never reaches here
+        (that's the any_to_download=False path). The block is, in order: the status
+        line, then each recommended release group, then the per-release outcome
+        (added / downloading / kept).
 
         Args:
             seadex_dict (dict): SeaDex entries (used for the recommended groups)
@@ -784,6 +788,9 @@ class RunReporter:
                 run, where there are no client-reported names)
             dry_run (bool): No torrent client, so nothing was really grabbed,, but
                 we'd have added everything. Defaults to False
+            monitor_active (bool): The run will wait on / import pending torrents
+                this session (import_wait_mode != OFF, non-preview), so the
+                "already downloading" line can promise the import. Defaults to False
 
         Returns:
             bool: True if a status block was logged; False if there was nothing
@@ -792,6 +799,9 @@ class RunReporter:
         """
 
         added = dry_run or any(r.added for r in results)
+        # Every result present-from-a-prior-run (none freshly added): the torrent
+        # is in the client but still downloading / not yet imported.
+        already_downloading = bool(results) and not added
 
         # Nothing grabbed and nothing already present (e.g., all releases skipped
         # by public_only): leave the status to the inline "skipped" warning
@@ -803,6 +813,11 @@ class RunReporter:
                 "status",
                 "your copy differs from SeaDex's pick - adding a better release",
             )
+        elif already_downloading:
+            message = "your copy is incomplete - SeaDex's pick is already downloading"
+            if monitor_active:
+                message += " - waiting to import"
+            self.log_fmt.detail("status", message, value_style="yellow")
         else:
             self.log_fmt.detail(
                 "status",
@@ -826,6 +841,8 @@ class RunReporter:
         for r in results:
             if r.added:
                 self.log_fmt.detail("added", r.name, value_style="green")
+            elif r.outcome is AddOutcome.ALREADY_ADDED:
+                self.log_fmt.detail("downloading", r.name, value_style="yellow")
             else:
                 self.log_fmt.detail("kept", r.name)
 

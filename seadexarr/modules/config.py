@@ -381,6 +381,50 @@ class AppConfig:
         return value if value is not None else 14
 
     @property
+    def wait_webhook_url(self) -> str | None:
+        """Generic outbound webhook for the wait-complete summary (ntfy/gotify/HA).
+
+        POSTed the run-report JSON when set; ``None`` (the default) disables it.
+        Independent of ``discord_url`` - either, both, or neither may be set.
+        """
+
+        return self.data.get("wait_webhook_url", None)
+
+    @property
+    def wait_notify(self) -> bool:
+        """Push a completion notification when the blocking wait pass finishes.
+
+        Defaults to on whenever a Discord webhook or a generic ``wait_webhook_url``
+        is configured (so the walk-away ping just works), off otherwise; an explicit
+        value overrides. Blank coalesces to the default.
+        """
+
+        value = self.data.get("wait_notify")
+        if value is not None:
+            return bool(value)
+        return self.discord_url is not None or self.wait_webhook_url is not None
+
+    @property
+    def wait_report(self) -> bool:
+        """Write a durable run-report artifact (md + json) when the wait finishes.
+
+        Defaults on; blank coalesces to the default.
+        """
+
+        value = self.data.get("wait_report")
+        return True if value is None else bool(value)
+
+    @property
+    def wait_digest_interval(self) -> int:
+        """Target seconds between aggregate wait digests on a non-TTY (Docker/cron).
+
+        Floored by ``import_poll_interval`` at use; blank coalesces to the default.
+        """
+
+        value = self.data.get("wait_digest_interval")
+        return value if value is not None else 300
+
+    @property
     def discord_url(self) -> str | None:
         return self.data.get("discord_url", None)
 

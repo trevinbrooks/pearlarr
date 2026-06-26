@@ -1,31 +1,121 @@
 """Discord notifier: build the embed fields and post the grab notification.
 
 ``Notifier`` owns the Discord webhook - building the per-release embed fields
-from a shaped ``seadex_dict`` and pushing the message. It's gated on the
-configured webhook url; with none, it's a no-op.
+from a shaped ``seadex_dict`` and pushing the message - plus a wait-complete
+summary push to Discord and/or a generic outbound webhook. It's gated on a
+configured url; with none, every push is a no-op.
 """
 
+import requests
+
 from .discord import discord_push
+from .log import LogFormatter
+from .manual_import import OutcomeCategory
 from .seadex_types import EmbedField, SeadexDict
+from .wait_view import WaitResult
+
+# Cap how many titles a single notification field lists before collapsing the
+# remainder into a "… +N more" line, so a big carried-over backlog can't blow
+# past Discord's per-field limit.
+_MAX_FIELD_TITLES = 25
 
 
 class Notifier:
-    """Builds Discord embed fields and posts grab notifications."""
+    """Builds Discord embed fields and posts grab + wait-complete notifications."""
 
-    def __init__(self, *, discord_url: str | None) -> None:
+    def __init__(self, *, discord_url: str | None, webhook_url: str | None = None) -> None:
         """Configure the notifier.
 
         Args:
-            discord_url (str | None): Webhook url, or None to disable.
+            discord_url (str | None): Discord webhook url, or None to disable.
+            webhook_url (str | None): A generic outbound webhook POSTed the
+                wait-complete report JSON (ntfy/gotify/Home-Assistant), or None.
         """
 
         self.discord_url = discord_url
+        self.webhook_url = webhook_url
 
     @property
     def enabled(self) -> bool:
         """True when a Discord webhook is configured."""
 
         return self.discord_url is not None
+
+    def push_wait_summary(self, *, arr: str, result: WaitResult) -> bool:
+        """Post the wait-pass outcome to Discord and/or the generic webhook.
+
+        A no-op (returns False) when nothing waited or no url is configured; the
+        caller already gates on ``wait_notify`` and swallows any error, so this
+        can never abort the end-of-run cache save.
+
+        Args:
+            arr (str): Which Arr the wait pass ran for (for the title).
+            result (WaitResult): The terminal outcomes + elapsed time.
+        """
+
+        if result.waited == 0:
+            return False
+        posted = False
+        if self.discord_url is not None:
+            elapsed = LogFormatter.format_elapsed(result.elapsed_s)
+            discord_push(
+                url=self.discord_url,
+                arr_title=f"SeaDexArr - {arr.capitalize()} wait complete",
+                al_title=(
+                    f"{result.imported} imported - {result.left} left - "
+                    f"{result.failed} failed  ({elapsed})"
+                ),
+                seadex_url="",
+                fields=self._wait_fields(result),
+                thumb_url=None,
+            )
+            posted = True
+        if self.webhook_url is not None:
+            posted = self._post_webhook(arr, result) or posted
+        return posted
+
+    @staticmethod
+    def _wait_fields(result: WaitResult) -> list[dict[str, str]]:
+        """One embed field per outcome class (imported / left / failed), if any."""
+
+        sections = (
+            (OutcomeCategory.SUCCESS, "Imported"),
+            (OutcomeCategory.DEFERRED, "Left for a later run"),
+            (OutcomeCategory.FAILED, "Failed"),
+        )
+        fields: list[dict[str, str]] = []
+        for category, name in sections:
+            labels = [r.label for r in result.rows if r.outcome.category is category]
+            if not labels:
+                continue
+            shown = labels[:_MAX_FIELD_TITLES]
+            value = "\n".join(shown)
+            if len(labels) > _MAX_FIELD_TITLES:
+                value += f"\n… +{len(labels) - _MAX_FIELD_TITLES} more"
+            fields.append({"name": name, "value": value})
+        return fields
+
+    def _post_webhook(self, arr: str, result: WaitResult) -> bool:
+        """POST the report JSON to the generic webhook; swallow request errors."""
+
+        if self.webhook_url is None:
+            return False
+        payload = {
+            "arr": str(arr),
+            "imported": result.imported,
+            "left": result.left,
+            "failed": result.failed,
+            "elapsed_s": result.elapsed_s,
+            "rows": [
+                {"label": r.label, "outcome": r.outcome.name, "word": r.outcome.word}
+                for r in result.rows
+            ],
+        }
+        try:
+            requests.post(self.webhook_url, json=payload, timeout=10)
+        except requests.RequestException:
+            return False
+        return True
 
     def build_fields(
         self,

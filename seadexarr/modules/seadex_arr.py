@@ -1,9 +1,12 @@
 import copy
+import json
 import logging
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from logging.handlers import RotatingFileHandler
 from typing import Any, cast, final
 
 import qbittorrentapi
@@ -24,11 +27,14 @@ from .manual_import import (
     ImportProbe,
     ImportReadiness,
     ImportWaitMode,
+    Outcome,
     PendingImport,
     PendingState,
+    TorrentProbe,
     WaitOutcome,
     classify_pending,
     resolve_wait_mode,
+    sanitize_torrent_telemetry,
 )
 from .mappings import MappingEntry, MappingResolver, TmdbType
 from .notify import Notifier
@@ -45,7 +51,15 @@ from .seadex_types import (
     SonarrEpisode,
 )
 from .torrents import AddOutcome, ReleaseOutcome, TorrentService
-from .wait_view import WaitView, make_wait_view
+from .wait_view import (
+    Phase,
+    TorrentView,
+    WaitOutcomeRow,
+    WaitResult,
+    WaitSnapshot,
+    WaitView,
+    make_wait_view,
+)
 
 
 @dataclass(frozen=True)
@@ -173,7 +187,10 @@ class RunDeps:
             anilist=anilist,
             torrents=torrents,
             # Discord notifier; a no-op when no webhook is configured.
-            notifier=Notifier(discord_url=app_config.discord_url),
+            notifier=Notifier(
+                discord_url=app_config.discord_url,
+                webhook_url=app_config.wait_webhook_url,
+            ),
             # Download-decision engine: flips each release's download flag.
             planner=DownloadPlanner(
                 public_only=app_config.public_only,
@@ -190,6 +207,77 @@ class RunDeps:
                 anilist=anilist,
             ),
         )
+
+def _resolve_log_dir(logger: logging.Logger) -> str:
+    """The directory the rotating file log writes to (fallback ``logs``).
+
+    Derived from the live file handler so the run report lands next to
+    ``SeaDexArr.log`` without re-deriving the ``DOCKER_ENV`` / ``CONFIG_DIR`` path
+    logic ``setup_logger`` already owns.
+    """
+
+    for handler in logger.handlers:
+        if isinstance(handler, RotatingFileHandler) and handler.baseFilename:
+            return os.path.dirname(handler.baseFilename) or "logs"
+    return "logs"
+
+
+def write_wait_report(
+    logger: logging.Logger, arr: Arr, result: WaitResult, *, when: datetime,
+) -> tuple[str, str]:
+    """Write a durable wait-pass report (markdown + json) to the log directory.
+
+    The human ``.md`` is a small outcome table; the ``.json`` is the machine
+    record. Directly fixes the "a TTY wait leaves no trace / the summary is
+    pre-monitor" gap. ``when`` is injected so the filename is deterministic in
+    tests. Returns the ``(markdown_path, json_path)`` written.
+    """
+
+    log_dir = _resolve_log_dir(logger)
+    os.makedirs(log_dir, exist_ok=True)
+    stamp = when.strftime("%Y%m%d-%H%M%S")
+    base = os.path.join(log_dir, f"run-report-{arr}-{stamp}")
+    md_path, json_path = f"{base}.md", f"{base}.json"
+
+    elapsed = LogFormatter.format_elapsed(result.elapsed_s)
+    lines = [
+        f"# SeaDexArr - {arr.capitalize()} wait, {when.strftime('%Y-%m-%d %H:%M')}",
+        "",
+        f"**{result.imported} imported - {result.left} left - "
+        f"{result.failed} failed**  ({elapsed})",
+        "",
+        "| Outcome | Title |",
+        "| --- | --- |",
+        *(
+            f"| {row.outcome.glyph(use_unicode=True)} {row.outcome.word} | {row.label} |"
+            for row in result.rows
+        ),
+    ]
+    with open(md_path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+
+    payload = {
+        "arr": str(arr),
+        "generated_at": when.isoformat(timespec="seconds"),
+        "elapsed_s": result.elapsed_s,
+        "imported": result.imported,
+        "left": result.left,
+        "failed": result.failed,
+        "rows": [
+            {
+                "key": row.key,
+                "label": row.label,
+                "outcome": row.outcome.name,
+                "word": row.outcome.word,
+                "category": row.outcome.category.name,
+            }
+            for row in result.rows
+        ],
+    }
+    with open(json_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+    return md_path, json_path
+
 
 @final
 class SeaDexArr:
@@ -592,9 +680,11 @@ class SeaDexArr:
         download, private-only under ``public_only``, or an unselected tracker)
         and for a service ``add`` that neither added nor was already present. On
         an ``AddOutcome.ADDED`` the run-summary grab record is appended here; the
-        caller owns the torrents_added/cap bookkeeping. When this release matches
-        a ``pending_seeds`` entry (and the feature is on, off-preview), the
-        durable :class:`PendingImport` record is persisted here too.
+        caller owns the torrents_added/cap bookkeeping. On EITHER ``ADDED`` or
+        ``ALREADY_ADDED`` (an already-present torrent is a prior-run grab still
+        downloading / not yet imported) the durable :class:`PendingImport` record
+        is persisted via :meth:`_register_pending_import` so the end-of-run monitor
+        waits on it - when the feature is on, off-preview, and we hold its seed.
         """
 
         # If not flagged for download, then skip
@@ -651,36 +741,50 @@ class SeaDexArr:
                 ),
             )
 
-            # Persist the durable pending-import record for the wait/import pass.
-            # Only on a real (non-preview) add of a release we have a seed for,
-            # keyed by infohash so a re-add overwrites and a verified import
-            # deletes. The in-memory copy rides the run context for the fast
-            # end-of-run blocking pass.
-            if (
-                self._import_wait_mode is not ImportWaitMode.OFF
-                and not self._is_preview()
-                and url_item.hash
-                and pending_seeds
-                and url_item.hash in pending_seeds
-            ):
-                pending = pending_seeds[url_item.hash]
-                self._pending_store()[url_item.hash] = pending.to_json()
-                self._ctx.pending_imports.append(pending)
-
-            return ReleaseOutcome(
-                outcome=AddOutcome.ADDED,
-                name=torrent_name,
-                group=srg,
-            )
-
-        if success is AddOutcome.ALREADY_ADDED:
-            return ReleaseOutcome(
-                outcome=AddOutcome.ALREADY_ADDED,
-                name=torrent_name,
-                group=srg,
-            )
+        # Persist the durable pending-import record on BOTH a fresh add and an
+        # already-present torrent. ALREADY_ADDED here means "in the client from a
+        # prior run, still downloading / not yet imported": we only reach this add
+        # when the planner flagged a download, and the genuine "you already own it"
+        # case is the any_to_download=False branch, which never calls add_torrent.
+        # So the end-of-run monitor must wait on it too. Appending to
+        # _ctx.pending_imports marks the infohash a this-run grab, so the per-series
+        # snapshot / reconcile / tally skip it (no double-report, no early drop).
+        if success in (AddOutcome.ADDED, AddOutcome.ALREADY_ADDED):
+            self._register_pending_import(url_item, pending_seeds)
+            return ReleaseOutcome(outcome=success, name=torrent_name, group=srg)
 
         return None
+
+    def _register_pending_import(
+        self,
+        url_item: SeadexUrlItem,
+        pending_seeds: dict[str, PendingImport] | None,
+    ) -> None:
+        """Finalize the durable :class:`PendingImport` for a grabbed/present release.
+
+        Only on a real (non-preview) add of a release we hold a seed for, keyed by
+        infohash so a re-add overwrites and a verified import deletes. The in-memory
+        copy rides the run context for the fast end-of-run blocking pass and marks
+        the infohash a this-run grab (excluded from the carried-over snapshot /
+        reconcile / tally).
+
+        Args:
+            url_item (SeadexUrlItem): The release just handed to the client; its
+                ``hash`` keys the seed and the durable store.
+            pending_seeds (dict[str, PendingImport] | None): The Sonarr strategy's
+                ``infohash -> PendingImport`` seeds for this id (None for Radarr).
+        """
+
+        if (
+            self._import_wait_mode is not ImportWaitMode.OFF
+            and not self._is_preview()
+            and url_item.hash
+            and pending_seeds
+            and url_item.hash in pending_seeds
+        ):
+            pending = pending_seeds[url_item.hash]
+            self._pending_store()[url_item.hash] = pending.to_json()
+            self._ctx.pending_imports.append(pending)
 
     def _is_preview(self) -> bool:
         """A run is a no-op preview when an explicit dry run was requested OR
@@ -1139,9 +1243,16 @@ class SeaDexArr:
         )
 
         # Log the action block now the outcome is known, so the status reads
-        # "adding" only when something was actually grabbed (else "keeping")
+        # "adding" only when something was actually grabbed, "already downloading"
+        # when the pick is already in the client mid-download, else "keeping".
         self._reporter.log_seadex_action(
-            seadex_dict, results, dry_run=self._is_preview(),
+            seadex_dict,
+            results,
+            dry_run=self._is_preview(),
+            monitor_active=(
+                self._import_wait_mode is not ImportWaitMode.OFF
+                and not self._is_preview()
+            ),
         )
 
         # Push a message to Discord if we've added anything (never on a
@@ -1200,42 +1311,49 @@ class SeaDexArr:
         ).setdefault(self._ctx.arr.value, {})
         return store
 
-    def _poll_torrent(
-        self, infohash: str,
-    ) -> tuple[WaitOutcome | None, str | None, float]:
+    def _poll_torrent(self, infohash: str) -> TorrentProbe:
         """Poll qBittorrent once for a torrent's terminal/in-progress state.
 
-        Returns ``(outcome, content_path, progress)``: a terminal
-        :class:`WaitOutcome` (COMPLETE carries the ``content_path``;
-        ERRORED/MISSING carry None), or ``(None, None, progress)`` for "still
-        waiting" - either the torrent is still downloading or the qBittorrent call
-        failed transiently (auto-reauth / connection drop), which the wait loop
-        treats as keep-waiting. ``progress`` is the torrent's 0.0-1.0 completion
-        fraction (0.0 when unknown), surfaced so the wait loop can show it.
+        Returns a :class:`TorrentProbe`: a terminal :class:`WaitOutcome` (COMPLETE
+        carries the ``content_path``; ERRORED/MISSING carry None), or
+        ``outcome=None`` for "still waiting" - either the torrent is still
+        downloading or the qBittorrent call failed transiently (auto-reauth /
+        connection drop), which the wait loop treats as keep-waiting. This is the
+        ONE place that reads qBittorrent AND the one place that sanitizes its junk
+        telemetry (via :func:`sanitize_torrent_telemetry`), so nothing downstream
+        ever sees a sentinel ETA / idle-speed / over-count.
 
         Args:
             infohash (str): The qBittorrent tracking key to poll.
         """
 
         if self.qbit is None:
-            return None, None, 0.0
+            return TorrentProbe(None, None, 0.0)
         try:
             info = self.qbit.torrents_info(torrent_hashes=infohash)
         except (qbittorrentapi.APIError, qbittorrentapi.APIConnectionError):
             # Transient: a dropped connection or a re-auth in flight. Treat as
             # still-waiting so the caller keeps polling until the deadline.
-            return None, None, 0.0
+            return TorrentProbe(None, None, 0.0)
 
         if not info:
-            return WaitOutcome.MISSING, None, 0.0
+            return TorrentProbe(WaitOutcome.MISSING, None, 0.0)
 
         t = info[0]
-        progress = float(getattr(t, "progress", 0.0) or 0.0)
+        progress, speed_bps, eta_s, bytes_done, bytes_total = sanitize_torrent_telemetry(
+            getattr(t, "progress", None),
+            getattr(t, "dlspeed", None),
+            getattr(t, "eta", None),
+            getattr(t, "completed", None),
+            getattr(t, "size", None),
+        )
         if t.state_enum.is_errored:
-            return WaitOutcome.ERRORED, None, progress
+            return TorrentProbe(WaitOutcome.ERRORED, None, progress, speed_bps, eta_s, bytes_done, bytes_total)
         if t.state_enum.is_complete or progress >= 1.0:
-            return WaitOutcome.COMPLETE, t.content_path, progress
-        return None, None, progress
+            return TorrentProbe(
+                WaitOutcome.COMPLETE, t.content_path, progress, speed_bps, eta_s, bytes_done, bytes_total,
+            )
+        return TorrentProbe(None, None, progress, speed_bps, eta_s, bytes_done, bytes_total)
 
     def _try_import_completed(
         self,
@@ -1298,12 +1416,14 @@ class SeaDexArr:
         """
 
         pending = PendingImport.from_json(raw)
-        outcome, path, _ = self._poll_torrent(infohash)
+        poll = self._poll_torrent(infohash)
         probe = ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
-        if outcome is WaitOutcome.COMPLETE and path:
-            probe = self._try_import_completed(pending, path, force=True, at_deadline=False)
+        if poll.outcome is WaitOutcome.COMPLETE and poll.content_path:
+            probe = self._try_import_completed(
+                pending, poll.content_path, force=True, at_deadline=False,
+            )
 
-        state = classify_pending(outcome, probe.files_present)
+        state = classify_pending(poll.outcome, probe.files_present)
         self._ctx.pending_states[infohash] = state
         if state is PendingState.IMPORTED:
             self._drop_pending(infohash)
@@ -1402,7 +1522,7 @@ class SeaDexArr:
         now: Callable[[], float] | None = None,
         sleep: Callable[[float], None] | None = None,
         view: WaitView | None = None,
-    ) -> None:
+    ) -> WaitResult | None:
         """Interleaved, copy-aware wait+import over ALL pending, after the summary.
 
         The blocking/hybrid end-of-run pass, run dead last (after the scoreboard is
@@ -1410,26 +1530,35 @@ class SeaDexArr:
         (``_ctx.pending_imports``) AND carried-over store records, deduped by
         infohash - so a single-series run still finishes other-series carried-over
         downloads (the user's "monitor ALL" choice). Each cycle advances every
-        active torrent once (so a fast torrent isn't stuck behind a slow one);
+        active torrent once (so a fast torrent isn't stuck behind a slow one) into a
+        ``dict[infohash -> TorrentView]``, then pushes ONE :class:`WaitSnapshot` to
+        the view (which graduates any newly-terminal torrent to scrollback).
         ``imported`` is reported ONLY when the episode files are verified present
         (``probe.files_present``), so an in-flight remote-mount copy reads
         ``importing`` until it lands. Per-torrent timeouts: ``import_wait_timeout``
         for the download, ``import_ready_timeout`` for the import (from the first
-        COMPLETE). The clock / sleep / view are injectable for tests.
+        COMPLETE). Ctrl-C breaks the loop (the ``finally`` restores the terminal and
+        the caller still saves the cache); the terminal outcomes are returned as a
+        :class:`WaitResult` for the run report + completion notification. The clock /
+        sleep / view are injectable for tests.
         """
 
         if self._active_strategy is None:
-            return
+            return None
 
         records = self._monitor_working_set()
         if not records:
-            return
+            return None
 
         clock = now if now is not None else time.monotonic
         nap = sleep if sleep is not None else time.sleep
         own_view = view is None
         if view is None:
-            view = make_wait_view(self.logger, poll_s=self._config.import_poll_interval)
+            view = make_wait_view(
+                self.logger,
+                poll_s=self._config.import_poll_interval,
+                digest_interval=self._config.wait_digest_interval,
+            )
 
         dl_timeout = self._config.import_wait_timeout
         import_timeout = self._config.import_ready_timeout
@@ -1439,29 +1568,46 @@ class SeaDexArr:
         dl_start: dict[str, float] = {r.infohash: start for r in records}
         import_start: dict[str, float] = {}
         active: set[str] = {r.infohash for r in records}
+        views: dict[str, TorrentView] = {
+            r.infohash: TorrentView(
+                key=r.infohash, label=r.title or r.infohash, phase=Phase.QUEUED,
+            )
+            for r in records
+        }
+        results: list[WaitOutcomeRow] = []
 
         try:
-            view.start([(r.infohash, r.title or r.infohash) for r in records])
+            view.update(WaitSnapshot(tuple(views.values()), elapsed_s=0.0))
             while active:
-                for record in records:
-                    h = record.infohash
-                    if h not in active:
-                        continue
-                    self._monitor_advance_one(
-                        record,
-                        view=view,
-                        now=clock,
-                        active=active,
-                        dl_start=dl_start,
-                        import_start=import_start,
-                        dl_timeout=dl_timeout,
-                        import_timeout=import_timeout,
+                try:
+                    for record in records:
+                        h = record.infohash
+                        if h not in active:
+                            continue
+                        self._monitor_advance_one(
+                            record,
+                            views=views,
+                            results=results,
+                            now=clock,
+                            active=active,
+                            dl_start=dl_start,
+                            import_start=import_start,
+                            dl_timeout=dl_timeout,
+                            import_timeout=import_timeout,
+                        )
+                    view.update(
+                        WaitSnapshot(tuple(views.values()), elapsed_s=clock() - start),
                     )
-                if active:
-                    nap(poll_s)
+                    if active:
+                        nap(poll_s)
+                except KeyboardInterrupt:
+                    self.logger.info(f"Wait interrupted; {len(active)} left pending")
+                    break
         finally:
             if own_view:
                 view.close()
+
+        return WaitResult(tuple(results), elapsed_s=clock() - start)
 
     def _monitor_working_set(self) -> list[PendingImport]:
         """Dedup ``_ctx.pending_imports`` + rehydrated store records by infohash.
@@ -1488,7 +1634,8 @@ class SeaDexArr:
         self,
         record: PendingImport,
         *,
-        view: WaitView,
+        views: dict[str, TorrentView],
+        results: list[WaitOutcomeRow],
         now: Callable[[], float],
         active: set[str],
         dl_start: dict[str, float],
@@ -1498,86 +1645,84 @@ class SeaDexArr:
     ) -> None:
         """Advance one torrent one monitor cycle (download or drive/verify import).
 
-        Mutates ``active`` (discarding a torrent that reached a terminal outcome)
-        and ``import_start`` (stamped on the first COMPLETE). ``imported`` is gated
-        on verified episode files, so a freshly-issued import command reads
-        ``importing`` until the copy lands; the final in-bound attempt
+        Writes this torrent's current :class:`TorrentView` into ``views`` (the frame
+        the caller snapshots) and, on a terminal outcome, appends a
+        :class:`WaitOutcomeRow` to ``results``, discards it from ``active``, and
+        drops the durable record when (and only when) ``outcome.dropped`` - which is
+        True for exactly IMPORTED and MISSING, so the displayed word and the store
+        mutation can't diverge. ``import_start`` is stamped on the first COMPLETE.
+        ``imported`` is gated on verified episode files, so a freshly-issued import
+        command reads ``importing`` until the copy lands; the final in-bound attempt
         (``at_deadline``) both forces and warns.
         """
 
         h = record.infohash
-        outcome, path, progress = self._poll_torrent(h)
+        label = record.title or record.infohash
 
-        if outcome is None:
+        def terminal(outcome: Outcome) -> None:
+            views[h] = TorrentView(
+                key=h, label=label, phase=Phase.TERMINAL, outcome=outcome,
+            )
+            results.append(WaitOutcomeRow(key=h, label=label, outcome=outcome))
+            if outcome.dropped:
+                self._drop_pending(h)
+            active.discard(h)
+
+        poll = self._poll_torrent(h)
+
+        if poll.outcome is None:
             if now() - dl_start[h] >= dl_timeout:
-                self._notify_done(view, h, "download timed out; left")
-                active.discard(h)
+                terminal(Outcome.DOWNLOAD_TIMED_OUT)
             else:
-                self._notify_download(view, h, progress, now() - dl_start[h], dl_timeout)
+                views[h] = TorrentView(
+                    key=h,
+                    label=label,
+                    phase=Phase.DOWNLOADING,
+                    fraction=poll.progress,
+                    speed_bps=poll.speed_bps,
+                    eta_s=poll.eta_s,
+                    bytes_done=poll.bytes_done,
+                    bytes_total=poll.bytes_total,
+                    phase_elapsed_s=now() - dl_start[h],
+                    phase_timeout_s=dl_timeout,
+                )
             return
-        if outcome is WaitOutcome.MISSING:
-            self._notify_done(view, h, "gone from qBittorrent")
-            self._drop_pending(h)
-            active.discard(h)
+        if poll.outcome is WaitOutcome.MISSING:
+            terminal(Outcome.MISSING)
             return
-        if outcome is WaitOutcome.ERRORED:
-            self._notify_done(view, h, "download errored; left")
-            active.discard(h)
+        if poll.outcome is WaitOutcome.ERRORED:
+            terminal(Outcome.DOWNLOAD_ERRORED)
             return
-        if outcome is not WaitOutcome.COMPLETE or not path:
-            self._notify_done(view, h, "download timed out; left")
-            active.discard(h)
+        if poll.outcome is not WaitOutcome.COMPLETE or not poll.content_path:
+            terminal(Outcome.DOWNLOAD_TIMED_OUT)
             return
 
         # COMPLETE: drive / verify our import, gating `imported` on verified files.
         import_start.setdefault(h, now())
         at_deadline = now() - import_start[h] >= import_timeout
         probe = self._try_import_completed(
-            record, path, force=at_deadline, at_deadline=at_deadline,
+            record, poll.content_path, force=at_deadline, at_deadline=at_deadline,
         )
         if probe.files_present:
-            self._notify_done(view, h, "imported")
-            self._drop_pending(h)
-            active.discard(h)
+            terminal(Outcome.IMPORTED)
         elif at_deadline:
-            self._notify_done(
-                view, h,
-                "still importing; left" if probe.command_issued else "not ready; left",
+            terminal(
+                Outcome.STILL_IMPORTING if probe.command_issued else Outcome.NOT_READY,
             )
-            active.discard(h)
         elif probe.readiness is ImportReadiness.LEAVE:
-            self._notify_done(view, h, "nothing to import; left")
-            active.discard(h)
+            terminal(Outcome.NOTHING_TO_IMPORT)
         else:
             # RETRY / copy in flight: the command was accepted but the files
             # haven't landed yet (or Sonarr is still scanning).
-            self._notify_importing(view, h, now() - import_start[h], import_timeout)
-
-    @staticmethod
-    def _notify_download(
-        view: WaitView | None,
-        key: str,
-        progress: float,
-        elapsed: float,
-        timeout: float,
-    ) -> None:
-        """Forward a download-wait heartbeat to the view (no-op if none)."""
-        if view is not None:
-            view.download(key, progress, elapsed, timeout)
-
-    @staticmethod
-    def _notify_importing(
-        view: WaitView | None, key: str, elapsed: float, timeout: float,
-    ) -> None:
-        """Forward an import-wait heartbeat to the view (no-op if none)."""
-        if view is not None:
-            view.importing(key, elapsed, timeout)
-
-    @staticmethod
-    def _notify_done(view: WaitView | None, key: str, outcome: str) -> None:
-        """Forward a terminal outcome to the view (no-op if none)."""
-        if view is not None:
-            view.done(key, outcome)
+            views[h] = TorrentView(
+                key=h,
+                label=label,
+                phase=Phase.IMPORTING,
+                fraction=1.0,
+                phase_elapsed_s=now() - import_start[h],
+                phase_timeout_s=import_timeout,
+                command_issued=probe.command_issued,
+            )
 
     def _prune_expired_pending(self) -> None:
         """Drop durable pending records past their TTL (or with a bad stamp).
@@ -1665,9 +1810,36 @@ class SeaDexArr:
             if active and self._import_wait_mode in (
                 ImportWaitMode.BLOCKING, ImportWaitMode.HYBRID,
             ):
-                self._run_monitor()
+                result = self._run_monitor()
+                # Best-effort walk-away grafts, run only when something actually
+                # waited. Each swallows its own errors so a bad webhook / disk can
+                # never skip the cache save in the finally below.
+                if result is not None and result.waited:
+                    self._emit_wait_report(arr, result)
+                    self._notify_wait_complete(arr, result)
         finally:
             self.cache_store.save(preview=preview)
+
+    def _emit_wait_report(self, arr: Arr, result: WaitResult) -> None:
+        """Write the durable run report, gated on ``wait_report``; swallow errors."""
+
+        if not self._config.wait_report:
+            return
+        try:
+            md_path, _ = write_wait_report(self.logger, arr, result, when=datetime.now())
+            self.logger.info(indent_string(f"wait report written to {md_path}"))
+        except Exception:
+            self.logger.debug("wait report write failed", exc_info=True)
+
+    def _notify_wait_complete(self, arr: Arr, result: WaitResult) -> None:
+        """Push the completion notification, gated on ``wait_notify``; swallow errors."""
+
+        if not self._config.wait_notify:
+            return
+        try:
+            _ = self._notifier.push_wait_summary(arr=arr, result=result)
+        except Exception:
+            self.logger.debug("wait completion notification failed", exc_info=True)
 
     # --- Presentation seam (RunServices) ------------------------------------
     #

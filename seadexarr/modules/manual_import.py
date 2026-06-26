@@ -14,6 +14,7 @@ in the engine and the Sonarr strategy; this module only owns the data shapes and
 the rules they share, so the rules can be unit-tested without any I/O.
 """
 
+import math
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
@@ -192,6 +193,185 @@ class ImportProbe:
     readiness: ImportReadiness
     files_present: bool
     command_issued: bool
+
+
+class OutcomeCategory(Enum):
+    """The visual class of a terminal wait outcome - how it reads at a glance.
+
+    Drives the wait view's ledger glyph + color and the end-of-wait tally:
+
+    ``SUCCESS`` -> the torrent imported.
+    ``DEFERRED`` -> left pending for a later run (a download timeout, or an
+    import that hasn't landed yet); not a failure, just unfinished.
+    ``FAILED`` -> the download errored or vanished from qBittorrent.
+
+    Each member carries the unicode glyph, an ASCII fallback (dumb terminals /
+    legacy Windows, where ``✔`` can't be encoded), and the rich style its ledger
+    row is colored with - so one place owns the look of each outcome class.
+    """
+
+    SUCCESS = ("✔", "ok", "green")
+    DEFERRED = ("⚠", "~", "yellow")
+    FAILED = ("✖", "x", "bold red")
+
+    glyph: str
+    ascii_glyph: str
+    style: str
+
+    def __init__(self, glyph: str, ascii_glyph: str, style: str) -> None:
+        self.glyph = glyph
+        self.ascii_glyph = ascii_glyph
+        self.style = style
+
+
+class Outcome(Enum):
+    """A torrent's terminal result in the wait pass, with its rendering vocab.
+
+    Replaces the free-form outcome strings the engine used to hand the WaitView,
+    so success and failure read distinctly AND the displayed word can't drift
+    from the durable-store decision. Each member carries:
+
+    ``word`` -> the short ledger token (every one fits ``STATE_WIDTH`` = 11).
+    ``detail`` -> the longer human phrase the run report / notification use.
+    ``category`` -> the :class:`OutcomeCategory` driving glyph + color + tally.
+    ``dropped`` -> whether the engine removes the record from the durable store
+    on this outcome. True for EXACTLY ``IMPORTED`` (files verified present) and
+    ``MISSING`` (gone from qBittorrent) - the two records that must never be
+    retried; a test pins this set so the word and the drop can't diverge.
+    """
+
+    IMPORTED = ("imported", "imported", OutcomeCategory.SUCCESS, True)
+    MISSING = ("gone", "gone from qBittorrent", OutcomeCategory.FAILED, True)
+    DOWNLOAD_ERRORED = ("errored", "download errored; left pending", OutcomeCategory.FAILED, False)
+    DOWNLOAD_TIMED_OUT = ("timed out", "download timed out; left pending", OutcomeCategory.DEFERRED, False)
+    STILL_IMPORTING = ("unfinished", "still importing; left pending", OutcomeCategory.DEFERRED, False)
+    NOT_READY = ("not ready", "import not ready; left pending", OutcomeCategory.DEFERRED, False)
+    NOTHING_TO_IMPORT = ("no files", "nothing to import; left pending", OutcomeCategory.DEFERRED, False)
+
+    word: str
+    detail: str
+    category: OutcomeCategory
+    dropped: bool
+
+    def __init__(
+        self, word: str, detail: str, category: OutcomeCategory, dropped: bool,
+    ) -> None:
+        self.word = word
+        self.detail = detail
+        self.category = category
+        self.dropped = dropped
+
+    @property
+    def style(self) -> str:
+        """The rich style for this outcome's ledger row (from its category)."""
+
+        return self.category.style
+
+    def glyph(self, *, use_unicode: bool) -> str:
+        """The leading ledger glyph: unicode ``✔/⚠/✖`` or its ASCII fallback."""
+
+        return self.category.glyph if use_unicode else self.category.ascii_glyph
+
+
+# qBittorrent reports a torrent with no meaningful ETA as 8_640_000 seconds
+# (100 days), its "infinite" sentinel; treat it (and anything at/above it) as
+# "unknown" rather than rendering a nonsense countdown.
+_QBIT_ETA_INFINITE = 8_640_000
+
+
+@dataclass(frozen=True)
+class TorrentProbe:
+    """One qBittorrent completion poll, with live download telemetry.
+
+    Widens the old ``(outcome, content_path, progress)`` tuple so the wait view
+    can show real speed / ETA / bytes. :meth:`SeaDexArr._poll_torrent` is the one
+    place that builds this and the one place that SANITIZES qBittorrent's junk
+    (via :func:`sanitize_torrent_telemetry`), so nothing downstream ever sees a
+    sentinel: ``eta_s`` drops the 8_640_000 "∞" value to None, ``speed_bps`` drops
+    a 0/idle speed to None (the view renders that as "stalled"), bytes are
+    clamped, and a NaN/blank progress folds to 0.0.
+
+    Args:
+        outcome (WaitOutcome | None): The terminal outcome this poll, or None
+            while still downloading (or on a transient qB error -> keep waiting).
+        content_path (str | None): The completed download's path (COMPLETE only).
+        progress (float): 0.0-1.0 download fraction (0.0 when unknown).
+        speed_bps (int | None): Download speed in bytes/s, None when idle/unknown.
+        eta_s (int | None): qBittorrent's ETA in seconds, None when unknown/∞.
+        bytes_done (int | None): Bytes downloaded so far, None when unknown.
+        bytes_total (int | None): Total size in bytes, None when unknown.
+    """
+
+    outcome: "WaitOutcome | None"
+    content_path: str | None
+    progress: float
+    speed_bps: int | None = None
+    eta_s: int | None = None
+    bytes_done: int | None = None
+    bytes_total: int | None = None
+
+
+def sanitize_torrent_telemetry(
+    progress: object, dlspeed: object, eta: object, completed: object, size: object,
+) -> tuple[float, int | None, int | None, int | None, int | None]:
+    """Fold one qBittorrent info row's raw telemetry into sanitized fields.
+
+    Pure (no I/O), so the sentinel handling is unit-testable without a client.
+    A NaN/blank ``progress`` folds to 0.0 and is clamped to ``[0, 1]``; a 0/idle
+    or negative ``dlspeed`` and the 8_640_000 "∞" ``eta`` become None; bytes are
+    coerced to non-negative ints (None when unknown) and ``completed`` is clamped
+    to ``size``. Inputs are typed ``object`` because the values come off an
+    untyped qBittorrent attribute read (``getattr``), which can hand back None.
+
+    Returns:
+        tuple: ``(progress, speed_bps, eta_s, bytes_done, bytes_total)``.
+    """
+
+    frac = _as_float(progress)
+    frac = 0.0 if frac is None else max(0.0, min(1.0, frac))
+
+    raw_speed = _as_int(dlspeed)
+    speed_bps = raw_speed if raw_speed is not None and raw_speed > 0 else None
+
+    raw_eta = _as_int(eta)
+    eta_s = raw_eta if raw_eta is not None and 0 < raw_eta < _QBIT_ETA_INFINITE else None
+
+    raw_total = _as_int(size)
+    bytes_total = raw_total if raw_total is not None and raw_total > 0 else None
+    raw_done = _as_int(completed)
+    bytes_done = max(0, raw_done) if raw_done is not None and raw_done > 0 else None
+    if bytes_done is not None and bytes_total is not None:
+        bytes_done = min(bytes_done, bytes_total)
+    return frac, speed_bps, eta_s, bytes_done, bytes_total
+
+
+def _as_float(value: object) -> float | None:
+    """Best-effort float, or None for a non-numeric / NaN value."""
+
+    if isinstance(value, (int, float)):
+        return None if math.isnan(value) else float(value)
+    if isinstance(value, str):
+        try:
+            parsed = float(value)
+        except ValueError:
+            return None
+        return None if math.isnan(parsed) else parsed
+    return None
+
+
+def _as_int(value: object) -> int | None:
+    """Best-effort int, or None for a non-numeric value."""
+
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return None if math.isnan(value) else int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
 
 
 class QueueVerdict(Enum):
