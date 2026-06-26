@@ -140,7 +140,14 @@ class RunDeps:
         credentials = app_config.qbittorrent.credentials()
         if credentials is not None:
             host, username, password = credentials
-            client = qbittorrentapi.Client(host=host, username=username, password=password)
+            # `options` forwards any extra qbittorrentapi.Client kwargs (e.g.
+            # VERIFY_WEBUI_CERTIFICATE for a self-signed WebUI); empty by default.
+            client = qbittorrentapi.Client(
+                host=host,
+                username=username,
+                password=password,
+                **app_config.qbittorrent.options,
+            )
             try:
                 client.auth_log_in()
             except qbittorrentapi.LoginFailed:

@@ -56,6 +56,20 @@ class TestFileLifecycle:
         cfg = AppConfig.load(str(cfg_path))
         assert cfg.checksum() == hashlib.md5(b"seadex:\n  public_only: true\n").hexdigest()
 
+    def test_load_parses_yaml_quirk_values_end_to_end(self, tmp_path) -> None:
+        # Guards the real file -> yaml.safe_load -> AppConfig.load path (not just
+        # model_validate) for the three parse-quirk coalescings: an unquoted `off`
+        # (which YAML 1.1 parses as the bool False), a scalar tracker, and an explicit
+        # empty language list - all under their nested groups.
+        cfg_path = tmp_path / "config.yml"
+        cfg_path.write_text(
+            "seadex:\n  trackers: Nyaa\nimports:\n  wait_mode: off\n  languages_dual: []\n",
+        )
+        cfg = AppConfig.load(str(cfg_path))
+        assert cfg.seadex.trackers == {"nyaa"}
+        assert cfg.imports.wait_mode is ImportWaitMode.OFF
+        assert cfg.imports.languages_dual == ["Japanese", "English"]
+
 
 class TestDefaults:
     def test_group_defaults_when_absent(self) -> None:
@@ -127,6 +141,15 @@ class TestBlankCoalescing:
         assert imp.languages_dual == ["Japanese", "English"]
         assert imp.languages_single == ["Japanese"]
 
+    def test_explicit_empty_language_lists_fall_back_to_defaults(self) -> None:
+        # An explicit `[]` (not just blank/None) must also coalesce to the default: the
+        # pre-Pydantic property used truthiness (`value if value else default`), and an
+        # imported file must never be tagged with no language (Sonarr reads that as
+        # Unknown and may re-grab).
+        imp = ImportsSettings.model_validate({"languages_dual": [], "languages_single": []})
+        assert imp.languages_dual == ["Japanese", "English"]
+        assert imp.languages_single == ["Japanese"]
+
     def test_blank_top_level_group_uses_defaults(self) -> None:
         # A group header with nothing under it (`seadex:`) parses to None.
         cfg = AppConfig.model_validate({"seadex": None})
@@ -169,6 +192,14 @@ class TestStrictValidation:
         with pytest.raises(ValidationError):
             ImportsSettings.model_validate({"wait_mode": "bogus"})
 
+    def test_wait_mode_unquoted_yaml_off_maps_to_off(self) -> None:
+        # YAML 1.1 parses a bare `off` (the documented disabled value) as the bool
+        # False; it must still resolve to OFF rather than failing enum validation and
+        # skipping the whole run.
+        parsed = yaml.safe_load("wait_mode: off")
+        assert parsed == {"wait_mode": False}
+        assert ImportsSettings.model_validate(parsed).wait_mode is ImportWaitMode.OFF
+
     def test_mapping_true_is_rejected(self) -> None:
         # Only false (disable) / blank (auto-download) / inline dict are valid.
         with pytest.raises(ValidationError):
@@ -193,6 +224,17 @@ class TestNormalization:
     def test_trackers_explicit_are_casefolded(self) -> None:
         assert SeadexSettings.model_validate({"trackers": ["Nyaa", "AB"]}).trackers == {"nyaa", "ab"}
 
+    def test_trackers_scalar_string_is_single_tracker(self) -> None:
+        # `trackers: Nyaa` (a natural scalar mistake) is one tracker, not iterated
+        # character-by-character into a garbage {'n', 'y', 'a'} set that matches nothing.
+        assert SeadexSettings.model_validate({"trackers": "Nyaa"}).trackers == {"nyaa"}
+
+    def test_trackers_non_iterable_raises_validation_error(self) -> None:
+        # A non-iterable must surface as a clean ValidationError (which the cli catches
+        # and reports), not a raw TypeError that escapes to the generic handler.
+        with pytest.raises(ValidationError):
+            SeadexSettings.model_validate({"trackers": 5})
+
 
 class TestQbittorrent:
     def test_credentials_require_all_three(self) -> None:
@@ -202,6 +244,15 @@ class TestQbittorrent:
     def test_credentials_none_when_any_missing(self) -> None:
         assert QbittorrentSettings.model_validate({"host": "h", "username": "u"}).credentials() is None
         assert QbittorrentSettings().credentials() is None
+
+    def test_options_escape_hatch_passthrough_and_default(self) -> None:
+        # `options` carries extra qbittorrentapi.Client kwargs (e.g. VERIFY_WEBUI_-
+        # CERTIFICATE) that the explicit 4-field model would otherwise drop.
+        assert QbittorrentSettings().options == {}
+        cfg = QbittorrentSettings.model_validate(
+            {"host": "h", "options": {"VERIFY_WEBUI_CERTIFICATE": False}},
+        )
+        assert cfg.options == {"VERIFY_WEBUI_CERTIFICATE": False}
 
 
 class TestNotifications:

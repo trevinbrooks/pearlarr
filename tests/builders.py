@@ -15,18 +15,7 @@ from unittest import mock
 
 from seadex import Tag
 
-from seadexarr.modules.config import (
-    AdvancedSettings,
-    AppConfig,
-    Arr,
-    ArrSettings,
-    ImportsSettings,
-    MappingsSettings,
-    NotificationsSettings,
-    QbittorrentSettings,
-    SeadexSettings,
-    SonarrSettings,
-)
+from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, PendingImport
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.seadex_arr import SeaDexArr
@@ -40,23 +29,19 @@ from seadexarr.modules.seadex_types import (
     SonarrEpisode,
 )
 
-# Map each flat (group-local) setting name to its config group, derived from the
-# real Pydantic submodels so it can't drift into a stale subset. Groups are ordered
-# so a name shared across groups (the ArrSettings keys url/api_key/ignore_unmonitored/
-# torrent_category) resolves to ``sonarr`` - the arr make_config/make_arr default to.
-_GROUP_MODELS: dict[str, type] = {
-    "seadex": SeadexSettings,
-    "imports": ImportsSettings,
-    "advanced": AdvancedSettings,
-    "notifications": NotificationsSettings,
-    "qbittorrent": QbittorrentSettings,
-    "sonarr": SonarrSettings,
-    "radarr": ArrSettings,
-    "mappings": MappingsSettings,
-}
+# Map each flat (group-local) setting name to its config group, derived straight from
+# AppConfig's own field tree so it can't drift into a stale subset: adding a 9th
+# settings group to AppConfig wires it in here for free. AppConfig declares ``sonarr``
+# before ``radarr``, so a name shared across the two arr groups (the ArrSettings keys
+# url/api_key/ignore_unmonitored/torrent_category) resolves to ``sonarr`` - the arr
+# make_config/make_arr default to - via the first-wins ``setdefault`` below.
 _FIELD_GROUP: dict[str, str] = {}
-for _group, _model in _GROUP_MODELS.items():
-    for _field in _model.model_fields:
+for _group, _group_field in AppConfig.model_fields.items():
+    # ``annotation`` is the group's submodel class (typed Optional on FieldInfo, but
+    # every AppConfig group field is a concrete ``_ConfigBase`` subclass); read its
+    # own field names off it.
+    _submodel: Any = _group_field.annotation
+    for _field in _submodel.model_fields:
         _FIELD_GROUP.setdefault(_field, _group)
 
 # Pre-nesting flat names -> (group, field). The historical builder interface used

@@ -20,7 +20,15 @@ from hashlib import md5
 from typing import Any, Literal, cast
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from .manual_import import ImportWaitMode
 
@@ -119,12 +127,19 @@ class SonarrSettings(ArrSettings):
 
 
 class QbittorrentSettings(_ConfigBase):
-    """qBittorrent connection. Modelled explicitly instead of an ``Any`` dict splat."""
+    """qBittorrent connection. The connection fields are modelled explicitly; ``options``
+    is a scoped escape hatch for the remaining ``qbittorrentapi.Client`` kwargs (e.g.
+    ``VERIFY_WEBUI_CERTIFICATE`` for a self-signed-HTTPS WebUI, ``REQUESTS_ARGS``) so the
+    explicit model doesn't drop connectivity the old free-form ``qbit_info`` splat allowed.
+    """
 
     host: str | None = None
     username: str | None = None
     password: str | None = None
     tags: list[str] | None = None
+    # Extra keyword arguments splatted into qbittorrentapi.Client alongside the
+    # connection triple. Empty by default; nest advanced client kwargs here.
+    options: dict[str, Any] = Field(default_factory=dict)
 
     def credentials(self) -> tuple[str, str, str] | None:
         """The ``(host, username, password)`` triple, or ``None`` if any part is unset.
@@ -159,10 +174,25 @@ class SeadexSettings(_ConfigBase):
         """Casefold explicit trackers so membership tests match SeaDex's names.
 
         Only fires when ``trackers`` is provided; an absent/blank value takes the
-        ``PUBLIC | PRIVATE`` default_factory (already casefolded).
+        ``PUBLIC | PRIVATE`` default_factory (already casefolded). A scalar string is
+        treated as a single tracker rather than iterated character-by-character (so
+        ``trackers: Nyaa`` yields ``{"nyaa"}``, not ``{"n", "y", "a"}``); a non-iterable
+        raises ``ValueError`` so it surfaces as a clean ``ValidationError`` instead of a
+        raw ``TypeError`` that would escape the cli's error handler.
         """
 
-        return {str(tracker).casefold() for tracker in value}
+        if isinstance(value, str):
+            value = [value]
+        elif not isinstance(value, (list, set, tuple)):
+            raise ValueError("trackers must be a list of tracker names")
+        return {str(tracker).casefold() for tracker in cast("list[Any]", value)}
+
+
+# Languages applied to imported files. An explicit empty list in the config coalesces
+# back to these (a file must never be imported with no language - Sonarr reads that as
+# Unknown and may re-grab); referenced by both the field default and the validator.
+_LANGUAGES_DUAL_DEFAULT = ["Japanese", "English"]
+_LANGUAGES_SINGLE_DEFAULT = ["Japanese"]
 
 
 class ImportsSettings(_ConfigBase):
@@ -176,10 +206,44 @@ class ImportsSettings(_ConfigBase):
     poll_interval: int = 30
     mode: str = "auto"
     default_quality: str | None = None
-    languages_dual: list[str] = Field(default_factory=lambda: ["Japanese", "English"])
-    languages_single: list[str] = Field(default_factory=lambda: ["Japanese"])
+    languages_dual: list[str] = Field(default_factory=lambda: list(_LANGUAGES_DUAL_DEFAULT))
+    languages_single: list[str] = Field(default_factory=lambda: list(_LANGUAGES_SINGLE_DEFAULT))
     pending_max_age_days: int = 14
     digest_interval: int = 300
+
+    @field_validator("wait_mode", mode="before")
+    @classmethod
+    def _yaml_bool_off(cls, value: Any) -> Any:
+        """Map YAML's unquoted ``off`` back to the OFF mode.
+
+        YAML 1.1 parses a bare ``off`` (the documented disabled value) as the boolean
+        ``False``, so without this ``wait_mode: off`` would fail enum validation and skip
+        the whole run. ``False`` reads as "disabled", so it maps to OFF; any other
+        unrecognized value still raises cleanly.
+        """
+
+        if value is False:
+            return ImportWaitMode.OFF
+        return value
+
+    @field_validator("languages_dual", "languages_single", mode="before")
+    @classmethod
+    def _languages_default_if_empty(cls, value: Any, info: ValidationInfo) -> Any:
+        """Coalesce an explicit empty list to the language default.
+
+        Preserves the pre-Pydantic truthiness coalescing (``value if value else
+        default``): ``languages_dual: []`` in the config must not tag imported files with
+        no language. A blank/absent key already takes the default_factory via the
+        inherited blank-drop, so this only handles an explicitly-empty list.
+        """
+
+        if value:
+            return value
+        return list(
+            _LANGUAGES_DUAL_DEFAULT
+            if info.field_name == "languages_dual"
+            else _LANGUAGES_SINGLE_DEFAULT,
+        )
 
 
 class NotificationsSettings(_ConfigBase):

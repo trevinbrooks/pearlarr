@@ -21,6 +21,7 @@ qbittorrent:
   username:
   password:
   tags:                            # Tags applied to every added torrent
+  options:                         # Extra qbittorrentapi.Client kwargs, e.g. {VERIFY_WEBUI_CERTIFICATE: false} for a self-signed WebUI
 
 # SeaDex release-selection filters
 seadex:
