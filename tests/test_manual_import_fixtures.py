@@ -23,17 +23,22 @@ from unittest import mock
 from seadexarr.modules.manual_import import (
     EpisodeAssignment,
     ImportReadiness,
+    ParsedQuality,
     QueueRecordView,
     QueueVerdict,
     assign_episode_ids,
     classify_queue,
     manual_import_in_flight,
     parse_se_from_filename,
+    quality_axes_from_model,
+    resolve_quality,
 )
 from seadexarr.modules.seadex_types import (
     CommandResource,
     ManualImportCandidate,
     ParsedFileInfo,
+    QualityDefinition,
+    QualitySource,
     SonarrEpisode,
 )
 
@@ -61,6 +66,66 @@ def _pinfo(
         episode_numbers=episodes,
         absolute_episode_numbers=absolutes,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Quality resolution - the (source, resolution) match, on real bodies
+# --------------------------------------------------------------------------- #
+class TestQualityResolution:
+    """The quality fix's load-bearing claims.
+
+    Quality is matched by the structured ``(source, resolution)`` pair. The
+    candidate-read test runs on a verbatim live-Sonarr capture; the
+    qualitydefinition list is a hand-authored STAND-IN (``qualitydefinitions.json``)
+    mirroring real Sonarr - the live ``/api/v3/qualitydefinition`` capture is owed
+    (the user's instance sits behind an auth proxy). Dropping a real capture in
+    place of the stand-in re-runs these against reality unchanged.
+    """
+
+    def test_qualitydefinition_fixture_has_the_shape_the_matcher_needs(self) -> None:
+        # CONTRACT, not validation: the matcher keys on (source, resolution), so
+        # every definition must carry both. This guards the stand-in (and any real
+        # capture swapped in for it) - it does NOT by itself prove the live
+        # instance serializes the fields; that capture is owed to the user.
+        defs: list[QualityDefinition] = load_fixture("qualitydefinitions.json")
+        assert defs
+        for definition in defs:
+            quality = definition.get("quality")
+            assert quality is not None
+            assert isinstance(quality.get("resolution"), int)
+            assert isinstance(quality.get("source"), str)
+            if quality.get("name") != "Unknown":
+                assert QualitySource.parse(quality.get("source")) is not None
+
+    def test_bd_remux_resolves_against_full_def_list(self) -> None:
+        # The original failure: a 1080p BD remux. Sonarr parses it as
+        # (blurayRaw, 1080); against the full definition list that must resolve to
+        # the "Bluray-1080p Remux" definition (valid id+name) - never omitted.
+        defs: list[QualityDefinition] = load_fixture("qualitydefinitions.json")
+        sonarr = ParsedQuality(source=QualitySource.BLURAY_RAW, resolution=1080)
+        model = resolve_quality(
+            sonarr, ParsedQuality(), ParsedQuality(), defs, candidate_model=None,
+        )
+        quality = model.get("quality")
+        assert quality is not None
+        assert quality.get("name") == "Bluray-1080p Remux"
+        assert quality.get("source") == "blurayRaw"
+        assert quality.get("resolution") == 1080
+
+    def test_structured_read_on_real_manualimport_candidate(self) -> None:
+        # quality_axes_from_model reads (source, resolution) off a candidate
+        # captured verbatim from a live Sonarr - proving the read works on real
+        # output, not just hand-written dicts.
+        raw = load_fixture("manualimport_yamada.json")
+        candidates = [ManualImportCandidate.from_api(c) for c in raw]
+        dvd = next(
+            c
+            for c in candidates
+            if c.quality is not None and (c.quality.get("quality") or {}).get("name") == "DVD"
+        )
+        assert quality_axes_from_model(dvd.quality) == ParsedQuality(
+            source=QualitySource.DVD, resolution=480,
+        )
 
 
 # --------------------------------------------------------------------------- #

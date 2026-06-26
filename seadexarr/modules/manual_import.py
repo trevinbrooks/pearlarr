@@ -20,14 +20,16 @@ import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from enum import Enum, StrEnum, auto
-from typing import Any, cast
+from typing import Any
 
 from .seadex_types import (
     CommandResource,
     Language,
     ParsedFileInfo,
+    Quality,
     QualityDefinition,
     QualityModel,
+    QualitySource,
     Revision,
     SonarrEpisode,
     season_episode_key,
@@ -1121,159 +1123,126 @@ def resolve_wait_mode(
     return ImportWaitMode.OFF
 
 
-# Source/resolution -> Sonarr quality name, mirroring Sonarr's quality naming
-# (e.g. "Bluray-2160p", "WEBDL-1080p"). Keyed by a normalized source token; the
-# resolution suffix is appended from the matched resolution.
-_SOURCE_TO_NAME: dict[str, str] = {
-    "bluray": "Bluray",
-    "remux": "Remux",
-    "webdl": "WEBDL",
-    "webrip": "WEBRip",
-    "web": "WEBDL",
-    "hdtv": "HDTV",
-}
-
-# Source patterns, ordered most-specific first so "WEB-DL" wins over a bare
-# "WEB" and "Remux" is detected before "BluRay" in a "BluRay Remux" name.
-_SOURCE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("remux", re.compile(r"remux", re.IGNORECASE)),
-    ("webdl", re.compile(r"web-?dl", re.IGNORECASE)),
-    ("webrip", re.compile(r"webrip", re.IGNORECASE)),
-    ("bluray", re.compile(r"blu-?ray", re.IGNORECASE)),
-    ("hdtv", re.compile(r"hdtv", re.IGNORECASE)),
-    ("web", re.compile(r"web", re.IGNORECASE)),
+# Filename source tokens -> QualitySource, ordered most-specific first so a
+# "BluRay Remux" name resolves to BLURAY_RAW (not BLURAY), "BD" counts as BluRay,
+# and "WEB-DL" wins over a bare "WEB". A token that matches nothing leaves the
+# source axis undetermined (None) - it is NEVER defaulted to WEB here; the
+# configured default fills it.
+_SOURCE_PATTERNS: list[tuple[re.Pattern[str], QualitySource]] = [
+    (re.compile(r"remux", re.IGNORECASE), QualitySource.BLURAY_RAW),
+    (re.compile(r"blu-?ray|\bbd\b", re.IGNORECASE), QualitySource.BLURAY),
+    (re.compile(r"web-?dl", re.IGNORECASE), QualitySource.WEB),
+    (re.compile(r"webrip", re.IGNORECASE), QualitySource.WEBRIP),
+    (re.compile(r"hdtv", re.IGNORECASE), QualitySource.TELEVISION),
+    (re.compile(r"\bdvd\b", re.IGNORECASE), QualitySource.DVD),
+    (re.compile(r"\bweb\b", re.IGNORECASE), QualitySource.WEB),
 ]
 
-_RESOLUTION_PATTERN: re.Pattern[str] = re.compile(r"(2160p|1080p|720p|480p)", re.IGNORECASE)
+_RESOLUTION_PATTERN: re.Pattern[str] = re.compile(r"(2160|1080|720|480)p", re.IGNORECASE)
 
 
-def parse_quality_from_filename(filename: str) -> str | None:
-    """Best-effort Sonarr quality name from a SeaDex filename.
+@dataclass(frozen=True, slots=True)
+class ParsedQuality:
+    """Quality as two independent axes: ``source`` and ``resolution``.
 
-    Detects a resolution (``2160p``/``1080p``/``720p``/``480p``) and a source
-    (BluRay, Remux, WEB-DL, WEBRip, WEB, HDTV), case-insensitively, and joins
-    them into a Sonarr-style name like ``"Bluray-2160p"`` or ``"WEBDL-1080p"``.
-    A ``Remux`` source maps to ``"Remux-2160p"``; a bare ``WEB`` is treated as
-    WEB-DL. When no source is recognized the name defaults to a ``WEBDL`` prefix
-    (the most common anime case), so a resolution is always enough to produce a
-    name. None is returned only when no resolution can be found at all.
+    Either axis is ``None`` when it could not be authoritatively determined, which
+    is what lets the quality decision layer the axes across Sonarr's parse, our
+    filename parse, and the configured default (each fills only the axes the
+    higher-precedence layers left ``None``). The resulting ``(source, resolution)``
+    pair is matched against Sonarr's quality definitions to pick the real quality.
+    """
+
+    source: QualitySource | None = None
+    resolution: int | None = None
+
+
+def parse_quality_from_filename(filename: str) -> ParsedQuality:
+    """Best-effort ``(source, resolution)`` parse of a SeaDex filename.
+
+    Detects a resolution (``2160``/``1080``/``720``/``480``) and a source
+    (Remux, BluRay, WEB-DL, WEBRip, WEB, HDTV, DVD), case-insensitively and
+    independently. Either axis is ``None`` when not found - notably an
+    unrecognized source is left ``None`` (NOT defaulted to WEB), so the configured
+    default can fill it rather than the file being silently mislabeled.
 
     Args:
-        filename (str): The SeaDex filename (or full path; only the name text
-            is matched).
+        filename (str): The SeaDex filename (or full path; only the text matched).
 
     Returns:
-        str | None: A Sonarr quality name, or None when no resolution is found.
+        ParsedQuality: The parsed axes; either may be ``None``.
     """
 
     res_match = _RESOLUTION_PATTERN.search(filename)
-    if res_match is None:
-        return None
-    resolution = res_match.group(1).lower()
+    resolution = int(res_match.group(1)) if res_match is not None else None
 
-    # Default to a WEBDL-style name (the most common case for anime releases that
-    # omit an explicit source tag); the first matching pattern overrides it. Every
-    # ``_SOURCE_PATTERNS`` token is a ``_SOURCE_TO_NAME`` key, so the lookup is total.
-    source_name = "WEBDL"
-    for token, pattern in _SOURCE_PATTERNS:
+    source: QualitySource | None = None
+    for pattern, candidate in _SOURCE_PATTERNS:
         if pattern.search(filename):
-            source_name = _SOURCE_TO_NAME[token]
+            source = candidate
             break
-    return f"{source_name}-{resolution}"
+    return ParsedQuality(source=source, resolution=resolution)
 
 
-@dataclass(frozen=True)
-class QualitySelection:
-    """The outcome of the layered quality decision.
+def quality_axes_from_model(model: QualityModel | None) -> ParsedQuality:
+    """The ``(source, resolution)`` axes of a Sonarr ``QualityModel``.
 
-    ``name`` is the Sonarr quality name to resolve (the ours/default layers) and
-    ``model`` is the candidate's in-context quality model dict to reuse verbatim
-    (the sonarr layer); exactly one is set, or both are None for the unknown case
-    (the caller warns). The winning layer isn't recorded - the consumer branches
-    on which of ``name``/``model`` is set, never on a layer tag.
-    """
-
-    name: str | None
-    model: QualityModel | None
-
-
-def _quality_name(blob: object) -> str | None:
-    """The ``name`` of a quality-ish object, or None when absent/non-str.
-
-    Reads ``name`` off an arbitrary JSON object null-safely; used to walk the
-    schema ``QualityModel.quality.name`` path and its cross-version variants.
-    """
-
-    if isinstance(blob, dict):
-        name: object = cast("dict[str, Any]", blob).get("name")
-        if isinstance(name, str) and name:
-            return name
-    return None
-
-
-def _candidate_quality_name(candidate_quality: QualityModel | None) -> str | None:
-    """Pull the nested quality name out of a Sonarr candidate quality model.
-
-    The schema path is ``QualityModel.quality.name``, but Sonarr nests the name
-    differently across endpoints/versions (``quality.quality.name``, or a bare
-    ``name`` on the model itself). The model is therefore probed as an open
-    mapping for these variant paths, which the strict ``QualityModel`` schema
-    does not cover.
-    """
-
-    if not candidate_quality:
-        return None
-    quality = candidate_quality.get("quality")
-    # Schema path + the ``quality.quality.name`` variant: ``quality`` is the
-    # nested ``Quality`` whose ``name`` is canonical, but a variant double-nests
-    # another quality object under it. ``Quality`` is read as an open mapping
-    # here because that inner ``quality`` key is outside the schema.
-    if isinstance(quality, dict):
-        inner_name = _quality_name(cast("dict[str, Any]", quality).get("quality"))
-        if inner_name is not None:
-            return inner_name
-        direct = _quality_name(quality)
-        if direct is not None:
-            return direct
-    # Variant: a bare ``name`` on the model itself (outside the schema, which puts
-    # ``name`` on the nested ``Quality``), so probe the model as an open mapping.
-    return _quality_name(cast("dict[str, Any]", candidate_quality))
-
-
-def select_quality(
-    our_name: str | None,
-    candidate_quality: QualityModel | None,
-    default_name: str | None,
-) -> QualitySelection:
-    """Choose a quality with precedence ours > sonarr-in-context > default.
-
-    Layers, in order:
-      1. ``our_name`` (our regex parse of the SeaDex filename) -> carry the name.
-      2. ``candidate_quality`` if present *and* its nested quality name is a real
-         value (not missing and not ``"Unknown"``) -> reuse the model verbatim.
-      3. ``default_name`` (the configured fallback) -> carry the name.
-      4. otherwise both None (the caller warns; Sonarr re-grab risk).
+    Reads the canonical schema path ``model.quality.source`` /
+    ``model.quality.resolution`` via ``.get()`` (the ``QualityModel``/``Quality``
+    keys are ``NotRequired``, so subscripting is runtime-unsafe). An ``"unknown"``
+    source or a ``0``/absent resolution maps to ``None`` (undetermined), so an
+    unparsed candidate cleanly yields ``ParsedQuality()`` and falls through to the
+    next precedence layer.
 
     Args:
-        our_name (str | None): Our parsed Sonarr quality name, if any.
-        candidate_quality (QualityModel | None): The candidate's in-context model.
-        default_name (str | None): The configured default quality name.
+        model (QualityModel | None): A candidate's in-context quality model.
 
     Returns:
-        QualitySelection: The value to carry forward (a name, a model, or neither).
+        ParsedQuality: The structured axes Sonarr determined, each possibly None.
     """
 
-    if our_name:
-        return QualitySelection(name=our_name, model=None)
+    if not model:
+        return ParsedQuality()
+    quality = model.get("quality")
+    if not quality:
+        return ParsedQuality()
+    resolution = quality.get("resolution")
+    if not isinstance(resolution, int) or resolution <= 0:
+        resolution = None
+    return ParsedQuality(source=QualitySource.parse(quality.get("source")), resolution=resolution)
 
-    candidate_name = _candidate_quality_name(candidate_quality)
-    if candidate_name and candidate_name != "Unknown":
-        return QualitySelection(name=None, model=candidate_quality)
 
-    if default_name:
-        return QualitySelection(name=default_name, model=None)
+def quality_axes_from_name(
+    name: str | None,
+    quality_defs: list[QualityDefinition],
+) -> ParsedQuality:
+    """The ``(source, resolution)`` axes of a configured default quality NAME.
 
-    return QualitySelection(name=None, model=None)
+    Resolves the user's ``import_default_quality`` (a Sonarr quality name like
+    ``"Bluray-2160p"``) to its structured axes by matching it, case-insensitively,
+    against the ``/api/v3/qualitydefinition`` list - so the default contributes a
+    real ``(source, resolution)`` the decision fills gaps from. An unset name, or
+    one that matches no definition, yields ``ParsedQuality()`` (no default).
+
+    Args:
+        name (str | None): The configured default quality name, if any.
+        quality_defs (list[QualityDefinition]): The ``/api/v3/qualitydefinition``
+            list.
+
+    Returns:
+        ParsedQuality: The default's axes, or empty when unset/unmatched.
+    """
+
+    if not name:
+        return ParsedQuality()
+    target = name.casefold()
+    for definition in quality_defs:
+        quality = definition.get("quality")
+        if not quality:
+            continue
+        def_name = quality.get("name")
+        if def_name is not None and def_name.casefold() == target:
+            return quality_axes_from_model({"quality": quality})
+    return ParsedQuality()
 
 
 def derive_languages(
@@ -1295,40 +1264,98 @@ def derive_languages(
     return dual if is_dual_audio else single
 
 
-def resolve_quality_model(
-    name: str,
+def _find_definition(
+    source: QualitySource,
+    resolution: int,
     quality_defs: list[QualityDefinition],
-) -> QualityModel | None:
-    """Resolve a Sonarr quality NAME to a manual-import ``QualityModel``.
+) -> Quality | None:
+    """The nested ``Quality`` whose ``(source, resolution)`` matches, or None.
 
-    Looks the name up (case-insensitive) against the nested ``quality.name`` of
-    each ``/api/v3/qualitydefinition`` entry and wraps the matched quality dict
-    in the ``{"quality": ..., "revision": ...}`` shape Sonarr expects on a
-    manual-import file. Returns None when no definition matches the name, so the
-    caller can omit the quality key (Sonarr falls back to Unknown).
-
-    Args:
-        name (str): A Sonarr quality name (e.g. ``"WEBDL-1080p"``).
-        quality_defs (list[QualityDefinition]): The ``/api/v3/qualitydefinition``
-            list; each entry nests a ``quality`` dict with
-            ``id``/``name``/``source``/``resolution`` (re-emitted verbatim).
-
-    Returns:
-        QualityModel | None: A ``QualityModel``, or None when no definition matches.
+    Scans the ``/api/v3/qualitydefinition`` list for the definition whose nested
+    quality has the given structured source and resolution. ``(source, resolution)``
+    is unique across Sonarr's standard definitions (the only near-collision, Raw-HD
+    vs HDTV-1080p, differs by source), so the pair identifies the quality without
+    ever matching on its display name.
     """
 
-    target = name.casefold()
     for definition in quality_defs:
-        # The matched definition's nested quality is the schema ``Quality`` the
-        # outgoing QualityModel re-emits verbatim.
         quality = definition.get("quality")
         if quality is None:
             continue
-        quality_name = _quality_name(quality)
-        if quality_name is not None and quality_name.casefold() == target:
-            revision: Revision = {"version": 1, "real": 0, "isRepack": False}
-            return {"quality": quality, "revision": revision}
+        if (
+            quality.get("resolution") == resolution
+            and QualitySource.parse(quality.get("source")) is source
+        ):
+            return quality
     return None
+
+
+def _candidate_revision(candidate_model: QualityModel | None) -> Revision:
+    """The candidate's revision (proper/repack), or a fresh ``version 1`` default."""
+
+    if candidate_model is not None:
+        revision = candidate_model.get("revision")
+        if revision is not None:
+            return revision
+    return {"version": 1, "real": 0, "isRepack": False}
+
+
+def resolve_quality(
+    sonarr: ParsedQuality,
+    ours: ParsedQuality,
+    default: ParsedQuality,
+    quality_defs: list[QualityDefinition],
+    candidate_model: QualityModel | None,
+) -> QualityModel:
+    """Resolve the final manual-import ``QualityModel`` - never omitted.
+
+    The source and resolution axes are decided independently, each taking the
+    first authoritative value in precedence order: Sonarr's parse, then our
+    filename parse, then the configured default. When both axes are determined the
+    quality definition matching the ``(source, resolution)`` pair is emitted, so
+    the payload always carries a quality Sonarr actually defines (a valid id+name).
+    A determined ``BLURAY_RAW``/``TELEVISION_RAW`` with no matching remux/raw
+    definition at that resolution gracefully downgrades to ``BLURAY``/``TELEVISION``
+    rather than failing.
+
+    Crucially this never returns ``None`` and the caller never omits the quality:
+    omitting it is exactly what made Sonarr crash in
+    ``FileNameBuilder.AddQualityTokens``. When nothing resolves, Sonarr's own
+    candidate model (valid by construction) is re-emitted verbatim; only if the
+    candidate carries no quality at all is an explicit ``Unknown`` synthesized.
+
+    Args:
+        sonarr (ParsedQuality): Axes from Sonarr's candidate parse (highest).
+        ours (ParsedQuality): Axes from our filename parse.
+        default (ParsedQuality): Axes from the configured default quality.
+        quality_defs (list[QualityDefinition]): The ``/api/v3/qualitydefinition``
+            list to match against.
+        candidate_model (QualityModel | None): Sonarr's in-context model, the
+            last-resort verbatim fallback.
+
+    Returns:
+        QualityModel: The quality to POST; never omitted.
+    """
+
+    source = sonarr.source or ours.source or default.source
+    resolution = sonarr.resolution or ours.resolution or default.resolution
+    revision = _candidate_revision(candidate_model)
+
+    if source is not None and resolution is not None:
+        quality = _find_definition(source, resolution, quality_defs)
+        if quality is None and source is QualitySource.BLURAY_RAW:
+            quality = _find_definition(QualitySource.BLURAY, resolution, quality_defs)
+        if quality is None and source is QualitySource.TELEVISION_RAW:
+            quality = _find_definition(QualitySource.TELEVISION, resolution, quality_defs)
+        if quality is not None:
+            return {"quality": quality, "revision": revision}
+
+    # No confident match: re-emit Sonarr's own candidate (valid by construction)
+    # rather than omit the quality, else synthesize an explicit Unknown.
+    if candidate_model is not None and candidate_model.get("quality"):
+        return candidate_model
+    unknown: Quality = {"id": 0, "name": "Unknown", "source": "unknown", "resolution": 0}
+    return {"quality": unknown, "revision": revision}
 
 
 def resolve_language_objects(

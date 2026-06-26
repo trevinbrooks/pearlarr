@@ -384,7 +384,7 @@ class AppConfig:
     def wait_webhook_url(self) -> str | None:
         """Generic outbound webhook for the wait-complete summary (ntfy/gotify/HA).
 
-        POSTed the run-report JSON when set; ``None`` (the default) disables it.
+        POSTed the wait-summary JSON when set; ``None`` (the default) disables it.
         Independent of ``discord_url`` - either, both, or neither may be set.
         """
 
@@ -403,16 +403,6 @@ class AppConfig:
         if value is not None:
             return bool(value)
         return self.discord_url is not None or self.wait_webhook_url is not None
-
-    @property
-    def wait_report(self) -> bool:
-        """Write a durable run-report artifact (md + json) when the wait finishes.
-
-        Defaults on; blank coalesces to the default.
-        """
-
-        value = self.data.get("wait_report")
-        return True if value is None else bool(value)
 
     @property
     def wait_digest_interval(self) -> int:

@@ -1,28 +1,18 @@
-"""Tests for the walk-away grafts: the run-report artifact + the completion push.
+"""Tests for the walk-away graft: the wait-complete notification push.
 
-``write_wait_report`` serializes a :class:`WaitResult` to a markdown + json pair
-next to the log file; ``Notifier.push_wait_summary`` posts that outcome to Discord
-and/or a generic webhook. Both are best-effort (the engine swallows their errors),
-so these pin the happy paths and the no-url no-op.
+``Notifier.push_wait_summary`` posts the wait-pass outcome to Discord and/or a
+generic webhook. It is best-effort (the engine swallows its errors), so these
+pin the happy paths and the no-url no-op.
 """
 
-import json
-import logging
-from datetime import datetime
-from logging.handlers import RotatingFileHandler
-from pathlib import Path
 from typing import Any
 
 import requests
 
 from seadexarr.modules import notify
-from seadexarr.modules.config import Arr
 from seadexarr.modules.manual_import import Outcome
 from seadexarr.modules.notify import Notifier
-from seadexarr.modules.seadex_arr import write_wait_report
 from seadexarr.modules.wait_view import WaitOutcomeRow, WaitResult
-
-_WHEN = datetime(2026, 6, 25, 12, 0, 0)
 
 
 def _result() -> WaitResult:
@@ -35,38 +25,6 @@ def _result() -> WaitResult:
         ),
         elapsed_s=4264,
     )
-
-
-def _logger_to(tmp_path: Path) -> logging.Logger:
-    logger = logging.getLogger(f"wait-report-{tmp_path}")
-    logger.handlers.clear()
-    logger.propagate = False
-    logger.addHandler(RotatingFileHandler(str(tmp_path / "SeaDexArr.log"), delay=True))
-    return logger
-
-
-def test_write_wait_report_emits_md_and_json(tmp_path: Path) -> None:
-    logger = _logger_to(tmp_path)
-
-    md_path, json_path = write_wait_report(logger, Arr.SONARR, _result(), when=_WHEN)
-
-    assert Path(md_path).parent == tmp_path  # lands next to the log file
-    assert Path(md_path).name == "run-report-sonarr-20260625-120000.md"
-
-    md = Path(md_path).read_text(encoding="utf-8")
-    assert "2 imported - 1 left - 1 failed" in md
-    assert "| ✔ imported | Frieren |" in md
-    assert "| ⚠ timed out | Spy x Family |" in md
-    assert "| ✖ errored | Bleach TYBW |" in md
-
-    payload: dict[str, Any] = json.loads(Path(json_path).read_text(encoding="utf-8"))
-    assert payload["imported"] == 2
-    assert payload["left"] == 1
-    assert payload["failed"] == 1
-    assert payload["arr"] == "sonarr"
-    assert [row["label"] for row in payload["rows"]] == [
-        "Frieren", "Apothecary Diaries", "Spy x Family", "Bleach TYBW",
-    ]
 
 
 def test_push_wait_summary_no_url_is_noop() -> None:

@@ -1,12 +1,9 @@
 import copy
-import json
 import logging
-import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from logging.handlers import RotatingFileHandler
 from typing import Any, cast, final
 
 import qbittorrentapi
@@ -207,76 +204,6 @@ class RunDeps:
                 anilist=anilist,
             ),
         )
-
-def _resolve_log_dir(logger: logging.Logger) -> str:
-    """The directory the rotating file log writes to (fallback ``logs``).
-
-    Derived from the live file handler so the run report lands next to
-    ``SeaDexArr.log`` without re-deriving the ``DOCKER_ENV`` / ``CONFIG_DIR`` path
-    logic ``setup_logger`` already owns.
-    """
-
-    for handler in logger.handlers:
-        if isinstance(handler, RotatingFileHandler) and handler.baseFilename:
-            return os.path.dirname(handler.baseFilename) or "logs"
-    return "logs"
-
-
-def write_wait_report(
-    logger: logging.Logger, arr: Arr, result: WaitResult, *, when: datetime,
-) -> tuple[str, str]:
-    """Write a durable wait-pass report (markdown + json) to the log directory.
-
-    The human ``.md`` is a small outcome table; the ``.json`` is the machine
-    record. Directly fixes the "a TTY wait leaves no trace / the summary is
-    pre-monitor" gap. ``when`` is injected so the filename is deterministic in
-    tests. Returns the ``(markdown_path, json_path)`` written.
-    """
-
-    log_dir = _resolve_log_dir(logger)
-    os.makedirs(log_dir, exist_ok=True)
-    stamp = when.strftime("%Y%m%d-%H%M%S")
-    base = os.path.join(log_dir, f"run-report-{arr}-{stamp}")
-    md_path, json_path = f"{base}.md", f"{base}.json"
-
-    elapsed = LogFormatter.format_elapsed(result.elapsed_s)
-    lines = [
-        f"# SeaDexArr - {arr.capitalize()} wait, {when.strftime('%Y-%m-%d %H:%M')}",
-        "",
-        f"**{result.imported} imported - {result.left} left - "
-        f"{result.failed} failed**  ({elapsed})",
-        "",
-        "| Outcome | Title |",
-        "| --- | --- |",
-        *(
-            f"| {row.outcome.glyph(use_unicode=True)} {row.outcome.word} | {row.label} |"
-            for row in result.rows
-        ),
-    ]
-    with open(md_path, "w", encoding="utf-8") as handle:
-        handle.write("\n".join(lines) + "\n")
-
-    payload = {
-        "arr": str(arr),
-        "generated_at": when.isoformat(timespec="seconds"),
-        "elapsed_s": result.elapsed_s,
-        "imported": result.imported,
-        "left": result.left,
-        "failed": result.failed,
-        "rows": [
-            {
-                "key": row.key,
-                "label": row.label,
-                "outcome": row.outcome.name,
-                "word": row.outcome.word,
-                "category": row.outcome.category.name,
-            }
-            for row in result.rows
-        ],
-    }
-    with open(json_path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
-    return md_path, json_path
 
 
 @final
@@ -1811,25 +1738,13 @@ class SeaDexArr:
                 ImportWaitMode.BLOCKING, ImportWaitMode.HYBRID,
             ):
                 result = self._run_monitor()
-                # Best-effort walk-away grafts, run only when something actually
-                # waited. Each swallows its own errors so a bad webhook / disk can
-                # never skip the cache save in the finally below.
+                # Best-effort walk-away graft, run only when something actually
+                # waited. It swallows its own errors so a bad webhook can never
+                # skip the cache save in the finally below.
                 if result is not None and result.waited:
-                    self._emit_wait_report(arr, result)
                     self._notify_wait_complete(arr, result)
         finally:
             self.cache_store.save(preview=preview)
-
-    def _emit_wait_report(self, arr: Arr, result: WaitResult) -> None:
-        """Write the durable run report, gated on ``wait_report``; swallow errors."""
-
-        if not self._config.wait_report:
-            return
-        try:
-            md_path, _ = write_wait_report(self.logger, arr, result, when=datetime.now())
-            self.logger.info(indent_string(f"wait report written to {md_path}"))
-        except Exception:
-            self.logger.debug("wait report write failed", exc_info=True)
 
     def _notify_wait_complete(self, arr: Arr, result: WaitResult) -> None:
         """Push the completion notification, gated on ``wait_notify``; swallow errors."""

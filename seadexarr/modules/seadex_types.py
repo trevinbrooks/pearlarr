@@ -22,6 +22,7 @@ The defaults also encode one load-bearing distinction:
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import (
     Any,
     NamedTuple,
@@ -310,13 +311,60 @@ class AniListMediaNode:
 #     defaults).
 
 
+class QualitySource(StrEnum):
+    """Sonarr's ``QualitySource`` enum (schema ``QualitySource``).
+
+    The structured ``source`` axis of a :class:`Quality`, modeled verbatim from
+    the Sonarr OpenAPI schema (``schemas/sonarr.schema``) - the values are
+    camelCase strings as Sonarr serializes them. Quality is matched on the
+    ``(source, resolution)`` pair (never on the display name), so this enum is the
+    authoritative source vocabulary the manual-import quality decision works in.
+    ``BLURAY_RAW`` is a BD remux; ``TELEVISION_RAW`` is Raw-HD.
+    """
+
+    UNKNOWN = "unknown"
+    TELEVISION = "television"
+    TELEVISION_RAW = "televisionRaw"
+    WEB = "web"
+    WEBRIP = "webRip"
+    DVD = "dvd"
+    BLURAY = "bluray"
+    BLURAY_RAW = "blurayRaw"
+
+    @classmethod
+    def parse(cls, value: str | None) -> "QualitySource | None":
+        """A real source from a raw enum string, or None when undetermined.
+
+        Case-insensitive. Returns None for a missing value, an unrecognized
+        string, or ``"unknown"`` - i.e. None means "no authoritative source", so
+        the caller's next precedence layer (our parse, then the configured
+        default) gets a chance to fill the axis.
+
+        Args:
+            value (str | None): A raw ``QualitySource`` string from Sonarr JSON.
+
+        Returns:
+            QualitySource | None: The matched source, or None when undetermined.
+        """
+
+        if not value:
+            return None
+        folded = value.casefold()
+        for member in cls:
+            if member is cls.UNKNOWN:
+                continue
+            if member.value.casefold() == folded:
+                return member
+        return None
+
+
 class Quality(TypedDict):
     """The nested ``quality`` object of a Sonarr ``QualityModel``.
 
     Schema ``Quality``: ``id``/``resolution`` are non-null ints, ``name`` is
-    ``string | null``, ``source`` is the ``QualitySource`` enum (a string). Every
-    key is ``NotRequired`` because the helpers build and read partial quality
-    dicts (``resolve_quality_model`` copies only the keys a definition carries).
+    ``string | null``, ``source`` is the :class:`QualitySource` enum (a string).
+    Every key is ``NotRequired`` because the helpers build and read partial
+    quality dicts (the quality resolver copies only the keys a definition carries).
     """
 
     id: NotRequired[int]
@@ -337,11 +385,11 @@ class QualityModel(TypedDict):
     """A Sonarr ``QualityModel`` (schema): ``{quality, revision}``.
 
     Used two ways on the manual-import path: a candidate's in-context model is
-    read for its nested quality name and, when it wins the layered decision,
-    re-emitted verbatim into the outgoing file payload; and
-    ``resolve_quality_model`` builds one from a quality definition. Both keys are
-    ``NotRequired`` because a built model may omit ``revision`` and a candidate
-    model may carry only ``quality``.
+    read for its structured ``quality.source``/``quality.resolution`` axes and,
+    when no definition matches the resolved quality, re-emitted verbatim into the
+    outgoing file payload; and ``resolve_quality`` builds one from the matched
+    quality definition. Both keys are ``NotRequired`` because a built model may
+    omit ``revision`` and a candidate model may carry only ``quality``.
     """
 
     quality: NotRequired[Quality]
@@ -494,12 +542,12 @@ class QueueRecord:
 class QualityDefinition(TypedDict):
     """One Sonarr ``QualityDefinitionResource`` (schema), reduced to ``quality``.
 
-    Read-and-re-emit: ``resolve_quality_model`` looks a name up against the nested
-    ``quality.name`` and re-emits the matched :class:`Quality` verbatim into the
-    outgoing ``QualityModel``, so a ``TypedDict`` types the JSON shape without a
-    round-trip. Only the nested ``quality`` is consumed; ``quality`` is
-    ``NotRequired`` because a malformed/partial definition may omit it (the
-    resolver skips such entries).
+    Read-and-re-emit: ``resolve_quality`` matches a definition by its nested
+    ``quality.source``/``quality.resolution`` pair and re-emits the matched
+    :class:`Quality` verbatim into the outgoing ``QualityModel``, so a
+    ``TypedDict`` types the JSON shape without a round-trip. Only the nested
+    ``quality`` is consumed; ``quality`` is ``NotRequired`` because a
+    malformed/partial definition may omit it (the resolver skips such entries).
     """
 
     quality: NotRequired[Quality]

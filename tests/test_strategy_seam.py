@@ -15,7 +15,6 @@ from seadexarr.modules.manual_import import (
     ImportReadiness,
     PendingImport,
     resolve_language_objects,
-    resolve_quality_model,
 )
 from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.seadex_radarr import RadarrSync
@@ -517,9 +516,9 @@ class TestImportCompletedPayload:
         assert entry["downloadId"] == "HASH"
         assert entry["path"] == "/downloads/Show - 01 [1080p].mkv"
 
-    def test_our_regex_quality_wins_over_candidate(self) -> None:
-        # Filename says 1080p WEB-DL -> our parse yields "WEBDL-1080p"; the
-        # candidate's in-context "HDTV-720p" must lose.
+    def test_sonarr_structured_quality_wins_over_ours(self) -> None:
+        # Sonarr already parsed the release as (bluray, 1080); our filename parse
+        # would say WEB-DL, but Sonarr's structured parse takes precedence.
         pending = pending_import(
             file_episode_map={"Show - 01 [1080p][WEB-DL].mkv": [101]},
             episode_ids=[101],
@@ -527,10 +526,38 @@ class TestImportCompletedPayload:
         )
         candidate = manual_candidate(
             "/d/Show - 01 [1080p][WEB-DL].mkv",
-            quality={"quality": {"name": "HDTV-720p"}},
+            quality={"quality": {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
         )
         quality_defs: list[QualityDefinition] = [
-            {"quality": {"id": 3, "name": "WEBDL-1080p", "resolution": 1080}},
+            {"quality": {"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080}},
+            {"quality": {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
+        ]
+        strat, sonarr = _make_sonarr_for_import(
+            candidates=[candidate], quality_defs=quality_defs,
+        )
+
+        strat.import_completed(pending, "/d")
+
+        (_, kwargs) = sonarr.manual_import_execute.call_args
+        entry = kwargs["files"][0]
+        assert entry["quality"]["quality"]["name"] == "Bluray-1080p"
+        assert entry["quality"]["revision"]["version"] == 1
+
+    def test_our_parse_fills_when_sonarr_quality_unknown(self) -> None:
+        # Sonarr couldn't parse the release (Unknown); our filename parse of
+        # (web, 1080) fills both axes -> WEBDL-1080p, and a real quality is emitted.
+        pending = pending_import(
+            file_episode_map={"Show - 01 [1080p][WEB-DL].mkv": [101]},
+            episode_ids=[101],
+            seadex_files=["Show - 01 [1080p][WEB-DL].mkv"],
+        )
+        candidate = manual_candidate(
+            "/d/Show - 01 [1080p][WEB-DL].mkv",
+            quality={"quality": {"id": 0, "name": "Unknown", "source": "unknown", "resolution": 0}},
+        )
+        quality_defs: list[QualityDefinition] = [
+            {"quality": {"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080}},
+            {"quality": {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
         ]
         strat, sonarr = _make_sonarr_for_import(
             candidates=[candidate], quality_defs=quality_defs,
@@ -541,7 +568,6 @@ class TestImportCompletedPayload:
         (_, kwargs) = sonarr.manual_import_execute.call_args
         entry = kwargs["files"][0]
         assert entry["quality"]["quality"]["name"] == "WEBDL-1080p"
-        assert entry["quality"]["revision"]["version"] == 1
 
     def test_matches_disk_name_across_nfd_normalization(self) -> None:
         # The seed map is keyed by an NFC name; the on-disk leaf arrives NFD
@@ -816,33 +842,6 @@ class TestManualImportWarningGating:
             "not visible to Sonarr" in r.message and r.levelname == "WARNING"
             for r in caplog.records
         )
-
-
-class TestResolveQualityModel:
-    """resolve_quality_model maps a name to a QualityModel, case-insensitively."""
-
-    def test_matches_case_insensitively(self) -> None:
-        defs: list[QualityDefinition] = [
-            {"quality": {"id": 1, "name": "HDTV-720p"}},
-            {"quality": {"id": 3, "name": "WEBDL-1080p"}},
-        ]
-
-        model = resolve_quality_model("webdl-1080p", defs)
-
-        assert model is not None
-        quality = model.get("quality")
-        assert quality is not None
-        assert quality.get("id") == 3
-        assert quality.get("name") == "WEBDL-1080p"
-        assert model.get("revision") == {"version": 1, "real": 0, "isRepack": False}
-
-    def test_no_match_returns_none(self) -> None:
-        defs: list[QualityDefinition] = [{"quality": {"id": 1, "name": "HDTV-720p"}}]
-
-        assert resolve_quality_model("Bluray-2160p", defs) is None
-
-    def test_empty_defs_returns_none(self) -> None:
-        assert resolve_quality_model("WEBDL-1080p", []) is None
 
 
 class TestResolveLanguageObjects:

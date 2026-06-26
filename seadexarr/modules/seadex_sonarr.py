@@ -35,9 +35,10 @@ from .manual_import import (
     parse_quality_from_filename,
     parse_se_from_filename,
     plan_import_files,
+    quality_axes_from_model,
+    quality_axes_from_name,
     resolve_language_objects,
-    resolve_quality_model,
-    select_quality,
+    resolve_quality,
     targets_needing_import,
 )
 from .mappings import MappingEntry, MappingMode
@@ -59,6 +60,7 @@ from .seadex_types import (
     ManualImportFile,
     ParsedFileInfo,
     QualityDefinition,
+    QualitySource,
     RadarrItem,
     SeadexDict,
     SonarrEpisode,
@@ -1381,8 +1383,9 @@ class SonarrSync(ArrSync[SonarrItem]):
         """Build one ManualImport file payload from a planned ``import`` decision.
 
         The episode ids come straight from our authoritative map (never Sonarr's
-        parse); the quality layers ours -> the candidate's in-context model ->
-        the configured default, warning when none resolves (re-grab risk).
+        parse); the quality is decided per axis with precedence Sonarr's parse ->
+        our filename parse -> the configured default, and always emits a real
+        quality (never an omitted key), warning only when it resolves to Unknown.
 
         Only ``import`` decisions reach here, so ``decision.path`` is the on-disk
         candidate path (always set); the ``or decision.basename`` keeps the
@@ -1400,26 +1403,19 @@ class SonarrSync(ArrSync[SonarrItem]):
         }
 
         base = os.path.basename(path)
-        our_q = parse_quality_from_filename(base)
-        sel = select_quality(our_q, decision.quality, self._config.import_default_quality)
-        if sel.model is not None:
-            entry["quality"] = sel.model
-        elif sel.name is not None:
-            quality_model = resolve_quality_model(sel.name, quality_defs)
-            if quality_model is not None:
-                entry["quality"] = quality_model
-            else:
-                self.logger.warning(
-                    indent_string(
-                        f"{label}: could not resolve quality '{sel.name}' for {base}; "
-                        f"importing without an explicit quality",
-                    ),
-                )
-        else:
+        sonarr_axes = quality_axes_from_model(decision.quality)
+        our_axes = parse_quality_from_filename(base)
+        default_axes = quality_axes_from_name(self._config.import_default_quality, quality_defs)
+        quality = resolve_quality(
+            sonarr_axes, our_axes, default_axes, quality_defs, decision.quality,
+        )
+        entry["quality"] = quality
+        resolved = quality.get("quality") or {}
+        if QualitySource.parse(resolved.get("source")) is None:
             self.logger.warning(
                 indent_string(
-                    f"{label}: unknown quality for {base}; importing without an "
-                    f"explicit quality (re-grab risk)",
+                    f"{label}: could not confidently resolve quality for {base}; "
+                    f"importing as Unknown (re-grab risk)",
                 ),
             )
         return entry
