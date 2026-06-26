@@ -10,13 +10,23 @@ test actually read.
 """
 
 import logging
-from functools import cached_property
 from typing import Any
 from unittest import mock
 
 from seadex import Tag
 
-from seadexarr.modules.config import AppConfig, Arr
+from seadexarr.modules.config import (
+    AdvancedSettings,
+    AppConfig,
+    Arr,
+    ArrSettings,
+    ImportsSettings,
+    MappingsSettings,
+    NotificationsSettings,
+    QbittorrentSettings,
+    SeadexSettings,
+    SonarrSettings,
+)
 from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, PendingImport
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.seadex_arr import SeaDexArr
@@ -30,16 +40,65 @@ from seadexarr.modules.seadex_types import (
     SonarrEpisode,
 )
 
-# The override keys make_arr routes into self._config, derived from AppConfig's
-# real setting surface so it can't drift into a stale subset. The old hardcoded
-# list silently misrouted any flag it omitted to a dead direct attribute that no
-# code reads (so the test exercised the config default while looking like it set
-# the override).
-_CONFIG_SETTING_NAMES = frozenset(
-    name
-    for name, attr in vars(AppConfig).items()
-    if isinstance(attr, (property, cached_property))
-)
+# Map each flat (group-local) setting name to its config group, derived from the
+# real Pydantic submodels so it can't drift into a stale subset. Groups are ordered
+# so a name shared across groups (the ArrSettings keys url/api_key/ignore_unmonitored/
+# torrent_category) resolves to ``sonarr`` - the arr make_config/make_arr default to.
+_GROUP_MODELS: dict[str, type] = {
+    "seadex": SeadexSettings,
+    "imports": ImportsSettings,
+    "advanced": AdvancedSettings,
+    "notifications": NotificationsSettings,
+    "qbittorrent": QbittorrentSettings,
+    "sonarr": SonarrSettings,
+    "radarr": ArrSettings,
+    "mappings": MappingsSettings,
+}
+_FIELD_GROUP: dict[str, str] = {}
+for _group, _model in _GROUP_MODELS.items():
+    for _field in _model.model_fields:
+        _FIELD_GROUP.setdefault(_field, _group)
+
+# Pre-nesting flat names -> (group, field). The historical builder interface used
+# the old flat config keys (``import_*``, ``{arr}_*``, etc.); map them here so the
+# existing call sites keep passing flat kwargs without each one being rewritten.
+_FLAT_ALIASES: dict[str, tuple[str, str]] = {
+    "import_wait_mode": ("imports", "wait_mode"),
+    "import_wait_timeout": ("imports", "wait_timeout"),
+    "import_ready_timeout": ("imports", "ready_timeout"),
+    "import_poll_interval": ("imports", "poll_interval"),
+    "import_mode": ("imports", "mode"),
+    "import_default_quality": ("imports", "default_quality"),
+    "import_languages_dual": ("imports", "languages_dual"),
+    "import_languages_single": ("imports", "languages_single"),
+    "import_pending_max_age_days": ("imports", "pending_max_age_days"),
+    "wait_digest_interval": ("imports", "digest_interval"),
+    "max_torrents_to_add": ("advanced", "max_torrents_to_add"),
+    "sleep_time": ("advanced", "sleep_time"),
+    "cache_time": ("advanced", "cache_time"),
+    "log_level": ("advanced", "log_level"),
+    "discord_url": ("notifications", "discord_url"),
+    "wait_webhook_url": ("notifications", "wait_webhook_url"),
+    "wait_notify": ("notifications", "wait_notify"),
+    "torrent_tags": ("qbittorrent", "tags"),
+    "sonarr_ignore_unmonitored": ("sonarr", "ignore_unmonitored"),
+    "radarr_ignore_unmonitored": ("radarr", "ignore_unmonitored"),
+    "sonarr_torrent_category": ("sonarr", "torrent_category"),
+    "radarr_torrent_category": ("radarr", "torrent_category"),
+}
+
+
+def _resolve_setting(key: str) -> tuple[str, str]:
+    """Map a flat override key to its ``(group, field)`` in the nested config."""
+
+    if key in _FLAT_ALIASES:
+        return _FLAT_ALIASES[key]
+    return _FIELD_GROUP.get(key, "seadex"), key
+
+
+# The override keys make_arr routes into self._config (rather than onto the bare
+# engine as a direct attribute/collaborator).
+_CONFIG_SETTING_NAMES = frozenset(_FIELD_GROUP) | frozenset(_FLAT_ALIASES)
 
 
 def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
@@ -76,29 +135,28 @@ def make_logger(name: str = "seadexarr-test") -> logging.Logger:
 def make_config(**overrides: Any) -> AppConfig:
     """An in-memory ``AppConfig`` carrying ``make_arr``'s decision-test defaults.
 
-    After Phase 5b the config flags are read through ``self._config`` (the single
-    source of truth), so a bare instance needs a real ``AppConfig`` rather than
-    flat mirror attributes. These defaults mirror the historical ``make_arr``
-    flags - notably ``public_only=False`` (``AppConfig``'s own default is True) -
-    and leave ``trackers`` unset so it defaults to PUBLIC | PRIVATE.
+    The config flags are read through ``self._config`` (the single source of truth),
+    so a bare instance needs a real ``AppConfig``. These defaults mirror the historical
+    ``make_arr`` flags - notably ``public_only=False`` (``AppConfig``'s own default is
+    True) - and leave ``trackers`` unset so it defaults to PUBLIC | PRIVATE. Each flat
+    override is routed to its config group (``_FIELD_GROUP``) and the nested mapping is
+    validated through the models, so the before-validators run exactly as on a real load.
     """
 
-    data: dict[str, Any] = {
-        "public_only": False,
-        "want_best": True,
-        "prefer_dual_audio": True,
-        "ignore_tags": [],
-        "interactive": False,
-        "use_torrent_hash_to_filter": False,
+    nested: dict[str, dict[str, Any]] = {
+        "seadex": {
+            "public_only": False,
+            "want_best": True,
+            "prefer_dual_audio": True,
+            "ignore_tags": [],
+            "use_torrent_hash_to_filter": False,
+        },
+        "advanced": {"interactive": False},
     }
-    # AppConfig reads a few settings under an ``{arr}_`` data key (e.g.
-    # ``ignore_unmonitored`` -> ``sonarr_ignore_unmonitored``). Write each
-    # override under both the bare and the sonarr-prefixed key so it takes effect
-    # whichever form the property reads - no per-key allow-list to keep in sync.
     for key, value in overrides.items():
-        data[key] = value
-        data[f"sonarr_{key}"] = value
-    return AppConfig(path="unused.yml", arr=Arr.SONARR, data=data)
+        group, field = _resolve_setting(key)
+        nested.setdefault(group, {})[field] = value
+    return AppConfig.model_validate(nested)
 
 
 def make_arr(**overrides: Any) -> SeaDexArr:
@@ -124,10 +182,14 @@ def make_arr(**overrides: Any) -> SeaDexArr:
         if key in _CONFIG_SETTING_NAMES
     }
 
+    config = make_config(**config_overrides)
     defaults: dict[str, Any] = {
         "logger": logger,
         "log_fmt": mock.MagicMock(),
-        "_config": make_config(**config_overrides),
+        "_config": config,
+        # The engine reads per-arr flags (e.g. ignore_unmonitored) off _arr_config,
+        # the Sonarr view of the same shared config.
+        "_arr_config": config.for_arr(Arr.SONARR),
     }
     defaults.update(overrides)
     return make_bare_instance(SeaDexArr, **defaults)

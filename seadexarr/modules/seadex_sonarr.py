@@ -326,9 +326,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         # counts/formats (the gateway is the single owner, shared with the engine).
         self._anilist = deps.anilist
 
-        # Set up Sonarr
-        sonarr_url = self._config.sonarr_url
-        sonarr_api_key = self._config.sonarr_api_key
+        # Set up Sonarr (connection keys are required only now, when a Sonarr run runs)
+        sonarr_url, sonarr_api_key = self._config.require_connection(Arr.SONARR)
 
         # self.session (a shared keep-alive requests.Session) comes from the
         # injected deps and is handed to the client; parse in particular fires one
@@ -373,7 +372,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         # every call. None means "not refreshed yet this run" (reset in get_items).
         self._last_refresh_monotonic: float | None = None
 
-        self.ignore_movies_in_radarr = self._config.ignore_movies_in_radarr
+        self.ignore_movies_in_radarr = self._config.sonarr.ignore_movies_in_radarr
 
         # Only when ignore_movies_in_radarr is on do we need Radarr's movie list
         # (for the specials cross-check in process_al_id). Build a lightweight
@@ -381,8 +380,10 @@ class SonarrSync(ArrSync[SonarrItem]):
         # SeaDexRadarr (which would re-run the whole engine __init__: mapping
         # parse, cache load, and a qBittorrent login, all unused here).
         self.all_radarr_movies: list[RadarrItem] | None = None
-        radarr_url = self._config.radarr_url_optional
-        radarr_api_key = self._config.radarr_api_key_optional
+        # None-tolerant cross-check read: the Radarr keys are optional here (this is a
+        # Sonarr run), so read them directly rather than require_connection.
+        radarr_url = self._config.radarr.url
+        radarr_api_key = self._config.radarr.api_key
 
         if (
             self.ignore_movies_in_radarr
@@ -490,7 +491,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             return False
 
         # Also check if it's in the Radarr cache, if we have that option
-        if self.ignore_movies_in_radarr and not self._config.ignore_seadex_update_times:
+        if self.ignore_movies_in_radarr and not self._config.seadex.ignore_seadex_update_times:
             al_id_in_radarr_cache = run.check_al_id_in_cache(
                 arr=Arr.RADARR,
                 al_id=al_id,
@@ -557,7 +558,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                         movie.title,
                     )
 
-                time.sleep(self._config.sleep_time)
+                time.sleep(self._config.advanced.sleep_time)
                 return False
 
         # Get the episode list for all relevant episodes
@@ -572,11 +573,11 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         # If all episodes are unmonitored, then skip if ignore_unmonitored is switched on
         ep_list_monitored = [ep.monitored for ep in ep_list]
-        if not any(ep_list_monitored) and self._config.ignore_unmonitored:
+        if not any(ep_list_monitored) and self._config.sonarr.ignore_unmonitored:
             run.log_anilist_item_unmonitored(
                 item_title=anilist_title,
             )
-            time.sleep(self._config.sleep_time)
+            time.sleep(self._config.advanced.sleep_time)
             return False
 
         # Now that we have the episodes, log the active entry with its
@@ -619,7 +620,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         overlapping_results = get_overlapping_results(seadex_dict=seadex_dict)
 
         # If we're in interactive mode and there are multiple equivalent options here, then select
-        if self._config.interactive and len(seadex_dict) > 1 and overlapping_results:
+        if self._config.advanced.interactive and len(seadex_dict) > 1 and overlapping_results:
             seadex_dict = run.filter_seadex_interactive(
                 seadex_dict=seadex_dict,
                 sd_entry=sd_entry,
@@ -999,7 +1000,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         """
 
         now = time.monotonic()
-        interval = self._config.import_poll_interval
+        interval = self._config.imports.poll_interval
         if (
             self._last_refresh_monotonic is not None
             and now - self._last_refresh_monotonic < interval
@@ -1175,7 +1176,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         cmd_id = self.sonarr.manual_import_execute(
             files=files,
-            import_mode=self._config.import_mode,
+            import_mode=self._config.imports.mode,
         )
         if cmd_id is None:
             self.logger.debug(
@@ -1360,8 +1361,8 @@ class SonarrSync(ArrSync[SonarrItem]):
             self._languages_cache = self.sonarr.languages()
         lang_names = derive_languages(
             pending.is_dual_audio,
-            self._config.import_languages_dual,
-            self._config.import_languages_single,
+            self._config.imports.languages_dual,
+            self._config.imports.languages_single,
         )
         return resolve_language_objects(lang_names, self._languages_cache)
 
@@ -1405,7 +1406,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         base = os.path.basename(path)
         sonarr_axes = quality_axes_from_model(decision.quality)
         our_axes = parse_quality_from_filename(base)
-        default_axes = quality_axes_from_name(self._config.import_default_quality, quality_defs)
+        default_axes = quality_axes_from_name(self._config.imports.default_quality, quality_defs)
         quality = resolve_quality(
             sonarr_axes, our_axes, default_axes, quality_defs, decision.quality,
         )

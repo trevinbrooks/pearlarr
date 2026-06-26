@@ -40,8 +40,8 @@ class RadarrSync(ArrSync[RadarrItem]):
         self.anime_mappings: dict[str, dict[str, Any]] = deps.mappings.anime_mappings
         self.anibridge = deps.mappings.anibridge
 
-        radarr_url = self._config.radarr_url
-        radarr_api_key = self._config.radarr_api_key
+        # Connection keys are required only now, when a Radarr run actually runs.
+        radarr_url, radarr_api_key = self._config.require_connection(Arr.RADARR)
 
         self.radarr = make_radarr_client(
             url=radarr_url,
@@ -154,7 +154,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         )
 
         # If we're in interactive mode and there are multiple options here, then select
-        if self._config.interactive and len(seadex_dict) > 1:
+        if self._config.advanced.interactive and len(seadex_dict) > 1:
             seadex_dict = run.filter_seadex_interactive(
                 seadex_dict=seadex_dict,
                 sd_entry=sd_entry,

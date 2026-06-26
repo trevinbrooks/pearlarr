@@ -1,79 +1,78 @@
-# Parameters for Sonarr
-sonarr_url:
-sonarr_api_key:
-sonarr_ignore_unmonitored: false  # If True, will not grab releases that are unmonitored in Sonarr
-ignore_movies_in_radarr: false  # If True, will not add movies to Sonarr that already exist in Radarr
+# Sonarr connection + behaviour. url/api_key are required only when a Sonarr run
+# actually executes (a Radarr-only config still loads fine).
+sonarr:
+  url:
+  api_key:
+  ignore_unmonitored: false        # If true, skip releases unmonitored in Sonarr
+  torrent_category:                # qBittorrent category for Sonarr-added torrents
+  ignore_movies_in_radarr: false   # If true, don't add movies to Sonarr that already exist in Radarr
 
-# Parameters for Radarr
-radarr_url:
-radarr_api_key:
-radarr_ignore_unmonitored: false  # If True, will not grab releases that are unmonitored in Radarr
+# Radarr connection + behaviour. url/api_key are required only when a Radarr run runs.
+radarr:
+  url:
+  api_key:
+  ignore_unmonitored: false        # If true, skip releases unmonitored in Radarr
+  torrent_category:                # qBittorrent category for Radarr-added torrents
 
-# qBittorrent parameters
-qbit_info:
+# qBittorrent connection. All of host/username/password are needed to add torrents;
+# leave any blank to run in preview-only mode (nothing is grabbed).
+qbittorrent:
   host:
   username:
   password:
+  tags:                            # Tags applied to every added torrent
 
-# Categories for added torrents
-sonarr_torrent_category:
-radarr_torrent_category:
-torrent_tags:
+# SeaDex release-selection filters
+seadex:
+  public_only: true                # Only return results from public trackers
+  prefer_dual_audio: true          # Prefer dual-audio releases (else prefer Ja-only)
+  want_best: true                  # Prefer releases tagged "best"
+  ignore_tags:                     # SeaDex tags to skip (e.g. Dolby Vision, Deband Required)
+  trackers:                        # Allowed trackers (default: all public + private)
+  ignore_anilist_ids:              # AniList IDs to never process (a list of integer IDs)
+  ignore_seadex_update_times: false   # If true, re-check entries even if SeaDex hasn't updated them
+  use_torrent_hash_to_filter: false   # Filter by torrent hash (true) instead of release group (false)
 
-# Ignore SeaDex update times?
-ignore_seadex_update_times: false
-
-# Do you want to filter purely by torrent hash?
-use_torrent_hash_to_filter: false
-
-# Maximum number of torrents to add in one run
-max_torrents_to_add:
-
-# Wait-for-completion + Sonarr manual import (Sonarr only; Radarr is a no-op)
-# After a torrent is added, optionally wait for qBittorrent to finish it, then
-# ask Sonarr to rescan (RefreshMonitoredDownloads) and watch its queue: let Sonarr
-# import the files itself, and only step in with a series-pinned manual import
-# (our authoritative mapping) when Sonarr can't auto-import them (importBlocked) or
-# isn't tracking the download. import_wait_mode enables the feature; "off" disables
-# it entirely (no waiting, no pending records, no manual import). Other modes
-# control *when* it runs:
+# Wait-for-completion + Sonarr manual import (Sonarr only; Radarr is a no-op).
+# After a torrent is added, optionally wait for qBittorrent to finish it, then ask
+# Sonarr to rescan (RefreshMonitoredDownloads) and watch its queue: let Sonarr import
+# the files itself, and only step in with a series-pinned manual import (our
+# authoritative mapping) when Sonarr can't auto-import them (importBlocked) or isn't
+# tracking the download. wait_mode enables the feature; "off" disables it entirely (no
+# waiting, no pending records, no manual import). Other modes control *when* it runs:
 #   off       - disabled (default)
 #   deferred  - never block; import already-complete downloads on a later run
 #   blocking  - block at end of run (and on early-break) until complete, then import
 #   hybrid    - recommended: deferred reconcile at start + blocking pass at end
-import_wait_mode: "off"     # off (disabled) / deferred / blocking / hybrid
-import_wait_timeout: 3600   # Seconds to wait per torrent for qBittorrent to finish
-import_ready_timeout: 600   # Seconds to then wait for Sonarr to rescan + import
-import_poll_interval: 30    # Seconds between polls (qBittorrent + Sonarr queue)
-import_mode: auto           # Sonarr importMode: auto/move/copy
-# Fallback quality when neither our parse nor Sonarr's is known (e.g. Bluray-2160p).
-# Recommended on a 4K instance to avoid Unknown-quality re-grabs.
-import_default_quality:
-import_languages_dual:      # Languages for dual-audio releases (default: [Japanese, English])
-import_languages_single:    # Languages for single-audio releases (default: [Japanese])
-import_pending_max_age_days: 14  # Drop pending-import records older than this (TTL)
+imports:
+  wait_mode: "off"                 # off (disabled) / deferred / blocking / hybrid
+  wait_timeout: 3600               # Seconds to wait per torrent for qBittorrent to finish
+  ready_timeout: 600               # Seconds to then wait for Sonarr to rescan + import
+  poll_interval: 30                # Seconds between polls (qBittorrent + Sonarr queue)
+  mode: auto                       # Sonarr importMode: auto/move/copy
+  default_quality:                 # Fallback quality (e.g. Bluray-2160p) on a 4K instance
+  languages_dual:                  # Languages for dual-audio releases (default: [Japanese, English])
+  languages_single:                # Languages for single-audio releases (default: [Japanese])
+  pending_max_age_days: 14         # Drop pending-import records older than this (TTL)
+  digest_interval: 300             # Target seconds between wait digests on a non-TTY (Docker/cron)
 
-# Discord webhook URL
-discord_url:
+# Notifications. Either, both, or neither may be set.
+notifications:
+  discord_url:                     # Discord webhook URL
+  wait_webhook_url:                # Generic outbound webhook (ntfy/gotify/HA) for the wait summary
+  wait_notify:                     # Push on wait-complete (default: on if any webhook is set)
 
-# SeaDex filters
-public_only: true
-prefer_dual_audio: true
-want_best: true
-ignore_tags:
-trackers:
+# ID/episode mapping sources. Leave blank to auto-download, or set to false to disable.
+# anibridge is the primary source; the others are fallbacks for anything it misses.
+mappings:
+  anime_mappings:                  # Kometa Anime-IDs (fallback)
+  anidb_mappings:                  # AniDB anime-lists XML (fallback, used for specials)
+  anibridge_mappings:              # anibridge-mappings v3 graph (primary: IDs + per-season episode maps)
 
-# AniList IDs to skip entirely. Provide a list of integer IDs that should never be processed
-ignore_anilist_ids:
-
-# Advanced settings
-sleep_time: 2
-cache_time: 1
-interactive: false
-# ID/episode mapping sources. Leave blank to auto-download, set to false to
-# disable, or inline your own data. anibridge is the primary source; the others
-# act as fallbacks for anything it doesn't cover.
-anime_mappings:      # Kometa Anime-IDs (fallback)
-anidb_mappings:      # AniDB anime-lists XML (fallback, used for specials)
-anibridge_mappings:  # anibridge-mappings v3 graph (primary: IDs + per-season episode maps)
-log_level: "INFO"
+# Advanced
+advanced:
+  sleep_time: 2                    # Seconds to sleep between API queries (rate limiting)
+  cache_time: 1                    # Days to cache the downloaded mapping sources
+  interactive: false               # Prompt when multiple torrent options match
+  max_torrents_to_add:             # Cap torrents added per run (default: unlimited)
+  log_level: "INFO"                # WARNING / INFO / DEBUG

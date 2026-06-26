@@ -13,7 +13,7 @@ from seadex import EntryRecord
 from . import coverage as _coverage
 from .anilist_gateway import AniListGateway
 from .cache import UPDATED_AT_STR_FORMAT, CacheField, CacheRecord, CacheStore
-from .config import PRIVATE_TRACKERS, AppConfig, Arr
+from .config import PRIVATE_TRACKERS, AppConfig, Arr, ArrSettings
 from .log import (
     EntryState,
     LogFormatter,
@@ -70,10 +70,12 @@ class RunDeps:
     nor the strategy constructs the other's dependencies - the engine receives
     these, the strategy receives the subset it needs. ``anime_mappings`` /
     ``anidb_mappings`` / ``anibridge`` are read off ``mappings`` by consumers, not
-    stored separately.
+    stored separately. ``arr_config`` is the per-arr connection/behaviour submodel
+    (``config.for_arr(arr)``); ``config`` is the shared root reused by both arrs.
     """
 
     config: AppConfig
+    arr_config: ArrSettings
     config_file: str
     session: requests.Session
     qbit: qbittorrentapi.Client | None
@@ -103,7 +105,7 @@ class RunDeps:
         """Construct the shared collaborators in dependency order.
 
         Args:
-            arr (Arr): Which Arr is being run; selects the arr-prefixed config keys.
+            arr (Arr): Which Arr is being run; selects the per-arr config submodel.
             config (str, optional): Path to a config file. Defaults to "config.yml".
             cache (str, optional): Path to a cache file. Defaults to "cache.json".
             logger (logging.Logger | None, optional): Logger to use. Defaults to
@@ -112,37 +114,38 @@ class RunDeps:
                 CLI and shared across a scheduled Radarr->Sonarr cycle so the three
                 large mapping sources are downloaded, parsed and indexed once.
             app_config (AppConfig | None, optional): A pre-loaded config injected by
-                the CLI so a scheduled cycle reads and template-syncs the file once
-                per run. Defaults to None, which loads it here.
+                the CLI so a scheduled cycle reads and validates the file once per
+                run. Defaults to None, which loads it here.
         """
 
-        # Load, template-sync, and expose the config file as typed settings.
-        # AppConfig owns the file lifecycle (copy-template-if-missing, parse,
-        # key-order sync) and is the single source of truth for every setting. The
-        # CLI may inject an already-loaded config (one read+sync shared across the
-        # Radarr->Sonarr cycle); otherwise it's loaded here for the standalone path.
-        app_config = AppConfig.load(config, arr) if app_config is None else app_config
+        # Load, validate, and expose the config file as typed settings. AppConfig
+        # owns the file lifecycle (copy-template-if-missing, parse, validate) and is
+        # the single source of truth for every setting. The CLI may inject an
+        # already-loaded config (one read shared across the Radarr->Sonarr cycle);
+        # otherwise it's loaded here for the standalone path. ``arr_config`` is this
+        # arr's connection/behaviour submodel, injected alongside the shared root.
+        app_config = AppConfig.load(config) if app_config is None else app_config
+        arr_config = app_config.for_arr(arr)
 
         if logger is None:
-            logger = setup_logger(log_level=app_config.log_level)
+            logger = setup_logger(log_level=app_config.advanced.log_level)
 
         # A single keep-alive session shared by the raw Sonarr/Radarr API calls.
         session = requests.Session()
 
-        # qbit. None unless every qbit_info field has a value; with a missing block
-        # or any null field, no client is created and the app treats `qbit is None`
-        # as "no client -> perpetual preview".
+        # qbit. None unless host/username/password are all set; with any unset, no
+        # client is created and the app treats `qbit is None` as "no client ->
+        # perpetual preview".
         qbit: qbittorrentapi.Client | None = None
-        qbit_info = app_config.qbit_info
-        if qbit_info is not None and all(
-            qbit_info.get(key, None) is not None for key in qbit_info
-        ):
-            client = qbittorrentapi.Client(**qbit_info)
+        credentials = app_config.qbittorrent.credentials()
+        if credentials is not None:
+            host, username, password = credentials
+            client = qbittorrentapi.Client(host=host, username=username, password=password)
             try:
                 client.auth_log_in()
             except qbittorrentapi.LoginFailed:
                 raise ValueError(
-                    "qBittorrent login failed - check the qbit_info host and "
+                    "qBittorrent login failed - check the qbittorrent host and "
                     "credentials in your config",
                 )
             qbit = client
@@ -162,8 +165,8 @@ class RunDeps:
         torrents = TorrentService(
             qbit=qbit,
             session=session,
-            category=app_config.torrent_category,
-            tags=app_config.torrent_tags,
+            category=arr_config.torrent_category,
+            tags=app_config.qbittorrent.tags,
             logger=logger,
         )
 
@@ -172,6 +175,7 @@ class RunDeps:
 
         return cls(
             config=app_config,
+            arr_config=arr_config,
             config_file=config,
             session=session,
             qbit=qbit,
@@ -185,14 +189,14 @@ class RunDeps:
             torrents=torrents,
             # Discord notifier; a no-op when no webhook is configured.
             notifier=Notifier(
-                discord_url=app_config.discord_url,
-                webhook_url=app_config.wait_webhook_url,
+                discord_url=app_config.notifications.discord_url,
+                webhook_url=app_config.notifications.wait_webhook_url,
             ),
             # Download-decision engine: flips each release's download flag.
             planner=DownloadPlanner(
-                public_only=app_config.public_only,
-                interactive=app_config.interactive,
-                use_torrent_hash_to_filter=app_config.use_torrent_hash_to_filter,
+                public_only=app_config.seadex.public_only,
+                interactive=app_config.advanced.interactive,
+                use_torrent_hash_to_filter=app_config.seadex.use_torrent_hash_to_filter,
                 logger=logger,
             ),
             log_fmt=log_fmt,
@@ -231,6 +235,7 @@ class SeaDexArr:
         # and pipeline methods read directly. anime_mappings / anidb_mappings /
         # anibridge are read off the shared resolver (read-only; it owns them).
         self._config = deps.config
+        self._arr_config = deps.arr_config
         self.config_file = deps.config_file
         self.session = deps.session
         self.qbit = deps.qbit
@@ -364,14 +369,14 @@ class SeaDexArr:
         # the whole list of model objects on every entry.
 
         # Filter out any tags
-        ignore_tags = set(self._config.ignore_tags)
+        ignore_tags = set(self._config.seadex.ignore_tags)
         final_torrent_list = [
             t for t in sd_entry.torrents if ignore_tags.isdisjoint(t.tags)
         ]
 
         # Filter down by allowed trackers
         final_torrent_list = [
-            t for t in final_torrent_list if t.tracker.casefold() in self._config.trackers
+            t for t in final_torrent_list if t.tracker.casefold() in self._config.seadex.trackers
         ]
 
         # Pull out torrents tagged as best, so long as at least one
@@ -381,13 +386,13 @@ class SeaDexArr:
         any_best = len(best_torrents) > 0
 
         # Narrow to 'best' releases when any exist
-        if self._config.want_best and any_best:
+        if self._config.seadex.want_best and any_best:
             candidates = best_torrents
         else:
             candidates = final_torrent_list
 
         # Prefer dual-audio releases, but only when at least one exists
-        if self._config.prefer_dual_audio:
+        if self._config.seadex.prefer_dual_audio:
             duals = [t for t in candidates if t.is_dual_audio]
             if len(duals) > 0:
                 candidates = duals
@@ -421,7 +426,7 @@ class SeaDexArr:
         # group that only has a private URL is kept for now and only filtered
         # out later if the Arr doesn't already have a matching download (see
         # reduce_overlapping_downloads)
-        if self._config.public_only:
+        if self._config.seadex.public_only:
             for release_group_item in seadex_release_groups.values():
                 urls = release_group_item.urls
                 has_public = any(u.is_public for u in urls.values())
@@ -571,7 +576,7 @@ class SeaDexArr:
 
         n_torrents_added = 0
         results: list[ReleaseOutcome] = []
-        cap = self._config.max_torrents_to_add
+        cap = self._config.advanced.max_torrents_to_add
 
         for srg, srg_item in torrent_dict.items():
             for url, url_item in srg_item.urls.items():
@@ -620,7 +625,7 @@ class SeaDexArr:
 
         tracker = url_item.tracker
 
-        if self._config.public_only and not url_item.is_public:
+        if self._config.seadex.public_only and not url_item.is_public:
             self.log_fmt.detail(
                 "skipped",
                 f"{tracker} private-only (public_only on)",
@@ -632,7 +637,7 @@ class SeaDexArr:
             return None
 
         # Skip trackers not in the user's selected list
-        if tracker.casefold() not in self._config.trackers:
+        if tracker.casefold() not in self._config.seadex.trackers:
             self.log_fmt.detail(
                 "skipped",
                 f"{url} (tracker {tracker} not in your selected list)",
@@ -723,7 +728,7 @@ class SeaDexArr:
         """The wait mode resolved for the current run (cli > config > default).
 
         Set at the top of ``run_sync``; the active strategy reads this (not the
-        raw ``config.import_wait_mode``) so its seed-building gate agrees with the
+        raw ``config.imports.wait_mode``) so its seed-building gate agrees with the
         engine's persist/reconcile/blocking gates - otherwise a CLI override that
         turns the feature on over an ``off`` config would build no seeds and the
         whole pass would silently no-op.
@@ -774,7 +779,7 @@ class SeaDexArr:
 
         self.log_no_seadex_releases()
         self.update_cache(arr=arr, al_id=al_id, cache_details=cache_details)
-        time.sleep(self._config.sleep_time)
+        time.sleep(self._config.advanced.sleep_time)
         return False
 
     def reset_run_stats(self, arr: Arr, dry_run: bool) -> bool:
@@ -853,7 +858,7 @@ class SeaDexArr:
         # concrete ArrSync structurally satisfies, so no invariant-ItemT cast.
         self._active_strategy = strategy
         self._import_wait_mode = resolve_wait_mode(
-            import_wait_mode, self._config.import_wait_mode,
+            import_wait_mode, self._config.imports.wait_mode,
         )
 
         # Start a fresh run context (stats tally + clock + counter snapshot)
@@ -885,7 +890,7 @@ class SeaDexArr:
         self._anilist.load_cache()
         prefetch_ids: set[int] = set()
         for item in all_items:
-            if not item.monitored and self._config.ignore_unmonitored:
+            if not item.monitored and self._arr_config.ignore_unmonitored:
                 continue
             prefetch_ids.update(
                 strategy.item_anilist_ids(item, log_ignored=False),
@@ -903,7 +908,7 @@ class SeaDexArr:
                 )
 
                 # If we're not monitored, then skip if ignore_unmonitored is switched on
-                if not item.monitored and self._config.ignore_unmonitored:
+                if not item.monitored and self._arr_config.ignore_unmonitored:
                     self._reporter.log_arr_item_unmonitored(self._ctx, item_title)
                     continue
 
@@ -1016,7 +1021,7 @@ class SeaDexArr:
 
         if not self.check_al_id_in_cache(arr=arr, al_id=al_id, seadex_entry=sd_entry):
             return False
-        if self._config.ignore_seadex_update_times:
+        if self._config.seadex.ignore_seadex_update_times:
             return False
 
         # Backfill the enriched fields for records written before they existed,
@@ -1129,7 +1134,7 @@ class SeaDexArr:
             )
 
         # Add in a wait, if required
-        time.sleep(self._config.sleep_time)
+        time.sleep(self._config.advanced.sleep_time)
 
         return False
 
@@ -1197,7 +1202,7 @@ class SeaDexArr:
                 thumb_url=anilist_thumb,
             )
 
-        cap = self._config.max_torrents_to_add
+        cap = self._config.advanced.max_torrents_to_add
         if cap is not None and self._ctx.torrents_added >= cap:
             self._reporter.log_max_torrents_added()
             # Finalize even on the early break so the blocking/hybrid pass still
@@ -1483,13 +1488,13 @@ class SeaDexArr:
         if view is None:
             view = make_wait_view(
                 self.logger,
-                poll_s=self._config.import_poll_interval,
-                digest_interval=self._config.wait_digest_interval,
+                poll_s=self._config.imports.poll_interval,
+                digest_interval=self._config.imports.digest_interval,
             )
 
-        dl_timeout = self._config.import_wait_timeout
-        import_timeout = self._config.import_ready_timeout
-        poll_s = self._config.import_poll_interval
+        dl_timeout = self._config.imports.wait_timeout
+        import_timeout = self._config.imports.ready_timeout
+        poll_s = self._config.imports.poll_interval
 
         start = clock()
         dl_start: dict[str, float] = {r.infohash: start for r in records}
@@ -1662,7 +1667,7 @@ class SeaDexArr:
         """
 
         cutoff = datetime.now() - timedelta(
-            days=self._config.import_pending_max_age_days,
+            days=self._config.imports.pending_max_age_days,
         )
 
         for infohash, raw in list(self._pending_store().items()):
@@ -1679,7 +1684,7 @@ class SeaDexArr:
             if added_at < cutoff:
                 self.logger.info(
                     f"Pending import {infohash} older than "
-                    f"{self._config.import_pending_max_age_days} days; dropping",
+                    f"{self._config.imports.pending_max_age_days} days; dropping",
                 )
                 self._drop_pending(infohash)
 
@@ -1749,7 +1754,7 @@ class SeaDexArr:
     def _notify_wait_complete(self, arr: Arr, result: WaitResult) -> None:
         """Push the completion notification, gated on ``wait_notify``; swallow errors."""
 
-        if not self._config.wait_notify:
+        if not self._config.notifications.wait_notify:
             return
         try:
             _ = self._notifier.push_wait_summary(arr=arr, result=result)

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import NamedTuple
 
 import typer
+from pydantic import ValidationError
 
 from .config import AppConfig, Arr
 from .log import setup_logger
@@ -54,7 +55,7 @@ def _build_shared(
 ) -> tuple[AppConfig, MappingResolver] | None:
     """Load the config once and build the id-mapping resolver both arrs share.
 
-    The config is read and template-synced a single time and returned so each arr
+    The config is read and validated a single time and returned so each arr
     reuses it (one read+sync per run, not one per arr); the resolver settings are
     arr-independent, so it's loaded as "sonarr" purely to read them. The resolver
     downloads, parses and indexes the three large mapping sources once and is then
@@ -69,11 +70,23 @@ def _build_shared(
     """
 
     try:
-        app_config = AppConfig.load(config, Arr.SONARR)
+        app_config = AppConfig.load(config)
     except FileNotFoundError:
         logger.error(
             f"No config file at {config} - a starter template was written; "
             "fill it in and re-run. Skipping this run.",
+        )
+        return None
+    except ValidationError as e:
+        # Surface the specific bad keys (nested path -> message) without a traceback,
+        # then skip + retry next cycle - same contract as the missing-file branch.
+        details = "\n".join(
+            f"  - {'.'.join(str(part) for part in err['loc'])}: {err['msg']}"
+            for err in e.errors()
+        )
+        logger.error(
+            f"Invalid configuration in {config}:\n{details}\n"
+            "Fix the listed keys and re-run. Skipping this run.",
         )
         return None
     except Exception:
@@ -82,11 +95,11 @@ def _build_shared(
 
     try:
         resolver = MappingResolver(
-            cache_time=app_config.cache_time,
-            ignore_anilist_ids=app_config.ignore_anilist_ids,
-            anime_mappings_cfg=app_config.anime_mappings_cfg,
-            anidb_mappings_cfg=app_config.anidb_mappings_cfg,
-            anibridge_mappings_cfg=app_config.anibridge_mappings_cfg,
+            cache_time=app_config.advanced.cache_time,
+            ignore_anilist_ids=app_config.seadex.ignore_anilist_ids,
+            anime_mappings_cfg=app_config.mappings.anime_mappings,
+            anidb_mappings_cfg=app_config.mappings.anidb_mappings,
+            anibridge_mappings_cfg=app_config.mappings.anibridge_mappings,
         )
     except Exception:
         logger.error(
@@ -135,7 +148,7 @@ def _run_arrs(
                 cache,
                 logger,
                 mappings=mappings,
-                app_config=app_config.for_arr(arr_name),
+                app_config=app_config,
             )
             services = SeaDexArr(deps, arr_name)
             match arr_name:

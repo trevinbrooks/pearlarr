@@ -1,219 +1,253 @@
-"""Characterization tests for ``AppConfig``.
+"""Characterization tests for the Pydantic ``AppConfig`` model tree.
 
-Pins the config-file lifecycle and the typed-settings normalization moved out of
-``SeaDexArr.__init__`` / ``verify_config`` during the refactor.
+Pins the validated-settings behaviour: per-group defaults, blank-YAML coalescing,
+strict validation (extra-forbid + strict enum), the lazy point-of-use connection
+requirement, and the file lifecycle (template copy + checksum).
 """
 
 import hashlib
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
-from seadexarr.modules.config import PRIVATE_TRACKERS, PUBLIC_TRACKERS, AppConfig, Arr
+from seadexarr.modules.config import (
+    PRIVATE_TRACKERS,
+    PUBLIC_TRACKERS,
+    AppConfig,
+    Arr,
+    ImportsSettings,
+    NotificationsSettings,
+    QbittorrentSettings,
+    SeadexSettings,
+)
 from seadexarr.modules.manual_import import ImportWaitMode
-
-
-def _cfg(**data: object) -> AppConfig:
-    """An ``AppConfig`` over an in-memory data dict (no file load)."""
-
-    return AppConfig(path="unused.yml", arr=Arr.SONARR, data=dict(data))
 
 
 class TestFileLifecycle:
     def test_missing_config_copies_template_and_raises(self, tmp_path) -> None:
         cfg_path = tmp_path / "config.yml"
         with pytest.raises(FileNotFoundError):
-            AppConfig.load(str(cfg_path), Arr.SONARR)
-        # The bundled template was copied into place for the user to edit.
+            AppConfig.load(str(cfg_path))
+        # The bundled (nested) template was copied into place for the user to edit.
         assert cfg_path.exists()
-        assert "sonarr_url" in yaml.safe_load(cfg_path.read_text())
+        assert "sonarr" in yaml.safe_load(cfg_path.read_text())
 
     def test_load_preserves_user_values(self, tmp_path) -> None:
         cfg_path = tmp_path / "config.yml"
-        cfg_path.write_text("sonarr_url: http://x\npublic_only: false\n")
-        cfg = AppConfig.load(str(cfg_path), Arr.SONARR)
-        assert cfg.data["sonarr_url"] == "http://x"
-        assert cfg.public_only is False
+        cfg_path.write_text("sonarr:\n  url: http://x\nseadex:\n  public_only: false\n")
+        cfg = AppConfig.load(str(cfg_path))
+        assert cfg.sonarr.url == "http://x"
+        assert cfg.seadex.public_only is False
+
+    def test_template_loads_as_all_defaults(self, tmp_path) -> None:
+        # The shipped template is all-blank, so it must validate to the defaults.
+        cfg_path = tmp_path / "config.yml"
+        with pytest.raises(FileNotFoundError):
+            AppConfig.load(str(cfg_path))  # copies the template
+        cfg = AppConfig.load(str(cfg_path))
+        assert cfg.seadex.public_only is True
+        assert cfg.imports.wait_mode is ImportWaitMode.OFF
+        assert cfg.advanced.log_level == "INFO"
 
     def test_checksum_matches_file_bytes(self, tmp_path) -> None:
         cfg_path = tmp_path / "config.yml"
-        cfg_path.write_bytes(b"public_only: true\n")
-        cfg = AppConfig(path=str(cfg_path), arr=Arr.SONARR, data={})
-        assert cfg.checksum() == hashlib.md5(b"public_only: true\n").hexdigest()
+        cfg_path.write_bytes(b"seadex:\n  public_only: true\n")
+        cfg = AppConfig.load(str(cfg_path))
+        assert cfg.checksum() == hashlib.md5(b"seadex:\n  public_only: true\n").hexdigest()
 
 
-class TestTemplateSync:
-    def test_partial_config_is_rewritten_in_template_order(self, tmp_path) -> None:
-        cfg_path = tmp_path / "config.yml"
-        # Keys present but out of template order -> triggers the rewrite.
-        cfg_path.write_text("public_only: false\nsonarr_url: http://x\n")
-        cfg = AppConfig.load(str(cfg_path), Arr.SONARR)
-        # First template key leads, a previously-absent key is now present, and
-        # the user's values survive the merge.
-        assert next(iter(cfg.data)) == "sonarr_url"
-        assert "log_level" in cfg.data
-        assert cfg.public_only is False
-        assert cfg.data["sonarr_url"] == "http://x"
+class TestDefaults:
+    def test_group_defaults_when_absent(self) -> None:
+        cfg = AppConfig()
+        assert cfg.seadex.public_only is True
+        assert cfg.seadex.prefer_dual_audio is True
+        assert cfg.seadex.want_best is True
+        assert cfg.seadex.ignore_seadex_update_times is False
+        assert cfg.seadex.use_torrent_hash_to_filter is False
+        assert cfg.advanced.interactive is False
+        assert cfg.advanced.sleep_time == 2
+        assert cfg.advanced.cache_time == 1
+        assert cfg.advanced.log_level == "INFO"
+        assert cfg.advanced.max_torrents_to_add is None
+        assert cfg.notifications.discord_url is None
+        assert cfg.qbittorrent.tags is None
+        assert cfg.qbittorrent.credentials() is None
+        assert cfg.sonarr.torrent_category is None
+        assert cfg.mappings.anime_mappings is None
 
-    def test_template_order_config_not_rewritten(self, tmp_path) -> None:
-        cfg_path = tmp_path / "config.yml"
-        with pytest.raises(FileNotFoundError):
-            AppConfig.load(str(cfg_path), Arr.SONARR)  # copies the template
-        before = cfg_path.read_bytes()
-        AppConfig.load(str(cfg_path), Arr.SONARR)  # already in template order
-        assert cfg_path.read_bytes() == before
+    def test_import_defaults_when_absent(self) -> None:
+        imp = ImportsSettings()
+        assert imp.wait_mode is ImportWaitMode.OFF
+        assert imp.wait_timeout == 3600
+        assert imp.ready_timeout == 600
+        assert imp.poll_interval == 30
+        assert imp.mode == "auto"
+        assert imp.default_quality is None
+        assert imp.languages_dual == ["Japanese", "English"]
+        assert imp.languages_single == ["Japanese"]
+        assert imp.pending_max_age_days == 14
+        assert imp.digest_interval == 300
 
-
-class TestTypedSettings:
-    def test_defaults_when_absent(self) -> None:
-        cfg = _cfg()
-        assert cfg.public_only is True
-        assert cfg.prefer_dual_audio is True
-        assert cfg.want_best is True
-        assert cfg.ignore_seadex_update_times is False
-        assert cfg.use_torrent_hash_to_filter is False
-        assert cfg.interactive is False
-        assert cfg.sleep_time == 2
-        assert cfg.cache_time == 1
-        assert cfg.log_level == "INFO"
-        assert cfg.discord_url is None
-        assert cfg.max_torrents_to_add is None
-        assert cfg.torrent_tags is None
-        assert cfg.qbit_info is None
-
-    def test_explicit_values_override(self) -> None:
-        cfg = _cfg(public_only=False, want_best=False, sleep_time=9, discord_url="u")
-        assert cfg.public_only is False
-        assert cfg.want_best is False
-        assert cfg.sleep_time == 9
-        assert cfg.discord_url == "u"
-
-    def test_arr_prefixed_keys_select_by_arr(self) -> None:
-        data = {
-            "sonarr_ignore_unmonitored": True,
-            "radarr_ignore_unmonitored": False,
-            "sonarr_torrent_category": "anime-tv",
-            "radarr_torrent_category": "anime-movies",
-        }
-        sonarr = AppConfig(path="x", arr=Arr.SONARR, data=data)
-        radarr = AppConfig(path="x", arr=Arr.RADARR, data=data)
-        assert sonarr.ignore_unmonitored is True
-        assert radarr.ignore_unmonitored is False
-        assert sonarr.torrent_category == "anime-tv"
-        assert radarr.torrent_category == "anime-movies"
-
-    def test_ignore_tags_none_becomes_empty_list(self) -> None:
-        assert _cfg().ignore_tags == []
-        assert _cfg(ignore_tags=None).ignore_tags == []
-        assert _cfg(ignore_tags=["a", "b"]).ignore_tags == ["a", "b"]
-
-    def test_ignore_anilist_ids_coerced_to_int_set(self) -> None:
-        assert _cfg().ignore_anilist_ids == set()
-        assert _cfg(ignore_anilist_ids=None).ignore_anilist_ids == set()
-        assert _cfg(ignore_anilist_ids=["1", "2", 3]).ignore_anilist_ids == {1, 2, 3}
-
-    def test_trackers_default_is_public_plus_private(self) -> None:
-        assert _cfg().trackers == PUBLIC_TRACKERS | PRIVATE_TRACKERS
-
-    def test_trackers_explicit_are_casefolded(self) -> None:
-        assert _cfg(trackers=["Nyaa", "AB"]).trackers == {"nyaa", "ab"}
-
-    def test_qbit_info_passthrough(self) -> None:
-        info = {"host": "h", "username": "u", "password": "p"}
-        assert _cfg(qbit_info=info).qbit_info == info
-
-    def test_ignore_movies_in_radarr_default_and_override(self) -> None:
-        assert _cfg().ignore_movies_in_radarr is False
-        assert _cfg(ignore_movies_in_radarr=True).ignore_movies_in_radarr is True
-
-    def test_required_connection_properties_return_value(self) -> None:
-        cfg = _cfg(
-            sonarr_url="http://s",
-            sonarr_api_key="sk",
-            radarr_url="http://r",
-            radarr_api_key="rk",
+    def test_nested_explicit_values_override(self) -> None:
+        cfg = AppConfig.model_validate(
+            {
+                "seadex": {"public_only": False, "want_best": False},
+                "advanced": {"sleep_time": 9},
+                "notifications": {"discord_url": "u"},
+            },
         )
-        assert cfg.sonarr_url == "http://s"
-        assert cfg.sonarr_api_key == "sk"
-        assert cfg.radarr_url == "http://r"
-        assert cfg.radarr_api_key == "rk"
-
-    def test_required_connection_properties_raise_when_absent(self) -> None:
-        cfg = _cfg()
-        for getter in ("sonarr_url", "sonarr_api_key", "radarr_url", "radarr_api_key"):
-            with pytest.raises(ValueError):
-                getattr(cfg, getter)
-
-    def test_optional_radarr_properties_default_none(self) -> None:
-        assert _cfg().radarr_url_optional is None
-        assert _cfg().radarr_api_key_optional is None
-        cfg = _cfg(radarr_url="http://r", radarr_api_key="rk")
-        assert cfg.radarr_url_optional == "http://r"
-        assert cfg.radarr_api_key_optional == "rk"
+        assert cfg.seadex.public_only is False
+        assert cfg.seadex.want_best is False
+        assert cfg.advanced.sleep_time == 9
+        assert cfg.notifications.discord_url == "u"
 
 
-class TestImportSettings:
-    def test_defaults_when_absent(self) -> None:
-        cfg = _cfg()
-        assert cfg.import_wait_mode is ImportWaitMode.OFF
-        assert cfg.import_wait_timeout == 3600
-        assert cfg.import_ready_timeout == 600
-        assert cfg.import_poll_interval == 30
-        assert cfg.import_mode == "auto"
-        assert cfg.import_default_quality is None
-        assert cfg.import_languages_dual == ["Japanese", "English"]
-        assert cfg.import_languages_single == ["Japanese"]
-        assert cfg.import_pending_max_age_days == 14
-
-    def test_explicit_values_override(self) -> None:
-        cfg = _cfg(
-            import_wait_timeout=120,
-            import_poll_interval=5,
-            import_mode="copy",
-            import_default_quality="Bluray-2160p",
-            import_languages_dual=["English"],
-            import_languages_single=["German"],
-            import_pending_max_age_days=30,
+class TestBlankCoalescing:
+    def test_blank_scalar_knobs_fall_back_to_defaults(self) -> None:
+        # A present-but-blank YAML value parses to None; without coalescing it would
+        # flow into time.sleep(None) / be rejected by the int field.
+        imp = ImportsSettings.model_validate(
+            {
+                "wait_timeout": None,
+                "poll_interval": None,
+                "ready_timeout": None,
+                "mode": None,
+                "pending_max_age_days": None,
+            },
         )
-        assert cfg.import_wait_timeout == 120
-        assert cfg.import_poll_interval == 5
-        assert cfg.import_mode == "copy"
-        assert cfg.import_default_quality == "Bluray-2160p"
-        assert cfg.import_languages_dual == ["English"]
-        assert cfg.import_languages_single == ["German"]
-        assert cfg.import_pending_max_age_days == 30
-
-    def test_import_wait_mode_coerces_valid_string(self) -> None:
-        assert _cfg(import_wait_mode="hybrid").import_wait_mode is ImportWaitMode.HYBRID
-        assert _cfg(import_wait_mode="deferred").import_wait_mode is ImportWaitMode.DEFERRED
-        assert _cfg(import_wait_mode="blocking").import_wait_mode is ImportWaitMode.BLOCKING
-        assert _cfg(import_wait_mode="off").import_wait_mode is ImportWaitMode.OFF
-
-    def test_import_wait_mode_invalid_falls_back_to_off(self) -> None:
-        assert _cfg(import_wait_mode="bogus").import_wait_mode is ImportWaitMode.OFF
-
-    def test_import_ready_timeout_override(self) -> None:
-        assert _cfg(import_ready_timeout=120).import_ready_timeout == 120
+        assert imp.wait_timeout == 3600
+        assert imp.poll_interval == 30
+        assert imp.ready_timeout == 600
+        assert imp.mode == "auto"
+        assert imp.pending_max_age_days == 14
 
     def test_blank_language_lists_fall_back_to_defaults(self) -> None:
-        # A blank YAML value parses to None; the key is present, so a plain .get
-        # default wouldn't apply. Coalescing keeps the import from crashing.
-        cfg = _cfg(import_languages_dual=None, import_languages_single=None)
-        assert cfg.import_languages_dual == ["Japanese", "English"]
-        assert cfg.import_languages_single == ["Japanese"]
+        imp = ImportsSettings.model_validate({"languages_dual": None, "languages_single": None})
+        assert imp.languages_dual == ["Japanese", "English"]
+        assert imp.languages_single == ["Japanese"]
 
-    def test_blank_scalar_knobs_fall_back_to_defaults(self) -> None:
-        # A present-but-blank YAML value parses to None; without coalescing it
-        # would flow into time.sleep(None) / deadline math and crash the wait loop.
-        cfg = _cfg(
-            import_wait_timeout=None,
-            import_poll_interval=None,
-            import_ready_timeout=None,
-            import_mode=None,
-            import_pending_max_age_days=None,
+    def test_blank_top_level_group_uses_defaults(self) -> None:
+        # A group header with nothing under it (`seadex:`) parses to None.
+        cfg = AppConfig.model_validate({"seadex": None})
+        assert cfg.seadex.public_only is True
+
+
+class TestStrictValidation:
+    def test_unknown_key_with_value_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            SeadexSettings.model_validate({"public_onlyy": True})
+
+    def test_unknown_key_blank_is_also_rejected(self) -> None:
+        # Blank typos are caught too: _drop_blank_none keeps unknown keys regardless
+        # of blankness, so extra="forbid" still flags them.
+        with pytest.raises(ValidationError):
+            SeadexSettings.model_validate({"public_onlyy": None})
+
+    def test_unknown_top_level_group_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AppConfig.model_validate({"sonar": {"url": "x"}})
+
+    def test_radarr_group_rejects_sonarr_only_key(self) -> None:
+        # ignore_movies_in_radarr lives on SonarrSettings only.
+        AppConfig.model_validate({"sonarr": {"ignore_movies_in_radarr": True}})
+        with pytest.raises(ValidationError):
+            AppConfig.model_validate({"radarr": {"ignore_movies_in_radarr": True}})
+
+    def test_bad_scalar_type_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            AppConfig.model_validate({"advanced": {"sleep_time": "abc"}})
+
+    def test_wait_mode_coerces_valid_strings(self) -> None:
+        assert ImportsSettings.model_validate({"wait_mode": "hybrid"}).wait_mode is ImportWaitMode.HYBRID
+        assert ImportsSettings.model_validate({"wait_mode": "deferred"}).wait_mode is ImportWaitMode.DEFERRED
+        assert ImportsSettings.model_validate({"wait_mode": "blocking"}).wait_mode is ImportWaitMode.BLOCKING
+        assert ImportsSettings.model_validate({"wait_mode": "off"}).wait_mode is ImportWaitMode.OFF
+
+    def test_wait_mode_invalid_raises(self) -> None:
+        # Strict: an unrecognized wait_mode is a ValidationError (no lenient fallback).
+        with pytest.raises(ValidationError):
+            ImportsSettings.model_validate({"wait_mode": "bogus"})
+
+    def test_mapping_true_is_rejected(self) -> None:
+        # Only false (disable) / blank (auto-download) / inline dict are valid.
+        with pytest.raises(ValidationError):
+            AppConfig.model_validate({"mappings": {"anime_mappings": True}})
+        assert AppConfig.model_validate({"mappings": {"anime_mappings": False}}).mappings.anime_mappings is False
+
+
+class TestNormalization:
+    def test_ignore_tags_none_becomes_empty_list(self) -> None:
+        assert SeadexSettings().ignore_tags == []
+        assert SeadexSettings.model_validate({"ignore_tags": None}).ignore_tags == []
+        assert SeadexSettings.model_validate({"ignore_tags": ["a", "b"]}).ignore_tags == ["a", "b"]
+
+    def test_ignore_anilist_ids_coerced_to_int_set(self) -> None:
+        assert SeadexSettings().ignore_anilist_ids == set()
+        assert SeadexSettings.model_validate({"ignore_anilist_ids": None}).ignore_anilist_ids == set()
+        assert SeadexSettings.model_validate({"ignore_anilist_ids": ["1", "2", 3]}).ignore_anilist_ids == {1, 2, 3}
+
+    def test_trackers_default_is_public_plus_private(self) -> None:
+        assert SeadexSettings().trackers == PUBLIC_TRACKERS | PRIVATE_TRACKERS
+
+    def test_trackers_explicit_are_casefolded(self) -> None:
+        assert SeadexSettings.model_validate({"trackers": ["Nyaa", "AB"]}).trackers == {"nyaa", "ab"}
+
+
+class TestQbittorrent:
+    def test_credentials_require_all_three(self) -> None:
+        info = {"host": "h", "username": "u", "password": "p"}
+        assert QbittorrentSettings.model_validate(info).credentials() == ("h", "u", "p")
+
+    def test_credentials_none_when_any_missing(self) -> None:
+        assert QbittorrentSettings.model_validate({"host": "h", "username": "u"}).credentials() is None
+        assert QbittorrentSettings().credentials() is None
+
+
+class TestNotifications:
+    def test_wait_notify_defaults_off_without_webhooks(self) -> None:
+        assert NotificationsSettings().wait_notify is False
+
+    def test_wait_notify_on_when_any_webhook_set(self) -> None:
+        assert NotificationsSettings.model_validate({"discord_url": "u"}).wait_notify is True
+        assert NotificationsSettings.model_validate({"wait_webhook_url": "u"}).wait_notify is True
+
+    def test_explicit_wait_notify_wins(self) -> None:
+        assert NotificationsSettings.model_validate({"discord_url": "u", "wait_notify": False}).wait_notify is False
+
+
+class TestConnection:
+    def test_for_arr_selects_submodel(self) -> None:
+        cfg = AppConfig.model_validate(
+            {
+                "sonarr": {"ignore_unmonitored": True, "torrent_category": "anime-tv"},
+                "radarr": {"ignore_unmonitored": False, "torrent_category": "anime-movies"},
+            },
         )
-        assert cfg.import_wait_timeout == 3600
-        assert cfg.import_poll_interval == 30
-        assert cfg.import_ready_timeout == 600
-        assert cfg.import_mode == "auto"
-        assert cfg.import_pending_max_age_days == 14
+        assert cfg.for_arr(Arr.SONARR).ignore_unmonitored is True
+        assert cfg.for_arr(Arr.RADARR).ignore_unmonitored is False
+        assert cfg.for_arr(Arr.SONARR).torrent_category == "anime-tv"
+        assert cfg.for_arr(Arr.RADARR).torrent_category == "anime-movies"
+
+    def test_require_connection_returns_url_api_key(self) -> None:
+        cfg = AppConfig.model_validate(
+            {
+                "sonarr": {"url": "http://s", "api_key": "sk"},
+                "radarr": {"url": "http://r", "api_key": "rk"},
+            },
+        )
+        assert cfg.require_connection(Arr.SONARR) == ("http://s", "sk")
+        assert cfg.require_connection(Arr.RADARR) == ("http://r", "rk")
+
+    def test_require_connection_raises_when_absent(self) -> None:
+        cfg = AppConfig()
+        for arr in (Arr.SONARR, Arr.RADARR):
+            with pytest.raises(ValueError):
+                cfg.require_connection(arr)
+
+    def test_cross_check_reads_are_none_tolerant(self) -> None:
+        # The Sonarr->Radarr specials cross-check reads radarr url/api_key directly
+        # (no require), so they stay None on a Sonarr-only config.
+        cfg = AppConfig.model_validate({"sonarr": {"url": "http://s", "api_key": "sk"}})
+        assert cfg.radarr.url is None
+        assert cfg.radarr.api_key is None

@@ -1,34 +1,31 @@
-"""Application configuration: file lifecycle and typed settings.
+"""Application configuration: typed, validated settings loaded from the YAML file.
 
-``AppConfig`` owns everything to do with the YAML config *file* — copying the
-bundled template when it's missing, loading it, and keeping its key order in
-sync with the template — and exposes the individual settings as typed, normalized
-properties so the rest of the package reads ``config.public_only`` instead of
-``config.get("public_only", True)`` scattered across the codebase.
+``AppConfig`` is a Pydantic model tree over the config file. Pydantic owns parsing,
+defaults, coercion (including the present-but-blank-YAML-key footgun) and validation:
+an unknown/typo'd key or a bad value raises a clear ``ValidationError`` instead of
+being silently dropped or coalesced. The rest of the package reads
+``config.seadex.public_only`` rather than ``config.get("public_only", True)``.
 
-Extracted from ``SeaDexArr.__init__`` / ``verify_config`` / ``setup_cache``
-during the refactor; behaviour-preserving.
+Each settings group is its own submodel (``sonarr``/``radarr``/``qbittorrent``/
+``seadex``/``imports``/``notifications``/``advanced``/``mappings``). The connection
+``url``/``api_key`` for each arr are optional at parse time and enforced lazily at
+point-of-use via :meth:`AppConfig.require_connection`, so a config filled in for only
+one arr still validates and runs.
 """
 
-import copy
 import os
 import shutil
-from dataclasses import dataclass
 from enum import StrEnum
-from functools import cached_property
 from hashlib import md5
-from typing import IO, Any, Protocol, cast
-from xml.etree import ElementTree
+from typing import Any, Literal, cast
 
 import yaml
-from ruamel.yaml import YAML
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
-from .anibridge import AniBridgeGraph
 from .manual_import import ImportWaitMode
-from .mappings import AnimeIdsMap
 
 # Tracker name classification. Stored casefolded so membership tests match the
-# casefolded ``trackers`` setting and the casefolded tracker names from SeaDex.
+# casefolded ``seadex.trackers`` setting and the casefolded tracker names from SeaDex.
 PUBLIC_TRACKERS = {
     tracker.casefold()
     for tracker in [
@@ -58,30 +55,13 @@ CONFIG_TEMPLATE_FILE = "config_sample.yml"
 class Arr(StrEnum):
     """Which *arr the run targets.
 
-    A ``StrEnum`` so the value still equals its string (``Arr.SONARR ==
-    "sonarr"``), serializes as a bare JSON cache key, and builds the
-    ``{arr}_``-prefixed config keys unchanged - while making the two valid
-    arrs the only representable states (no runtime ``ALLOWED_ARRS`` guard
-    needed; an out-of-domain value is now a static type error).
+    A ``StrEnum`` so the value still equals its string (``Arr.SONARR == "sonarr"``),
+    serializes as a bare JSON cache key, and selects the matching config group -
+    while making the two valid arrs the only representable states.
     """
 
     SONARR = "sonarr"
     RADARR = "radarr"
-
-
-class _Yaml(Protocol):
-    """Structural view of the ``ruamel.yaml.YAML`` surface this module uses.
-
-    ruamel ships ``py.typed`` but leaves ``load``/``dump`` loosely typed, so
-    their results/parameters come back ``Unknown`` under strict checking. Casting
-    a ``YAML()`` instance to this protocol (the sanctioned cast-to-Protocol
-    pattern, mirroring ``log.py``'s ``_CountingLogger``) types just the two
-    methods we call - reading the template (``load``) and rewriting the file in
-    template key order (``dump``) - without otherwise constraining ruamel.
-    """
-
-    def load(self, stream: IO[str]) -> dict[str, Any]: ...
-    def dump(self, data: dict[str, Any], stream: IO[str]) -> None: ...
 
 
 def _template_path() -> str:
@@ -90,30 +70,197 @@ def _template_path() -> str:
     return os.path.join(os.path.dirname(__file__), CONFIG_TEMPLATE_FILE)
 
 
-@dataclass
-class AppConfig:
-    """Typed view over the loaded config file.
+class _ConfigBase(BaseModel):
+    """Shared base for every settings group: strict, immutable, blank-tolerant.
 
-    ``data`` is the raw parsed mapping (kept available for the few arr-specific
-    keys read directly by the Sonarr/Radarr subclasses); the properties expose
-    the shared settings with their defaults and normalization applied.
+    ``extra="forbid"`` turns a typo'd key into a ``ValidationError`` (the whole point
+    of validating); ``frozen=True`` matches the project's value-object convention and
+    makes sharing one loaded config across both arrs provably safe.
     """
 
-    path: str
-    arr: Arr
-    data: dict[str, Any]
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_blank_none(cls, data: Any) -> Any:
+        """Let blank YAML keys fall back to their declared default.
+
+        A present-but-blank YAML key (``foo:``) parses to ``None``; a plain field
+        default would not apply (the key is present) and ``None`` would be rejected
+        by an ``int``/``str`` field. Drop ``None`` *only for known fields* so the
+        default applies. Unknown keys are kept regardless of blankness, so
+        ``extra="forbid"`` still flags both ``typo: value`` and a bare ``typo:``.
+        """
+
+        if not isinstance(data, dict):
+            return data
+        raw = cast("dict[str, Any]", data)
+        fields = cls.model_fields
+        return {key: value for key, value in raw.items() if value is not None or key not in fields}
+
+
+class ArrSettings(_ConfigBase):
+    """Connection + per-arr behaviour, shared by the ``sonarr`` and ``radarr`` groups."""
+
+    url: str | None = None
+    api_key: str | None = None
+    ignore_unmonitored: bool = False
+    torrent_category: str | None = None
+
+
+class SonarrSettings(ArrSettings):
+    """Sonarr adds one cross-arr flag the Radarr group must not accept.
+
+    ``ignore_movies_in_radarr`` is read only on a Sonarr run; declaring it here (not
+    on the shared base) means ``extra="forbid"`` correctly rejects it under ``radarr``.
+    """
+
+    ignore_movies_in_radarr: bool = False
+
+
+class QbittorrentSettings(_ConfigBase):
+    """qBittorrent connection. Modelled explicitly instead of an ``Any`` dict splat."""
+
+    host: str | None = None
+    username: str | None = None
+    password: str | None = None
+    tags: list[str] | None = None
+
+    def credentials(self) -> tuple[str, str, str] | None:
+        """The ``(host, username, password)`` triple, or ``None`` if any part is unset.
+
+        All three are needed to add torrents; a missing one means run in preview mode
+        (nothing is grabbed). The caller builds the client with explicit kwargs.
+        """
+
+        if self.host and self.username and self.password:
+            return self.host, self.username, self.password
+        return None
+
+
+class SeadexSettings(_ConfigBase):
+    """SeaDex release-selection filters."""
+
+    public_only: bool = True
+    prefer_dual_audio: bool = True
+    want_best: bool = True
+    ignore_tags: list[str] = Field(default_factory=list)
+    # Default to all trackers (public + private) when none configured. Private are
+    # included even when public_only: they're filtered later, after the overlap check
+    # against what's already downloaded.
+    trackers: set[str] = Field(default_factory=lambda: PUBLIC_TRACKERS | PRIVATE_TRACKERS)
+    ignore_anilist_ids: set[int] = Field(default_factory=set[int])
+    ignore_seadex_update_times: bool = False
+    use_torrent_hash_to_filter: bool = False
+
+    @field_validator("trackers", mode="before")
+    @classmethod
+    def _casefold_trackers(cls, value: Any) -> Any:
+        """Casefold explicit trackers so membership tests match SeaDex's names.
+
+        Only fires when ``trackers`` is provided; an absent/blank value takes the
+        ``PUBLIC | PRIVATE`` default_factory (already casefolded).
+        """
+
+        return {str(tracker).casefold() for tracker in value}
+
+
+class ImportsSettings(_ConfigBase):
+    """Wait-for-completion + Sonarr manual import (Sonarr only; Radarr is a no-op)."""
+
+    # off (disabled, default) / deferred / blocking / hybrid. An unrecognized value
+    # raises ValidationError like any other bad config (surfaced cleanly by the cli).
+    wait_mode: ImportWaitMode = ImportWaitMode.OFF
+    wait_timeout: int = 3600
+    ready_timeout: int = 600
+    poll_interval: int = 30
+    mode: str = "auto"
+    default_quality: str | None = None
+    languages_dual: list[str] = Field(default_factory=lambda: ["Japanese", "English"])
+    languages_single: list[str] = Field(default_factory=lambda: ["Japanese"])
+    pending_max_age_days: int = 14
+    digest_interval: int = 300
+
+
+class NotificationsSettings(_ConfigBase):
+    """Discord + generic webhook + the walk-away wait-complete ping."""
+
+    discord_url: str | None = None
+    wait_webhook_url: str | None = None
+    wait_notify: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_wait_notify(cls, data: Any) -> Any:
+        """Default ``wait_notify`` on whenever any webhook is set; explicit value wins.
+
+        Order-independent w.r.t. the inherited blank-drop: it keys off
+        ``wait_notify`` being absent/None, true either way.
+        """
+
+        if not isinstance(data, dict):
+            return data
+        raw = cast("dict[str, Any]", data)
+        if raw.get("wait_notify") is None:
+            raw = {
+                **raw,
+                "wait_notify": raw.get("discord_url") is not None
+                or raw.get("wait_webhook_url") is not None,
+            }
+        return raw
+
+
+class AdvancedSettings(_ConfigBase):
+    """Advanced knobs (rate limiting, caching, run cap, logging)."""
+
+    sleep_time: int = 2
+    cache_time: int = 1
+    interactive: bool = False
+    max_torrents_to_add: int | None = None
+    log_level: str = "INFO"
+
+
+class MappingsSettings(_ConfigBase):
+    """ID/episode mapping sources: ``False`` disables, blank auto-downloads.
+
+    ``anime``/``anibridge`` also accept an inline mapping dict (a power-user path the
+    resolver supports). ``anidb``'s inline form is an XML element that can't come from
+    a YAML file, so only disable/auto-download are offered there.
+    """
+
+    anime_mappings: dict[str, Any] | Literal[False] | None = None
+    anidb_mappings: Literal[False] | None = None
+    anibridge_mappings: dict[str, Any] | Literal[False] | None = None
+
+
+class AppConfig(_ConfigBase):
+    """The full validated config: one submodel per settings group."""
+
+    sonarr: SonarrSettings = Field(default_factory=SonarrSettings)
+    radarr: ArrSettings = Field(default_factory=ArrSettings)
+    qbittorrent: QbittorrentSettings = Field(default_factory=QbittorrentSettings)
+    seadex: SeadexSettings = Field(default_factory=SeadexSettings)
+    imports: ImportsSettings = Field(default_factory=ImportsSettings)
+    notifications: NotificationsSettings = Field(default_factory=NotificationsSettings)
+    advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)
+    mappings: MappingsSettings = Field(default_factory=MappingsSettings)
+
+    # Set once by ``load`` after construction (frozen models still allow private-attr
+    # assignment); the file checksum is the cache descriptor, the path feeds error text.
+    _path: str = PrivateAttr(default="")
+    _checksum: str = PrivateAttr(default="")
 
     @classmethod
-    def load(cls, path: str, arr: Arr) -> "AppConfig":
-        """Locate, load, and template-sync the config file.
+    def load(cls, path: str) -> "AppConfig":
+        """Locate, load and validate the config file.
 
-        Copies the bundled template to ``path`` and raises if the file is
-        missing (so a first run writes a starter config), then parses it and
-        reconciles its key order against the template.
+        Copies the bundled template to ``path`` and raises ``FileNotFoundError`` when
+        the file is missing (so a first run writes a starter config), then parses and
+        validates it. An invalid config raises ``pydantic.ValidationError`` (a
+        ``ValueError`` subclass) naming the offending keys.
 
         Args:
             path (str): Path to the config file.
-            arr (Arr): Which Arr is being run; selects the arr-prefixed keys.
         """
 
         template_path = _template_path()
@@ -121,369 +268,36 @@ class AppConfig:
             shutil.copy(template_path, path)
             raise FileNotFoundError(f"{path} not found. Copying template")
 
-        with open(path) as f:
-            data = yaml.safe_load(f)
-
-        config = cls(path=path, arr=arr, data=data)
-        config._sync_with_template(template_path)
+        with open(path, "rb") as f:
+            raw = f.read()
+        config = cls.model_validate(yaml.safe_load(raw) or {})
+        # PrivateAttr writes on a frozen model: go through object.__setattr__ so the
+        # type checkers don't read it as a frozen-field mutation (it isn't - these are
+        # private attrs, set once here at load and never again).
+        object.__setattr__(config, "_path", path)
+        object.__setattr__(config, "_checksum", md5(raw).hexdigest())
         return config
 
-    def for_arr(self, arr: Arr) -> "AppConfig":
-        """A view of this already-loaded config under a different arr selector.
-
-        The parsed ``data`` is shared with this instance (the file is read and
-        template-synced once), so the composition root can load the config a
-        single time and hand each arr its own view rather than re-reading and
-        re-syncing the same file once per arr. Only the ``{arr}_``-prefixed
-        properties differ between views; every global/resolver setting is
-        identical. ``data`` is read-only after ``load``, so sharing it is safe.
-        """
-
-        return AppConfig(path=self.path, arr=arr, data=self.data)
-
-    def _sync_with_template(self, template_path: str) -> None:
-        """Rewrite the config in template key order, inheriting existing values.
-
-        If the file's keys aren't in the template's order (e.g. a new release
-        added keys), rebuild it from the template — keeping the user's values
-        where present, filling defaults otherwise — and persist the result.
-        """
-
-        with open(template_path) as f:
-            # Narrow the parsed template mapping (genuinely open YAML our code
-            # only reads by key) so the downstream keys/index reads are typed.
-            # ruamel's load/dump are loosely typed (Unknown under strict), so the
-            # YAML() instance is cast to the _Yaml protocol that types both.
-            config_template: dict[str, Any] = cast("_Yaml", YAML()).load(f)
-
-        if list(self.data.keys()) != list(config_template.keys()):
-            # Start from the template (template key order + any newly added
-            # defaults) and overwrite with the user's existing values. Keys the
-            # user has that the template lacks are intentionally dropped.
-            new_config = copy.deepcopy(config_template)
-            for key in config_template:
-                if key in self.data:
-                    new_config[key] = copy.deepcopy(self.data[key])
-
-            self.data = new_config
-
-            with open(self.path, "w+") as f:
-                cast("_Yaml", YAML()).dump(self.data, f)
-
     def checksum(self) -> str:
-        """MD5 hex digest of the config file's current bytes (cache descriptor)."""
+        """MD5 hex digest of the config file's bytes at load time (cache descriptor)."""
 
-        with open(self.path, "rb") as f:
-            return md5(f.read()).hexdigest()
+        return self._checksum
 
-    def get(self, key: str, default: Any = None) -> Any:
-        """Read a raw config value (for keys without a dedicated property)."""
+    def for_arr(self, arr: Arr) -> ArrSettings:
+        """The per-arr connection/behaviour submodel (one load serves both arrs)."""
 
-        return self.data.get(key, default)
+        return self.sonarr if arr is Arr.SONARR else self.radarr
 
-    def require(self, key: str) -> Any:
-        """Read a config value that must be present and truthy, or raise.
+    def require_connection(self, arr: Arr) -> tuple[str, str]:
+        """The arr's ``(url, api_key)``, or raise naming the missing key + file.
 
-        Mirrors ``get(key)`` but raises ``ValueError`` (naming the key and the
-        config path) when the value is missing or empty - the check both arr
-        strategies repeat for their required ``*_url`` / ``*_api_key`` settings.
+        Connection settings are optional at parse time so a config filled in for only
+        one arr still validates; this enforces them lazily when that arr actually runs.
         """
 
-        value = self.data.get(key, None)
-        if not value:
-            raise ValueError(f"{key} needs to be defined in {self.path}")
-        return value
-
-    def _require_str(self, key: str) -> str:
-        """``require(key)`` narrowed to ``str`` for the *_url/*_api_key keys.
-
-        The required connection settings are always strings; this wraps the
-        generic ``require`` so the typed properties expose ``str`` rather than
-        leaking ``Any`` to the arr strategies.
-        """
-
-        value = self.require(key)
-        assert isinstance(value, str)
-        return value
-
-    # --- Typed settings -----------------------------------------------------
-
-    @property
-    def sonarr_url(self) -> str:
-        return self._require_str("sonarr_url")
-
-    @property
-    def sonarr_api_key(self) -> str:
-        return self._require_str("sonarr_api_key")
-
-    @property
-    def radarr_url(self) -> str:
-        return self._require_str("radarr_url")
-
-    @property
-    def radarr_api_key(self) -> str:
-        return self._require_str("radarr_api_key")
-
-    @property
-    def radarr_url_optional(self) -> str | None:
-        return self.data.get("radarr_url", None)
-
-    @property
-    def radarr_api_key_optional(self) -> str | None:
-        return self.data.get("radarr_api_key", None)
-
-    @property
-    def ignore_movies_in_radarr(self) -> bool:
-        return self.data.get("ignore_movies_in_radarr", False)
-
-    @property
-    def ignore_unmonitored(self) -> bool:
-        return self.data.get(f"{self.arr}_ignore_unmonitored", False)
-
-    @property
-    def qbit_info(self) -> dict[str, Any] | None:
-        # The qBittorrent connection-kwargs bag, splatted as
-        # ``qbittorrentapi.Client(**qbit_info)`` at the composition root. The
-        # values are all strings (host/username/password), but the splat target
-        # is a precisely-typed third-party constructor whose keyword params
-        # include bools; a ``dict[str, str]`` makes that ``**`` splat a static
-        # type error against those bool params. ``Any`` keeps the genuinely
-        # dynamic constructor-splat boundary checkable (see Phase 2 follow-up).
-        return self.data.get("qbit_info", None)
-
-    @property
-    def ignore_seadex_update_times(self) -> bool:
-        return self.data.get("ignore_seadex_update_times", False)
-
-    @property
-    def use_torrent_hash_to_filter(self) -> bool:
-        return self.data.get("use_torrent_hash_to_filter", False)
-
-    @property
-    def torrent_category(self) -> str | None:
-        return self.data.get(f"{self.arr}_torrent_category", None)
-
-    @property
-    def torrent_tags(self) -> list[str] | None:
-        return self.data.get("torrent_tags", None)
-
-    @property
-    def max_torrents_to_add(self) -> int | None:
-        return self.data.get("max_torrents_to_add", None)
-
-    # --- Wait-for-completion + Sonarr manual import -------------------------
-
-    @property
-    def import_wait_mode(self) -> ImportWaitMode:
-        """How (and whether) to wait for downloads and drive Sonarr import.
-
-        ``off`` (the default) disables the whole feature: no pending records,
-        no waiting, no manual import. The other modes (``deferred``,
-        ``blocking``, ``hybrid``) control *when* the wait/import runs. An
-        unrecognized value falls back to ``ImportWaitMode.OFF`` rather than
-        raising, so a typo in the config can never crash a run.
-        """
-
-        raw = self.data.get("import_wait_mode", "off")
-        try:
-            return ImportWaitMode(raw)
-        except ValueError:
-            return ImportWaitMode.OFF
-
-    @property
-    def import_wait_timeout(self) -> int:
-        """Seconds to block per torrent in the end-of-run blocking pass.
-
-        A present-but-blank YAML value parses to ``None`` (the key is present, so
-        a plain ``.get`` default wouldn't apply); coalesce it to the documented
-        default, mirroring the list knobs, so a blanked-out value can't feed
-        ``None`` into the wait-loop's ``time.sleep`` / deadline math.
-        """
-
-        value = self.data.get("import_wait_timeout")
-        return value if value is not None else 3600
-
-    @property
-    def import_poll_interval(self) -> int:
-        """Seconds between qBittorrent completion polls while waiting.
-
-        Blank coalesces to the default; see :meth:`import_wait_timeout`.
-        """
-
-        value = self.data.get("import_poll_interval")
-        return value if value is not None else 30
-
-    @property
-    def import_ready_timeout(self) -> int:
-        """Seconds to wait for Sonarr to import a completed download.
-
-        After qBittorrent reports the torrent complete, the blocking pass asks
-        Sonarr to rescan and then polls its queue until the files import (Sonarr's
-        own import, or our authoritative manual import on an ``importBlocked``).
-        This bounds that second phase; the download wait itself is bounded
-        separately by ``import_wait_timeout``. Blank coalesces to the default;
-        see :meth:`import_wait_timeout`.
-        """
-
-        value = self.data.get("import_ready_timeout")
-        return value if value is not None else 600
-
-    @property
-    def import_mode(self) -> str:
-        """Sonarr ``importMode`` for the manual import (``auto``/``move``/``copy``).
-
-        Blank coalesces to the default; see :meth:`import_wait_timeout`.
-        """
-
-        value = self.data.get("import_mode")
-        return value if value is not None else "auto"
-
-    @property
-    def import_default_quality(self) -> str | None:
-        """Fallback quality name when neither our parse nor Sonarr's is known.
-
-        Recommended on a 4K instance (e.g. ``Bluray-2160p``) to avoid
-        importing files as Unknown quality and triggering re-grabs.
-        """
-
-        return self.data.get("import_default_quality", None)
-
-    @property
-    def import_languages_dual(self) -> list[str]:
-        """Languages applied to imported files from dual-audio releases.
-
-        A blank YAML value parses to ``None`` (the key is present, so a plain
-        ``.get`` default wouldn't apply); coalesce it to the documented default,
-        mirroring ``ignore_tags`` / ``trackers``.
-        """
-
-        value = self.data.get("import_languages_dual")
-        return value if value else ["Japanese", "English"]
-
-    @property
-    def import_languages_single(self) -> list[str]:
-        """Languages applied to imported files from single-audio releases.
-
-        Blank coalesces to the default; see :meth:`import_languages_dual`.
-        """
-
-        value = self.data.get("import_languages_single")
-        return value if value else ["Japanese"]
-
-    @property
-    def import_pending_max_age_days(self) -> int:
-        """Drop pending-import records older than this many days (TTL).
-
-        Blank coalesces to the default; see :meth:`import_wait_timeout`.
-        """
-
-        value = self.data.get("import_pending_max_age_days")
-        return value if value is not None else 14
-
-    @property
-    def wait_webhook_url(self) -> str | None:
-        """Generic outbound webhook for the wait-complete summary (ntfy/gotify/HA).
-
-        POSTed the wait-summary JSON when set; ``None`` (the default) disables it.
-        Independent of ``discord_url`` - either, both, or neither may be set.
-        """
-
-        return self.data.get("wait_webhook_url", None)
-
-    @property
-    def wait_notify(self) -> bool:
-        """Push a completion notification when the blocking wait pass finishes.
-
-        Defaults to on whenever a Discord webhook or a generic ``wait_webhook_url``
-        is configured (so the walk-away ping just works), off otherwise; an explicit
-        value overrides. Blank coalesces to the default.
-        """
-
-        value = self.data.get("wait_notify")
-        if value is not None:
-            return bool(value)
-        return self.discord_url is not None or self.wait_webhook_url is not None
-
-    @property
-    def wait_digest_interval(self) -> int:
-        """Target seconds between aggregate wait digests on a non-TTY (Docker/cron).
-
-        Floored by ``import_poll_interval`` at use; blank coalesces to the default.
-        """
-
-        value = self.data.get("wait_digest_interval")
-        return value if value is not None else 300
-
-    @property
-    def discord_url(self) -> str | None:
-        return self.data.get("discord_url", None)
-
-    @property
-    def public_only(self) -> bool:
-        return self.data.get("public_only", True)
-
-    @property
-    def prefer_dual_audio(self) -> bool:
-        return self.data.get("prefer_dual_audio", True)
-
-    @property
-    def want_best(self) -> bool:
-        return self.data.get("want_best", True)
-
-    @property
-    def ignore_tags(self) -> list[str]:
-        ignore_tags = self.data.get("ignore_tags", None)
-        if ignore_tags is None:
-            ignore_tags = list[str]()
-        return ignore_tags
-
-    # cached_property, not property: these two normalize into a fresh ``set`` on
-    # every access, and after Phase 5b removed the SeaDexArr mirror attributes
-    # they're read inside hot loops (get_seadex_dict / add_torrent). Caching keeps
-    # them parse-once per instance. Safe because ``data`` is only ever reassigned
-    # by ``_sync_with_template`` during ``load`` (before any property access) and
-    # is never mutated afterwards.
-    @cached_property
-    def ignore_anilist_ids(self) -> set[int]:
-        ignore_anilist_ids = self.data.get("ignore_anilist_ids", None)
-        if ignore_anilist_ids is None:
-            ignore_anilist_ids = set[int]()
-        return {int(x) for x in ignore_anilist_ids}
-
-    @cached_property
-    def trackers(self) -> set[str]:
-        trackers = self.data.get("trackers", None)
-        # Default to all trackers (public + private) when none configured.
-        # Include private even when public_only: they're filtered later, after
-        # the overlap check against what's already downloaded.
-        if trackers is None:
-            trackers = PUBLIC_TRACKERS.union(PRIVATE_TRACKERS)
-        return {t.casefold() for t in trackers}
-
-    @property
-    def sleep_time(self) -> int:
-        return self.data.get("sleep_time", 2)
-
-    @property
-    def cache_time(self) -> int:
-        return self.data.get("cache_time", 1)
-
-    @property
-    def interactive(self) -> bool:
-        return self.data.get("interactive", False)
-
-    @property
-    def log_level(self) -> str:
-        return self.data.get("log_level", "INFO")
-
-    @property
-    def anime_mappings_cfg(self) -> AnimeIdsMap | bool | None:
-        return self.data.get("anime_mappings", None)
-
-    @property
-    def anidb_mappings_cfg(self) -> ElementTree.Element | bool | None:
-        return self.data.get("anidb_mappings", None)
-
-    @property
-    def anibridge_mappings_cfg(self) -> AniBridgeGraph | bool | None:
-        return self.data.get("anibridge_mappings", None)
+        sub = self.for_arr(arr)
+        if not sub.url:
+            raise ValueError(f"{arr.value}.url must be set in {self._path}")
+        if not sub.api_key:
+            raise ValueError(f"{arr.value}.api_key must be set in {self._path}")
+        return sub.url, sub.api_key
