@@ -21,10 +21,12 @@ Write model (preserves the pre-SQLite semantics exactly):
   point; they're simply re-checked next run, never silently skipped - the safe
   direction.
 
-This rests on **autocommit being OFF** (the connection keeps the default
-``isolation_level=""``, i.e. deferred). Do NOT switch it to autocommit / set
-``isolation_level=None`` - every staged write would commit immediately and the
-preview gate would break.
+This rests on the connection using **deferred** transaction control. The
+connection factory (:func:`_connect`) pins it *explicitly*
+(``autocommit=LEGACY_TRANSACTION_CONTROL`` + ``isolation_level="DEFERRED"``) rather
+than leaning on the sqlite3 defaults, so a future Python flipping a default can't
+silently break the preview gate. Do NOT set ``isolation_level=None`` / real
+autocommit - every staged write would commit immediately and the gate would break.
 
 A missing cache opens an **in-memory** database and is *promoted* to the real
 file on the first non-preview ``save`` (via the sqlite3 backup API), so a preview
@@ -61,9 +63,14 @@ UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
 _BUSY_TIMEOUT_MS = 5000
 
 # One statement per block; ``IF NOT EXISTS`` so it's a no-op on an existing db.
-# anilist_meta / sonarr_parse store the record as a JSONB blob and expose the
-# fetch timestamp as a VIRTUAL generated column indexed for the TTL sweep - the
-# spike confirmed the index is used by ``DELETE ... WHERE fetched_at < ?``.
+# NOTE: there is NO schema-migration mechanism here - ``CREATE TABLE IF NOT EXISTS``
+# creates a missing table but silently does NOT alter an existing one. So changing a
+# column on a shipped table (e.g. relaxing a NOT NULL) won't reach an upgraded
+# cache.db and will diverge or crash; such a change needs a real migration, or - as
+# ``torrent_hashes`` does for its None marker - a storage trick that leaves the
+# column type unchanged. anilist_meta / sonarr_parse store the record as a JSONB blob
+# and expose the fetch timestamp as a VIRTUAL generated column indexed for the TTL
+# sweep - the spike confirmed the index is used by ``DELETE ... WHERE fetched_at < ?``.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
@@ -83,7 +90,13 @@ CREATE TABLE IF NOT EXISTS entries (
 CREATE TABLE IF NOT EXISTS torrent_hashes (
     arr      TEXT    NOT NULL,
     al_id    INTEGER NOT NULL,
-    infohash TEXT    NOT NULL,
+    -- A SeaDex url's infohash can be ``None`` (a hashless release), and a remembered
+    -- ``None`` IS a membership key the planner dedups on, so it must round-trip. The
+    -- column stays NOT NULL (unchanged since the first release - ``CREATE TABLE IF
+    -- NOT EXISTS`` would NOT migrate an existing db, so a nullable column would crash
+    -- on an upgraded cache). ``None`` is persisted as the ``_NO_HASH`` sentinel and
+    -- mapped back on read; a real infohash is never empty, so there's no collision.
+    infohash TEXT NOT NULL,
     PRIMARY KEY (arr, al_id, infohash),
     FOREIGN KEY (arr, al_id) REFERENCES entries (arr, al_id) ON DELETE CASCADE
 );
@@ -183,8 +196,8 @@ class CacheRecord(TypedDict, total=False):
     coverage: str
     updated_at: "str | datetime"
     # A SeaDex url's infohash is ``str | None`` and is appended unconditionally
-    # (planner.filter_by_torrent_hash), so a remembered list can carry ``None``;
-    # the store drops those Nones (they never matched anything).
+    # (planner.filter_by_torrent_hash), so a remembered list can carry ``None``; the
+    # store preserves those Nones because the planner dedups on None membership.
     torrent_hashes: list[str | None]
 
 
@@ -192,6 +205,11 @@ class CacheRecord(TypedDict, total=False):
 # a set so the partial-update path only touches columns actually supplied (the old
 # dict ``.update`` left absent fields untouched - this preserves that).
 _ENTRY_SCALAR_COLUMNS = ("name", "url", "coverage", "updated_at")
+
+# Sentinel stored in ``torrent_hashes.infohash`` (a NOT NULL column) for a remembered
+# ``None`` marker - a hashless release the planner still dedups on. A real infohash is
+# never empty, so the empty string round-trips uniquely back to ``None`` on read.
+_NO_HASH = ""
 
 
 def _arr_key(arr: Arr) -> str:
@@ -260,6 +278,69 @@ def _quarantine_corrupt(path: str, *, logger: logging.Logger | None) -> None:
         )
 
 
+def _connect(path: str, *, ensure_wal: bool = True) -> sqlite3.Connection:
+    """Open a cache-db connection with the project's fixed pragmas + txn control.
+
+    The single place cache connections are created, so ``load``, ``_promote`` and
+    the read-only CLI commands all share identical settings instead of re-typing the
+    pragma trio. ``busy_timeout`` is applied FIRST, so the WAL-mode switch and the
+    schema statements that follow already honour it (rather than racing with a
+    zero timeout). Transaction control is pinned *explicitly* to legacy/deferred so
+    the staged-write preview gate can't be silently broken by a future Python
+    autocommit default change.
+
+    Args:
+        path (str): Database path (or ``":memory:"``).
+        ensure_wal (bool): Apply the WAL + foreign-keys pragmas (the writable run
+            path). Read-only diagnostics pass False so they neither mutate the db's
+            journal mode nor need the file to be a valid db just to open. Defaults
+            to True.
+    """
+
+    conn = sqlite3.connect(path)
+    # Pin deferred transaction control EXPLICITLY rather than leaning on the sqlite3
+    # defaults: legacy mode means an implicit BEGIN precedes the first DML and
+    # nothing commits until save() - exactly what the preview gate relies on - so a
+    # future Python flipping a default can't silently turn staged writes into
+    # immediate commits. (Both attributes are set post-connect; no transaction is
+    # open yet, so this is a pure configuration step.)
+    conn.autocommit = sqlite3.LEGACY_TRANSACTION_CONTROL
+    conn.isolation_level = "DEFERRED"
+    try:
+        conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+        if ensure_wal:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+    except sqlite3.DatabaseError:
+        # A non-db / corrupt file raises on the WAL switch; don't leak the handle.
+        conn.close()
+        raise
+    return conn
+
+
+def _is_corruption(exc: sqlite3.DatabaseError) -> bool:
+    """True if a DatabaseError signals an actually corrupt / not-a-database file.
+
+    The quarantine path destroys (renames) the cache, so it must fire ONLY on real
+    corruption - never on a transient ``OperationalError`` (``SQLITE_BUSY`` /
+    ``database is locked``, a disk I/O error), which would otherwise wipe a healthy
+    cache (and its pending-imports) on a fluke. Keys on the SQLite extended/primary
+    result code, with a message fallback for builds that don't surface one.
+    """
+
+    code = getattr(exc, "sqlite_errorcode", None)
+    if isinstance(code, int):
+        # Compare the primary result code (low 8 bits) so extended codes match too.
+        primary = code & 0xFF
+        if primary in (sqlite3.SQLITE_NOTADB, sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_FORMAT):
+            return True
+        # A known operational/transient code is explicitly NOT corruption.
+        if primary in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_IOERR):
+            return False
+    msg = str(exc).lower()
+    return any(s in msg for s in ("not a database", "malformed", "file is encrypted"))
+
+
 class CacheStore:
     """Owns the cache database: schema, freshness checks, and persistence."""
 
@@ -308,39 +389,49 @@ class CacheStore:
         """
 
         exists = os.path.exists(path)
-        conn = sqlite3.connect(path if exists else ":memory:")
-        store = cls(conn, path, on_memory=not exists)
+        conn: sqlite3.Connection | None = None
         try:
-            store._configure(conn)
-        except sqlite3.DatabaseError:
-            # An existing file that isn't a valid database (e.g. a torn write or a
-            # stray non-db file) raises here on the first PRAGMA/DDL. Quarantine it
-            # and start fresh in memory (promoted on the first real save), so a
-            # corrupt cache fails open instead of crash-looping every run.
-            conn.close()
+            conn = _connect(path if exists else ":memory:")
+            # Ensure the schema before any staged write (executescript implicitly
+            # COMMITs first, a no-op here since nothing is staged yet).
+            conn.executescript(_SCHEMA)
+        except sqlite3.DatabaseError as exc:
+            if conn is not None:
+                with contextlib.suppress(sqlite3.Error):
+                    conn.close()
+            if not _is_corruption(exc):
+                # A transient/operational error (locked, disk I/O) is NOT corruption.
+                # Fail closed - re-raise rather than destructively quarantining a
+                # healthy cache (and its pending_imports) on a fluke. The run's outer
+                # handler logs it and the cache is retried next cycle.
+                raise
+            # A real not-a-database / torn file: quarantine it and start fresh in
+            # memory (promoted on the first real save), so a corrupt cache fails open
+            # instead of crash-looping every run.
             _quarantine_corrupt(path, logger=logger)
-            conn = sqlite3.connect(":memory:")
-            store = cls(conn, path, on_memory=True)
-            store._configure(conn)
+            conn = _connect(":memory:")
+            conn.executescript(_SCHEMA)
             exists = False
+        store = cls(conn, path, on_memory=not exists)
         if not exists and migrate_from and os.path.exists(migrate_from):
             store._seed_from_legacy_json(migrate_from, logger=logger)
         store._reconcile(config_checksum)
         return store
 
-    @staticmethod
-    def _configure(conn: sqlite3.Connection) -> None:
-        """Apply connection pragmas and ensure the schema.
+    @classmethod
+    def open_readonly(cls, path: str) -> "CacheStore":
+        """Open an existing cache db for a read-only diagnostic (``stats``/``check``).
 
-        Runs before any staged data write, so the WAL/schema statements execute in
-        autocommit and never tangle with the run's deferred write transaction. WAL
-        is a no-op on an in-memory db (it reports ``memory``); that's fine.
+        Applies only ``busy_timeout`` (NOT the WAL / foreign-keys pragmas, so a
+        diagnostic never mutates the file's journal mode) and does NOT ensure the
+        schema, reconcile the descriptor, or quarantine on corruption - the command
+        should reflect the file as-is. A corrupt / not-a-database file raises
+        :class:`sqlite3.DatabaseError` from the first read (in ``stats`` /
+        ``integrity_check``); the caller is expected to catch and report it, since
+        surfacing bad integrity is the whole point of those commands.
         """
 
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
-        conn.executescript(_SCHEMA)
+        return cls(_connect(path, ensure_wal=False), path, on_memory=False)
 
     def _reconcile(self, config_checksum: str) -> None:
         """Stamp the current package version and config checksum into ``kv``."""
@@ -443,23 +534,39 @@ class CacheStore:
             self._conn.commit()
 
     def _promote(self) -> None:
-        """Promote the in-memory db to the on-disk file via the sqlite3 backup API.
+        """Promote the in-memory db to the on-disk file, durably.
 
-        Commits the staged writes in memory (free - no file yet), copies the whole
-        db onto ``path``, then re-points at the file-backed connection. Subsequent
-        writes land on the file and commit at the next save point.
+        Commits the staged writes in memory, copies the whole db to a *temp* file via
+        the sqlite3 backup API, then atomically renames it onto ``path`` and re-opens
+        the file-backed connection through :func:`_connect`. Backing up to a temp +
+        atomic rename means ``cache.db`` is only ever created from a COMPLETE copy: a
+        crash or I/O error mid-copy leaves no 0-byte / partial ``cache.db`` for the
+        next run to mistake for a real (empty) cache and skip the migration over.
         """
 
         self._conn.commit()
-        disk = sqlite3.connect(self._path)
-        self._conn.backup(disk)
+        tmp_path = self._path + ".promote.tmp"
+        # Clear any temp left by a previously-aborted promote before reusing the name.
+        for suffix in ("", "-wal", "-shm"):
+            with contextlib.suppress(OSError):
+                os.remove(tmp_path + suffix)
+        disk: sqlite3.Connection | None = None
+        try:
+            disk = sqlite3.connect(tmp_path)
+            self._conn.backup(disk)
+            disk.close()
+            disk = None
+            os.replace(tmp_path, self._path)  # atomic: cache.db is never a torn file
+        finally:
+            if disk is not None:
+                disk.close()
+            # Remove the temp (and any sidecars) if we failed before the rename.
+            for suffix in ("", "-wal", "-shm"):
+                with contextlib.suppress(OSError):
+                    os.remove(tmp_path + suffix)
+        # Swap the in-memory source for a fresh file-backed handle (pragmas applied).
         self._conn.close()
-        # Re-apply the connection-scoped pragmas on the new file-backed handle
-        # (foreign_keys is per-connection; WAL persists in the file once set).
-        disk.execute("PRAGMA journal_mode=WAL")
-        disk.execute("PRAGMA foreign_keys=ON")
-        disk.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
-        self._conn = disk
+        self._conn = _connect(self._path)
         self._on_memory = False
 
         # If this db was seeded from a legacy cache.json, retire it now that the
@@ -552,9 +659,9 @@ class CacheStore:
     def torrent_hashes(self, arr: Arr, al_id: int) -> list[str | None]:
         """Torrent hashes already remembered for an entry (empty if none).
 
-        Used by the download planner to skip releases already grabbed. The stored
-        hashes are concrete strings; the element type is widened to ``str | None``
-        to match the planner's ``cached_hashes: list[str | None]`` parameter.
+        Used by the download planner to skip releases already grabbed. A remembered
+        ``None`` marker (a hashless release) is preserved and round-trips, matching
+        the planner's ``cached_hashes: list[str | None]`` membership check.
 
         Args:
             arr (Arr): Arr instance the entry is cached under.
@@ -565,7 +672,8 @@ class CacheStore:
             "SELECT infohash FROM torrent_hashes WHERE arr = ? AND al_id = ? ORDER BY infohash",
             (_arr_key(arr), al_id),
         ).fetchall()
-        return cast("list[str | None]", [r[0] for r in rows])
+        # Map the _NO_HASH sentinel back to the None marker it stands in for.
+        return cast("list[str | None]", [None if r[0] == _NO_HASH else r[0] for r in rows])
 
     def update_cache(
         self,
@@ -595,22 +703,28 @@ class CacheStore:
 
         arr_key = _arr_key(arr)
 
-        # Ensure the parent row exists (the FK target for torrent_hashes) without
-        # clobbering existing scalar fields.
-        self._conn.execute(
-            "INSERT INTO entries (arr, al_id) VALUES (?, ?) "
-            "ON CONFLICT (arr, al_id) DO NOTHING",
-            (arr_key, al_id),
-        )
-
         scalar = [c for c in _ENTRY_SCALAR_COLUMNS if c in details]
         if scalar:
-            assignments = ", ".join(f"{c} = ?" for c in scalar)
-            params = [details[c] for c in scalar]
-            params.extend((arr_key, al_id))
+            # One upsert instead of INSERT-then-UPDATE: insert the supplied columns,
+            # or on an existing row update ONLY those columns (partial merge - absent
+            # columns are left untouched). The column names come from the closed
+            # _ENTRY_SCALAR_COLUMNS tuple, so the interpolation isn't an injection
+            # surface.
+            cols = ", ".join(scalar)
+            placeholders = ", ".join("?" for _ in scalar)
+            assignments = ", ".join(f"{c} = excluded.{c}" for c in scalar)
             self._conn.execute(
-                f"UPDATE entries SET {assignments} WHERE arr = ? AND al_id = ?",  # noqa: S608
-                params,
+                f"INSERT INTO entries (arr, al_id, {cols}) VALUES (?, ?, {placeholders}) "  # noqa: S608
+                f"ON CONFLICT (arr, al_id) DO UPDATE SET {assignments}",
+                (arr_key, al_id, *(details[c] for c in scalar)),
+            )
+        else:
+            # No scalar fields: just ensure the row exists (the FK target for
+            # torrent_hashes) without clobbering existing fields.
+            self._conn.execute(
+                "INSERT INTO entries (arr, al_id) VALUES (?, ?) "
+                "ON CONFLICT (arr, al_id) DO NOTHING",
+                (arr_key, al_id),
             )
 
         if "torrent_hashes" in details:
@@ -619,10 +733,14 @@ class CacheStore:
                 (arr_key, al_id),
             )
             hashes: list[str | None] = details["torrent_hashes"] or []
+            # Keep None markers (a hashless release the planner still dedups on at
+            # planner.filter_by_torrent_hash). None is stored as the _NO_HASH sentinel
+            # (the column is NOT NULL); ON CONFLICT then collapses duplicates -
+            # including repeated sentinels - so at most one None marker is kept.
             self._conn.executemany(
                 "INSERT INTO torrent_hashes (arr, al_id, infohash) VALUES (?, ?, ?) "
                 "ON CONFLICT (arr, al_id, infohash) DO NOTHING",
-                [(arr_key, al_id, h) for h in hashes if h is not None],
+                [(arr_key, al_id, _NO_HASH if h is None else h) for h in hashes],
             )
 
         return True
@@ -724,25 +842,31 @@ class CacheStore:
     # -- maintenance: eviction, stats, integrity -----------------------------
 
     def evict_anilist_meta(self, cutoff: datetime) -> int:
-        """Delete AniList-meta records older than ``cutoff``; return the count.
+        """Delete AniList-meta records older than ``cutoff`` (or stamp-less); count.
 
         Hits the indexed generated ``fetched_at`` column, so it's an index
-        range-delete, not a scan. Staged like any write - committed at the next
-        save point, discarded in a preview - so it only frees rows that the
-        gateway already refuses to read (older than the same TTL).
+        range-delete, not a scan. Staged like any write - committed at the next save
+        point, discarded in a preview - so it only frees rows the gateway already
+        refuses to read (older than the same TTL). A NULL ``fetched_at`` (a legacy /
+        hand-edited record with no stamp) is unreadable AND would otherwise be
+        un-evictable forever, so it's swept here too.
         """
 
         cursor = self._conn.execute(
-            "DELETE FROM anilist_meta WHERE fetched_at < ?",
+            "DELETE FROM anilist_meta WHERE fetched_at < ? OR fetched_at IS NULL",
             (cutoff.strftime(UPDATED_AT_STR_FORMAT),),
         )
         return cursor.rowcount
 
     def evict_sonarr_parse(self, cutoff: datetime) -> int:
-        """Delete Sonarr parse records older than ``cutoff``; return the count."""
+        """Delete Sonarr parse records older than ``cutoff`` (or stamp-less); count.
+
+        A NULL ``fetched_at`` (stamp-less legacy record) is unreadable and otherwise
+        un-evictable, so it's swept here too - mirroring :meth:`evict_anilist_meta`.
+        """
 
         cursor = self._conn.execute(
-            "DELETE FROM sonarr_parse WHERE fetched_at < ?",
+            "DELETE FROM sonarr_parse WHERE fetched_at < ? OR fetched_at IS NULL",
             (cutoff.strftime(UPDATED_AT_STR_FORMAT),),
         )
         return cursor.rowcount

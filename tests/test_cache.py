@@ -6,12 +6,15 @@ the staged-write / preview gate (a preview never persists; a real save does) and
 the in-memory -> file promotion for a missing cache.
 """
 
+import contextlib
 import json
+import sqlite3
 from datetime import datetime
 from typing import Any
+from unittest import mock
 
 import seadexarr
-from seadexarr.modules.cache import CacheField, CacheStore
+from seadexarr.modules.cache import CacheField, CacheStore, _is_corruption
 from seadexarr.modules.config import Arr
 
 # Stand-in for a config-file checksum. ``CacheStore`` only stamps and compares the
@@ -46,10 +49,18 @@ class TestSchemaAndDescriptor:
         store.save(preview=False)
         store.close()
 
-        reopened = _open(tmp_path)
-        assert reopened._get_kv("seadexarr_version") == seadexarr.__version__
-        assert reopened._get_kv("config_checksum") == CHECKSUM
-        reopened.close()
+        # Read kv with a RAW connection. CacheStore.load re-stamps the descriptor on
+        # open (via _reconcile), so reopening through the facade would read back the
+        # just-re-stamped constants and pass even if save() never persisted them.
+        db = tmp_path / "cache.db"
+        assert db.exists()
+        raw = sqlite3.connect(str(db))
+        try:
+            rows = dict(raw.execute("SELECT key, value FROM kv").fetchall())
+        finally:
+            raw.close()
+        assert rows.get("seadexarr_version") == seadexarr.__version__
+        assert rows.get("config_checksum") == CHECKSUM
 
 
 class TestEntries:
@@ -97,12 +108,20 @@ class TestEntries:
 
 
 class TestTorrentHashes:
-    def test_roundtrip_and_none_dropped(self, tmp_path) -> None:
+    def test_roundtrip_preserves_none_marker(self, tmp_path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["aaa", "bbb", None]})
-        assert store.torrent_hashes(Arr.SONARR, 7) == ["aaa", "bbb"]
+        # The None marker (a hashless release) is preserved - the planner dedups on
+        # its membership, so dropping it would re-grab the release. Order is free.
+        assert set(store.torrent_hashes(Arr.SONARR, 7)) == {"aaa", "bbb", None}
         # Missing entry -> empty list, never None.
         assert store.torrent_hashes(Arr.SONARR, 999) == []
+        store.close()
+
+    def test_duplicate_none_markers_collapse_to_one(self, tmp_path) -> None:
+        store = _open(tmp_path)
+        store.update_cache(Arr.SONARR, 7, {"torrent_hashes": [None, "aaa", None]})
+        assert store.torrent_hashes(Arr.SONARR, 7) == [None, "aaa"]
         store.close()
 
     def test_rewrite_replaces_the_set(self, tmp_path) -> None:
@@ -110,6 +129,29 @@ class TestTorrentHashes:
         store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["aaa", "bbb"]})
         store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["ccc"]})
         assert store.torrent_hashes(Arr.SONARR, 7) == ["ccc"]
+        store.close()
+
+    def test_none_marker_on_a_preexisting_db(self, tmp_path) -> None:
+        # Upgrade path: a cache.db from the first release has `infohash TEXT NOT NULL`,
+        # and CREATE TABLE IF NOT EXISTS will NOT alter it - so the None marker must
+        # round-trip via the sentinel WITHOUT an IntegrityError, not lean on a schema
+        # change that never reaches an existing db. (This test fails if torrent_hashes
+        # is made nullable instead, since the old table stays NOT NULL.)
+        db = str(tmp_path / "cache.db")
+        raw = sqlite3.connect(db)
+        raw.executescript(
+            "CREATE TABLE entries (arr TEXT NOT NULL, al_id INTEGER NOT NULL, name TEXT, "
+            "url TEXT, coverage TEXT, updated_at TEXT, PRIMARY KEY (arr, al_id));"
+            "CREATE TABLE torrent_hashes (arr TEXT NOT NULL, al_id INTEGER NOT NULL, "
+            "infohash TEXT NOT NULL, PRIMARY KEY (arr, al_id, infohash), "
+            "FOREIGN KEY (arr, al_id) REFERENCES entries (arr, al_id) ON DELETE CASCADE);",
+        )
+        raw.commit()
+        raw.close()
+
+        store = CacheStore.load(db, config_checksum=CHECKSUM)
+        store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["aaa", None]})  # must not raise
+        assert set(store.torrent_hashes(Arr.SONARR, 7)) == {"aaa", None}
         store.close()
 
 
@@ -243,7 +285,8 @@ class TestLegacyMigration:
         reopened = CacheStore.load(db, config_checksum=CHECKSUM)
         assert reopened.get_cached_field(Arr.SONARR, 7, CacheField.URL) == "u"
         assert reopened.get_cached_field(Arr.SONARR, 7, CacheField.COVERAGE) == "S01"
-        assert reopened.torrent_hashes(Arr.SONARR, 7) == ["aaa", "bbb"]  # None dropped
+        # legacy ["aaa", None, "bbb"] -> None marker preserved (de-duped, order-free)
+        assert set(reopened.torrent_hashes(Arr.SONARR, 7)) == {"aaa", "bbb", None}
         assert reopened.check_al_id_in_cache(Arr.SONARR, 7, _entry(datetime(2021, 6, 5, 4, 3, 2)))
         meta = reopened.get_anilist_meta(7)
         assert meta is not None and meta["data"] == {"Media": {"id": 7}}
@@ -265,6 +308,36 @@ class TestLegacyMigration:
         # A preview never promotes: no db written, the legacy file left untouched.
         assert not (tmp_path / "cache.db").exists()
         assert legacy.exists()
+
+    def test_failed_promote_does_not_orphan_migration(self, tmp_path) -> None:
+        # If the promote rename fails (disk full / killed mid-copy), it must leave NO
+        # partial cache.db and must NOT retire the legacy file - else the next load
+        # sees an (empty) db, skips migrate_from, and silently abandons the legacy
+        # cache + its pending imports.
+        legacy = tmp_path / "cache.json"
+        legacy.write_text(json.dumps(self._legacy()))
+        db = str(tmp_path / "cache.db")
+
+        store = CacheStore.load(db, config_checksum=CHECKSUM, migrate_from=str(legacy))
+        with (
+            mock.patch("seadexarr.modules.cache.os.replace", side_effect=OSError("boom")),
+            contextlib.suppress(OSError),
+        ):
+            store.save(preview=False)
+        store.close()
+
+        assert not (tmp_path / "cache.db").exists()  # no 0-byte orphan
+        assert legacy.exists()  # legacy not retired
+        assert not list(tmp_path.glob("cache.db.promote*"))  # temp cleaned up
+
+        # A subsequent real run re-migrates everything (the data was never lost).
+        again = CacheStore.load(db, config_checksum=CHECKSUM, migrate_from=str(legacy))
+        assert again.get_cached_name(Arr.SONARR, 7) == "T"
+        assert again.get_pending(Arr.SONARR) == {"h1": {"infohash": "h1", "series_id": 5}}
+        again.save(preview=False)
+        again.close()
+        assert (tmp_path / "cache.db").exists()
+        assert (tmp_path / "cache.json.migrated").exists()
 
 
 class TestRunLifecycle:
@@ -322,6 +395,20 @@ class TestMaintenance:
         assert store.get_sonarr_parse("new.mkv") is not None
         store.close()
 
+    def test_evict_sweeps_stampless_records(self, tmp_path) -> None:
+        # A record with no fetched_at -> NULL generated column. It is unreadable
+        # (record_is_fresh rejects it) and must not become un-evictable dead weight.
+        store = _open(tmp_path)
+        store.put_anilist_meta(1, {"data": {"x": 1}})  # no fetched_at -> NULL
+        store.put_anilist_meta(2, {"fetched_at": "2026-06-26 12:00:00", "data": {"x": 2}})
+        assert store.evict_anilist_meta(datetime(2026, 6, 20)) == 1  # only the stampless
+        assert store.get_anilist_meta(1) is None
+        assert store.get_anilist_meta(2) is not None  # fresh, stamped -> kept
+        store.put_sonarr_parse("nostamp.mkv", {"episodes": []})  # no fetched_at -> NULL
+        assert store.evict_sonarr_parse(datetime(2026, 6, 20)) == 1
+        assert store.get_sonarr_parse("nostamp.mkv") is None
+        store.close()
+
     def test_stats_and_integrity(self, tmp_path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"name": "T", "torrent_hashes": ["a", "b"]})
@@ -340,6 +427,38 @@ class TestMaintenance:
 
 
 class TestCorruptStore:
+    def test_is_corruption_distinguishes_corrupt_from_transient(self) -> None:
+        # Quarantine wipes the db, so it must fire ONLY on real corruption - never on
+        # a transient lock/IO error (which would destroy a healthy cache on a fluke).
+        assert _is_corruption(sqlite3.DatabaseError("file is not a database")) is True
+        assert _is_corruption(sqlite3.DatabaseError("database disk image is malformed")) is True
+        assert _is_corruption(sqlite3.OperationalError("database is locked")) is False
+        assert _is_corruption(sqlite3.OperationalError("disk I/O error")) is False
+
+    def test_locked_healthy_db_is_not_quarantined(self, tmp_path) -> None:
+        # A healthy db whose load() hits a non-corruption DatabaseError must NOT be
+        # quarantined: the error propagates (fail closed) and the file is untouched.
+        store = _open(tmp_path)
+        store.update_cache(Arr.SONARR, 7, {"name": "Keep"})
+        store.save(preview=False)
+        store.close()
+        db = tmp_path / "cache.db"
+
+        # Simulate a transient lock at open time (e.g. the WAL switch hitting BUSY).
+        with mock.patch(
+            "seadexarr.modules.cache._connect",
+            side_effect=sqlite3.OperationalError("database is locked"),
+        ):
+            raised = False
+            try:
+                CacheStore.load(str(db), config_checksum=CHECKSUM)
+            except sqlite3.OperationalError:
+                raised = True
+
+        assert raised  # propagated, not swallowed into a quarantine
+        assert db.exists()  # healthy db left in place
+        assert not list(tmp_path.glob("cache.db.corrupt-*"))  # never quarantined
+
     def test_corrupt_db_is_quarantined_and_recovered(self, tmp_path) -> None:
         db = tmp_path / "cache.db"
         db.write_text("this is not a sqlite database")  # torn-write stand-in

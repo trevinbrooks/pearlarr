@@ -10,11 +10,14 @@ test actually read.
 """
 
 import logging
-from typing import Any
+from collections.abc import Iterator
+from datetime import datetime
+from typing import Any, cast
 from unittest import mock
 
-from seadex import Tag
+from seadex import EntryRecord, Tag
 
+from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT, CacheField, CacheRecord
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, PendingImport
 from seadexarr.modules.planner import DownloadPlanner
@@ -101,14 +104,49 @@ def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
     return obj
 
 
-class FakeCacheStore:
-    """In-memory stand-in for the SQLite ``CacheStore`` facade.
+# The scalar entry columns ``update_cache`` merges, derived from the public
+# ``CacheField`` vocabulary (every field but the hash set) so the fake can't drift
+# from the real ``CacheStore``'s ``_ENTRY_SCALAR_COLUMNS``.
+_FAKE_SCALAR_FIELDS: tuple[str, ...] = tuple(
+    field.value for field in CacheField if field is not CacheField.TORRENT_HASHES
+)
 
-    Backs the pending-import and Sonarr-parse facades with plain dicts so the
-    orchestration / seed / strategy tests can seed and assert the durable store
-    without a real database. ``get_pending`` returns a fresh copy (matching the
-    real store's snapshot semantics); ``save``/``close`` are no-ops. Pending keys
-    use ``str(arr)`` to mirror production's ``_arr_key``.
+
+def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
+    """Drop records whose ``fetched_at`` is stamp-less or older than ``cutoff``.
+
+    Mirrors the real ``DELETE ... WHERE fetched_at < ? OR fetched_at IS NULL``: a
+    missing/None (or otherwise non-string) stamp is unreadable and so swept too.
+    """
+
+    cutoff_str = cutoff.strftime(UPDATED_AT_STR_FORMAT)
+    stale: list[K] = []
+    for cache_key, record in store.items():
+        stamp = record.get("fetched_at")
+        if not isinstance(stamp, str) or stamp < cutoff_str:
+            stale.append(cache_key)
+    for cache_key in stale:
+        del store[cache_key]
+    return len(stale)
+
+
+class FakeCacheStore:
+    """In-memory stand-in mirroring the SQLite ``CacheStore`` public facade.
+
+    Backs every facade block - the per-entry ``entries`` scalars plus their
+    ``torrent_hashes`` child set, the ``anilist_meta`` and ``sonarr_parse`` JSONB
+    caches, and ``pending_imports`` - with plain dicts, so a driven path that
+    reaches ANY facade method gets the real store's behaviour instead of an
+    ``AttributeError`` or a silent no-op. Semantics are matched, not just the
+    names: ``update_cache`` partial-merges the supplied scalars and (when given)
+    REPLACES the whole hash set while keeping a single ``None`` marker;
+    ``check_al_id_in_cache`` compares the strftime'd ``updated_at`` strings; and the
+    ``evict_*`` sweeps drop stamp-less / aged-out records like the real SQL DELETE.
+
+    ``get_pending`` returns a fresh (outer) copy, matching the real snapshot
+    semantics; ``save`` / ``close`` are no-ops; ``stats`` / ``integrity_check``
+    report a plausible health snapshot. Arr keys use ``str(arr)`` to mirror
+    production's ``_arr_key``.
     """
 
     def __init__(
@@ -121,23 +159,13 @@ class FakeCacheStore:
         self._pending: dict[str, dict[str, dict[str, Any]]] = {
             str(arr): dict(recs) for arr, recs in (pending or {}).items()
         }
-
-    # -- Sonarr parse cache --
-    def get_sonarr_parse(self, filename: str) -> dict[str, Any] | None:
-        return self._sonarr_parse.get(filename)
-
-    def put_sonarr_parse(self, filename: str, record: dict[str, Any]) -> None:
-        self._sonarr_parse[filename] = record
-
-    # -- pending imports --
-    def get_pending(self, arr: object) -> dict[str, dict[str, Any]]:
-        return dict(self._pending.get(str(arr), {}))
-
-    def put_pending(self, arr: object, infohash: str, record: dict[str, Any]) -> None:
-        self._pending.setdefault(str(arr), {})[infohash] = record
-
-    def drop_pending(self, arr: object, infohash: str) -> None:
-        self._pending.get(str(arr), {}).pop(infohash, None)
+        # Per-entry records: the scalar columns keyed by (arr, al_id), and the
+        # entry's torrent-hash set kept separately (the entries / torrent_hashes
+        # split). An entry present with an empty scalar dict still "exists" - the
+        # existence checks key on membership, never the dict's truthiness.
+        self._entries: dict[tuple[str, int], dict[str, Any]] = {}
+        self._entry_hashes: dict[tuple[str, int], list[str | None]] = {}
+        self._anilist_meta: dict[int, dict[str, Any]] = {}
 
     # -- lifecycle --
     def save(self, *, preview: bool) -> None:
@@ -145,6 +173,118 @@ class FakeCacheStore:
 
     def close(self) -> None:
         pass
+
+    # -- per-entry records (entries + torrent_hashes) --
+    def update_cache(
+        self,
+        arr: Arr,
+        al_id: int,
+        cache_details: CacheRecord | None = None,
+    ) -> bool:
+        """Partial-merge the supplied scalars; replace the hash set if given."""
+
+        details: dict[str, Any] = dict(cache_details) if cache_details else {}
+        updated_at = details.get("updated_at")
+        if isinstance(updated_at, datetime):
+            details["updated_at"] = updated_at.strftime(UPDATED_AT_STR_FORMAT)
+
+        key = (str(arr), al_id)
+        entry = self._entries.setdefault(key, {})
+        for column in _FAKE_SCALAR_FIELDS:
+            if column in details:
+                entry[column] = details[column]
+
+        if "torrent_hashes" in details:
+            hashes: list[str | None] = list(details["torrent_hashes"] or [])
+            # dict.fromkeys de-dupes while keeping the single None marker the
+            # planner dedups on (the real PK leaves NULLs distinct; update_cache
+            # collapses the input to one None just like this).
+            self._entry_hashes[key] = list(dict.fromkeys(hashes))
+        return True
+
+    def check_al_id_in_cache(
+        self,
+        arr: Arr,
+        al_id: int,
+        seadex_entry: EntryRecord,
+    ) -> bool:
+        """True iff the entry exists and its stored timestamp matches the SeaDex one."""
+
+        sd_time_str = seadex_entry.updated_at.strftime(UPDATED_AT_STR_FORMAT)
+        entry = self._entries.get((str(arr), al_id))
+        return entry is not None and entry.get("updated_at") == sd_time_str
+
+    def get_cached_name(self, arr: Arr, al_id: int) -> str | None:
+        return cast("str | None", self.get_cached_field(arr, al_id, CacheField.NAME))
+
+    def get_cached_field(
+        self,
+        arr: Arr,
+        al_id: int,
+        field: CacheField,
+    ) -> object | None:
+        if field == CacheField.TORRENT_HASHES:
+            return self.torrent_hashes(arr, al_id)
+        entry = self._entries.get((str(arr), al_id))
+        return None if entry is None else entry.get(field.value)
+
+    def torrent_hashes(self, arr: Arr, al_id: int) -> list[str | None]:
+        """The entry's hashes, ordered None-first then ascending (mirrors ORDER BY)."""
+
+        stored = self._entry_hashes.get((str(arr), al_id), [])
+        ordered: list[str | None] = [None] if None in stored else []
+        ordered.extend(sorted(h for h in stored if h is not None))
+        return ordered
+
+    # -- AniList meta (TTL-swept) --
+    def iter_anilist_meta(self) -> Iterator[tuple[int, dict[str, Any]]]:
+        yield from list(self._anilist_meta.items())
+
+    def get_anilist_meta(self, al_id: int) -> dict[str, Any] | None:
+        return self._anilist_meta.get(al_id)
+
+    def put_anilist_meta(self, al_id: int, record: dict[str, Any]) -> None:
+        self._anilist_meta[al_id] = record
+
+    def evict_anilist_meta(self, cutoff: datetime) -> int:
+        return _evict_stale(self._anilist_meta, cutoff)
+
+    # -- Sonarr parse cache (TTL-swept) --
+    def iter_sonarr_parse(self) -> Iterator[tuple[str, dict[str, Any]]]:
+        yield from list(self._sonarr_parse.items())
+
+    def get_sonarr_parse(self, filename: str) -> dict[str, Any] | None:
+        return self._sonarr_parse.get(filename)
+
+    def put_sonarr_parse(self, filename: str, record: dict[str, Any]) -> None:
+        self._sonarr_parse[filename] = record
+
+    def evict_sonarr_parse(self, cutoff: datetime) -> int:
+        return _evict_stale(self._sonarr_parse, cutoff)
+
+    # -- pending imports --
+    def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]:
+        return dict(self._pending.get(str(arr), {}))
+
+    def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
+        self._pending.setdefault(str(arr), {})[infohash] = record
+
+    def drop_pending(self, arr: Arr, infohash: str) -> None:
+        self._pending.get(str(arr), {}).pop(infohash, None)
+
+    # -- maintenance: stats, integrity --
+    def stats(self) -> dict[str, int]:
+        return {
+            "entries": len(self._entries),
+            "torrent_hashes": sum(len(h) for h in self._entry_hashes.values()),
+            "anilist_meta": len(self._anilist_meta),
+            "sonarr_parse": len(self._sonarr_parse),
+            "pending_imports": sum(len(recs) for recs in self._pending.values()),
+            "size_bytes": 0,
+        }
+
+    def integrity_check(self) -> str:
+        return "ok"
 
 
 def make_logger(name: str = "seadexarr-test") -> logging.Logger:

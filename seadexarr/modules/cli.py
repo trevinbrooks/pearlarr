@@ -341,6 +341,11 @@ def cache_backup() -> bool:
     dest = sqlite3.connect(paths.cache_backup)
     try:
         source.backup(dest)
+    except sqlite3.DatabaseError as e:
+        # A corrupt/torn source raises here; report it cleanly rather than crashing
+        # the backup command on the very file it is meant to preserve.
+        typer.echo(f"cache backup failed: {e}")
+        return False
     finally:
         dest.close()
         source.close()
@@ -361,10 +366,21 @@ def cache_restore() -> bool:
     if not os.path.exists(paths.cache_backup):
         raise FileNotFoundError(f"File {paths.cache_backup} not found")
 
-    _remove_db_sidecars(paths.cache)
-    if os.path.exists(paths.cache):
-        os.remove(paths.cache)
-    shutil.move(paths.cache_backup, paths.cache)
+    # Replacing cache.db (and clearing its WAL/SHM) while a run is live would clobber
+    # the in-flight database; take the same single-instance lock the runner uses and
+    # refuse rather than corrupt an active run.
+    data_dir = os.path.dirname(os.path.abspath(paths.cache))
+    with single_instance_lock(data_dir) as acquired:
+        if not acquired:
+            typer.echo(
+                f"Another SeaDexArr run is active in {data_dir}; refusing to modify the cache.",
+            )
+            return False
+
+        _remove_db_sidecars(paths.cache)
+        if os.path.exists(paths.cache):
+            os.remove(paths.cache)
+        shutil.move(paths.cache_backup, paths.cache)
 
     return True
 
@@ -378,8 +394,18 @@ def cache_remove() -> bool:
     if not os.path.exists(paths.cache):
         raise FileNotFoundError(f"File {paths.cache} not found")
 
-    os.remove(paths.cache)
-    _remove_db_sidecars(paths.cache)
+    # Unlinking cache.db (and its WAL/SHM) out from under a live run would drop its
+    # database mid-write; take the single-instance lock and refuse if a run holds it.
+    data_dir = os.path.dirname(os.path.abspath(paths.cache))
+    with single_instance_lock(data_dir) as acquired:
+        if not acquired:
+            typer.echo(
+                f"Another SeaDexArr run is active in {data_dir}; refusing to modify the cache.",
+            )
+            return False
+
+        os.remove(paths.cache)
+        _remove_db_sidecars(paths.cache)
 
     return True
 
@@ -392,11 +418,15 @@ def cache_stats() -> bool:
     if not os.path.exists(paths.cache):
         raise FileNotFoundError(f"File {paths.cache} not found")
 
-    # Construct directly (not CacheStore.load) so this read-only command neither
-    # re-stamps the descriptor nor triggers fail-open quarantine.
-    store = CacheStore(sqlite3.connect(paths.cache), paths.cache, on_memory=False)
+    # Open read-only (no descriptor re-stamp, no WAL switch, no fail-open quarantine)
+    # so this diagnostic reflects the file as-is; a corrupt/not-a-database file raises
+    # from the first read, reported cleanly here instead of crashing the command.
+    store = CacheStore.open_readonly(paths.cache)
     try:
         s = store.stats()
+    except sqlite3.DatabaseError as e:
+        typer.echo(f"cache stats: unreadable database ({e})")
+        return False
     finally:
         store.close()
 
@@ -417,9 +447,15 @@ def cache_check() -> bool:
     if not os.path.exists(paths.cache):
         raise FileNotFoundError(f"File {paths.cache} not found")
 
-    store = CacheStore(sqlite3.connect(paths.cache), paths.cache, on_memory=False)
+    # Read-only (reflect the file as-is). A corrupt/not-a-database file raises from
+    # the first read; reporting that bad integrity IS this command's job, so it's a
+    # clean result line, not a traceback.
+    store = CacheStore.open_readonly(paths.cache)
     try:
         result = store.integrity_check()
+    except sqlite3.DatabaseError as e:
+        typer.echo(f"integrity: {e}")
+        return False
     finally:
         store.close()
 

@@ -14,6 +14,7 @@ from unittest import mock
 import qbittorrentapi
 from seadex import Tracker
 
+from seadexarr.modules.cache import CacheStore
 from seadexarr.modules.config import Arr
 from seadexarr.modules.manual_import import (
     ImportReadiness,
@@ -660,14 +661,16 @@ class TestImportWaitModeProperty:
 def _finalize_engine(calls: list[str], *, qbit: object, mode: ImportWaitMode) -> SeaDexArr:
     """A bare engine whose summary / save each append a marker to ``calls``.
 
-    The reporter and cache_store are MagicMocks (so ``side_effect`` is well-typed),
-    so ``_finalize_run``'s ordering can be asserted without a live
-    Sonarr/qBittorrent. ``_run_monitor`` is patched per-test (a recording stub).
+    The reporter is a MagicMock and the cache_store a ``MagicMock(spec=CacheStore)``
+    (so ``side_effect`` is well-typed and a renamed/typo'd cache method AttributeErrors
+    instead of silently returning a truthy Mock), so ``_finalize_run``'s ordering can be
+    asserted without a live Sonarr/qBittorrent. ``_run_monitor`` is patched per-test (a
+    recording stub).
     """
 
     reporter = mock.MagicMock()
     reporter.log_run_summary.side_effect = lambda *a, **k: calls.append("summary")
-    cache_store = mock.MagicMock()
+    cache_store = mock.MagicMock(spec=CacheStore)
     cache_store.get_pending.return_value = {}
     cache_store.save.side_effect = lambda *a, **k: calls.append("save")
     engine = make_bare_instance(

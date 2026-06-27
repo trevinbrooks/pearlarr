@@ -70,6 +70,16 @@ class TestSeaDexPrefetch:
         assert gateway.entry(2) is None
         assert fake.from_id_calls == []  # known-absent -> no fallback call
 
+    def test_second_prefetch_skips_known_absent_id(self) -> None:
+        fake = FakeSeaDex({1: _rec(1)})  # id 2 has no SeaDex entry
+        gateway = _gateway(fake)
+        gateway.prefetch([1, 2])
+        n = len(fake.filter_calls)
+        gateway.prefetch([1, 2])  # both known: 1 cached, 2 prefetched-absent
+        assert len(fake.filter_calls) == n  # no re-fetch of known ids
+        assert gateway.entry(2) is None
+        assert fake.from_id_calls == []  # never fell back to per-id
+
     def test_unprefetched_id_falls_back_to_from_id(self) -> None:
         fake = FakeSeaDex({9: _rec(9)})
         gateway = _gateway(fake)

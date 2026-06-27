@@ -23,3 +23,19 @@ class TestSingleInstanceLock:
         with single_instance_lock(str(d1)) as a, single_instance_lock(str(d2)) as b:
             assert a is True
             assert b is True
+
+    def test_nonexistent_data_dir_degrades_to_noop(self, tmp_path) -> None:
+        # A missing data dir makes os.open fail; the guard must degrade to a
+        # best-effort True (not raise) so the run reaches config validation,
+        # which surfaces the real, clean error.
+        missing = tmp_path / "does-not-exist"
+        with single_instance_lock(str(missing)) as acquired:
+            assert acquired is True
+
+    def test_no_fcntl_branch_degrades_to_noop(self, monkeypatch) -> None:
+        # Where fcntl is unavailable (e.g. Windows) the guard is a no-op.
+        import seadexarr.modules.runlock as rl
+
+        monkeypatch.setattr(rl, "fcntl", None)
+        with single_instance_lock("/nonexistent/path/should/never/be/touched") as acquired:
+            assert acquired is True

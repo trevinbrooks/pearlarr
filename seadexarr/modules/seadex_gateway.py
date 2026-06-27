@@ -14,6 +14,7 @@ cache never crosses runs (entries are stable within a run, may change between).
 
 import logging
 from collections.abc import Iterable
+from itertools import batched
 
 import httpx
 from seadex import EntryNotFoundError, EntryRecord, SeaDexEntry
@@ -60,7 +61,7 @@ class SeaDexGateway:
             al_ids (Iterable[int]): Candidate AniList IDs for this run.
         """
 
-        missing = sorted({i for i in al_ids if i not in self._entry_cache})
+        missing = sorted({i for i in al_ids if i not in self._entry_cache and i not in self._prefetched})
         if not missing:
             return
 
@@ -72,8 +73,8 @@ class SeaDexGateway:
             extra={"line_style": "grey50"},
         )
 
-        for start in range(0, len(missing), SEADEX_BATCH_SIZE):
-            chunk = missing[start:start + SEADEX_BATCH_SIZE]
+        for chunk in batched(missing, SEADEX_BATCH_SIZE):
+            chunk = list(chunk)
             try:
                 fetched = self._fetch_batch(chunk)
             except httpx.HTTPError:

@@ -16,6 +16,7 @@ On a platform without ``fcntl`` (e.g. Windows) the guard degrades to a no-op
 """
 
 import contextlib
+import errno
 import logging
 import os
 from collections.abc import Generator
@@ -38,8 +39,10 @@ def single_instance_lock(
 
     Yields ``True`` if this process acquired the lock (no other run is active in
     that directory), or ``False`` if another run already holds it - the caller
-    should skip and retry next cycle. Always yields ``True`` where ``fcntl`` is
-    unavailable.
+    should skip and retry next cycle. Degrades to a best-effort ``True`` (no real
+    lock) where ``fcntl`` is unavailable, the lock file can't be created
+    (missing/unwritable ``data_dir``), or the filesystem can't honor ``flock``
+    (e.g. ENOLCK) - so a guard failure never crashes or silently skips the run.
 
     Args:
         data_dir (str): The run's data directory (where ``cache.db`` lives).
@@ -51,13 +54,30 @@ def single_instance_lock(
         return
 
     lock_path = os.path.join(data_dir, LOCK_FILENAME)
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError as e:
+        # The lock file can't be created (missing/unwritable ``data_dir``).
+        # Degrade to a no-op lock so the run proceeds to config validation,
+        # which surfaces the real, clean error - best-effort, like the
+        # ``fcntl``-unavailable fallback above.
+        if logger is not None:
+            logger.warning(f"Could not create run lock {lock_path}: {e}; proceeding without it")
+        yield True
+        return
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            # Another process holds the lock (LOCK_NB -> immediate failure).
-            yield False
+        except OSError as e:
+            if e.errno in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES):
+                # Another process holds the lock (LOCK_NB -> immediate failure).
+                yield False
+                return
+            # The filesystem can't honor flock (e.g. ENOLCK on some NFS/FUSE
+            # mounts). Degrade to a no-op lock rather than misreport contention.
+            if logger is not None:
+                logger.warning(f"Could not lock {lock_path}: {e}; proceeding without it")
+            yield True
             return
         if logger is not None:
             logger.debug(f"Acquired run lock {lock_path}")
