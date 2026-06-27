@@ -7,7 +7,6 @@ built bare (``object.__new__``) so no live Sonarr/Radarr client is constructed.
 """
 
 import logging
-import types
 from unittest import mock
 
 from seadexarr.modules.config import Arr
@@ -31,6 +30,7 @@ from seadexarr.modules.seadex_types import (
 )
 
 from .builders import (
+    FakeCacheStore,
     make_bare_instance,
     make_config,
     make_logger,
@@ -187,7 +187,7 @@ def _make_sonarr_for_import(
         _ep_list_cache={},
         _parse_info_cache={},
         _warned_unplaceable=set(),
-        cache_store=types.SimpleNamespace(data={}),
+        cache_store=FakeCacheStore(),
     )
     return strat, sonarr
 

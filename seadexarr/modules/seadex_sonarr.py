@@ -735,12 +735,11 @@ class SonarrSync(ArrSync[SonarrItem]):
         # mapping the add flow resolved) instead of re-deriving identity from
         # Sonarr's title parse.
         ordered_episode_ids = [ep.id for ep in ep_list if ep.id]
-        # Genuinely-open cache JSON: each record is the persisted parse entry
+        # Per-file parse records are read straight from the cache facade
+        # (``get_sonarr_parse``): each is the persisted parse entry
         # ``{"fetched_at": str, "episodes": [...]}`` written by
-        # ``parse_episodes_from_seadex``, so the record value is ``dict[str, Any]``.
-        parse_cache: dict[str, dict[str, Any]] = self.cache_store.data.get(
-            "sonarr_parse_cache", {},
-        )
+        # ``parse_episodes_from_seadex`` in the same run (staged writes are visible
+        # to reads on the same connection).
         added_at = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
 
         pending_seeds: dict[str, PendingImport] = {}
@@ -772,7 +771,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 file_episode_map: dict[str, list[int]] = {}
                 seasons: set[int] = set()
                 for base in video_files:
-                    record = parse_cache.get(base)
+                    record = self.cache_store.get_sonarr_parse(base)
                     if not record:
                         continue
                     parsed: list[dict[str, Any]] = record.get("episodes", [])
@@ -932,11 +931,12 @@ class SonarrSync(ArrSync[SonarrItem]):
         ``dict[str, Any]``.
         """
 
-        # ``cache_store.data`` is ``dict[str, Any]``, so the per-Arr store walk is
-        # ``Any``; the ``isinstance`` below defensively narrows each value to a
-        # dict record (cast to the open cache-JSON shape) before reading it.
-        store: dict[str, Any] = self.cache_store.data.get("pending_imports", {}).get(
-            Arr.SONARR.value, {},
+        # ``get_pending`` returns a snapshot ``{infohash -> record}``; its values are
+        # typed ``dict[str, Any]`` but the cache is untyped on disk (a hand-edited /
+        # legacy db can carry a non-dict record), so widen to ``Any`` and keep the
+        # defensive ``isinstance`` narrow + cast to the open cache-JSON shape.
+        store: dict[str, Any] = cast(
+            "dict[str, Any]", self.cache_store.get_pending(Arr.SONARR),
         )
         records: list[dict[str, Any]] = []
         for raw in store.values():
@@ -1676,13 +1676,23 @@ class SonarrSync(ArrSync[SonarrItem]):
             seadex_dict (dict): Dictionary of seadex releases
         """
 
-        # filename -> {"fetched_at": <str>, "episodes": [{"season", "episode"}]},
-        # shared across runs via cache.json; fetched_at lets entries expire (TTL)
-        parse_cache = self.cache_store.data.setdefault("sonarr_parse_cache", {})
+        # Per filename the cache facade stores
+        # {"fetched_at": <str>, "episodes": [{"season", "episode"}]}, shared across
+        # runs via the cache db; fetched_at lets entries expire (TTL).
         now_str = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
         # Compute the TTL cutoff once for the whole run of files rather than
         # re-deriving datetime.now() in the per-file freshness check below.
         cutoff = datetime.now() - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS)
+
+        # Evict parse records aged past that same cutoff so the block stops growing
+        # without bound. Staged like the writes below (committed at the run's save
+        # point, discarded in a preview); only the first call per run finds stale
+        # rows, later calls evict nothing.
+        evicted = self.cache_store.evict_sonarr_parse(cutoff)
+        if evicted:
+            self.logger.debug(
+                indent_string(f"Evicted {evicted} stale Sonarr parse record(s)"),
+            )
 
         for release_group_item in seadex_dict.values():
 
@@ -1715,9 +1725,13 @@ class SonarrSync(ArrSync[SonarrItem]):
                     # Use the cached parse if it's still fresh, otherwise query
                     # Sonarr and remember the result with a timestamp so it
                     # expires (re-validates) rather than being trusted forever
-                    record = parse_cache.get(f)
-                    if self._sonarr_parse_is_fresh(record, cutoff):
-                        parsed = record["episodes"]
+                    record = self.cache_store.get_sonarr_parse(f)
+                    # ``record`` is the open cache record ``dict[str, Any] | None``;
+                    # the freshness check already implies a non-None dict whose
+                    # ``episodes`` mirror ``sonarr.parse``'s ``list[dict[str, int]]``,
+                    # so pin that element type back on (the store is untyped JSON).
+                    if record is not None and self._sonarr_parse_is_fresh(record, cutoff):
+                        parsed: list[dict[str, int]] = record["episodes"]
                     else:
                         parsed = self.sonarr.parse(f)
 
@@ -1731,7 +1745,9 @@ class SonarrSync(ArrSync[SonarrItem]):
                             # series isn't in Sonarr yet
                             continue
 
-                        parse_cache[f] = {"fetched_at": now_str, "episodes": parsed}
+                        self.cache_store.put_sonarr_parse(
+                            f, {"fetched_at": now_str, "episodes": parsed},
+                        )
 
                     size = sizes[sd_file_idx]
                     for ep in parsed:

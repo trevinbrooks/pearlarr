@@ -7,18 +7,16 @@ cached ``/parse`` results and the ``(season, episode) -> id`` index. Built bare
 (no live Sonarr) with a seeded in-memory parse cache.
 """
 
-import types
-
 from seadexarr.modules.manual_import import normalize_basename
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import SonarrEpisode
 
-from .builders import make_sonarr_sync, rg_group, url_item
+from .builders import FakeCacheStore, make_sonarr_sync, rg_group, url_item
 
 
 def _strat(parse_cache: dict) -> SonarrSync:
     return make_sonarr_sync(
-        cache_store=types.SimpleNamespace(data={"sonarr_parse_cache": parse_cache}),
+        cache_store=FakeCacheStore(sonarr_parse=parse_cache),
     )
 
 

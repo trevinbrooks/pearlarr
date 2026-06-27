@@ -565,9 +565,10 @@ def manual_import_in_flight(
 class PendingImport:
     """A durable record of one added torrent awaiting a series-pinned import.
 
-    Written at the add site (keyed by ``infohash`` in
-    ``cache_store.data["pending_imports"]``) and read back to drive the manual
-    import. It carries every field we have *authoritative* data for - the
+    Written at the add site through the cache facade (keyed by ``infohash`` via
+    ``cache_store.put_pending``/``get_pending``/``drop_pending``) and read back to
+    drive the manual import. It carries every field we have *authoritative* data
+    for - the
     Sonarr ``series_id``, our own ``(basename -> episode ids)`` mapping, the
     SeaDex release group, dual-audio flag and season - so the import never has
     to trust Sonarr's blind title parse.

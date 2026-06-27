@@ -63,13 +63,9 @@ class AniListGateway:
         save_cache for the writing side).
         """
 
-        meta = self._cache.data.get("anilist_meta", {})
-        if not meta:
-            return
-
         cutoff = datetime.now() - timedelta(days=ANILIST_CACHE_TTL_DAYS)
         loaded = 0
-        for id_str, record in meta.items():
+        for al_id, record in self._cache.iter_anilist_meta():
             if not record_is_fresh(
                 record,
                 payload_key="data",
@@ -77,10 +73,7 @@ class AniListGateway:
                 cutoff=cutoff,
             ):
                 continue
-            try:
-                self.al_cache[int(id_str)] = record["data"]
-            except (TypeError, ValueError):
-                continue
+            self.al_cache[al_id] = record["data"]
             loaded += 1
 
         if loaded:
@@ -101,26 +94,33 @@ class AniListGateway:
                 don't persist them (the gate lives in ``CacheStore.save``).
         """
 
-        meta = self._cache.data.setdefault("anilist_meta", {})
         now = datetime.now()
         now_str = now.strftime(UPDATED_AT_STR_FORMAT)
         cutoff = now - timedelta(days=ANILIST_CACHE_TTL_DAYS)
 
         written = 0
         for al_id, data in self.al_cache.items():
-            id_str = str(al_id)
             if record_is_fresh(
-                meta.get(id_str),
+                self._cache.get_anilist_meta(al_id),
                 payload_key="data",
                 ttl_days=ANILIST_CACHE_TTL_DAYS,
                 cutoff=cutoff,
             ):
                 continue
-            meta[id_str] = {"fetched_at": now_str, "data": data}
+            self._cache.put_anilist_meta(al_id, {"fetched_at": now_str, "data": data})
             written += 1
 
-        if written:
+        # Drop meta records aged past the same TTL we refuse to read, so the block
+        # stops accumulating dead weight (the un-evicted-stale problem). Skipped in
+        # preview (which persists nothing anyway).
+        evicted = 0 if preview else self._cache.evict_anilist_meta(cutoff)
+
+        if written or evicted:
             self._cache.save(preview=preview)
+        if evicted:
+            self.logger.debug(
+                indent_string(f"Evicted {evicted} stale AniList meta record(s)"),
+            )
 
     def prefetch(self, al_ids: Iterable[int], *, preview: bool) -> None:
         """Warm the AniList cache for a set of ids in batched requests

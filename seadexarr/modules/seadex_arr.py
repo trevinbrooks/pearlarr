@@ -96,18 +96,19 @@ class RunDeps:
         cls,
         arr: Arr,
         config: str = "config.yml",
-        cache: str = "cache.json",
+        cache: str = "cache.db",
         logger: logging.Logger | None = None,
         *,
         mappings: MappingResolver,
         app_config: AppConfig | None = None,
+        cache_legacy: str | None = None,
     ) -> "RunDeps":
         """Construct the shared collaborators in dependency order.
 
         Args:
             arr (Arr): Which Arr is being run; selects the per-arr config submodel.
             config (str, optional): Path to a config file. Defaults to "config.yml".
-            cache (str, optional): Path to a cache file. Defaults to "cache.json".
+            cache (str, optional): Path to the cache database. Defaults to "cache.db".
             logger (logging.Logger | None, optional): Logger to use. Defaults to
                 None, which builds one from the config's log level.
             mappings (MappingResolver): The id-mapping resolver, built once by the
@@ -116,6 +117,8 @@ class RunDeps:
             app_config (AppConfig | None, optional): A pre-loaded config injected by
                 the CLI so a scheduled cycle reads and validates the file once per
                 run. Defaults to None, which loads it here.
+            cache_legacy (str | None, optional): Path to a legacy ``cache.json`` to
+                migrate into ``cache.db`` when no db exists yet. Defaults to None.
         """
 
         # Load, validate, and expose the config file as typed settings. AppConfig
@@ -160,8 +163,14 @@ class RunDeps:
         # Load the cache (or create its schema) and reconcile the descriptor against
         # the current package version + config checksum. Each arr builds its own
         # store that reads the file fresh, so a scheduled Radarr->Sonarr cycle hands
-        # off through cache.json rather than shared memory.
-        cache_store = CacheStore.load(cache, config_checksum=app_config.checksum())
+        # off through cache.db rather than shared memory. A legacy cache.json (if
+        # present and there's no db yet) is migrated on the first real save.
+        cache_store = CacheStore.load(
+            cache,
+            config_checksum=app_config.checksum(),
+            migrate_from=cache_legacy,
+            logger=logger,
+        )
 
         # AniList client gateway: owns the in-memory meta cache (al_cache) and the
         # persisted anilist_meta block.
@@ -280,10 +289,16 @@ class SeaDexArr:
         self._ctx = RunContext(arr=arr, dry_run=False)
 
     def close(self) -> None:
-        """Close the shared HTTP session (release pooled connections)."""
+        """Release run-scoped resources: the HTTP session and the cache db.
+
+        Called once per arr run from ``cli.py``'s ``finally`` (each arr owns its
+        own ``CacheStore`` - no sharing - so this never double-closes). The cache
+        ``close`` rolls back anything not flushed by the end-of-run save point.
+        """
         # self.session is the injected RunDeps.session (a requests.Session, never
         # None), so it can be closed unconditionally.
         self.session.close()
+        self.cache_store.close()
 
     def check_al_id_in_cache(
         self,
@@ -722,7 +737,9 @@ class SeaDexArr:
             and url_item.hash in pending_seeds
         ):
             pending = pending_seeds[url_item.hash]
-            self._pending_store()[url_item.hash] = pending.to_json()
+            self.cache_store.put_pending(
+                self._ctx.arr, url_item.hash, pending.to_json(),
+            )
             self._ctx.pending_imports.append(pending)
 
     def _is_preview(self) -> bool:
@@ -903,6 +920,10 @@ class SeaDexArr:
                 strategy.item_anilist_ids(item, log_ignored=False),
             )
         self._anilist.prefetch(prefetch_ids, preview=self._is_preview())
+        # Bulk-fetch SeaDex entries for the same ids in batched OR-filter queries,
+        # collapsing the per-id from_id round-trips (one per library id, just to read
+        # updated_at) into a handful. entry() then serves from this warmed cache.
+        self._seadex.prefetch(prefetch_ids)
 
         for item_idx, item in enumerate(all_items):
 
@@ -1227,28 +1248,24 @@ class SeaDexArr:
     # and importing need a real qBittorrent client.
 
     def _pending_store(self) -> dict[str, Any]:
-        """The per-Arr ``{infohash -> record}`` store inside the cache.
+        """A snapshot of the per-Arr ``{infohash -> record}`` pending store.
 
-        Lazily creates the ``pending_imports`` block and the per-Arr sub-block
-        (mirroring the ``sonarr_parse_cache`` setdefault pattern), so the first
-        write and every later read share one durable, idempotent map.
+        Thin read wrapper over :meth:`CacheStore.get_pending`: returns a fresh
+        plain-dict copy each call (mutating it does NOT touch the store - the two
+        mutators go straight through the facade, :meth:`CacheStore.put_pending`
+        in ``_register_pending_import`` and :meth:`CacheStore.drop_pending` in
+        ``_drop_pending``). Every other caller only iterates it read-only.
 
         Each value is the JSON form of a :class:`PendingImport`
         (``to_json()``/``from_json(raw: dict[str, Any])``), i.e. genuinely-open
-        cache JSON. The map is typed ``dict[str, Any]`` (values ``Any``, not
-        ``dict[str, Any]``) precisely because the cache is untyped on disk: a
-        hand-edited or legacy file can carry a non-dict value, so consumers
-        defensively ``isinstance(raw, dict)``-narrow each value before reading
-        it (see :meth:`_snapshot_pending_for_series`, mirroring
-        ``_series_pending_records``).
+        cache JSON. ``get_pending`` types its values as ``dict[str, Any]``, but the
+        cache is untyped on disk (a hand-edited or legacy db can carry a non-dict
+        value), so the values are widened back to ``Any`` and consumers defensively
+        ``isinstance(raw, dict)``-narrow each one before reading it (see
+        :meth:`_snapshot_pending_for_series`, mirroring ``_series_pending_records``).
         """
 
-        # ``cache_store.data`` is ``dict[str, Any]``, so ``setdefault`` returns
-        # ``Any``; the inner block is the persisted PendingImport JSON map.
-        store: dict[str, Any] = self.cache_store.data.setdefault(
-            "pending_imports", {},
-        ).setdefault(self._ctx.arr.value, {})
-        return store
+        return cast("dict[str, Any]", self.cache_store.get_pending(self._ctx.arr))
 
     def _poll_torrent(self, infohash: str) -> TorrentProbe:
         """Poll qBittorrent once for a torrent's terminal/in-progress state.
@@ -1698,7 +1715,7 @@ class SeaDexArr:
     def _drop_pending(self, infohash: str) -> None:
         """Remove a pending record from both the durable store and the run list."""
 
-        self._pending_store().pop(infohash, None)
+        self.cache_store.drop_pending(self._ctx.arr, infohash)
         self._ctx.pending_imports = [
             p for p in self._ctx.pending_imports if p.infohash != infohash
         ]

@@ -1,6 +1,8 @@
+import contextlib
 import logging
 import os
 import shutil
+import sqlite3
 import time
 from datetime import datetime, timedelta
 from typing import NamedTuple
@@ -8,10 +10,12 @@ from typing import NamedTuple
 import typer
 from pydantic import ValidationError
 
+from .cache import CacheStore
 from .config import AppConfig, Arr
 from .log import setup_logger
 from .manual_import import ImportWaitMode
 from .mappings import MappingResolver
+from .runlock import single_instance_lock
 from .seadex_arr import RunDeps, SeaDexArr
 from .seadex_radarr import RadarrSync
 from .seadex_sonarr import SonarrSync
@@ -30,13 +34,16 @@ class _Paths(NamedTuple):
     config: str
     cache: str
     cache_backup: str
+    # Legacy JSON cache, seeded into ``cache.db`` on the first real run and then
+    # retired to ``cache.json.migrated``.
+    cache_legacy: str
 
 
 def _paths() -> _Paths:
     """Resolve the config/cache file paths under CONFIG_DIR (cwd if unset).
 
-    The CONFIG_DIR env var and the three filenames live here only, so every
-    command shares one definition instead of re-joining them inline.
+    The CONFIG_DIR env var and the filenames live here only, so every command
+    shares one definition instead of re-joining them inline.
     """
 
     # TODO: Switch to pathlib and use user_data_dir() for config/cache location
@@ -44,9 +51,18 @@ def _paths() -> _Paths:
     config_dir = os.getenv("SEADEX_ARR_DATA_DIR", os.path.abspath(os.path.join(file_dir, "..", "..")))
     return _Paths(
         config=os.path.join(config_dir, "config.yml"),
-        cache=os.path.join(config_dir, "cache.json"),
-        cache_backup=os.path.join(config_dir, "cache.backup.json"),
+        cache=os.path.join(config_dir, "cache.db"),
+        cache_backup=os.path.join(config_dir, "cache.backup.db"),
+        cache_legacy=os.path.join(config_dir, "cache.json"),
     )
+
+
+def _remove_db_sidecars(db_path: str) -> None:
+    """Remove a SQLite db's WAL/SHM sidecar files if present (best-effort)."""
+
+    for suffix in ("-wal", "-shm"):
+        with contextlib.suppress(OSError):
+            os.remove(db_path + suffix)
 
 
 def _build_shared(
@@ -116,6 +132,7 @@ def _run_arrs(
     config: str,
     cache: str,
     logger: logging.Logger,
+    cache_legacy: str | None = None,
     dry_run: bool = False,
     import_wait_mode: ImportWaitMode | None = None,
 ) -> bool:
@@ -134,47 +151,60 @@ def _run_arrs(
     if not arrs:
         return True
 
-    shared = _build_shared(config, logger)
-    if shared is None:
-        return False
-
-    app_config, mappings = shared
-    for arr_name, item_id in arrs:
-        services = None
-        try:
-            deps = RunDeps.build(
-                arr_name,
-                config,
-                cache,
-                logger,
-                mappings=mappings,
-                app_config=app_config,
+    # Guard against two runs sharing one data directory (cache.db + WAL); SQLite
+    # keeps the file safe, but overlapping runs would duplicate work and could race
+    # on imports. A different data dir gets its own lock, so intentional parallel
+    # instances are still fine.
+    data_dir = os.path.dirname(os.path.abspath(cache))
+    with single_instance_lock(data_dir, logger=logger) as acquired:
+        if not acquired:
+            logger.warning(
+                f"Another SeaDexArr run is active in {data_dir}; skipping this run.",
             )
-            services = SeaDexArr(deps, arr_name)
-            match arr_name:
-                case Arr.SONARR:
-                    services.run_sync(
-                        SonarrSync(deps, services),
-                        arr=arr_name,
-                        item_id=item_id,
-                        dry_run=dry_run,
-                        import_wait_mode=import_wait_mode,
-                    )
-                case Arr.RADARR:
-                    services.run_sync(
-                        RadarrSync(deps, services),
-                        arr=arr_name,
-                        item_id=item_id,
-                        dry_run=dry_run,
-                        import_wait_mode=import_wait_mode,
-                    )
-        except Exception:
-            logger.error(f"Unexpected error during {arr_name.capitalize()} run", exc_info=True)
-        finally:
-            if services is not None:
-                services.close()
+            return False
 
-    return True
+        shared = _build_shared(config, logger)
+        if shared is None:
+            return False
+
+        app_config, mappings = shared
+        for arr_name, item_id in arrs:
+            services = None
+            try:
+                deps = RunDeps.build(
+                    arr_name,
+                    config,
+                    cache,
+                    logger,
+                    mappings=mappings,
+                    app_config=app_config,
+                    cache_legacy=cache_legacy,
+                )
+                services = SeaDexArr(deps, arr_name)
+                match arr_name:
+                    case Arr.SONARR:
+                        services.run_sync(
+                            SonarrSync(deps, services),
+                            arr=arr_name,
+                            item_id=item_id,
+                            dry_run=dry_run,
+                            import_wait_mode=import_wait_mode,
+                        )
+                    case Arr.RADARR:
+                        services.run_sync(
+                            RadarrSync(deps, services),
+                            arr=arr_name,
+                            item_id=item_id,
+                            dry_run=dry_run,
+                            import_wait_mode=import_wait_mode,
+                        )
+            except Exception:
+                logger.error(f"Unexpected error during {arr_name.capitalize()} run", exc_info=True)
+            finally:
+                if services is not None:
+                    services.close()
+
+        return True
 
 
 # Default command, schedule run
@@ -218,7 +248,8 @@ def run_scheduled() -> None:
         # skipped, so it's retried next pass rather than crashing.
         _run_arrs(
             [(Arr.RADARR, None), (Arr.SONARR, None)],
-            config=paths.config, cache=paths.cache, logger=logger,
+            config=paths.config, cache=paths.cache, cache_legacy=paths.cache_legacy,
+            logger=logger,
         )
 
         next_run_time = datetime.now() + timedelta(hours=schedule_time)
@@ -271,8 +302,8 @@ def run_single(
     # arr was requested but the shared config/mappings couldn't be built, so a
     # programmatic caller can tell a no-op-on-failure from a real run.
     return _run_arrs(
-        arrs, config=paths.config, cache=paths.cache, logger=logger, dry_run=dry_run,
-        import_wait_mode=import_wait_mode,
+        arrs, config=paths.config, cache=paths.cache, cache_legacy=paths.cache_legacy,
+        logger=logger, dry_run=dry_run, import_wait_mode=import_wait_mode,
     )
 
 
@@ -295,47 +326,102 @@ def config_init() -> bool:
 # Cache commands
 @seadexarr_cache.command("backup")
 def cache_backup() -> bool:
-    """Backup cache file.
+    """Back up the cache database to ``cache.backup.db``.
 
-    Will rename cache to cache.backup.json
+    Uses the SQLite online-backup API so a consistent snapshot is taken even if a
+    WAL has uncommitted pages, rather than a raw file copy that could miss them.
     """
 
     paths = _paths()
 
-    shutil.copyfile(paths.cache, paths.cache_backup)
+    if not os.path.exists(paths.cache):
+        raise FileNotFoundError(f"File {paths.cache} not found")
+
+    source = sqlite3.connect(paths.cache)
+    dest = sqlite3.connect(paths.cache_backup)
+    try:
+        source.backup(dest)
+    finally:
+        dest.close()
+        source.close()
 
     return True
 
 
 @seadexarr_cache.command("restore")
 def cache_restore() -> bool:
-    """Restore cache file.
+    """Restore the cache database from ``cache.backup.db``.
 
-    Will rename cache.backup.json to cache.json
+    Replaces ``cache.db`` (and clears any stale WAL/SHM sidecars first so the
+    restored snapshot isn't shadowed by a leftover WAL).
     """
 
     paths = _paths()
 
-    if os.path.exists(paths.cache_backup):
-        shutil.move(paths.cache_backup, paths.cache)
-    else:
+    if not os.path.exists(paths.cache_backup):
         raise FileNotFoundError(f"File {paths.cache_backup} not found")
+
+    _remove_db_sidecars(paths.cache)
+    if os.path.exists(paths.cache):
+        os.remove(paths.cache)
+    shutil.move(paths.cache_backup, paths.cache)
 
     return True
 
 
 @seadexarr_cache.command("remove")
 def cache_remove() -> bool:
-    """Remove cache file.
-
-    Will remove cache.json
-    """
+    """Remove the cache database (``cache.db`` and its WAL/SHM sidecars)."""
 
     paths = _paths()
 
-    if os.path.exists(paths.cache):
-        os.remove(paths.cache)
-    else:
+    if not os.path.exists(paths.cache):
         raise FileNotFoundError(f"File {paths.cache} not found")
 
+    os.remove(paths.cache)
+    _remove_db_sidecars(paths.cache)
+
+    return True
+
+
+@seadexarr_cache.command("stats")
+def cache_stats() -> bool:
+    """Print cache health: per-block row counts and on-disk size."""
+
+    paths = _paths()
+    if not os.path.exists(paths.cache):
+        raise FileNotFoundError(f"File {paths.cache} not found")
+
+    # Construct directly (not CacheStore.load) so this read-only command neither
+    # re-stamps the descriptor nor triggers fail-open quarantine.
+    store = CacheStore(sqlite3.connect(paths.cache), paths.cache, on_memory=False)
+    try:
+        s = store.stats()
+    finally:
+        store.close()
+
+    size_mib = s["size_bytes"] / (1024 * 1024)
+    typer.echo(
+        f"entries={s['entries']}  torrent_hashes={s['torrent_hashes']}  "
+        f"anilist_meta={s['anilist_meta']}  sonarr_parse={s['sonarr_parse']}  "
+        f"pending_imports={s['pending_imports']}  size={size_mib:.2f} MiB",
+    )
+    return True
+
+
+@seadexarr_cache.command("check")
+def cache_check() -> bool:
+    """Run a SQLite integrity check on the cache database and print the result."""
+
+    paths = _paths()
+    if not os.path.exists(paths.cache):
+        raise FileNotFoundError(f"File {paths.cache} not found")
+
+    store = CacheStore(sqlite3.connect(paths.cache), paths.cache, on_memory=False)
+    try:
+        result = store.integrity_check()
+    finally:
+        store.close()
+
+    typer.echo(f"integrity: {result}")
     return True

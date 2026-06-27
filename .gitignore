@@ -218,6 +218,13 @@ __marimo__/
 # SeaDexArr runtime / user files
 config.yml
 cache.json
+cache.json.migrated
+cache.db
+cache.db-wal
+cache.db-shm
+cache.backup.db
+cache.db.corrupt-*
+.seadexarr.lock
 logs/
 
 # Downloaded mapping data

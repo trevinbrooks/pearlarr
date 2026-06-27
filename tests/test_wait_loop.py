@@ -8,7 +8,6 @@ mandatory, not just a speed-up. The engine is built bare (``object.__new__``
 via ``make_bare_instance``) so no live qBittorrent login or disk I/O happens.
 """
 
-import types
 from typing import cast, override
 from unittest import mock
 
@@ -30,6 +29,7 @@ from seadexarr.modules.torrents import AddOutcome
 from seadexarr.modules.wait_view import Phase, TorrentView, WaitSnapshot, WaitView
 
 from .builders import (
+    FakeCacheStore,
     import_probe,
     make_bare_instance,
     make_config,
@@ -216,12 +216,11 @@ def make_orchestration_engine(
         _config=make_config(**config_overrides),
         _active_strategy=strategy,
         _reporter=mock.MagicMock(),
-        cache_store=types.SimpleNamespace(data={}),
+        cache_store=FakeCacheStore(),
     )
     engine._ctx = RunContext(arr=Arr.SONARR, pending_imports=list(pending or []))
-    store = engine._pending_store()
     for record in store_records or []:
-        store[record["infohash"]] = record
+        engine.cache_store.put_pending(Arr.SONARR, record["infohash"], record)
     return engine
 
 
@@ -669,7 +668,7 @@ def _finalize_engine(calls: list[str], *, qbit: object, mode: ImportWaitMode) ->
     reporter = mock.MagicMock()
     reporter.log_run_summary.side_effect = lambda *a, **k: calls.append("summary")
     cache_store = mock.MagicMock()
-    cache_store.data = {}
+    cache_store.get_pending.return_value = {}
     cache_store.save.side_effect = lambda *a, **k: calls.append("save")
     engine = make_bare_instance(
         SeaDexArr,
@@ -804,7 +803,7 @@ def make_add_engine(
         _torrents=torrents,
         _active_strategy=mock.MagicMock(),
         _reporter=mock.MagicMock(),
-        cache_store=types.SimpleNamespace(data={}),
+        cache_store=FakeCacheStore(),
     )
     engine._ctx = RunContext(arr=Arr.SONARR)
     return engine

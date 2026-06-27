@@ -42,7 +42,13 @@ from seadexarr.modules.seadex_types import (
     SonarrEpisode,
 )
 
-from .builders import make_config, make_logger, make_sonarr_sync, pending_import
+from .builders import (
+    FakeCacheStore,
+    make_config,
+    make_logger,
+    make_sonarr_sync,
+    pending_import,
+)
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "sonarr"
 
@@ -521,7 +527,7 @@ def _yamada_strat() -> tuple[Any, mock.MagicMock, list[str]]:
         _ep_list_cache={},
         _parse_info_cache={},
         _warned_unplaceable=set(),
-        cache_store=types.SimpleNamespace(data={}),
+        cache_store=FakeCacheStore(),
     )
     return strat, sonarr, seadex_files
 

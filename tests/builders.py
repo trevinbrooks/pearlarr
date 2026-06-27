@@ -101,6 +101,52 @@ def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
     return obj
 
 
+class FakeCacheStore:
+    """In-memory stand-in for the SQLite ``CacheStore`` facade.
+
+    Backs the pending-import and Sonarr-parse facades with plain dicts so the
+    orchestration / seed / strategy tests can seed and assert the durable store
+    without a real database. ``get_pending`` returns a fresh copy (matching the
+    real store's snapshot semantics); ``save``/``close`` are no-ops. Pending keys
+    use ``str(arr)`` to mirror production's ``_arr_key``.
+    """
+
+    def __init__(
+        self,
+        *,
+        sonarr_parse: dict[str, dict[str, Any]] | None = None,
+        pending: dict[str, dict[str, dict[str, Any]]] | None = None,
+    ) -> None:
+        self._sonarr_parse: dict[str, dict[str, Any]] = dict(sonarr_parse or {})
+        self._pending: dict[str, dict[str, dict[str, Any]]] = {
+            str(arr): dict(recs) for arr, recs in (pending or {}).items()
+        }
+
+    # -- Sonarr parse cache --
+    def get_sonarr_parse(self, filename: str) -> dict[str, Any] | None:
+        return self._sonarr_parse.get(filename)
+
+    def put_sonarr_parse(self, filename: str, record: dict[str, Any]) -> None:
+        self._sonarr_parse[filename] = record
+
+    # -- pending imports --
+    def get_pending(self, arr: object) -> dict[str, dict[str, Any]]:
+        return dict(self._pending.get(str(arr), {}))
+
+    def put_pending(self, arr: object, infohash: str, record: dict[str, Any]) -> None:
+        self._pending.setdefault(str(arr), {})[infohash] = record
+
+    def drop_pending(self, arr: object, infohash: str) -> None:
+        self._pending.get(str(arr), {}).pop(infohash, None)
+
+    # -- lifecycle --
+    def save(self, *, preview: bool) -> None:
+        del preview
+
+    def close(self) -> None:
+        pass
+
+
 def make_logger(name: str = "seadexarr-test") -> logging.Logger:
     """A quiet logger for the characterization tests.
 
