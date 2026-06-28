@@ -1194,7 +1194,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         candidates_by_basename = self._candidate_files(candidates)
         ep_id_map = build_episode_id_map(list(episodes_by_id.values()))
-        authoritative_map, unplaceable = self._repair_authoritative_map(
+        authoritative_map, unplaceable = self._assign_from_resolved(
             pending,
             candidates_by_basename,
             ep_id_map,
@@ -1303,7 +1303,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             )
         return by_basename
 
-    def _repair_authoritative_map(
+    def _assign_from_resolved(
         self,
         pending: PendingImport,
         candidates_by_basename: dict[str, CandidateFile],
@@ -1311,25 +1311,12 @@ class SonarrSync(ArrSync[SonarrItem]):
     ) -> tuple[dict[str, list[int]], list[str]]:
         """Build the final ``basename -> episode ids`` map from OUR resolved set.
 
-        Identity is assigned by :func:`assign_episode_ids` off each file's
-        series-agnostic parse against the live series episode map: a file's
+        Identity is assigned off each file's series-agnostic parse against the live
+        series episode map - never Sonarr's series-matched title parse: a file's
         ``(season, episode)`` is honored only *inside* our resolved set, an
         absolute-numbered pack is mapped positionally onto it, and anything ambiguous
         is returned as skipped (the caller warns and leaves it - the chosen safe
-        posture). Sonarr's series-matched title parse is never consulted.
-
-        Returns ``(merged_map, unplaceable_basenames)``.
-        """
-
-        return self._assign_from_resolved(pending, candidates_by_basename, ep_id_map)
-
-    def _assign_from_resolved(
-        self,
-        pending: PendingImport,
-        candidates_by_basename: dict[str, CandidateFile],
-        ep_id_map: dict[tuple[int, int], int],
-    ) -> tuple[dict[str, list[int]], list[str]]:
-        """Assign the on-disk video files to our resolved episode set.
+        posture).
 
         Files our grab-time ``file_episode_map`` already covers (the add-time
         assignment) are taken as-is - no need to re-parse what we resolved at grab
@@ -1341,6 +1328,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         found nothing), :func:`assign_episode_ids` falls back to the live series map
         for exactly named files (see ``allow_unscoped``). Fresh placements self-heal
         onto the record; SeaDex order keeps output and the absolute leg stable.
+
+        Returns ``(merged_map, unplaceable_basenames)``.
         """
 
         on_disk = {
