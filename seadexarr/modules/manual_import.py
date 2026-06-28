@@ -256,7 +256,11 @@ class Outcome(Enum):
     dropped: bool
 
     def __init__(
-        self, word: str, detail: str, category: OutcomeCategory, dropped: bool,
+        self,
+        word: str,
+        detail: str,
+        category: OutcomeCategory,
+        dropped: bool,
     ) -> None:
         self.word = word
         self.detail = detail
@@ -314,7 +318,11 @@ class TorrentProbe:
 
 
 def sanitize_torrent_telemetry(
-    progress: object, dlspeed: object, eta: object, completed: object, size: object,
+    progress: object,
+    dlspeed: object,
+    eta: object,
+    completed: object,
+    size: object,
 ) -> tuple[float, int | None, int | None, int | None, int | None]:
     """Fold one qBittorrent info row's raw telemetry into sanitized fields.
 
@@ -755,9 +763,7 @@ def all_targets_done(statuses: dict[int, EpisodeFileStatus]) -> bool:
     but-unidentifiable file never makes us drop a record prematurely.
     """
 
-    return bool(statuses) and all(
-        s is EpisodeFileStatus.RECOMMENDED for s in statuses.values()
-    )
+    return bool(statuses) and all(s is EpisodeFileStatus.RECOMMENDED for s in statuses.values())
 
 
 def targets_needing_import(statuses: dict[int, EpisodeFileStatus]) -> set[int]:
@@ -767,11 +773,7 @@ def targets_needing_import(statuses: dict[int, EpisodeFileStatus]) -> set[int]:
     excluded (it is done and must not be overwritten).
     """
 
-    return {
-        ep_id
-        for ep_id, status in statuses.items()
-        if status is not EpisodeFileStatus.RECOMMENDED
-    }
+    return {ep_id for ep_id, status in statuses.items() if status is not EpisodeFileStatus.RECOMMENDED}
 
 
 def episode_ids_for_parsed(
@@ -870,9 +872,7 @@ def _exact_episode_ids(
 def _has_no_signal(info: ParsedFileInfo | None) -> bool:
     """Whether a file carries no usable episode number at all (parse miss)."""
 
-    return info is None or (
-        not info.episode_numbers and not info.absolute_episode_numbers
-    )
+    return info is None or (not info.episode_numbers and not info.absolute_episode_numbers)
 
 
 def assign_episode_ids(
@@ -935,7 +935,10 @@ def assign_episode_ids(
     # series map when there is no set to scope against.
     for name in ordered_files:
         ids = _exact_episode_ids(
-            parsed_by_file.get(name), ep_id_map, resolved_set, allow_unscoped,
+            parsed_by_file.get(name),
+            ep_id_map,
+            resolved_set,
+            allow_unscoped,
         )
         if ids and not any(i in used for i in ids):
             assigned[name] = ids
@@ -953,8 +956,8 @@ def assign_episode_ids(
 
     clean_absolute = (
         bool(abs_by_file)
-        and len(abs_by_file) == len(deferred)        # every leftover has one absolute
-        and len(abs_by_file) == len(leftover_ids)    # 1:1 with the leftover ids
+        and len(abs_by_file) == len(deferred)  # every leftover has one absolute
+        and len(abs_by_file) == len(leftover_ids)  # 1:1 with the leftover ids
         and len(set(abs_by_file.values())) == len(abs_by_file)  # no shared absolute (restart numbering)
     )
 
@@ -962,8 +965,12 @@ def assign_episode_ids(
     if clean_absolute:
         for name, _abs in sorted(abs_by_file.items(), key=lambda kv: kv[1]):
             assigned[name] = [leftover_ids.pop(0)]
-    elif len(deferred) == 1 and len(leftover_ids) == 1 and _has_no_signal(
-        parsed_by_file.get(deferred[0]),
+    elif (
+        len(deferred) == 1
+        and len(leftover_ids) == 1
+        and _has_no_signal(
+            parsed_by_file.get(deferred[0]),
+        )
     ):
         # Degenerate positional: one leftover file, one leftover episode, and the
         # file carries NO usable number - it is that episode (the single-file
@@ -1096,7 +1103,11 @@ def plan_import_files(
         # the non-recommended / unidentifiable one we grabbed to replace).
         decisions.append(
             ImportDecision(
-                basename, ImportAction.IMPORT, candidate.path, candidate.quality, import_ids,
+                basename,
+                ImportAction.IMPORT,
+                candidate.path,
+                candidate.quality,
+                import_ids,
             ),
         )
     return decisions
@@ -1283,10 +1294,7 @@ def _find_definition(
         quality = definition.get("quality")
         if quality is None:
             continue
-        if (
-            quality.get("resolution") == resolution
-            and QualitySource.parse(quality.get("source")) is source
-        ):
+        if quality.get("resolution") == resolution and QualitySource.parse(quality.get("source")) is source:
             return quality
     return None
 
@@ -1389,9 +1397,7 @@ def resolve_language_objects(
     """
 
     by_name: dict[str, Language] = {
-        name.casefold(): definition
-        for definition in lang_defs
-        if isinstance((name := definition.get("name")), str)
+        name.casefold(): definition for definition in lang_defs if isinstance((name := definition.get("name")), str)
     }
     resolved: list[Language] = []
     # ``names or []`` and the str guard keep a blank/None or malformed configured

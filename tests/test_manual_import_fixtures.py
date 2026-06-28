@@ -110,7 +110,11 @@ class TestQualityResolution:
         defs: list[QualityDefinition] = load_fixture("qualitydefinitions.json")
         sonarr = ParsedQuality(source=QualitySource.BLURAY_RAW, resolution=1080)
         model = resolve_quality(
-            sonarr, ParsedQuality(), ParsedQuality(), defs, candidate_model=None,
+            sonarr,
+            ParsedQuality(),
+            ParsedQuality(),
+            defs,
+            candidate_model=None,
         )
         quality = model.get("quality")
         assert quality is not None
@@ -125,12 +129,11 @@ class TestQualityResolution:
         raw = load_fixture("manualimport_yamada.json")
         candidates = [ManualImportCandidate.from_api(c) for c in raw]
         dvd = next(
-            c
-            for c in candidates
-            if c.quality is not None and (c.quality.get("quality") or {}).get("name") == "DVD"
+            c for c in candidates if c.quality is not None and (c.quality.get("quality") or {}).get("name") == "DVD"
         )
         assert quality_axes_from_model(dvd.quality) == ParsedQuality(
-            source=QualitySource.DVD, resolution=480,
+            source=QualitySource.DVD,
+            resolution=480,
         )
 
 
@@ -349,7 +352,10 @@ class TestAssignGuards:
         ep_id_map = {(1, 1): 8033}
 
         result = assign_episode_ids(
-            ["s01e01.mkv", "extra.mkv"], parsed, [8033, 8044], ep_id_map,
+            ["s01e01.mkv", "extra.mkv"],
+            parsed,
+            [8033, 8044],
+            ep_id_map,
         )
 
         assert result.assigned == {"s01e01.mkv": [8033], "extra.mkv": [8044]}
@@ -423,9 +429,7 @@ class TestCommandResourceFixture:
         return [CommandResource.from_api(c) for c in load_fixture("command_list.json")]
 
     def test_started_manual_import_parses_message_and_files(self) -> None:
-        started = next(
-            c for c in self._commands() if c.name == "ManualImport" and c.status == "started"
-        )
+        started = next(c for c in self._commands() if c.name == "ManualImport" and c.status == "started")
         assert started.message == "Processing file 4 of 8"
         assert started.files  # body.files were parsed
         first = started.files[0]
@@ -442,9 +446,7 @@ class TestCommandResourceFixture:
     def test_folder_import_has_no_download_id(self) -> None:
         # The Tensei Vodes season-pack import is folder-based: its files carry a
         # folderName + path but NO downloadId, so the guard must fall back to path.
-        folder = next(
-            c for c in self._commands() if c.files and c.files[0].series_id == 153
-        )
+        folder = next(c for c in self._commands() if c.files and c.files[0].series_id == 153)
         assert folder.files[0].download_id is None
         assert "Vodes" in (folder.files[0].path or "")
 
@@ -464,19 +466,28 @@ class TestManualImportInFlightFixture:
         # The SAO download has a started + queued ManualImport sharing its
         # downloadId -> a fresh import for it would stack a duplicate.
         assert manual_import_in_flight(
-            self._commands(), _SAO_DOWNLOAD_ID, "/downloads", set(),
+            self._commands(),
+            _SAO_DOWNLOAD_ID,
+            "/downloads",
+            set(),
         )
 
     def test_unrelated_download_id_is_not_in_flight(self) -> None:
         # A different infohash with no path/episode overlap -> proceed.
         assert not manual_import_in_flight(
-            self._commands(), "ffffffffffffffffffffffffffffffffffffffff", "/nowhere", set(),
+            self._commands(),
+            "ffffffffffffffffffffffffffffffffffffffff",
+            "/nowhere",
+            set(),
         )
 
     def test_folder_import_matches_by_episode_id(self) -> None:
         # The Vodes folder import carries no downloadId; episode 5645 is ours.
         assert manual_import_in_flight(
-            self._commands(), "no-such-hash", "/nowhere", {5645},
+            self._commands(),
+            "no-such-hash",
+            "/nowhere",
+            {5645},
         )
 
 
@@ -501,10 +512,7 @@ def _yamada_strat() -> tuple[Any, mock.MagicMock, list[str]]:
     """
 
     episodes = [SonarrEpisode.from_api(e) for e in load_fixture("episodes_213_yamada.json")]
-    candidates = [
-        ManualImportCandidate.from_api(c)
-        for c in load_fixture("manualimport_yamada.json")
-    ]
+    candidates = [ManualImportCandidate.from_api(c) for c in load_fixture("manualimport_yamada.json")]
     seadex_files = [c.path.rsplit("/", 1)[-1] for c in candidates if c.path]
 
     sonarr = mock.MagicMock()

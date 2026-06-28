@@ -31,10 +31,7 @@ def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
             run_start = run_end = episode
     runs.append((run_start, run_end))
 
-    return ", ".join(
-        f"E{start:02d}" if start == end else f"E{start:02d}-E{end:02d}"
-        for start, end in runs
-    )
+    return ", ".join(f"E{start:02d}" if start == end else f"E{start:02d}-E{end:02d}" for start, end in runs)
 
 
 def format_episode_coverage(episodes: list[EpisodeRecord]) -> list[tuple[str, str]] | None:
@@ -69,8 +66,7 @@ def format_episode_coverage(episodes: list[EpisodeRecord]) -> list[tuple[str, st
         return None
 
     return [
-        (f"S{season:02d}", format_episode_ranges(episodes_by_season[season]))
-        for season in sorted(episodes_by_season)
+        (f"S{season:02d}", format_episode_ranges(episodes_by_season[season])) for season in sorted(episodes_by_season)
     ]
 
 

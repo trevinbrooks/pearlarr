@@ -82,7 +82,6 @@ build = [
     "hatchling>=1.27.0",
 ]
 static-analysis = [
-    "autopep8~=2.0",
     "ruff~=0.15.0",
 ]
 test = [
@@ -183,6 +182,11 @@ ignore = [
     "RUF001",  # ambiguous-unicode-character-string
     "RUF012",  # mutable-class-default
     "RUF100",  # unused-noqa (flake8 has slightly different behavior)
+    # Owned by `ruff format` (it adds trailing commas and normalises implicit string
+    # concatenation), so enforcing them as lint rules fights the formatter. ruff's own
+    # `format` conflict warning names exactly these two; the rest of COM/ISC stays on.
+    "COM812",  # missing-trailing-comma
+    "ISC001",  # single-line-implicit-string-concatenation
 ]
 select = [
     "E",      # pycodestyle Error
@@ -227,66 +231,3 @@ docstring-quotes = "double"
 multiline-quotes = "double"
 inline-quotes = "double"
 avoid-escape = false
-
-[tool.autopep8]
-max_line_length = 120
-recursive = true
-exit-code = true
-jobs = 0
-select = [
-    "E101",
-    "E112",
-    "E113",
-    "E115",
-    "E116",
-    "E117",
-    "E121",
-    "E122",
-    "E123",
-    "E124",
-    "E125",
-    "E126",
-    "E127",
-    "E128",
-    "E129",
-    "E131",
-    "E201",
-    "E202",
-    "E203",
-    "E211",
-    "E221",
-    "E222",
-    "E223",
-    "E224",
-    "E225",
-    "E226",
-    "E227",
-    "E228",
-    "E231",
-    "E241",
-    "E242",
-    "E251",
-    "E252",
-    "E261",
-    "E262",
-    "E265",
-    "E266",
-    "E271",
-    "E272",
-    "E273",
-    "E274",
-    "E275",
-    "E301",
-    "E302",
-    "E303",
-    "E304",
-    "E305",
-    "E306",
-    "E502",
-    "E701",
-    "E702",
-    "E704",
-    "W391",
-    "W504",
-]
-exclude = "*venv*,.idea,.vscode,build,docs/_build"

@@ -150,7 +150,8 @@ class RichConsoleHandler(logging.Handler):
             # renders exc_info), so nothing is lost from the log file.
             if record.exc_info:
                 label, style = self.LEVEL_BADGES.get(
-                    record.levelno, ("ERROR", "bold red"),
+                    record.levelno,
+                    ("ERROR", "bold red"),
                 )
                 line = Text(f"{label:<8} ", style=style)
                 line.append(message)
@@ -159,7 +160,9 @@ class RichConsoleHandler(logging.Handler):
                 if exc_type is not None and exc_value is not None:
                     self.console.print(
                         Traceback.from_exception(
-                            exc_type, exc_value, exc_tb,
+                            exc_type,
+                            exc_value,
+                            exc_tb,
                             show_locals=True,
                             max_frames=self.MAX_TRACEBACK_FRAMES,
                         ),
@@ -195,7 +198,9 @@ class RichConsoleHandler(logging.Handler):
                 # run summary's "issues" tally; here, position and value_style
                 # carry the meaning.
                 self.console.print(
-                    self._render_kv(kv), highlight=False, soft_wrap=True,
+                    self._render_kv(kv),
+                    highlight=False,
+                    soft_wrap=True,
                 )
                 return
 
@@ -334,7 +339,8 @@ def setup_logger(
 
     # Define the log message format for the log files
     logfile_formatter = logging.Formatter(
-        fmt="%(asctime)s %(levelname)s: %(message)s", datefmt="%m/%d/%y %I:%M %p",
+        fmt="%(asctime)s %(levelname)s: %(message)s",
+        datefmt="%m/%d/%y %I:%M %p",
     )
 
     # Create the file handler. Rotation is performed manually above (the
@@ -342,7 +348,10 @@ def setup_logger(
     # opens a fresh file each run (mode="w"). maxBytes is intentionally unset,
     # so size-based rollover never fires - hence no backupCount here.
     handler = RotatingFileHandler(
-        log_file, delay=True, mode="w", encoding="utf-8",
+        log_file,
+        delay=True,
+        mode="w",
+        encoding="utf-8",
     )
     handler.setFormatter(logfile_formatter)
 
@@ -411,9 +420,7 @@ ENTRY_LABEL_OFFSET = STATE_WIDTH + 1
 # and the value, so subtract it here. Derived from the same constants as the
 # title column, so the two can't drift.
 DETAIL_INDENT = 2
-DETAIL_KEY_WIDTH = (
-    (len(INDENT) + ENTRY_LABEL_OFFSET) - (DETAIL_INDENT * len(INDENT)) - 1
-)
+DETAIL_KEY_WIDTH = (len(INDENT) + ENTRY_LABEL_OFFSET) - (DETAIL_INDENT * len(INDENT)) - 1
 
 
 class EntryState(StrEnum):

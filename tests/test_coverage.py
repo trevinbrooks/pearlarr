@@ -54,7 +54,7 @@ class TestEpisodesFromEpList:
 
     def test_missing_only_drops_episodes_with_files(self) -> None:
         eps = [
-            sonarr_ep(1, 1, episode_file_id=0),   # missing (no file)
+            sonarr_ep(1, 1, episode_file_id=0),  # missing (no file)
             sonarr_ep(1, 2, episode_file_id=42),  # has a file
         ]
         result = episodes_from_ep_list(eps, missing_only=True)

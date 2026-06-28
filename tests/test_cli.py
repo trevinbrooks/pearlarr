@@ -54,7 +54,7 @@ class TestCacheRoundTrip:
 
         assert cache_restore() is True
         assert not (tmp_path / "cache.backup.db").exists()  # consumed by the move
-        assert not (tmp_path / "cache.db-wal").exists()      # stale sidecar cleared
+        assert not (tmp_path / "cache.db-wal").exists()  # stale sidecar cleared
 
         # The restored db still holds the original entry.
         store = CacheStore.open_readonly(str(tmp_path / "cache.db"))

@@ -54,24 +54,33 @@ _MEDIA_FIELDS = """
 """
 
 # Single-id query
-QUERY = """
+QUERY = (
+    """
 query ($id: Int) {
   Media (id: $id, type: ANIME) {
-""" + _MEDIA_FIELDS + """
+"""
+    + _MEDIA_FIELDS
+    + """
   }
 }
 """
+)
 
 # Batched query: many Media in one request via id_in
-BATCH_QUERY = """
+BATCH_QUERY = (
+    """
 query ($ids: [Int]) {
   Page (perPage: %d) {
     media (id_in: $ids, type: ANIME) {
-""" % ANILIST_BATCH_SIZE + _MEDIA_FIELDS + """
+"""
+    % ANILIST_BATCH_SIZE
+    + _MEDIA_FIELDS
+    + """
     }
   }
 }
 """
+)
 
 
 def _errors_are_retryable(body: dict[str, Any] | None) -> bool:
@@ -173,16 +182,16 @@ def _post_with_retry(query: str, variables: dict[str, Any]) -> dict[str, Any]:
     """
 
     for attempt in range(MAX_RETRIES + 1):
-
         try:
             resp = requests.post(
-                API_URL, json={"query": query, "variables": variables},
+                API_URL,
+                json={"query": query, "variables": variables},
             )
         except requests.RequestException:
             # Network blip: back off and retry, then give up with an empty result
             if attempt >= MAX_RETRIES:
                 return {}
-            time.sleep(min(2 ** attempt, MAX_BACKOFF))
+            time.sleep(min(2**attempt, MAX_BACKOFF))
             continue
 
         retryable = resp.status_code in RETRYABLE_STATUS
@@ -203,7 +212,7 @@ def _post_with_retry(query: str, variables: dict[str, Any]) -> dict[str, Any]:
         if retryable and attempt < MAX_RETRIES:
             # Prefer the server's Retry-After (seconds); otherwise exponential
             retry_after = resp.headers.get("Retry-After")
-            wait = 2 ** attempt
+            wait = 2**attempt
             if retry_after is not None:
                 with contextlib.suppress(TypeError, ValueError):
                     wait = float(retry_after)

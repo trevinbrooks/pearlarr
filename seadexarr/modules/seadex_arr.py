@@ -155,8 +155,7 @@ class RunDeps:
                 client.auth_log_in()
             except qbittorrentapi.LoginFailed:
                 raise ValueError(
-                    "qBittorrent login failed - check the qbittorrent host and "
-                    "credentials in your config",
+                    "qBittorrent login failed - check the qbittorrent host and credentials in your config",
                 )
             qbit = client
 
@@ -389,14 +388,10 @@ class SeaDexArr:
 
         # Filter out any tags
         ignore_tags = set(self._config.seadex.ignore_tags)
-        final_torrent_list = [
-            t for t in sd_entry.torrents if ignore_tags.isdisjoint(t.tags)
-        ]
+        final_torrent_list = [t for t in sd_entry.torrents if ignore_tags.isdisjoint(t.tags)]
 
         # Filter down by allowed trackers
-        final_torrent_list = [
-            t for t in final_torrent_list if t.tracker.casefold() in self._config.seadex.trackers
-        ]
+        final_torrent_list = [t for t in final_torrent_list if t.tracker.casefold() in self._config.seadex.trackers]
 
         # Pull out torrents tagged as best, so long as at least one
         # is tagged as best. Keep a copy so we can fall back if audio
@@ -450,9 +445,7 @@ class SeaDexArr:
                 urls = release_group_item.urls
                 has_public = any(u.is_public for u in urls.values())
                 if has_public:
-                    release_group_item.urls = {
-                        url: u for url, u in urls.items() if u.is_public
-                    }
+                    release_group_item.urls = {url: u for url, u in urls.items() if u.is_public}
 
         return seadex_release_groups
 
@@ -489,8 +482,7 @@ class SeaDexArr:
             )
 
         srgs_to_grab = input(
-            "Which release group(s)? Enter one number, a comma-separated list, "
-            "or leave blank for all: ",
+            "Which release group(s)? Enter one number, a comma-separated list, or leave blank for all: ",
         )
 
         srgs_to_grab = srgs_to_grab.split(",")
@@ -503,7 +495,6 @@ class SeaDexArr:
         if len(srgs_to_grab) > 0:
             seadex_dict_filtered = {}
             for srg_idx in srgs_to_grab:
-
                 try:
                     srg = all_srgs[int(srg_idx)]
                 except IndexError:
@@ -599,9 +590,11 @@ class SeaDexArr:
 
         for srg, srg_item in torrent_dict.items():
             for url, url_item in srg_item.urls.items():
-
                 add_result = self._add_one_url(
-                    srg, url, url_item, pending_seeds=pending_seeds,
+                    srg,
+                    url,
+                    url_item,
+                    pending_seeds=pending_seeds,
                 )
                 if add_result is None:
                     continue
@@ -735,7 +728,9 @@ class SeaDexArr:
         ):
             pending = pending_seeds[url_item.hash]
             self.cache_store.put_pending(
-                self._ctx.arr, url_item.hash, pending.to_json(),
+                self._ctx.arr,
+                url_item.hash,
+                pending.to_json(),
             )
             self._ctx.pending_imports.append(pending)
 
@@ -879,7 +874,8 @@ class SeaDexArr:
         # concrete ArrSync structurally satisfies, so no invariant-ItemT cast.
         self._active_strategy = strategy
         self._import_wait_mode = resolve_wait_mode(
-            import_wait_mode, self._config.imports.wait_mode,
+            import_wait_mode,
+            self._config.imports.wait_mode,
         )
 
         # Start a fresh run context (stats tally + clock + counter snapshot)
@@ -923,13 +919,14 @@ class SeaDexArr:
         self._seadex.prefetch(prefetch_ids)
 
         for item_idx, item in enumerate(all_items):
-
             try:
-
                 item_title = item.title
 
                 self._reporter.log_arr_item_start(
-                    arr, item_title, item_idx + 1, n_items,
+                    arr,
+                    item_title,
+                    item_idx + 1,
+                    n_items,
                 )
 
                 # If we're not monitored, then skip if ignore_unmonitored is switched on
@@ -968,17 +965,14 @@ class SeaDexArr:
                 # series block. Sonarr returns its series id; Radarr returns None
                 # (no pending records), short-circuiting the snapshot.
                 sid = strategy.pending_import_series_id(item)
-                if (
-                    sid is not None
-                    and self._import_wait_mode is not ImportWaitMode.OFF
-                    and not self._is_preview()
-                ):
+                if sid is not None and self._import_wait_mode is not ImportWaitMode.OFF and not self._is_preview():
                     self._snapshot_pending_for_series(sid)
 
             except Exception as e:
                 title = getattr(item, "title", "unknown title")
                 self.logger.error(
-                    f"{title}: unexpected error: {e}", exc_info=True,
+                    f"{title}: unexpected error: {e}",
+                    exc_info=True,
                 )
                 continue
 
@@ -1196,7 +1190,8 @@ class SeaDexArr:
         # download-flag, public_only and tracker filters still apply, so only
         # releases that would actually be grabbed are counted.
         n_torrents_added, results = self.add_torrent(
-            torrent_dict=seadex_dict, pending_seeds=pending_seeds,
+            torrent_dict=seadex_dict,
+            pending_seeds=pending_seeds,
         )
 
         # Log the action block now the outcome is known, so the status reads
@@ -1206,19 +1201,12 @@ class SeaDexArr:
             seadex_dict,
             results,
             dry_run=self._is_preview(),
-            monitor_active=(
-                self._import_wait_mode is not ImportWaitMode.OFF
-                and not self._is_preview()
-            ),
+            monitor_active=(self._import_wait_mode is not ImportWaitMode.OFF and not self._is_preview()),
         )
 
         # Push a message to Discord if we've added anything (never on a
         # preview - it's an outward notification)
-        if (
-            self._notifier.enabled
-            and n_torrents_added > 0
-            and not self._is_preview()
-        ):
+        if self._notifier.enabled and n_torrents_added > 0 and not self._is_preview():
             self._notifier.push(
                 arr_title=item_title,
                 al_title=anilist_title,
@@ -1304,7 +1292,13 @@ class SeaDexArr:
             return TorrentProbe(WaitOutcome.ERRORED, None, progress, speed_bps, eta_s, bytes_done, bytes_total)
         if t.state_enum.is_complete or progress >= 1.0:
             return TorrentProbe(
-                WaitOutcome.COMPLETE, t.content_path, progress, speed_bps, eta_s, bytes_done, bytes_total,
+                WaitOutcome.COMPLETE,
+                t.content_path,
+                progress,
+                speed_bps,
+                eta_s,
+                bytes_done,
+                bytes_total,
             )
         return TorrentProbe(None, None, progress, speed_bps, eta_s, bytes_done, bytes_total)
 
@@ -1334,12 +1328,14 @@ class SeaDexArr:
             return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
         try:
             return self._active_strategy.import_completed(
-                pending, path, force=force, at_deadline=at_deadline,
+                pending,
+                path,
+                force=force,
+                at_deadline=at_deadline,
             )
         except Exception:
             self.logger.error(
-                f"Manual import for pending {pending.infohash} raised; "
-                "leaving it pending for a later run",
+                f"Manual import for pending {pending.infohash} raised; leaving it pending for a later run",
                 exc_info=True,
             )
             return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
@@ -1354,7 +1350,9 @@ class SeaDexArr:
         return {p.infohash for p in self._ctx.pending_imports}
 
     def _reconcile_one(
-        self, infohash: str, raw: dict[str, Any],
+        self,
+        infohash: str,
+        raw: dict[str, Any],
     ) -> tuple[PendingImport, PendingState]:
         """Poll one carried-over record once and fold it to a :class:`PendingState`.
 
@@ -1373,7 +1371,10 @@ class SeaDexArr:
         probe = ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
         if poll.outcome is WaitOutcome.COMPLETE and poll.content_path:
             probe = self._try_import_completed(
-                pending, poll.content_path, force=True, at_deadline=False,
+                pending,
+                poll.content_path,
+                force=True,
+                at_deadline=False,
             )
 
         state = classify_pending(poll.outcome, probe.files_present)
@@ -1420,7 +1421,11 @@ class SeaDexArr:
                 continue
             pending, state = self._reconcile_one(infohash, record)
             self._reporter.log_pending_snapshot(
-                self._ctx, state, pending.title or infohash, pending.coverage, pending.url,
+                self._ctx,
+                state,
+                pending.title or infohash,
+                pending.coverage,
+                pending.url,
             )
 
     def _reconcile_remaining(self) -> None:
@@ -1523,7 +1528,9 @@ class SeaDexArr:
         active: set[str] = {r.infohash for r in records}
         views: dict[str, TorrentView] = {
             r.infohash: TorrentView(
-                key=r.infohash, label=r.title or r.infohash, phase=Phase.QUEUED,
+                key=r.infohash,
+                label=r.title or r.infohash,
+                phase=Phase.QUEUED,
             )
             for r in records
         }
@@ -1614,7 +1621,10 @@ class SeaDexArr:
 
         def terminal(outcome: Outcome) -> None:
             views[h] = TorrentView(
-                key=h, label=label, phase=Phase.TERMINAL, outcome=outcome,
+                key=h,
+                label=label,
+                phase=Phase.TERMINAL,
+                outcome=outcome,
             )
             results.append(WaitOutcomeRow(key=h, label=label, outcome=outcome))
             if outcome.dropped:
@@ -1654,7 +1664,10 @@ class SeaDexArr:
         import_start.setdefault(h, now())
         at_deadline = now() - import_start[h] >= import_timeout
         probe = self._try_import_completed(
-            record, poll.content_path, force=at_deadline, at_deadline=at_deadline,
+            record,
+            poll.content_path,
+            force=at_deadline,
+            at_deadline=at_deadline,
         )
         if probe.files_present:
             terminal(Outcome.IMPORTED)
@@ -1697,15 +1710,13 @@ class SeaDexArr:
                 added_at = datetime.strptime(pending.added_at, UPDATED_AT_STR_FORMAT)
             except (TypeError, ValueError):
                 self.logger.debug(
-                    f"Pending import {infohash} has an unparseable timestamp; "
-                    "dropping as expired",
+                    f"Pending import {infohash} has an unparseable timestamp; dropping as expired",
                 )
                 self._drop_pending(infohash)
                 continue
             if added_at < cutoff:
                 self.logger.info(
-                    f"Pending import {infohash} older than "
-                    f"{self._config.imports.pending_max_age_days} days; dropping",
+                    f"Pending import {infohash} older than {self._config.imports.pending_max_age_days} days; dropping",
                 )
                 self._drop_pending(infohash)
 
@@ -1713,9 +1724,7 @@ class SeaDexArr:
         """Remove a pending record from both the durable store and the run list."""
 
         self.cache_store.drop_pending(self._ctx.arr, infohash)
-        self._ctx.pending_imports = [
-            p for p in self._ctx.pending_imports if p.infohash != infohash
-        ]
+        self._ctx.pending_imports = [p for p in self._ctx.pending_imports if p.infohash != infohash]
 
     def _finalize_run(self, arr: Arr) -> None:
         """Shared run tail: reconcile + tally, print the summary, THEN block.
@@ -1761,7 +1770,8 @@ class SeaDexArr:
         # reason - here the save runs after, to also capture the monitor's drops).
         try:
             if active and self._import_wait_mode in (
-                ImportWaitMode.BLOCKING, ImportWaitMode.HYBRID,
+                ImportWaitMode.BLOCKING,
+                ImportWaitMode.HYBRID,
             ):
                 result = self._run_monitor()
                 # Best-effort walk-away graft, run only when something actually
@@ -1810,7 +1820,10 @@ class SeaDexArr:
     ) -> bool:
         """Log the active-entry header (delegates to RunReporter)."""
         return self._reporter.log_al_title(
-            self._ctx, anilist_title, sd_entry, coverage=coverage,
+            self._ctx,
+            anilist_title,
+            sd_entry,
+            coverage=coverage,
         )
 
     def log_cached_entry(
@@ -1825,4 +1838,3 @@ class SeaDexArr:
     def log_no_seadex_releases(self) -> bool:
         """Log a no-suitable-releases outcome (delegates to RunReporter)."""
         return self._reporter.log_no_seadex_releases(self._ctx)
-

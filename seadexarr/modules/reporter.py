@@ -202,9 +202,7 @@ class RunReporter:
         # configured at all - annotate (and later dim) the summary either way.
         is_dry_run = is_preview
         if is_dry_run:
-            note = "nothing grabbed" if has_client else (
-                "no client; nothing grabbed"
-            )
+            note = "nothing grabbed" if has_client else ("no client; nothing grabbed")
             rule_title += f"   (DRY RUN — {note})"
         self.logger.info(
             title,
@@ -332,9 +330,7 @@ class RunReporter:
         summary_kv("up to date", str(stats.up_to_date))
         summary_kv(
             "unchanged",
-            f"{stats.cached}  (since last run)"
-            if stats.cached
-            else "0",
+            f"{stats.cached}  (since last run)" if stats.cached else "0",
             value_style="grey50",
         )
         if stats.no_mappings:
@@ -351,9 +347,7 @@ class RunReporter:
         summary_kv(
             "issues",
             f"{count_noun(n_warnings, 'warning')}, {count_noun(n_errors, 'error')}",
-            value_style="bold red"
-            if n_errors
-            else ("yellow" if n_warnings else None),
+            value_style="bold red" if n_errors else ("yellow" if n_warnings else None),
         )
         if ctx.started_monotonic is not None:
             elapsed = self.log_fmt.format_elapsed(
@@ -364,14 +358,11 @@ class RunReporter:
         # A single guidance line if anything was skipped purely for being
         # private-only, rather than repeating it per-entry during the run. Kept
         # at indent 1, so it reads as part of the summary block, not detached.
-        public_only_skipped = any(
-            "public_only" in (item.reason or "") for item in needs
-        )
+        public_only_skipped = any("public_only" in (item.reason or "") for item in needs)
         if public_only_skipped:
             self.logger.info(
                 indent_string(
-                    "Tip: set public_only: false to allow private trackers, or "
-                    "wait for a public release.",
+                    "Tip: set public_only: false to allow private trackers, or wait for a public release.",
                     level=1,
                 ),
                 extra={"line_style": "grey50"},
@@ -517,20 +508,14 @@ class RunReporter:
             incomplete (bool): Flag the SeaDex entry as incomplete. Defaults False
         """
 
-        rows = [
-            row for row in (("files", coverage), ("link", url)) if row[1]
-        ]
+        rows = [row for row in (("files", coverage), ("link", url)) if row[1]]
         if not rows:
             return False
 
         for idx, (label, value) in enumerate(rows):
             # The incomplete flag rides the last line so it reads once, next to
             # the URL when there is one
-            tail = (
-                "(marked incomplete on SeaDex)"
-                if incomplete and idx == len(rows) - 1
-                else None
-            )
+            tail = "(marked incomplete on SeaDex)" if incomplete and idx == len(rows) - 1 else None
             self.log_fmt.detail(label, value, value_style=style, tail=tail)
 
         return True
@@ -697,7 +682,9 @@ class RunReporter:
         # as the focal line, not a no-op like the gray unchanged rows
         self.log_entry_status(EntryState.CHECKING, anilist_title, style=None)
         self.log_entry_coverage(
-            coverage, sd_entry.url, incomplete=sd_entry.is_incomplete,
+            coverage,
+            sd_entry.url,
+            incomplete=sd_entry.is_incomplete,
         )
 
         return True
@@ -827,7 +814,6 @@ class RunReporter:
 
         # The release group(s) we recommend (those flagged for download), tags too
         for srg, srg_item in seadex_dict.items():
-
             urls = srg_item.urls
             if any(u.download for u in urls.values()):
                 tags = srg_item.tags

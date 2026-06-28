@@ -91,20 +91,15 @@ def _build_shared(
         app_config = AppConfig.load(config)
     except FileNotFoundError:
         logger.error(
-            f"No config file at {config} - a starter template was written; "
-            "fill it in and re-run. Skipping this run.",
+            f"No config file at {config} - a starter template was written; fill it in and re-run. Skipping this run.",
         )
         return None
     except ValidationError as e:
         # Surface the specific bad keys (nested path -> message) without a traceback,
         # then skip + retry next cycle - same contract as the missing-file branch.
-        details = "\n".join(
-            f"  - {'.'.join(str(part) for part in err['loc'])}: {err['msg']}"
-            for err in e.errors()
-        )
+        details = "\n".join(f"  - {'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in e.errors())
         logger.error(
-            f"Invalid configuration in {config}:\n{details}\n"
-            "Fix the listed keys and re-run. Skipping this run.",
+            f"Invalid configuration in {config}:\n{details}\nFix the listed keys and re-run. Skipping this run.",
         )
         return None
     except Exception:
@@ -129,6 +124,7 @@ def _build_shared(
         return None
 
     return app_config, resolver
+
 
 def _run_arrs(
     arrs: list[tuple[Arr, int | None]],
@@ -246,7 +242,6 @@ def run_scheduled() -> None:
     schedule_time = float(os.getenv("SCHEDULE_TIME", "6"))
 
     while True:
-
         logger = setup_logger(log_level="INFO")
         logger.info("Starting SeaDexArr in scheduled mode")
 
@@ -259,7 +254,9 @@ def run_scheduled() -> None:
         # skipped, so it's retried next pass rather than crashing.
         _run_arrs(
             [(Arr.RADARR, None), (Arr.SONARR, None)],
-            config=paths.config, cache=paths.cache, cache_legacy=paths.cache_legacy,
+            config=paths.config,
+            cache=paths.cache,
+            cache_legacy=paths.cache_legacy,
             logger=logger,
         )
 
@@ -313,8 +310,13 @@ def run_single(
     # arr was requested but the shared config/mappings couldn't be built, so a
     # programmatic caller can tell a no-op-on-failure from a real run.
     return _run_arrs(
-        arrs, config=paths.config, cache=paths.cache, cache_legacy=paths.cache_legacy,
-        logger=logger, dry_run=dry_run, import_wait_mode=import_wait_mode,
+        arrs,
+        config=paths.config,
+        cache=paths.cache,
+        cache_legacy=paths.cache_legacy,
+        logger=logger,
+        dry_run=dry_run,
+        import_wait_mode=import_wait_mode,
     )
 
 

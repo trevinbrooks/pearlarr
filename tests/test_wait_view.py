@@ -37,7 +37,9 @@ _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 
 
 def _logger_with_console(
-    *, force_terminal: bool, width: int = 100,
+    *,
+    force_terminal: bool,
+    width: int = 100,
 ) -> tuple[logging.Logger, Console]:
     logger = logging.getLogger(f"wait-view-test-{force_terminal}-{width}")
     logger.handlers.clear()

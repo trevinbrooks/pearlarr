@@ -17,6 +17,7 @@ durable graduation lines, so container logs stay clean. :func:`make_wait_view`
 probes the console once and picks the right one, so the engine drives a single
 small interface either way.
 """
+
 import logging
 from abc import ABC, abstractmethod
 from collections import Counter
@@ -198,9 +199,7 @@ def graduations(seen: frozenset[str], snapshot: WaitSnapshot) -> list[TorrentVie
     return [
         torrent
         for torrent in snapshot.torrents
-        if torrent.phase is Phase.TERMINAL
-        and torrent.outcome is not None
-        and torrent.key not in seen
+        if torrent.phase is Phase.TERMINAL and torrent.outcome is not None and torrent.key not in seen
     ]
 
 
@@ -253,7 +252,10 @@ class LiveModel:
 
 
 def make_wait_view(
-    logger: logging.Logger, *, poll_s: int, digest_interval: int = 300,
+    logger: logging.Logger,
+    *,
+    poll_s: int,
+    digest_interval: int = 300,
 ) -> "WaitView":
     """Build a live cockpit on a capable TTY, else a calm log digest.
 
@@ -270,7 +272,10 @@ def make_wait_view(
     if console is not None and caps.live:
         return LiveWaitView(console, caps, logger)
     return LogWaitView(
-        logger, caps, poll_s=poll_s, digest_interval=digest_interval,
+        logger,
+        caps,
+        poll_s=poll_s,
+        digest_interval=digest_interval,
     )
 
 
@@ -297,11 +302,7 @@ def _detect_capabilities(console: Console | None) -> Capabilities:
     size = console.size
     width = size.width or 80
     height = size.height or 24
-    live = (
-        console.is_terminal
-        and not console.is_dumb_terminal
-        and width >= MIN_LIVE_WIDTH
-    )
+    live = console.is_terminal and not console.is_dumb_terminal and width >= MIN_LIVE_WIDTH
     return Capabilities(
         live=live,
         color=console.color_system is not None,
@@ -420,11 +421,7 @@ def _overflow_text(hidden: list[TorrentView]) -> str:
 def _aggregate_speed(snapshot: WaitSnapshot) -> int:
     """Total download speed across the downloading rows (bytes/s)."""
 
-    return sum(
-        t.speed_bps
-        for t in snapshot.torrents
-        if t.phase is Phase.DOWNLOADING and t.speed_bps is not None
-    )
+    return sum(t.speed_bps for t in snapshot.torrents if t.phase is Phase.DOWNLOADING and t.speed_bps is not None)
 
 
 def _aggregate_eta(snapshot: WaitSnapshot, agg_speed: int) -> int | None:
@@ -576,7 +573,10 @@ class LiveWaitView(_DurableWaitView):
     """
 
     def __init__(
-        self, console: Console, caps: Capabilities, logger: logging.Logger,
+        self,
+        console: Console,
+        caps: Capabilities,
+        logger: logging.Logger,
     ) -> None:
         super().__init__(logger, caps)
         self._console = console
@@ -644,7 +644,12 @@ class LiveWaitView(_DurableWaitView):
         return table
 
     def _row_cells(
-        self, row: RowModel, bar_width: int, *, show_speed: bool, show_size: bool,
+        self,
+        row: RowModel,
+        bar_width: int,
+        *,
+        show_speed: bool,
+        show_size: bool,
     ) -> list[Text]:
         marker = self._marker(row.phase)
         cells: list[Text] = [marker, Text(row.label)]

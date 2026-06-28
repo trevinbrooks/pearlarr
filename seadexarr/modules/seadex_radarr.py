@@ -59,7 +59,9 @@ class RadarrSync(ArrSync[RadarrItem]):
 
     @override
     def filter_to_single(
-        self, items: list[RadarrItem], item_id: int,
+        self,
+        items: list[RadarrItem],
+        item_id: int,
     ) -> list[RadarrItem]:
         """Narrow the movie list to a single TMDB ID."""
 
@@ -234,8 +236,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         # one-element list so the value matches the shared ArrReleaseDict shape
         # (Sonarr accumulates a per-episode list).
         radarr_release_dict: ArrReleaseDict = {
-            mf.release_group: [mf.size]
-            for mf in self.radarr.movie_files(radarr_movie_id)
+            mf.release_group: [mf.size] for mf in self.radarr.movie_files(radarr_movie_id)
         }
 
         # If we have multiple options, throw up an error

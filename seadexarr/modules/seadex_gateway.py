@@ -67,8 +67,7 @@ class SeaDexGateway:
 
         self.logger.info(
             indent_string(
-                f"Prefetching {len(missing)} SeaDex entries "
-                f"in batches of {SEADEX_BATCH_SIZE}",
+                f"Prefetching {len(missing)} SeaDex entries in batches of {SEADEX_BATCH_SIZE}",
             ),
             extra={"line_style": "grey50"},
         )

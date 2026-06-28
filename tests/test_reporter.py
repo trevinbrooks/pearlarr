@@ -149,12 +149,18 @@ class TestRunSummary:
 
     def test_real_run_renders(self) -> None:
         assert _make_reporter().log_run_summary(
-            self._ctx_with_data(), Arr.SONARR, is_preview=False, has_client=True,
+            self._ctx_with_data(),
+            Arr.SONARR,
+            is_preview=False,
+            has_client=True,
         )
 
     def test_dry_run_renders(self) -> None:
         assert _make_reporter().log_run_summary(
-            self._ctx_with_data(), Arr.SONARR, is_preview=True, has_client=False,
+            self._ctx_with_data(),
+            Arr.SONARR,
+            is_preview=True,
+            has_client=False,
         )
 
 
@@ -174,7 +180,11 @@ def _summary_messages(reporter: RunReporter, ctx: RunContext, **kwargs: Any) -> 
     reporter.logger.setLevel(logging.DEBUG)
     try:
         reporter.log_run_summary(
-            ctx, Arr.SONARR, is_preview=False, has_client=True, **kwargs,
+            ctx,
+            Arr.SONARR,
+            is_preview=False,
+            has_client=True,
+            **kwargs,
         )
     finally:
         reporter.logger.removeHandler(handler)
@@ -189,7 +199,11 @@ class TestPendingSnapshot:
         ctx = RunContext(arr=Arr.SONARR)
 
         rendered = reporter.log_pending_snapshot(
-            ctx, PendingState.IMPORTED, "My Show", "S01 E01-E13", "https://releases.moe/1",
+            ctx,
+            PendingState.IMPORTED,
+            "My Show",
+            "S01 E01-E13",
+            "https://releases.moe/1",
         )
 
         assert rendered is True
@@ -202,9 +216,16 @@ class TestPendingSnapshot:
         reporter = _make_reporter()
         ctx = RunContext(arr=Arr.SONARR)
 
-        assert reporter.log_pending_snapshot(
-            ctx, PendingState.MISSING, "Gone", None, None,
-        ) is False
+        assert (
+            reporter.log_pending_snapshot(
+                ctx,
+                PendingState.MISSING,
+                "Gone",
+                None,
+                None,
+            )
+            is False
+        )
 
 
 class TestSummaryPendingCounters:
@@ -217,7 +238,9 @@ class TestSummaryPendingCounters:
         ctx.stats.imported = 3
 
         messages = _summary_messages(
-            _make_reporter(), ctx, import_wait_mode=ImportWaitMode.BLOCKING,
+            _make_reporter(),
+            ctx,
+            import_wait_mode=ImportWaitMode.BLOCKING,
         )
         joined = "\n".join(messages)
 
@@ -232,7 +255,9 @@ class TestSummaryPendingCounters:
         ctx.stats.imported = 3
 
         messages = _summary_messages(
-            _make_reporter(), ctx, import_wait_mode=ImportWaitMode.OFF,
+            _make_reporter(),
+            ctx,
+            import_wait_mode=ImportWaitMode.OFF,
         )
 
         assert not any("queued" in m for m in messages)
@@ -242,7 +267,9 @@ class TestSummaryPendingCounters:
         ctx = RunContext(arr=Arr.SONARR)  # all counters zero
 
         messages = _summary_messages(
-            _make_reporter(), ctx, import_wait_mode=ImportWaitMode.BLOCKING,
+            _make_reporter(),
+            ctx,
+            import_wait_mode=ImportWaitMode.BLOCKING,
         )
 
         assert not any("queued" in m for m in messages)
@@ -260,7 +287,9 @@ class TestSummaryPendingCounters:
         # counters stay 0 -> no queued/importing rows
 
         messages = _summary_messages(
-            _make_reporter(), ctx, import_wait_mode=ImportWaitMode.BLOCKING,
+            _make_reporter(),
+            ctx,
+            import_wait_mode=ImportWaitMode.BLOCKING,
         )
 
         assert any("added" in m for m in messages)

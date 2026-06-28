@@ -146,14 +146,13 @@ class AniListGateway:
         # warm runs stay silent), so the upfront pause on a cold run is explained
         self.logger.info(
             indent_string(
-                f"Prefetching {len(missing)} AniList entries "
-                f"in batches of {ANILIST_BATCH_SIZE}",
+                f"Prefetching {len(missing)} AniList entries in batches of {ANILIST_BATCH_SIZE}",
             ),
             extra={"line_style": "grey50"},
         )
 
         for start in range(0, len(missing), ANILIST_BATCH_SIZE):
-            chunk = missing[start:start + ANILIST_BATCH_SIZE]
+            chunk = missing[start : start + ANILIST_BATCH_SIZE]
             # Ids unknown to AniList are simply absent from the result; the
             # per-id helpers will try once more on demand and degrade gracefully
             for al_id, data in get_query_batch(chunk).items():

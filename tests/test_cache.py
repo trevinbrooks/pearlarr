@@ -249,7 +249,9 @@ class TestLegacyMigration:
             "anilist_entries": {
                 "sonarr": {
                     "7": {
-                        "name": "T", "url": "u", "coverage": "S01",
+                        "name": "T",
+                        "url": "u",
+                        "coverage": "S01",
                         "updated_at": "2021-06-05 04:03:02",
                         "torrent_hashes": ["aaa", None, "bbb"],
                     },
@@ -350,15 +352,21 @@ class TestRunLifecycle:
 
         # Run 1 (real): process one entry the way the loop does, then commit + close.
         store = CacheStore.load(db, config_checksum=CHECKSUM)
-        store.update_cache(Arr.SONARR, 7, {
-            "name": "Show", "url": "u", "coverage": "S01",
-            "updated_at": datetime(2026, 1, 2, 3, 4, 5),
-            "torrent_hashes": ["aaa", "bbb"],
-        })
+        store.update_cache(
+            Arr.SONARR,
+            7,
+            {
+                "name": "Show",
+                "url": "u",
+                "coverage": "S01",
+                "updated_at": datetime(2026, 1, 2, 3, 4, 5),
+                "torrent_hashes": ["aaa", "bbb"],
+            },
+        )
         store.put_anilist_meta(7, {"fetched_at": "2026-06-26 12:00:00", "data": {"id": 7}})
         store.put_pending(Arr.SONARR, "aaa", {"infohash": "aaa", "series_id": 5})
         store.save(preview=False)  # mid/end-of-run commit
-        store.close()              # finally: rollback is a no-op (already committed)
+        store.close()  # finally: rollback is a no-op (already committed)
 
         # Run 2: reopen -> cache hit, remembered hashes, carried-over pending.
         again = CacheStore.load(db, config_checksum=CHECKSUM)

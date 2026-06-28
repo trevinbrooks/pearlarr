@@ -347,7 +347,8 @@ class TestQualityAxesFromModel:
             "quality": {"name": "Bluray-1080p", "source": "bluray", "resolution": 1080},
         }
         assert quality_axes_from_model(model) == ParsedQuality(
-            source=QualitySource.BLURAY, resolution=1080,
+            source=QualitySource.BLURAY,
+            resolution=1080,
         )
 
     def test_unknown_source_and_zero_resolution_are_undetermined(self) -> None:
@@ -363,7 +364,8 @@ class TestQualityAxesFromModel:
 class TestQualityAxesFromName:
     def test_resolves_default_name_to_axes(self) -> None:
         assert quality_axes_from_name("Bluray-2160p", _DEFS) == ParsedQuality(
-            source=QualitySource.BLURAY, resolution=2160,
+            source=QualitySource.BLURAY,
+            resolution=2160,
         )
 
     def test_unset_or_unmatched_is_empty(self) -> None:
@@ -384,7 +386,11 @@ class TestResolveQuality:
         # The headline fix: (blurayRaw, 1080) -> "Bluray-1080p Remux" (valid id+name).
         sonarr = ParsedQuality(source=QualitySource.BLURAY_RAW, resolution=1080)
         model = resolve_quality(
-            sonarr, ParsedQuality(), ParsedQuality(), _DEFS, candidate_model=None,
+            sonarr,
+            ParsedQuality(),
+            ParsedQuality(),
+            _DEFS,
+            candidate_model=None,
         )
         assert _resolved_name(model) == "Bluray-1080p Remux"
         assert (model.get("quality") or {}).get("id") == 20
@@ -395,7 +401,11 @@ class TestResolveQuality:
         ours = ParsedQuality(source=None, resolution=1080)
         default = ParsedQuality(source=QualitySource.BLURAY, resolution=2160)
         model = resolve_quality(
-            ParsedQuality(), ours, default, _DEFS, candidate_model=None,
+            ParsedQuality(),
+            ours,
+            default,
+            _DEFS,
+            candidate_model=None,
         )
         assert _resolved_name(model) == "Bluray-1080p"
 
@@ -404,7 +414,11 @@ class TestResolveQuality:
         # to Bluray-720p rather than failing.
         sonarr = ParsedQuality(source=QualitySource.BLURAY_RAW, resolution=720)
         model = resolve_quality(
-            sonarr, ParsedQuality(), ParsedQuality(), _DEFS, candidate_model=None,
+            sonarr,
+            ParsedQuality(),
+            ParsedQuality(),
+            _DEFS,
+            candidate_model=None,
         )
         assert _resolved_name(model) == "Bluray-720p"
 
@@ -416,7 +430,11 @@ class TestResolveQuality:
             "revision": {"version": 1, "real": 0, "isRepack": False},
         }
         model = resolve_quality(
-            ParsedQuality(), ParsedQuality(), ParsedQuality(), _DEFS, candidate,
+            ParsedQuality(),
+            ParsedQuality(),
+            ParsedQuality(),
+            _DEFS,
+            candidate,
         )
         assert model == candidate
 
@@ -424,7 +442,11 @@ class TestResolveQuality:
         # No axes and no candidate quality: emit an explicit Unknown object (never
         # omit the key - the omitted key is what crashed Sonarr's FileNameBuilder).
         model = resolve_quality(
-            ParsedQuality(), ParsedQuality(), ParsedQuality(), _DEFS, candidate_model=None,
+            ParsedQuality(),
+            ParsedQuality(),
+            ParsedQuality(),
+            _DEFS,
+            candidate_model=None,
         )
         assert model.get("quality") == {"id": 0, "name": "Unknown", "source": "unknown", "resolution": 0}
         assert "revision" in model
@@ -537,7 +559,11 @@ class TestPendingStateAndProbe:
 
     def test_pending_state_members(self) -> None:
         assert {s.name for s in PendingState} == {
-            "QUEUED", "IMPORTING", "IMPORTED", "ERRORED", "MISSING",
+            "QUEUED",
+            "IMPORTING",
+            "IMPORTED",
+            "ERRORED",
+            "MISSING",
         }
 
     def test_pending_state_is_its_string(self) -> None:
@@ -546,7 +572,9 @@ class TestPendingStateAndProbe:
 
     def test_import_probe_holds_readiness_and_flags(self) -> None:
         probe = ImportProbe(
-            readiness=ImportReadiness.RETRY, files_present=False, command_issued=True,
+            readiness=ImportReadiness.RETRY,
+            files_present=False,
+            command_issued=True,
         )
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.files_present is False
@@ -619,10 +647,7 @@ class TestClassifyQueue:
     def test_in_motion_beats_blocked_to_avoid_racing(self) -> None:
         # Something is actively importing -> wait, don't race it, even if a sibling
         # record is blocked; a later poll re-evaluates once the import settles.
-        assert (
-            classify_queue([_qrecord("importing"), _qrecord("importBlocked", "warning")])
-            is QueueVerdict.WAIT
-        )
+        assert classify_queue([_qrecord("importing"), _qrecord("importBlocked", "warning")]) is QueueVerdict.WAIT
 
     def test_case_insensitive(self) -> None:
         assert classify_queue([_qrecord("IMPORTBLOCKED", "WARNING")]) is QueueVerdict.STEP_IN

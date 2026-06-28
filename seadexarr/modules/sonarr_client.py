@@ -4,6 +4,7 @@
 and the two raw endpoints the syncer needs
 (``/api/v3/episode`` and ``/api/v3/parse``)
 """
+
 import logging
 from typing import Any, cast
 from urllib.parse import urlencode
@@ -136,8 +137,7 @@ class SonarrClient:
         if parse_req.status_code != 200:
             self._logger.warning(
                 indent_string(
-                    f"Could not parse {filename} via Sonarr "
-                    f"(status code {parse_req.status_code}); skipping file",
+                    f"Could not parse {filename} via Sonarr (status code {parse_req.status_code}); skipping file",
                 ),
             )
             return []
@@ -150,15 +150,13 @@ class SonarrClient:
 
         parsed: list[dict[str, int]] = []
         for ep in episode_info:
-
             season = ep.get("seasonNumber", None)
             episode = ep.get("episodeNumber", None)
 
             if season is None or episode is None:
                 self._logger.debug(
                     indent_string(
-                        f"Season or episode came up None for {filename}; "
-                        f"skipping this episode entry",
+                        f"Season or episode came up None for {filename}; skipping this episode entry",
                     ),
                 )
                 continue
@@ -198,8 +196,7 @@ class SonarrClient:
         if parse_req.status_code != 200:
             self._logger.warning(
                 indent_string(
-                    f"Could not parse {filename} via Sonarr "
-                    f"(status code {parse_req.status_code}); will retry",
+                    f"Could not parse {filename} via Sonarr (status code {parse_req.status_code}); will retry",
                 ),
             )
             return None
@@ -258,13 +255,13 @@ class SonarrClient:
         candidates_req_url = f"{self._url}/api/v3/manualimport?{params_enc}"
         try:
             candidates_req = self._session.get(
-                candidates_req_url, timeout=MANUAL_IMPORT_TIMEOUT_S,
+                candidates_req_url,
+                timeout=MANUAL_IMPORT_TIMEOUT_S,
             )
         except requests.RequestException as e:
             self._logger.warning(
                 indent_string(
-                    f"Manual-import scan of {pending.title} did not respond ({e}); "
-                    f"will retry",
+                    f"Manual-import scan of {pending.title} did not respond ({e}); will retry",
                 ),
             )
             return None
@@ -351,8 +348,7 @@ class SonarrClient:
         if command_req.status_code not in (200, 201):
             self._logger.warning(
                 indent_string(
-                    f"Could not queue {label} command "
-                    f"(status code {command_req.status_code})",
+                    f"Could not queue {label} command (status code {command_req.status_code})",
                 ),
             )
             return None
@@ -398,8 +394,7 @@ class SonarrClient:
         if queue_req.status_code != 200:
             self._logger.warning(
                 indent_string(
-                    f"Could not fetch the Sonarr queue "
-                    f"(status code {queue_req.status_code})",
+                    f"Could not fetch the Sonarr queue (status code {queue_req.status_code})",
                 ),
             )
             return []
@@ -431,8 +426,7 @@ class SonarrClient:
 
         if defs_req.status_code != 200:
             self._logger.warning(
-                "Could not fetch quality definitions from Sonarr; "
-                "it may be unreachable",
+                "Could not fetch quality definitions from Sonarr; it may be unreachable",
             )
             return []
 
@@ -487,16 +481,13 @@ class SonarrClient:
                 a default (``status`` None) on failure.
         """
 
-        status_req_url = (
-            f"{self._url}/api/v3/command/{command_id}?apikey={self._api_key}"
-        )
+        status_req_url = f"{self._url}/api/v3/command/{command_id}?apikey={self._api_key}"
         status_req = self._session.get(status_req_url)
 
         if status_req.status_code != 200:
             self._logger.warning(
                 indent_string(
-                    f"Could not fetch status for command {command_id} "
-                    f"(status code {status_req.status_code})",
+                    f"Could not fetch status for command {command_id} (status code {status_req.status_code})",
                 ),
             )
             return CommandResource()
@@ -532,8 +523,7 @@ class SonarrClient:
         if commands_req.status_code != 200:
             self._logger.warning(
                 indent_string(
-                    f"Could not fetch the Sonarr command list "
-                    f"(status code {commands_req.status_code})",
+                    f"Could not fetch the Sonarr command list (status code {commands_req.status_code})",
                 ),
             )
             return []

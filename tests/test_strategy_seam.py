@@ -71,7 +71,10 @@ class TestItemAnilistIdsDelegates:
 
         assert result == {7: {}}
         run.get_anilist_ids.assert_called_once_with(
-            tmdb_id=42, imdb_id="tt7", tmdb_type="movie", log_ignored=False,
+            tmdb_id=42,
+            imdb_id="tt7",
+            tmdb_type="movie",
+            log_ignored=False,
         )
 
     def test_sonarr_uses_tvdb_and_imdb(self) -> None:
@@ -81,7 +84,9 @@ class TestItemAnilistIdsDelegates:
         strat.item_anilist_ids(_Item(tvdbId=99, imdbId="tt9"))
 
         run.get_anilist_ids.assert_called_once_with(
-            tvdb_id=99, imdb_id="tt9", log_ignored=True,
+            tvdb_id=99,
+            imdb_id="tt9",
+            log_ignored=True,
         )
 
 
@@ -193,7 +198,11 @@ def _make_sonarr_for_import(
 
 
 def _queue_record(
-    infohash: str, state: str, *, status: str = "ok", messages: list | None = None,
+    infohash: str,
+    state: str,
+    *,
+    status: str = "ok",
+    messages: list | None = None,
 ) -> QueueRecord:
     """One Sonarr queue record matching a download by infohash + tracked state.
 
@@ -533,7 +542,8 @@ class TestImportCompletedPayload:
             {"quality": {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
         ]
         strat, sonarr = _make_sonarr_for_import(
-            candidates=[candidate], quality_defs=quality_defs,
+            candidates=[candidate],
+            quality_defs=quality_defs,
         )
 
         strat.import_completed(pending, "/d")
@@ -560,7 +570,8 @@ class TestImportCompletedPayload:
             {"quality": {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
         ]
         strat, sonarr = _make_sonarr_for_import(
-            candidates=[candidate], quality_defs=quality_defs,
+            candidates=[candidate],
+            quality_defs=quality_defs,
         )
 
         strat.import_completed(pending, "/d")
@@ -826,10 +837,7 @@ class TestManualImportWarningGating:
         assert probe.readiness is ImportReadiness.RETRY
         warnings = [r for r in caplog.records if r.levelname == "WARNING"]
         assert not any("not visible to Sonarr" in r.message for r in warnings)
-        assert any(
-            "not visible to Sonarr" in r.message and r.levelname == "DEBUG"
-            for r in caplog.records
-        )
+        assert any("not visible to Sonarr" in r.message and r.levelname == "DEBUG" for r in caplog.records)
 
     def test_missing_at_deadline_warns_loudly(self, caplog) -> None:
         strat, pending = self._strat_with_missing_file()
@@ -838,10 +846,7 @@ class TestManualImportWarningGating:
             probe = strat.import_completed(pending, "/d", at_deadline=True)
 
         assert probe.readiness is ImportReadiness.RETRY
-        assert any(
-            "not visible to Sonarr" in r.message and r.levelname == "WARNING"
-            for r in caplog.records
-        )
+        assert any("not visible to Sonarr" in r.message and r.levelname == "WARNING" for r in caplog.records)
 
 
 class TestResolveLanguageObjects:

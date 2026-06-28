@@ -347,11 +347,7 @@ def make_arr(**overrides: Any) -> SeaDexArr:
     # Config-backed flags are read via self._config after Phase 5b; route any
     # passed as overrides through an in-memory AppConfig, leaving the rest as
     # direct attributes/collaborators.
-    config_overrides = {
-        key: overrides.pop(key)
-        for key in list(overrides)
-        if key in _CONFIG_SETTING_NAMES
-    }
+    config_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CONFIG_SETTING_NAMES}
 
     config = make_config(**config_overrides)
     defaults: dict[str, Any] = {

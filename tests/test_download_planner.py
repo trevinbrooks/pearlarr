@@ -97,7 +97,8 @@ class TestFilterByTorrentHash:
         planner = make_planner(public_only=False)
         seadex = {"A": rg_group({"u1": url_item(infohash="h1", download=False)})}
         result = planner.filter_by_torrent_hash(
-            seadex_dict=seadex, cached_hashes=["h1"],
+            seadex_dict=seadex,
+            cached_hashes=["h1"],
         )
         assert result.seadex_dict["A"].urls["u1"].download is False
         assert result.torrent_hashes == ["h1"]
@@ -143,9 +144,11 @@ class TestFilterByReleaseGroup:
     def test_episode_match_same_rg_and_size_no_download(self) -> None:
         planner = make_planner(public_only=False)
         seadex = {
-            "Era-Raws": rg_group({
-                "u1": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=100)], infohash="h1"),
-            }),
+            "Era-Raws": rg_group(
+                {
+                    "u1": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=100)], infohash="h1"),
+                }
+            ),
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
@@ -159,9 +162,11 @@ class TestFilterByReleaseGroup:
     def test_episode_different_rg_downloads(self) -> None:
         planner = make_planner(public_only=False)
         seadex = {
-            "Era-Raws": rg_group({
-                "u1": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=100)], infohash="h1"),
-            }),
+            "Era-Raws": rg_group(
+                {
+                    "u1": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=100)], infohash="h1"),
+                }
+            ),
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
@@ -175,9 +180,11 @@ class TestFilterByReleaseGroup:
     def test_episode_same_rg_all_sizes_differ_downloads(self) -> None:
         planner = make_planner(public_only=False)
         seadex = {
-            "Era-Raws": rg_group({
-                "u1": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=999)], infohash="h1"),
-            }),
+            "Era-Raws": rg_group(
+                {
+                    "u1": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=999)], infohash="h1"),
+                }
+            ),
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
@@ -191,9 +198,11 @@ class TestFilterByReleaseGroup:
     def test_episodes_but_no_ep_list_skips(self) -> None:
         planner = make_planner(public_only=False)
         seadex = {
-            "Era-Raws": rg_group({
-                "u1": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=100)], infohash="h1"),
-            }),
+            "Era-Raws": rg_group(
+                {
+                    "u1": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=100)], infohash="h1"),
+                }
+            ),
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
@@ -224,9 +233,11 @@ class TestFilterByReleaseGroup:
         planner = make_planner(public_only=False)
         planner.logger.setLevel(logging.DEBUG)
         seadex = {
-            "Era-Raws": rg_group({
-                "u1": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=100)], infohash="h1"),
-            }),
+            "Era-Raws": rg_group(
+                {
+                    "u1": url_item(episodes=[EpisodeRecord(season=1, episode=1, size=100)], infohash="h1"),
+                }
+            ),
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,

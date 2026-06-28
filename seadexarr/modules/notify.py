@@ -61,10 +61,7 @@ class Notifier:
             discord_push(
                 url=self.discord_url,
                 arr_title=f"SeaDexArr - {arr.capitalize()} wait complete",
-                al_title=(
-                    f"{result.imported} imported - {result.left} left - "
-                    f"{result.failed} failed  ({elapsed})"
-                ),
+                al_title=(f"{result.imported} imported - {result.left} left - {result.failed} failed  ({elapsed})"),
                 seadex_url="",
                 fields=self._wait_fields(result),
                 thumb_url=None,
@@ -106,10 +103,7 @@ class Notifier:
             "left": result.left,
             "failed": result.failed,
             "elapsed_s": result.elapsed_s,
-            "rows": [
-                {"label": r.label, "outcome": r.outcome.name, "word": r.outcome.word}
-                for r in result.rows
-            ],
+            "rows": [{"label": r.label, "outcome": r.outcome.name, "word": r.outcome.word} for r in result.rows],
         }
         try:
             requests.post(self.webhook_url, json=payload, timeout=10)
@@ -161,16 +155,10 @@ class Notifier:
 
         # SeaDex options with links
         for srg, srg_item in seadex_dict.items():
-
             # URLs flagged for download in this group, in one pass
-            urls_to_download = [
-                url
-                for url, u in srg_item.urls.items()
-                if u.download
-            ]
+            urls_to_download = [url for url, u in srg_item.urls.items() if u.download]
 
             if urls_to_download:
-
                 # Include any tags in the string
                 discord_value = ""
                 tags = srg_item.tags

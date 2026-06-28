@@ -240,9 +240,7 @@ class ImportsSettings(_ConfigBase):
         if value:
             return value
         return list(
-            _LANGUAGES_DUAL_DEFAULT
-            if info.field_name == "languages_dual"
-            else _LANGUAGES_SINGLE_DEFAULT,
+            _LANGUAGES_DUAL_DEFAULT if info.field_name == "languages_dual" else _LANGUAGES_SINGLE_DEFAULT,
         )
 
 
@@ -268,8 +266,7 @@ class NotificationsSettings(_ConfigBase):
         if raw.get("wait_notify") is None:
             raw = {
                 **raw,
-                "wait_notify": raw.get("discord_url") is not None
-                or raw.get("wait_webhook_url") is not None,
+                "wait_notify": raw.get("discord_url") is not None or raw.get("wait_webhook_url") is not None,
             }
         return raw
 

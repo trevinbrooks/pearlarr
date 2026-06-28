@@ -123,7 +123,9 @@ class TestPollTorrent:
         engine = make_engine(FakeQbit([[torrent]]))
 
         assert engine._poll_torrent("h") == TorrentProbe(
-            WaitOutcome.COMPLETE, "/data/show", 0.0,
+            WaitOutcome.COMPLETE,
+            "/data/show",
+            0.0,
         )
 
     def test_complete_on_full_progress_without_flag(self) -> None:
@@ -132,7 +134,9 @@ class TestPollTorrent:
         engine = make_engine(FakeQbit([[torrent]]))
 
         assert engine._poll_torrent("h") == TorrentProbe(
-            WaitOutcome.COMPLETE, "/data/movie", 1.0,
+            WaitOutcome.COMPLETE,
+            "/data/movie",
+            1.0,
         )
 
     def test_none_while_downloading_carries_progress(self) -> None:
@@ -153,13 +157,22 @@ class TestPollTorrent:
 
     def test_carries_live_download_telemetry(self) -> None:
         torrent = FakeTorrent(
-            progress=0.64, dlspeed=3_200_000, eta=130,
-            completed=1_800_000_000, size=2_900_000_000,
+            progress=0.64,
+            dlspeed=3_200_000,
+            eta=130,
+            completed=1_800_000_000,
+            size=2_900_000_000,
         )
         engine = make_engine(FakeQbit([[torrent]]))
 
         assert engine._poll_torrent("h") == TorrentProbe(
-            None, None, 0.64, 3_200_000, 130, 1_800_000_000, 2_900_000_000,
+            None,
+            None,
+            0.64,
+            3_200_000,
+            130,
+            1_800_000_000,
+            2_900_000_000,
         )
 
     def test_sanitizes_junk_telemetry(self) -> None:
@@ -235,7 +248,9 @@ class TestPruneExpiredPending:
             pending_import(infohash="bad", added_at="not-a-timestamp").to_json(),
         ]
         engine = make_orchestration_engine(
-            qbit=None, strategy=mock.MagicMock(), store_records=records,
+            qbit=None,
+            strategy=mock.MagicMock(),
+            store_records=records,
         )
 
         engine._prune_expired_pending()
@@ -271,11 +286,7 @@ class RecordingWaitView(WaitView):
     def saw(self, key: str, phase: Phase) -> bool:
         """Whether any recorded snapshot showed ``key`` in ``phase``."""
 
-        return any(
-            t.key == key and t.phase is phase
-            for snap in self.snapshots
-            for t in snap.torrents
-        )
+        return any(t.key == key and t.phase is phase for snap in self.snapshots for t in snap.torrents)
 
 
 class TestSnapshotPendingForSeries:
@@ -286,11 +297,13 @@ class TestSnapshotPendingForSeries:
         # is reported imported, dropped, and stats.imported bumped.
         strategy = mock.MagicMock()
         strategy.import_completed.return_value = import_probe(
-            ImportReadiness.IMPORTED, files_present=True,
+            ImportReadiness.IMPORTED,
+            files_present=True,
         )
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
         engine = make_orchestration_engine(
-            qbit=qbit, strategy=strategy,
+            qbit=qbit,
+            strategy=strategy,
             store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH).to_json()],
         )
 
@@ -308,7 +321,8 @@ class TestSnapshotPendingForSeries:
         strategy = mock.MagicMock()
         qbit = FakeQbit([[FakeTorrent(progress=0.5)]])
         engine = make_orchestration_engine(
-            qbit=qbit, strategy=strategy,
+            qbit=qbit,
+            strategy=strategy,
             store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH).to_json()],
         )
 
@@ -327,8 +341,10 @@ class TestSnapshotPendingForSeries:
         this_run = pending_import(infohash="h", series_id=7, added_at=_FRESH)
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
         engine = make_orchestration_engine(
-            qbit=qbit, strategy=strategy,
-            store_records=[this_run.to_json()], pending=[this_run],
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[this_run.to_json()],
+            pending=[this_run],
         )
 
         engine._snapshot_pending_for_series(7)
@@ -345,7 +361,8 @@ class TestSnapshotPendingForSeries:
         strategy = mock.MagicMock()
         qbit = FakeQbit([[FakeTorrent(progress=0.5)]])
         engine = make_orchestration_engine(
-            qbit=qbit, strategy=strategy,
+            qbit=qbit,
+            strategy=strategy,
             store_records=[pending_import(infohash="other", series_id=99, added_at=_FRESH).to_json()],
         )
 
@@ -361,11 +378,13 @@ class TestReconcileRemaining:
     def test_imports_ready_record_not_yet_snapshotted(self) -> None:
         strategy = mock.MagicMock()
         strategy.import_completed.return_value = import_probe(
-            ImportReadiness.IMPORTED, files_present=True,
+            ImportReadiness.IMPORTED,
+            files_present=True,
         )
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
         engine = make_orchestration_engine(
-            qbit=qbit, strategy=strategy,
+            qbit=qbit,
+            strategy=strategy,
             store_records=[pending_import(infohash="h", added_at=_FRESH).to_json()],
         )
 
@@ -396,7 +415,8 @@ class TestReconcileRemaining:
         engine = make_orchestration_engine(
             qbit=FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]]),
             strategy=strategy,
-            store_records=[this_run.to_json()], pending=[this_run],
+            store_records=[this_run.to_json()],
+            pending=[this_run],
         )
 
         engine._reconcile_remaining()
@@ -409,7 +429,8 @@ class TestTallyCarriedOverIntoStats:
 
     def test_counts_known_states_and_defaults_to_queued(self) -> None:
         engine = make_orchestration_engine(
-            qbit=None, strategy=mock.MagicMock(),
+            qbit=None,
+            strategy=mock.MagicMock(),
             store_records=[
                 pending_import(infohash="q", added_at=_FRESH).to_json(),
                 pending_import(infohash="i", added_at=_FRESH).to_json(),
@@ -429,8 +450,10 @@ class TestTallyCarriedOverIntoStats:
     def test_excludes_this_run_grabs(self) -> None:
         this_run = pending_import(infohash="h", added_at=_FRESH)
         engine = make_orchestration_engine(
-            qbit=None, strategy=mock.MagicMock(),
-            store_records=[this_run.to_json()], pending=[this_run],
+            qbit=None,
+            strategy=mock.MagicMock(),
+            store_records=[this_run.to_json()],
+            pending=[this_run],
         )
 
         engine._tally_carried_over_into_stats()
@@ -448,7 +471,8 @@ class TestRunMonitor:
         # advance each cycle (interleaved), so the fast one isn't stuck behind slow.
         strategy = mock.MagicMock()
         strategy.import_completed.return_value = import_probe(
-            ImportReadiness.RETRY, files_present=True,
+            ImportReadiness.RETRY,
+            files_present=True,
         )
 
         class TwoTorrentQbit:
@@ -468,10 +492,13 @@ class TestRunMonitor:
         fast = pending_import(infohash="fast", added_at=_FRESH)
         slow = pending_import(infohash="slow", added_at=_FRESH)
         engine = make_orchestration_engine(
-            qbit=TwoTorrentQbit(), strategy=strategy,
+            qbit=TwoTorrentQbit(),
+            strategy=strategy,
             store_records=[fast.to_json(), slow.to_json()],
             pending=[fast, slow],
-            import_wait_timeout=3600, import_ready_timeout=600, import_poll_interval=30,
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
         )
         view = RecordingWaitView()
         clock = FakeClock(step=30)
@@ -501,9 +528,13 @@ class TestRunMonitor:
         pending = pending_import(infohash="h", added_at=_FRESH)
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
         engine = make_orchestration_engine(
-            qbit=qbit, strategy=strategy,
-            store_records=[pending.to_json()], pending=[pending],
-            import_wait_timeout=3600, import_ready_timeout=600, import_poll_interval=30,
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending.to_json()],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
         )
         view = RecordingWaitView()
         clock = FakeClock(step=30)
@@ -520,14 +551,20 @@ class TestRunMonitor:
         # (at_deadline) leaves it pending with "still importing; left" - no drop.
         strategy = mock.MagicMock()
         strategy.import_completed.return_value = import_probe(
-            ImportReadiness.RETRY, files_present=False, command_issued=True,
+            ImportReadiness.RETRY,
+            files_present=False,
+            command_issued=True,
         )
         pending = pending_import(infohash="h", added_at=_FRESH)
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
         engine = make_orchestration_engine(
-            qbit=qbit, strategy=strategy,
-            store_records=[pending.to_json()], pending=[pending],
-            import_wait_timeout=3600, import_ready_timeout=60, import_poll_interval=30,
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending.to_json()],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=60,
+            import_poll_interval=30,
         )
         view = RecordingWaitView()
         clock = FakeClock(step=30)
@@ -545,9 +582,13 @@ class TestRunMonitor:
         strategy = mock.MagicMock()
         pending = pending_import(infohash="h", added_at=_FRESH)
         engine = make_orchestration_engine(
-            qbit=FakeQbit([[]]), strategy=strategy,
-            store_records=[pending.to_json()], pending=[pending],
-            import_wait_timeout=3600, import_ready_timeout=600, import_poll_interval=30,
+            qbit=FakeQbit([[]]),
+            strategy=strategy,
+            store_records=[pending.to_json()],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
         )
         view = RecordingWaitView()
         clock = FakeClock(step=30)
@@ -562,9 +603,13 @@ class TestRunMonitor:
         strategy = mock.MagicMock()
         pending = pending_import(infohash="h", added_at=_FRESH)
         engine = make_orchestration_engine(
-            qbit=FakeQbit([[FakeTorrent(is_errored=True)]]), strategy=strategy,
-            store_records=[pending.to_json()], pending=[pending],
-            import_wait_timeout=3600, import_ready_timeout=600, import_poll_interval=30,
+            qbit=FakeQbit([[FakeTorrent(is_errored=True)]]),
+            strategy=strategy,
+            store_records=[pending.to_json()],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
         )
         view = RecordingWaitView()
         clock = FakeClock(step=30)
@@ -581,14 +626,18 @@ class TestRunMonitor:
         # there are no this-run grabs at all, yet the store record is driven.
         strategy = mock.MagicMock()
         strategy.import_completed.return_value = import_probe(
-            ImportReadiness.RETRY, files_present=True,
+            ImportReadiness.RETRY,
+            files_present=True,
         )
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
         engine = make_orchestration_engine(
-            qbit=qbit, strategy=strategy,
+            qbit=qbit,
+            strategy=strategy,
             store_records=[pending_import(infohash="carried", added_at=_FRESH).to_json()],
             pending=[],  # nothing grabbed this run
-            import_wait_timeout=3600, import_ready_timeout=600, import_poll_interval=30,
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
         )
         view = RecordingWaitView()
         clock = FakeClock(step=30)
@@ -606,9 +655,13 @@ class TestRunMonitor:
         strategy = mock.MagicMock()
         pending = pending_import(infohash="h", added_at=_FRESH)
         engine = make_orchestration_engine(
-            qbit=FakeQbit([[FakeTorrent(progress=0.3)]]), strategy=strategy,
-            store_records=[pending.to_json()], pending=[pending],
-            import_wait_timeout=3600, import_ready_timeout=600, import_poll_interval=30,
+            qbit=FakeQbit([[FakeTorrent(progress=0.3)]]),
+            strategy=strategy,
+            store_records=[pending.to_json()],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
         )
         view = RecordingWaitView()
 
@@ -616,7 +669,9 @@ class TestRunMonitor:
             raise KeyboardInterrupt
 
         result = engine._run_monitor(  # must not raise
-            now=lambda: 0.0, sleep=interrupt, view=view,
+            now=lambda: 0.0,
+            sleep=interrupt,
+            view=view,
         )
 
         assert result is not None and result.waited == 0
@@ -631,9 +686,13 @@ class TestRunMonitor:
         pending = pending_import(infohash="h", added_at=_FRESH)
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
         engine = make_orchestration_engine(
-            qbit=qbit, strategy=strategy,
-            store_records=[pending.to_json()], pending=[pending],
-            import_wait_timeout=3600, import_ready_timeout=60, import_poll_interval=30,
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending.to_json()],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=60,
+            import_poll_interval=30,
         )
         view = RecordingWaitView()
         clock = FakeClock(step=30)
@@ -679,7 +738,9 @@ def _finalize_engine(calls: list[str], *, qbit: object, mode: ImportWaitMode) ->
         logger=make_logger(),
         log_fmt=mock.MagicMock(),
         _config=make_config(
-            import_wait_timeout=3600, import_ready_timeout=600, import_poll_interval=30,
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
         ),
         _active_strategy=mock.MagicMock(),
         _reporter=reporter,
@@ -699,11 +760,15 @@ class TestFinalizeRunOrdering:
         # last (so the store reflects the monitor's drops).
         calls: list[str] = []
         engine = _finalize_engine(
-            calls, qbit=mock.MagicMock(), mode=ImportWaitMode.BLOCKING,
+            calls,
+            qbit=mock.MagicMock(),
+            mode=ImportWaitMode.BLOCKING,
         )
 
         with mock.patch.object(
-            engine, "_run_monitor", side_effect=lambda *a, **k: calls.append("monitor"),
+            engine,
+            "_run_monitor",
+            side_effect=lambda *a, **k: calls.append("monitor"),
         ):
             engine._finalize_run(Arr.SONARR)
 
@@ -713,11 +778,15 @@ class TestFinalizeRunOrdering:
         # Deferred reconciles pre-summary but NEVER runs the blocking monitor.
         calls: list[str] = []
         engine = _finalize_engine(
-            calls, qbit=mock.MagicMock(), mode=ImportWaitMode.DEFERRED,
+            calls,
+            qbit=mock.MagicMock(),
+            mode=ImportWaitMode.DEFERRED,
         )
 
         with mock.patch.object(
-            engine, "_run_monitor", side_effect=lambda *a, **k: calls.append("monitor"),
+            engine,
+            "_run_monitor",
+            side_effect=lambda *a, **k: calls.append("monitor"),
         ):
             engine._finalize_run(Arr.SONARR)
 
@@ -730,7 +799,9 @@ class TestFinalizeRunOrdering:
         engine = _finalize_engine(calls, qbit=None, mode=ImportWaitMode.BLOCKING)
 
         with mock.patch.object(
-            engine, "_run_monitor", side_effect=lambda *a, **k: calls.append("monitor"),
+            engine,
+            "_run_monitor",
+            side_effect=lambda *a, **k: calls.append("monitor"),
         ):
             engine._finalize_run(Arr.SONARR)
 
@@ -744,7 +815,8 @@ class TestDropPending:
         keep = pending_import(infohash="keep", added_at=_FRESH)
         drop = pending_import(infohash="drop", added_at=_FRESH)
         engine = make_orchestration_engine(
-            qbit=None, strategy=mock.MagicMock(),
+            qbit=None,
+            strategy=mock.MagicMock(),
             store_records=[keep.to_json(), drop.to_json()],
             pending=[keep, drop],
         )
@@ -772,7 +844,12 @@ class FakeTorrents:
         self.calls: list[str | None] = []
 
     def add(
-        self, *, url: str, tracker: object, torrent_hash: str | None, preview: bool,
+        self,
+        *,
+        url: str,
+        tracker: object,
+        torrent_hash: str | None,
+        preview: bool,
     ) -> tuple[AddOutcome, str | None]:
         del url, tracker, preview
         self.calls.append(torrent_hash)
@@ -837,7 +914,8 @@ class TestAddOneUrlRegistersPending:
         seeds = {"h1": pending_import(infohash="h1", series_id=7)}
 
         n_added, results = engine.add_torrent(
-            _one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds,
+            _one_release_dict(srg="NAN0", infohash="h1"),
+            pending_seeds=seeds,
         )
 
         assert set(engine._pending_store()) == {"h1"}
@@ -853,7 +931,8 @@ class TestAddOneUrlRegistersPending:
         seeds = {"h1": pending_import(infohash="h1")}
 
         n_added, _ = engine.add_torrent(
-            _one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds,
+            _one_release_dict(srg="NAN0", infohash="h1"),
+            pending_seeds=seeds,
         )
 
         assert set(engine._pending_store()) == {"h1"}
@@ -864,10 +943,12 @@ class TestAddOneUrlRegistersPending:
 
     def test_already_added_does_not_count_toward_cap(self) -> None:
         # One already-present + one fresh, cap 1: only the fresh add counts.
-        torrents = FakeTorrents({
-            "already": (AddOutcome.ALREADY_ADDED, "old"),
-            "fresh": (AddOutcome.ADDED, "new"),
-        })
+        torrents = FakeTorrents(
+            {
+                "already": (AddOutcome.ALREADY_ADDED, "old"),
+                "fresh": (AddOutcome.ADDED, "new"),
+            }
+        )
         engine = make_add_engine(torrents=torrents, max_torrents_to_add=1)
         seadex_dict = {
             **_one_release_dict(srg="OLD", infohash="already", url="https://nyaa.si/view/1"),
@@ -888,7 +969,8 @@ class TestAddOneUrlRegistersPending:
         engine = make_add_engine(torrents=torrents)
 
         engine.add_torrent(
-            _one_release_dict(srg="NAN0", infohash="h1"), pending_seeds={},
+            _one_release_dict(srg="NAN0", infohash="h1"),
+            pending_seeds={},
         )
 
         assert engine._pending_store() == {}
@@ -900,7 +982,8 @@ class TestAddOneUrlRegistersPending:
         seeds = {"h1": pending_import(infohash="h1")}
 
         engine.add_torrent(
-            _one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds,
+            _one_release_dict(srg="NAN0", infohash="h1"),
+            pending_seeds=seeds,
         )
 
         assert engine._pending_store() == {}
@@ -913,7 +996,8 @@ class TestAddOneUrlRegistersPending:
         seeds = {"h1": pending_import(infohash="h1")}
 
         _, results = engine.add_torrent(
-            _one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds,
+            _one_release_dict(srg="NAN0", infohash="h1"),
+            pending_seeds=seeds,
         )
 
         assert engine._pending_store() == {}
@@ -929,7 +1013,8 @@ class TestAddOneUrlRegistersPending:
         seeds = {"h1": pending_import(infohash="h1", series_id=7, added_at=_FRESH)}
 
         engine.add_torrent(
-            _one_release_dict(srg="NAN0", infohash="h1"), pending_seeds=seeds,
+            _one_release_dict(srg="NAN0", infohash="h1"),
+            pending_seeds=seeds,
         )
         engine._snapshot_pending_for_series(7)
 

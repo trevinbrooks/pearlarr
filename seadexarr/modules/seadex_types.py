@@ -149,6 +149,7 @@ def as_size_list(size: int | list[int | None] | None) -> list[int]:
 
 # --- Arr items (Sonarr series / Radarr movies) ------------------------------
 
+
 @runtime_checkable
 class ArrItem(Protocol):
     """The attribute surface shared by a Sonarr series and a Radarr movie."""
@@ -174,6 +175,7 @@ class RadarrItem(ArrItem, Protocol):
 
 
 # --- Sonarr episodes (``/api/v3/episode`` JSON) -----------------------------
+
 
 @dataclass(frozen=True, slots=True)
 class SonarrEpisodeFile:
@@ -230,6 +232,7 @@ type TvdbMappings = dict[int, list[tuple[int, int | None]]]
 
 # --- AniList GraphQL errors (the ``errors`` array of a response body) --------
 
+
 @dataclass(frozen=True, slots=True)
 class AniListError:
     """One entry of an AniList GraphQL ``errors`` array, parsed at the boundary.
@@ -254,6 +257,7 @@ class AniListError:
 
 
 # --- AniList Media node (cached GraphQL ``Media`` record) --------------------
+
 
 @dataclass(frozen=True, slots=True)
 class AniListMediaNode:
@@ -647,11 +651,7 @@ class CommandResource:
         message = raw.get("message")
         body: dict[str, Any] = raw.get("body") or {}
         raw_files: list[Any] = body.get("files") or []
-        files = tuple(
-            CommandFile.from_api(cast("dict[str, Any]", f))
-            for f in raw_files
-            if isinstance(f, dict)
-        )
+        files = tuple(CommandFile.from_api(cast("dict[str, Any]", f)) for f in raw_files if isinstance(f, dict))
         return cls(
             id=raw.get("id", 0),
             status=status if isinstance(status, str) else None,

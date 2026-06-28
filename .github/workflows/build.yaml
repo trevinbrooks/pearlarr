@@ -32,6 +32,8 @@ jobs:
         run: uv sync --group dev --python ${{ matrix.python-version }}
       - name: Ruff (lint)
         run: uv run ruff check seadexarr/ tests/
+      - name: Ruff (format)
+        run: uv run ruff format --check seadexarr/ tests/
       - name: Basedpyright (src, strict + reportAny)
         run: uv run basedpyright seadexarr
       # The type gate is vanilla pyright (pinned for reproducible CI). It reads

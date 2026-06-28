@@ -41,7 +41,10 @@ class TestBuildPendingSeeds:
         }
 
         seeds = _strat(parse_cache)._build_pending_seeds(
-            seadex_dict=seadex_dict, ep_list=ep_list, sonarr_series_id=7, anilist_title="Show",
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            sonarr_series_id=7,
+            anilist_title="Show",
         )
 
         # Only the download+hash url is seeded (no download / no hash are skipped).
@@ -76,7 +79,10 @@ class TestBuildPendingSeeds:
         }
 
         seeds = _strat(parse_cache)._build_pending_seeds(
-            seadex_dict=seadex_dict, ep_list=ep_list, sonarr_series_id=7, anilist_title="Show",
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            sonarr_series_id=7,
+            anilist_title="Show",
         )
 
         seed = seeds["h1"]
@@ -99,14 +105,20 @@ class TestBuildPendingSeeds:
             "RG": rg_group(
                 {
                     "u1": url_item(
-                        files=["S01.mkv", "S02.mkv"], size=[1, 2], infohash="h1", download=True,
+                        files=["S01.mkv", "S02.mkv"],
+                        size=[1, 2],
+                        infohash="h1",
+                        download=True,
                     ),
                 },
             ),
         }
 
         seeds = _strat(parse_cache)._build_pending_seeds(
-            seadex_dict=seadex_dict, ep_list=ep_list, sonarr_series_id=7, anilist_title="Show",
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            sonarr_series_id=7,
+            anilist_title="Show",
         )
 
         assert seeds["h1"].season_number is None
@@ -124,7 +136,10 @@ class TestBuildPendingSeeds:
         }
 
         seeds = _strat({})._build_pending_seeds(
-            seadex_dict=seadex_dict, ep_list=ep_list, sonarr_series_id=7, anilist_title="Show",
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            sonarr_series_id=7,
+            anilist_title="Show",
         )
 
         assert set(seeds) == {"h1"}
@@ -143,7 +158,10 @@ class TestBuildPendingSeeds:
         }
 
         seeds = _strat({})._build_pending_seeds(
-            seadex_dict=seadex_dict, ep_list=ep_list, sonarr_series_id=7, anilist_title="Show",
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            sonarr_series_id=7,
+            anilist_title="Show",
         )
 
         assert seeds == {}

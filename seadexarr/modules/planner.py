@@ -172,14 +172,12 @@ def get_all_seadex_rgs_per_episode(
 
     if len(seadex_dict) > 1:
         for seadex_rg, seadex_rg_item in seadex_dict.items():
-
             # Index by the normalized name so the membership checks in
             # filter_by_release_group are case- and dash-insensitive
             seadex_rg_normalized = normalize_rg(seadex_rg)
 
             seadex_urls = seadex_rg_item.urls
             for url_item in seadex_urls.values():
-
                 seadex_episodes = url_item.episodes
 
                 # If we haven't managed to parse, then set this up as an
@@ -196,7 +194,8 @@ def get_all_seadex_rgs_per_episode(
                     if (season, episode) in sonarr_by_key:
                         season_key = f"S{season:02d}E{episode:02d}"
                         all_seadex_rgs_per_episode.setdefault(
-                            season_key, set(),
+                            season_key,
+                            set(),
                         ).add(seadex_rg_normalized)
 
     return all_seadex_rgs_per_episode
@@ -288,7 +287,6 @@ class DownloadPlanner:
         torrent_hashes: list[str | None] = []
 
         for seadex_rg, seadex_rg_item in seadex_dict.items():
-
             self.logger.debug(
                 indent_string(
                     f"Filtering for release group {seadex_rg}",
@@ -297,7 +295,6 @@ class DownloadPlanner:
 
             seadex_urls = seadex_rg_item.urls
             for url_item in seadex_urls.values():
-
                 url_hash = url_item.hash
 
                 # If the URL is already in the hash cache, then append but don't set to download
@@ -305,8 +302,7 @@ class DownloadPlanner:
                 if url_hash not in cached_hashes:
                     self.logger.debug(
                         indent_string(
-                            f"Torrent hash {url_hash} not found in cache. "
-                            f"Will add to downloads",
+                            f"Torrent hash {url_hash} not found in cache. Will add to downloads",
                         ),
                     )
 
@@ -386,7 +382,6 @@ class DownloadPlanner:
         debug_on = self.logger.isEnabledFor(logging.DEBUG)
 
         for seadex_rg, seadex_rg_item in seadex_dict.items():
-
             self.logger.debug(
                 indent_string(
                     f"Filtering for release group {seadex_rg}",
@@ -395,7 +390,6 @@ class DownloadPlanner:
 
             seadex_urls = seadex_rg_item.urls
             for url, url_item in seadex_urls.items():
-
                 seadex_episodes = url_item.episodes
 
                 # Simple case, we have no episode mappings, so
@@ -477,7 +471,6 @@ class DownloadPlanner:
 
         # If the group matches, fall through to a size comparison
         if seadex_rg in arr_release_groups:
-
             seadex_file_sizes = url_item.size
             arr_file_sizes = as_size_list(arr_release_dict[seadex_rg])
 
@@ -539,7 +532,6 @@ class DownloadPlanner:
         size_matches = [False] * len(seadex_episodes)
 
         for seadex_idx, seadex_ep in enumerate(seadex_episodes):
-
             seadex_ep_season = seadex_ep.season
             seadex_ep_episode = seadex_ep.episode
             seadex_ep_size = seadex_ep.size
@@ -564,14 +556,9 @@ class DownloadPlanner:
             # Do the sizes match? A missing Sonarr file reports no
             # size, so guard against None == None reading as a match
             # when neither side actually has a size.
-            size_match = (
-                sonarr_ep_size is not None
-                and sonarr_ep_size == seadex_ep_size
-            )
+            size_match = sonarr_ep_size is not None and sonarr_ep_size == seadex_ep_size
 
-            season_ep_str = (
-                f"S{seadex_ep_season:02d}E{seadex_ep_episode:02d}"
-            )
+            season_ep_str = f"S{seadex_ep_season:02d}E{seadex_ep_episode:02d}"
 
             # Check SeaDex release group matches the episode release group in Sonarr
             sonarr_rg = sonarr_ep.episode_file.release_group if sonarr_ep.episode_file else None
@@ -582,13 +569,12 @@ class DownloadPlanner:
             # normalized name indexes all_seadex_rgs_per_episode, so compare the normalized name
             if (
                 sonarr_rg_normalized != seadex_rg_normalized
-                and sonarr_rg_normalized
-                not in all_seadex_rgs_per_episode["all"]
+                and sonarr_rg_normalized not in all_seadex_rgs_per_episode["all"]
             ):
-
                 # Avoid duplicating when another release already covers it
                 all_seadex_rg = all_seadex_rgs_per_episode.get(
-                    season_ep_str, (),
+                    season_ep_str,
+                    (),
                 )
 
                 if sonarr_rg_normalized not in all_seadex_rg:
@@ -605,19 +591,16 @@ class DownloadPlanner:
                     url_item.download = True
 
             else:
-
                 if debug_on:
                     self.logger.debug(
                         indent_string(
-                            f"Found SeaDex match to {arr.capitalize()} "
-                            f"for {season_ep_str}.",
+                            f"Found SeaDex match to {arr.capitalize()} for {season_ep_str}.",
                         ),
                     )
                     if not size_match:
                         self.logger.debug(
                             indent_string(
-                                f"-> Sizes are different: "
-                                f"{sonarr_ep_size} (Sonarr), {seadex_ep_size} (SeaDex)",
+                                f"-> Sizes are different: {sonarr_ep_size} (Sonarr), {seadex_ep_size} (SeaDex)",
                             ),
                         )
                     else:
@@ -686,16 +669,13 @@ class DownloadPlanner:
         same_files_groups = get_same_files_groups(seadex_dict)
 
         for same_files in same_files_groups:
-
             # Only the release groups the Arr doesn't already have are flagged
             flagged = [rg for rg in same_files if is_flagged(seadex_dict[rg])]
             if len(flagged) == 0:
                 continue
 
             if self.public_only:
-                public_flagged = [
-                    rg for rg in flagged if is_public_group(seadex_dict[rg])
-                ]
+                public_flagged = [rg for rg in flagged if is_public_group(seadex_dict[rg])]
 
                 if len(public_flagged) == 0:
                     # The Arr has none of these release groups, public_only is
@@ -727,8 +707,7 @@ class DownloadPlanner:
 
                 self.logger.debug(
                     indent_string(
-                        f"Not downloading release group {rg}: release group "
-                        f"{keeper} already covers the same files",
+                        f"Not downloading release group {rg}: release group {keeper} already covers the same files",
                     ),
                 )
                 unflag(seadex_dict[rg])
@@ -743,8 +722,4 @@ class DownloadPlanner:
             seadex_dict (dict): Dictionary of SeaDex releases
         """
 
-        return any(
-            url_item.download
-            for rg_item in seadex_dict.values()
-            for url_item in rg_item.urls.values()
-        )
+        return any(url_item.download for rg_item in seadex_dict.values() for url_item in rg_item.urls.values())
