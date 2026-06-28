@@ -740,11 +740,14 @@ class SeaDexArr:
         dry_run: bool,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
     ) -> bool:
-        """Start a fresh run context and the run clock
+        """Start a fresh run context and the run clock, and rebind collaborators
 
         Replaces the run-scoped state wholesale with a new RunContext and
         snapshots the logger-level counter (warning/error counts are diffed
-        against this when the summary is logged).
+        against this when the summary is logged). The ``begin_run`` rebind is
+        folded in here so the ctx swap and the collaborator rebind can never
+        drift apart - a missed rebind would silently route a collaborator's
+        writes to the orphaned prior context.
 
         Args:
             arr (Arr): Which Arr is being run.
@@ -762,6 +765,7 @@ class SeaDexArr:
             started_monotonic=time.monotonic(),
             log_counts_at_start=counter.snapshot() if counter else {},
         )
+        self.begin_run(self._ctx)
 
         return True
 
@@ -826,9 +830,8 @@ class SeaDexArr:
         )
 
         # Start a fresh run context (stats + clock + counter snapshot + the run's
-        # dry_run / wait-mode flags), then bind it to the per-run collaborators.
+        # dry_run / wait-mode flags); reset_run_stats rebinds the collaborators to it.
         self.reset_run_stats(arr=arr, dry_run=dry_run, import_wait_mode=resolved_wait_mode)
-        self.begin_run(self._ctx)
 
         # Tend the durable pending-import store at run start (never on a preview,
         # since waiting/importing needs a real qBittorrent client). The TTL prune
