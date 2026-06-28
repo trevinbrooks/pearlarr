@@ -53,6 +53,7 @@ class TestCapReachedFinalizesOnce:
             _reporter=mock.MagicMock(),
             _filter=mock.MagicMock(),  # begin_run binds it; a stub absorbs the no-op
             _grab_pipeline=mock.MagicMock(),  # begin_run rebinds it too now
+            _wait_manager=mock.MagicMock(),  # begin_run rebinds it too now
             _finalize_run=finalize,
         )
 

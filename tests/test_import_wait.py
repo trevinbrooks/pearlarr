@@ -1,11 +1,13 @@
-"""Unit tests for the engine's qBittorrent completion wait/poll machinery.
+"""Unit tests for the completion wait/poll machinery (:class:`ImportWaitManager`).
 
-These pin :meth:`SeaDexArr._poll_torrent` (the single-shot state read) and
-:meth:`SeaDexArr._run_monitor` (the poll loop) against a scripted ``FakeQbit``.
-The clock and sleep are injected into the monitor loop so it never actually
-waits - real foreground ``sleep`` is blocked in this env, so the fakes are
-mandatory, not just a speed-up. The engine is built bare (``object.__new__``
-via ``make_bare_instance``) so no live qBittorrent login or disk I/O happens.
+These pin :meth:`ImportWaitManager._poll_torrent` (the single-shot state read)
+and :meth:`ImportWaitManager.run_monitor` (the poll loop) against a scripted
+``FakeQbit``. The clock and sleep are injected into the monitor loop so it never
+actually waits - real foreground ``sleep`` is blocked in this env, so the fakes
+are mandatory, not just a speed-up. The manager is built bare (``object.__new__``
+via ``make_bare_instance``) so no live qBittorrent login or disk I/O happens. The
+engine's ``_finalize_run`` orchestration (which drives the manager's passes) is
+pinned via a real engine with an attached manager at the bottom of the file.
 """
 
 from typing import cast, override
@@ -15,6 +17,7 @@ import qbittorrentapi
 
 from seadexarr.modules.cache import CacheStore
 from seadexarr.modules.config import Arr
+from seadexarr.modules.import_wait import ImportWaitManager
 from seadexarr.modules.manual_import import (
     ImportReadiness,
     ImportWaitMode,
@@ -36,6 +39,7 @@ from .builders import (
     make_bare_instance,
     make_config,
     make_grab_pipeline,
+    make_import_wait_manager,
     make_logger,
     one_release_dict,
     pending_import,
@@ -100,30 +104,30 @@ class FakeQbit:
         return result
 
 
-def make_engine(qbit: FakeQbit) -> SeaDexArr:
-    """A bare ``SeaDexArr`` wired only with the ``qbit`` the wait path reads."""
+def make_wait_manager(qbit: FakeQbit) -> ImportWaitManager:
+    """A bare ``ImportWaitManager`` wired only with the ``qbit`` the poll reads."""
 
-    return make_bare_instance(SeaDexArr, qbit=qbit)
+    return make_bare_instance(ImportWaitManager, qbit=qbit)
 
 
 class TestPollTorrent:
     """_poll_torrent maps a single qBittorrent read to a sanitized TorrentProbe."""
 
     def test_missing_on_empty_list(self) -> None:
-        engine = make_engine(FakeQbit([[]]))
+        mgr = make_wait_manager(FakeQbit([[]]))
 
-        assert engine._poll_torrent("h") == TorrentProbe(WaitOutcome.MISSING, None, 0.0)
+        assert mgr._poll_torrent("h") == TorrentProbe(WaitOutcome.MISSING, None, 0.0)
 
     def test_errored(self) -> None:
-        engine = make_engine(FakeQbit([[FakeTorrent(is_errored=True)]]))
+        mgr = make_wait_manager(FakeQbit([[FakeTorrent(is_errored=True)]]))
 
-        assert engine._poll_torrent("h") == TorrentProbe(WaitOutcome.ERRORED, None, 0.0)
+        assert mgr._poll_torrent("h") == TorrentProbe(WaitOutcome.ERRORED, None, 0.0)
 
     def test_complete_carries_content_path(self) -> None:
         torrent = FakeTorrent(is_complete=True, content_path="/data/show")
-        engine = make_engine(FakeQbit([[torrent]]))
+        mgr = make_wait_manager(FakeQbit([[torrent]]))
 
-        assert engine._poll_torrent("h") == TorrentProbe(
+        assert mgr._poll_torrent("h") == TorrentProbe(
             WaitOutcome.COMPLETE,
             "/data/show",
             0.0,
@@ -132,29 +136,29 @@ class TestPollTorrent:
     def test_complete_on_full_progress_without_flag(self) -> None:
         # progress == 1.0 counts as complete even if the state flag is unset.
         torrent = FakeTorrent(progress=1.0, content_path="/data/movie")
-        engine = make_engine(FakeQbit([[torrent]]))
+        mgr = make_wait_manager(FakeQbit([[torrent]]))
 
-        assert engine._poll_torrent("h") == TorrentProbe(
+        assert mgr._poll_torrent("h") == TorrentProbe(
             WaitOutcome.COMPLETE,
             "/data/movie",
             1.0,
         )
 
     def test_none_while_downloading_carries_progress(self) -> None:
-        engine = make_engine(FakeQbit([[FakeTorrent(progress=0.5)]]))
+        mgr = make_wait_manager(FakeQbit([[FakeTorrent(progress=0.5)]]))
 
-        assert engine._poll_torrent("h") == TorrentProbe(None, None, 0.5)
+        assert mgr._poll_torrent("h") == TorrentProbe(None, None, 0.5)
 
     def test_none_on_transient_api_error(self) -> None:
         # A dropped connection / re-auth in flight is "still waiting", not terminal.
-        engine = make_engine(FakeQbit([qbittorrentapi.APIConnectionError("boom")]))
+        mgr = make_wait_manager(FakeQbit([qbittorrentapi.APIConnectionError("boom")]))
 
-        assert engine._poll_torrent("h") == TorrentProbe(None, None, 0.0)
+        assert mgr._poll_torrent("h") == TorrentProbe(None, None, 0.0)
 
     def test_none_when_no_client(self) -> None:
-        engine = make_bare_instance(SeaDexArr, qbit=None)
+        mgr = make_bare_instance(ImportWaitManager, qbit=None)
 
-        assert engine._poll_torrent("h") == TorrentProbe(None, None, 0.0)
+        assert mgr._poll_torrent("h") == TorrentProbe(None, None, 0.0)
 
     def test_carries_live_download_telemetry(self) -> None:
         torrent = FakeTorrent(
@@ -164,9 +168,9 @@ class TestPollTorrent:
             completed=1_800_000_000,
             size=2_900_000_000,
         )
-        engine = make_engine(FakeQbit([[torrent]]))
+        mgr = make_wait_manager(FakeQbit([[torrent]]))
 
-        assert engine._poll_torrent("h") == TorrentProbe(
+        assert mgr._poll_torrent("h") == TorrentProbe(
             None,
             None,
             0.64,
@@ -180,9 +184,9 @@ class TestPollTorrent:
         # qB's "∞" eta sentinel, an idle (0) speed and a zero size all sanitize to
         # None so the wait view never renders a nonsense countdown / negative bar.
         torrent = FakeTorrent(progress=0.5, dlspeed=0, eta=8_640_000, completed=0, size=0)
-        engine = make_engine(FakeQbit([[torrent]]))
+        mgr = make_wait_manager(FakeQbit([[torrent]]))
 
-        assert engine._poll_torrent("h") == TorrentProbe(None, None, 0.5)
+        assert mgr._poll_torrent("h") == TorrentProbe(None, None, 0.5)
 
 
 class FakeClock:
@@ -207,40 +211,39 @@ _FRESH = "2999-01-01 00:00:00"
 _EXPIRED = "2000-01-01 00:00:00"
 
 
-def make_orchestration_engine(
+def make_orchestration_manager(
     *,
     qbit: object,
     strategy: mock.MagicMock,
     store_records: list[dict] | None = None,
     pending: list | None = None,
     **config_overrides: object,
-) -> SeaDexArr:
-    """A bare ``SeaDexArr`` wired for the pending-import orchestration paths.
+) -> ImportWaitManager:
+    """A bare ``ImportWaitManager`` wired for the pending-import orchestration paths.
 
-    Seeds the durable per-arr store (via the engine's own ``_pending_store``) and
-    the in-memory ``_ctx.pending_imports`` list so ``_prune_expired_pending``,
-    ``_snapshot_pending_for_series``, ``_reconcile_remaining`` and ``_run_monitor``
+    Seeds the durable per-arr store (via the manager's own ``_pending_store``) and
+    the in-memory ``_ctx.pending_imports`` list so ``prune_expired_pending``,
+    ``snapshot_pending_for_series``, ``reconcile_remaining`` and ``run_monitor``
     can be driven without a live Sonarr/qBittorrent.
     """
 
-    engine = make_bare_instance(
-        SeaDexArr,
+    mgr = make_bare_instance(
+        ImportWaitManager,
         qbit=qbit,
         logger=make_logger(),
-        log_fmt=mock.MagicMock(),
         _config=make_config(**config_overrides),
         _active_strategy=strategy,
         _reporter=mock.MagicMock(),
         cache_store=FakeCacheStore(),
     )
-    engine._ctx = RunContext(arr=Arr.SONARR, pending_imports=list(pending or []))
+    mgr._ctx = RunContext(arr=Arr.SONARR, pending_imports=list(pending or []))
     for record in store_records or []:
-        engine.cache_store.put_pending(Arr.SONARR, record["infohash"], record)
-    return engine
+        mgr.cache_store.put_pending(Arr.SONARR, record["infohash"], record)
+    return mgr
 
 
 class TestPruneExpiredPending:
-    """_prune_expired_pending drops aged-out / unparseable records only."""
+    """prune_expired_pending drops aged-out / unparseable records only."""
 
     def test_drops_expired_and_unparseable_keeps_fresh(self) -> None:
         records = [
@@ -248,19 +251,19 @@ class TestPruneExpiredPending:
             pending_import(infohash="old", added_at=_EXPIRED).to_json(),
             pending_import(infohash="bad", added_at="not-a-timestamp").to_json(),
         ]
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=None,
             strategy=mock.MagicMock(),
             store_records=records,
         )
 
-        engine._prune_expired_pending()
+        mgr.prune_expired_pending()
 
-        assert set(engine._pending_store()) == {"fresh"}
+        assert set(mgr._pending_store()) == {"fresh"}
 
 
 class RecordingWaitView(WaitView):
-    """Records every snapshot the engine pushes, for assertion.
+    """Records every snapshot the manager pushes, for assertion.
 
     Replaces the old call-tuple FakeWaitView: the view is now a pure function of
     the pushed :class:`WaitSnapshot`, so the tests assert on the recorded snapshot
@@ -291,7 +294,7 @@ class RecordingWaitView(WaitView):
 
 
 class TestSnapshotPendingForSeries:
-    """_snapshot_pending_for_series reports CARRIED-OVER records inline, no double-report."""
+    """snapshot_pending_for_series reports CARRIED-OVER records inline, no double-report."""
 
     def test_carried_over_imported_drops_and_counts(self) -> None:
         # A prior run's download finished: COMPLETE + verified files -> the record
@@ -302,17 +305,17 @@ class TestSnapshotPendingForSeries:
             files_present=True,
         )
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=qbit,
             strategy=strategy,
             store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH).to_json()],
         )
 
-        engine._snapshot_pending_for_series(7)
+        mgr.snapshot_pending_for_series(7)
 
-        assert engine._pending_store() == {}
-        assert engine._ctx.stats.imported == 1
-        assert engine._ctx.pending_states["h"] is PendingState.IMPORTED
+        assert mgr._pending_store() == {}
+        assert mgr._ctx.stats.imported == 1
+        assert mgr._ctx.pending_states["h"] is PendingState.IMPORTED
         # Forced (CDH-off safe) but NOT at the deadline (no loud warning).
         assert strategy.import_completed.call_args.kwargs.get("force") is True
         assert strategy.import_completed.call_args.kwargs.get("at_deadline") is False
@@ -321,18 +324,18 @@ class TestSnapshotPendingForSeries:
         # Still downloading -> queued, record kept, no import attempt.
         strategy = mock.MagicMock()
         qbit = FakeQbit([[FakeTorrent(progress=0.5)]])
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=qbit,
             strategy=strategy,
             store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH).to_json()],
         )
 
-        engine._snapshot_pending_for_series(7)
+        mgr.snapshot_pending_for_series(7)
 
         strategy.import_completed.assert_not_called()
-        assert set(engine._pending_store()) == {"h"}
-        assert engine._ctx.pending_states["h"] is PendingState.QUEUED
-        assert engine._ctx.stats.imported == 0
+        assert set(mgr._pending_store()) == {"h"}
+        assert mgr._ctx.pending_states["h"] is PendingState.QUEUED
+        assert mgr._ctx.stats.imported == 0
 
     def test_this_run_grab_is_skipped_no_double_report(self) -> None:
         # REGRESSION (double-report): a torrent grabbed THIS run lives in
@@ -341,40 +344,40 @@ class TestSnapshotPendingForSeries:
         strategy = mock.MagicMock()
         this_run = pending_import(infohash="h", series_id=7, added_at=_FRESH)
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=qbit,
             strategy=strategy,
             store_records=[this_run.to_json()],
             pending=[this_run],
         )
 
-        engine._snapshot_pending_for_series(7)
+        mgr.snapshot_pending_for_series(7)
 
         strategy.import_completed.assert_not_called()
-        cast("mock.MagicMock", engine._reporter).log_pending_snapshot.assert_not_called()
-        assert engine._ctx.pending_states == {}
-        assert engine._ctx.stats.imported == 0
-        assert set(engine._pending_store()) == {"h"}
+        cast("mock.MagicMock", mgr._reporter).log_pending_snapshot.assert_not_called()
+        assert mgr._ctx.pending_states == {}
+        assert mgr._ctx.stats.imported == 0
+        assert set(mgr._pending_store()) == {"h"}
 
     def test_other_series_record_is_not_touched(self) -> None:
         # The snapshot is series-scoped: a record for a different series is left
         # alone (the deferred reconcile / monitor handles it later).
         strategy = mock.MagicMock()
         qbit = FakeQbit([[FakeTorrent(progress=0.5)]])
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=qbit,
             strategy=strategy,
             store_records=[pending_import(infohash="other", series_id=99, added_at=_FRESH).to_json()],
         )
 
-        engine._snapshot_pending_for_series(7)
+        mgr.snapshot_pending_for_series(7)
 
-        assert "other" not in engine._ctx.pending_states
-        assert set(engine._pending_store()) == {"other"}
+        assert "other" not in mgr._ctx.pending_states
+        assert set(mgr._pending_store()) == {"other"}
 
 
 class TestReconcileRemaining:
-    """_reconcile_remaining force-polls carried-over records not snapshotted this run."""
+    """reconcile_remaining force-polls carried-over records not snapshotted this run."""
 
     def test_imports_ready_record_not_yet_snapshotted(self) -> None:
         strategy = mock.MagicMock()
@@ -383,53 +386,53 @@ class TestReconcileRemaining:
             files_present=True,
         )
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=qbit,
             strategy=strategy,
             store_records=[pending_import(infohash="h", added_at=_FRESH).to_json()],
         )
 
-        engine._reconcile_remaining()
+        mgr.reconcile_remaining()
 
-        assert engine._pending_store() == {}
-        assert engine._ctx.stats.imported == 1
+        assert mgr._pending_store() == {}
+        assert mgr._ctx.stats.imported == 1
         assert strategy.import_completed.call_args.kwargs.get("force") is True
         assert strategy.import_completed.call_args.kwargs.get("at_deadline") is False
 
     def test_skips_already_snapshotted(self) -> None:
         # A record the inline snapshot already touched must not be re-polled.
         strategy = mock.MagicMock()
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]]),
             strategy=strategy,
             store_records=[pending_import(infohash="h", added_at=_FRESH).to_json()],
         )
-        engine._ctx.pending_states["h"] = PendingState.QUEUED
+        mgr._ctx.pending_states["h"] = PendingState.QUEUED
 
-        engine._reconcile_remaining()
+        mgr.reconcile_remaining()
 
         strategy.import_completed.assert_not_called()
 
     def test_skips_this_run_grabs(self) -> None:
         strategy = mock.MagicMock()
         this_run = pending_import(infohash="h", added_at=_FRESH)
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]]),
             strategy=strategy,
             store_records=[this_run.to_json()],
             pending=[this_run],
         )
 
-        engine._reconcile_remaining()
+        mgr.reconcile_remaining()
 
         strategy.import_completed.assert_not_called()
 
 
 class TestTallyCarriedOverIntoStats:
-    """_tally_carried_over_into_stats counts each still-pending record once."""
+    """tally_carried_over_into_stats counts each still-pending record once."""
 
     def test_counts_known_states_and_defaults_to_queued(self) -> None:
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=None,
             strategy=mock.MagicMock(),
             store_records=[
@@ -438,33 +441,33 @@ class TestTallyCarriedOverIntoStats:
                 pending_import(infohash="untouched", added_at=_FRESH).to_json(),
             ],
         )
-        engine._ctx.pending_states = {
+        mgr._ctx.pending_states = {
             "q": PendingState.QUEUED,
             "i": PendingState.IMPORTING,
         }
 
-        engine._tally_carried_over_into_stats()
+        mgr.tally_carried_over_into_stats()
 
-        assert engine._ctx.stats.queued == 2  # explicit q + defaulted untouched
-        assert engine._ctx.stats.importing == 1
+        assert mgr._ctx.stats.queued == 2  # explicit q + defaulted untouched
+        assert mgr._ctx.stats.importing == 1
 
     def test_excludes_this_run_grabs(self) -> None:
         this_run = pending_import(infohash="h", added_at=_FRESH)
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=None,
             strategy=mock.MagicMock(),
             store_records=[this_run.to_json()],
             pending=[this_run],
         )
 
-        engine._tally_carried_over_into_stats()
+        mgr.tally_carried_over_into_stats()
 
-        assert engine._ctx.stats.queued == 0
-        assert engine._ctx.stats.importing == 0
+        assert mgr._ctx.stats.queued == 0
+        assert mgr._ctx.stats.importing == 0
 
 
 class TestRunMonitor:
-    """_run_monitor: interleaved, copy-aware wait+import over ALL pending."""
+    """run_monitor: interleaved, copy-aware wait+import over ALL pending."""
 
     def test_interleaved_fast_and_slow(self) -> None:
         # Two torrents: "fast" completes + imports first cycle (files present);
@@ -492,7 +495,7 @@ class TestRunMonitor:
 
         fast = pending_import(infohash="fast", added_at=_FRESH)
         slow = pending_import(infohash="slow", added_at=_FRESH)
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=TwoTorrentQbit(),
             strategy=strategy,
             store_records=[fast.to_json(), slow.to_json()],
@@ -504,10 +507,10 @@ class TestRunMonitor:
         view = RecordingWaitView()
         clock = FakeClock(step=30)
 
-        engine._run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         # Both ultimately imported and dropped.
-        assert engine._pending_store() == {}
+        assert mgr._pending_store() == {}
         assert view.final("fast").outcome is Outcome.IMPORTED
         assert view.final("slow").outcome is Outcome.IMPORTED
         # slow showed a downloading heartbeat (fraction 0.5) before it completed.
@@ -528,7 +531,7 @@ class TestRunMonitor:
         ]
         pending = pending_import(infohash="h", added_at=_FRESH)
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=qbit,
             strategy=strategy,
             store_records=[pending.to_json()],
@@ -540,12 +543,12 @@ class TestRunMonitor:
         view = RecordingWaitView()
         clock = FakeClock(step=30)
 
-        engine._run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert strategy.import_completed.call_count == 2
         assert view.saw("h", Phase.IMPORTING)  # cycle 1, copy in flight
         assert view.final("h").outcome is Outcome.IMPORTED  # cycle 2, files landed
-        assert engine._pending_store() == {}
+        assert mgr._pending_store() == {}
 
     def test_importing_at_deadline_left_without_warning(self) -> None:
         # The copy never lands within import_ready_timeout: the final attempt
@@ -558,7 +561,7 @@ class TestRunMonitor:
         )
         pending = pending_import(infohash="h", added_at=_FRESH)
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=qbit,
             strategy=strategy,
             store_records=[pending.to_json()],
@@ -570,10 +573,10 @@ class TestRunMonitor:
         view = RecordingWaitView()
         clock = FakeClock(step=30)
 
-        engine._run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert view.final("h").outcome is Outcome.STILL_IMPORTING
-        assert set(engine._pending_store()) == {"h"}  # left, not dropped
+        assert set(mgr._pending_store()) == {"h"}  # left, not dropped
         # The final in-bound poll forces AND flags the deadline.
         last = strategy.import_completed.call_args_list[-1]
         assert last.kwargs.get("force") is True
@@ -582,7 +585,7 @@ class TestRunMonitor:
     def test_missing_drops_record(self) -> None:
         strategy = mock.MagicMock()
         pending = pending_import(infohash="h", added_at=_FRESH)
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=FakeQbit([[]]),
             strategy=strategy,
             store_records=[pending.to_json()],
@@ -594,16 +597,16 @@ class TestRunMonitor:
         view = RecordingWaitView()
         clock = FakeClock(step=30)
 
-        engine._run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         strategy.import_completed.assert_not_called()
         assert view.final("h").outcome is Outcome.MISSING
-        assert engine._pending_store() == {}
+        assert mgr._pending_store() == {}
 
     def test_errored_leaves_record(self) -> None:
         strategy = mock.MagicMock()
         pending = pending_import(infohash="h", added_at=_FRESH)
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=FakeQbit([[FakeTorrent(is_errored=True)]]),
             strategy=strategy,
             store_records=[pending.to_json()],
@@ -615,11 +618,11 @@ class TestRunMonitor:
         view = RecordingWaitView()
         clock = FakeClock(step=30)
 
-        engine._run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         strategy.import_completed.assert_not_called()
         assert view.final("h").outcome is Outcome.DOWNLOAD_ERRORED
-        assert set(engine._pending_store()) == {"h"}
+        assert set(mgr._pending_store()) == {"h"}
 
     def test_wait_scope_all_includes_store_only_carried_over(self) -> None:
         # REGRESSION (complaint 4 - "exited right away"): a carried-over record
@@ -631,7 +634,7 @@ class TestRunMonitor:
             files_present=True,
         )
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=qbit,
             strategy=strategy,
             store_records=[pending_import(infohash="carried", added_at=_FRESH).to_json()],
@@ -643,11 +646,11 @@ class TestRunMonitor:
         view = RecordingWaitView()
         clock = FakeClock(step=30)
 
-        engine._run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         strategy.import_completed.assert_called()
         assert view.final("carried").outcome is Outcome.IMPORTED
-        assert engine._pending_store() == {}
+        assert mgr._pending_store() == {}
 
     def test_keyboard_interrupt_breaks_and_leaves_records(self) -> None:
         # Ctrl-C during the poll nap must break the loop (not propagate), so the
@@ -655,7 +658,7 @@ class TestRunMonitor:
         # in-flight record is left pending and a WaitResult is still returned.
         strategy = mock.MagicMock()
         pending = pending_import(infohash="h", added_at=_FRESH)
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=FakeQbit([[FakeTorrent(progress=0.3)]]),
             strategy=strategy,
             store_records=[pending.to_json()],
@@ -669,14 +672,14 @@ class TestRunMonitor:
         def interrupt(_seconds: float) -> None:
             raise KeyboardInterrupt
 
-        result = engine._run_monitor(  # must not raise
+        result = mgr.run_monitor(  # must not raise
             now=lambda: 0.0,
             sleep=interrupt,
             view=view,
         )
 
         assert result is not None and result.waited == 0
-        assert set(engine._pending_store()) == {"h"}  # left pending for next run
+        assert set(mgr._pending_store()) == {"h"}  # left pending for next run
         assert view.saw("h", Phase.DOWNLOADING)
 
     def test_import_exception_is_swallowed_and_record_left(self) -> None:
@@ -686,7 +689,7 @@ class TestRunMonitor:
         strategy.import_completed.side_effect = RuntimeError("boom")
         pending = pending_import(infohash="h", added_at=_FRESH)
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=qbit,
             strategy=strategy,
             store_records=[pending.to_json()],
@@ -698,10 +701,10 @@ class TestRunMonitor:
         view = RecordingWaitView()
         clock = FakeClock(step=30)
 
-        engine._run_monitor(now=clock.now, sleep=clock.sleep, view=view)  # must not raise
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)  # must not raise
 
         assert view.final("h").outcome is Outcome.NOTHING_TO_IMPORT
-        assert set(engine._pending_store()) == {"h"}
+        assert set(mgr._pending_store()) == {"h"}
 
 
 class TestImportWaitModeProperty:
@@ -721,14 +724,34 @@ class TestImportWaitModeProperty:
         assert engine.import_wait_mode is ImportWaitMode.HYBRID
 
 
+def _attach_wait_manager(engine: SeaDexArr) -> None:
+    """Attach an ``ImportWaitManager`` sharing the engine's run state.
+
+    The wait/poll machinery lives on the manager now, so a finalize/snapshot test
+    on a bare engine must wire one bound to the SAME ``_ctx`` / ``cache_store`` /
+    client / strategy the engine holds - exactly as ``__init__`` + ``begin_run`` do.
+    """
+
+    engine._wait_manager = make_import_wait_manager(
+        _config=engine._config,
+        cache_store=engine.cache_store,
+        _reporter=engine._reporter,
+        logger=engine.logger,
+        qbit=engine.qbit,
+        _ctx=engine._ctx,
+        _active_strategy=engine._active_strategy,
+    )
+
+
 def _finalize_engine(calls: list[str], *, qbit: object, mode: ImportWaitMode) -> SeaDexArr:
     """A bare engine whose summary / save each append a marker to ``calls``.
 
     The reporter is a MagicMock and the cache_store a ``MagicMock(spec=CacheStore)``
     (so ``side_effect`` is well-typed and a renamed/typo'd cache method AttributeErrors
     instead of silently returning a truthy Mock), so ``_finalize_run``'s ordering can be
-    asserted without a live Sonarr/qBittorrent. ``_run_monitor`` is patched per-test (a
-    recording stub).
+    asserted without a live Sonarr/qBittorrent. The attached manager's ``run_monitor``
+    is patched per-test (a recording stub); its reconcile/tally read the empty mock
+    store and no-op.
     """
 
     reporter = mock.MagicMock()
@@ -751,6 +774,7 @@ def _finalize_engine(calls: list[str], *, qbit: object, mode: ImportWaitMode) ->
         cache_store=cache_store,
     )
     engine._ctx = RunContext(arr=Arr.SONARR, import_wait_mode=mode)
+    _attach_wait_manager(engine)
     return engine
 
 
@@ -768,8 +792,8 @@ class TestFinalizeRunOrdering:
         )
 
         with mock.patch.object(
-            engine,
-            "_run_monitor",
+            engine._wait_manager,
+            "run_monitor",
             side_effect=lambda *a, **k: calls.append("monitor"),
         ):
             engine._finalize_run()
@@ -786,8 +810,8 @@ class TestFinalizeRunOrdering:
         )
 
         with mock.patch.object(
-            engine,
-            "_run_monitor",
+            engine._wait_manager,
+            "run_monitor",
             side_effect=lambda *a, **k: calls.append("monitor"),
         ):
             engine._finalize_run()
@@ -801,8 +825,8 @@ class TestFinalizeRunOrdering:
         engine = _finalize_engine(calls, qbit=None, mode=ImportWaitMode.BLOCKING)
 
         with mock.patch.object(
-            engine,
-            "_run_monitor",
+            engine._wait_manager,
+            "run_monitor",
             side_effect=lambda *a, **k: calls.append("monitor"),
         ):
             engine._finalize_run()
@@ -816,17 +840,17 @@ class TestDropPending:
     def test_removes_from_store_and_ctx(self) -> None:
         keep = pending_import(infohash="keep", added_at=_FRESH)
         drop = pending_import(infohash="drop", added_at=_FRESH)
-        engine = make_orchestration_engine(
+        mgr = make_orchestration_manager(
             qbit=None,
             strategy=mock.MagicMock(),
             store_records=[keep.to_json(), drop.to_json()],
             pending=[keep, drop],
         )
 
-        engine._drop_pending("drop")
+        mgr._drop_pending("drop")
 
-        assert set(engine._pending_store()) == {"keep"}
-        assert engine._ctx.pending_imports == [keep]
+        assert set(mgr._pending_store()) == {"keep"}
+        assert mgr._ctx.pending_imports == [keep]
 
 
 def make_add_engine(
@@ -837,14 +861,15 @@ def make_add_engine(
     dry_run: bool = False,
     **config_overrides: object,
 ) -> SeaDexArr:
-    """A bare ``SeaDexArr`` + an attached ``GrabPipeline`` sharing its run state.
+    """A bare ``SeaDexArr`` + an attached ``GrabPipeline`` + ``ImportWaitManager``.
 
-    The produce side lives on :class:`GrabPipeline` now, so the engine gets one
-    wired to the SAME ``_ctx`` / ``cache_store`` / client it holds - an add through
-    ``engine._grab_pipeline`` registers into exactly the state the consume methods
-    (``_snapshot_pending_for_series`` / ``_monitor_working_set``) read back.
-    ``_active_strategy`` / ``_reporter`` are stubbed so the engine can be driven
-    through the snapshot afterwards.
+    The produce side lives on :class:`GrabPipeline` and the consume side on
+    :class:`ImportWaitManager` now, so the engine gets both wired to the SAME
+    ``_ctx`` / ``cache_store`` / client it holds - an add through
+    ``engine._grab_pipeline`` registers into exactly the state the manager's
+    consume passes (``snapshot_pending_for_series`` / ``_monitor_working_set``)
+    read back. ``_active_strategy`` / ``_reporter`` are stubbed so the snapshot
+    can be driven afterwards.
     """
 
     engine = make_bare_instance(
@@ -866,6 +891,7 @@ def make_add_engine(
         qbit=qbit,
         _ctx=engine._ctx,
     )
+    _attach_wait_manager(engine)
     return engine
 
 
@@ -884,9 +910,9 @@ class TestRegisteredGrabSurvivesSnapshot:
             one_release_dict(srg="NAN0", infohash="h1"),
             pending_seeds=seeds,
         )
-        engine._snapshot_pending_for_series(7)
+        engine._wait_manager.snapshot_pending_for_series(7)
 
         strategy = cast("mock.MagicMock", engine._active_strategy)
         strategy.import_completed.assert_not_called()
-        assert set(engine._pending_store()) == {"h1"}
-        assert [p.infohash for p in engine._monitor_working_set()] == ["h1"]
+        assert set(engine._wait_manager._pending_store()) == {"h1"}
+        assert [p.infohash for p in engine._wait_manager._monitor_working_set()] == ["h1"]

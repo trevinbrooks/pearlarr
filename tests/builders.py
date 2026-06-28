@@ -20,6 +20,7 @@ from seadex import EntryRecord, Tag, Tracker
 from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT, CachedEntry, CacheField, CacheRecord
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.grab_pipeline import GrabPipeline
+from seadexarr.modules.import_wait import ImportWaitManager
 from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.reporter import RunContext
@@ -489,6 +490,31 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
     }
     defaults.update(overrides)
     return make_bare_instance(GrabPipeline, **defaults)
+
+
+def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
+    """Build a bare ``ImportWaitManager`` with only what its methods read.
+
+    Config-backed flags (the import timeouts / poll interval) route through an
+    in-memory ``AppConfig``; the rest pass straight to the bare instance. The
+    ``_ctx`` defaults to a fresh Sonarr run context and ``_active_strategy`` /
+    ``_reporter`` / ``cache_store`` to mocks/fakes, so a test sets just the
+    qbit + strategy + store it exercises.
+    """
+
+    config_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CONFIG_SETTING_NAMES}
+    config = make_config(**config_overrides)
+    defaults: dict[str, Any] = {
+        "_config": config,
+        "cache_store": FakeCacheStore(),
+        "_reporter": mock.MagicMock(),
+        "logger": make_logger(),
+        "qbit": None,
+        "_ctx": RunContext(arr=Arr.SONARR),
+        "_active_strategy": mock.MagicMock(),
+    }
+    defaults.update(overrides)
+    return make_bare_instance(ImportWaitManager, **defaults)
 
 
 def make_planner(**overrides: Any) -> DownloadPlanner:
