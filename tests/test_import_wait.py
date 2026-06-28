@@ -1,6 +1,6 @@
 """Unit tests for the completion wait/poll machinery (:class:`ImportWaitManager`).
 
-These pin :meth:`ImportWaitManager._poll_torrent` (the single-shot state read)
+These pin :meth:`ImportWaitManager.poll_torrent` (the single-shot state read)
 and :meth:`ImportWaitManager.run_monitor` (the poll loop) against a scripted
 ``FakeQbit``. The clock and sleep are injected into the monitor loop so it never
 actually waits - real foreground ``sleep`` is blocked in this env, so the fakes
@@ -55,10 +55,10 @@ class FakeStateEnum:
 
 
 class FakeTorrent:
-    """Mimics one qBittorrent torrent info row (the fields ``_poll_torrent`` reads).
+    """Mimics one qBittorrent torrent info row (the fields ``poll_torrent`` reads).
 
     The telemetry fields (``dlspeed`` / ``eta`` / ``completed`` / ``size``) default
-    to None so the common monitor tests don't have to set them; ``_poll_torrent``
+    to None so the common monitor tests don't have to set them; ``poll_torrent``
     reads them via ``getattr`` and sanitizes None to None.
     """
 
@@ -111,23 +111,23 @@ def make_wait_manager(qbit: FakeQbit) -> ImportWaitManager:
 
 
 class TestPollTorrent:
-    """_poll_torrent maps a single qBittorrent read to a sanitized TorrentProbe."""
+    """poll_torrent maps a single qBittorrent read to a sanitized TorrentProbe."""
 
     def test_missing_on_empty_list(self) -> None:
         mgr = make_wait_manager(FakeQbit([[]]))
 
-        assert mgr._poll_torrent("h") == TorrentProbe(WaitOutcome.MISSING, None, 0.0)
+        assert mgr.poll_torrent("h") == TorrentProbe(WaitOutcome.MISSING, None, 0.0)
 
     def test_errored(self) -> None:
         mgr = make_wait_manager(FakeQbit([[FakeTorrent(is_errored=True)]]))
 
-        assert mgr._poll_torrent("h") == TorrentProbe(WaitOutcome.ERRORED, None, 0.0)
+        assert mgr.poll_torrent("h") == TorrentProbe(WaitOutcome.ERRORED, None, 0.0)
 
     def test_complete_carries_content_path(self) -> None:
         torrent = FakeTorrent(is_complete=True, content_path="/data/show")
         mgr = make_wait_manager(FakeQbit([[torrent]]))
 
-        assert mgr._poll_torrent("h") == TorrentProbe(
+        assert mgr.poll_torrent("h") == TorrentProbe(
             WaitOutcome.COMPLETE,
             "/data/show",
             0.0,
@@ -138,7 +138,7 @@ class TestPollTorrent:
         torrent = FakeTorrent(progress=1.0, content_path="/data/movie")
         mgr = make_wait_manager(FakeQbit([[torrent]]))
 
-        assert mgr._poll_torrent("h") == TorrentProbe(
+        assert mgr.poll_torrent("h") == TorrentProbe(
             WaitOutcome.COMPLETE,
             "/data/movie",
             1.0,
@@ -147,18 +147,18 @@ class TestPollTorrent:
     def test_none_while_downloading_carries_progress(self) -> None:
         mgr = make_wait_manager(FakeQbit([[FakeTorrent(progress=0.5)]]))
 
-        assert mgr._poll_torrent("h") == TorrentProbe(None, None, 0.5)
+        assert mgr.poll_torrent("h") == TorrentProbe(None, None, 0.5)
 
     def test_none_on_transient_api_error(self) -> None:
         # A dropped connection / re-auth in flight is "still waiting", not terminal.
         mgr = make_wait_manager(FakeQbit([qbittorrentapi.APIConnectionError("boom")]))
 
-        assert mgr._poll_torrent("h") == TorrentProbe(None, None, 0.0)
+        assert mgr.poll_torrent("h") == TorrentProbe(None, None, 0.0)
 
     def test_none_when_no_client(self) -> None:
         mgr = make_bare_instance(ImportWaitManager, qbit=None)
 
-        assert mgr._poll_torrent("h") == TorrentProbe(None, None, 0.0)
+        assert mgr.poll_torrent("h") == TorrentProbe(None, None, 0.0)
 
     def test_carries_live_download_telemetry(self) -> None:
         torrent = FakeTorrent(
@@ -170,7 +170,7 @@ class TestPollTorrent:
         )
         mgr = make_wait_manager(FakeQbit([[torrent]]))
 
-        assert mgr._poll_torrent("h") == TorrentProbe(
+        assert mgr.poll_torrent("h") == TorrentProbe(
             None,
             None,
             0.64,
@@ -186,7 +186,7 @@ class TestPollTorrent:
         torrent = FakeTorrent(progress=0.5, dlspeed=0, eta=8_640_000, completed=0, size=0)
         mgr = make_wait_manager(FakeQbit([[torrent]]))
 
-        assert mgr._poll_torrent("h") == TorrentProbe(None, None, 0.5)
+        assert mgr.poll_torrent("h") == TorrentProbe(None, None, 0.5)
 
 
 class FakeClock:
@@ -847,7 +847,7 @@ class TestDropPending:
             pending=[keep, drop],
         )
 
-        mgr._drop_pending("drop")
+        mgr.drop_pending("drop")
 
         assert set(mgr._pending_store()) == {"keep"}
         assert mgr._ctx.pending_imports == [keep]

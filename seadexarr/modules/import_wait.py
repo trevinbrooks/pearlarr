@@ -95,7 +95,7 @@ class ImportWaitManager:
         plain-dict copy each call (mutating it does NOT touch the store - the two
         mutators go straight through the facade, :meth:`CacheStore.put_pending`
         in ``_register_pending_import`` and :meth:`CacheStore.drop_pending` in
-        ``_drop_pending``). Every other caller only iterates it read-only.
+        ``drop_pending``). Every other caller only iterates it read-only.
 
         Each value is the JSON form of a :class:`PendingImport`
         (``to_json()``/``from_json(raw: dict[str, Any])``), i.e. genuinely-open
@@ -103,12 +103,12 @@ class ImportWaitManager:
         cache is untyped on disk (a hand-edited or legacy db can carry a non-dict
         value), so the values are widened back to ``Any`` and consumers defensively
         ``isinstance(raw, dict)``-narrow each one before reading it (see
-        :meth:`_snapshot_pending_for_series`, mirroring ``_series_pending_records``).
+        :meth:`snapshot_pending_for_series`, mirroring ``_series_pending_records``).
         """
 
         return cast("dict[str, Any]", self.cache_store.get_pending(self._ctx.arr))
 
-    def _poll_torrent(self, infohash: str) -> TorrentProbe:
+    def poll_torrent(self, infohash: str) -> TorrentProbe:
         """Poll qBittorrent once for a torrent's terminal/in-progress state.
 
         Returns a :class:`TorrentProbe`: a terminal :class:`WaitOutcome` (COMPLETE
@@ -158,7 +158,7 @@ class ImportWaitManager:
             )
         return TorrentProbe(None, None, progress, speed_bps, eta_s, bytes_done, bytes_total)
 
-    def _try_import_completed(
+    def try_import_completed(
         self,
         pending: PendingImport,
         path: str,
@@ -213,7 +213,7 @@ class ImportWaitManager:
         """Poll one carried-over record once and fold it to a :class:`PendingState`.
 
         Shared by the inline snapshot and the deferred reconcile: one non-blocking
-        :meth:`_poll_torrent`; on COMPLETE drive one forced (CDH-off safe),
+        :meth:`poll_torrent`; on COMPLETE drive one forced (CDH-off safe),
         non-deadline import attempt (so a still-missing file never warns). The
         outcome + the probe's verified-files flag fold through
         :func:`classify_pending` into one state, stashed per infohash for the
@@ -223,10 +223,10 @@ class ImportWaitManager:
         """
 
         pending = PendingImport.from_json(raw)
-        poll = self._poll_torrent(infohash)
+        poll = self.poll_torrent(infohash)
         probe = ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
         if poll.outcome is WaitOutcome.COMPLETE and poll.content_path:
-            probe = self._try_import_completed(
+            probe = self.try_import_completed(
                 pending,
                 poll.content_path,
                 force=True,
@@ -236,10 +236,10 @@ class ImportWaitManager:
         state = classify_pending(poll.outcome, probe.files_present)
         self._ctx.pending_states[infohash] = state
         if state is PendingState.IMPORTED:
-            self._drop_pending(infohash)
+            self.drop_pending(infohash)
             self._ctx.stats.imported += 1
         elif state is PendingState.MISSING:
-            self._drop_pending(infohash)
+            self.drop_pending(infohash)
         return pending, state
 
     def snapshot_pending_for_series(self, series_id: int) -> None:
@@ -248,7 +248,7 @@ class ImportWaitManager:
         For each durable record for ``series_id`` that is NOT a this-run grab (its
         infohash is absent from ``_ctx.pending_imports`` - those are already shown
         as ``added``, so including them here would double-report), do one
-        non-blocking :meth:`_poll_torrent`; on COMPLETE drive one forced (CDH-off
+        non-blocking :meth:`poll_torrent`; on COMPLETE drive one forced (CDH-off
         safe) import attempt with ``at_deadline=False`` (so a still-missing file
         never warns). The poll's outcome + the probe's verified-files flag fold
         through :func:`classify_pending` into one :class:`PendingState`, which is
@@ -371,56 +371,38 @@ class ImportWaitManager:
                 digest_interval=self._config.imports.digest_interval,
             )
 
-        dl_timeout = self._config.imports.wait_timeout
-        import_timeout = self._config.imports.ready_timeout
         poll_s = self._config.imports.poll_interval
 
-        start = clock()
-        dl_start: dict[str, float] = {r.infohash: start for r in records}
-        import_start: dict[str, float] = {}
-        active: set[str] = {r.infohash for r in records}
-        views: dict[str, TorrentView] = {
-            r.infohash: TorrentView(
-                key=r.infohash,
-                label=r.title or r.infohash,
-                phase=Phase.QUEUED,
-            )
-            for r in records
-        }
-        results: list[WaitOutcomeRow] = []
+        # Fresh-per-call behavioral object: it owns the per-cycle accumulators (so
+        # there's nothing to reset between calls) and the advance logic; the loop
+        # here keeps only the view lifecycle, the cycle pacing, and the Ctrl-C break.
+        mp = MonitorPass(
+            self,
+            records,
+            now=clock,
+            dl_timeout=self._config.imports.wait_timeout,
+            import_timeout=self._config.imports.ready_timeout,
+        )
 
         try:
-            view.update(WaitSnapshot(tuple(views.values()), elapsed_s=0.0))
-            while active:
+            view.update(mp.snapshot(0.0))
+            while mp.active:
                 try:
                     for record in records:
-                        h = record.infohash
-                        if h not in active:
+                        if record.infohash not in mp.active:
                             continue
-                        self._monitor_advance_one(
-                            record,
-                            views=views,
-                            results=results,
-                            now=clock,
-                            active=active,
-                            dl_start=dl_start,
-                            import_start=import_start,
-                            dl_timeout=dl_timeout,
-                            import_timeout=import_timeout,
-                        )
-                    view.update(
-                        WaitSnapshot(tuple(views.values()), elapsed_s=clock() - start),
-                    )
-                    if active:
+                        mp.advance(record)
+                    view.update(mp.snapshot(clock() - mp.start))
+                    if mp.active:
                         nap(poll_s)
                 except KeyboardInterrupt:
-                    self.logger.info(f"Wait interrupted; {len(active)} left pending")
+                    self.logger.info(f"Wait interrupted; {len(mp.active)} left pending")
                     break
         finally:
             if own_view:
                 view.close()
 
-        return WaitResult(tuple(results), elapsed_s=clock() - start)
+        return WaitResult(tuple(mp.results), elapsed_s=clock() - mp.start)
 
     def _monitor_working_set(self) -> list[PendingImport]:
         """Dedup ``_ctx.pending_imports`` + rehydrated store records by infohash.
@@ -442,106 +424,6 @@ class ImportWaitManager:
             seen.add(infohash)
             records.append(PendingImport.from_json(raw))
         return records
-
-    def _monitor_advance_one(
-        self,
-        record: PendingImport,
-        *,
-        views: dict[str, TorrentView],
-        results: list[WaitOutcomeRow],
-        now: Callable[[], float],
-        active: set[str],
-        dl_start: dict[str, float],
-        import_start: dict[str, float],
-        dl_timeout: int,
-        import_timeout: int,
-    ) -> None:
-        """Advance one torrent one monitor cycle (download or drive/verify import).
-
-        Writes this torrent's current :class:`TorrentView` into ``views`` (the frame
-        the caller snapshots) and, on a terminal outcome, appends a
-        :class:`WaitOutcomeRow` to ``results``, discards it from ``active``, and
-        drops the durable record when (and only when) ``outcome.dropped`` - which is
-        True for exactly IMPORTED and MISSING, so the displayed word and the store
-        mutation can't diverge. ``import_start`` is stamped on the first COMPLETE.
-        ``imported`` is gated on verified episode files, so a freshly-issued import
-        command reads ``importing`` until the copy lands; the final in-bound attempt
-        (``at_deadline``) both forces and warns.
-        """
-
-        h = record.infohash
-        label = record.title or record.infohash
-
-        def terminal(outcome: Outcome) -> None:
-            views[h] = TorrentView(
-                key=h,
-                label=label,
-                phase=Phase.TERMINAL,
-                outcome=outcome,
-            )
-            results.append(WaitOutcomeRow(key=h, label=label, outcome=outcome))
-            if outcome.dropped:
-                self._drop_pending(h)
-            active.discard(h)
-
-        poll = self._poll_torrent(h)
-
-        if poll.outcome is None:
-            if now() - dl_start[h] >= dl_timeout:
-                terminal(Outcome.DOWNLOAD_TIMED_OUT)
-            else:
-                views[h] = TorrentView(
-                    key=h,
-                    label=label,
-                    phase=Phase.DOWNLOADING,
-                    fraction=poll.progress,
-                    speed_bps=poll.speed_bps,
-                    eta_s=poll.eta_s,
-                    bytes_done=poll.bytes_done,
-                    bytes_total=poll.bytes_total,
-                    phase_elapsed_s=now() - dl_start[h],
-                    phase_timeout_s=dl_timeout,
-                )
-            return
-        if poll.outcome is WaitOutcome.MISSING:
-            terminal(Outcome.MISSING)
-            return
-        if poll.outcome is WaitOutcome.ERRORED:
-            terminal(Outcome.DOWNLOAD_ERRORED)
-            return
-        if poll.outcome is not WaitOutcome.COMPLETE or not poll.content_path:
-            terminal(Outcome.DOWNLOAD_TIMED_OUT)
-            return
-
-        # COMPLETE: drive / verify our import, gating `imported` on verified files.
-        import_start.setdefault(h, now())
-        at_deadline = now() - import_start[h] >= import_timeout
-        probe = self._try_import_completed(
-            record,
-            poll.content_path,
-            force=at_deadline,
-            at_deadline=at_deadline,
-        )
-        if probe.files_present:
-            terminal(Outcome.IMPORTED)
-        elif at_deadline:
-            terminal(
-                Outcome.STILL_IMPORTING if probe.command_issued else Outcome.NOT_READY,
-            )
-        elif probe.readiness is ImportReadiness.LEAVE:
-            terminal(Outcome.NOTHING_TO_IMPORT)
-        else:
-            # RETRY / copy in flight: the command was accepted but the files
-            # haven't landed yet (or Sonarr is still scanning).
-            views[h] = TorrentView(
-                key=h,
-                label=label,
-                phase=Phase.IMPORTING,
-                fraction=1.0,
-                phase_elapsed_s=now() - import_start[h],
-                phase_timeout_s=import_timeout,
-                command_issued=probe.command_issued,
-            )
 
     def prune_expired_pending(self) -> None:
         """Drop durable pending records past their TTL (or with a bad stamp).
@@ -565,17 +447,161 @@ class ImportWaitManager:
                 self.logger.debug(
                     f"Pending import {infohash} has an unparseable timestamp; dropping as expired",
                 )
-                self._drop_pending(infohash)
+                self.drop_pending(infohash)
                 continue
             if added_at < cutoff:
                 self.logger.info(
                     f"Pending import {infohash} older than {self._config.imports.pending_max_age_days} days; dropping",
                 )
-                self._drop_pending(infohash)
+                self.drop_pending(infohash)
 
-    def _drop_pending(self, infohash: str) -> None:
+    def drop_pending(self, infohash: str) -> None:
         """Remove a pending record from both the durable store and the run list."""
 
         self.cache_store.drop_pending(self._ctx.arr, infohash)
         self._ctx.pending_imports = [p for p in self._ctx.pending_imports if p.infohash != infohash]
+
+
+class MonitorPass:
+    """One blocking-monitor invocation's mutable state + per-cycle advance logic.
+
+    Built fresh at the top of :meth:`ImportWaitManager.run_monitor` from the
+    manager, the working-set records, the clock, and the two per-torrent timeouts.
+    It owns the five accumulators the loop used to thread - ``views`` (the frame
+    the manager snapshots), ``results`` (terminal rows), ``active`` (still-running
+    infohashes), ``dl_start`` / ``import_start`` (per-phase clocks) - as fields,
+    so :meth:`advance` takes only the record and there is nothing to reset between
+    runs (the object IS the per-invocation scope). It calls back to the manager's
+    ``poll_torrent`` / ``try_import_completed`` / ``drop_pending`` (those are
+    shared with the reconcile passes, so they stay on the manager).
+    """
+
+    def __init__(
+        self,
+        manager: "ImportWaitManager",
+        records: list[PendingImport],
+        *,
+        now: Callable[[], float],
+        dl_timeout: int,
+        import_timeout: int,
+    ) -> None:
+        self._mgr = manager
+        self.now = now
+        self.dl_timeout = dl_timeout
+        self.import_timeout = import_timeout
+        # Sampled once here (was ``start = clock()`` atop run_monitor); the download
+        # clock for every record starts now, and the manager reads ``start`` back for
+        # the snapshot / WaitResult elapsed.
+        self.start = now()
+        self.dl_start: dict[str, float] = {r.infohash: self.start for r in records}
+        self.import_start: dict[str, float] = {}
+        self.active: set[str] = {r.infohash for r in records}
+        self.views: dict[str, TorrentView] = {
+            r.infohash: TorrentView(
+                key=r.infohash,
+                label=r.title or r.infohash,
+                phase=Phase.QUEUED,
+            )
+            for r in records
+        }
+        self.results: list[WaitOutcomeRow] = []
+
+    def snapshot(self, elapsed_s: float) -> WaitSnapshot:
+        """The current frame: every torrent's :class:`TorrentView`, plus elapsed."""
+
+        return WaitSnapshot(tuple(self.views.values()), elapsed_s=elapsed_s)
+
+    def _terminal(self, outcome: Outcome, h: str, label: str) -> None:
+        """Record a terminal outcome: snapshot row + result + (maybe) drop + retire.
+
+        Drops the durable record when (and only when) ``outcome.dropped`` - True for
+        exactly IMPORTED and MISSING, so the displayed word and the store mutation
+        can't diverge.
+        """
+
+        self.views[h] = TorrentView(
+            key=h,
+            label=label,
+            phase=Phase.TERMINAL,
+            outcome=outcome,
+        )
+        self.results.append(WaitOutcomeRow(key=h, label=label, outcome=outcome))
+        if outcome.dropped:
+            self._mgr.drop_pending(h)
+        self.active.discard(h)
+
+    def advance(self, record: PendingImport) -> None:
+        """Advance one torrent one monitor cycle (download or drive/verify import).
+
+        Writes this torrent's current :class:`TorrentView` into ``views`` (the frame
+        the caller snapshots) and, on a terminal outcome, retires it via
+        :meth:`_terminal`. ``import_start`` is stamped on the first COMPLETE.
+        ``imported`` is gated on verified episode files, so a freshly-issued import
+        command reads ``importing`` until the copy lands; the final in-bound attempt
+        (``at_deadline``) both forces and warns.
+        """
+
+        h = record.infohash
+        label = record.title or record.infohash
+
+        poll = self._mgr.poll_torrent(h)
+
+        if poll.outcome is None:
+            if self.now() - self.dl_start[h] >= self.dl_timeout:
+                self._terminal(Outcome.DOWNLOAD_TIMED_OUT, h, label)
+            else:
+                self.views[h] = TorrentView(
+                    key=h,
+                    label=label,
+                    phase=Phase.DOWNLOADING,
+                    fraction=poll.progress,
+                    speed_bps=poll.speed_bps,
+                    eta_s=poll.eta_s,
+                    bytes_done=poll.bytes_done,
+                    bytes_total=poll.bytes_total,
+                    phase_elapsed_s=self.now() - self.dl_start[h],
+                    phase_timeout_s=self.dl_timeout,
+                )
+            return
+        if poll.outcome is WaitOutcome.MISSING:
+            self._terminal(Outcome.MISSING, h, label)
+            return
+        if poll.outcome is WaitOutcome.ERRORED:
+            self._terminal(Outcome.DOWNLOAD_ERRORED, h, label)
+            return
+        if poll.outcome is not WaitOutcome.COMPLETE or not poll.content_path:
+            self._terminal(Outcome.DOWNLOAD_TIMED_OUT, h, label)
+            return
+
+        # COMPLETE: drive / verify our import, gating `imported` on verified files.
+        self.import_start.setdefault(h, self.now())
+        at_deadline = self.now() - self.import_start[h] >= self.import_timeout
+        probe = self._mgr.try_import_completed(
+            record,
+            poll.content_path,
+            force=at_deadline,
+            at_deadline=at_deadline,
+        )
+        if probe.files_present:
+            self._terminal(Outcome.IMPORTED, h, label)
+        elif at_deadline:
+            self._terminal(
+                Outcome.STILL_IMPORTING if probe.command_issued else Outcome.NOT_READY,
+                h,
+                label,
+            )
+        elif probe.readiness is ImportReadiness.LEAVE:
+            self._terminal(Outcome.NOTHING_TO_IMPORT, h, label)
+        else:
+            # RETRY / copy in flight: the command was accepted but the files
+            # haven't landed yet (or Sonarr is still scanning).
+            self.views[h] = TorrentView(
+                key=h,
+                label=label,
+                phase=Phase.IMPORTING,
+                fraction=1.0,
+                phase_elapsed_s=self.now() - self.import_start[h],
+                phase_timeout_s=self.import_timeout,
+                command_issued=probe.command_issued,
+            )
 
