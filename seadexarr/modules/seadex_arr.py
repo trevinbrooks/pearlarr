@@ -285,6 +285,17 @@ class GrabRequest:
     pending_seeds: dict[str, PendingImport] | None = None
 
 
+def is_preview(ctx: RunContext, qbit: qbittorrentapi.Client | None) -> bool:
+    """A run is a no-op preview when a dry run was requested OR qBittorrent is not
+    configured (nothing can actually be grabbed).
+
+    Module-level so every per-run collaborator computes preview identically from
+    the shared :class:`RunContext` + client, rather than each re-deriving it.
+    """
+
+    return ctx.dry_run or qbit is None
+
+
 @final
 class SeaDexArr:
     """The Arr-agnostic run machinery (the strategy's :class:`~.protocols.RunServices`).
@@ -326,23 +337,18 @@ class SeaDexArr:
         self.log_fmt = deps.log_fmt
         self._reporter = deps.reporter
 
-        # When True, simulate a run without grabbing torrents, writing the cache,
-        # or sending notifications. Set per-run by run_sync(); the no-op default
-        # here keeps every method that consults it safe before run_sync is called.
-        self.dry_run = False
-
-        # The wait-for-completion mode and the active strategy for the current
-        # run. Both are (re)set at the top of run_sync; OFF here keeps every
-        # pending-import code path a no-op before the first run, and the
-        # placeholder strategy is replaced before any hook is invoked.
-        self._import_wait_mode: ImportWaitMode = ImportWaitMode.OFF
+        # The active strategy for the current run, (re)set at the top of run_sync;
+        # the placeholder None here is replaced before any import hook is invoked.
         self._active_strategy: ImportCompleter | None = None
 
         # All per-run state (stats tally, running torrent count, the active
-        # title/url/coverage, the run clock, the public_only skip flags) lives on
-        # this context, replaced fresh at the start of each run by reset_run_stats.
-        # A placeholder is created here so the object is usable before run_sync.
-        self._ctx = RunContext(arr=arr, dry_run=False)
+        # title/url/coverage, the run clock, the public_only skip flags, plus the
+        # run's dry_run + resolved wait-mode flags) lives on this context, replaced
+        # fresh at the start of each run by reset_run_stats. A placeholder is built
+        # here - its dry_run=False + OFF wait mode keep every preview / pending-
+        # import path a safe no-op - so the object is usable before run_sync.
+        self._ctx = RunContext(arr=arr)
+        self.begin_run(self._ctx)
 
     def close(self) -> None:
         """Release run-scoped resources: the HTTP session and the cache db.
@@ -797,7 +803,7 @@ class SeaDexArr:
         """
 
         if (
-            self._import_wait_mode is not ImportWaitMode.OFF
+            self._ctx.import_wait_mode is not ImportWaitMode.OFF
             and not self._is_preview()
             and url_item.hash
             and pending_seeds
@@ -814,7 +820,7 @@ class SeaDexArr:
     def _is_preview(self) -> bool:
         """A run is a no-op preview when an explicit dry run was requested OR
         qBittorrent is not configured (nothing can actually be grabbed)."""
-        return self.dry_run or self.qbit is None
+        return is_preview(self._ctx, self.qbit)
 
     @property
     def import_wait_mode(self) -> ImportWaitMode:
@@ -827,7 +833,7 @@ class SeaDexArr:
         whole pass would silently no-op.
         """
 
-        return self._import_wait_mode
+        return self._ctx.import_wait_mode
 
     def update_cache(
         self,
@@ -875,7 +881,23 @@ class SeaDexArr:
         time.sleep(self._config.advanced.sleep_time)
         return False
 
-    def reset_run_stats(self, arr: Arr, dry_run: bool) -> bool:
+    def begin_run(self, ctx: RunContext) -> None:
+        """Bind the fresh run context to the engine's per-run collaborators.
+
+        Two-phase bind: called once with the placeholder ctx in ``__init__`` (so
+        pre-run paths are safe) and again from ``run_sync`` right after
+        ``reset_run_stats`` swaps in the run's real ctx. A no-op today; the Phase B
+        collaborator extractions rebind their bound ctx here.
+        """
+
+        del ctx
+
+    def reset_run_stats(
+        self,
+        arr: Arr,
+        dry_run: bool,
+        import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
+    ) -> bool:
         """Start a fresh run context and the run clock
 
         Replaces the run-scoped state wholesale with a new RunContext and
@@ -885,12 +907,15 @@ class SeaDexArr:
         Args:
             arr (Arr): Which Arr is being run.
             dry_run (bool): Whether this run simulates without grabbing/writing.
+            import_wait_mode (ImportWaitMode): The run's resolved wait mode
+                (cli > config > default), stamped onto the fresh context.
         """
 
         counter = getattr(self.logger, "seadex_counter", None)
         self._ctx = RunContext(
             arr=arr,
             dry_run=dry_run,
+            import_wait_mode=import_wait_mode,
             # Monotonic so a wall-clock step (NTP, DST) can't yield negative elapsed
             started_monotonic=time.monotonic(),
             log_counts_at_start=counter.snapshot() if counter else {},
@@ -947,22 +972,21 @@ class SeaDexArr:
 
         boot = boot if boot is not None else NullBootView()
 
-        # Whether this is a no-op preview - consulted by the mutating helpers
-        self.dry_run = dry_run
-
         # Hold the active strategy (so _finalize_run / _grab can call its import
         # hook) and resolve the effective wait mode (cli > config > default) for
         # the whole run. The engine only ever calls import_completed off it, so it
         # is held under the narrow, non-generic ImportCompleter protocol - which a
         # concrete ArrSync structurally satisfies, so no invariant-ItemT cast.
         self._active_strategy = strategy
-        self._import_wait_mode = resolve_wait_mode(
+        resolved_wait_mode = resolve_wait_mode(
             import_wait_mode,
             self._config.imports.wait_mode,
         )
 
-        # Start a fresh run context (stats tally + clock + counter snapshot)
-        self.reset_run_stats(arr=arr, dry_run=dry_run)
+        # Start a fresh run context (stats + clock + counter snapshot + the run's
+        # dry_run / wait-mode flags), then bind it to the per-run collaborators.
+        self.reset_run_stats(arr=arr, dry_run=dry_run, import_wait_mode=resolved_wait_mode)
+        self.begin_run(self._ctx)
 
         # Tend the durable pending-import store at run start (never on a preview,
         # since waiting/importing needs a real qBittorrent client). The TTL prune
@@ -971,7 +995,7 @@ class SeaDexArr:
         # report and import carried-over records run AFTER the per-item loop (the
         # inline per-series snapshot) and in _finalize_run (deferred reconcile +
         # the post-summary blocking monitor), never before the banner.
-        if self._import_wait_mode is not ImportWaitMode.OFF and not self._is_preview():
+        if self._ctx.import_wait_mode is not ImportWaitMode.OFF and not self._is_preview():
             self._prune_expired_pending()
 
         # Fetch the library (the long pre-scan network wait) inside the cockpit so
@@ -1078,7 +1102,7 @@ class SeaDexArr:
                 # series block. Sonarr returns its series id; Radarr returns None
                 # (no pending records), short-circuiting the snapshot.
                 sid = strategy.pending_import_series_id(item)
-                if sid is not None and self._import_wait_mode is not ImportWaitMode.OFF and not self._is_preview():
+                if sid is not None and self._ctx.import_wait_mode is not ImportWaitMode.OFF and not self._is_preview():
                     self._snapshot_pending_for_series(sid)
 
             except Exception as e:
@@ -1274,7 +1298,7 @@ class SeaDexArr:
             req.seadex_dict,
             results,
             dry_run=self._is_preview(),
-            monitor_active=(self._import_wait_mode is not ImportWaitMode.OFF and not self._is_preview()),
+            monitor_active=(self._ctx.import_wait_mode is not ImportWaitMode.OFF and not self._is_preview()),
         )
 
         # Push a message to Discord if we've added anything (never on a
@@ -1818,9 +1842,9 @@ class SeaDexArr:
         """
 
         preview = self._is_preview()
-        active = self._import_wait_mode is not ImportWaitMode.OFF and not preview
+        active = self._ctx.import_wait_mode is not ImportWaitMode.OFF and not preview
 
-        if active and self._import_wait_mode is ImportWaitMode.DEFERRED:
+        if active and self._ctx.import_wait_mode is ImportWaitMode.DEFERRED:
             self._reconcile_remaining()
         if active:
             self._tally_carried_over_into_stats()
@@ -1830,7 +1854,7 @@ class SeaDexArr:
             arr,
             is_preview=preview,
             has_client=self.qbit is not None,
-            import_wait_mode=self._import_wait_mode,
+            import_wait_mode=self._ctx.import_wait_mode,
         )
 
         # The monitor is the only post-summary step that mutates the store
@@ -1839,7 +1863,7 @@ class SeaDexArr:
         # durable cache (the old order saved before the wait pass for the same
         # reason - here the save runs after, to also capture the monitor's drops).
         try:
-            if active and self._import_wait_mode in (
+            if active and self._ctx.import_wait_mode in (
                 ImportWaitMode.BLOCKING,
                 ImportWaitMode.HYBRID,
             ):

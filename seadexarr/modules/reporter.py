@@ -102,6 +102,9 @@ class RunContext:
 
     arr: Arr
     dry_run: bool = False
+    # The run's resolved wait-for-completion mode (cli > config > default), stamped
+    # in reset_run_stats; OFF makes every pending-import path a no-op.
+    import_wait_mode: ImportWaitMode = ImportWaitMode.OFF
     stats: RunStats = field(default_factory=RunStats)
     torrents_added: int = 0
     # Title, SeaDex URL, and coverage of the entry currently being processed, so

@@ -712,7 +712,10 @@ class TestImportWaitModeProperty:
     """
 
     def test_reflects_resolved_mode(self) -> None:
-        engine = make_bare_instance(SeaDexArr, _import_wait_mode=ImportWaitMode.HYBRID)
+        engine = make_bare_instance(
+            SeaDexArr,
+            _ctx=RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.HYBRID),
+        )
 
         assert engine.import_wait_mode is ImportWaitMode.HYBRID
 
@@ -745,10 +748,8 @@ def _finalize_engine(calls: list[str], *, qbit: object, mode: ImportWaitMode) ->
         _active_strategy=mock.MagicMock(),
         _reporter=reporter,
         cache_store=cache_store,
-        _import_wait_mode=mode,
-        dry_run=False,
     )
-    engine._ctx = RunContext(arr=Arr.SONARR)
+    engine._ctx = RunContext(arr=Arr.SONARR, import_wait_mode=mode)
     return engine
 
 
@@ -875,17 +876,15 @@ def make_add_engine(
     engine = make_bare_instance(
         SeaDexArr,
         qbit=qbit,
-        dry_run=dry_run,
         logger=make_logger(),
         log_fmt=mock.MagicMock(),
         _config=make_config(**config_overrides),
-        _import_wait_mode=mode,
         _torrents=torrents,
         _active_strategy=mock.MagicMock(),
         _reporter=mock.MagicMock(),
         cache_store=FakeCacheStore(),
     )
-    engine._ctx = RunContext(arr=Arr.SONARR)
+    engine._ctx = RunContext(arr=Arr.SONARR, dry_run=dry_run, import_wait_mode=mode)
     return engine
 
 
