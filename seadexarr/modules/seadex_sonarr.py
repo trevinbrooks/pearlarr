@@ -470,6 +470,11 @@ class SonarrSync(ArrSync[SonarrItem]):
             return 1
         return SONARR_FETCH_WORKERS
 
+    @property
+    @override
+    def warms_episodes(self) -> bool:
+        return True
+
     @override
     def prefetch_episodes(self, items: list[SonarrItem]) -> None:
         """Warm the per-series episode lists CONCURRENTLY before the scan loop.

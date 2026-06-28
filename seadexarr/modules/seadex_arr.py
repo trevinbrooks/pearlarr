@@ -943,24 +943,38 @@ class SeaDexArr:
         # Warm the AniList cache before the per-item loop: reuse what past runs
         # fetched, then batch-fetch (id_in pages) everything still missing, so the
         # loop rarely hits AniList one id at a time and trips its rate limit.
-        with boot.step("Prefetching metadata"):
-            self._anilist.load_cache()
-            prefetch_ids: set[int] = set()
-            for item in all_items:
-                if not item.monitored and self._arr_config.ignore_unmonitored:
-                    continue
-                prefetch_ids.update(
-                    strategy.item_anilist_ids(item, log_ignored=False),
-                )
-            self._anilist.prefetch(prefetch_ids, preview=self._is_preview())
-            # Bulk-fetch SeaDex entries for the same ids in batched OR-filter queries,
-            # collapsing the per-id from_id round-trips (one per library id, just to read
-            # updated_at) into a handful. entry() then serves from this warmed cache.
-            self._seadex.prefetch(prefetch_ids)
-            # Warm the per-item episode lists concurrently (Sonarr only; Radarr
-            # no-ops). Kept FRESH - not cached across runs - so the grab/skip
-            # decision still reads current Sonarr file state; this only collapses
-            # the sequential per-series fetch latency.
+        # Seed the AniList cache + collect the run's candidate ids - instant local
+        # work, so no ledger line. Then surface each network/concurrent warm as its
+        # own timed step instead of one opaque "Prefetching metadata".
+        self._anilist.load_cache()
+        prefetch_ids: set[int] = set()
+        for item in all_items:
+            if not item.monitored and self._arr_config.ignore_unmonitored:
+                continue
+            prefetch_ids.update(
+                strategy.item_anilist_ids(item, log_ignored=False),
+            )
+
+        with boot.step("Fetching AniList metadata") as step:
+            fetched = self._anilist.prefetch(prefetch_ids, preview=self._is_preview(), progress=step)
+            step.note("cached" if fetched == 0 else count_noun(fetched, "entry", "entries"))
+
+        # Bulk-fetch SeaDex entries for the same ids in batched OR-filter queries,
+        # collapsing the per-id from_id round-trips (one per library id, just to read
+        # updated_at) into a handful. entry() then serves from this warmed cache.
+        with boot.step("Fetching SeaDex entries") as step:
+            fetched = self._seadex.prefetch(prefetch_ids, progress=step)
+            step.note("cached" if fetched == 0 else count_noun(fetched, "entry", "entries"))
+
+        # Warm the per-item episode lists concurrently (Sonarr only; Radarr no-ops,
+        # so it gets no step). Kept FRESH - not cached across runs - so the grab/skip
+        # decision still reads current Sonarr file state; this only collapses the
+        # sequential per-series fetch latency.
+        if strategy.warms_episodes:
+            with boot.step("Warming episode lists") as step:
+                strategy.prefetch_episodes(all_items)
+                step.note(count_noun(n_items, "series", "series"))
+        else:
             strategy.prefetch_episodes(all_items)
 
         # Tear the cockpit down BEFORE the per-item scan logs anything, so the scan

@@ -87,6 +87,11 @@ class RadarrSync(ArrSync[RadarrItem]):
             log_ignored=log_ignored,
         )
 
+    @property
+    @override
+    def warms_episodes(self) -> bool:
+        return False
+
     @override
     def prefetch_episodes(self, items: list[RadarrItem]) -> None:
         """No-op: movies have no episode lists to warm."""

@@ -14,6 +14,7 @@ longer stamps ``current_title``; the caller does that.
 import logging
 from collections.abc import Iterable
 from datetime import datetime, timedelta
+from typing import Protocol
 
 from .anilist import (
     ANILIST_BATCH_SIZE,
@@ -29,6 +30,16 @@ from .log import indent_string
 # title/format/coverImage are effectively static; episodes for a currently airing
 # show drift, so this caps how stale that count can get (~one episode/week).
 ANILIST_CACHE_TTL_DAYS = 7
+
+
+class PrefetchProgress(Protocol):
+    """Sink for batch-prefetch progress - drives the boot cockpit's live bar.
+
+    Structural, so the boot view's step handle satisfies it without this gateway
+    importing the UI layer (mirrors ``mappings.DownloadProgress``).
+    """
+
+    def progress(self, fraction: float, detail: str | None = None) -> None: ...
 
 
 class AniListGateway:
@@ -122,7 +133,13 @@ class AniListGateway:
                 indent_string(f"Evicted {evicted} stale AniList meta record(s)"),
             )
 
-    def prefetch(self, al_ids: Iterable[int], *, preview: bool) -> None:
+    def prefetch(
+        self,
+        al_ids: Iterable[int],
+        *,
+        preview: bool,
+        progress: PrefetchProgress | None = None,
+    ) -> int:
         """Warm the AniList cache for a set of ids in batched requests
 
         Fetches everything still missing from the cache in ANILIST_BATCH_SIZE-id
@@ -134,33 +151,36 @@ class AniListGateway:
         Args:
             al_ids (iterable[int]): Candidate AniList IDs for this run
             preview (bool): Forwarded to the post-fetch save's preview gate.
+            progress (PrefetchProgress | None): Boot cockpit step fed per-batch
+                fraction + "done/total" detail; None outside the cockpit.
+
+        Returns:
+            int: How many ids needed fetching (0 = fully cache-warm), for the
+            caller's ledger detail.
         """
 
         missing = sorted(
             {i for i in al_ids if i not in self.al_cache},
         )
-        if not missing:
-            return
+        total = len(missing)
+        if not total:
+            return 0
 
-        # Surfaced at INFO (only when there's actually something to fetch, so
-        # warm runs stay silent), so the upfront pause on a cold run is explained
-        self.logger.info(
-            indent_string(
-                f"Prefetching {len(missing)} AniList entries in batches of {ANILIST_BATCH_SIZE}",
-            ),
-            extra={"line_style": "grey50"},
-        )
-
-        for start in range(0, len(missing), ANILIST_BATCH_SIZE):
+        done = 0
+        for start in range(0, total, ANILIST_BATCH_SIZE):
             chunk = missing[start : start + ANILIST_BATCH_SIZE]
             # Ids unknown to AniList are simply absent from the result; the
             # per-id helpers will try once more on demand and degrade gracefully
             for al_id, data in get_query_batch(chunk).items():
                 self.al_cache[al_id] = data
+            done += len(chunk)
+            if progress is not None:
+                progress.progress(done / total, f"{done}/{total}")
 
         # Persist now (before the main loop) so the batch's work survives even an
         # early return - e.g., when max_torrents_to_add is hit mid-run
         self.save_cache(preview=preview)
+        return total
 
     def title(self, al_id: int) -> str | None:
         """Resolve the AniList title for an id (cache or live query), or None.

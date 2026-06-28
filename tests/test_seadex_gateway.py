@@ -38,6 +38,16 @@ class FakeSeaDex:
         raise EntryNotFoundError("nope")
 
 
+class _Recorder:
+    """A ``PrefetchProgress`` sink that records every ``progress`` call."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[float, str | None]] = []
+
+    def progress(self, fraction: float, detail: str | None = None) -> None:
+        self.calls.append((fraction, detail))
+
+
 def _gateway(fake: FakeSeaDex) -> SeaDexGateway:
     logger = logging.getLogger("test_seadex_gateway")
     logger.handlers = [logging.NullHandler()]
@@ -105,3 +115,25 @@ class TestSeaDexPrefetch:
         gateway = _gateway(fake)
         gateway.prefetch(ids)
         assert len(fake.filter_calls) == 3
+
+    def test_prefetch_returns_missing_count(self) -> None:
+        fake = FakeSeaDex({1: _rec(1), 2: _rec(2)})
+        gateway = _gateway(fake)
+        assert gateway.prefetch([1, 2]) == 2
+
+    def test_warm_prefetch_returns_zero_and_skips_sink(self) -> None:
+        fake = FakeSeaDex({1: _rec(1)})
+        gateway = _gateway(fake)
+        gateway.prefetch([1])  # warm the per-run cache first
+        rec = _Recorder()
+        assert gateway.prefetch([1], progress=rec) == 0  # nothing left to fetch
+        assert rec.calls == []  # no work -> no progress drive
+
+    def test_prefetch_drives_progress_per_batch(self) -> None:
+        ids = list(range(1, SEADEX_BATCH_SIZE * 2 + 6))  # three batches
+        fake = FakeSeaDex({i: _rec(i) for i in ids})
+        gateway = _gateway(fake)
+        rec = _Recorder()
+        assert gateway.prefetch(ids, progress=rec) == len(ids)
+        assert len(rec.calls) == 3  # one drive per batch
+        assert rec.calls[-1] == (1.0, f"{len(ids)}/{len(ids)}")  # ends complete

@@ -62,6 +62,16 @@ class ArrSync[ItemT: ArrItem](ABC):
     ) -> dict[int, MappingEntry]:
         """Resolve the AniList ids mapped to one Arr item."""
 
+    @property
+    @abstractmethod
+    def warms_episodes(self) -> bool:
+        """Whether :meth:`prefetch_episodes` does real work (gets a boot step).
+
+        ``SonarrSync`` warms per-series episode lists; ``RadarrSync`` has none, so
+        the run machinery skips the "Warming episode lists" step entirely rather
+        than graduate an empty one.
+        """
+
     @abstractmethod
     def prefetch_episodes(self, items: list[ItemT]) -> None:
         """Warm per-item network caches concurrently before the scan loop.
