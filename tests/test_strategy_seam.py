@@ -839,7 +839,7 @@ class TestRadarrImportCompletedNoOp:
 
 
 class TestManualImportWarningGating:
-    """_manual_import warns loudly only at the deadline; otherwise it's debug.
+    """The import warns loudly only at the deadline; otherwise it's debug.
 
     A missing intended file on an early poll is expected (the copy hasn't landed),
     so it must NOT inflate the summary's warning count; only the final attempt
@@ -849,7 +849,7 @@ class TestManualImportWarningGating:
     @staticmethod
     def _strat_with_missing_file() -> tuple[SonarrSync, "PendingImport"]:
         # Our map intends a file that isn't on disk yet (only an unrelated file is),
-        # so _manual_import always finds it missing and retries.
+        # so run_manual_import always finds it missing and retries.
         pending = pending_import(
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
             episode_ids=[101],
@@ -858,12 +858,16 @@ class TestManualImportWarningGating:
             candidates=[manual_candidate("/d/Unrelated.mkv")],
         )
         # caplog captures via the root logger's propagation, so use a propagating
-        # DEBUG logger here (make_logger disables propagation for quiet runs).
+        # DEBUG logger here (make_logger disables propagation for quiet runs). The
+        # missing-file line is logged by the import executor, which holds the same
+        # logger as the strat in production - so set both (the strat's plus the
+        # executor's) to mirror that and let caplog see the executor's record.
         logger = logging.getLogger("seadexarr-warning-gating")
         logger.handlers.clear()
         logger.propagate = True
         logger.setLevel(logging.DEBUG)
         strat.logger = logger
+        strat._executor.logger = logger
         return strat, pending
 
     def test_missing_off_deadline_is_debug_not_warning(self, caplog) -> None:

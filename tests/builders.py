@@ -34,6 +34,7 @@ from seadexarr.modules.seadex_types import (
     SonarrEpisode,
 )
 from seadexarr.modules.sonarr_episodes import SonarrEpisodes
+from seadexarr.modules.sonarr_import import ImportExecutor
 from seadexarr.modules.sonarr_mapper import FileEpisodeMapper
 from seadexarr.modules.sonarr_parse import SonarrParseCache
 
@@ -643,27 +644,31 @@ def make_sonarr_sync(**attrs: Any) -> SonarrSync:
 
     Mirrors ``make_arr`` / ``make_bare_instance``: no live Sonarr client is built,
     so the tests assign just the collaborators the method under test reads
-    (``sonarr``, ``logger``, ``_config``, and the per-run caches). The two
-    per-run quality/language caches default to None (not yet fetched) so the
-    lazy-fetch path runs unless a test pre-seeds them.
+    (``sonarr``, ``logger``, ``_config``, and the per-run caches).
 
     The episode-domain state (``_ep_list_cache`` / ``_series_fp``) lives on the
-    ``SonarrEpisodes`` collaborator now, exactly as the real ``__init__`` builds it,
-    so it is routed there and the strat gets a wired ``_episodes`` sharing the same
-    client/config/services. Pass ``_episodes=`` to override the whole collaborator.
+    ``SonarrEpisodes`` collaborator now, and the four per-run import caches
+    (``_quality_defs_cache`` / ``_languages_cache`` / ``_warned_unplaceable`` /
+    ``_last_refresh_monotonic``) on the ``ImportExecutor`` collaborator, exactly as
+    the real ``__init__`` builds them - so a test still passes those field names and
+    they are routed to the right collaborator (the executor sharing the strat's
+    mapper + client/config/logger). Pass ``_episodes=`` / ``_executor=`` to override
+    a whole collaborator.
     """
 
-    defaults: dict[str, Any] = {
-        "_quality_defs_cache": None,
-        "_languages_cache": None,
-    }
+    defaults: dict[str, Any] = {}
     defaults.update(attrs)
     episodes = defaults.pop("_episodes", None)
     parse = defaults.pop("_parse", None)
     mapper = defaults.pop("_mapper", None)
+    executor = defaults.pop("_executor", None)
     ep_cache = defaults.pop("_ep_list_cache", {})
     series_fp = defaults.pop("_series_fp", "")
     parse_info = defaults.pop("_parse_info_cache", {})
+    quality_defs = defaults.pop("_quality_defs_cache", None)
+    languages = defaults.pop("_languages_cache", None)
+    warned = defaults.pop("_warned_unplaceable", set())
+    last_refresh = defaults.pop("_last_refresh_monotonic", None)
     strat = make_bare_instance(SonarrSync, **defaults)
     if episodes is None:
         episodes = make_sonarr_episodes(
@@ -696,7 +701,41 @@ def make_sonarr_sync(**attrs: Any) -> SonarrSync:
             _parse_info_cache=parse_info,
         )
     strat._mapper = mapper
+    if executor is None:
+        # Share the strat's mapper + client/config/logger so the import_completed-
+        # driven tests exercise the same objects (and the same on-disk /parse mock);
+        # routes the four per-run import caches here.
+        executor = make_import_executor(
+            sonarr=defaults.get("sonarr"),
+            _config=defaults.get("_config"),
+            logger=defaults.get("logger"),
+            _mapper=mapper,
+            _quality_defs_cache=quality_defs,
+            _languages_cache=languages,
+            _warned_unplaceable=warned,
+            _last_refresh_monotonic=last_refresh,
+        )
+    strat._executor = executor
     return strat
+
+
+def make_import_executor(**attrs: Any) -> ImportExecutor:
+    """A bare ``ImportExecutor`` with ``__init__`` bypassed and only ``attrs`` set.
+
+    The tests assign just what the method under test reads (``sonarr`` for the
+    manual-import calls, ``_mapper`` for the file->episode map, ``_config`` /
+    ``logger``); the four per-run caches default to their run-start values (None /
+    empty) so the lazy-fetch + warn-once paths run unless a test pre-seeds them.
+    """
+
+    defaults: dict[str, Any] = {
+        "_quality_defs_cache": None,
+        "_languages_cache": None,
+        "_warned_unplaceable": set(),
+        "_last_refresh_monotonic": None,
+    }
+    defaults.update(attrs)
+    return make_bare_instance(ImportExecutor, **defaults)
 
 
 def make_sonarr_mapper(**attrs: Any) -> FileEpisodeMapper:
