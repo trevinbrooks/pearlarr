@@ -12,7 +12,7 @@ from seadex import EntryRecord
 
 from . import coverage as _coverage
 from .anilist_gateway import AniListGateway
-from .cache import UPDATED_AT_STR_FORMAT, CacheField, CacheRecord, CacheStore
+from .cache import UPDATED_AT_STR_FORMAT, CacheRecord, CacheStore
 from .config import PRIVATE_TRACKERS, AppConfig, Arr, ArrSettings
 from .log import (
     EntryState,
@@ -1038,7 +1038,12 @@ class SeaDexArr:
                 the backfill ("" for a movie, a season/episode range for a series)
         """
 
-        if not self.check_al_id_in_cache(arr=arr, al_id=al_id, seadex_entry=sd_entry):
+        # One read of the whole row serves both the freshness check and the
+        # url-backfill check below (was a SELECT updated_at + a SELECT url).
+        entry = self.cache_store.get_entry(arr, al_id)
+        # Mirrors check_al_id_in_cache: absent, or a timestamp that no longer matches
+        # SeaDex's, means re-process (don't skip).
+        if entry is None or entry.updated_at != sd_entry.updated_at.strftime(UPDATED_AT_STR_FORMAT):
             return False
         if self._config.seadex.ignore_seadex_update_times:
             return False
@@ -1046,7 +1051,7 @@ class SeaDexArr:
         # Backfill the enriched fields for records written before they existed,
         # so cached rows can still link to SeaDex (and, for series, show the
         # season/episode coverage). One-time per old entry.
-        if not self.cache_store.get_cached_field(arr, al_id, CacheField.URL):
+        if not entry.url:
             self.update_cache(
                 arr=arr,
                 al_id=al_id,
@@ -1406,15 +1411,12 @@ class SeaDexArr:
             return
 
         run_grabs = self._this_run_infohashes()
-        for infohash, raw in list(self._pending_store().items()):
-            # Cache values are genuinely-open JSON (Any): defensively narrow each
-            # to a dict record (cast to the open cache-JSON shape) before reading
-            # it, mirroring ``_series_pending_records``.
-            if not isinstance(raw, dict):
-                continue
-            record = cast("dict[str, Any]", raw)
-            if record.get("series_id") != series_id:
-                continue
+        # Fresh per call and SQL-filtered to this series (so a record dropped earlier
+        # this run is already absent) - replaces a full get_pending scan + Python
+        # series filter once per series. The ``record ->> 'series_id'`` match only
+        # returns JSON objects, so each value is already a typed record (no defensive
+        # isinstance/cast like the Any-typed _pending_store() consumers need).
+        for infohash, record in self.cache_store.get_pending_for_series(self._ctx.arr, series_id).items():
             # Skip this-run grabs: they're already reported as `added`, so a
             # `queued`/`importing`/`imported` row here would be a double report.
             if infohash in run_grabs:

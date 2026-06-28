@@ -1,14 +1,14 @@
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any
 
 from rich.text import Text
 from seadex import EntryRecord
 
 from .anilist import get_anilist_title
 from .anilist_gateway import AniListGateway
-from .cache import CacheField, CacheStore
+from .cache import CacheStore
 from .config import Arr
 from .log import (
     EntryState,
@@ -716,7 +716,10 @@ class RunReporter:
 
         ctx.stats.cached += 1
 
-        anilist_title = self.cache_store.get_cached_name(arr=arr, al_id=al_id)
+        # One row read serves the title, coverage, and URL lines below (was a
+        # SELECT name + SELECT coverage + SELECT url against the same row).
+        entry = self.cache_store.get_entry(arr, al_id)
+        anilist_title = entry.name if entry is not None else None
         if anilist_title is None:
             # Older cache without a stored name - fall back to a lookup
             anilist_title, self.anilist.al_cache = get_anilist_title(
@@ -728,8 +731,8 @@ class RunReporter:
 
         self.log_entry_status(state, anilist_title)
         self.log_entry_coverage(
-            cast("str | None", self.cache_store.get_cached_field(arr, al_id, CacheField.COVERAGE)),
-            cast("str | None", self.cache_store.get_cached_field(arr, al_id, CacheField.URL)),
+            entry.coverage if entry is not None else None,
+            entry.url if entry is not None else None,
         )
 
         return True

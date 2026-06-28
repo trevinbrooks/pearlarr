@@ -1,7 +1,7 @@
 import os
 import time
 from datetime import datetime, timedelta
-from typing import Any, cast, override
+from typing import Any, override
 
 from . import coverage as _coverage
 from .anilist import (
@@ -869,21 +869,11 @@ class SonarrSync(ArrSync[SonarrItem]):
         ``dict[str, Any]``.
         """
 
-        # ``get_pending`` returns a snapshot ``{infohash -> record}``; its values are
-        # typed ``dict[str, Any]`` but the cache is untyped on disk (a hand-edited /
-        # legacy db can carry a non-dict record), so widen to ``Any`` and keep the
-        # defensive ``isinstance`` narrow + cast to the open cache-JSON shape.
-        store: dict[str, Any] = cast(
-            "dict[str, Any]",
-            self.cache_store.get_pending(Arr.SONARR),
-        )
-        records: list[dict[str, Any]] = []
-        for raw in store.values():
-            if isinstance(raw, dict):
-                record = cast("dict[str, Any]", raw)
-                if record.get("series_id") == series_id:
-                    records.append(record)
-        return records
+        # ``get_pending_for_series`` returns a fresh snapshot ``{infohash -> record}``
+        # already filtered to this series in SQL (so a record dropped earlier this run
+        # is absent). The ``record ->> 'series_id'`` match only returns JSON objects,
+        # so every value is a typed record - no defensive isinstance/widen needed.
+        return list(self.cache_store.get_pending_for_series(Arr.SONARR, series_id).values())
 
     def _recommended_groups(self, series_id: int, this_group: str) -> set[str]:
         """Normalized recommended groups for the series (the overwrite-guard set).

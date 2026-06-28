@@ -11,7 +11,7 @@ assert on the :class:`RunContext` mutations rather than exact log strings.
 import time
 from typing import Any
 
-from seadexarr.modules.cache import CacheField
+from seadexarr.modules.cache import CachedEntry
 from seadexarr.modules.config import Arr
 from seadexarr.modules.log import LogFormatter
 from seadexarr.modules.manual_import import ImportWaitMode, PendingState
@@ -27,19 +27,20 @@ from tests.builders import make_logger
 
 
 class _FakeCacheStore:
-    """Minimal stand-in for CacheStore: the two reads the reporter makes."""
+    """Minimal stand-in for CacheStore: the one row read the reporter makes."""
 
     def __init__(self, name: str | None = None, fields: dict | None = None) -> None:
         self._name = name
         self._fields = fields or {}
 
-    def get_cached_name(self, arr: str, al_id: int) -> str | None:
+    def get_entry(self, arr: str, al_id: int) -> CachedEntry | None:
         del arr, al_id
-        return self._name
-
-    def get_cached_field(self, arr: str, al_id: int, field: CacheField):
-        del arr, al_id
-        return self._fields.get(field)
+        return CachedEntry(
+            updated_at=self._fields.get("updated_at"),
+            name=self._name,
+            url=self._fields.get("url"),
+            coverage=self._fields.get("coverage"),
+        )
 
 
 class _FakeAniList:

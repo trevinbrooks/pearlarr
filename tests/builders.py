@@ -17,7 +17,7 @@ from unittest import mock
 
 from seadex import EntryRecord, Tag
 
-from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT, CacheField, CacheRecord
+from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT, CachedEntry, CacheField, CacheRecord
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, PendingImport
 from seadexarr.modules.planner import DownloadPlanner
@@ -214,6 +214,19 @@ class FakeCacheStore:
         entry = self._entries.get((str(arr), al_id))
         return entry is not None and entry.get("updated_at") == sd_time_str
 
+    def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None:
+        """The four scalar columns of the entry as a ``CachedEntry``, or None."""
+
+        entry = self._entries.get((str(arr), al_id))
+        if entry is None:
+            return None
+        return CachedEntry(
+            updated_at=entry.get("updated_at"),
+            name=entry.get("name"),
+            url=entry.get("url"),
+            coverage=entry.get("coverage"),
+        )
+
     def get_cached_name(self, arr: Arr, al_id: int) -> str | None:
         return cast("str | None", self.get_cached_field(arr, al_id, CacheField.NAME))
 
@@ -265,6 +278,15 @@ class FakeCacheStore:
     # -- pending imports --
     def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]:
         return dict(self._pending.get(str(arr), {}))
+
+    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
+        """Fresh snapshot filtered to one series (mirrors the SQL ``->> 'series_id'``)."""
+
+        return {
+            infohash: record
+            for infohash, record in self._pending.get(str(arr), {}).items()
+            if record.get("series_id") == series_id
+        }
 
     def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
         self._pending.setdefault(str(arr), {})[infohash] = record

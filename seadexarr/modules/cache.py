@@ -43,6 +43,7 @@ import logging
 import os
 import sqlite3
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any, TypedDict, cast
@@ -197,6 +198,22 @@ class CacheRecord(TypedDict, total=False):
     # (planner.filter_by_torrent_hash), so a remembered list can carry ``None``; the
     # store preserves those Nones because the planner dedups on None membership.
     torrent_hashes: list[str | None]
+
+
+@dataclass(frozen=True, slots=True)
+class CachedEntry:
+    """The four scalar columns of one ``entries`` row, read in a single query.
+
+    Lets a caller that needs several fields of the same ``(arr, al_id)`` row fetch
+    them in one round-trip (see :meth:`CacheStore.get_entry`) instead of issuing a
+    point ``SELECT`` per field. Each column is nullable on disk, so every field is
+    ``str | None``.
+    """
+
+    updated_at: str | None
+    name: str | None
+    url: str | None
+    coverage: str | None
 
 
 # The four scalar columns of ``entries`` that ``update_cache`` may merge. Kept in
@@ -559,6 +576,21 @@ class CacheStore:
         ).fetchone()
         return bool(row) and row[0] == sd_time_str
 
+    def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None:
+        """The four scalar columns of an entry's row in one query, or None.
+
+        Folds what used to be a point ``SELECT`` per field into a single read for
+        callers that need several columns of the same ``(arr, al_id)`` row (the
+        cached-skip short-circuit and the cached-entry log line). Does NOT include
+        the ``torrent_hashes`` child set - use :meth:`torrent_hashes` for that.
+        """
+
+        row = self._conn.execute(
+            "SELECT updated_at, name, url, coverage FROM entries WHERE arr = ? AND al_id = ?",
+            (_arr_key(arr), al_id),
+        ).fetchone()
+        return None if row is None else CachedEntry(row[0], row[1], row[2], row[3])
+
     def get_cached_name(self, arr: Arr, al_id: int) -> str | None:
         """The cached AniList title for an entry, if any (no AniList lookup)."""
 
@@ -753,6 +785,27 @@ class CacheStore:
         for infohash, rec_json in self._conn.execute(
             "SELECT infohash, json(record) FROM pending_imports WHERE arr = ?",
             (_arr_key(arr),),
+        ):
+            out[infohash] = json.loads(rec_json)
+        return out
+
+    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
+        """Pending-import records for one Sonarr ``series_id``, keyed by infohash.
+
+        Same fresh-per-call snapshot as :meth:`get_pending` (a record dropped earlier
+        this run is already absent), but the ``series_id`` filter is pushed into SQL
+        via ``record ->> 'series_id'`` so only this series' records are deserialized -
+        the per-series reconcile no longer re-parses every pending record once per
+        series. ``series_id`` is stored as a JSON int (``PendingImport.series_id``),
+        so the bound int compares directly; a record with no ``series_id`` yields NULL
+        and is excluded, matching the old ``record.get("series_id") != series_id`` skip.
+        """
+
+        out: dict[str, dict[str, Any]] = {}
+        for infohash, rec_json in self._conn.execute(
+            "SELECT infohash, json(record) FROM pending_imports "
+            "WHERE arr = ? AND record ->> 'series_id' = ?",
+            (_arr_key(arr), series_id),
         ):
             out[infohash] = json.loads(rec_json)
         return out

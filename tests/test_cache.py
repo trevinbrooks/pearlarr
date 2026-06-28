@@ -106,6 +106,25 @@ class TestEntries:
         assert store.get_cached_name(Arr.RADARR, 7) == "R"
         store.close()
 
+    def test_get_entry_reads_all_scalar_columns_at_once(self, tmp_path) -> None:
+        store = _open(tmp_path)
+        store.update_cache(
+            Arr.SONARR,
+            7,
+            {"name": "Title", "url": "u", "coverage": "S01", "updated_at": datetime(2021, 6, 5, 4, 3, 2)},
+        )
+        entry = store.get_entry(Arr.SONARR, 7)
+        assert entry is not None
+        assert (entry.name, entry.url, entry.coverage, entry.updated_at) == (
+            "Title",
+            "u",
+            "S01",
+            "2021-06-05 04:03:02",
+        )
+        # A missing row reads back as None, not an all-None record.
+        assert store.get_entry(Arr.SONARR, 999) is None
+        store.close()
+
 
 class TestTorrentHashes:
     def test_roundtrip_preserves_none_marker(self, tmp_path) -> None:
@@ -238,6 +257,25 @@ class TestPendingImports:
         assert store.get_pending(Arr.SONARR) == {}
         # Dropping a missing infohash is a no-op.
         store.drop_pending(Arr.SONARR, "nope")
+        store.close()
+
+    def test_get_pending_for_series_filters_in_sql(self, tmp_path) -> None:
+        store = _open(tmp_path)
+        a = {"infohash": "a", "series_id": 5}
+        b = {"infohash": "b", "series_id": 5}
+        c = {"infohash": "c", "series_id": 9}
+        d = {"infohash": "d"}  # no series_id key -> excluded (record ->> 'series_id' is NULL)
+        for h, rec in (("a", a), ("b", b), ("c", c), ("d", d)):
+            store.put_pending(Arr.SONARR, h, rec)
+
+        # Only this series' records come back; the integer series_id binds directly.
+        assert store.get_pending_for_series(Arr.SONARR, 5) == {"a": a, "b": b}
+        assert store.get_pending_for_series(Arr.SONARR, 9) == {"c": c}
+        assert store.get_pending_for_series(Arr.SONARR, 404) == {}
+
+        # Fresh per call: a drop is reflected immediately (no stale snapshot).
+        store.drop_pending(Arr.SONARR, "a")
+        assert store.get_pending_for_series(Arr.SONARR, 5) == {"b": b}
         store.close()
 
 
