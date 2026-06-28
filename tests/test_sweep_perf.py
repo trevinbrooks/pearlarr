@@ -9,18 +9,18 @@ from unittest import mock
 
 from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
 from seadexarr.modules.config import Arr
-from seadexarr.modules.seadex_sonarr import (
-    SONARR_PARSE_CACHE_TTL_DAYS,
-    SONARR_PARSE_NEG_CACHE_TTL_DAYS,
-    ParseWindow,
-    SonarrClient,
-    SonarrSync,
-)
+from seadexarr.modules.seadex_sonarr import SonarrClient
 from seadexarr.modules.sonarr_episodes import (
     SONARR_FETCH_WORKERS,
     SonarrEpisodes,
     fetch_workers,
     sonarr_series_fingerprint,
+)
+from seadexarr.modules.sonarr_parse import (
+    SONARR_PARSE_CACHE_TTL_DAYS,
+    SONARR_PARSE_NEG_CACHE_TTL_DAYS,
+    ParseWindow,
+    SonarrParseCache,
 )
 from tests.builders import (
     FakeCacheStore,
@@ -29,7 +29,7 @@ from tests.builders import (
     make_config,
     make_logger,
     make_sonarr_episodes,
-    make_sonarr_sync,
+    make_sonarr_parse,
     rg_group,
     url_item,
 )
@@ -44,7 +44,7 @@ def _stamp(days_ago: float) -> str:
 
 
 def _fresh(record: dict[str, Any], *, series_fp: str = "fp") -> bool:
-    return SonarrSync._sonarr_parse_is_fresh(
+    return SonarrParseCache._sonarr_parse_is_fresh(
         record,
         window=ParseWindow(
             now_str=_NOW.strftime(UPDATED_AT_STR_FORMAT),
@@ -348,41 +348,39 @@ class TestPrefetchSkipsUnchanged:
 
 
 class TestParseEpisodesNegativeCache:
-    def _strat(
+    def _parse(
         self,
         *,
         parse_result: Any,
         sleep_time: int = 0,
         sonarr_parse: dict[str, dict[str, Any]] | None = None,
-    ) -> tuple[SonarrSync, mock.MagicMock]:
+    ) -> tuple[SonarrParseCache, mock.MagicMock]:
         sonarr = mock.MagicMock()
         sonarr.parse.return_value = parse_result
-        strat = make_sonarr_sync(
+        parse = make_sonarr_parse(
             sonarr=sonarr,
             _config=make_config(sleep_time=sleep_time),
             cache_store=FakeCacheStore(sonarr_parse=sonarr_parse or {}),
-            _series_fp="fp",
-            _ep_list_cache={},
             logger=make_logger(),
         )
-        return strat, sonarr
+        return parse, sonarr
 
     @staticmethod
     def _dict(*files: str) -> dict[str, Any]:
         return {"GroupA": rg_group({"u": url_item(files=list(files), size=[100] * len(files))})}
 
     def test_genuine_empty_is_negative_cached_with_fp(self) -> None:
-        strat, _ = self._strat(parse_result=[])
-        strat.parse_episodes_from_seadex(self._dict("[X] Show - 01.mkv"))
-        rec = strat.cache_store.get_sonarr_parse("[X] Show - 01.mkv")
+        parse, _ = self._parse(parse_result=[])
+        parse.parse_episodes_from_seadex(self._dict("[X] Show - 01.mkv"), series_fp="fp")
+        rec = parse.cache_store.get_sonarr_parse("[X] Show - 01.mkv")
         assert rec is not None
         assert rec["episodes"] == []
         assert rec["series_fp"] == "fp"
 
     def test_transient_none_is_not_cached(self) -> None:
-        strat, _ = self._strat(parse_result=None)
-        strat.parse_episodes_from_seadex(self._dict("[X] Show - 01.mkv"))
-        assert strat.cache_store.get_sonarr_parse("[X] Show - 01.mkv") is None
+        parse, _ = self._parse(parse_result=None)
+        parse.parse_episodes_from_seadex(self._dict("[X] Show - 01.mkv"), series_fp="fp")
+        assert parse.cache_store.get_sonarr_parse("[X] Show - 01.mkv") is None
 
     def test_fresh_negative_hit_skips_network(self) -> None:
         seeded = {
@@ -392,20 +390,20 @@ class TestParseEpisodesNegativeCache:
                 "series_fp": "fp",
             },
         }
-        strat, sonarr = self._strat(parse_result=[], sonarr_parse=seeded)
-        strat.parse_episodes_from_seadex(self._dict("[X] Show - 01.mkv"))
+        parse, sonarr = self._parse(parse_result=[], sonarr_parse=seeded)
+        parse.parse_episodes_from_seadex(self._dict("[X] Show - 01.mkv"), series_fp="fp")
         sonarr.parse.assert_not_called()
 
     def test_audio_file_never_parsed(self) -> None:
-        strat, sonarr = self._strat(parse_result=[])
-        strat.parse_episodes_from_seadex(self._dict("[X] OST - 01.flac"))
+        parse, sonarr = self._parse(parse_result=[])
+        parse.parse_episodes_from_seadex(self._dict("[X] OST - 01.flac"), series_fp="fp")
         sonarr.parse.assert_not_called()
 
     def test_concurrent_pass_negative_caches_each_file(self) -> None:
-        strat, _ = self._strat(parse_result=[], sleep_time=0)
-        strat.parse_episodes_from_seadex(self._dict("[X] Show - 01.mkv", "[X] Show - 02.mkv"))
+        parse, _ = self._parse(parse_result=[], sleep_time=0)
+        parse.parse_episodes_from_seadex(self._dict("[X] Show - 01.mkv", "[X] Show - 02.mkv"), series_fp="fp")
         for name in ("[X] Show - 01.mkv", "[X] Show - 02.mkv"):
-            rec = strat.cache_store.get_sonarr_parse(name)
+            rec = parse.cache_store.get_sonarr_parse(name)
             assert rec is not None
             assert rec["episodes"] == []
             assert rec["series_fp"] == "fp"

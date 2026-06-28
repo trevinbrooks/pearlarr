@@ -34,6 +34,7 @@ from seadexarr.modules.seadex_types import (
     SonarrEpisode,
 )
 from seadexarr.modules.sonarr_episodes import SonarrEpisodes
+from seadexarr.modules.sonarr_parse import SonarrParseCache
 
 # Map each flat (group-local) setting name to its config group, derived straight from
 # AppConfig's own field tree so it can't drift into a stale subset: adding a 9th
@@ -657,6 +658,7 @@ def make_sonarr_sync(**attrs: Any) -> SonarrSync:
     }
     defaults.update(attrs)
     episodes = defaults.pop("_episodes", None)
+    parse = defaults.pop("_parse", None)
     ep_cache = defaults.pop("_ep_list_cache", {})
     series_fp = defaults.pop("_series_fp", "")
     strat = make_bare_instance(SonarrSync, **defaults)
@@ -673,4 +675,25 @@ def make_sonarr_sync(**attrs: Any) -> SonarrSync:
             _series_fp=series_fp,
         )
     strat._episodes = episodes
+    if parse is None:
+        # Share the SAME cache_store as the strat so a parse write is visible to
+        # the seed builder's read later in the run (the staged-write invariant).
+        parse = make_sonarr_parse(
+            sonarr=defaults.get("sonarr"),
+            _config=defaults.get("_config"),
+            cache_store=defaults.get("cache_store"),
+            logger=defaults.get("logger"),
+        )
+    strat._parse = parse
     return strat
+
+
+def make_sonarr_parse(**attrs: Any) -> SonarrParseCache:
+    """A bare ``SonarrParseCache`` with ``__init__`` bypassed and only ``attrs`` set.
+
+    The tests assign just what the method under test reads (``sonarr``, ``_config``,
+    ``cache_store``, ``logger``). ``parse_episodes_from_seadex`` takes the run's
+    ``series_fp`` as a call argument, so there is no per-run field to default here.
+    """
+
+    return make_bare_instance(SonarrParseCache, **attrs)

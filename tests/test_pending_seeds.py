@@ -7,11 +7,13 @@ cached ``/parse`` results and the ``(season, episode) -> id`` index. Built bare
 (no live Sonarr) with a seeded in-memory parse cache.
 """
 
+from unittest import mock
+
 from seadexarr.modules.manual_import import normalize_basename
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import SonarrEpisode
 
-from .builders import FakeCacheStore, make_sonarr_sync, rg_group, url_item
+from .builders import FakeCacheStore, make_config, make_logger, make_sonarr_sync, rg_group, url_item
 
 
 def _strat(parse_cache: dict) -> SonarrSync:
@@ -165,3 +167,38 @@ class TestBuildPendingSeeds:
         )
 
         assert seeds == {}
+
+
+class TestParseWriteVisibleToSeeds:
+    """The parse cache (writer) and the seed builder (reader) are now separate
+    objects; they must share one ``cache_store`` so a parse write earlier in the
+    run is visible to the seed read - the staged-write invariant the split risks."""
+
+    def test_parse_write_feeds_seed_build(self) -> None:
+        sonarr = mock.MagicMock()
+        sonarr.parse.return_value = [{"season": 1, "episode": 1}]
+        # No pre-seed: the parse pass must populate the shared cache itself.
+        strat = make_sonarr_sync(
+            sonarr=sonarr,
+            _config=make_config(sleep_time=2),  # sequential: deterministic, no warm pool
+            cache_store=FakeCacheStore(),
+            logger=make_logger(),
+        )
+        ep_list = [_ep(101, 1, 1)]
+        seadex_dict = {
+            "RG": rg_group(
+                {"u1": url_item(files=["Show - 01.mkv"], size=[1000], infohash="h1", download=True)},
+            ),
+        }
+
+        # Writer: fills the SHARED cache_store via the parse collaborator.
+        strat._parse.parse_episodes_from_seadex(seadex_dict, series_fp="fp")
+        # Reader: the seed builder reads that record back out of the same store.
+        seeds = strat._build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            sonarr_series_id=7,
+            anilist_title="Show",
+        )
+
+        assert seeds["h1"].file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
