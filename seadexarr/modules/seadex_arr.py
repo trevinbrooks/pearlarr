@@ -1,5 +1,6 @@
 import copy
 import logging
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -141,7 +142,10 @@ class RunDeps:
         arr_config = app_config.for_arr(arr)
 
         if logger is None:
-            logger = setup_logger(log_level=app_config.advanced.log_level)
+            # Standalone path (the CLI always injects a logger): logs live in the
+            # data dir alongside the cache it was handed (unified layout).
+            log_dir = os.path.join(os.path.dirname(os.path.abspath(cache)), "logs")
+            logger = setup_logger(log_level=app_config.advanced.log_level, log_dir=log_dir)
 
         # Shared keep-alive session for the raw Sonarr/Radarr calls. Retries
         # transient failures on idempotent GETs only (POSTs never retry, so a

@@ -36,6 +36,7 @@ from .mapping_store import (
     SOURCE_ANIME_IDS,
     MappingStore,
 )
+from .paths import resolve_paths
 from .seadex_types import TvdbMappings
 
 type AnimeIdsRecord = dict[str, Any]
@@ -408,6 +409,14 @@ class MappingResolver:
         self.logger = logger
         self._progress = progress
 
+        # The downloaded sources are cached next to mappings.db in the data dir; an
+        # in-memory db (tests / pre-parsed configs) falls back to the default data
+        # dir, so a source is never written to the working directory.
+        base = os.path.dirname(os.path.abspath(mappings_db)) if mappings_db != ":memory:" else resolve_paths().data_dir
+        self._anime_ids_path = os.path.join(base, ANIME_IDS_FILE)
+        self._anidb_path = os.path.join(base, ANIDB_MAPPINGS_FILE)
+        self._anibridge_path = os.path.join(base, ANIBRIDGE_MAPPINGS_FILE)
+
         # Memoize get_anilist_ids per identifying key, so the prefetch pass and the
         # main loop don't recompute (and re-query) it twice per item.
         self._anilist_ids_cache: dict[
@@ -497,6 +506,10 @@ class MappingResolver:
     def _maybe_download(self, file: str, url: str, label: str) -> None:
         """Download ``file`` if missing, or refresh it once it's past cache_time."""
 
+        # The data dir exists in the normal CLI flow (ensure_data_dir); create it
+        # here too so the in-memory/standalone fallback never fails on a first write.
+        os.makedirs(os.path.dirname(file), exist_ok=True)
+
         if not os.path.exists(file):
             self._log(f"Downloading {label}")
             _download_file(
@@ -514,42 +527,42 @@ class MappingResolver:
     def _load_anime_ids(self) -> None:
         """Download + (re)index the Kometa Anime-IDs map only if its content changed."""
 
-        self._maybe_download(ANIME_IDS_FILE, ANIME_IDS_URL, "anime_ids.json")
-        digest = _file_digest(ANIME_IDS_FILE)
+        self._maybe_download(self._anime_ids_path, ANIME_IDS_URL, "anime_ids.json")
+        digest = _file_digest(self._anime_ids_path)
         if self._store.is_fresh(SOURCE_ANIME_IDS, digest):
             self._log("anime_ids.json unchanged; using cached index")
             return
         self._log("Parsing + indexing anime_ids.json ...")
         t0 = time.perf_counter()
-        rows = _anime_ids_rows(_parse_anime_mappings(ANIME_IDS_FILE))
+        rows = _anime_ids_rows(_parse_anime_mappings(self._anime_ids_path))
         self._store.replace_anime_ids(digest, rows)
         self._log(f"Indexed anime_ids.json ({len(rows)} records, {time.perf_counter() - t0:.2f}s)")
 
     def _load_anidb(self) -> None:
         """Download + (re)index the AniDB anime-list XML only if its content changed."""
 
-        self._maybe_download(ANIDB_MAPPINGS_FILE, ANIDB_MAPPINGS_URL, "anidb anime-list")
-        digest = _file_digest(ANIDB_MAPPINGS_FILE)
+        self._maybe_download(self._anidb_path, ANIDB_MAPPINGS_URL, "anidb anime-list")
+        digest = _file_digest(self._anidb_path)
         if self._store.is_fresh(SOURCE_ANIDB, digest):
             self._log("anidb anime-list unchanged; using cached index")
             return
         self._log("Parsing + indexing anidb anime-list ...")
         t0 = time.perf_counter()
-        rows, ambiguous = _anidb_rows(_parse_anidb_mappings(ANIDB_MAPPINGS_FILE))
+        rows, ambiguous = _anidb_rows(_parse_anidb_mappings(self._anidb_path))
         self._store.replace_anidb(digest, rows, ambiguous)
         self._log(f"Indexed anidb anime-list ({len(rows)} mappings, {time.perf_counter() - t0:.2f}s)")
 
     def _load_anibridge(self) -> None:
         """Download + (re)index the anibridge graph only if its content changed."""
 
-        self._maybe_download(ANIBRIDGE_MAPPINGS_FILE, ANIBRIDGE_MAPPINGS_URL, "anibridge mappings")
-        digest = _file_digest(ANIBRIDGE_MAPPINGS_FILE)
+        self._maybe_download(self._anibridge_path, ANIBRIDGE_MAPPINGS_URL, "anibridge mappings")
+        digest = _file_digest(self._anibridge_path)
         if self._store.is_fresh(SOURCE_ANIBRIDGE, digest):
             self._log("anibridge mappings unchanged; using cached index")
         else:
             self._log("Parsing + indexing anibridge mappings ...")
             t0 = time.perf_counter()
-            with open(ANIBRIDGE_MAPPINGS_FILE) as f:
+            with open(self._anibridge_path) as f:
                 graph = json.load(f)
             ab = AniBridge(graph, logger=self.logger)
             self._store.replace_anibridge(digest, *ab.to_rows())

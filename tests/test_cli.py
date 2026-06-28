@@ -10,7 +10,7 @@ Pins the two behaviours the commands must guarantee around the SQLite cache:
   lock first and refuse while a run is active, so they never unlink or replace the
   live db out from under it (finding #5).
 
-Each test points ``_paths()`` at its own ``tmp_path`` via ``SEADEX_ARR_DATA_DIR``
+Each test points ``resolve_paths()`` at its own ``tmp_path`` via ``SEADEX_ARR_DATA_DIR``
 and calls the command functions directly (they return ``bool``).
 """
 

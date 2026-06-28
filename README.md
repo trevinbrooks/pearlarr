@@ -75,6 +75,23 @@ cd seadexarr
 pip install -e .
 ```
 
+## Data directory
+
+SeaDexArr keeps everything — `config.yml`, the caches (`cache.db`, `mappings.db`) and
+`logs/` — in a single data directory. By default this is the OS-standard per-user
+location:
+
+| OS      | Default data directory                          |
+|---------|-------------------------------------------------|
+| Linux   | `~/.local/share/seadexarr` (honors `$XDG_DATA_HOME`) |
+| macOS   | `~/Library/Application Support/seadexarr`        |
+| Windows | `%LOCALAPPDATA%\seadexarr`                       |
+
+Override the location with the `SEADEX_ARR_DATA_DIR` environment variable or the global
+`--data-dir` flag (the flag wins). Run `seadexarr paths` to print the resolved locations.
+The Docker image sets `SEADEX_ARR_DATA_DIR=/config`, so the `/config` volume mount above
+holds the whole data directory.
+
 ## CLI
 
 SeaDexArr features a command-line interface, with a number of modules. If running in Docker mode, 
@@ -96,7 +113,14 @@ so you don't also need ``--radarr``/``--sonarr``.
 ### ``seadexarr config``
 
 To generate a blank config file, simply enter ``config init``. You can then populate
-to your liking.
+to your liking. The file is written to the data directory (see above); run
+``seadexarr paths`` to find it.
+
+### ``seadexarr paths``
+
+Prints the resolved data directory and the files within it (config, caches, logs).
+Useful for confirming where SeaDexArr is reading/writing, especially with a custom
+``--data-dir`` or ``SEADEX_ARR_DATA_DIR``.
 
 ### ```seadexarr cache```
 
@@ -118,8 +142,9 @@ sdr = SeaDexRadarr()
 sdr.run()
 ```
 
-On the first run, the code will generate a config file in your working directory. This should be populated to your own 
-preference, and then run the code again.
+On the first run, the code will generate a config file in the data directory (run
+``seadexarr paths`` to find it). This should be populated to your own preference, and then
+run the code again.
 
 ## How SeaDexArr chooses a release
 

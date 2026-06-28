@@ -279,7 +279,7 @@ _LOG_LEVELS = {
 
 def setup_logger(
     log_level: str,
-    log_dir: str = "logs",
+    log_dir: str,
     log_name: str = "SeaDexArr",
     max_logs: int = 9,
 ) -> logging.Logger:
@@ -288,8 +288,8 @@ def setup_logger(
 
     Parameters:
         log_level (str): The log level to use
-        log_dir (str): Directory for log files.
-            Defaults to "logs"
+        log_dir (str): Full path to the directory for log files (resolved by the
+            caller via ``paths.log_dir``; created here if missing).
         log_name (str): The name of the log file.
             Defaults to "SeaDexArr"
         max_logs (int): Maximum number of log files to keep.
@@ -299,14 +299,7 @@ def setup_logger(
         A logger object for logging messages.
     """
 
-    if os.environ.get("DOCKER_ENV"):
-        config_dir = os.environ.get("CONFIG_DIR", os.getcwd())
-        log_dir = os.path.join(config_dir, log_dir)
-    else:
-        log_dir = os.path.join(os.getcwd(), log_dir)
-
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+    os.makedirs(log_dir, exist_ok=True)
 
     log_file = os.path.join(log_dir, f"{log_name}.log")
 

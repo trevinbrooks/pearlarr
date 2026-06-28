@@ -23,6 +23,7 @@ from seadexarr.modules.mappings import (
     TmdbType,
     _entry_from_raw,
 )
+from seadexarr.modules.paths import resolve_paths
 
 # --------------------------------------------------------------------------- #
 # AniBridge: SQL backing must equal the graph backing (the oracle)
@@ -405,10 +406,14 @@ class TestConstructionFailureClosesStore:
 # Real-data parity: SQL backings must equal the in-memory oracle over the
 # actual source files (gitignored, so skipped in CI / when absent). This is the
 # migration's core promise - it diffs the SQL path against the unchanged code.
+# The sources are cached in the data directory (next to mappings.db).
 # --------------------------------------------------------------------------- #
 
-_REAL_FILES = (m.ANIME_IDS_FILE, m.ANIDB_MAPPINGS_FILE, m.ANIBRIDGE_MAPPINGS_FILE)
-_HAVE_REAL = all(os.path.exists(f) for f in _REAL_FILES)
+_REAL_DIR = resolve_paths().data_dir
+_REAL_ANIME_IDS = os.path.join(_REAL_DIR, m.ANIME_IDS_FILE)
+_REAL_ANIDB = os.path.join(_REAL_DIR, m.ANIDB_MAPPINGS_FILE)
+_REAL_ANIBRIDGE = os.path.join(_REAL_DIR, m.ANIBRIDGE_MAPPINGS_FILE)
+_HAVE_REAL = all(os.path.exists(f) for f in (_REAL_ANIME_IDS, _REAL_ANIDB, _REAL_ANIBRIDGE))
 
 
 def _anidb_oracle(root: ElementTree.Element, anidb_id: int, tvdb_season: int) -> dict:
@@ -438,7 +443,7 @@ def _anidb_oracle(root: ElementTree.Element, anidb_id: int, tvdb_season: int) ->
 @pytest.mark.skipif(not _HAVE_REAL, reason="real mapping source files not present")
 class TestRealDataParity:
     def test_anibridge_sql_matches_graph_over_all_ids(self) -> None:
-        with open(m.ANIBRIDGE_MAPPINGS_FILE) as f:
+        with open(_REAL_ANIBRIDGE) as f:
             graph = json.load(f)
         graph_ab = AniBridge(graph)
         store = MappingStore.open(":memory:")
@@ -461,7 +466,7 @@ class TestRealDataParity:
             store.close()
 
     def test_anime_ids_sql_matches_oracle_sample(self) -> None:
-        amap = m._parse_anime_mappings(m.ANIME_IDS_FILE)
+        amap = m._parse_anime_mappings(_REAL_ANIME_IDS)
         resolver = MappingResolver(
             cache_time=99999,
             ignore_anilist_ids=set(),
@@ -484,7 +489,7 @@ class TestRealDataParity:
             resolver.close()
 
     def test_anidb_sql_matches_oracle_sample(self) -> None:
-        root = m._parse_anidb_mappings(m.ANIDB_MAPPINGS_FILE)
+        root = m._parse_anidb_mappings(_REAL_ANIDB)
         resolver = MappingResolver(
             cache_time=99999,
             ignore_anilist_ids=set(),

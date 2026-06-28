@@ -4,7 +4,7 @@ COPY . /app
 RUN pip install setuptools
 RUN pip install -e .
 
-ENV CONFIG_DIR=/config
-ENV DOCKER_ENV=true
+# One mounted volume holds config, caches and logs (see seadexarr paths).
+ENV SEADEX_ARR_DATA_DIR=/config
 
 ENTRYPOINT ["seadexarr"]

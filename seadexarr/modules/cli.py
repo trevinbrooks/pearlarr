@@ -7,7 +7,7 @@ import shutil
 import sqlite3
 import time
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 import typer
 from pydantic import ValidationError
@@ -16,6 +16,7 @@ from .boot_view import BootView, make_boot_view
 from .config import AppConfig, Arr
 from .log import setup_logger
 from .manual_import import ImportWaitMode
+from .paths import AppPaths, ensure_data_dir, resolve_paths
 from .runlock import single_instance_lock
 
 if TYPE_CHECKING:
@@ -37,33 +38,6 @@ seadexarr_cache = typer.Typer(name="cache")
 seadexarr_cli.add_typer(seadexarr_run)
 seadexarr_cli.add_typer(seadexarr_config)
 seadexarr_cli.add_typer(seadexarr_cache)
-
-
-class _Paths(NamedTuple):
-    config: str
-    cache: str
-    cache_backup: str
-    # Legacy JSON cache, seeded into ``cache.db`` on the first real run and then
-    # retired to ``cache.json.migrated``.
-    cache_legacy: str
-
-
-def _paths() -> _Paths:
-    """Resolve the config/cache file paths under CONFIG_DIR (cwd if unset).
-
-    The CONFIG_DIR env var and the filenames live here only, so every command
-    shares one definition instead of re-joining them inline.
-    """
-
-    # TODO: Switch to pathlib and use user_data_dir() for config/cache location
-    file_dir = os.path.dirname(str(os.path.realpath(__file__)))
-    config_dir = os.getenv("SEADEX_ARR_DATA_DIR", os.path.abspath(os.path.join(file_dir, "..", "..")))
-    return _Paths(
-        config=os.path.join(config_dir, "config.yml"),
-        cache=os.path.join(config_dir, "cache.db"),
-        cache_backup=os.path.join(config_dir, "cache.backup.db"),
-        cache_legacy=os.path.join(config_dir, "cache.json"),
-    )
 
 
 def _remove_db_sidecars(db_path: str) -> None:
@@ -147,10 +121,8 @@ def _build_shared(
 def _run_arrs(
     arrs: list[tuple[Arr, int | None]],
     *,
-    config: str,
-    cache: str,
+    paths: AppPaths,
     logger: logging.Logger,
-    cache_legacy: str | None = None,
     dry_run: bool = False,
     import_wait_mode: ImportWaitMode | None = None,
 ) -> bool:
@@ -173,11 +145,10 @@ def _run_arrs(
     # keeps the file safe, but overlapping runs would duplicate work and could race
     # on imports. A different data dir gets its own lock, so intentional parallel
     # instances are still fine.
-    data_dir = os.path.dirname(os.path.abspath(cache))
-    with single_instance_lock(data_dir, logger=logger) as acquired:
+    with single_instance_lock(paths.data_dir, logger=logger) as acquired:
         if not acquired:
             logger.warning(
-                f"Another SeaDexArr run is active in {data_dir}; skipping this run.",
+                f"Another SeaDexArr run is active in {paths.data_dir}; skipping this run.",
             )
             return False
 
@@ -197,8 +168,7 @@ def _run_arrs(
 
         try:
             # The parsed/indexed mapping cache lives beside cache.db in the data dir.
-            mappings_db = os.path.join(data_dir, "mappings.db")
-            shared = _build_shared(config, logger, mappings_db, boot)
+            shared = _build_shared(paths.config, logger, paths.mappings_db, boot)
             if shared is None:
                 return False
 
@@ -209,12 +179,12 @@ def _run_arrs(
                     try:
                         deps = RunDeps.build(
                             arr_name,
-                            config,
-                            cache,
+                            paths.config,
+                            paths.cache,
                             logger,
                             mappings=mappings,
                             app_config=app_config,
-                            cache_legacy=cache_legacy,
+                            cache_legacy=paths.cache_legacy,
                             boot=boot,
                         )
                         services = SeaDexArr(deps, arr_name)
@@ -258,15 +228,40 @@ def _run_arrs(
 
 # Default command, schedule run
 @seadexarr_cli.callback(invoke_without_command=True)
-def main(ctx: typer.Context) -> bool:
+def main(ctx: typer.Context, data_dir: str | None = None) -> bool:
     """Run SeaDexArr in scheduled mode
 
     Will run both Radarr and Sonarr modules
+
+    Args:
+        data_dir: Override the data directory holding config, caches and logs
+            (typer exposes this as ``--data-dir``). Defaults to None, which uses
+            ``SEADEX_ARR_DATA_DIR`` or the OS-standard per-user data location.
     """
+
+    # The flag is sugar over SEADEX_ARR_DATA_DIR: fold it into the env so every
+    # command's resolve_paths() sees it (commands are also called directly in tests,
+    # so the env - not ctx.obj - is the single override channel). Flag wins over a
+    # pre-set env because it overwrites here, before any subcommand resolves.
+    if data_dir is not None:
+        os.environ["SEADEX_ARR_DATA_DIR"] = os.path.abspath(data_dir)
 
     if ctx.invoked_subcommand is None:
         run_scheduled()
 
+    return True
+
+
+@seadexarr_cli.command("paths")
+def show_paths() -> bool:
+    """Print the resolved data directory and the files within it."""
+
+    paths = resolve_paths()
+    typer.echo(f"data_dir:    {paths.data_dir}")
+    typer.echo(f"config:      {paths.config}")
+    typer.echo(f"cache:       {paths.cache}")
+    typer.echo(f"mappings_db: {paths.mappings_db}")
+    typer.echo(f"logs:        {paths.log_dir}")
     return True
 
 
@@ -277,14 +272,16 @@ def run_scheduled() -> None:
     Will run both Radarr and Sonarr modules
     """
 
-    # Set up config file location
-    paths = _paths()
+    # Resolve the data directory once and make sure it exists (config-template copy
+    # + run lock both need it).
+    paths = resolve_paths()
+    ensure_data_dir(paths)
 
     # Get how often to run things
     schedule_time = float(os.getenv("SCHEDULE_TIME", "6"))
 
     while True:
-        logger = setup_logger(log_level="INFO")
+        logger = setup_logger(log_level="INFO", log_dir=paths.log_dir)
 
         # Build the shared config + id-mapping resolver once and run both arrs
         # (one config read + one download/parse per cycle, reused by both). On a
@@ -294,9 +291,7 @@ def run_scheduled() -> None:
         # so the scheduled path reads the same as a single run.
         _run_arrs(
             [(Arr.RADARR, None), (Arr.SONARR, None)],
-            config=paths.config,
-            cache=paths.cache,
-            cache_legacy=paths.cache_legacy,
+            paths=paths,
             logger=logger,
         )
 
@@ -332,10 +327,12 @@ def run_single(
             unset the config's ``import_wait_mode`` wins (cli > config > default).
     """
 
-    # Set up config file location
-    paths = _paths()
+    # Resolve the data directory once and make sure it exists (config-template copy
+    # + run lock both need it).
+    paths = resolve_paths()
+    ensure_data_dir(paths)
 
-    logger = setup_logger(log_level="INFO")
+    logger = setup_logger(log_level="INFO", log_dir=paths.log_dir)
 
     # Passing a movie/series ID implies running that arr.
     arrs: list[tuple[Arr, int | None]] = []
@@ -350,9 +347,7 @@ def run_single(
     # programmatic caller can tell a no-op-on-failure from a real run.
     return _run_arrs(
         arrs,
-        config=paths.config,
-        cache=paths.cache,
-        cache_legacy=paths.cache_legacy,
+        paths=paths,
         logger=logger,
         dry_run=dry_run,
         import_wait_mode=import_wait_mode,
@@ -362,15 +357,17 @@ def run_single(
 # Config commands
 @seadexarr_config.command("init")
 def config_init() -> bool:
-    """Initialise a configuration file.
+    """Initialise a configuration file in the data directory.
 
-    If not running in Docker, will create a config.yml in the current working
-    directory. For Docker, will create config.yml in the /config directory
+    Writes ``config.yml`` to the resolved data directory (see ``seadexarr paths``);
+    override the location with ``--data-dir`` or ``SEADEX_ARR_DATA_DIR``.
     """
 
-    config_template_path = os.path.join(os.path.dirname(__file__), "config_sample.yml")
+    paths = resolve_paths()
+    ensure_data_dir(paths)
 
-    shutil.copyfile(config_template_path, _paths().config)
+    config_template_path = os.path.join(os.path.dirname(__file__), "config_sample.yml")
+    shutil.copyfile(config_template_path, paths.config)
 
     return True
 
@@ -384,7 +381,7 @@ def cache_backup() -> bool:
     WAL has uncommitted pages, rather than a raw file copy that could miss them.
     """
 
-    paths = _paths()
+    paths = resolve_paths()
 
     if not os.path.exists(paths.cache):
         raise FileNotFoundError(f"File {paths.cache} not found")
@@ -413,7 +410,7 @@ def cache_restore() -> bool:
     restored snapshot isn't shadowed by a leftover WAL).
     """
 
-    paths = _paths()
+    paths = resolve_paths()
 
     if not os.path.exists(paths.cache_backup):
         raise FileNotFoundError(f"File {paths.cache_backup} not found")
@@ -421,11 +418,10 @@ def cache_restore() -> bool:
     # Replacing cache.db (and clearing its WAL/SHM) while a run is live would clobber
     # the in-flight database; take the same single-instance lock the runner uses and
     # refuse rather than corrupt an active run.
-    data_dir = os.path.dirname(os.path.abspath(paths.cache))
-    with single_instance_lock(data_dir) as acquired:
+    with single_instance_lock(paths.data_dir) as acquired:
         if not acquired:
             typer.echo(
-                f"Another SeaDexArr run is active in {data_dir}; refusing to modify the cache.",
+                f"Another SeaDexArr run is active in {paths.data_dir}; refusing to modify the cache.",
             )
             return False
 
@@ -441,18 +437,17 @@ def cache_restore() -> bool:
 def cache_remove() -> bool:
     """Remove the cache database (``cache.db`` and its WAL/SHM sidecars)."""
 
-    paths = _paths()
+    paths = resolve_paths()
 
     if not os.path.exists(paths.cache):
         raise FileNotFoundError(f"File {paths.cache} not found")
 
     # Unlinking cache.db (and its WAL/SHM) out from under a live run would drop its
     # database mid-write; take the single-instance lock and refuse if a run holds it.
-    data_dir = os.path.dirname(os.path.abspath(paths.cache))
-    with single_instance_lock(data_dir) as acquired:
+    with single_instance_lock(paths.data_dir) as acquired:
         if not acquired:
             typer.echo(
-                f"Another SeaDexArr run is active in {data_dir}; refusing to modify the cache.",
+                f"Another SeaDexArr run is active in {paths.data_dir}; refusing to modify the cache.",
             )
             return False
 
@@ -468,7 +463,7 @@ def cache_stats() -> bool:
 
     from .cache import CacheStore
 
-    paths = _paths()
+    paths = resolve_paths()
     if not os.path.exists(paths.cache):
         raise FileNotFoundError(f"File {paths.cache} not found")
 
@@ -499,7 +494,7 @@ def cache_check() -> bool:
 
     from .cache import CacheStore
 
-    paths = _paths()
+    paths = resolve_paths()
     if not os.path.exists(paths.cache):
         raise FileNotFoundError(f"File {paths.cache} not found")
 
