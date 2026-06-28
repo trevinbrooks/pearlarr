@@ -4,7 +4,7 @@ import os
 import time
 from collections.abc import Iterable
 from datetime import datetime, timedelta
-from typing import Any, override
+from typing import Any, NamedTuple, override
 
 from . import coverage as _coverage
 from .anilist import (
@@ -151,6 +151,23 @@ SONARR_PARSE_NEG_CACHE_TTL_DAYS = 7
 # Episode fetches are I/O-bound, but a typical Sonarr (often behind a reverse
 # proxy) saturates around ~10-12 concurrent, so larger values don't help.
 SONARR_FETCH_WORKERS = 12
+
+
+class ParseWindow(NamedTuple):
+    """The freshness window for one parse pass, computed once per call.
+
+    Bundles the values the parse-cache freshness check and writes thread
+    together: ``now_str`` stamps new records, ``cutoff`` bounds a positive
+    record's TTL, ``neg_cutoff`` the short negative-record backstop, and
+    ``series_fp`` pins negative records to the current series-id set (so a
+    newly-added series self-heals). One window is built in
+    ``parse_episodes_from_seadex`` and passed down to the fresh-check / writer.
+    """
+
+    now_str: str
+    cutoff: datetime
+    neg_cutoff: datetime
+    series_fp: str
 
 
 def sonarr_series_fingerprint(series_ids: Iterable[int]) -> str:
@@ -1689,16 +1706,15 @@ class SonarrSync(ArrSync[SonarrItem]):
     def _sonarr_parse_is_fresh(
         record: dict[str, Any] | None,
         *,
-        cutoff: datetime,
-        neg_cutoff: datetime,
-        series_fp: str,
+        window: ParseWindow,
     ) -> bool:
         """True if a persisted parse record is still usable.
 
-        Positive (has episodes): stable mapping, valid for the 30-day ``cutoff``.
-        Negative (empty): valid only while the series-id set is unchanged
-        (matching ``series_fp``) and within the short ``neg_cutoff`` backstop, so
-        a newly-added series self-heals. Legacy records (no fp) read stale.
+        Positive (has episodes): stable mapping, valid for the 30-day
+        ``window.cutoff``. Negative (empty): valid only while the series-id set is
+        unchanged (matching ``window.series_fp``) and within the short
+        ``window.neg_cutoff`` backstop, so a newly-added series self-heals. Legacy
+        records (no fp) read stale.
         """
 
         if not isinstance(record, dict):
@@ -1708,16 +1724,16 @@ class SonarrSync(ArrSync[SonarrItem]):
                 record,
                 payload_key="episodes",
                 ttl_days=SONARR_PARSE_CACHE_TTL_DAYS,
-                cutoff=cutoff,
+                cutoff=window.cutoff,
             )
-        if record.get("series_fp") != series_fp:
+        if record.get("series_fp") != window.series_fp:
             return False
         try:
-            return datetime.strptime(record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT) >= neg_cutoff
+            return datetime.strptime(record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT) >= window.neg_cutoff
         except (TypeError, ValueError):
             return False
 
-    def _write_parse_record(self, filename: str, episodes: list[dict[str, int]], *, now_str: str) -> None:
+    def _write_parse_record(self, filename: str, episodes: list[dict[str, int]], *, window: ParseWindow) -> None:
         """Upsert a Sonarr parse-cache record (one builder for both shapes).
 
         A NEGATIVE record (empty ``episodes``) carries the series fingerprint so
@@ -1725,18 +1741,16 @@ class SonarrSync(ArrSync[SonarrItem]):
         freshness reader dispatches on exactly that presence.
         """
 
-        record: dict[str, Any] = {"fetched_at": now_str, "episodes": episodes}
+        record: dict[str, Any] = {"fetched_at": window.now_str, "episodes": episodes}
         if not episodes:
-            record["series_fp"] = self._series_fp
+            record["series_fp"] = window.series_fp
         self.cache_store.put_sonarr_parse(filename, record)
 
     def _warm_parse_cache(
         self,
         seadex_dict: SeadexDict,
         *,
-        now_str: str,
-        cutoff: datetime,
-        neg_cutoff: datetime,
+        window: ParseWindow,
     ) -> None:
         """Concurrently parse the not-yet-cached files for one release.
 
@@ -1761,12 +1775,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                         continue
                     seen.add(f)
                     record = self.cache_store.get_sonarr_parse(f)
-                    if record is not None and self._sonarr_parse_is_fresh(
-                        record,
-                        cutoff=cutoff,
-                        neg_cutoff=neg_cutoff,
-                        series_fp=self._series_fp,
-                    ):
+                    if record is not None and self._sonarr_parse_is_fresh(record, window=window):
                         continue
                     pending.append(f)
 
@@ -1782,7 +1791,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         for name, result in results:
             if result is None:  # request failed: don't cache a transient miss
                 continue
-            self._write_parse_record(name, result, now_str=now_str)
+            self._write_parse_record(name, result, window=window)
 
     def parse_episodes_from_seadex(
         self,
@@ -1806,15 +1815,18 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         # Record shape per filename: {"fetched_at", "episodes"[, "series_fp"]}.
         # Cutoffs computed once per call (not per file).
-        now_str = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
-        cutoff = datetime.now() - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS)
-        neg_cutoff = datetime.now() - timedelta(days=SONARR_PARSE_NEG_CACHE_TTL_DAYS)
+        window = ParseWindow(
+            now_str=datetime.now().strftime(UPDATED_AT_STR_FORMAT),
+            cutoff=datetime.now() - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS),
+            neg_cutoff=datetime.now() - timedelta(days=SONARR_PARSE_NEG_CACHE_TTL_DAYS),
+            series_fp=self._series_fp,
+        )
 
         # Evict parse records aged past that same cutoff so the block stops growing
         # without bound. Staged like the writes below (committed at the run's save
         # point, discarded in a preview); only the first call per run finds stale
         # rows, later calls evict nothing.
-        evicted = self.cache_store.evict_sonarr_parse(cutoff)
+        evicted = self.cache_store.evict_sonarr_parse(window.cutoff)
         if evicted:
             self.logger.debug(
                 indent_string(f"Evicted {evicted} stale Sonarr parse record(s)"),
@@ -1822,7 +1834,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         # Concurrently warm the cache for any not-yet-cached files so the mapping
         # loop below reads them as hits (no-op when sequential or already warm).
-        self._warm_parse_cache(seadex_dict, now_str=now_str, cutoff=cutoff, neg_cutoff=neg_cutoff)
+        self._warm_parse_cache(seadex_dict, window=window)
 
         for release_group_item in seadex_dict.values():
             # Set up an overall "all episodes" list (bound locally so the
@@ -1850,12 +1862,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                     # expires (re-validates) rather than being trusted forever
                     record = self.cache_store.get_sonarr_parse(f)
                     # ``episodes`` is untyped JSON; pin the element type back on.
-                    if record is not None and self._sonarr_parse_is_fresh(
-                        record,
-                        cutoff=cutoff,
-                        neg_cutoff=neg_cutoff,
-                        series_fp=self._series_fp,
-                    ):
+                    if record is not None and self._sonarr_parse_is_fresh(record, window=window):
                         parsed: list[dict[str, int]] = record["episodes"]
                         if not parsed:
                             continue
@@ -1869,7 +1876,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
                         # Cache the result (negatives are series-fp pinned so they
                         # aren't re-parsed every run) before acting on it.
-                        self._write_parse_record(f, parsed, now_str=now_str)
+                        self._write_parse_record(f, parsed, window=window)
 
                         if not parsed:
                             self.logger.debug(

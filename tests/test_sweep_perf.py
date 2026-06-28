@@ -13,6 +13,7 @@ from seadexarr.modules.seadex_sonarr import (
     SONARR_FETCH_WORKERS,
     SONARR_PARSE_CACHE_TTL_DAYS,
     SONARR_PARSE_NEG_CACHE_TTL_DAYS,
+    ParseWindow,
     SonarrClient,
     SonarrSync,
     sonarr_series_fingerprint,
@@ -40,9 +41,12 @@ def _stamp(days_ago: float) -> str:
 def _fresh(record: dict[str, Any], *, series_fp: str = "fp") -> bool:
     return SonarrSync._sonarr_parse_is_fresh(
         record,
-        cutoff=_POS_CUTOFF,
-        neg_cutoff=_NEG_CUTOFF,
-        series_fp=series_fp,
+        window=ParseWindow(
+            now_str=_NOW.strftime(UPDATED_AT_STR_FORMAT),
+            cutoff=_POS_CUTOFF,
+            neg_cutoff=_NEG_CUTOFF,
+            series_fp=series_fp,
+        ),
     )
 
 
