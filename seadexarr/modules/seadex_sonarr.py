@@ -512,14 +512,9 @@ class SonarrSync(ArrSync[SonarrItem]):
             # retries and logs it on the main thread if it still fails.
             return series_id, self.sonarr.episodes(series_id, quiet=True)
 
+        # max_workers=1 (sleep_time throttle) runs the same map serially on one
+        # worker, so a single path covers both the concurrent and sequential cases.
         workers = min(self._fetch_workers(), len(series_ids))
-        if workers <= 1:
-            for sid in series_ids:
-                eps = self.sonarr.episodes(sid, quiet=True)
-                if eps is not None:
-                    self._ep_list_cache[sid] = eps
-            return
-
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             for sid, eps in pool.map(warm, series_ids):
                 if eps is not None:
@@ -1689,13 +1684,23 @@ class SonarrSync(ArrSync[SonarrItem]):
             )
         if record.get("series_fp") != series_fp:
             return False
-        stamp = record.get("fetched_at")
-        if not isinstance(stamp, str):
-            return False
         try:
-            return datetime.strptime(stamp, UPDATED_AT_STR_FORMAT) >= neg_cutoff
-        except ValueError:
+            return datetime.strptime(record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT) >= neg_cutoff
+        except (TypeError, ValueError):
             return False
+
+    def _write_parse_record(self, filename: str, episodes: list[dict[str, int]], *, now_str: str) -> None:
+        """Upsert a Sonarr parse-cache record (one builder for both shapes).
+
+        A NEGATIVE record (empty ``episodes``) carries the series fingerprint so
+        it self-heals when the library changes; a POSITIVE one never does - the
+        freshness reader dispatches on exactly that presence.
+        """
+
+        record: dict[str, Any] = {"fetched_at": now_str, "episodes": episodes}
+        if not episodes:
+            record["series_fp"] = self._series_fp
+        self.cache_store.put_sonarr_parse(filename, record)
 
     def _warm_parse_cache(
         self,
@@ -1749,13 +1754,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         for name, result in results:
             if result is None:  # request failed: don't cache a transient miss
                 continue
-            if result:
-                self.cache_store.put_sonarr_parse(name, {"fetched_at": now_str, "episodes": result})
-            else:
-                self.cache_store.put_sonarr_parse(
-                    name,
-                    {"fetched_at": now_str, "episodes": [], "series_fp": self._series_fp},
-                )
+            self._write_parse_record(name, result, now_str=now_str)
 
     def parse_episodes_from_seadex(
         self,
@@ -1813,13 +1812,9 @@ class SonarrSync(ArrSync[SonarrItem]):
                     # Get basename from the file
                     f = os.path.basename(seadex_file)
 
-                    # Skip filenames with things like "NCED", "NCOP"
-                    if any(x in f for x in TORRENT_FILENAMES_TO_SKIP):
-                        continue
-
-                    # Skip non-video files (subtitles, fonts, images, ...) before
-                    # hitting Sonarr - they never resolve to an episode
-                    if os.path.splitext(f)[1].lower() in NON_VIDEO_EXTENSIONS:
+                    # Skip non-episode files (NCED/NCOP, subs, fonts, audio, ...)
+                    # before hitting Sonarr - the same rule the warm pass uses.
+                    if not self._is_video_candidate(f):
                         continue
 
                     # Use the cached parse if it's still fresh, otherwise query
@@ -1844,21 +1839,15 @@ class SonarrSync(ArrSync[SonarrItem]):
                             continue
                         parsed = result
 
+                        # Cache the result (negatives are series-fp pinned so they
+                        # aren't re-parsed every run) before acting on it.
+                        self._write_parse_record(f, parsed, now_str=now_str)
+
                         if not parsed:
                             self.logger.debug(
                                 indent_string(f"Sonarr could not parse episode for {f}"),
                             )
-                            # Negative-cache (series-fp pinned) so it's not re-parsed every run.
-                            self.cache_store.put_sonarr_parse(
-                                f,
-                                {"fetched_at": now_str, "episodes": [], "series_fp": self._series_fp},
-                            )
                             continue
-
-                        self.cache_store.put_sonarr_parse(
-                            f,
-                            {"fetched_at": now_str, "episodes": parsed},
-                        )
 
                     size = sizes[sd_file_idx]
                     for ep in parsed:

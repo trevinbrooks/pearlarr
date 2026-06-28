@@ -100,13 +100,9 @@ class SonarrClient:
         try:
             eps_req = self._session.get(eps_req_url, timeout=SONARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
-            if not quiet:
-                self._logger.warning(
-                    "Could not fetch episode data from Sonarr; it may be unreachable",
-                )
-            return None
+            eps_req = None
 
-        if eps_req.status_code != 200:
+        if eps_req is None or eps_req.status_code != 200:
             if not quiet:
                 self._logger.warning(
                     "Could not fetch episode data from Sonarr; it may be unreachable",
