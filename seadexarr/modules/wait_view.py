@@ -30,18 +30,14 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
+from .console_caps import Capabilities, console_of, detect_capabilities
 from .log import (
     STATE_WIDTH,
     LogFormatter,
-    RichConsoleHandler,
     indent_string,
     rule_string,
 )
 from .manual_import import Outcome, OutcomeCategory
-
-# Below this console width a sticky live region can't be drawn legibly, so we
-# fall back to the log view (the same path a non-TTY / dumb terminal takes).
-MIN_LIVE_WIDTH = 40
 
 # The live cockpit never grows past this many in-flight rows; the rest collapse
 # into a one-line "+ N more ..." overflow, so a large carried-over backlog can't
@@ -204,23 +200,6 @@ def graduations(seen: frozenset[str], snapshot: WaitSnapshot) -> list[TorrentVie
 
 
 @dataclass(frozen=True, slots=True)
-class Capabilities:
-    """What the output stream can do, probed once - drives mode + glyph choices.
-
-    ``live`` -> may we drive a sticky live region (a real, non-dumb, wide-enough
-    TTY)? ``color`` -> may we emit ANSI color? ``unicode`` -> may we use ``✔``/box
-    glyphs, or must we fall back to ASCII? ``width``/``height`` -> the clamped
-    render size.
-    """
-
-    live: bool
-    color: bool
-    unicode: bool
-    width: int
-    height: int
-
-
-@dataclass(frozen=True, slots=True)
 class RowModel:
     """One rendered in-flight row, as plain strings - the pure-render unit.
 
@@ -267,8 +246,8 @@ def make_wait_view(
         digest_interval (int): Target seconds between non-TTY aggregate pulses.
     """
 
-    console = _console_of(logger)
-    caps = _detect_capabilities(console)
+    console = console_of(logger)
+    caps = detect_capabilities(console)
     if console is not None and caps.live:
         return LiveWaitView(console, caps, logger)
     return LogWaitView(
@@ -277,52 +256,6 @@ def make_wait_view(
         poll_s=poll_s,
         digest_interval=digest_interval,
     )
-
-
-def _console_of(logger: logging.Logger) -> Console | None:
-    """The rich Console behind the logger's console handler, if any."""
-
-    for handler in logger.handlers:
-        if isinstance(handler, RichConsoleHandler):
-            return handler.console
-    return None
-
-
-def _detect_capabilities(console: Console | None) -> Capabilities:
-    """Fold rich's derived console signals into our render capabilities.
-
-    Reads rich's own folded flags (which already honor ``NO_COLOR`` / ``TERM`` /
-    isatty / legacy Windows) rather than re-parsing the environment; the only
-    things added on top are the ``MIN_LIVE_WIDTH`` floor and a glyph-encodability
-    probe, which decide box-vs-lines and the glyph set.
-    """
-
-    if console is None:
-        return Capabilities(live=False, color=False, unicode=False, width=80, height=24)
-    size = console.size
-    width = size.width or 80
-    height = size.height or 24
-    live = console.is_terminal and not console.is_dumb_terminal and width >= MIN_LIVE_WIDTH
-    return Capabilities(
-        live=live,
-        color=console.color_system is not None,
-        unicode=_supports_unicode(console),
-        width=width,
-        height=height,
-    )
-
-
-def _supports_unicode(console: Console) -> bool:
-    """Whether the console can encode the glyphs/blocks the cockpit draws."""
-
-    if getattr(console, "legacy_windows", False):
-        return False
-    encoding = console.encoding or "utf-8"
-    try:
-        "✔━▏░".encode(encoding)
-    except (UnicodeEncodeError, LookupError):
-        return False
-    return True
 
 
 def live_model(snapshot: WaitSnapshot, caps: Capabilities) -> LiveModel:
