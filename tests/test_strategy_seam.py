@@ -16,7 +16,7 @@ from seadexarr.modules.manual_import import (
 )
 from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.seadex_radarr import RadarrSync
-from seadexarr.modules.seadex_sonarr import SonarrSync, sonarr_series_fingerprint
+from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
     CommandResource,
     Language,
@@ -27,6 +27,7 @@ from seadexarr.modules.seadex_types import (
     SonarrEpisode,
     SonarrItem,
 )
+from seadexarr.modules.sonarr_episodes import sonarr_series_fingerprint
 
 from .builders import (
     FakeCacheStore,
@@ -107,19 +108,35 @@ class TestFilterToSingle:
 
 
 class TestRunStartHook:
-    """get_items doubles as the run-start hook: it resets the per-run scratch."""
+    """get_items doubles as the run-start hook: it resets the per-run scratch.
+
+    The episode reset/fingerprint now lives on the SonarrEpisodes collaborator;
+    this stays at strategy level to pin that get_items actually routes through it.
+    """
 
     def test_sonarr_get_items_clears_ep_list_cache(self) -> None:
         series = [_Item(id=5), _Item(id=7)]
-        strat = make_bare_instance(SonarrSync, _ep_list_cache={5: ["stale"]})
-        strat.get_all_sonarr_series = mock.MagicMock(return_value=series)
+        strat = make_sonarr_sync(_ep_list_cache={5: ["stale"]})
+        strat._episodes.get_all_sonarr_series = mock.MagicMock(return_value=series)
 
         result = strat.get_items()
 
         assert result == series
-        assert strat._ep_list_cache == {}
-        # The run-start hook also fingerprints the current series-id set.
-        assert strat._series_fp == sonarr_series_fingerprint([5, 7])
+        # The episode collaborator drops its cache + re-fingerprints as it enumerates.
+        assert strat._episodes._ep_list_cache == {}
+        assert strat._episodes._series_fp == sonarr_series_fingerprint([5, 7])
+
+
+class TestSonarrPrefetchDelegates:
+    """prefetch_episodes is a thin hook over the episode collaborator's warm."""
+
+    def test_sonarr_prefetch_routes_to_episodes(self) -> None:
+        strat = make_sonarr_sync()
+        strat._episodes.prefetch = mock.MagicMock(return_value=3)
+        items: list[SonarrItem] = [_Item(id=1)]
+
+        assert strat.prefetch_episodes(items, progress=None) == 3
+        strat._episodes.prefetch.assert_called_once_with(items, progress=None)
 
 
 class TestRadarrPrefetchEpisodes:

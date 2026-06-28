@@ -33,6 +33,7 @@ from seadexarr.modules.seadex_types import (
     SeadexUrlItem,
     SonarrEpisode,
 )
+from seadexarr.modules.sonarr_episodes import SonarrEpisodes
 
 # Map each flat (group-local) setting name to its config group, derived straight from
 # AppConfig's own field tree so it can't drift into a stale subset: adding a 9th
@@ -622,6 +623,19 @@ def manual_candidate(
     )
 
 
+def make_sonarr_episodes(**attrs: Any) -> SonarrEpisodes:
+    """A bare ``SonarrEpisodes`` with ``__init__`` bypassed and only ``attrs`` set.
+
+    Mirrors ``make_sonarr_sync``: the per-run episode cache + series fingerprint
+    default empty, so a test only sets the collaborators the method under test
+    reads (``sonarr``, ``_services``, ``_config``, ``_mappings``, ``_anilist``, ...).
+    """
+
+    defaults: dict[str, Any] = {"_ep_list_cache": {}, "_series_fp": ""}
+    defaults.update(attrs)
+    return make_bare_instance(SonarrEpisodes, **defaults)
+
+
 def make_sonarr_sync(**attrs: Any) -> SonarrSync:
     """A bare ``SonarrSync`` with ``__init__`` bypassed and only ``attrs`` set.
 
@@ -630,6 +644,11 @@ def make_sonarr_sync(**attrs: Any) -> SonarrSync:
     (``sonarr``, ``logger``, ``_config``, and the per-run caches). The two
     per-run quality/language caches default to None (not yet fetched) so the
     lazy-fetch path runs unless a test pre-seeds them.
+
+    The episode-domain state (``_ep_list_cache`` / ``_series_fp``) lives on the
+    ``SonarrEpisodes`` collaborator now, exactly as the real ``__init__`` builds it,
+    so it is routed there and the strat gets a wired ``_episodes`` sharing the same
+    client/config/services. Pass ``_episodes=`` to override the whole collaborator.
     """
 
     defaults: dict[str, Any] = {
@@ -637,4 +656,21 @@ def make_sonarr_sync(**attrs: Any) -> SonarrSync:
         "_languages_cache": None,
     }
     defaults.update(attrs)
-    return make_bare_instance(SonarrSync, **defaults)
+    episodes = defaults.pop("_episodes", None)
+    ep_cache = defaults.pop("_ep_list_cache", {})
+    series_fp = defaults.pop("_series_fp", "")
+    strat = make_bare_instance(SonarrSync, **defaults)
+    if episodes is None:
+        episodes = make_sonarr_episodes(
+            sonarr=defaults.get("sonarr"),
+            _services=defaults.get("_services"),
+            _config=defaults.get("_config"),
+            _mappings=defaults.get("_mappings"),
+            anibridge=defaults.get("anibridge"),
+            _anilist=defaults.get("_anilist"),
+            log_fmt=defaults.get("log_fmt"),
+            _ep_list_cache=ep_cache,
+            _series_fp=series_fp,
+        )
+    strat._episodes = episodes
+    return strat

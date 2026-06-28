@@ -10,12 +10,16 @@ from unittest import mock
 from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
 from seadexarr.modules.config import Arr
 from seadexarr.modules.seadex_sonarr import (
-    SONARR_FETCH_WORKERS,
     SONARR_PARSE_CACHE_TTL_DAYS,
     SONARR_PARSE_NEG_CACHE_TTL_DAYS,
     ParseWindow,
     SonarrClient,
     SonarrSync,
+)
+from seadexarr.modules.sonarr_episodes import (
+    SONARR_FETCH_WORKERS,
+    SonarrEpisodes,
+    fetch_workers,
     sonarr_series_fingerprint,
 )
 from tests.builders import (
@@ -24,6 +28,7 @@ from tests.builders import (
     make_bare_instance,
     make_config,
     make_logger,
+    make_sonarr_episodes,
     make_sonarr_sync,
     rg_group,
     url_item,
@@ -126,12 +131,10 @@ class TestParseClientTransientVsEmpty:
 
 class TestFetchWorkers:
     def test_concurrent_when_no_sleep(self) -> None:
-        strat = make_sonarr_sync(_config=make_config(sleep_time=0))
-        assert strat._fetch_workers() == SONARR_FETCH_WORKERS
+        assert fetch_workers(make_config(sleep_time=0)) == SONARR_FETCH_WORKERS
 
     def test_sequential_when_throttled(self) -> None:
-        strat = make_sonarr_sync(_config=make_config(sleep_time=2))
-        assert strat._fetch_workers() == 1
+        assert fetch_workers(make_config(sleep_time=2)) == 1
 
 
 class _Series:
@@ -170,58 +173,56 @@ class _Recorder:
 
 
 class TestPrefetchEpisodes:
-    def _strat(self, *, mapped: set[int], sleep_time: int = 0) -> tuple[SonarrSync, mock.MagicMock]:
+    def _eps(self, *, mapped: set[int], sleep_time: int = 0) -> tuple[SonarrEpisodes, mock.MagicMock]:
         sonarr = mock.MagicMock()
         sonarr.episodes.side_effect = lambda sid, quiet=False: [f"ep{sid}"] if sid in mapped else None
         services = mock.MagicMock()
         # Only "mapped" series resolve to a non-empty AniList mapping.
         services.get_anilist_ids.side_effect = lambda **kw: {1: object()} if kw["tvdb_id"] in mapped else {}
-        strat = make_sonarr_sync(
+        eps = make_sonarr_episodes(
             sonarr=sonarr,
             _services=services,
             _config=make_config(sleep_time=sleep_time),
-            _ep_list_cache={},
-            logger=make_logger(),
         )
-        return strat, sonarr
+        return eps, sonarr
 
     def test_warms_only_mapped_series(self) -> None:
-        strat, _ = self._strat(mapped={1, 2})
-        strat.prefetch_episodes([_item(1), _item(2), _item(3)])
-        assert strat._ep_list_cache == {1: ["ep1"], 2: ["ep2"]}
+        eps, _ = self._eps(mapped={1, 2})
+        eps.prefetch([_item(1), _item(2), _item(3)])
+        assert eps._ep_list_cache == {1: ["ep1"], 2: ["ep2"]}
 
     def test_skips_unmonitored_when_ignored(self) -> None:
-        strat, _ = self._strat(mapped={1, 2})
-        strat._config = make_config(sleep_time=0, ignore_unmonitored=True)
-        strat.prefetch_episodes([_item(1, monitored=False), _item(2)])
-        assert strat._ep_list_cache == {2: ["ep2"]}
+        eps, _ = self._eps(mapped={1, 2})
+        eps._config = make_config(sleep_time=0, ignore_unmonitored=True)
+        eps.prefetch([_item(1, monitored=False), _item(2)])
+        assert eps._ep_list_cache == {2: ["ep2"]}
 
     def test_dedups_series_ids(self) -> None:
-        strat, sonarr = self._strat(mapped={1})
-        strat.prefetch_episodes([_item(1), _item(1)])
+        eps, sonarr = self._eps(mapped={1})
+        eps.prefetch([_item(1), _item(1)])
         assert sonarr.episodes.call_count == 1
 
     def test_none_result_not_cached(self) -> None:
         # series 9 is a candidate (resolves a mapping) but episodes() returns None.
-        strat, sonarr = self._strat(mapped={9})
+        eps, sonarr = self._eps(mapped={9})
         sonarr.episodes.side_effect = lambda sid, quiet=False: None
-        strat.prefetch_episodes([_item(9)])
-        assert strat._ep_list_cache == {}
+        eps.prefetch([_item(9)])
+        assert eps._ep_list_cache == {}
 
     def test_sequential_path_matches_concurrent(self) -> None:
-        strat, _ = self._strat(mapped={1, 2}, sleep_time=2)
-        strat.prefetch_episodes([_item(1), _item(2)])
-        assert strat._ep_list_cache == {1: ["ep1"], 2: ["ep2"]}
+        eps, _ = self._eps(mapped={1, 2}, sleep_time=2)
+        eps.prefetch([_item(1), _item(2)])
+        assert eps._ep_list_cache == {1: ["ep1"], 2: ["ep2"]}
 
     def test_returns_warmed_count(self) -> None:
         # Only mapped, monitored series are warmed: 3 is unmapped, so 2 warmed.
-        strat, _ = self._strat(mapped={1, 2})
-        assert strat.prefetch_episodes([_item(1), _item(2), _item(3)]) == 2
+        eps, _ = self._eps(mapped={1, 2})
+        assert eps.prefetch([_item(1), _item(2), _item(3)]) == 2
 
     def test_drives_progress_per_series(self) -> None:
-        strat, _ = self._strat(mapped={1, 2})
+        eps, _ = self._eps(mapped={1, 2})
         rec = _Recorder()
-        strat.prefetch_episodes([_item(1), _item(2), _item(3)], progress=rec)
+        eps.prefetch([_item(1), _item(2), _item(3)], progress=rec)
         # One drive per warmed series, ending complete. Completion order is
         # nondeterministic, so assert on the count + the final value, not the
         # intermediate sequence.
@@ -231,11 +232,11 @@ class TestPrefetchEpisodes:
     def test_count_is_attempted_not_cached(self) -> None:
         # series 9 is a candidate (resolves a mapping) but episodes() returns None.
         # It's still attempted, so it counts toward the return value + the bar.
-        strat, sonarr = self._strat(mapped={9})
+        eps, sonarr = self._eps(mapped={9})
         sonarr.episodes.side_effect = lambda sid, quiet=False: None
         rec = _Recorder()
-        assert strat.prefetch_episodes([_item(9)], progress=rec) == 1
-        assert strat._ep_list_cache == {}  # nothing cached
+        assert eps.prefetch([_item(9)], progress=rec) == 1
+        assert eps._ep_list_cache == {}  # nothing cached
         assert rec.calls[-1] == (1.0, "1/1")  # but progress still completed
 
 
@@ -303,7 +304,7 @@ class TestPrefetchSkipsUnchanged:
     series whose every SeaDex entry is unchanged (or absent) is no longer fetched -
     the regression this change fixes."""
 
-    def _strat(self, *, needs_scan: set[int]) -> tuple[SonarrSync, mock.MagicMock]:
+    def _eps(self, *, needs_scan: set[int]) -> tuple[SonarrEpisodes, mock.MagicMock]:
         # Each series maps to a single al_id equal to its id, so a series is warmed
         # iff that id is in ``needs_scan``.
         sonarr = mock.MagicMock()
@@ -311,25 +312,23 @@ class TestPrefetchSkipsUnchanged:
         services = mock.MagicMock()
         services.get_anilist_ids.side_effect = lambda **kw: {kw["tvdb_id"]: object()}
         services.al_id_needs_scan.side_effect = lambda al_id: al_id in needs_scan
-        strat = make_sonarr_sync(
+        eps = make_sonarr_episodes(
             sonarr=sonarr,
             _services=services,
             _config=make_config(sleep_time=0),
-            _ep_list_cache={},
-            logger=make_logger(),
         )
-        return strat, sonarr
+        return eps, sonarr
 
     def test_skips_series_with_no_scannable_id(self) -> None:
-        strat, sonarr = self._strat(needs_scan={1})
-        assert strat.prefetch_episodes([_item(1), _item(2)]) == 1
-        assert strat._ep_list_cache == {1: ["ep1"]}  # series 2 never fetched
+        eps, sonarr = self._eps(needs_scan={1})
+        assert eps.prefetch([_item(1), _item(2)]) == 1
+        assert eps._ep_list_cache == {1: ["ep1"]}  # series 2 never fetched
         sonarr.episodes.assert_called_once_with(1, quiet=True)
 
     def test_warms_none_when_all_unchanged(self) -> None:
-        strat, sonarr = self._strat(needs_scan=set())
-        assert strat.prefetch_episodes([_item(1), _item(2)]) == 0
-        assert strat._ep_list_cache == {}
+        eps, sonarr = self._eps(needs_scan=set())
+        assert eps.prefetch([_item(1), _item(2)]) == 0
+        assert eps._ep_list_cache == {}
         sonarr.episodes.assert_not_called()
 
     def test_warms_series_with_any_scannable_id(self) -> None:
@@ -339,15 +338,13 @@ class TestPrefetchSkipsUnchanged:
         services = mock.MagicMock()
         services.get_anilist_ids.side_effect = lambda **kw: {10: object(), 11: object()}
         services.al_id_needs_scan.side_effect = lambda al_id: al_id == 11
-        strat = make_sonarr_sync(
+        eps = make_sonarr_episodes(
             sonarr=sonarr,
             _services=services,
             _config=make_config(sleep_time=0),
-            _ep_list_cache={},
-            logger=make_logger(),
         )
-        assert strat.prefetch_episodes([_item(5)]) == 1
-        assert strat._ep_list_cache == {5: ["ep5"]}
+        assert eps.prefetch([_item(5)]) == 1
+        assert eps._ep_list_cache == {5: ["ep5"]}
 
 
 class TestParseEpisodesNegativeCache:
