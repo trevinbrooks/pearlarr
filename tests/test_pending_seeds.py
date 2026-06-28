@@ -1,4 +1,4 @@
-"""Unit tests for ``SonarrSync._build_pending_seeds``.
+"""Unit tests for ``ImportReconciler.build_pending_seeds`` (via the strat).
 
 The seed-construction heart of the wait/import feature: it turns the filtered
 SeaDex releases into the durable ``PendingImport`` records the import path later
@@ -42,7 +42,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parse_cache)._build_pending_seeds(
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             sonarr_series_id=7,
@@ -80,7 +80,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parse_cache)._build_pending_seeds(
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             sonarr_series_id=7,
@@ -116,7 +116,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat(parse_cache)._build_pending_seeds(
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             sonarr_series_id=7,
@@ -137,7 +137,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat({})._build_pending_seeds(
+        seeds = _strat({})._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             sonarr_series_id=7,
@@ -159,7 +159,7 @@ class TestBuildPendingSeeds:
             ),
         }
 
-        seeds = _strat({})._build_pending_seeds(
+        seeds = _strat({})._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             sonarr_series_id=7,
@@ -194,7 +194,7 @@ class TestParseWriteVisibleToSeeds:
         # Writer: fills the SHARED cache_store via the parse collaborator.
         strat._parse.parse_episodes_from_seadex(seadex_dict, series_fp="fp")
         # Reader: the seed builder reads that record back out of the same store.
-        seeds = strat._build_pending_seeds(
+        seeds = strat._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
             sonarr_series_id=7,

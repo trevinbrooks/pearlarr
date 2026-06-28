@@ -34,7 +34,7 @@ from seadexarr.modules.seadex_types import (
     SonarrEpisode,
 )
 from seadexarr.modules.sonarr_episodes import SonarrEpisodes
-from seadexarr.modules.sonarr_import import ImportExecutor
+from seadexarr.modules.sonarr_import import ImportExecutor, ImportReconciler
 from seadexarr.modules.sonarr_mapper import FileEpisodeMapper
 from seadexarr.modules.sonarr_parse import SonarrParseCache
 
@@ -662,6 +662,7 @@ def make_sonarr_sync(**attrs: Any) -> SonarrSync:
     parse = defaults.pop("_parse", None)
     mapper = defaults.pop("_mapper", None)
     executor = defaults.pop("_executor", None)
+    reconciler = defaults.pop("_reconciler", None)
     ep_cache = defaults.pop("_ep_list_cache", {})
     series_fp = defaults.pop("_series_fp", "")
     parse_info = defaults.pop("_parse_info_cache", {})
@@ -716,6 +717,16 @@ def make_sonarr_sync(**attrs: Any) -> SonarrSync:
             _last_refresh_monotonic=last_refresh,
         )
     strat._executor = executor
+    if reconciler is None:
+        # Composes the strat's episodes + executor, sharing the same cache_store so
+        # build_pending_seeds reads back the parse writes (the staged-write invariant).
+        reconciler = make_import_reconciler(
+            _episodes=episodes,
+            _executor=executor,
+            cache_store=defaults.get("cache_store"),
+            logger=defaults.get("logger"),
+        )
+    strat._reconciler = reconciler
     return strat
 
 
@@ -736,6 +747,17 @@ def make_import_executor(**attrs: Any) -> ImportExecutor:
     }
     defaults.update(attrs)
     return make_bare_instance(ImportExecutor, **defaults)
+
+
+def make_import_reconciler(**attrs: Any) -> ImportReconciler:
+    """A bare ``ImportReconciler`` with ``__init__`` bypassed and only ``attrs`` set.
+
+    The reconciler holds no per-run caches; it composes ``_episodes`` + ``_executor``
+    and reads ``cache_store`` / ``logger``, so a test sets just those (the tests
+    mostly drive it through the strat's import_completed / build_pending_seeds).
+    """
+
+    return make_bare_instance(ImportReconciler, **attrs)
 
 
 def make_sonarr_mapper(**attrs: Any) -> FileEpisodeMapper:
