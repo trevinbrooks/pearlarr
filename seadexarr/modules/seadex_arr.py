@@ -971,9 +971,9 @@ class SeaDexArr:
         # decision still reads current Sonarr file state; this only collapses the
         # sequential per-series fetch latency.
         if strategy.warms_episodes:
-            with boot.step("Warming episode lists") as step:
-                strategy.prefetch_episodes(all_items)
-                step.note(count_noun(n_items, "series", "series"))
+            with boot.step("Fetching Sonarr episodes") as step:
+                warmed = strategy.prefetch_episodes(all_items, progress=step)
+                step.note(count_noun(warmed, "series", "series"))
         else:
             strategy.prefetch_episodes(all_items)
 

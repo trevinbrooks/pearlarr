@@ -45,7 +45,7 @@ from .manual_import import (
 )
 from .mappings import MappingEntry, MappingMode
 from .planner import get_episode_keys
-from .protocols import ArrSync
+from .protocols import ArrSync, EpisodeProgress
 from .radarr_client import (
     IdField,
     collect_anime_items,
@@ -476,7 +476,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         return True
 
     @override
-    def prefetch_episodes(self, items: list[SonarrItem]) -> None:
+    def prefetch_episodes(self, items: list[SonarrItem], *, progress: EpisodeProgress | None = None) -> int:
         """Warm the per-series episode lists CONCURRENTLY before the scan loop.
 
         One sequential ``/api/v3/episode`` round-trip per processed series is the
@@ -492,6 +492,13 @@ class SonarrSync(ArrSync[SonarrItem]):
         Args:
             items (list[SonarrItem]): The run's series list (already narrowed for
                 a single-series run).
+            progress (EpisodeProgress | None): Boot cockpit step fed per-series
+                fraction + "done/total" detail as each fetch completes; None
+                outside the cockpit.
+
+        Returns:
+            int: How many series were warmed (attempted), for the caller's ledger
+            detail. A series whose fetch returned None still counts.
         """
 
         # The series we'll actually process: monitored (unless unmonitored are
@@ -510,20 +517,30 @@ class SonarrSync(ArrSync[SonarrItem]):
             series_ids.append(item.id)
 
         if not series_ids:
-            return
+            return 0
 
         def warm(series_id: int) -> tuple[int, list[SonarrEpisode] | None]:
             # quiet: a transient miss here isn't logged from a worker; get_ep_list
             # retries and logs it on the main thread if it still fails.
             return series_id, self.sonarr.episodes(series_id, quiet=True)
 
-        # max_workers=1 (sleep_time throttle) runs the same map serially on one
-        # worker, so a single path covers both the concurrent and sequential cases.
-        workers = min(self._fetch_workers(), len(series_ids))
+        # submit + as_completed (not pool.map): advance the bar as each series
+        # FINISHES, so a slow series doesn't freeze the bar then jump. max_workers=1
+        # (sleep_time throttle) still runs serially. Results are consumed on the main
+        # thread, so the cache write and the progress drive are both single-threaded.
+        total = len(series_ids)
+        workers = min(self._fetch_workers(), total)
+        done = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-            for sid, eps in pool.map(warm, series_ids):
+            futures = [pool.submit(warm, sid) for sid in series_ids]
+            for fut in concurrent.futures.as_completed(futures):
+                sid, eps = fut.result()
                 if eps is not None:
                     self._ep_list_cache[sid] = eps
+                done += 1
+                if progress is not None:
+                    progress.progress(done / total, f"{done}/{total}")
+        return total
 
     @override
     def process_al_id(

@@ -153,6 +153,16 @@ def _item(series_id: int, *, monitored: bool = True) -> _Series:
     )
 
 
+class _Recorder:
+    """An ``EpisodeProgress`` sink that records every ``progress`` call."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[float, str | None]] = []
+
+    def progress(self, fraction: float, detail: str | None = None) -> None:
+        self.calls.append((fraction, detail))
+
+
 class TestPrefetchEpisodes:
     def _strat(self, *, mapped: set[int], sleep_time: int = 0) -> tuple[SonarrSync, mock.MagicMock]:
         sonarr = mock.MagicMock()
@@ -196,6 +206,31 @@ class TestPrefetchEpisodes:
         strat, _ = self._strat(mapped={1, 2}, sleep_time=2)
         strat.prefetch_episodes([_item(1), _item(2)])
         assert strat._ep_list_cache == {1: ["ep1"], 2: ["ep2"]}
+
+    def test_returns_warmed_count(self) -> None:
+        # Only mapped, monitored series are warmed: 3 is unmapped, so 2 warmed.
+        strat, _ = self._strat(mapped={1, 2})
+        assert strat.prefetch_episodes([_item(1), _item(2), _item(3)]) == 2
+
+    def test_drives_progress_per_series(self) -> None:
+        strat, _ = self._strat(mapped={1, 2})
+        rec = _Recorder()
+        strat.prefetch_episodes([_item(1), _item(2), _item(3)], progress=rec)
+        # One drive per warmed series, ending complete. Completion order is
+        # nondeterministic, so assert on the count + the final value, not the
+        # intermediate sequence.
+        assert len(rec.calls) == 2
+        assert rec.calls[-1] == (1.0, "2/2")
+
+    def test_count_is_attempted_not_cached(self) -> None:
+        # series 9 is a candidate (resolves a mapping) but episodes() returns None.
+        # It's still attempted, so it counts toward the return value + the bar.
+        strat, sonarr = self._strat(mapped={9})
+        sonarr.episodes.side_effect = lambda sid, quiet=False: None
+        rec = _Recorder()
+        assert strat.prefetch_episodes([_item(9)], progress=rec) == 1
+        assert strat._ep_list_cache == {}  # nothing cached
+        assert rec.calls[-1] == (1.0, "1/1")  # but progress still completed
 
 
 class TestParseEpisodesNegativeCache:

@@ -123,6 +123,25 @@ class TestRunStartHook:
         assert strat._series_fp == sonarr_series_fingerprint([5, 7])
 
 
+class TestRadarrPrefetchEpisodes:
+    """Radarr has no episodes: the warm hook is a no-op that warms nothing."""
+
+    def test_returns_zero_and_skips_sink(self) -> None:
+        strat = make_bare_instance(RadarrSync, logger=make_logger())
+        calls: list[tuple[float, str | None]] = []
+
+        class _Rec:
+            def progress(self, fraction: float, detail: str | None = None) -> None:
+                calls.append((fraction, detail))
+
+        assert strat.prefetch_episodes([_Item(tmdbId=1)], progress=_Rec()) == 0
+        assert calls == []  # no episodes -> sink never driven
+
+    def test_warms_episodes_is_false(self) -> None:
+        strat = make_bare_instance(RadarrSync, logger=make_logger())
+        assert strat.warms_episodes is False
+
+
 class TestProcessAlIdThreadsServices:
     """The per-id head runs through the held services; a missing entry stops this id."""
 

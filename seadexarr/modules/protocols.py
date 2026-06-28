@@ -7,6 +7,16 @@ from .mappings import MappingEntry
 from .seadex_types import ArrItem
 
 
+class EpisodeProgress(Protocol):
+    """Sink for episode-warm progress - drives the boot cockpit's live bar.
+
+    Structural, so the boot view's step handle satisfies it without this module
+    importing the UI layer (mirrors the gateways' ``PrefetchProgress``).
+    """
+
+    def progress(self, fraction: float, detail: str | None = None) -> None: ...
+
+
 class ImportCompleter(Protocol):
     """The single strategy hook the engine drives after a download completes.
 
@@ -73,12 +83,22 @@ class ArrSync[ItemT: ArrItem](ABC):
         """
 
     @abstractmethod
-    def prefetch_episodes(self, items: list[ItemT]) -> None:
+    def prefetch_episodes(self, items: list[ItemT], *, progress: EpisodeProgress | None = None) -> int:
         """Warm per-item network caches concurrently before the scan loop.
 
         Called once in the pre-scan prefetch step, beside the AniList/SeaDex bulk
         prefetches. ``SonarrSync`` fans the per-series ``/api/v3/episode`` fetches
         out over a bounded pool; ``RadarrSync`` is a no-op (no episodes).
+
+        Args:
+            items (list[ItemT]): The run's item list (already narrowed for a
+                single-item run).
+            progress (EpisodeProgress | None): Boot cockpit step fed per-item
+                fraction + "done/total" detail; None outside the cockpit.
+
+        Returns:
+            int: How many items were warmed (attempted), for the caller's ledger
+            detail. ``RadarrSync`` returns 0.
         """
 
     @abstractmethod

@@ -5,7 +5,7 @@ from .config import Arr
 from .log import indent_string
 from .manual_import import ImportProbe, ImportReadiness, PendingImport
 from .mappings import MappingEntry, TmdbType
-from .protocols import ArrSync
+from .protocols import ArrSync, EpisodeProgress
 from .radarr_client import collect_anime_movies, make_radarr_client
 from .seadex_arr import RunDeps, SeaDexArr
 from .seadex_types import ArrReleaseDict, RadarrItem
@@ -93,8 +93,11 @@ class RadarrSync(ArrSync[RadarrItem]):
         return False
 
     @override
-    def prefetch_episodes(self, items: list[RadarrItem]) -> None:
-        """No-op: movies have no episode lists to warm."""
+    def prefetch_episodes(self, items: list[RadarrItem], *, progress: EpisodeProgress | None = None) -> int:
+        """No-op: movies have no episode lists to warm. Returns 0 (warmed none)."""
+
+        del items, progress
+        return 0
 
     @override
     def process_al_id(
