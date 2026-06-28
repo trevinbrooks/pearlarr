@@ -52,7 +52,7 @@ from .radarr_client import (
     collect_anime_movies,
     make_radarr_client,
 )
-from .seadex_arr import RunDeps, SeaDexArr
+from .seadex_arr import GrabRequest, RunDeps, SeaDexArr
 from .seadex_types import (
     ArrReleaseDict,
     CommandResource,
@@ -753,16 +753,18 @@ class SonarrSync(ArrSync[SonarrItem]):
             )
 
         return run.grab_and_cache(
-            arr=arr,
-            al_id=al_id,
-            item_title=item_title,
-            anilist_title=anilist_title,
-            sd_url=sd_url,
-            seadex_dict=seadex_dict,
-            torrent_hashes=torrent_hashes,
-            cache_details=cache_details,
-            release_group=sonarr_release_groups,
-            pending_seeds=pending_seeds,
+            GrabRequest(
+                arr=arr,
+                al_id=al_id,
+                item_title=item_title,
+                anilist_title=anilist_title,
+                sd_url=sd_url,
+                seadex_dict=seadex_dict,
+                torrent_hashes=torrent_hashes,
+                cache_details=cache_details,
+                release_group=sonarr_release_groups,
+                pending_seeds=pending_seeds,
+            ),
         )
 
     @override

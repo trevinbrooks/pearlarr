@@ -258,6 +258,33 @@ class RunDeps:
         )
 
 
+@dataclass(frozen=True)
+class GrabRequest:
+    """The resolved per-id payload for the shared grab tail.
+
+    Both strategies build this at the tail of ``process_al_id`` - once the
+    Arr-specific ``seadex_dict`` and release-group info are resolved - and hand it
+    to :meth:`SeaDexArr.grab_and_cache`. Bundling the values that used to thread
+    ``grab_and_cache`` -> ``_grab`` -> ``add_torrent`` as one frozen object
+    collapses that trampoline.
+
+    ``cache_details`` is the run's mutable :class:`CacheRecord` accumulator: the
+    frozen field pins the reference, not the dict's contents (``grab_and_cache``
+    still writes ``torrent_hashes`` into it before saving).
+    """
+
+    arr: Arr
+    al_id: int
+    item_title: str
+    anilist_title: str
+    sd_url: str
+    seadex_dict: SeadexDict
+    torrent_hashes: list[str | None]
+    cache_details: CacheRecord
+    release_group: str | list[str | None] | None
+    pending_seeds: dict[str, PendingImport] | None = None
+
+
 @final
 class SeaDexArr:
     """The Arr-agnostic run machinery (the strategy's :class:`~.protocols.RunServices`).
@@ -1146,44 +1173,18 @@ class SeaDexArr:
         self._reporter.log_cached_entry(self._ctx, arr, al_id)
         return True
 
-    def grab_and_cache(
-        self,
-        arr: Arr,
-        al_id: int,
-        item_title: str,
-        anilist_title: str,
-        sd_url: str,
-        seadex_dict: SeadexDict,
-        torrent_hashes: list[str | None],
-        cache_details: CacheRecord,
-        release_group: str | list[str | None] | None,
-        pending_seeds: dict[str, PendingImport] | None = None,
-    ) -> bool:
+    def grab_and_cache(self, req: GrabRequest) -> bool:
         """Shared per-id tail: add torrents, notify, then cache the outcome
 
-        Identical across both Arrs once the (Arr-specific) seadex_dict and
-        release-group info have been resolved. Returns True only when
-        max_torrents_to_add has been reached (cache saved and summary logged),
-        so the caller stops the whole run; otherwise False (move to the next id).
-
-        Args:
-            arr (Arr): Which Arr is being run
-            al_id (int): AniList id being processed
-            item_title (str): Arr item title (Discord notification heading)
-            anilist_title (str): Resolved AniList title (non-None; Discord field)
-            sd_url (str): SeaDex entry URL (non-None; Discord field)
-            seadex_dict (dict): Filtered SeaDex releases
-            torrent_hashes (list): Hashes to remember in the cache record
-            cache_details (CacheRecord): Cache record being assembled for this id
-            release_group (list | str | None): Arr release group(s) for the
-                Discord fields
-            pending_seeds (dict[str, PendingImport] | None): The Sonarr strategy's
-                ``infohash -> PendingImport`` seeds for this id, finalized into a
-                durable record on a successful add. Radarr passes None.
+        Identical across both Arrs once the (Arr-specific) ``seadex_dict`` and
+        release-group info have been resolved (bundled into ``req``). Returns True
+        only when max_torrents_to_add has been reached (cache saved and summary
+        logged), so the caller stops the whole run; otherwise False (move to the
+        next id).
         """
 
         # Check the release groups are matching, and get a bespoke list of torrents
-        any_to_download = self._planner.get_any_to_download(seadex_dict)
+        any_to_download = self._planner.get_any_to_download(req.seadex_dict)
 
         # Capture the running total before the add block so we can tell whether
         # THIS title actually grabbed anything
@@ -1197,16 +1198,7 @@ class SeaDexArr:
                     "already have the recommended release",
                     value_style="blue",
                 )
-        elif self._grab(
-            arr=arr,
-            al_id=al_id,
-            item_title=item_title,
-            anilist_title=anilist_title,
-            sd_url=sd_url,
-            seadex_dict=seadex_dict,
-            release_group=release_group,
-            pending_seeds=pending_seeds,
-        ):
+        elif self._grab(req):
             # max_torrents_to_add reached: cache saved and summary logged inside
             # _grab; stop the whole run.
             return True
@@ -1220,11 +1212,11 @@ class SeaDexArr:
         # so it's re-checked (and the skip re-logged as a reminder) on every run,
         # and retried once a public release appears or public_only is relaxed
         if added_this_title > 0 or not self._ctx.public_only_skipped:
-            cache_details.update({"torrent_hashes": torrent_hashes})
+            req.cache_details.update({"torrent_hashes": req.torrent_hashes})
             self.update_cache(
-                arr=arr,
-                al_id=al_id,
-                cache_details=cache_details,
+                arr=req.arr,
+                al_id=req.al_id,
+                cache_details=req.cache_details,
             )
         elif added_this_title == 0:
             # Record the private-only skip for the summary's "needs action" list,
@@ -1248,17 +1240,7 @@ class SeaDexArr:
 
         return False
 
-    def _grab(
-        self,
-        arr: Arr,
-        al_id: int,
-        item_title: str,
-        anilist_title: str,
-        sd_url: str,
-        seadex_dict: SeadexDict,
-        release_group: str | list[str | None] | None,
-        pending_seeds: dict[str, PendingImport] | None = None,
-    ) -> bool:
+    def _grab(self, req: GrabRequest) -> bool:
         """Add this title's torrents, notify, and honour the run-wide cap.
 
         Runs only when there's something to download. Returns True once
@@ -1269,11 +1251,11 @@ class SeaDexArr:
         # Resolve the AniList cover thumbnail (via the gateway) and build the
         # Discord embed fields for the grab. The thumb lookup is done up front
         # to preserve ordering even though it's only used in the push below.
-        anilist_thumb = self._anilist.thumb(al_id)
+        anilist_thumb = self._anilist.thumb(req.al_id)
         fields = self._notifier.build_fields(
-            arr=arr,
-            release_group=release_group,
-            seadex_dict=seadex_dict,
+            arr=req.arr,
+            release_group=req.release_group,
+            seadex_dict=req.seadex_dict,
         )
 
         # Add torrents to qBittorrent. add_torrent runs even in a preview
@@ -1281,15 +1263,15 @@ class SeaDexArr:
         # download-flag, public_only and tracker filters still apply, so only
         # releases that would actually be grabbed are counted.
         n_torrents_added, results = self.add_torrent(
-            torrent_dict=seadex_dict,
-            pending_seeds=pending_seeds,
+            torrent_dict=req.seadex_dict,
+            pending_seeds=req.pending_seeds,
         )
 
         # Log the action block now the outcome is known, so the status reads
         # "adding" only when something was actually grabbed, "already downloading"
         # when the pick is already in the client mid-download, else "keeping".
         self._reporter.log_seadex_action(
-            seadex_dict,
+            req.seadex_dict,
             results,
             dry_run=self._is_preview(),
             monitor_active=(self._import_wait_mode is not ImportWaitMode.OFF and not self._is_preview()),
@@ -1299,9 +1281,9 @@ class SeaDexArr:
         # preview - it's an outward notification)
         if self._notifier.enabled and n_torrents_added > 0 and not self._is_preview():
             self._notifier.push(
-                arr_title=item_title,
-                al_title=anilist_title,
-                seadex_url=sd_url,
+                arr_title=req.item_title,
+                al_title=req.anilist_title,
+                seadex_url=req.sd_url,
                 fields=fields,
                 thumb_url=anilist_thumb,
             )
@@ -1311,7 +1293,7 @@ class SeaDexArr:
             self._reporter.log_max_torrents_added()
             # Finalize even on the early break so the blocking/hybrid pass still
             # imports this run's records before saving and logging the summary.
-            self._finalize_run(arr)
+            self._finalize_run(req.arr)
             return True
 
         return False

@@ -7,7 +7,7 @@ from .manual_import import ImportProbe, ImportReadiness, PendingImport
 from .mappings import MappingEntry, TmdbType
 from .protocols import ArrSync, EpisodeProgress
 from .radarr_client import collect_anime_movies, make_radarr_client
-from .seadex_arr import RunDeps, SeaDexArr
+from .seadex_arr import GrabRequest, RunDeps, SeaDexArr
 from .seadex_types import ArrReleaseDict, RadarrItem
 
 
@@ -181,15 +181,17 @@ class RadarrSync(ArrSync[RadarrItem]):
         )
 
         return run.grab_and_cache(
-            arr=arr,
-            al_id=al_id,
-            item_title=item_title,
-            anilist_title=anilist_title,
-            sd_url=sd_url,
-            seadex_dict=seadex_dict,
-            torrent_hashes=torrent_hashes,
-            cache_details=cache_details,
-            release_group=radarr_release_group,
+            GrabRequest(
+                arr=arr,
+                al_id=al_id,
+                item_title=item_title,
+                anilist_title=anilist_title,
+                sd_url=sd_url,
+                seadex_dict=seadex_dict,
+                torrent_hashes=torrent_hashes,
+                cache_details=cache_details,
+                release_group=radarr_release_group,
+            ),
         )
 
     @override
