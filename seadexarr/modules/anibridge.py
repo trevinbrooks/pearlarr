@@ -499,19 +499,18 @@ class AniBridge:
 
         result: AniBridgeLookup = {}
         for row in store.anibridge_entries_for(axis, ext_id):
-            anilist_id, anidb_id, imdb_id, tmdb_movie_id, mal_id, first_tvdb_id, first_tmdb_show_id = row
             entry: dict[str, Any] = {
-                "tvdb_id": tvdb_id if tvdb_id is not None else first_tvdb_id,
-                "anidb_id": anidb_id,
-                "imdb_id": imdb_id,
-                "tmdb_show_id": tmdb_show_id if tmdb_show_id is not None else first_tmdb_show_id,
-                "tmdb_movie_id": tmdb_movie_id,
-                "mal_id": mal_id,
+                "tvdb_id": tvdb_id if tvdb_id is not None else row.first_tvdb_id,
+                "anidb_id": row.anidb_id,
+                "imdb_id": row.imdb_id,
+                "tmdb_show_id": tmdb_show_id if tmdb_show_id is not None else row.first_tmdb_show_id,
+                "tmdb_movie_id": row.tmdb_movie_id,
+                "mal_id": row.mal_id,
                 "source": "anibridge",
             }
             if tvdb_id is not None:
-                entry["tvdb_mappings"] = self._ranges_to_mappings(ranges_by_anilist.get(anilist_id, []))
-            result[anilist_id] = entry
+                entry["tvdb_mappings"] = self._ranges_to_mappings(ranges_by_anilist.get(row.anilist_id, []))
+            result[row.anilist_id] = entry
         return result
 
     def lookup_by_tvdb(self, tvdb_id: int) -> AniBridgeLookup:

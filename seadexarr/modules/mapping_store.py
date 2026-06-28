@@ -39,6 +39,7 @@ import contextlib
 import logging
 import sqlite3
 from collections.abc import Callable, Iterable
+from typing import NamedTuple
 
 from .sqlite_util import connect, is_corruption, quarantine_corrupt
 
@@ -167,6 +168,23 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     else:
         conn.executescript(_SCHEMA)
     conn.commit()
+
+
+class AniBridgeEntryRow(NamedTuple):
+    """One stored ``anibridge_entry`` row: the computed ``_consumer_entry`` picks.
+
+    A typed record (not a positional ``tuple[object, ...]``) so the consumer reads
+    precise, named fields. Tuple-compatible, so it's built straight from a fetched
+    row with ``AniBridgeEntryRow(*row)``.
+    """
+
+    anilist_id: int
+    anidb_id: int | None
+    imdb_id: str | None
+    tmdb_movie_id: int | None
+    mal_id: int | None
+    first_tvdb_id: int | None
+    first_tmdb_show_id: int | None
 
 
 class MappingStore:
@@ -370,28 +388,23 @@ class MappingStore:
 
     # -- anibridge queries ---------------------------------------------------
 
-    def anibridge_entries_for(
-        self,
-        axis: str,
-        ext_id: object,
-    ) -> list[tuple[int, object, object, object, object, object, object]]:
-        """Every ``(anilist_id, *entry)`` row mapped to ``ext_id`` on ``axis``.
+    def anibridge_entries_for(self, axis: str, ext_id: object) -> list[AniBridgeEntryRow]:
+        """Every :class:`AniBridgeEntryRow` mapped to ``ext_id`` on ``axis``.
 
         One xref->entry JOIN so a lookup that resolves k AniList ids costs a single
-        query instead of k per-id point lookups. Row shape: ``(anilist_id, anidb_id,
-        imdb_id, tmdb_movie_id, mal_id, first_tvdb_id, first_tmdb_show_id)`` - the
-        stored ``_consumer_entry`` picks the caller rebuilds the entry from. The
-        INNER JOIN drops any xref row lacking an entry, but ``to_rows`` writes both
-        from the same ``by_anilist`` map, so that pairing is structurally guaranteed.
+        query instead of k per-id point lookups. The INNER JOIN drops any xref row
+        lacking an entry, but ``to_rows`` writes both from the same ``by_anilist``
+        map, so that pairing is structurally guaranteed.
         """
 
-        return self._conn.execute(
+        rows = self._conn.execute(
             "SELECT x.anilist_id, e.anidb_id, e.imdb_id, e.tmdb_movie_id, e.mal_id, "
             "e.first_tvdb_id, e.first_tmdb_show_id "
             "FROM anibridge_xref x JOIN anibridge_entry e ON e.anilist_id = x.anilist_id "
             "WHERE x.axis = ? AND x.ext_id = ?",
             (axis, ext_id),
         ).fetchall()
+        return [AniBridgeEntryRow(*row) for row in rows]
 
     def anibridge_ranges_for(
         self,
