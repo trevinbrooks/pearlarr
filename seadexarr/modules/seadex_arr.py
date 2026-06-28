@@ -1055,6 +1055,9 @@ class SeaDexArr:
 
         self._reporter.log_arr_start(arr, n_items)
 
+        # Set when a per-id grab hits max_torrents_to_add: breaks the scan and falls
+        # through to the single _finalize_run site below.
+        cap_reached = False
         for item_idx, item in enumerate(all_items):
             try:
                 item_title = item.title
@@ -1080,12 +1083,12 @@ class SeaDexArr:
 
                 for al_id, mapping in al_mappings.items():
                     # process_al_id returns True only when max_torrents_to_add was
-                    # reached - it has already saved the cache and logged the
-                    # summary - so stop the whole run here. The original per-item
-                    # post-loop max check is redundant with this early return (the
-                    # in-block check fires after every add, so torrents_added can
-                    # never reach the cap without process_al_id stopping first),
-                    # so it isn't repeated.
+                    # reached - stop the whole run. The post-loop _finalize_run (the
+                    # single finalize site) still runs, so the blocking/hybrid pass
+                    # imports this run's records before the save + summary. The
+                    # original per-item post-loop max check is redundant with this
+                    # (the in-block check fires after every add, so torrents_added
+                    # can't reach the cap without process_al_id stopping first).
                     if strategy.process_al_id(
                         arr=arr,
                         item=item,
@@ -1093,7 +1096,11 @@ class SeaDexArr:
                         al_id=al_id,
                         mapping=mapping,
                     ):
-                        return True
+                        cap_reached = True
+                        break
+
+                if cap_reached:
+                    break
 
                 # Non-blocking per-item snapshot of this series' CARRIED-OVER
                 # pending records (grabbed in a prior run). Runs after all of an
@@ -1315,9 +1322,9 @@ class SeaDexArr:
         cap = self._config.advanced.max_torrents_to_add
         if cap is not None and self._ctx.torrents_added >= cap:
             self._reporter.log_max_torrents_added()
-            # Finalize even on the early break so the blocking/hybrid pass still
-            # imports this run's records before saving and logging the summary.
-            self._finalize_run(req.arr)
+            # Cap reached: signal the run to stop with a pure bool. run_sync breaks
+            # the scan and runs the single _finalize_run site (so the blocking/hybrid
+            # pass still imports this run's records before the save + summary).
             return True
 
         return False
