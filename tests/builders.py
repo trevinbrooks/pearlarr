@@ -15,11 +15,12 @@ from datetime import datetime
 from typing import Any, cast
 from unittest import mock
 
-from seadex import EntryRecord, Tag
+from seadex import EntryRecord, Tag, Tracker
 
 from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT, CachedEntry, CacheField, CacheRecord
 from seadexarr.modules.config import AppConfig, Arr
-from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, PendingImport
+from seadexarr.modules.grab_pipeline import GrabPipeline
+from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.seadex_arr import SeaDexArr
@@ -37,6 +38,7 @@ from seadexarr.modules.sonarr_episodes import SonarrEpisodes
 from seadexarr.modules.sonarr_import import ImportExecutor, ImportReconciler
 from seadexarr.modules.sonarr_mapper import FileEpisodeMapper
 from seadexarr.modules.sonarr_parse import SonarrParseCache
+from seadexarr.modules.torrents import AddOutcome
 
 # Map each flat (group-local) setting name to its config group, derived straight from
 # AppConfig's own field tree so it can't drift into a stale subset: adding a 9th
@@ -416,6 +418,77 @@ def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
     }
     defaults.update(overrides)
     return SeadexReleaseFilter(**defaults)
+
+
+# A truthy stand-in for a logged-in qBittorrent client, so _is_preview() is
+# False without a real login (the actual add is faked by FakeTorrents).
+CLIENT_SENTINEL = object()
+
+
+class FakeTorrents:
+    """Mimics ``TorrentService.add``: a per-hash scripted ``(outcome, name)``.
+
+    Keyed by infohash (not call order) so a multi-release add can return a
+    different outcome per release regardless of dict iteration order.
+    """
+
+    def __init__(self, by_hash: dict[str | None, tuple[AddOutcome, str | None]]) -> None:
+        self._by_hash = by_hash
+        self.calls: list[str | None] = []
+
+    def add(
+        self,
+        *,
+        url: str,
+        tracker: object,
+        torrent_hash: str | None,
+        preview: bool,
+    ) -> tuple[AddOutcome, str | None]:
+        del url, tracker, preview
+        self.calls.append(torrent_hash)
+        return self._by_hash[torrent_hash]
+
+
+def one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/view/1") -> dict:
+    """A one-release ``SeadexDict`` flagged for download on a public tracker.
+
+    The builder defaults the tracker to ``OTHER`` (not in the selected set), so
+    pin it to ``NYAA`` to clear ``_add_one_url``'s tracker filter.
+    """
+
+    item = url_item(url=url, infohash=infohash, download=True)
+    item.tracker = Tracker.NYAA
+    return {srg: rg_group({url: item})}
+
+
+def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
+    """Build a bare ``GrabPipeline`` with only what its methods read.
+
+    Mirrors ``make_release_filter``: config-backed flags route through an
+    in-memory ``AppConfig``; the rest pass straight to the bare instance. The
+    ``_ctx`` defaults to a non-preview blocking run (so the pending-import
+    registration is reachable); pass ``qbit=CLIENT_SENTINEL`` (the default) for a
+    non-preview run or ``qbit=None`` to exercise the preview short-circuit.
+    """
+
+    config_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CONFIG_SETTING_NAMES}
+    config = make_config(**config_overrides)
+    notifier = mock.MagicMock()
+    notifier.enabled = False
+    defaults: dict[str, Any] = {
+        "_config": config,
+        "_planner": make_planner(),
+        "cache_store": FakeCacheStore(),
+        "_torrents": mock.MagicMock(),
+        "_anilist": mock.MagicMock(),
+        "_notifier": notifier,
+        "_reporter": mock.MagicMock(),
+        "log_fmt": mock.MagicMock(),
+        "qbit": CLIENT_SENTINEL,
+        "_ctx": RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
+    }
+    defaults.update(overrides)
+    return make_bare_instance(GrabPipeline, **defaults)
 
 
 def make_planner(**overrides: Any) -> DownloadPlanner:

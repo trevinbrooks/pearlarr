@@ -12,8 +12,7 @@ from typing import Any
 from unittest import mock
 
 from seadexarr.modules.config import Arr
-from seadexarr.modules.reporter import RunContext
-from seadexarr.modules.seadex_arr import GrabRequest, SeaDexArr
+from seadexarr.modules.seadex_arr import SeaDexArr
 
 from .builders import make_bare_instance, make_config, make_logger
 
@@ -53,6 +52,7 @@ class TestCapReachedFinalizesOnce:
             _seadex=seadex,
             _reporter=mock.MagicMock(),
             _filter=mock.MagicMock(),  # begin_run binds it; a stub absorbs the no-op
+            _grab_pipeline=mock.MagicMock(),  # begin_run rebinds it too now
             _finalize_run=finalize,
         )
 
@@ -63,40 +63,3 @@ class TestCapReachedFinalizesOnce:
         strategy.process_al_id.assert_called_once()
         # ...and the single post-loop finalize ran exactly once (reads ctx.arr now).
         finalize.assert_called_once_with()
-
-
-class TestGrabReturnsPureBool:
-    """_grab signals cap-reached as a bool and never finalizes itself."""
-
-    def test_grab_at_cap_returns_true_without_finalizing(self) -> None:
-        finalize = mock.MagicMock()
-        notifier = mock.MagicMock()
-        notifier.enabled = False
-
-        engine = make_bare_instance(
-            SeaDexArr,
-            qbit=None,
-            logger=make_logger(),
-            _config=make_config(max_torrents_to_add=1),
-            _ctx=RunContext(arr=Arr.SONARR),
-            _anilist=mock.MagicMock(),
-            _notifier=notifier,
-            _reporter=mock.MagicMock(),
-            add_torrent=mock.MagicMock(return_value=(1, [])),
-            _finalize_run=finalize,
-        )
-        engine._ctx.torrents_added = 1  # already at the cap of 1
-
-        req = GrabRequest(
-            al_id=1,
-            item_title="Show",
-            anilist_title="Show",
-            sd_url="https://seadex.example/1",
-            seadex_dict={},
-            torrent_hashes=[],
-            cache_details={},
-            release_group=None,
-        )
-
-        assert engine._grab(req) is True
-        finalize.assert_not_called()

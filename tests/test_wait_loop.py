@@ -12,7 +12,6 @@ from typing import cast, override
 from unittest import mock
 
 import qbittorrentapi
-from seadex import Tracker
 
 from seadexarr.modules.cache import CacheStore
 from seadexarr.modules.config import Arr
@@ -30,14 +29,16 @@ from seadexarr.modules.torrents import AddOutcome
 from seadexarr.modules.wait_view import Phase, TorrentView, WaitSnapshot, WaitView
 
 from .builders import (
+    CLIENT_SENTINEL,
     FakeCacheStore,
+    FakeTorrents,
     import_probe,
     make_bare_instance,
     make_config,
+    make_grab_pipeline,
     make_logger,
+    one_release_dict,
     pending_import,
-    rg_group,
-    url_item,
 )
 
 
@@ -828,49 +829,22 @@ class TestDropPending:
         assert engine._ctx.pending_imports == [keep]
 
 
-# A truthy stand-in for a logged-in qBittorrent client, so _is_preview() is
-# False without a real login (the actual add is faked by FakeTorrents).
-_CLIENT = object()
-
-
-class FakeTorrents:
-    """Mimics ``TorrentService.add``: a per-hash scripted ``(outcome, name)``.
-
-    Keyed by infohash (not call order) so a multi-release add can return a
-    different outcome per release regardless of dict iteration order.
-    """
-
-    def __init__(self, by_hash: dict[str | None, tuple[AddOutcome, str | None]]) -> None:
-        self._by_hash = by_hash
-        self.calls: list[str | None] = []
-
-    def add(
-        self,
-        *,
-        url: str,
-        tracker: object,
-        torrent_hash: str | None,
-        preview: bool,
-    ) -> tuple[AddOutcome, str | None]:
-        del url, tracker, preview
-        self.calls.append(torrent_hash)
-        return self._by_hash[torrent_hash]
-
-
 def make_add_engine(
     *,
     torrents: FakeTorrents,
     mode: ImportWaitMode = ImportWaitMode.BLOCKING,
-    qbit: object = _CLIENT,
+    qbit: object = CLIENT_SENTINEL,
     dry_run: bool = False,
     **config_overrides: object,
 ) -> SeaDexArr:
-    """A bare ``SeaDexArr`` wired for the ``add_torrent`` / ``_add_one_url`` path.
+    """A bare ``SeaDexArr`` + an attached ``GrabPipeline`` sharing its run state.
 
-    Fakes the qBittorrent ``add`` (``_torrents``), seeds an empty durable cache,
-    and defaults to a non-preview blocking run so the pending-import registration
-    is reachable. ``_active_strategy`` / ``_reporter`` are stubbed so the same
-    engine can be driven through ``_snapshot_pending_for_series`` afterwards.
+    The produce side lives on :class:`GrabPipeline` now, so the engine gets one
+    wired to the SAME ``_ctx`` / ``cache_store`` / client it holds - an add through
+    ``engine._grab_pipeline`` registers into exactly the state the consume methods
+    (``_snapshot_pending_for_series`` / ``_monitor_working_set``) read back.
+    ``_active_strategy`` / ``_reporter`` are stubbed so the engine can be driven
+    through the snapshot afterwards.
     """
 
     engine = make_bare_instance(
@@ -885,123 +859,18 @@ def make_add_engine(
         cache_store=FakeCacheStore(),
     )
     engine._ctx = RunContext(arr=Arr.SONARR, dry_run=dry_run, import_wait_mode=mode)
+    engine._grab_pipeline = make_grab_pipeline(
+        _config=engine._config,
+        _torrents=torrents,
+        cache_store=engine.cache_store,
+        qbit=qbit,
+        _ctx=engine._ctx,
+    )
     return engine
 
 
-def _one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/view/1") -> dict:
-    """A one-release ``SeadexDict`` flagged for download on a public tracker.
-
-    The builder defaults the tracker to ``OTHER`` (not in the selected set), so
-    pin it to ``NYAA`` to clear ``_add_one_url``'s tracker filter.
-    """
-
-    item = url_item(url=url, infohash=infohash, download=True)
-    item.tracker = Tracker.NYAA
-    return {srg: rg_group({url: item})}
-
-
-class TestAddOneUrlRegistersPending:
-    """_add_one_url registers a PendingImport for a fresh AND an already-present
-    torrent, but records a grab / counts toward the cap only for a fresh add."""
-
-    def test_already_added_registers_pending_import(self) -> None:
-        # The recommended release is already in qBittorrent (a prior run grabbed
-        # it, still downloading): register it for the monitor, but don't count it
-        # as a this-run grab.
-        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "Show-NAN0")})
-        engine = make_add_engine(torrents=torrents)
-        seeds = {"h1": pending_import(infohash="h1", series_id=7)}
-
-        n_added, results = engine.add_torrent(
-            _one_release_dict(srg="NAN0", infohash="h1"),
-            pending_seeds=seeds,
-        )
-
-        assert set(engine._pending_store()) == {"h1"}
-        assert [p.infohash for p in engine._ctx.pending_imports] == ["h1"]
-        assert n_added == 0
-        assert engine._ctx.torrents_added == 0
-        assert engine._ctx.stats.added == []
-        assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED]
-
-    def test_added_registers_and_counts(self) -> None:
-        torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-NAN0")})
-        engine = make_add_engine(torrents=torrents)
-        seeds = {"h1": pending_import(infohash="h1")}
-
-        n_added, _ = engine.add_torrent(
-            _one_release_dict(srg="NAN0", infohash="h1"),
-            pending_seeds=seeds,
-        )
-
-        assert set(engine._pending_store()) == {"h1"}
-        assert [p.infohash for p in engine._ctx.pending_imports] == ["h1"]
-        assert n_added == 1
-        assert engine._ctx.torrents_added == 1
-        assert len(engine._ctx.stats.added) == 1
-
-    def test_already_added_does_not_count_toward_cap(self) -> None:
-        # One already-present + one fresh, cap 1: only the fresh add counts.
-        torrents = FakeTorrents(
-            {
-                "already": (AddOutcome.ALREADY_ADDED, "old"),
-                "fresh": (AddOutcome.ADDED, "new"),
-            }
-        )
-        engine = make_add_engine(torrents=torrents, max_torrents_to_add=1)
-        seadex_dict = {
-            **_one_release_dict(srg="OLD", infohash="already", url="https://nyaa.si/view/1"),
-            **_one_release_dict(srg="NEW", infohash="fresh", url="https://nyaa.si/view/2"),
-        }
-        seeds = {
-            "already": pending_import(infohash="already"),
-            "fresh": pending_import(infohash="fresh"),
-        }
-
-        n_added, _ = engine.add_torrent(seadex_dict, pending_seeds=seeds)
-
-        assert n_added == 1
-        assert engine._ctx.torrents_added == 1
-
-    def test_no_seed_does_not_register(self) -> None:
-        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "x")})
-        engine = make_add_engine(torrents=torrents)
-
-        engine.add_torrent(
-            _one_release_dict(srg="NAN0", infohash="h1"),
-            pending_seeds={},
-        )
-
-        assert engine._pending_store() == {}
-        assert engine._ctx.pending_imports == []
-
-    def test_off_mode_does_not_register(self) -> None:
-        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "x")})
-        engine = make_add_engine(torrents=torrents, mode=ImportWaitMode.OFF)
-        seeds = {"h1": pending_import(infohash="h1")}
-
-        engine.add_torrent(
-            _one_release_dict(srg="NAN0", infohash="h1"),
-            pending_seeds=seeds,
-        )
-
-        assert engine._pending_store() == {}
-        assert engine._ctx.pending_imports == []
-
-    def test_preview_does_not_register_but_returns_outcome(self) -> None:
-        # No client -> preview: nothing persisted, but the outcome still surfaces.
-        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "x")})
-        engine = make_add_engine(torrents=torrents, qbit=None)
-        seeds = {"h1": pending_import(infohash="h1")}
-
-        _, results = engine.add_torrent(
-            _one_release_dict(srg="NAN0", infohash="h1"),
-            pending_seeds=seeds,
-        )
-
-        assert engine._pending_store() == {}
-        assert engine._ctx.pending_imports == []
-        assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED]
+class TestRegisteredGrabSurvivesSnapshot:
+    """A this-run grab registered by the pipeline is owned by the monitor, not re-polled."""
 
     def test_registered_already_added_survives_snapshot(self) -> None:
         # Integration: an ALREADY_ADDED registered THIS run is a this-run grab, so
@@ -1011,8 +880,8 @@ class TestAddOneUrlRegistersPending:
         engine = make_add_engine(torrents=torrents)
         seeds = {"h1": pending_import(infohash="h1", series_id=7, added_at=_FRESH)}
 
-        engine.add_torrent(
-            _one_release_dict(srg="NAN0", infohash="h1"),
+        engine._grab_pipeline.add_torrent(
+            one_release_dict(srg="NAN0", infohash="h1"),
             pending_seeds=seeds,
         )
         engine._snapshot_pending_for_series(7)

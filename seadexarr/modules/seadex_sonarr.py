@@ -4,6 +4,7 @@ from typing import override
 from . import coverage as _coverage
 from .cache import CacheRecord
 from .config import Arr
+from .grab_pipeline import GrabRequest
 from .log import EntryState, indent_string
 from .manual_import import (
     ImportProbe,
@@ -17,7 +18,7 @@ from .radarr_client import (
     collect_anime_movies,
     make_radarr_client,
 )
-from .seadex_arr import GrabRequest, RunDeps, SeaDexArr
+from .seadex_arr import RunDeps, SeaDexArr
 from .seadex_types import (
     RadarrItem,
     SeadexDict,

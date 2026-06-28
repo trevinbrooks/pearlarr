@@ -2,12 +2,13 @@ from typing import override
 
 from .cache import CacheRecord
 from .config import Arr
+from .grab_pipeline import GrabRequest
 from .log import indent_string
 from .manual_import import ImportProbe, ImportReadiness, PendingImport
 from .mappings import MappingEntry, TmdbType
 from .protocols import ArrSync, EpisodeProgress
 from .radarr_client import collect_anime_movies, make_radarr_client
-from .seadex_arr import GrabRequest, RunDeps, SeaDexArr
+from .seadex_arr import RunDeps, SeaDexArr
 from .seadex_types import ArrReleaseDict, RadarrItem
 
 

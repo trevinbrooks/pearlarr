@@ -3,6 +3,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+import qbittorrentapi
 from rich.text import Text
 from seadex import EntryRecord
 
@@ -135,6 +136,17 @@ class RunContext:
     pending_states: dict[str, PendingState] = field(
         default_factory=dict[str, PendingState],
     )
+
+
+def is_preview(ctx: RunContext, qbit: qbittorrentapi.Client | None) -> bool:
+    """A run is a no-op preview when a dry run was requested OR qBittorrent is not
+    configured (nothing can actually be grabbed).
+
+    Module-level so every per-run collaborator computes preview identically from
+    the shared :class:`RunContext` + client, rather than each re-deriving it.
+    """
+
+    return ctx.dry_run or qbit is None
 
 
 class RunReporter:
