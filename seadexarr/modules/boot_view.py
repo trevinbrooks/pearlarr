@@ -33,11 +33,12 @@ from typing import Protocol, final, override
 
 from rich.console import Console
 from rich.live import Live
+from rich.padding import Padding
 from rich.spinner import Spinner
 from rich.text import Text
 
 from .console_caps import Capabilities, console_of, detect_capabilities
-from .log import LogFormatter, indent_string
+from .log import INDENT, LogFormatter, indent_string
 from .manual_import import OutcomeCategory
 
 # Width of the live download bar (mapping refresh); only the live cockpit draws
@@ -162,6 +163,10 @@ class _DurableBootView(BootView):
                 extra={"rule_title": title, "rule_style": "bold cyan", "rule_heavy": True},
             ),
         )
+        # A blank under the title gives the step ledger a gap below the header,
+        # matching every other section. Printed before the Live spinner starts,
+        # so it stays in durable scrollback above the transient spinner.
+        self._safe(lambda: self._logger.info(""))
 
     @final
     @override
@@ -290,9 +295,13 @@ class LiveBootView(_DurableBootView):
             )
             self._live.start()
         # A fresh Spinner per step restarts the animation at frame 0 (intended);
-        # within a step we mutate .text so the dots keep their phase.
+        # within a step we mutate .text so the dots keep their phase. Pad the
+        # whole spinner left by one indent so the running glyph sits in the same
+        # column as the graduated "✔" line (indent_string). Padding holds the
+        # spinner by reference and re-renders it each frame, so _on_change still
+        # mutates self._spinner directly.
         self._spinner = Spinner(self._spinner_name, text=self._frame_text(step), style="cyan")
-        self._live.update(self._spinner)
+        self._live.update(Padding(self._spinner, (0, 0, 0, len(INDENT))))
 
     @override
     def _on_change(self, step: BootStep) -> None:

@@ -204,6 +204,8 @@ class RunReporter:
         if is_dry_run:
             note = "nothing grabbed" if has_client else ("no client; nothing grabbed")
             rule_title += f"   (DRY RUN — {note})"
+        # A blank before the rule separates the last item from the summary.
+        self.log_fmt.blank()
         self.logger.info(
             title,
             extra={
@@ -212,6 +214,8 @@ class RunReporter:
                 "rule_heavy": True,
             },
         )
+        # A blank under the title gives the scoreboard a gap below the header.
+        self.log_fmt.blank()
 
         # The summary's key column is narrower than the per-title detail column:
         # "needs action" (12) is the widest key here, vs. "missing episodes" (16)
@@ -437,6 +441,9 @@ class RunReporter:
             Arr.SONARR: count_noun(n_items, "series", "series"),
         }[arr]
 
+        # A blank before the rule separates the boot block from the run banner;
+        # the gap UNDER this title is supplied by the first log_arr_item_start.
+        self.log_fmt.blank()
         banner = f"Starting SeaDexArr ({arr.capitalize()}) for {item_label}"
         self.logger.info(
             banner,
