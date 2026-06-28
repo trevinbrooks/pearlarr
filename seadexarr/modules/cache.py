@@ -803,8 +803,7 @@ class CacheStore:
 
         out: dict[str, dict[str, Any]] = {}
         for infohash, rec_json in self._conn.execute(
-            "SELECT infohash, json(record) FROM pending_imports "
-            "WHERE arr = ? AND record ->> 'series_id' = ?",
+            "SELECT infohash, json(record) FROM pending_imports WHERE arr = ? AND record ->> 'series_id' = ?",
             (_arr_key(arr), series_id),
         ):
             out[infohash] = json.loads(rec_json)
