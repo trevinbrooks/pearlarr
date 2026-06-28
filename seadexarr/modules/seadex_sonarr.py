@@ -489,6 +489,12 @@ class SonarrSync(ArrSync[SonarrItem]):
         fetch fails is left unwarmed and re-fetched (and logged) by
         ``get_ep_list`` on the main thread during the loop.
 
+        Only series the per-id loop would actually process are warmed: a series
+        whose every AniList id the loop short-circuits (no SeaDex entry, or cached
+        and unchanged - ``al_id_needs_scan``) is skipped, since ``get_ep_list``
+        would never run for it. This keeps a warm run from re-fetching the episode
+        lists the loop's cached-entry skip already obviates.
+
         Args:
             items (list[SonarrItem]): The run's series list (already narrowed for
                 a single-series run).
@@ -497,13 +503,19 @@ class SonarrSync(ArrSync[SonarrItem]):
                 outside the cockpit.
 
         Returns:
-            int: How many series were warmed (attempted), for the caller's ledger
-            detail. A series whose fetch returned None still counts.
+            int: How many series were warmed (attempted) - the needs-scan subset,
+            for the caller's ledger detail. A series whose fetch returned None
+            still counts.
         """
 
         # The series we'll actually process: monitored (unless unmonitored are
-        # ignored) and carrying at least one AniList mapping. item_anilist_ids is
-        # memoized, so re-resolving here on the main thread is ~free.
+        # ignored), carrying at least one AniList mapping, and with at least one id
+        # the per-id loop won't short-circuit on (no SeaDex entry, or cached and
+        # unchanged - al_id_needs_scan). item_anilist_ids is memoized and the
+        # predicate hits only warmed caches, so this stays ~free on the main thread.
+        # get_ep_list still lazily warms any series we under-skip here, so the gate
+        # only ever saves a round-trip; it never changes the grab/skip outcome.
+        run = self._services
         series_ids: list[int] = []
         seen: set[int] = set()
         for item in items:
@@ -511,7 +523,10 @@ class SonarrSync(ArrSync[SonarrItem]):
                 continue
             if not item.monitored and self._config.sonarr.ignore_unmonitored:
                 continue
-            if not self.item_anilist_ids(item, log_ignored=False):
+            al_ids = self.item_anilist_ids(item, log_ignored=False)
+            if not al_ids:
+                continue
+            if not any(run.al_id_needs_scan(Arr.SONARR, aid) for aid in al_ids):
                 continue
             seen.add(item.id)
             series_ids.append(item.id)

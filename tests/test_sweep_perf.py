@@ -8,6 +8,7 @@ from typing import Any
 from unittest import mock
 
 from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
+from seadexarr.modules.config import Arr
 from seadexarr.modules.seadex_sonarr import (
     SONARR_FETCH_WORKERS,
     SONARR_PARSE_CACHE_TTL_DAYS,
@@ -18,6 +19,7 @@ from seadexarr.modules.seadex_sonarr import (
 )
 from tests.builders import (
     FakeCacheStore,
+    make_arr,
     make_bare_instance,
     make_config,
     make_logger,
@@ -231,6 +233,117 @@ class TestPrefetchEpisodes:
         assert strat.prefetch_episodes([_item(9)], progress=rec) == 1
         assert strat._ep_list_cache == {}  # nothing cached
         assert rec.calls[-1] == (1.0, "1/1")  # but progress still completed
+
+
+def _entry(dt: datetime) -> Any:
+    """A stand-in SeaDex entry exposing only ``updated_at`` (typed Any)."""
+
+    class _Entry:
+        updated_at = dt
+
+    return _Entry()
+
+
+class TestAlIdNeedsScan:
+    """``SeaDexArr.al_id_needs_scan``: the side-effect-free mirror of the per-id
+    loop's no-entry + ``cached_entry_skip`` gates, so ``prefetch_episodes`` warms
+    only the series the loop would actually process (the SeaDex-modification-times
+    fix). Pinned against the same cases as ``cached_entry_skip``."""
+
+    @staticmethod
+    def _run(*, entry: Any, cache: FakeCacheStore, **cfg: Any):
+        seadex = mock.MagicMock()
+        seadex.entry.return_value = entry
+        return make_arr(_seadex=seadex, cache_store=cache, **cfg)
+
+    def test_no_seadex_entry_does_not_need_scan(self) -> None:
+        run = self._run(entry=None, cache=FakeCacheStore())
+        assert run.al_id_needs_scan(Arr.SONARR, 7) is False
+
+    def test_uncached_entry_needs_scan(self) -> None:
+        run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=FakeCacheStore())
+        assert run.al_id_needs_scan(Arr.SONARR, 7) is True
+
+    def test_cached_and_matching_does_not_need_scan(self) -> None:
+        cache = FakeCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
+        run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=cache)
+        assert run.al_id_needs_scan(Arr.SONARR, 7) is False
+
+    def test_cached_but_stale_needs_scan(self) -> None:
+        cache = FakeCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
+        run = self._run(entry=_entry(datetime(2022, 6, 6)), cache=cache)
+        assert run.al_id_needs_scan(Arr.SONARR, 7) is True
+
+    def test_ignore_update_times_forces_scan_when_entry_exists(self) -> None:
+        # A matching cached entry is normally skipped; ignore_seadex_update_times
+        # makes the loop re-process it, so the predicate must report needs-scan.
+        cache = FakeCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
+        run = self._run(
+            entry=_entry(datetime(2021, 1, 1)),
+            cache=cache,
+            ignore_seadex_update_times=True,
+        )
+        assert run.al_id_needs_scan(Arr.SONARR, 7) is True
+
+    def test_ignore_update_times_still_skips_when_no_entry(self) -> None:
+        # No SeaDex entry -> al_id_prologue would skip regardless of the flag.
+        run = self._run(entry=None, cache=FakeCacheStore(), ignore_seadex_update_times=True)
+        assert run.al_id_needs_scan(Arr.SONARR, 7) is False
+
+
+class TestPrefetchSkipsUnchanged:
+    """``prefetch_episodes`` warms only series with at least one scannable id, so a
+    series whose every SeaDex entry is unchanged (or absent) is no longer fetched -
+    the regression this change fixes."""
+
+    def _strat(self, *, needs_scan: set[int]) -> tuple[SonarrSync, mock.MagicMock]:
+        # Each series maps to a single al_id equal to its id, so a series is warmed
+        # iff that id is in ``needs_scan``.
+        sonarr = mock.MagicMock()
+        sonarr.episodes.side_effect = lambda sid, quiet=False: [f"ep{sid}"]
+        services = mock.MagicMock()
+        services.get_anilist_ids.side_effect = lambda **kw: {kw["tvdb_id"]: object()}
+        services.al_id_needs_scan.side_effect = lambda arr, al_id: al_id in needs_scan
+        strat = make_sonarr_sync(
+            sonarr=sonarr,
+            _services=services,
+            _config=make_config(sleep_time=0),
+            _ep_list_cache={},
+            logger=make_logger(),
+        )
+        return strat, sonarr
+
+    def test_skips_series_with_no_scannable_id(self) -> None:
+        strat, sonarr = self._strat(needs_scan={1})
+        assert strat.prefetch_episodes([_item(1), _item(2)]) == 1
+        assert strat._ep_list_cache == {1: ["ep1"]}  # series 2 never fetched
+        sonarr.episodes.assert_called_once_with(1, quiet=True)
+
+    def test_warms_none_when_all_unchanged(self) -> None:
+        strat, sonarr = self._strat(needs_scan=set())
+        assert strat.prefetch_episodes([_item(1), _item(2)]) == 0
+        assert strat._ep_list_cache == {}
+        sonarr.episodes.assert_not_called()
+
+    def test_warms_series_with_any_scannable_id(self) -> None:
+        # A series whose mapping carries a stale id alongside a fresh one is warmed.
+        sonarr = mock.MagicMock()
+        sonarr.episodes.side_effect = lambda sid, quiet=False: [f"ep{sid}"]
+        services = mock.MagicMock()
+        services.get_anilist_ids.side_effect = lambda **kw: {10: object(), 11: object()}
+        services.al_id_needs_scan.side_effect = lambda arr, al_id: al_id == 11
+        strat = make_sonarr_sync(
+            sonarr=sonarr,
+            _services=services,
+            _config=make_config(sleep_time=0),
+            _ep_list_cache={},
+            logger=make_logger(),
+        )
+        assert strat.prefetch_episodes([_item(5)]) == 1
+        assert strat._ep_list_cache == {5: ["ep5"]}
 
 
 class TestParseEpisodesNegativeCache:

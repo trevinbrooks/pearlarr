@@ -335,6 +335,23 @@ class SeaDexArr:
 
         return self.cache_store.check_al_id_in_cache(arr, al_id, seadex_entry)
 
+    def al_id_needs_scan(self, arr: Arr, al_id: int) -> bool:
+        """Side-effect-free mirror of process_al_id's no-entry + cached_entry_skip
+        gates: True iff the per-id loop would actually process this id.
+
+        Lets prefetch_episodes warm only the series the loop won't short-circuit
+        (no SeaDex entry, or cached and unchanged), instead of every mapped
+        series. No logging / stats / backfill - purely a predicate over the
+        warmed SeaDex cache and the entry cache.
+        """
+
+        sd_entry = self._seadex.entry(al_id)  # warmed cache, no network
+        if sd_entry is None:
+            return False
+        if self._config.seadex.ignore_seadex_update_times:
+            return True
+        return not self.cache_store.check_al_id_in_cache(arr, al_id, sd_entry)
+
     def get_anilist_ids(
         self,
         tvdb_id: int | None = None,
@@ -973,7 +990,7 @@ class SeaDexArr:
         if strategy.warms_episodes:
             with boot.step("Fetching Sonarr episodes") as step:
                 warmed = strategy.prefetch_episodes(all_items, progress=step)
-                step.note(count_noun(warmed, "series", "series"))
+                step.note("cached" if warmed == 0 else count_noun(warmed, "series", "series"))
         else:
             strategy.prefetch_episodes(all_items)
 
