@@ -50,17 +50,15 @@ from typing import Any, TypedDict, cast
 from seadex import EntryRecord
 
 from .config import Arr
+from .sqlite_util import connect as _sqlite_connect
+from .sqlite_util import is_corruption as _is_corruption
+from .sqlite_util import quarantine_corrupt
 from .. import __version__
 
 # Timestamp format for cache record fields (entry ``updated_at`` and the AniList
 # meta / Sonarr parse ``fetched_at``). Lives here because the cache owns the
 # record schema; consumers (the orchestrator and the Sonarr adapter) import it.
 UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
-
-# Wait this long for a write lock before raising, instead of failing instantly on
-# a momentarily-locked db. The single-instance run lock makes contention rare, but
-# this keeps a brief overlap (e.g. a lingering reader) from crashing a run.
-_BUSY_TIMEOUT_MS = 5000
 
 # One statement per block; ``IF NOT EXISTS`` so it's a no-op on an existing db.
 # NOTE: there is NO schema-migration mechanism here - ``CREATE TABLE IF NOT EXISTS``
@@ -256,89 +254,23 @@ def _as_dict(value: object) -> dict[str, Any] | None:
     return cast("dict[str, Any]", value) if isinstance(value, dict) else None
 
 
-def _quarantine_corrupt(path: str, *, logger: logging.Logger | None) -> None:
-    """Move an unreadable cache db (and its WAL/SHM) aside so a run can recover.
-
-    Fail-open: rather than crash-loop on a corrupt/torn file, rename it to
-    ``<path>.corrupt-<timestamp>`` (kept for inspection) and let the caller start a
-    fresh cache. A fresh cache only costs one re-check pass - the safe direction.
-    """
-
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    dest = f"{path}.corrupt-{stamp}"
-    with contextlib.suppress(OSError):
-        os.replace(path, dest)
-    for suffix in ("-wal", "-shm"):
-        with contextlib.suppress(OSError):
-            os.replace(path + suffix, dest + suffix)
-    if logger is not None:
-        logger.warning(
-            f"Cache database at {path} was unreadable/corrupt; moved it to {dest} "
-            "and started a fresh cache (entries will be re-checked this run).",
-        )
-
-
 def _connect(path: str, *, ensure_wal: bool = True) -> sqlite3.Connection:
-    """Open a cache-db connection with the project's fixed pragmas + txn control.
+    """Open a cache-db connection (see :func:`sqlite_util.connect`).
 
-    The single place cache connections are created, so ``load``, ``_promote`` and
-    the read-only CLI commands all share identical settings instead of re-typing the
-    pragma trio. ``busy_timeout`` is applied FIRST, so the WAL-mode switch and the
-    schema statements that follow already honour it (rather than racing with a
-    zero timeout). Transaction control is pinned *explicitly* to legacy/deferred so
-    the staged-write preview gate can't be silently broken by a future Python
-    autocommit default change.
+    Kept as the cache's own connection factory - the single place ``load`` /
+    ``_promote`` / ``open_readonly`` go through, and the patch point the cache tests
+    target - delegating the pragma/transaction-control plumbing to the shared
+    helper. The cache has FK constraints (``torrent_hashes`` -> ``entries`` ON
+    DELETE CASCADE), so foreign keys are enabled whenever WAL is (the writable run
+    path); read-only diagnostics pass ``ensure_wal=False`` and get neither.
 
     Args:
         path (str): Database path (or ``":memory:"``).
-        ensure_wal (bool): Apply the WAL + foreign-keys pragmas (the writable run
-            path). Read-only diagnostics pass False so they neither mutate the db's
-            journal mode nor need the file to be a valid db just to open. Defaults
-            to True.
+        ensure_wal (bool): Apply the WAL (and, with it, foreign-keys) pragmas.
+            Defaults to True.
     """
 
-    conn = sqlite3.connect(path)
-    # Pin deferred transaction control EXPLICITLY rather than leaning on the sqlite3
-    # defaults: legacy mode means an implicit BEGIN precedes the first DML and
-    # nothing commits until save() - exactly what the preview gate relies on - so a
-    # future Python flipping a default can't silently turn staged writes into
-    # immediate commits. (Both attributes are set post-connect; no transaction is
-    # open yet, so this is a pure configuration step.)
-    conn.autocommit = sqlite3.LEGACY_TRANSACTION_CONTROL
-    conn.isolation_level = "DEFERRED"
-    try:
-        conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
-        if ensure_wal:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA foreign_keys=ON")
-    except sqlite3.DatabaseError:
-        # A non-db / corrupt file raises on the WAL switch; don't leak the handle.
-        conn.close()
-        raise
-    return conn
-
-
-def _is_corruption(exc: sqlite3.DatabaseError) -> bool:
-    """True if a DatabaseError signals an actually corrupt / not-a-database file.
-
-    The quarantine path destroys (renames) the cache, so it must fire ONLY on real
-    corruption - never on a transient ``OperationalError`` (``SQLITE_BUSY`` /
-    ``database is locked``, a disk I/O error), which would otherwise wipe a healthy
-    cache (and its pending-imports) on a fluke. Keys on the SQLite extended/primary
-    result code, with a message fallback for builds that don't surface one.
-    """
-
-    code = getattr(exc, "sqlite_errorcode", None)
-    if isinstance(code, int):
-        # Compare the primary result code (low 8 bits) so extended codes match too.
-        primary = code & 0xFF
-        if primary in (sqlite3.SQLITE_NOTADB, sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_FORMAT):
-            return True
-        # A known operational/transient code is explicitly NOT corruption.
-        if primary in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_IOERR):
-            return False
-    msg = str(exc).lower()
-    return any(s in msg for s in ("not a database", "malformed", "file is encrypted"))
+    return _sqlite_connect(path, ensure_wal=ensure_wal, foreign_keys=ensure_wal)
 
 
 class CacheStore:
@@ -408,7 +340,12 @@ class CacheStore:
             # A real not-a-database / torn file: quarantine it and start fresh in
             # memory (promoted on the first real save), so a corrupt cache fails open
             # instead of crash-looping every run.
-            _quarantine_corrupt(path, logger=logger)
+            quarantine_corrupt(
+                path,
+                logger=logger,
+                what="Cache database",
+                recovery="started a fresh cache (entries will be re-checked this run).",
+            )
             conn = _connect(":memory:")
             conn.executescript(_SCHEMA)
             exists = False
@@ -591,8 +528,7 @@ class CacheStore:
 
     def _set_kv(self, key: str, value: str) -> None:
         self._conn.execute(
-            "INSERT INTO kv (key, value) VALUES (?, ?) "
-            "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            "INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
             (key, value),
         )
 
@@ -722,8 +658,7 @@ class CacheStore:
             # No scalar fields: just ensure the row exists (the FK target for
             # torrent_hashes) without clobbering existing fields.
             self._conn.execute(
-                "INSERT INTO entries (arr, al_id) VALUES (?, ?) "
-                "ON CONFLICT (arr, al_id) DO NOTHING",
+                "INSERT INTO entries (arr, al_id) VALUES (?, ?) ON CONFLICT (arr, al_id) DO NOTHING",
                 (arr_key, al_id),
             )
 

@@ -38,7 +38,7 @@ GRAPH = {
         "tmdb_show:5000:s1": {"1-12": "1-12"},
     },
     "anilist:270": {
-        "tvdb_show:74796:s1": {},          # same tvdb id, present-but-empty season
+        "tvdb_show:74796:s1": {},  # same tvdb id, present-but-empty season
         "tmdb_movie:888": {},
         "tvdb_movie:999": {},
     },
@@ -114,12 +114,11 @@ class TestAniBridgeParity:
 # --------------------------------------------------------------------------- #
 
 AMAP = {
-    "A": {"anilist_id": 100, "tvdb_id": 200, "tvdb_season": 2, "tvdb_epoffset": 3,
-          "imdb_id": "tt100", "anidb_id": 50},
-    "B": {"anilist_id": 101, "tvdb_id": 200},                # same tvdb id, 2nd anilist
+    "A": {"anilist_id": 100, "tvdb_id": 200, "tvdb_season": 2, "tvdb_epoffset": 3, "imdb_id": "tt100", "anidb_id": 50},
+    "B": {"anilist_id": 101, "tvdb_id": 200},  # same tvdb id, 2nd anilist
     "C": {"anilist_id": 100, "tvdb_id": 200, "tvdb_season": 9},  # dup anilist -> first wins
-    "D": {"anilist_id": 102, "imdb_id": "tt100"},            # shares imdb
-    "E": {"tvdb_id": 999},                                   # no anilist -> filter-set only
+    "D": {"anilist_id": 102, "imdb_id": "tt100"},  # shares imdb
+    "E": {"tvdb_id": 999},  # no anilist -> filter-set only
     "F": {"anilist_id": 103, "tmdb_movie_id": 7000},
 }
 
@@ -128,7 +127,10 @@ def _anime_oracle(amap: dict, **kw: object) -> dict[int, object]:
     """Inline twin of the former reverse-index + no-clobber merge (the oracle)."""
 
     index: dict[str, dict[object, list[dict]]] = {
-        "tvdb_id": {}, "tmdb_movie_id": {}, "tmdb_show_id": {}, "imdb_id": {},
+        "tvdb_id": {},
+        "tmdb_movie_id": {},
+        "tmdb_show_id": {},
+        "imdb_id": {},
     }
     for rec in amap.values():
         if rec.get("anilist_id") is None:
@@ -157,20 +159,46 @@ def _anime_oracle(amap: dict, **kw: object) -> dict[int, object]:
 
 
 class TestAnimeIdsParity:
-    @pytest.mark.parametrize("kwargs", [
-        {"tvdb_id": 200},
-        {"imdb_id": "tt100"},
-        {"tmdb_id": 7000, "tmdb_type": TmdbType.MOVIE},
-        {"tvdb_id": 200, "imdb_id": "tt100"},
-        {"tvdb_id": 424242},  # no match -> empty
-    ])
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"tvdb_id": 200},
+            {"imdb_id": "tt100"},
+            {"tmdb_id": 7000, "tmdb_type": TmdbType.MOVIE},
+            {"tvdb_id": 200, "imdb_id": "tt100"},
+            {"tvdb_id": 424242},  # no match -> empty
+        ],
+    )
     def test_lookup_matches_oracle(self, kwargs: dict) -> None:
         resolver = MappingResolver(
-            cache_time=1, ignore_anilist_ids=set(), anime_mappings_cfg=AMAP,
-            anidb_mappings_cfg=False, anibridge_mappings_cfg=False,
+            cache_time=1,
+            ignore_anilist_ids=set(),
+            anime_mappings_cfg=AMAP,
+            anidb_mappings_cfg=False,
+            anibridge_mappings_cfg=False,
         )
         try:
             assert resolver.get_mappings_from_anime_mappings(**kwargs) == _anime_oracle(AMAP, **kwargs)
+        finally:
+            resolver.close()
+
+    def test_explicit_null_season_coalesces_to_sentinel(self) -> None:
+        # A present-but-null tvdb_season / tvdb_epoffset (an explicit JSON null, not
+        # an absent key) must not abort the populate against the NOT NULL columns; it
+        # coalesces to the same -1 / 0 sentinel an absent key gets, so the run still
+        # works exactly as the pre-SQL code (which carried the None through harmlessly).
+        amap = {"N": {"anilist_id": 500, "tvdb_id": 5000, "tvdb_season": None, "tvdb_epoffset": None}}
+        resolver = MappingResolver(
+            cache_time=1,
+            ignore_anilist_ids=set(),
+            anime_mappings_cfg=amap,
+            anidb_mappings_cfg=False,
+            anibridge_mappings_cfg=False,
+        )
+        try:
+            entry = resolver.get_mappings_from_anime_mappings(tvdb_id=5000)[500]
+            assert entry.tvdb_season == -1
+            assert entry.tvdb_epoffset == 0
         finally:
             resolver.close()
 
@@ -178,8 +206,11 @@ class TestAnimeIdsParity:
         # The former full-map scan added external ids even from anilist-less records
         # (record E). The SQL distinct must keep that, even though lookups skip them.
         resolver = MappingResolver(
-            cache_time=1, ignore_anilist_ids=set(), anime_mappings_cfg=AMAP,
-            anidb_mappings_cfg=False, anibridge_mappings_cfg=False,
+            cache_time=1,
+            ignore_anilist_ids=set(),
+            anime_mappings_cfg=AMAP,
+            anidb_mappings_cfg=False,
+            anibridge_mappings_cfg=False,
         )
         try:
             assert resolver.anime_id_set("tvdb_id") == {200, 999}
@@ -197,8 +228,11 @@ class TestGetAnilistIdsMerge:
         # is sorted by AniList id.
         amap = {"x": {"anilist_id": 269, "tvdb_id": 74796, "tvdb_season": 7}}
         resolver = MappingResolver(
-            cache_time=1, ignore_anilist_ids={270}, anime_mappings_cfg=amap,
-            anidb_mappings_cfg=False, anibridge_mappings_cfg=GRAPH,
+            cache_time=1,
+            ignore_anilist_ids={270},
+            anime_mappings_cfg=amap,
+            anidb_mappings_cfg=False,
+            anibridge_mappings_cfg=GRAPH,
         )
         try:
             mappings, dropped = resolver.get_anilist_ids(tvdb_id=74796)
@@ -232,8 +266,11 @@ ANIDB_XML = """<anime-list>
 def _anidb_resolver() -> MappingResolver:
     root = ElementTree.fromstring(ANIDB_XML)
     return MappingResolver(
-        cache_time=1, ignore_anilist_ids=set(), anime_mappings_cfg=False,
-        anidb_mappings_cfg=root, anibridge_mappings_cfg=False,
+        cache_time=1,
+        ignore_anilist_ids=set(),
+        anime_mappings_cfg=False,
+        anidb_mappings_cfg=root,
+        anibridge_mappings_cfg=False,
     )
 
 
@@ -250,7 +287,7 @@ class TestAnidbMappingDict:
     def test_missing_season_or_id_is_empty(self) -> None:
         resolver = _anidb_resolver()
         try:
-            assert resolver.anidb_mapping_dict(1, 5) == {}   # id known, season absent
+            assert resolver.anidb_mapping_dict(1, 5) == {}  # id known, season absent
             assert resolver.anidb_mapping_dict(404, 1) == {}  # id unknown
         finally:
             resolver.close()
@@ -272,8 +309,11 @@ class TestAnidbMappingDict:
 
     def test_disabled_source_is_empty_and_not_available(self) -> None:
         resolver = MappingResolver(
-            cache_time=1, ignore_anilist_ids=set(), anime_mappings_cfg=False,
-            anidb_mappings_cfg=False, anibridge_mappings_cfg=False,
+            cache_time=1,
+            ignore_anilist_ids=set(),
+            anime_mappings_cfg=False,
+            anidb_mappings_cfg=False,
+            anibridge_mappings_cfg=False,
         )
         try:
             assert not resolver.has_anidb
@@ -285,6 +325,7 @@ class TestAnidbMappingDict:
 # --------------------------------------------------------------------------- #
 # Digest gate end-to-end: an unchanged source file is not re-parsed
 # --------------------------------------------------------------------------- #
+
 
 class TestDigestGate:
     def test_unchanged_file_is_not_reparsed_changed_file_is(self, tmp_path, monkeypatch) -> None:
@@ -307,8 +348,12 @@ class TestDigestGate:
 
         def build() -> MappingResolver:
             return MappingResolver(
-                cache_time=1, ignore_anilist_ids=set(), anime_mappings_cfg=None,
-                anidb_mappings_cfg=False, anibridge_mappings_cfg=False, mappings_db=db,
+                cache_time=1,
+                ignore_anilist_ids=set(),
+                anime_mappings_cfg=None,
+                anidb_mappings_cfg=False,
+                anibridge_mappings_cfg=False,
+                mappings_db=db,
             )
 
         build().close()
@@ -347,9 +392,11 @@ class TestConstructionFailureClosesStore:
 
         with pytest.raises(ValueError, match="parse blew up"):
             MappingResolver(
-                cache_time=1, ignore_anilist_ids=set(),
+                cache_time=1,
+                ignore_anilist_ids=set(),
                 anime_mappings_cfg={"x": {"anilist_id": 1}},
-                anidb_mappings_cfg=False, anibridge_mappings_cfg=False,
+                anidb_mappings_cfg=False,
+                anibridge_mappings_cfg=False,
             )
         assert closed["n"] >= 1
 
@@ -416,16 +463,21 @@ class TestRealDataParity:
     def test_anime_ids_sql_matches_oracle_sample(self) -> None:
         amap = m._parse_anime_mappings(m.ANIME_IDS_FILE)
         resolver = MappingResolver(
-            cache_time=99999, ignore_anilist_ids=set(), anime_mappings_cfg=amap,
-            anidb_mappings_cfg=False, anibridge_mappings_cfg=False,
+            cache_time=99999,
+            ignore_anilist_ids=set(),
+            anime_mappings_cfg=amap,
+            anidb_mappings_cfg=False,
+            anibridge_mappings_cfg=False,
         )
         try:
-            tvdbs = [r["tvdb_id"] for r in amap.values()
-                     if r.get("tvdb_id") is not None and r.get("anilist_id") is not None][:200]
+            tvdbs = [
+                r["tvdb_id"] for r in amap.values() if r.get("tvdb_id") is not None and r.get("anilist_id") is not None
+            ][:200]
             for tvdb in tvdbs:
                 assert resolver.get_mappings_from_anime_mappings(tvdb_id=tvdb) == _anime_oracle(amap, tvdb_id=tvdb)
-            imdbs = [r["imdb_id"] for r in amap.values()
-                     if r.get("imdb_id") is not None and r.get("anilist_id") is not None][:200]
+            imdbs = [
+                r["imdb_id"] for r in amap.values() if r.get("imdb_id") is not None and r.get("anilist_id") is not None
+            ][:200]
             for imdb in imdbs:
                 assert resolver.get_mappings_from_anime_mappings(imdb_id=imdb) == _anime_oracle(amap, imdb_id=imdb)
         finally:
@@ -434,8 +486,11 @@ class TestRealDataParity:
     def test_anidb_sql_matches_oracle_sample(self) -> None:
         root = m._parse_anidb_mappings(m.ANIDB_MAPPINGS_FILE)
         resolver = MappingResolver(
-            cache_time=99999, ignore_anilist_ids=set(), anime_mappings_cfg=False,
-            anidb_mappings_cfg=root, anibridge_mappings_cfg=False,
+            cache_time=99999,
+            ignore_anilist_ids=set(),
+            anime_mappings_cfg=False,
+            anidb_mappings_cfg=root,
+            anibridge_mappings_cfg=False,
         )
         try:
             anidb_ids: list[int] = []

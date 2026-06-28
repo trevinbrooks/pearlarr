@@ -37,18 +37,14 @@ not shared across threads.
 
 import contextlib
 import logging
-import os
 import sqlite3
-from collections.abc import Iterable
-from datetime import datetime
+from collections.abc import Callable, Iterable
+
+from .sqlite_util import connect, is_corruption, quarantine_corrupt
 
 # Bump when the table layout below changes; a stored ``user_version`` that differs
 # triggers a DROP+rebuild (the data is a pure cache, re-derived from the sources).
 SCHEMA_VERSION = 1
-
-# Mirror CacheStore's pragma: wait briefly for a write lock rather than failing
-# instantly on a momentary overlap (the single-instance run lock makes this rare).
-_BUSY_TIMEOUT_MS = 5000
 
 # Source names used as ``meta`` keys and to select which tables a ``replace_*``
 # clears. Kept as constants so the resolver and the store agree on the spelling.
@@ -145,80 +141,13 @@ _SOURCE_TABLES: dict[str, tuple[str, ...]] = {
     SOURCE_ANIDB: ("anidb_mapping", "anidb_ambiguous"),
 }
 
-# Drop in FK-free order; all tables are independent so any order works.
+# Drop in FK-free order; all tables are independent so any order works. Derived
+# from _SOURCE_TABLES (plus the shared ``meta`` table) so a new source's tables are
+# dropped on a SCHEMA_VERSION rebuild automatically - no parallel hand-maintained
+# list to forget (which would leave a stale table that CREATE IF NOT EXISTS skips).
 _DROP_ALL = "".join(
-    f"DROP TABLE IF EXISTS {t};\n"
-    for t in ("meta", "anime_ids", "anibridge_entry", "anibridge_xref",
-              "anibridge_tvdb_range", "anidb_mapping", "anidb_ambiguous")
+    f"DROP TABLE IF EXISTS {t};\n" for t in ("meta", *(t for tables in _SOURCE_TABLES.values() for t in tables))
 )
-
-
-def _connect(path: str) -> sqlite3.Connection:
-    """Open a mappings-db connection with WAL + a busy timeout + deferred txns.
-
-    ``busy_timeout`` is applied first so the WAL switch and schema statements honour
-    it. Transaction control is pinned to legacy/deferred so ``replace_*`` controls
-    its own atomic commit explicitly (a future Python autocommit-default flip can't
-    silently turn each staged insert into its own commit and break atomicity).
-    A corrupt/non-db file raises on the WAL switch; the handle is closed so it
-    doesn't leak before the caller decides whether to quarantine.
-
-    Args:
-        path (str): Database path, or ``":memory:"``.
-    """
-
-    conn = sqlite3.connect(path)
-    conn.autocommit = sqlite3.LEGACY_TRANSACTION_CONTROL
-    conn.isolation_level = "DEFERRED"
-    try:
-        conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
-        conn.execute("PRAGMA journal_mode=WAL")
-    except sqlite3.DatabaseError:
-        conn.close()
-        raise
-    return conn
-
-
-def _is_corruption(exc: sqlite3.DatabaseError) -> bool:
-    """True if a DatabaseError signals an actually corrupt / not-a-database file.
-
-    Keyed on the SQLite primary result code (with a message fallback) so the
-    destructive quarantine fires ONLY on real corruption, never on a transient
-    BUSY/LOCKED/IOERR that would otherwise wipe a healthy cache on a fluke. Same
-    policy as :func:`seadexarr.modules.cache._is_corruption`.
-    """
-
-    code = getattr(exc, "sqlite_errorcode", None)
-    if isinstance(code, int):
-        primary = code & 0xFF
-        if primary in (sqlite3.SQLITE_NOTADB, sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_FORMAT):
-            return True
-        if primary in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_IOERR):
-            return False
-    msg = str(exc).lower()
-    return any(s in msg for s in ("not a database", "malformed", "file is encrypted"))
-
-
-def _quarantine_corrupt(path: str, *, logger: logging.Logger | None) -> None:
-    """Move an unreadable mappings db (and its WAL/SHM) aside so a run can recover.
-
-    Renames it to ``<path>.corrupt-<timestamp>`` (kept for inspection) and lets the
-    caller start a fresh store. A fresh store only costs one re-parse - the safe
-    direction over crash-looping on a torn file.
-    """
-
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    dest = f"{path}.corrupt-{stamp}"
-    with contextlib.suppress(OSError):
-        os.replace(path, dest)
-    for suffix in ("-wal", "-shm"):
-        with contextlib.suppress(OSError):
-            os.replace(path + suffix, dest + suffix)
-    if logger is not None:
-        logger.warning(
-            f"Mappings database at {path} was unreadable/corrupt; moved it to {dest} "
-            "and started a fresh one (sources will be re-parsed this run).",
-        )
 
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
@@ -266,16 +195,21 @@ class MappingStore:
 
         conn: sqlite3.Connection | None = None
         try:
-            conn = _connect(path)
+            conn = connect(path)
             _ensure_schema(conn)
         except sqlite3.DatabaseError as exc:
             if conn is not None:
                 with contextlib.suppress(sqlite3.Error):
                     conn.close()
-            if not _is_corruption(exc):
+            if not is_corruption(exc):
                 raise
-            _quarantine_corrupt(path, logger=logger)
-            conn = _connect(":memory:")
+            quarantine_corrupt(
+                path,
+                logger=logger,
+                what="Mappings database",
+                recovery="started a fresh one (sources will be re-parsed this run).",
+            )
+            conn = connect(":memory:")
             _ensure_schema(conn)
         return cls(conn, path)
 
@@ -295,15 +229,9 @@ class MappingStore:
         row = self._conn.execute("SELECT digest FROM meta WHERE name = ?", (name,)).fetchone()
         return row is not None and row[0] == digest
 
-    def has_source(self, name: str) -> bool:
-        """True iff ``name`` has been populated at least once (a ``meta`` row)."""
-
-        row = self._conn.execute("SELECT 1 FROM meta WHERE name = ?", (name,)).fetchone()
-        return row is not None
-
     # -- atomic populate -----------------------------------------------------
 
-    def _replace(self, name: str, digest: str, write: object) -> None:
+    def _replace(self, name: str, digest: str, write: Callable[[sqlite3.Connection], None]) -> None:
         """Clear ``name``'s tables, run ``write`` to repopulate, stamp the digest.
 
         All in ONE transaction (legacy/deferred control means the first DELETE opens
@@ -315,7 +243,7 @@ class MappingStore:
         try:
             for table in _SOURCE_TABLES[name]:
                 self._conn.execute(f"DELETE FROM {table}")
-            write(self._conn)  # type: ignore[operator]
+            write(self._conn)
             self._conn.execute(
                 "INSERT INTO meta (name, digest) VALUES (?, ?) "
                 "ON CONFLICT (name) DO UPDATE SET digest = excluded.digest",
@@ -396,13 +324,11 @@ class MappingStore:
 
         def write(conn: sqlite3.Connection) -> None:
             conn.executemany(
-                "INSERT INTO anidb_mapping (anidb_id, tvdb_season, tvdb_ep, anidb_ep) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO anidb_mapping (anidb_id, tvdb_season, tvdb_ep, anidb_ep) VALUES (?, ?, ?, ?)",
                 mappings,
             )
             conn.executemany(
-                "INSERT INTO anidb_ambiguous (anidb_id) VALUES (?) "
-                "ON CONFLICT (anidb_id) DO NOTHING",
+                "INSERT INTO anidb_ambiguous (anidb_id) VALUES (?) ON CONFLICT (anidb_id) DO NOTHING",
                 ambiguous,
             )
 
@@ -444,36 +370,51 @@ class MappingStore:
 
     # -- anibridge queries ---------------------------------------------------
 
-    def anibridge_anilist_for(self, axis: str, ext_id: object) -> list[int]:
-        """AniList ids mapped to ``ext_id`` on ``axis`` (the reverse-index lookup)."""
+    def anibridge_entries_for(
+        self,
+        axis: str,
+        ext_id: object,
+    ) -> list[tuple[int, object, object, object, object, object, object]]:
+        """Every ``(anilist_id, *entry)`` row mapped to ``ext_id`` on ``axis``.
 
-        rows = self._conn.execute(
-            "SELECT anilist_id FROM anibridge_xref WHERE axis = ? AND ext_id = ?",
-            (axis, ext_id),
-        ).fetchall()
-        return [r[0] for r in rows]
-
-    def anibridge_entry(self, anilist_id: int) -> tuple[object, ...] | None:
-        """The anibridge_entry row for ``anilist_id`` (computed consumer picks)."""
-
-        return self._conn.execute(
-            "SELECT anidb_id, imdb_id, tmdb_movie_id, mal_id, first_tvdb_id, "
-            "first_tmdb_show_id FROM anibridge_entry WHERE anilist_id = ?",
-            (anilist_id,),
-        ).fetchone()
-
-    def anibridge_ranges(self, anilist_id: int, tvdb_id: int) -> list[tuple[int, int | None, int | None]]:
-        """``(season, start_ep, end_ep)`` range rows for one (anilist, tvdb) pair.
-
-        A row with NULL ``start_ep`` is a present-but-empty-season marker.
+        One xref->entry JOIN so a lookup that resolves k AniList ids costs a single
+        query instead of k per-id point lookups. Row shape: ``(anilist_id, anidb_id,
+        imdb_id, tmdb_movie_id, mal_id, first_tvdb_id, first_tmdb_show_id)`` - the
+        stored ``_consumer_entry`` picks the caller rebuilds the entry from. The
+        INNER JOIN drops any xref row lacking an entry, but ``to_rows`` writes both
+        from the same ``by_anilist`` map, so that pairing is structurally guaranteed.
         """
 
-        # ORDER BY rowid restores populate (insertion) order, so the per-season range
-        # list rebuilt by the caller matches the in-memory build order exactly.
         return self._conn.execute(
-            "SELECT season, start_ep, end_ep FROM anibridge_tvdb_range "
-            "WHERE anilist_id = ? AND tvdb_id = ? ORDER BY rowid",
-            (anilist_id, tvdb_id),
+            "SELECT x.anilist_id, e.anidb_id, e.imdb_id, e.tmdb_movie_id, e.mal_id, "
+            "e.first_tvdb_id, e.first_tmdb_show_id "
+            "FROM anibridge_xref x JOIN anibridge_entry e ON e.anilist_id = x.anilist_id "
+            "WHERE x.axis = ? AND x.ext_id = ?",
+            (axis, ext_id),
+        ).fetchall()
+
+    def anibridge_ranges_for(
+        self,
+        axis: str,
+        ext_id: object,
+        tvdb_id: int,
+    ) -> list[tuple[int, int, int | None, int | None]]:
+        """``(anilist_id, season, start_ep, end_ep)`` rows for an (axis, ext_id) set,
+        scoped to ``tvdb_id``, in ``(anilist_id, populate)`` order.
+
+        The batched twin of the former per-id range lookup: one xref->range JOIN
+        fetches the ranges for every AniList id a tvdb lookup resolves, so the caller
+        groups them by ``anilist_id`` and rebuilds each season's list in insertion
+        order (``ORDER BY x.anilist_id, r.rowid`` -> parity with the in-memory build).
+        A NULL ``start_ep`` row is the present-but-empty-season marker.
+        """
+
+        return self._conn.execute(
+            "SELECT x.anilist_id, r.season, r.start_ep, r.end_ep "
+            "FROM anibridge_xref x JOIN anibridge_tvdb_range r ON r.anilist_id = x.anilist_id "
+            "WHERE x.axis = ? AND x.ext_id = ? AND r.tvdb_id = ? "
+            "ORDER BY x.anilist_id, r.rowid",
+            (axis, ext_id, tvdb_id),
         ).fetchall()
 
     def anibridge_distinct(self, axis: str) -> set[object]:
@@ -496,7 +437,8 @@ class MappingStore:
         """True iff ``anidb_id`` appeared in more than one ``<anime>`` element."""
 
         row = self._conn.execute(
-            "SELECT 1 FROM anidb_ambiguous WHERE anidb_id = ?", (anidb_id,),
+            "SELECT 1 FROM anidb_ambiguous WHERE anidb_id = ?",
+            (anidb_id,),
         ).fetchone()
         return row is not None
 
@@ -504,7 +446,6 @@ class MappingStore:
         """``(tvdb_ep, anidb_ep)`` rows for ``anidb_id`` scoped to ``tvdb_season``."""
 
         return self._conn.execute(
-            "SELECT tvdb_ep, anidb_ep FROM anidb_mapping "
-            "WHERE anidb_id = ? AND tvdb_season = ?",
+            "SELECT tvdb_ep, anidb_ep FROM anidb_mapping WHERE anidb_id = ? AND tvdb_season = ?",
             (anidb_id, tvdb_season),
         ).fetchall()

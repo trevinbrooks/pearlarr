@@ -189,6 +189,10 @@ class AniBridge:
         self.all_tmdb_movie_ids: set[Any] = set(self.tmdb_movie_index)
         self.all_imdb_ids: set[Any] = set(self.imdb_index)
 
+        # Entry count, cached once: by_anilist is fixed after _parse, so __len__ /
+        # __bool__ never recompute it.
+        self._len = len(self.by_anilist)
+
     @classmethod
     def from_store(cls, store: MappingStore) -> "AniBridge":
         """Build a SQL-backed view that answers lookups from ``mappings.db``.
@@ -213,6 +217,10 @@ class AniBridge:
         self.all_tvdb_ids = store.anibridge_distinct("tvdb")
         self.all_tmdb_movie_ids = store.anibridge_distinct("tmdb_movie")
         self.all_imdb_ids = store.anibridge_distinct("imdb")
+        # Entry count, fetched once: the store is immutable for this view's lifetime
+        # (populated before from_store, read-only after), so a per-call COUNT(*) - an
+        # O(rows) scan that get_anilist_ids would trigger twice per item - is wasteful.
+        self._len = store.anibridge_len()
         return self
 
     def to_rows(
@@ -235,15 +243,17 @@ class AniBridge:
         entries: list[tuple[object, ...]] = []
         ranges: list[tuple[object, ...]] = []
         for anilist_id, record in self.by_anilist.items():
-            entries.append((
-                anilist_id,
-                record.anidb_id,
-                _first(record.imdb_ids),
-                _first(record.tmdb_movie_ids),
-                _first(record.mal_ids),
-                next(iter(record.tvdb_shows), None),
-                next(iter(record.tmdb_shows), None),
-            ))
+            entries.append(
+                (
+                    anilist_id,
+                    record.anidb_id,
+                    _first(record.imdb_ids),
+                    _first(record.tmdb_movie_ids),
+                    _first(record.mal_ids),
+                    next(iter(record.tvdb_shows), None),
+                    next(iter(record.tmdb_shows), None),
+                ),
+            )
             for tvdb_id, seasons in record.tvdb_shows.items():
                 for season, range_list in seasons.items():
                     if not range_list:
@@ -269,14 +279,27 @@ class AniBridge:
         return entries, xrefs, ranges
 
     def __bool__(self) -> bool:
-        if self._store is not None:
-            return self._store.anibridge_len() > 0
-        return bool(self.by_anilist)
+        return self._len > 0
 
     def __len__(self) -> int:
-        if self._store is not None:
-            return self._store.anibridge_len()
-        return len(self.by_anilist)
+        return self._len
+
+    def id_set(self, mapping_key: str) -> set[Any]:
+        """The precomputed candidate id set for a Kometa ``mapping_key`` axis.
+
+        Mirrors :meth:`MappingResolver.anime_id_set` so ``collect_anime_items`` can
+        build BOTH sources' candidate-set tuples from one comprehension over the same
+        ``fields`` - instead of a hand-ordered literal that can silently drift out of
+        positional alignment with ``fields`` (the ``zip(strict=True)`` only checks
+        length, not correspondence). The keys are exactly the ``mapping_key``s the
+        library filter passes (tvdb / tmdb-movie / imdb axes).
+        """
+
+        return {
+            "tvdb_id": self.all_tvdb_ids,
+            "tmdb_movie_id": self.all_tmdb_movie_ids,
+            "imdb_id": self.all_imdb_ids,
+        }[mapping_key]
 
     def _parse(self, graph: AniBridgeGraph) -> None:
         """Build per-AniList records and reverse indexes from the graph.
@@ -286,7 +309,6 @@ class AniBridge:
         """
 
         for key, targets in graph.items():
-
             provider, pid, _ = _parse_descriptor(key)
             if provider != "anilist" or pid is None:
                 # Reverse links are reconstructed from the anilist-keyed entries,
@@ -446,45 +468,51 @@ class AniBridge:
                 bucket.append((start, end))
         return mappings
 
-    def _sql_consumer_entry(
+    def _sql_lookup(
         self,
-        store: MappingStore,
-        anilist_id: int,
+        axis: str,
+        ext_id: object,
+        *,
         tvdb_id: int | None = None,
         tmdb_show_id: int | None = None,
-    ) -> AniBridgeEntry:
-        """SQL twin of :meth:`_consumer_entry`, built from the stored picks.
+    ) -> AniBridgeLookup:
+        """Batched SQL twin of the graph ``lookup_by_*`` (on a stored view).
 
-        Reproduces the same dict (including the ``mal_id`` / ``tmdb_show_id`` /
-        ``source`` fields), so a parity check against the graph-backed lookup is
-        exact. ``tvdb_mappings`` is attached whenever ``tvdb_id`` is supplied: the
-        only caller is :meth:`lookup_by_tvdb`, iterating the tvdb reverse index, so
-        ``tvdb_id`` is guaranteed present on the record (matching the in-memory
+        One xref->entry JOIN fetches every entry mapped to ``ext_id`` on ``axis``;
+        for a tvdb-scoped lookup a second xref->range JOIN fetches all their range
+        rows at once (grouped here by AniList id), so resolving k ids costs 2 queries
+        rather than the former 1 + 2k point queries. Reproduces :meth:`_consumer_entry`
+        exactly: the stored ``first_*`` picks back an unscoped id, and
+        ``tvdb_mappings`` is attached whenever ``tvdb_id`` is supplied - the only such
+        caller (:meth:`lookup_by_tvdb`) iterates the tvdb xref, so every resolved id
+        is guaranteed to carry that tvdb (matching the in-memory
         ``tvdb_id in record.tvdb_shows`` guard).
         """
 
-        row = store.anibridge_entry(anilist_id)
-        # The xref guarantees an entry row exists for this anilist_id.
-        anidb_id, imdb_id, tmdb_movie_id, mal_id, first_tvdb_id, first_tmdb_show_id = row or (
-            None, None, None, None, None, None,
-        )
+        store = self._store
+        assert store is not None  # only reached on a SQL-backed view
 
-        entry: dict[str, Any] = {
-            "tvdb_id": tvdb_id if tvdb_id is not None else first_tvdb_id,
-            "anidb_id": anidb_id,
-            "imdb_id": imdb_id,
-            "tmdb_show_id": tmdb_show_id if tmdb_show_id is not None else first_tmdb_show_id,
-            "tmdb_movie_id": tmdb_movie_id,
-            "mal_id": mal_id,
-            "source": "anibridge",
-        }
-
+        ranges_by_anilist: dict[int, list[tuple[int, int | None, int | None]]] = {}
         if tvdb_id is not None:
-            entry["tvdb_mappings"] = self._ranges_to_mappings(
-                store.anibridge_ranges(anilist_id, tvdb_id),
-            )
+            for anilist_id, season, start, end in store.anibridge_ranges_for(axis, ext_id, tvdb_id):
+                ranges_by_anilist.setdefault(anilist_id, []).append((season, start, end))
 
-        return entry
+        result: AniBridgeLookup = {}
+        for row in store.anibridge_entries_for(axis, ext_id):
+            anilist_id, anidb_id, imdb_id, tmdb_movie_id, mal_id, first_tvdb_id, first_tmdb_show_id = row
+            entry: dict[str, Any] = {
+                "tvdb_id": tvdb_id if tvdb_id is not None else first_tvdb_id,
+                "anidb_id": anidb_id,
+                "imdb_id": imdb_id,
+                "tmdb_show_id": tmdb_show_id if tmdb_show_id is not None else first_tmdb_show_id,
+                "tmdb_movie_id": tmdb_movie_id,
+                "mal_id": mal_id,
+                "source": "anibridge",
+            }
+            if tvdb_id is not None:
+                entry["tvdb_mappings"] = self._ranges_to_mappings(ranges_by_anilist.get(anilist_id, []))
+            result[anilist_id] = entry
+        return result
 
     def lookup_by_tvdb(self, tvdb_id: int) -> AniBridgeLookup:
         """Return "{anilist_id: entry}" for AniList ids mapped to a tvdb id.
@@ -494,10 +522,7 @@ class AniBridge:
         """
 
         if self._store is not None:
-            return {
-                anilist_id: self._sql_consumer_entry(self._store, anilist_id, tvdb_id=tvdb_id)
-                for anilist_id in self._store.anibridge_anilist_for("tvdb", tvdb_id)
-            }
+            return self._sql_lookup("tvdb", tvdb_id, tvdb_id=tvdb_id)
 
         return {
             anilist_id: self._consumer_entry(anilist_id, tvdb_id=tvdb_id)
@@ -518,14 +543,8 @@ class AniBridge:
 
         if self._store is not None:
             if tmdb_type == "show":
-                return {
-                    anilist_id: self._sql_consumer_entry(self._store, anilist_id, tmdb_show_id=tmdb_id)
-                    for anilist_id in self._store.anibridge_anilist_for("tmdb_show", tmdb_id)
-                }
-            return {
-                anilist_id: self._sql_consumer_entry(self._store, anilist_id)
-                for anilist_id in self._store.anibridge_anilist_for("tmdb_movie", tmdb_id)
-            }
+                return self._sql_lookup("tmdb_show", tmdb_id, tmdb_show_id=tmdb_id)
+            return self._sql_lookup("tmdb_movie", tmdb_id)
 
         if tmdb_type == "show":
             return {
@@ -533,10 +552,7 @@ class AniBridge:
                 for anilist_id in self.tmdb_show_index.get(tmdb_id, ())
             }
 
-        return {
-            anilist_id: self._consumer_entry(anilist_id)
-            for anilist_id in self.tmdb_movie_index.get(tmdb_id, ())
-        }
+        return {anilist_id: self._consumer_entry(anilist_id) for anilist_id in self.tmdb_movie_index.get(tmdb_id, ())}
 
     def lookup_by_imdb(self, imdb_id: str) -> AniBridgeLookup:
         """Return "{anilist_id: entry}" for AniList ids mapped to an IMDb id.
@@ -546,12 +562,6 @@ class AniBridge:
         """
 
         if self._store is not None:
-            return {
-                anilist_id: self._sql_consumer_entry(self._store, anilist_id)
-                for anilist_id in self._store.anibridge_anilist_for("imdb", imdb_id)
-            }
+            return self._sql_lookup("imdb", imdb_id)
 
-        return {
-            anilist_id: self._consumer_entry(anilist_id)
-            for anilist_id in self.imdb_index.get(imdb_id, ())
-        }
+        return {anilist_id: self._consumer_entry(anilist_id) for anilist_id in self.imdb_index.get(imdb_id, ())}

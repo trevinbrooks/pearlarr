@@ -86,11 +86,7 @@ class RadarrClient:
             movie_id (int): ID for the movie in Radarr.
         """
 
-        mov_req_url = (
-            f"{self._url}/api/v3/moviefile?"
-            f"movieId={movie_id}&"
-            f"apikey={self._api_key}"
-        )
+        mov_req_url = f"{self._url}/api/v3/moviefile?movieId={movie_id}&apikey={self._api_key}"
         # response.json() is untyped; the moviefile endpoint returns a JSON
         # array of objects, so cast at the parse boundary, then parse each raw
         # record into the typed MovieFile view.
@@ -149,8 +145,7 @@ def collect_anime_items[ItemT: ArrItem](
 
     # One candidate set per id space: the two sources' sets unioned.
     matched_sets: list[set[Any]] = [
-        anime | bridge
-        for anime, bridge in zip(anime_id_sets, anibridge_id_sets, strict=True)
+        anime | bridge for anime, bridge in zip(anime_id_sets, anibridge_id_sets, strict=True)
     ]
 
     # Track kept item ids in a set: "item not in kept" on a growing list is O(n)
@@ -163,10 +158,7 @@ def collect_anime_items[ItemT: ArrItem](
             continue
 
         # Keep the item if it matches in any id space
-        if any(
-            getattr(item, field.item_attr) in matched
-            for field, matched in zip(fields, matched_sets, strict=True)
-        ):
+        if any(getattr(item, field.item_attr) in matched for field, matched in zip(fields, matched_sets, strict=True)):
             kept.append(item)
             seen_ids.add(item.id)
 
@@ -191,8 +183,8 @@ def collect_anime_movies(
         radarr_client (RadarrClient): Client to fetch the movie list from.
         mappings (AnimeIdSets): Resolver exposing ``anime_id_set(column)`` for the
             Anime-IDs candidate sets.
-        anibridge (AniBridge | None): AniBridge view, exposing precomputed
-            ``all_tmdb_movie_ids`` / ``all_imdb_ids`` sets.
+        anibridge (AniBridge | None): AniBridge view, exposing ``id_set(mapping_key)``
+            for its precomputed candidate sets.
     """
 
     fields = (IdField("tmdb_movie_id", "tmdbId"), IdField("imdb_id", "imdbId"))
@@ -200,8 +192,5 @@ def collect_anime_movies(
         radarr_client.all_movies,
         fields,
         tuple(mappings.anime_id_set(f.mapping_key) for f in fields),
-        (
-            anibridge.all_tmdb_movie_ids if anibridge else set(),
-            anibridge.all_imdb_ids if anibridge else set(),
-        ),
+        tuple(anibridge.id_set(f.mapping_key) if anibridge else set() for f in fields),
     )

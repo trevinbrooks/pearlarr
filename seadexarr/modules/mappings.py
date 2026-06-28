@@ -179,7 +179,9 @@ ANIDB_MAPPINGS_FILE = "anime-list-master.xml"
 # Bump ANIBRIDGE_RELEASE when a new (breaking) major lands; the cache filename is
 # versioned to match so an old-format file is never parsed by the new loader.
 ANIBRIDGE_RELEASE = "v3"
-ANIBRIDGE_MAPPINGS_URL = f"https://github.com/anibridge/anibridge-mappings/releases/download/{ANIBRIDGE_RELEASE}/mappings.min.json"
+ANIBRIDGE_MAPPINGS_URL = (
+    f"https://github.com/anibridge/anibridge-mappings/releases/download/{ANIBRIDGE_RELEASE}/mappings.min.json"
+)
 ANIBRIDGE_MAPPINGS_FILE = f"anibridge_mappings_{ANIBRIDGE_RELEASE}.json"
 
 # Per-read socket timeout for a source download. A stalled connection raises after
@@ -230,8 +232,7 @@ def _download_file(
                 if logger is not None and got >= next_mark:
                     if total:
                         logger.info(
-                            f"  ...downloading {label}: {got >> 20}/{total >> 20} MB "
-                            f"({got * 100 // total}%)",
+                            f"  ...downloading {label}: {got >> 20}/{total >> 20} MB ({got * 100 // total}%)",
                         )
                     else:
                         logger.info(f"  ...downloading {label}: {got >> 20} MB")
@@ -262,16 +263,26 @@ def _anime_ids_rows(anime_mappings: AnimeIdsMap) -> list[tuple[Any, ...]]:
 
     rows: list[tuple[Any, ...]] = []
     for record in anime_mappings.values():
-        rows.append((
-            record.get("anilist_id"),
-            record.get("tvdb_id"),
-            record.get("tvdb_season", -1),
-            record.get("tvdb_epoffset", 0),
-            record.get("tmdb_movie_id"),
-            record.get("tmdb_show_id"),
-            record.get("imdb_id"),
-            record.get("anidb_id"),
-        ))
+        # ``.get(key, default)`` only substitutes the default for an ABSENT key; a
+        # present-but-null JSON value (``"tvdb_season": null``) returns None, which
+        # the NOT NULL ``tvdb_season`` / ``tvdb_epoffset`` columns reject - and that
+        # IntegrityError aborts the whole populate (then the :memory: fail-open
+        # re-parses the same data and re-raises, taking down the entire run).
+        # Coalesce an explicit null to the same sentinel an absent key gets.
+        season = record.get("tvdb_season", -1)
+        epoffset = record.get("tvdb_epoffset", 0)
+        rows.append(
+            (
+                record.get("anilist_id"),
+                record.get("tvdb_id"),
+                -1 if season is None else season,
+                0 if epoffset is None else epoffset,
+                record.get("tmdb_movie_id"),
+                record.get("tmdb_show_id"),
+                record.get("imdb_id"),
+                record.get("anidb_id"),
+            ),
+        )
     return rows
 
 
@@ -634,11 +645,7 @@ class MappingResolver:
                 )
 
             # Drop any AniList IDs the user has chosen to ignore.
-            ids_to_drop = [
-                al_id
-                for al_id in self.ignore_anilist_ids
-                if al_id in anilist_mappings
-            ]
+            ids_to_drop = [al_id for al_id in self.ignore_anilist_ids if al_id in anilist_mappings]
             for al_id in ids_to_drop:
                 del anilist_mappings[al_id]
 
@@ -647,8 +654,9 @@ class MappingResolver:
 
             self._anilist_ids_cache[key] = (anilist_mappings, ids_to_drop)
 
-        # Return a copy so a caller mutating the result can't corrupt the memo.
-        return dict(anilist_mappings), ids_to_drop
+        # Return fresh copies of BOTH so a caller mutating either can't corrupt the
+        # memo (the entries are frozen, so a shallow dict/list copy is enough).
+        return dict(anilist_mappings), list(ids_to_drop)
 
     def get_mappings_from_anime_mappings(
         self,

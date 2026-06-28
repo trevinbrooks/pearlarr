@@ -41,11 +41,13 @@ class TestFreshnessGate:
         assert store.anime_ids_lookup("tvdb_id", 200) == []
         store.close()
 
-    def test_has_source(self) -> None:
+    def test_replace_marks_source_fresh_for_its_digest(self) -> None:
+        # An empty populate still stamps the digest, so the source reads fresh for
+        # that digest (and not for any other) - the gate a re-parse decision hinges on.
         store = MappingStore.open(":memory:")
-        assert not store.has_source(SOURCE_ANIDB)
+        assert not store.is_fresh(SOURCE_ANIDB, "d")
         store.replace_anidb("d", [], [])
-        assert store.has_source(SOURCE_ANIDB)
+        assert store.is_fresh(SOURCE_ANIDB, "d")
         store.close()
 
 
@@ -111,7 +113,7 @@ class TestDurability:
         path = str(tmp_path / "mappings.db")
 
         store = MappingStore.open(path)
-        assert not store.has_source(SOURCE_ANIME_IDS)
+        assert not store.is_fresh(SOURCE_ANIME_IDS, "digest-A")
         store.replace_anime_ids("digest-A", [ROW])
         store.close()
 

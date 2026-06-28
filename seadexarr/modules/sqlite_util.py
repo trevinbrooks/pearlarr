@@ -1,0 +1,128 @@
+"""Shared SQLite primitives for the project's on-disk stores.
+
+Both :mod:`seadexarr.modules.cache` (``cache.db``) and
+:mod:`seadexarr.modules.mapping_store` (``mappings.db``) need the same low-level
+behaviour: a connection pinned to *explicit* legacy/deferred transaction control,
+a busy timeout, a corruption predicate that distinguishes a genuinely torn file
+from a transient lock, and a fail-open quarantine of an unreadable file. Those
+primitives live here so the two stores share ONE copy - a change to the
+corruption policy (which gates a destructive rename) or the transaction-control
+pin (which gates the cache's preview-write semantics) can't land in one store and
+silently diverge in the other.
+
+The store *classes* stay separate on purpose: their write models genuinely differ
+(the cache stages writes behind a preview gate and promotes an in-memory db; the
+mapping store does atomic per-source digest-gated replaces with a rebuild-on-format
+-change). Only the connection/corruption plumbing is shared.
+"""
+
+import contextlib
+import logging
+import os
+import sqlite3
+from datetime import datetime
+
+# Wait this long for a write lock before raising, instead of failing instantly on
+# a momentarily-locked db. The single-instance run lock makes contention rare, but
+# this keeps a brief overlap (e.g. a lingering reader) from crashing a run.
+BUSY_TIMEOUT_MS = 5000
+
+
+def connect(path: str, *, ensure_wal: bool = True, foreign_keys: bool = False) -> sqlite3.Connection:
+    """Open a connection with the project's fixed pragmas + transaction control.
+
+    The single place these connections are created, so every caller shares
+    identical settings instead of re-typing the pragma trio. ``busy_timeout`` is
+    applied FIRST so the WAL-mode switch and the schema statements that follow
+    already honour it (rather than racing with a zero timeout).
+
+    Transaction control is pinned *explicitly* to legacy/deferred rather than
+    leaning on the sqlite3 defaults: legacy mode means an implicit ``BEGIN``
+    precedes the first DML and nothing commits until the owner calls ``commit`` -
+    exactly what the cache's staged-write preview gate and the mapping store's
+    atomic per-source replace both rely on - so a future Python flipping a default
+    can't silently turn staged writes into immediate commits and break either. Do
+    NOT set ``isolation_level=None`` / real autocommit. (Both attributes are set
+    post-connect, before any transaction is open, so this is pure configuration.)
+
+    A non-db / corrupt file raises on the WAL switch; the handle is closed so it
+    doesn't leak before the caller decides whether to quarantine.
+
+    Args:
+        path (str): Database path, or ``":memory:"``.
+        ensure_wal (bool): Apply the WAL-mode pragma (the writable run path).
+            Read-only diagnostics pass False so they neither mutate the db's
+            journal mode nor need the file to be a valid db just to open. Defaults
+            to True.
+        foreign_keys (bool): Apply ``PRAGMA foreign_keys=ON`` (only the cache has FK
+            constraints - the mapping store has none). Defaults to False.
+    """
+
+    conn = sqlite3.connect(path)
+    conn.autocommit = sqlite3.LEGACY_TRANSACTION_CONTROL
+    conn.isolation_level = "DEFERRED"
+    try:
+        conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+        if ensure_wal:
+            conn.execute("PRAGMA journal_mode=WAL")
+        if foreign_keys:
+            conn.execute("PRAGMA foreign_keys=ON")
+    except sqlite3.DatabaseError:
+        conn.close()
+        raise
+    return conn
+
+
+def is_corruption(exc: sqlite3.DatabaseError) -> bool:
+    """True if a DatabaseError signals an actually corrupt / not-a-database file.
+
+    The quarantine path destroys (renames) the db, so it must fire ONLY on real
+    corruption - never on a transient ``OperationalError`` (``SQLITE_BUSY`` /
+    ``database is locked``, a disk I/O error), which would otherwise wipe a healthy
+    file on a fluke. Keys on the SQLite extended/primary result code, with a message
+    fallback for builds that don't surface one.
+    """
+
+    code = getattr(exc, "sqlite_errorcode", None)
+    if isinstance(code, int):
+        # Compare the primary result code (low 8 bits) so extended codes match too.
+        primary = code & 0xFF
+        if primary in (sqlite3.SQLITE_NOTADB, sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_FORMAT):
+            return True
+        # A known operational/transient code is explicitly NOT corruption.
+        if primary in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_IOERR):
+            return False
+    msg = str(exc).lower()
+    return any(s in msg for s in ("not a database", "malformed", "file is encrypted"))
+
+
+def quarantine_corrupt(
+    path: str,
+    *,
+    logger: logging.Logger | None,
+    what: str,
+    recovery: str,
+) -> None:
+    """Move an unreadable db (and its WAL/SHM sidecars) aside so a run can recover.
+
+    Fail-open: rather than crash-loop on a corrupt/torn file, rename it to
+    ``<path>.corrupt-<timestamp>`` (kept for inspection) and let the caller start
+    fresh. A fresh db only costs one re-derive pass - the safe direction.
+
+    Args:
+        path (str): Path to the unreadable database.
+        logger (logging.Logger | None): For the one-line quarantine notice.
+        what (str): Human noun for the log line (e.g. ``"Cache database"``).
+        recovery (str): Trailing clause describing the recovery (e.g.
+            ``"started a fresh cache (entries will be re-checked this run)."``).
+    """
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dest = f"{path}.corrupt-{stamp}"
+    with contextlib.suppress(OSError):
+        os.replace(path, dest)
+    for suffix in ("-wal", "-shm"):
+        with contextlib.suppress(OSError):
+            os.replace(path + suffix, dest + suffix)
+    if logger is not None:
+        logger.warning(f"{what} at {path} was unreadable/corrupt; moved it to {dest} and {recovery}")

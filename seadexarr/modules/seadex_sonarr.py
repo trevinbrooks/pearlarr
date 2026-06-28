@@ -140,8 +140,7 @@ def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
 
     release_groups: list[str] = list(episode_sets.keys())
     for i, rg1 in enumerate(release_groups):
-        for rg2 in release_groups[i + 1:]:
-
+        for rg2 in release_groups[i + 1 :]:
             # If either release hasn't been parsed, then we can't rule out an
             # overlap, so assume they overlap
             if len(episode_sets[rg1]) == 0 or len(episode_sets[rg2]) == 0:
@@ -344,11 +343,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         radarr_url = self._config.radarr.url
         radarr_api_key = self._config.radarr.api_key
 
-        if (
-            self.ignore_movies_in_radarr
-            and radarr_url is not None
-            and radarr_api_key is not None
-        ):
+        if self.ignore_movies_in_radarr and radarr_url is not None and radarr_api_key is not None:
             radarr_client = make_radarr_client(
                 url=radarr_url,
                 api_key=radarr_api_key,
@@ -476,41 +471,26 @@ class SonarrSync(ArrSync[SonarrItem]):
         }
 
         # If we don't want to add movies that are already in Radarr, do that now
-        if (
-            self.ignore_movies_in_radarr
-            and self.all_radarr_movies is not None
-        ):
-
+        if self.ignore_movies_in_radarr and self.all_radarr_movies is not None:
             radarr_movies: list[RadarrItem] = []
 
             # Make sure these are flagged as specials since sometimes shows and
             # movies are all lumped together
             mapping_season = mapping.tvdb_season
             if mapping_season == 0:
-
                 mapping_tmdb_id = mapping.tmdb_movie_id
                 mapping_imdb_id = mapping.imdb_id
 
                 for m in self.all_radarr_movies:
-
                     # Check by TMDB IDs
-                    if (
-                        mapping_tmdb_id is not None
-                        and m.tmdbId == mapping_tmdb_id
-                        and m not in radarr_movies
-                    ):
+                    if mapping_tmdb_id is not None and m.tmdbId == mapping_tmdb_id and m not in radarr_movies:
                         radarr_movies.append(m)
 
                     # Check by IMDb IDs
-                    if (
-                        mapping_imdb_id is not None
-                        and m.imdbId == mapping_imdb_id
-                        and m not in radarr_movies
-                    ):
+                    if mapping_imdb_id is not None and m.imdbId == mapping_imdb_id and m not in radarr_movies:
                         radarr_movies.append(m)
 
             if len(radarr_movies) > 0:
-
                 for movie in radarr_movies:
                     run.log_entry_status(
                         EntryState.IN_RADARR,
@@ -705,7 +685,6 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         for srg, srg_item in seadex_dict.items():
             for url_item in srg_item.urls.values():
-
                 if not (url_item.download and url_item.hash):
                     continue
 
@@ -714,7 +693,9 @@ class SonarrSync(ArrSync[SonarrItem]):
                 video_files: list[str] = []
                 video_sizes: list[int] = []
                 for seadex_file, size in zip(
-                    url_item.files, url_item.size, strict=False,
+                    url_item.files,
+                    url_item.size,
+                    strict=False,
                 ):
                     base = os.path.basename(seadex_file)
                     if self._is_video_candidate(base):
@@ -737,9 +718,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                     file_ids = episode_ids_for_parsed(parsed, ep_id_map)
                     if file_ids:
                         file_episode_map[normalize_basename(base)] = file_ids
-                        seasons.update(
-                            ep["season"] for ep in parsed if ep.get("season") is not None
-                        )
+                        seasons.update(ep["season"] for ep in parsed if ep.get("season") is not None)
 
                 season_number = seasons.pop() if len(seasons) == 1 else None
 
@@ -895,7 +874,8 @@ class SonarrSync(ArrSync[SonarrItem]):
         # legacy db can carry a non-dict record), so widen to ``Any`` and keep the
         # defensive ``isinstance`` narrow + cast to the open cache-JSON shape.
         store: dict[str, Any] = cast(
-            "dict[str, Any]", self.cache_store.get_pending(Arr.SONARR),
+            "dict[str, Any]",
+            self.cache_store.get_pending(Arr.SONARR),
         )
         records: list[dict[str, Any]] = []
         for raw in store.values():
@@ -960,10 +940,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         now = time.monotonic()
         interval = self._config.imports.poll_interval
-        if (
-            self._last_refresh_monotonic is not None
-            and now - self._last_refresh_monotonic < interval
-        ):
+        if self._last_refresh_monotonic is not None and now - self._last_refresh_monotonic < interval:
             return
         self._last_refresh_monotonic = now
 
@@ -1071,7 +1048,9 @@ class SonarrSync(ArrSync[SonarrItem]):
         candidates_by_basename = self._candidate_files(candidates)
         ep_id_map = build_episode_id_map(list(episodes_by_id.values()))
         authoritative_map, unplaceable = self._repair_authoritative_map(
-            pending, candidates_by_basename, ep_id_map,
+            pending,
+            candidates_by_basename,
+            ep_id_map,
         )
         if unplaceable:
             self._warn_unplaceable_files(pending, unplaceable)
@@ -1118,8 +1097,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             # loudly only then, debug otherwise. Either way the record is retried,
             # never dropped silently.
             message = indent_string(
-                f"{label}: {len(missing)} intended file(s) not visible to Sonarr "
-                f"for {pending.title}; will retry",
+                f"{label}: {len(missing)} intended file(s) not visible to Sonarr for {pending.title}; will retry",
             )
             if at_deadline:
                 self.logger.warning(message)
@@ -1226,11 +1204,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         # SeaDex order first (so output is stable and the absolute leg's input is
         # deterministic), then any on-disk leaf the SeaDex list didn't name.
-        ordered = [
-            norm
-            for norm in (normalize_basename(name) for name in pending.seadex_files)
-            if norm in on_disk
-        ]
+        ordered = [norm for norm in (normalize_basename(name) for name in pending.seadex_files) if norm in on_disk]
         placed = set(ordered)
         ordered += [norm_base for norm_base in on_disk if norm_base not in placed]
 
@@ -1248,8 +1222,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         leftover = [norm for norm in ordered if norm not in seeded]
         parsed_by_file = {
-            norm_base: self._parsed_file_info(os.path.basename(on_disk[norm_base].path))
-            for norm_base in leftover
+            norm_base: self._parsed_file_info(os.path.basename(on_disk[norm_base].path)) for norm_base in leftover
         }
 
         # The set the leftovers assign into: ordered_episode_ids, or - for a record
@@ -1262,7 +1235,10 @@ class SonarrSync(ArrSync[SonarrItem]):
         leftover_resolved = [i for i in resolved_ids if i not in seeded_ids]
 
         result = assign_episode_ids(
-            leftover, parsed_by_file, leftover_resolved, ep_id_map,
+            leftover,
+            parsed_by_file,
+            leftover_resolved,
+            ep_id_map,
         )
 
         # Self-heal: keep every fresh placement on the record for the run.
@@ -1367,15 +1343,18 @@ class SonarrSync(ArrSync[SonarrItem]):
         our_axes = parse_quality_from_filename(base)
         default_axes = quality_axes_from_name(self._config.imports.default_quality, quality_defs)
         quality = resolve_quality(
-            sonarr_axes, our_axes, default_axes, quality_defs, decision.quality,
+            sonarr_axes,
+            our_axes,
+            default_axes,
+            quality_defs,
+            decision.quality,
         )
         entry["quality"] = quality
         resolved = quality.get("quality") or {}
         if QualitySource.parse(resolved.get("source")) is None:
             self.logger.warning(
                 indent_string(
-                    f"{label}: could not confidently resolve quality for {base}; "
-                    f"importing as Unknown (re-grab risk)",
+                    f"{label}: could not confidently resolve quality for {base}; importing as Unknown (re-grab risk)",
                 ),
             )
         return entry
@@ -1390,10 +1369,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             self.sonarr.all_series,
             fields,
             tuple(self._mappings.anime_id_set(f.mapping_key) for f in fields),
-            (
-                self.anibridge.all_tvdb_ids if self.anibridge else set(),
-                self.anibridge.all_imdb_ids if self.anibridge else set(),
-            ),
+            tuple(self.anibridge.id_set(f.mapping_key) if self.anibridge else set() for f in fields),
         )
 
     def get_ep_list(
@@ -1439,18 +1415,10 @@ class SonarrSync(ArrSync[SonarrItem]):
         # mode rather than re-branching on a string for every episode; the
         # comprehension preserves ep_list order, exactly as the append loop did.
         if mode is MappingMode.ANIME_IDS:
-            final_ep_list = [
-                ep
-                for ep in ep_list
-                if check_ep_by_anime_ids(ep=ep, tvdb_season=tvdb_season)
-            ]
+            final_ep_list = [ep for ep in ep_list if check_ep_by_anime_ids(ep=ep, tvdb_season=tvdb_season)]
         else:
             tvdb_mappings = mapping.tvdb_mappings or {}
-            final_ep_list = [
-                ep
-                for ep in ep_list
-                if check_ep_by_anibridge(ep=ep, tvdb_mappings=tvdb_mappings)
-            ]
+            final_ep_list = [ep for ep in ep_list if check_ep_by_anibridge(ep=ep, tvdb_mappings=tvdb_mappings)]
 
         # For OVAs and movies, the offsets can often be wrong, so if we have specific mappings
         # then take that into account here
@@ -1465,11 +1433,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         # season's {tvdb_ep: anidb_ep} map ({} when none) and raises on an ambiguous
         # id (the former "multiple AniDB mappings found" case).
         anidb_mapping_dict: dict[int, dict[int, int]] = {}
-        if (
-            self._mappings.has_anidb
-            and anidb_id is not None
-            and (al_format not in ["TV"] or tvdb_season == 0)
-        ):
+        if self._mappings.has_anidb and anidb_id is not None and (al_format not in ["TV"] or tvdb_season == 0):
             anidb_mapping_dict = self._mappings.anidb_mapping_dict(anidb_id, tvdb_season)
 
         # Prefer the AniDB mapping dict over any offsets
@@ -1478,14 +1442,14 @@ class SonarrSync(ArrSync[SonarrItem]):
 
             # See if we have the mapping for each entry
             for ep in final_ep_list:
-
                 season_number = ep.season_number
                 episode_number = ep.episode_number
                 if season_number is None or episode_number is None:
                     continue
 
                 anidb_mapping_dict_entry = anidb_mapping_dict.get(
-                    season_number, {},
+                    season_number,
+                    {},
                 ).get(episode_number, None)
                 if anidb_mapping_dict_entry is not None:
                     anidb_final_ep_list.append(ep)
@@ -1537,11 +1501,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         # Check that we're including this by the episode number. This only
         # works for single-seasons, so be careful!
         if tvdb_season != -1:
-            return [
-                ep
-                for ep in final_ep_list
-                if 1 <= (ep.episode_number or 0) - ep_offset <= n_eps
-            ]
+            return [ep for ep in final_ep_list if 1 <= (ep.episode_number or 0) - ep_offset <= n_eps]
 
         return final_ep_list[ep_offset : n_eps + ep_offset]
 
@@ -1561,7 +1521,6 @@ class SonarrSync(ArrSync[SonarrItem]):
         missing_eps = 0
         n_eps = len(ep_list)
         for ep in ep_list:
-
             if ep.episode_file_id == 0:
                 missing_eps += 1
                 continue
@@ -1643,21 +1602,18 @@ class SonarrSync(ArrSync[SonarrItem]):
             )
 
         for release_group_item in seadex_dict.values():
-
             # Set up an overall "all episodes" list (bound locally so the
             # appends below stay typed as list, not list | None)
             all_episodes: list[EpisodeRecord] = []
             release_group_item.all_episodes = all_episodes
 
             for url_item in release_group_item.urls.values():
-
                 # Set up a list to parse episodes from files
                 episodes: list[EpisodeRecord] = []
                 url_item.episodes = episodes
                 sizes = url_item.size
 
                 for sd_file_idx, seadex_file in enumerate(url_item.files):
-
                     # Get basename from the file
                     f = os.path.basename(seadex_file)
 
@@ -1694,12 +1650,12 @@ class SonarrSync(ArrSync[SonarrItem]):
                             continue
 
                         self.cache_store.put_sonarr_parse(
-                            f, {"fetched_at": now_str, "episodes": parsed},
+                            f,
+                            {"fetched_at": now_str, "episodes": parsed},
                         )
 
                     size = sizes[sd_file_idx]
                     for ep in parsed:
-
                         season = ep["season"]
                         episode = ep["episode"]
 
