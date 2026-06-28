@@ -1,4 +1,4 @@
-from typing import Any, override
+from typing import override
 
 from .cache import CacheRecord
 from .config import Arr
@@ -34,10 +34,9 @@ class RadarrSync(ArrSync[RadarrItem]):
         self._config = deps.config
         self.session = deps.session
         self.logger = deps.logger
-        # ``Mappings.anime_mappings`` is an untyped bare ``dict``; narrow it here
-        # to the Kometa Anime-IDs shape ``collect_anime_movies`` consumes
-        # ({anilist_id: mapping}), so the movie collector sees a precise type.
-        self.anime_mappings: dict[str, dict[str, Any]] = deps.mappings.anime_mappings
+        # The resolver supplies the Anime-IDs candidate id-sets (from SQL) that
+        # ``collect_anime_movies`` filters with; the AniBridge view supplies its own.
+        self._mappings = deps.mappings
         self.anibridge = deps.mappings.anibridge
 
         # Connection keys are required only now, when a Radarr run actually runs.
@@ -217,7 +216,7 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         return collect_anime_movies(
             self.radarr,
-            self.anime_mappings,
+            self._mappings,
             self.anibridge,
         )
 

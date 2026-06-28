@@ -21,6 +21,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from .mapping_store import MappingStore
 from .seadex_types import TvdbMappings
 
 type AniBridgeGraph = dict[str, dict[str, dict[str, str]]]
@@ -149,10 +150,16 @@ def _first[T](values: list[T]) -> T | None:
 
 
 class AniBridge:
-    """Indexed view over an anibridge-mappings graph.
+    """Indexed view over an anibridge-mappings graph (in-memory or SQL-backed).
 
-    Parses the graph once at construction and exposes id-keyed lookups plus the
-    sets of ids needed to filter a Sonarr/Radarr library down to anime.
+    Two interchangeable backings behind one interface (``lookup_by_*`` / the
+    ``all_*`` id sets / ``__len__`` / ``__bool__``):
+
+    * **Graph-backed** (``AniBridge(graph)``): parses the graph once into per-AniList
+      records + reverse indexes. This is the parser/populator (its :meth:`to_rows`
+      feeds the SQL store) and the test oracle.
+    * **SQL-backed** (:meth:`from_store`): answers the same lookups from
+      ``mappings.db`` without holding the parsed graph in memory - the runtime path.
 
     Args:
         graph (AniBridgeGraph): Raw anibridge mappings JSON (descriptor -> targets)
@@ -162,6 +169,9 @@ class AniBridge:
     def __init__(self, graph: AniBridgeGraph, logger: logging.Logger | None = None) -> None:
 
         self.logger = logger
+
+        # SQL backing, set only by ``from_store``; None means graph-backed (below).
+        self._store: MappingStore | None = None
 
         # AniList id (int) -> the record of the ids/episode-maps it points to
         self.by_anilist: dict[int, AniBridgeRecord] = {}
@@ -175,14 +185,97 @@ class AniBridge:
         self._parse(graph or {})
 
         # Precomputed id sets for cheap library filtering
-        self.all_tvdb_ids = set(self.tvdb_index)
-        self.all_tmdb_movie_ids = set(self.tmdb_movie_index)
-        self.all_imdb_ids = set(self.imdb_index)
+        self.all_tvdb_ids: set[Any] = set(self.tvdb_index)
+        self.all_tmdb_movie_ids: set[Any] = set(self.tmdb_movie_index)
+        self.all_imdb_ids: set[Any] = set(self.imdb_index)
+
+    @classmethod
+    def from_store(cls, store: MappingStore) -> "AniBridge":
+        """Build a SQL-backed view that answers lookups from ``mappings.db``.
+
+        Holds only the store handle plus the (small) ``all_*`` id sets loaded once;
+        the per-AniList records and reverse indexes live in SQL, so the ~25MB parsed
+        graph is never resident. ``lookup_by_*`` query the store on demand.
+
+        Args:
+            store (MappingStore): Store whose anibridge tables are already populated.
+        """
+
+        self = cls.__new__(cls)
+        self.logger = None
+        self._store = store
+        # The graph-backed fields stay empty; the store answers everything.
+        self.by_anilist = {}
+        self.tvdb_index = defaultdict(set)
+        self.tmdb_show_index = defaultdict(set)
+        self.tmdb_movie_index = defaultdict(set)
+        self.imdb_index = defaultdict(set)
+        self.all_tvdb_ids = store.anibridge_distinct("tvdb")
+        self.all_tmdb_movie_ids = store.anibridge_distinct("tmdb_movie")
+        self.all_imdb_ids = store.anibridge_distinct("imdb")
+        return self
+
+    def to_rows(
+        self,
+    ) -> tuple[
+        list[tuple[object, ...]],
+        list[tuple[object, ...]],
+        list[tuple[object, ...]],
+    ]:
+        """Flatten this (graph-backed) view into store row tuples.
+
+        Persists the *computed* consumer-entry picks (``_first`` / ``next(iter)``) so
+        the SQL backing reproduces :meth:`_consumer_entry` with zero re-derivation.
+
+        Returns:
+            tuple: ``(entries, xrefs, ranges)`` row lists for
+                :meth:`MappingStore.replace_anibridge`.
+        """
+
+        entries: list[tuple[object, ...]] = []
+        ranges: list[tuple[object, ...]] = []
+        for anilist_id, record in self.by_anilist.items():
+            entries.append((
+                anilist_id,
+                record.anidb_id,
+                _first(record.imdb_ids),
+                _first(record.tmdb_movie_ids),
+                _first(record.mal_ids),
+                next(iter(record.tvdb_shows), None),
+                next(iter(record.tmdb_shows), None),
+            ))
+            for tvdb_id, seasons in record.tvdb_shows.items():
+                for season, range_list in seasons.items():
+                    if not range_list:
+                        # Present-but-empty season: a NULL-start marker so it
+                        # round-trips as ``{season: []}`` ("whole season covered")
+                        # rather than collapsing to a missing season.
+                        ranges.append((anilist_id, tvdb_id, season, None, None))
+                        continue
+                    for start, end in range_list:
+                        ranges.append((anilist_id, tvdb_id, season, start, end))
+
+        xrefs: list[tuple[object, ...]] = []
+        for axis, index in (
+            ("tvdb", self.tvdb_index),
+            ("tmdb_show", self.tmdb_show_index),
+            ("tmdb_movie", self.tmdb_movie_index),
+            ("imdb", self.imdb_index),
+        ):
+            for ext_id, anilist_ids in index.items():
+                for anilist_id in anilist_ids:
+                    xrefs.append((axis, ext_id, anilist_id))
+
+        return entries, xrefs, ranges
 
     def __bool__(self) -> bool:
+        if self._store is not None:
+            return self._store.anibridge_len() > 0
         return bool(self.by_anilist)
 
     def __len__(self) -> int:
+        if self._store is not None:
+            return self._store.anibridge_len()
         return len(self.by_anilist)
 
     def _parse(self, graph: AniBridgeGraph) -> None:
@@ -335,12 +428,76 @@ class AniBridge:
 
         return entry
 
+    @staticmethod
+    def _ranges_to_mappings(rows: list[tuple[int, int | None, int | None]]) -> TvdbMappings:
+        """Rebuild a season -> ``[(start, end)]`` map from ordered range rows.
+
+        ``rows`` arrive in populate (insertion) order, so each season's range list
+        is rebuilt in the same order the in-memory view appended them. A NULL-start
+        marker row creates the season key with an empty list (present-but-empty
+        season), exactly mirroring the in-memory ``{season: []}``. Season key order
+        is irrelevant to dict equality.
+        """
+
+        mappings: TvdbMappings = {}
+        for season, start, end in rows:
+            bucket = mappings.setdefault(season, [])
+            if start is not None:
+                bucket.append((start, end))
+        return mappings
+
+    def _sql_consumer_entry(
+        self,
+        store: MappingStore,
+        anilist_id: int,
+        tvdb_id: int | None = None,
+        tmdb_show_id: int | None = None,
+    ) -> AniBridgeEntry:
+        """SQL twin of :meth:`_consumer_entry`, built from the stored picks.
+
+        Reproduces the same dict (including the ``mal_id`` / ``tmdb_show_id`` /
+        ``source`` fields), so a parity check against the graph-backed lookup is
+        exact. ``tvdb_mappings`` is attached whenever ``tvdb_id`` is supplied: the
+        only caller is :meth:`lookup_by_tvdb`, iterating the tvdb reverse index, so
+        ``tvdb_id`` is guaranteed present on the record (matching the in-memory
+        ``tvdb_id in record.tvdb_shows`` guard).
+        """
+
+        row = store.anibridge_entry(anilist_id)
+        # The xref guarantees an entry row exists for this anilist_id.
+        anidb_id, imdb_id, tmdb_movie_id, mal_id, first_tvdb_id, first_tmdb_show_id = row or (
+            None, None, None, None, None, None,
+        )
+
+        entry: dict[str, Any] = {
+            "tvdb_id": tvdb_id if tvdb_id is not None else first_tvdb_id,
+            "anidb_id": anidb_id,
+            "imdb_id": imdb_id,
+            "tmdb_show_id": tmdb_show_id if tmdb_show_id is not None else first_tmdb_show_id,
+            "tmdb_movie_id": tmdb_movie_id,
+            "mal_id": mal_id,
+            "source": "anibridge",
+        }
+
+        if tvdb_id is not None:
+            entry["tvdb_mappings"] = self._ranges_to_mappings(
+                store.anibridge_ranges(anilist_id, tvdb_id),
+            )
+
+        return entry
+
     def lookup_by_tvdb(self, tvdb_id: int) -> AniBridgeLookup:
         """Return "{anilist_id: entry}" for AniList ids mapped to a tvdb id.
 
         Args:
             tvdb_id (int): TVDB series id
         """
+
+        if self._store is not None:
+            return {
+                anilist_id: self._sql_consumer_entry(self._store, anilist_id, tvdb_id=tvdb_id)
+                for anilist_id in self._store.anibridge_anilist_for("tvdb", tvdb_id)
+            }
 
         return {
             anilist_id: self._consumer_entry(anilist_id, tvdb_id=tvdb_id)
@@ -359,6 +516,17 @@ class AniBridge:
             tmdb_type (str): "movie" or "show"
         """
 
+        if self._store is not None:
+            if tmdb_type == "show":
+                return {
+                    anilist_id: self._sql_consumer_entry(self._store, anilist_id, tmdb_show_id=tmdb_id)
+                    for anilist_id in self._store.anibridge_anilist_for("tmdb_show", tmdb_id)
+                }
+            return {
+                anilist_id: self._sql_consumer_entry(self._store, anilist_id)
+                for anilist_id in self._store.anibridge_anilist_for("tmdb_movie", tmdb_id)
+            }
+
         if tmdb_type == "show":
             return {
                 anilist_id: self._consumer_entry(anilist_id, tmdb_show_id=tmdb_id)
@@ -376,6 +544,12 @@ class AniBridge:
         Args:
             imdb_id (str): IMDb id (e.g. "tt0094625")
         """
+
+        if self._store is not None:
+            return {
+                anilist_id: self._sql_consumer_entry(self._store, anilist_id)
+                for anilist_id in self._store.anibridge_anilist_for("imdb", imdb_id)
+            }
 
         return {
             anilist_id: self._consumer_entry(anilist_id)

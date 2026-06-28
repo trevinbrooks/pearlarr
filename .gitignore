@@ -224,6 +224,10 @@ cache.db-wal
 cache.db-shm
 cache.backup.db
 cache.db.corrupt-*
+mappings.db
+mappings.db-wal
+mappings.db-shm
+mappings.db.corrupt-*
 .seadexarr.lock
 logs/
 

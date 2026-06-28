@@ -2,7 +2,6 @@ import os
 import time
 from datetime import datetime, timedelta
 from typing import Any, cast, override
-from xml.etree import ElementTree
 
 from . import coverage as _coverage
 from .anilist import (
@@ -120,44 +119,6 @@ NON_VIDEO_EXTENSIONS = {
 # the current library, so a wrong-but-non-empty match could otherwise be trusted
 # forever; re-validate monthly so such an entry self-heals.
 SONARR_PARSE_CACHE_TTL_DAYS = 30
-
-
-def _parse_anidb_mapping_dict(
-    anidb_item: ElementTree.Element,
-    tvdb_season: int,
-) -> dict[int, dict[int, int]]:
-    """Parse an AniDB anime element's ``mapping-list`` into a season -> map dict.
-
-    Args:
-        anidb_item (ElementTree.Element): A single AniDB ``anime`` element.
-        tvdb_season (int): The TVDB season AniList resolved to; only mappings
-            whose ``tvdbseason`` agrees are kept.
-
-    Returns:
-        dict[int, dict[int, int]]: ``{tvdbseason: {tvdb_episode: anidb_episode}}``.
-            An empty ``mapping-list`` findall intentionally yields an empty dict
-            (the loops simply don't run); a repeated season is last-wins.
-    """
-
-    result: dict[int, dict[int, int]] = {}
-
-    for ms in anidb_item.findall("mapping-list"):
-        for i in ms.findall("mapping"):
-
-            # If there's no text, continue
-            if not i.text:
-                continue
-
-            # Only match things if AniList and AniDB agree on the TVDB season
-            anidb_tvdbseason = int(i.attrib["tvdbseason"])
-            if anidb_tvdbseason != tvdb_season:
-                continue
-
-            # Split at semicolons, then at hyphens; orientation is {end: start}
-            i_split = [x.split("-") for x in i.text.strip(";").split(";")]
-            result[anidb_tvdbseason] = {int(x[1]): int(x[0]) for x in i_split}
-
-    return result
 
 
 def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
@@ -316,8 +277,6 @@ class SonarrSync(ArrSync[SonarrItem]):
         self.session = deps.session
         self.logger = deps.logger
         self._mappings = deps.mappings
-        self.anime_mappings = deps.mappings.anime_mappings
-        self.anidb_mappings = deps.mappings.anidb_mappings
         self.anibridge = deps.mappings.anibridge
         self.cache_store = deps.cache_store
         self.log_fmt = deps.log_fmt
@@ -398,7 +357,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             )
             self.all_radarr_movies = collect_anime_movies(
                 radarr_client,
-                self.anime_mappings,
+                self._mappings,
                 self.anibridge,
             )
 
@@ -1426,10 +1385,11 @@ class SonarrSync(ArrSync[SonarrItem]):
     def get_all_sonarr_series(self) -> list[SonarrItem]:
         """Get all series in Sonarr with AniList mapping info"""
 
+        fields = (IdField("tvdb_id", "tvdbId"), IdField("imdb_id", "imdbId"))
         return collect_anime_items(
             self.sonarr.all_series,
-            self.anime_mappings,
-            (IdField("tvdb_id", "tvdbId"), IdField("imdb_id", "imdbId")),
+            fields,
+            tuple(self._mappings.anime_id_set(f.mapping_key) for f in fields),
             (
                 self.anibridge.all_tvdb_ids if self.anibridge else set(),
                 self.anibridge.all_imdb_ids if self.anibridge else set(),
@@ -1501,28 +1461,16 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         # Potentially pull out a bunch of mappings from AniDB. These should
         # be for anything not marked as TV, and specials as marked by
-        # being in Season 0
+        # being in Season 0. The resolver owns the AniDB parse now: it returns the
+        # season's {tvdb_ep: anidb_ep} map ({} when none) and raises on an ambiguous
+        # id (the former "multiple AniDB mappings found" case).
         anidb_mapping_dict: dict[int, dict[int, int]] = {}
         if (
-            self.anidb_mappings is not None
+            self._mappings.has_anidb
             and anidb_id is not None
             and (al_format not in ["TV"] or tvdb_season == 0)
         ):
-            anidb_item = self._mappings.anidb_anime_by_id(anidb_id)
-
-            # If we don't find anything, no worries. If we find multiple, worries
-            if len(anidb_item) > 1:
-                raise ValueError(
-                    "Multiple AniDB mappings found. This should not happen!",
-                )
-
-            # We want things with mapping lists in, since more regular
-            # mappings will have already been picked up
-            if len(anidb_item) == 1:
-                anidb_mapping_dict = _parse_anidb_mapping_dict(
-                    anidb_item[0],
-                    tvdb_season,
-                )
+            anidb_mapping_dict = self._mappings.anidb_mapping_dict(anidb_id, tvdb_season)
 
         # Prefer the AniDB mapping dict over any offsets
         if len(anidb_mapping_dict) > 0:

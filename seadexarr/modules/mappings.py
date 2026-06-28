@@ -1,24 +1,41 @@
 """ID-mapping resolution: external sources -> AniList ids.
 
 ``MappingResolver`` owns the three immutable mapping sources (the Kometa
-Anime-IDs JSON, the AniDB anime-list XML, and the anibridge graph): it
-downloads/refreshes them, parses and indexes them, and resolves an Arr's
-external ids (TVDB / TMDB / IMDb) to the AniList ids they map to.
+Anime-IDs JSON, the AniDB anime-list XML, and the anibridge graph). It
+downloads/refreshes each file, and - only when a file's *content* changes -
+parses and indexes it once into a dedicated SQLite store (``mappings.db``, via
+:class:`~seadexarr.modules.mapping_store.MappingStore`). Lookups are then served
+from SQL, so a process whose source files are unchanged never re-parses or holds
+the ~50MB of parsed structures resident. It resolves an Arr's external ids (TVDB /
+TMDB / IMDb) to the AniList ids they map to.
+
+Visibility: the resolver logs each source's download / cache-hit / parse step and
+streams download progress, and the downloader uses a per-read socket timeout so a
+stalled fetch fails (and is reported) instead of hanging the run forever.
 """
 
+import contextlib
+import hashlib
 import json
 import logging
 import os
-from collections import defaultdict
-from collections.abc import Callable
+import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, StrEnum
 from typing import Any, cast
-from urllib.request import urlretrieve
+from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
 from .anibridge import AniBridge, AniBridgeEntry, AniBridgeGraph, AniBridgeLookup
+from .mapping_store import (
+    INLINE_DIGEST,
+    SOURCE_ANIBRIDGE,
+    SOURCE_ANIDB,
+    SOURCE_ANIME_IDS,
+    MappingStore,
+)
 from .seadex_types import TvdbMappings
 
 type AnimeIdsRecord = dict[str, Any]
@@ -27,20 +44,13 @@ type AnimeIdsRecord = dict[str, Any]
 A loosely-shaped producer dict: a flat record carrying mixed-typed fields
 (``anilist_id``/``tvdb_id``/``tmdb_movie_id``/``imdb_id`` ints or strs,
 ``tvdb_season``/``tvdb_epoffset`` ints). It is read at the raw->typed boundary
-(:func:`_entry_from_raw`) and never modeled as a domain object, so it stays a
-loose ``dict[str, Any]`` like :data:`~seadexarr.modules.anibridge.AniBridgeEntry`.
+(:func:`_entry_from_raw` / :func:`_anime_ids_rows`) and never modeled as a domain
+object, so it stays a loose ``dict[str, Any]`` like
+:data:`~seadexarr.modules.anibridge.AniBridgeEntry`.
 """
 
 type AnimeIdsMap = dict[str, AnimeIdsRecord]
 """The parsed Kometa Anime-IDs JSON: ``{name -> record}`` (~16k entries)."""
-
-type AnimeIdsIndex = dict[str, dict[object, list[AnimeIdsRecord]]]
-"""Reverse index over the Anime-IDs map: field name -> {external id -> [record]}.
-
-The external-id key is ``object`` because the index buckets records by whatever
-each field carries verbatim (ints for ``tvdb_id``/``tmdb_*_id``, strs for
-``imdb_id``); lookups pass the matching id type back in.
-"""
 
 
 class TmdbType(StrEnum):
@@ -67,11 +77,10 @@ class MappingMode(Enum):
 class MappingEntry:
     """One resolved AniList mapping, as the sync strategies consume it.
 
-    Built at a single raw->typed boundary (:func:`_entry_from_raw`) from the two
-    producers' loosely-shaped dicts: the AniBridge graph attaches
-    ``tvdb_mappings`` (season -> episode ranges) only on a TVDB lookup, while the
-    Kometa Anime-IDs index carries the flat ``tvdb_season`` / ``tvdb_epoffset``
-    fields. The dataclass normalises both into one typed record with attribute
+    Built at the raw->typed boundary from the two producers: the AniBridge graph
+    attaches ``tvdb_mappings`` (season -> episode ranges) only on a TVDB lookup,
+    while the Kometa Anime-IDs records carry the flat ``tvdb_season`` /
+    ``tvdb_epoffset`` fields. Both normalise into one typed record with attribute
     reads; the ``tvdb_mappings``-present-or-not distinction becomes the typed
     :attr:`mode` discriminant.
     """
@@ -101,16 +110,13 @@ class MappingEntry:
 def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> MappingEntry:
     """Build a :class:`MappingEntry` from a producer's raw dict.
 
-    The one place loosely-typed producer dicts (Kometa Anime-IDs records and
-    AniBridge ``_consumer_entry`` dicts) become a typed record. Defaults mirror
-    the former ``.get(..., default)`` reads exactly, so an AniBridge entry
-    (which carries no ``tvdb_season`` / ``tvdb_epoffset``) lands on ``-1`` / ``0``
-    and a Kometa entry (which carries no ``tvdb_mappings``) lands on ``None`` ->
-    :attr:`MappingMode.ANIME_IDS`.
+    The one place a loosely-typed producer dict (an AniBridge ``_consumer_entry``
+    dict) becomes a typed record. Defaults mirror the former ``.get(..., default)``
+    reads exactly, so an AniBridge entry (which carries no ``tvdb_season`` /
+    ``tvdb_epoffset``) lands on ``-1`` / ``0``.
 
     Args:
-        anilist_id (int): AniList id for this entry (the dict key for AniBridge,
-            an in-record field for Kometa).
+        anilist_id (int): AniList id for this entry.
         raw (AnimeIdsRecord | AniBridgeEntry): Producer dict; only the enumerated
             keys are read.
     """
@@ -124,6 +130,30 @@ def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> Ma
         tmdb_movie_id=raw.get("tmdb_movie_id"),
         imdb_id=raw.get("imdb_id"),
         anidb_id=raw.get("anidb_id"),
+    )
+
+
+def _entry_from_anime_row(row: tuple[Any, ...]) -> MappingEntry:
+    """Build a :class:`MappingEntry` from a stored anime_ids row.
+
+    The SQL twin of :func:`_entry_from_raw` for Kometa records: a row never
+    carries ``tvdb_mappings`` (only AniBridge does), so ``mode`` is ANIME_IDS.
+
+    Args:
+        row: ``(anilist_id, tvdb_id, tvdb_season, tvdb_epoffset, tmdb_movie_id,
+            tmdb_show_id, imdb_id, anidb_id)`` as stored.
+    """
+
+    anilist_id, tvdb_id, tvdb_season, tvdb_epoffset, tmdb_movie_id, _tmdb_show_id, imdb_id, anidb_id = row
+    return MappingEntry(
+        anilist_id=anilist_id,
+        tvdb_id=tvdb_id,
+        tvdb_season=tvdb_season,
+        tvdb_epoffset=tvdb_epoffset,
+        tvdb_mappings=None,
+        tmdb_movie_id=tmdb_movie_id,
+        imdb_id=imdb_id,
+        anidb_id=anidb_id,
     )
 
 
@@ -152,48 +182,64 @@ ANIBRIDGE_RELEASE = "v3"
 ANIBRIDGE_MAPPINGS_URL = f"https://github.com/anibridge/anibridge-mappings/releases/download/{ANIBRIDGE_RELEASE}/mappings.min.json"
 ANIBRIDGE_MAPPINGS_FILE = f"anibridge_mappings_{ANIBRIDGE_RELEASE}.json"
 
+# Per-read socket timeout for a source download. A stalled connection raises after
+# this many seconds (reported, then the run skips and retries) instead of hanging
+# forever, which is the behaviour the previous timeout-less urlretrieve had.
+DOWNLOAD_TIMEOUT_S = 30
 
-# --- Shared parse cache for the immutable mapping sources -------------------
-#
-# anime_ids.json, anime-list-master.xml and the anibridge graph are large,
-# read-only files whose parsed and indexed forms never change once an arr
-# instance is built. A scheduled cycle builds a SeaDexRadarr then a SeaDexSonarr
-# in the same process, and each used to independently re-read and re-index all
-# three. This memo caches the parsed result under a stable key, holding a single
-# (mtime, value) slot per key: the second instance reuses the first's parse
-# while the file is unchanged on disk, and a re-download (new mtime) replaces the
-# slot rather than accumulating. The parsed objects are only ever read after
-# construction, so sharing them is safe; the CLI run path is single-threaded, so
-# the plain dict needs no locking.
-_PARSED_MAPPING_CACHE: dict[str, tuple[float, object]] = {}
 
-def _load_mapping_by_mtime[T](
-    path: str,
-    parse: Callable[[str], T],
-    cache_key: str | None = None,
-) -> T:
-    """Return ``parse(path)``, reusing a cached result while the mtime is unchanged.
+def _file_digest(path: str) -> str:
+    """sha256 of a file's bytes - the content key that gates a re-parse."""
 
-    Args:
-        path (str): File whose modification time gates the cache
-        parse (Callable[[str], T]): Builds the parsed value from the path
-        cache_key (str | None): Cache slot to use; defaults to ``path``. Pass a
-            distinct key when more than one product is derived from one file
-            (e.g. the Anime-IDs map and its reverse index).
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _download_file(
+    url: str,
+    dest: str,
+    *,
+    timeout: int,
+    logger: logging.Logger | None,
+    label: str,
+) -> None:
+    """Stream ``url`` to ``dest`` with a socket timeout and throttled progress.
+
+    Writes to a ``.part`` temp and atomically renames on success, so a failed or
+    stalled download never leaves a truncated source file for the next run to
+    digest and trust. A per-read timeout bounds a stall (the read raises rather
+    than blocking forever); progress is logged about once per MB.
     """
 
-    key = cache_key or path
-    mtime = os.path.getmtime(path)
-
-    cached = _PARSED_MAPPING_CACHE.get(key)
-    if cached is not None and cached[0] == mtime:
-        # The slot is type-erased across keys (each holds whatever its parse fn
-        # produced); the call's T is recovered from ``parse``'s return type.
-        return cast(T, cached[1])
-
-    value = parse(path)
-    _PARSED_MAPPING_CACHE[key] = (mtime, value)
-    return value
+    tmp = dest + ".part"
+    try:
+        req = Request(url, headers={"User-Agent": "seadexarr"})
+        with urlopen(req, timeout=timeout) as resp, open(tmp, "wb") as out:  # noqa: S310 (trusted https sources)
+            total = int(resp.headers.get("Content-Length") or 0)
+            got = 0
+            next_mark = 1 << 20
+            while True:
+                chunk = resp.read(1 << 16)
+                if not chunk:
+                    break
+                out.write(chunk)
+                got += len(chunk)
+                if logger is not None and got >= next_mark:
+                    if total:
+                        logger.info(
+                            f"  ...downloading {label}: {got >> 20}/{total >> 20} MB "
+                            f"({got * 100 // total}%)",
+                        )
+                    else:
+                        logger.info(f"  ...downloading {label}: {got >> 20} MB")
+                    next_mark = got + (1 << 20)
+        os.replace(tmp, dest)
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
 
 
 def _parse_anime_mappings(path: str) -> AnimeIdsMap:
@@ -204,42 +250,29 @@ def _parse_anime_mappings(path: str) -> AnimeIdsMap:
         return cast("AnimeIdsMap", json.load(f))
 
 
-def _build_anime_mappings_index(anime_mappings: AnimeIdsMap) -> AnimeIdsIndex:
-    """Build reverse indexes over the Kometa Anime-IDs map for fast lookups
+def _anime_ids_rows(anime_mappings: AnimeIdsMap) -> list[tuple[Any, ...]]:
+    """Flatten the Kometa map into anime_ids store rows (first-seen order).
 
-    Anime-IDs is a flat {name: mapping} dict of ~16k entries. Querying it by
-    external id (the per-series hot path) used to mean a full scan per id type;
-    this groups every mapping with an AniList id by each external id it carries,
-    so get_mappings_from_anime_mappings becomes a dict lookup.
-
-    Args:
-        anime_mappings (AnimeIdsMap): Parsed Anime-IDs map ({name: mapping})
-
-    Returns:
-        AnimeIdsIndex: field name -> {external id -> [mapping, ...]}, for the
-            "tvdb_id", "tmdb_movie_id", "tmdb_show_id" and "imdb_id" fields
+    Every record yields a row (a NULL ``anilist_id`` is kept, so the library-filter
+    candidate sets match the former full-map scan; id->entry lookups filter those
+    out, as the former reverse index did). Each field uses the same
+    ``.get(..., default)`` reads :func:`_entry_from_raw` used, so the SQL-served
+    entry is identical.
     """
 
-    index: AnimeIdsIndex = {
-        "tvdb_id": defaultdict(list[AnimeIdsRecord]),
-        "tmdb_movie_id": defaultdict(list[AnimeIdsRecord]),
-        "tmdb_show_id": defaultdict(list[AnimeIdsRecord]),
-        "imdb_id": defaultdict(list[AnimeIdsRecord]),
-    }
-    for m in anime_mappings.values():
-        if m.get("anilist_id") is None:
-            continue
-        for field, bucket in index.items():
-            value: object = m.get(field)
-            if value is not None:
-                bucket[value].append(m)
-    return index
-
-
-def _parse_anime_mappings_index(path: str) -> AnimeIdsIndex:
-    """Build the Anime-IDs reverse index over the memoized parse of ``path``."""
-
-    return _build_anime_mappings_index(_load_mapping_by_mtime(path, _parse_anime_mappings))
+    rows: list[tuple[Any, ...]] = []
+    for record in anime_mappings.values():
+        rows.append((
+            record.get("anilist_id"),
+            record.get("tvdb_id"),
+            record.get("tvdb_season", -1),
+            record.get("tvdb_epoffset", 0),
+            record.get("tmdb_movie_id"),
+            record.get("tmdb_show_id"),
+            record.get("imdb_id"),
+            record.get("anidb_id"),
+        ))
+    return rows
 
 
 def _parse_anidb_mappings(path: str) -> ElementTree.Element:
@@ -248,21 +281,67 @@ def _parse_anidb_mappings(path: str) -> ElementTree.Element:
     return ElementTree.parse(path).getroot()
 
 
-def _parse_anibridge(path: str, logger: logging.Logger | None) -> AniBridge:
-    """Load the anibridge graph from disk and build its indexed view."""
+def _anidb_rows(root: ElementTree.Element) -> tuple[list[tuple[Any, ...]], list[tuple[int]]]:
+    """Flatten the AniDB XML into ``anidb_mapping`` rows + the ambiguous-id set.
 
-    with open(path) as f:
-        graph = json.load(f)
+    Reproduces the former ``anidb_anime_by_id`` + ``_parse_anidb_mapping_dict``
+    behaviour exactly, but once at populate time:
 
-    return AniBridge(graph, logger=logger)
+    * An anidb id appearing in more than one ``<anime>`` element is *ambiguous*
+      (the former ``len(...) > 1`` -> raise case); it is recorded and stored with
+      no mapping rows, and :meth:`MappingResolver.anidb_mapping_dict` raises on it.
+    * For an unambiguous id, each ``<mapping-list>/<mapping>`` with text is parsed
+      to ``{tvdb_ep: anidb_ep}`` keyed by ``tvdbseason``; a repeated season is
+      last-wins, matching the former dict assignment. Malformed mappings are
+      skipped (the old code only crashed if such an anime was looked up; populating
+      every anime must tolerate what it never reached).
+    """
+
+    counts: dict[int, int] = {}
+    season_maps: dict[int, dict[int, dict[int, int]]] = {}
+    for anime in root.findall("anime"):
+        anidbid = anime.get("anidbid")
+        if anidbid is None:
+            continue
+        try:
+            aid = int(anidbid)
+        except ValueError:
+            continue
+        counts[aid] = counts.get(aid, 0) + 1
+
+        season_map: dict[int, dict[int, int]] = {}
+        for ms in anime.findall("mapping-list"):
+            for i in ms.findall("mapping"):
+                if not i.text:
+                    continue
+                try:
+                    season = int(i.attrib["tvdbseason"])
+                    pairs = [x.split("-") for x in i.text.strip(";").split(";")]
+                    # orientation {tvdb_ep: anidb_ep}; last <mapping> per season wins
+                    season_map[season] = {int(p[1]): int(p[0]) for p in pairs}
+                except (KeyError, ValueError, IndexError):
+                    continue
+        season_maps[aid] = season_map
+
+    rows: list[tuple[Any, ...]] = []
+    for aid, season_map in season_maps.items():
+        if counts[aid] > 1:
+            # Ambiguous: never read (lookup raises first), so store no rows.
+            continue
+        for season, mapping in season_map.items():
+            for tvdb_ep, anidb_ep in mapping.items():
+                rows.append((aid, season, tvdb_ep, anidb_ep))
+
+    ambiguous = [(aid,) for aid, count in counts.items() if count > 1]
+    return rows, ambiguous
 
 
 class MappingResolver:
-    """Resolve external Arr ids to AniList ids via three mapping sources.
+    """Resolve external Arr ids to AniList ids via three SQL-backed sources.
 
-    Loads, downloads-if-stale, parses and indexes the Kometa Anime-IDs map, the
-    AniDB anime-list XML, and the anibridge graph at construction, then answers
-    id lookups. ``get_anilist_ids`` returns the AniList mappings plus the ids it
+    Downloads-if-stale, then - only when a source's content digest changed -
+    parses and indexes it into ``mappings.db`` (owned here). Lookups are answered
+    from SQL. ``get_anilist_ids`` returns the AniList mappings plus the ids it
     dropped because the user chose to ignore them, so the caller (not the
     resolver) owns the per-id logging.
     """
@@ -275,8 +354,10 @@ class MappingResolver:
         anime_mappings_cfg: AnimeIdsMap | bool | None,
         anidb_mappings_cfg: ElementTree.Element | bool | None,
         anibridge_mappings_cfg: AniBridgeGraph | bool | None,
+        mappings_db: str = ":memory:",
+        logger: logging.Logger | None = None,
     ) -> None:
-        """Load and index the mapping sources.
+        """Open the store and load (parse-if-changed) the mapping sources.
 
         Args:
             cache_time (int): Days a downloaded source stays usable before it's
@@ -288,168 +369,215 @@ class MappingResolver:
                 AniDB XML, or a pre-parsed root element.
             anibridge_mappings_cfg: ``False`` to disable, ``None`` to download
                 the anibridge graph, or a raw anibridge graph dict.
+            mappings_db (str): Path to the SQLite mapping cache; defaults to an
+                in-memory db (tests / pre-parsed configs).
+            logger (logging.Logger | None): For download/parse visibility.
         """
 
         self.cache_time = cache_time
         self.ignore_anilist_ids = ignore_anilist_ids
+        self.logger = logger
 
-        # Memoize get_anilist_ids mapping computation per identifying key, so
-        # the prefetch pass and the main loop don't compute it twice per item
+        # Memoize get_anilist_ids per identifying key, so the prefetch pass and the
+        # main loop don't recompute (and re-query) it twice per item.
         self._anilist_ids_cache: dict[
             tuple[int | None, int | None, str | None, TmdbType],
             tuple[dict[int, MappingEntry], list[int]],
         ] = {}
 
-        anime_mappings: AnimeIdsMap
-        anime_mappings_index: AnimeIdsIndex | None
-        if anime_mappings_cfg is False:
-            anime_mappings = {}
-            anime_mappings_index = None
-        elif anime_mappings_cfg is None:
-            anime_mappings = self.get_anime_mappings()
-            anime_mappings_index = self._get_anime_mappings_index()
-        else:
-            # Neither disabled (False) nor download (None): a pre-parsed map dict.
-            assert isinstance(anime_mappings_cfg, dict)
-            anime_mappings = anime_mappings_cfg
-            anime_mappings_index = _build_anime_mappings_index(anime_mappings)
+        # Set by _build; the AniBridge facade is SQL-backed (None when disabled).
+        self.anibridge: AniBridge | None = None
+        self._anime_enabled = False
+        self._anidb_enabled = False
 
-        if anidb_mappings_cfg is False:
-            anidb_mappings = None
-        elif anidb_mappings_cfg is None:
-            anidb_mappings = self.get_anidb_mappings()
-        else:
-            # Neither disabled (False) nor download (None): a pre-parsed root.
-            assert isinstance(anidb_mappings_cfg, ElementTree.Element)
-            anidb_mappings = anidb_mappings_cfg
+        self._store = MappingStore.open(mappings_db, logger=logger)
+        # Close the store on ANY construction failure: the resolver is never
+        # returned on a raise, so nobody else can call close() - a leak that would
+        # accumulate a SQLite fd/WAL handle every scheduled cycle on a persistent
+        # download/parse failure (the old resolver held no resources).
+        try:
+            try:
+                self._build(anime_mappings_cfg, anidb_mappings_cfg, anibridge_mappings_cfg)
+            except sqlite3.DatabaseError:
+                # A read/write error against the on-disk db (e.g. disk full
+                # mid-populate): the atomic replace already rolled back, so nothing
+                # half-built persists and is_fresh stays false. Fall back to a fresh
+                # :memory: store and re-parse so the run still works rather than
+                # serving partial mappings.
+                if mappings_db == ":memory:":
+                    raise
+                if self.logger is not None:
+                    self.logger.warning(
+                        "mappings.db unusable; rebuilding indexes in memory for this run",
+                        exc_info=True,
+                    )
+                self._store.close()
+                self._store = MappingStore.open(":memory:", logger=logger)
+                self._build(anime_mappings_cfg, anidb_mappings_cfg, anibridge_mappings_cfg)
+        except BaseException:
+            self._store.close()
+            raise
 
-        if anibridge_mappings_cfg is False:
-            anibridge = None
-        elif anibridge_mappings_cfg is None:
-            anibridge = self.get_anibridge_mappings()
-        else:
-            # A config-provided value is treated as a raw anibridge graph dict.
-            # Built with logger=None to preserve the previous behaviour (the
-            # base class loaded mappings before its logger existed).
-            assert isinstance(anibridge_mappings_cfg, dict)
-            anibridge = AniBridge(anibridge_mappings_cfg, logger=None)
+    # -- construction --------------------------------------------------------
 
-        self.anime_mappings: AnimeIdsMap = anime_mappings
-        # Reverse indexes over the (large, ~16k-entry) Kometa Anime-IDs map so
-        # get_mappings_from_anime_mappings is an O(matches) dict lookup instead of
-        # three full scans of every mapping per series. Shared across instances
-        # via the mtime memo when both arrs read the same on-disk file.
-        self._anime_mappings_index = anime_mappings_index if anime_mappings else None
-        self.anidb_mappings = anidb_mappings
-        # Lazily-built {anidbid -> [element]} index over the AniDB XML, so the
-        # specials/movie path in get_ep_list does a dict lookup instead of an
-        # XPath scan of every <anime> element. Populated on first use.
-        self._anidb_index: dict[str, list[ElementTree.Element]] | None = None
-        self.anibridge = anibridge
-
-    def get_anime_mappings(self) -> AnimeIdsMap:
-        """Get the anime IDs file"""
-
-        self.get_external_mappings(
-            f=ANIME_IDS_FILE,
-            url=ANIME_IDS_URL,
-        )
-
-        return _load_mapping_by_mtime(ANIME_IDS_FILE, _parse_anime_mappings)
-
-    def _get_anime_mappings_index(self) -> AnimeIdsIndex:
-        """Reverse index over the on-disk Anime-IDs map, shared via the mtime memo.
-
-        Must follow get_anime_mappings (which downloads/refreshes the file); it
-        reuses that memoized parse instead of re-reading the JSON.
-        """
-
-        return _load_mapping_by_mtime(
-            ANIME_IDS_FILE,
-            _parse_anime_mappings_index,
-            cache_key=f"{ANIME_IDS_FILE}#index",
-        )
-
-    def get_anidb_mappings(self) -> ElementTree.Element:
-        """Get the AniDB mappings file"""
-
-        self.get_external_mappings(
-            f=ANIDB_MAPPINGS_FILE,
-            url=ANIDB_MAPPINGS_URL,
-        )
-
-        return _load_mapping_by_mtime(ANIDB_MAPPINGS_FILE, _parse_anidb_mappings)
-
-    def anidb_anime_by_id(self, anidb_id: int) -> list[ElementTree.Element]:
-        """Return the AniDB XML <anime> element(s) for an AniDB id
-
-        Builds (once, lazily) an "{anidbid -> [element]}" index over the parsed
-        AniDB mappings, so callers do a dict lookup instead of an XPath scan of
-        every <anime> element. Returns a list to preserve the caller's existing
-        "0 / 1 / >1 match" handling.
-
-        Args:
-            anidb_id (int): AniDB id to look up
-        """
-
-        if self.anidb_mappings is None:
-            return []
-
-        if self._anidb_index is None:
-            index: dict[str, list[ElementTree.Element]] = defaultdict(list[ElementTree.Element])
-            for anime in self.anidb_mappings.findall("anime"):
-                anidbid = anime.get("anidbid")
-                if anidbid is not None:
-                    index[anidbid].append(anime)
-            self._anidb_index = index
-
-        return self._anidb_index.get(str(anidb_id), [])
-
-    def get_anibridge_mappings(self) -> AniBridge:
-        """Download the anibridge-mappings graph and build an indexed view.
-
-        Returns:
-            AniBridge: Parsed, indexed mappings ready for id lookups
-        """
-
-        self.get_external_mappings(
-            f=ANIBRIDGE_MAPPINGS_FILE,
-            url=ANIBRIDGE_MAPPINGS_URL,
-        )
-
-        # Built with logger=None to preserve the previous behaviour (the base
-        # class loaded mappings before its logger existed).
-        return _load_mapping_by_mtime(
-            ANIBRIDGE_MAPPINGS_FILE,
-            lambda path: _parse_anibridge(path, None),
-        )
-
-    def get_external_mappings(
+    def _build(
         self,
-        f: str,
-        url: str,
-    ) -> bool:
-        """Get an external mapping file, respecting a cache time
+        anime_cfg: AnimeIdsMap | bool | None,
+        anidb_cfg: ElementTree.Element | bool | None,
+        anibridge_cfg: AniBridgeGraph | bool | None,
+    ) -> None:
+        """Load each source into the store per its config (download / inline / off).
 
-        Args:
-            f (str): file on disk
-            url (str): url to download the file from
+        Safe to call twice (the fail-open retry does): each ``replace_*`` fully
+        replaces a source's rows, and the enabled flags / ``anibridge`` facade are
+        simply re-set.
         """
 
-        if not os.path.exists(f):
-            urlretrieve(url, f)
+        if anime_cfg is False:
+            self._anime_enabled = False
+        elif anime_cfg is None:
+            self._anime_enabled = True
+            self._load_anime_ids()
+        else:
+            assert isinstance(anime_cfg, dict)
+            self._anime_enabled = True
+            self._store.replace_anime_ids(INLINE_DIGEST, _anime_ids_rows(anime_cfg))
 
-        f_mtime = os.path.getmtime(f)
-        f_datetime = datetime.fromtimestamp(f_mtime)
-        now_datetime = datetime.now()
+        if anidb_cfg is False:
+            self._anidb_enabled = False
+        elif anidb_cfg is None:
+            self._anidb_enabled = True
+            self._load_anidb()
+        else:
+            assert isinstance(anidb_cfg, ElementTree.Element)
+            self._anidb_enabled = True
+            rows, ambiguous = _anidb_rows(anidb_cfg)
+            self._store.replace_anidb(INLINE_DIGEST, rows, ambiguous)
 
-        t_diff = now_datetime - f_datetime
+        if anibridge_cfg is False:
+            self.anibridge = None
+        elif anibridge_cfg is None:
+            self._load_anibridge()
+        else:
+            assert isinstance(anibridge_cfg, dict)
+            ab = AniBridge(anibridge_cfg, logger=self.logger)
+            self._store.replace_anibridge(INLINE_DIGEST, *ab.to_rows())
+            self.anibridge = AniBridge.from_store(self._store)
 
-        # If the file is older than the cache time, re-download
-        if t_diff.days >= self.cache_time:
-            urlretrieve(url, f)
+    def _maybe_download(self, file: str, url: str, label: str) -> None:
+        """Download ``file`` if missing, or refresh it once it's past cache_time."""
 
-        return True
+        if not os.path.exists(file):
+            self._log(f"Downloading {label}")
+            _download_file(url, file, timeout=DOWNLOAD_TIMEOUT_S, logger=self.logger, label=label)
+            return
+
+        age = datetime.now() - datetime.fromtimestamp(os.path.getmtime(file))
+        if age.days >= self.cache_time:
+            self._log(f"Refreshing {label} (cached {age.days}d >= {self.cache_time}d)")
+            _download_file(url, file, timeout=DOWNLOAD_TIMEOUT_S, logger=self.logger, label=label)
+
+    def _load_anime_ids(self) -> None:
+        """Download + (re)index the Kometa Anime-IDs map only if its content changed."""
+
+        self._maybe_download(ANIME_IDS_FILE, ANIME_IDS_URL, "anime_ids.json")
+        digest = _file_digest(ANIME_IDS_FILE)
+        if self._store.is_fresh(SOURCE_ANIME_IDS, digest):
+            self._log("anime_ids.json unchanged; using cached index")
+            return
+        self._log("Parsing + indexing anime_ids.json ...")
+        t0 = time.perf_counter()
+        rows = _anime_ids_rows(_parse_anime_mappings(ANIME_IDS_FILE))
+        self._store.replace_anime_ids(digest, rows)
+        self._log(f"Indexed anime_ids.json ({len(rows)} records, {time.perf_counter() - t0:.2f}s)")
+
+    def _load_anidb(self) -> None:
+        """Download + (re)index the AniDB anime-list XML only if its content changed."""
+
+        self._maybe_download(ANIDB_MAPPINGS_FILE, ANIDB_MAPPINGS_URL, "anidb anime-list")
+        digest = _file_digest(ANIDB_MAPPINGS_FILE)
+        if self._store.is_fresh(SOURCE_ANIDB, digest):
+            self._log("anidb anime-list unchanged; using cached index")
+            return
+        self._log("Parsing + indexing anidb anime-list ...")
+        t0 = time.perf_counter()
+        rows, ambiguous = _anidb_rows(_parse_anidb_mappings(ANIDB_MAPPINGS_FILE))
+        self._store.replace_anidb(digest, rows, ambiguous)
+        self._log(f"Indexed anidb anime-list ({len(rows)} mappings, {time.perf_counter() - t0:.2f}s)")
+
+    def _load_anibridge(self) -> None:
+        """Download + (re)index the anibridge graph only if its content changed."""
+
+        self._maybe_download(ANIBRIDGE_MAPPINGS_FILE, ANIBRIDGE_MAPPINGS_URL, "anibridge mappings")
+        digest = _file_digest(ANIBRIDGE_MAPPINGS_FILE)
+        if self._store.is_fresh(SOURCE_ANIBRIDGE, digest):
+            self._log("anibridge mappings unchanged; using cached index")
+        else:
+            self._log("Parsing + indexing anibridge mappings ...")
+            t0 = time.perf_counter()
+            with open(ANIBRIDGE_MAPPINGS_FILE) as f:
+                graph = json.load(f)
+            ab = AniBridge(graph, logger=self.logger)
+            self._store.replace_anibridge(digest, *ab.to_rows())
+            self._log(f"Indexed anibridge mappings ({len(ab)} AniList ids, {time.perf_counter() - t0:.2f}s)")
+        self.anibridge = AniBridge.from_store(self._store)
+
+    def _log(self, message: str) -> None:
+        """Emit an INFO line if a logger was injected (no-op otherwise)."""
+
+        if self.logger is not None:
+            self.logger.info(message)
+
+    def close(self) -> None:
+        """Close the mapping store (idempotent); call once per cycle at teardown."""
+
+        self._store.close()
+
+    # -- library-filter id sets ---------------------------------------------
+
+    def anime_id_set(self, column: str) -> set[Any]:
+        """DISTINCT external ids the Anime-IDs source carries for ``column``.
+
+        Backs the library-filter candidate sets (symmetric with AniBridge's
+        ``all_*`` sets), so ``collect_anime_items`` no longer scans the full map.
+        Returns an empty set when the source is disabled.
+        """
+
+        if not self._anime_enabled:
+            return set()
+        return self._store.anime_ids_distinct(column)
+
+    @property
+    def has_anidb(self) -> bool:
+        """True when the AniDB source is enabled (the former ``anidb_mappings is not None``)."""
+
+        return self._anidb_enabled
+
+    # -- anidb episode mapping ----------------------------------------------
+
+    def anidb_mapping_dict(self, anidb_id: int, tvdb_season: int) -> dict[int, dict[int, int]]:
+        """Return ``{tvdb_season: {tvdb_ep: anidb_ep}}`` for an AniDB id + season.
+
+        Replaces the former ``anidb_anime_by_id`` + ``_parse_anidb_mapping_dict``
+        pair: ``{}`` when the source is disabled, the id is unknown, or it has no
+        mapping for the season; raises the same ``ValueError`` when the id was
+        ambiguous (appeared in more than one ``<anime>`` element).
+
+        Args:
+            anidb_id (int): AniDB id to look up.
+            tvdb_season (int): The TVDB season AniList resolved to.
+        """
+
+        if not self._anidb_enabled:
+            return {}
+        if self._store.anidb_is_ambiguous(anidb_id):
+            raise ValueError("Multiple AniDB mappings found. This should not happen!")
+        rows = self._store.anidb_rows(anidb_id, tvdb_season)
+        if not rows:
+            return {}
+        return {tvdb_season: dict(rows)}
+
+    # -- anilist resolution --------------------------------------------------
 
     def get_anilist_ids(
         self,
@@ -458,7 +586,7 @@ class MappingResolver:
         imdb_id: str | None = None,
         tmdb_type: TmdbType = TmdbType.MOVIE,
     ) -> tuple[dict[int, MappingEntry], list[int]]:
-        """Resolve external ids to a sorted {AniList id -> mapping} dict
+        """Resolve external ids to a sorted {AniList id -> mapping} dict.
 
         Args:
             tvdb_id (int): TVDB ID
@@ -475,8 +603,8 @@ class MappingResolver:
 
         _validate_ids(tvdb_id, tmdb_id, imdb_id)
 
-        # The mapping computation is deterministic for a given set of
-        # identifying args, so memoize it and only redo the per-call logging
+        # The mapping computation is deterministic for a given set of identifying
+        # args, so memoize it and only redo the per-call logging.
         key = (tvdb_id, tmdb_id, imdb_id, tmdb_type)
         if key in self._anilist_ids_cache:
             anilist_mappings, ids_to_drop = self._anilist_ids_cache[key]
@@ -484,7 +612,7 @@ class MappingResolver:
             anilist_mappings: dict[int, MappingEntry] = {}
 
             # AniBridge is the primary source: its richer per-season episode
-            # offsets win, so query it first and key results by AniList ID
+            # offsets win, so query it first and key results by AniList ID.
             if self.anibridge:
                 anilist_mappings = self.get_mappings_from_anibridge_mappings(
                     tvdb_id=tvdb_id,
@@ -495,8 +623,8 @@ class MappingResolver:
                 )
 
             # Then fall back to the Kometa Anime IDs for anything AniBridge
-            # doesn't cover (it only adds AniList IDs not already present)
-            if self.anime_mappings:
+            # doesn't cover (it only adds AniList IDs not already present).
+            if self._anime_enabled:
                 anilist_mappings = self.get_mappings_from_anime_mappings(
                     tvdb_id=tvdb_id,
                     tmdb_id=tmdb_id,
@@ -505,7 +633,7 @@ class MappingResolver:
                     anilist_mappings=anilist_mappings,
                 )
 
-            # Drop any AniList IDs the user has chosen to ignore
+            # Drop any AniList IDs the user has chosen to ignore.
             ids_to_drop = [
                 al_id
                 for al_id in self.ignore_anilist_ids
@@ -514,12 +642,12 @@ class MappingResolver:
             for al_id in ids_to_drop:
                 del anilist_mappings[al_id]
 
-            # Sort by AniList ID
+            # Sort by AniList ID.
             anilist_mappings = dict(sorted(anilist_mappings.items()))
 
             self._anilist_ids_cache[key] = (anilist_mappings, ids_to_drop)
 
-        # Return a copy so a caller mutating the result can't corrupt the memo
+        # Return a copy so a caller mutating the result can't corrupt the memo.
         return dict(anilist_mappings), ids_to_drop
 
     def get_mappings_from_anime_mappings(
@@ -530,7 +658,7 @@ class MappingResolver:
         tmdb_type: TmdbType = TmdbType.MOVIE,
         anilist_mappings: dict[int, MappingEntry] | None = None,
     ) -> dict[int, MappingEntry]:
-        """Get mappings from the Anime ID mappings
+        """Get mappings from the Anime ID mappings (served from SQL).
 
         Args:
             tvdb_id (int): TVDB ID
@@ -538,7 +666,7 @@ class MappingResolver:
             imdb_id (int): IMDb ID
             tmdb_type (TmdbType): Which TMDB id space the tmdb_id is in.
             anilist_mappings (dict): Dictionary of AniList mappings.
-                Defaults to None, which will create a new dictionary
+                Defaults to None, which will create a new dictionary.
         """
 
         if anilist_mappings is None:
@@ -546,17 +674,17 @@ class MappingResolver:
 
         _validate_ids(tvdb_id, tmdb_id, imdb_id)
 
-        index = self._anime_mappings_index
-        if index is None:
+        if not self._anime_enabled:
             return anilist_mappings
 
-        # Add the first mapping seen for each AniList id, matching the previous
-        # "don't clobber an id another query already produced" behaviour
-        def merge(field: str, value: object) -> None:
-            for m in index[field].get(value, ()):
-                anilist_id: int = m["anilist_id"]
+        # Add the first row seen for each AniList id (rows come back in first-seen
+        # order), matching the previous "don't clobber an id another query already
+        # produced" behaviour.
+        def merge(column: str, value: object) -> None:
+            for row in self._store.anime_ids_lookup(column, value):
+                anilist_id = cast("int", row[0])
                 if anilist_id not in anilist_mappings:
-                    anilist_mappings[anilist_id] = _entry_from_raw(anilist_id, m)
+                    anilist_mappings[anilist_id] = _entry_from_anime_row(row)
 
         if tvdb_id is not None:
             merge("tvdb_id", tvdb_id)
@@ -575,7 +703,7 @@ class MappingResolver:
         tmdb_type: TmdbType = TmdbType.MOVIE,
         anilist_mappings: dict[int, MappingEntry] | None = None,
     ) -> dict[int, MappingEntry]:
-        """Get mappings from the AniBridge mappings
+        """Get mappings from the AniBridge mappings (served from SQL).
 
         Args:
             tvdb_id (int): TVDB ID
@@ -583,7 +711,7 @@ class MappingResolver:
             imdb_id (int): IMDb ID
             tmdb_type (TmdbType): Which TMDB id space the tmdb_id is in.
             anilist_mappings (dict): Dictionary of AniList mappings.
-                Defaults to None, which will create a new dictionary
+                Defaults to None, which will create a new dictionary.
         """
 
         if anilist_mappings is None:

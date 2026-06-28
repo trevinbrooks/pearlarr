@@ -68,15 +68,17 @@ def _remove_db_sidecars(db_path: str) -> None:
 def _build_shared(
     config: str,
     logger: logging.Logger,
+    mappings_db: str,
 ) -> tuple[AppConfig, MappingResolver] | None:
     """Load the config once and build the id-mapping resolver both arrs share.
 
     The config is read and validated a single time and returned so each arr
     reuses it (one read+sync per run, not one per arr); the resolver settings are
     arr-independent, so it's loaded as "sonarr" purely to read them. The resolver
-    downloads, parses and indexes the three large mapping sources once and is then
-    injected (by ``_run_arr``) into both arrs, so that work also happens a single
-    time per run.
+    downloads-if-stale and (only when a source's content changed) parses+indexes
+    the three large mapping sources into ``mappings.db``, then serves both arrs
+    from SQL; it is injected (by ``_run_arrs``) into both, so that work happens a
+    single time per run and is skipped entirely when the sources are unchanged.
 
     Returns ``(app_config, resolver)``, or None - after logging the specific
     cause - when the config is missing/unreadable or a mapping source can't be
@@ -116,6 +118,8 @@ def _build_shared(
             anime_mappings_cfg=app_config.mappings.anime_mappings,
             anidb_mappings_cfg=app_config.mappings.anidb_mappings,
             anibridge_mappings_cfg=app_config.mappings.anibridge_mappings,
+            mappings_db=mappings_db,
+            logger=logger,
         )
     except Exception:
         logger.error(
@@ -163,46 +167,53 @@ def _run_arrs(
             )
             return False
 
-        shared = _build_shared(config, logger)
+        # The parsed/indexed mapping cache lives beside cache.db in the data dir.
+        mappings_db = os.path.join(data_dir, "mappings.db")
+        shared = _build_shared(config, logger, mappings_db)
         if shared is None:
             return False
 
         app_config, mappings = shared
-        for arr_name, item_id in arrs:
-            services = None
-            try:
-                deps = RunDeps.build(
-                    arr_name,
-                    config,
-                    cache,
-                    logger,
-                    mappings=mappings,
-                    app_config=app_config,
-                    cache_legacy=cache_legacy,
-                )
-                services = SeaDexArr(deps, arr_name)
-                match arr_name:
-                    case Arr.SONARR:
-                        services.run_sync(
-                            SonarrSync(deps, services),
-                            arr=arr_name,
-                            item_id=item_id,
-                            dry_run=dry_run,
-                            import_wait_mode=import_wait_mode,
-                        )
-                    case Arr.RADARR:
-                        services.run_sync(
-                            RadarrSync(deps, services),
-                            arr=arr_name,
-                            item_id=item_id,
-                            dry_run=dry_run,
-                            import_wait_mode=import_wait_mode,
-                        )
-            except Exception:
-                logger.error(f"Unexpected error during {arr_name.capitalize()} run", exc_info=True)
-            finally:
-                if services is not None:
-                    services.close()
+        try:
+            for arr_name, item_id in arrs:
+                services = None
+                try:
+                    deps = RunDeps.build(
+                        arr_name,
+                        config,
+                        cache,
+                        logger,
+                        mappings=mappings,
+                        app_config=app_config,
+                        cache_legacy=cache_legacy,
+                    )
+                    services = SeaDexArr(deps, arr_name)
+                    match arr_name:
+                        case Arr.SONARR:
+                            services.run_sync(
+                                SonarrSync(deps, services),
+                                arr=arr_name,
+                                item_id=item_id,
+                                dry_run=dry_run,
+                                import_wait_mode=import_wait_mode,
+                            )
+                        case Arr.RADARR:
+                            services.run_sync(
+                                RadarrSync(deps, services),
+                                arr=arr_name,
+                                item_id=item_id,
+                                dry_run=dry_run,
+                                import_wait_mode=import_wait_mode,
+                            )
+                except Exception:
+                    logger.error(f"Unexpected error during {arr_name.capitalize()} run", exc_info=True)
+                finally:
+                    if services is not None:
+                        services.close()
+        finally:
+            # The resolver owns mappings.db (shared across both arrs); close it once
+            # the cycle is done so the connection / WAL handles are released.
+            mappings.close()
 
         return True
 

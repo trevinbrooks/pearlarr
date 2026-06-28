@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 import requests
 from arrapi import RadarrAPI
@@ -111,17 +111,28 @@ class IdField:
     item_attr: str  # e.g. "tmdbId" / "tvdbId"
 
 
+class AnimeIdSets(Protocol):
+    """The slice of ``MappingResolver`` the library filter needs.
+
+    A structural type so this module needn't import ``MappingResolver`` (which
+    imports this one). Supplies the DISTINCT Anime-IDs id set for a given column.
+    """
+
+    def anime_id_set(self, column: str) -> set[Any]: ...
+
+
 def collect_anime_items[ItemT: ArrItem](
     list_fn: Callable[[], list[ItemT]],
-    anime_mappings: dict[str, dict[str, Any]] | None,
     fields: tuple[IdField, ...],
+    anime_id_sets: tuple[set[Any], ...],
     anibridge_id_sets: tuple[set[Any], ...],
 ) -> list[ItemT]:
     """Arr library items that have an AniList mapping, sorted by title.
 
-    Builds one candidate id-set per ``fields`` entry (union of the Kometa
-    Anime-IDs values for that key and the matching precomputed AniBridge set),
-    then keeps each item that matches at least one id space.
+    Per ``fields`` entry, unions the precomputed Anime-IDs and AniBridge candidate
+    sets, then keeps each item that matches at least one id space. Both id-set
+    tuples are aligned to ``fields`` by position (the Anime-IDs sets come from
+    ``MappingResolver.anime_id_set``, no longer a scan of the full map).
 
     Generic in ``ItemT`` (a :class:`~.seadex_types.SonarrItem` /
     :class:`~.seadex_types.RadarrItem`), so the filtered list returns the same
@@ -129,28 +140,18 @@ def collect_anime_items[ItemT: ArrItem](
 
     Args:
         list_fn (Callable[[], list[ItemT]]): Returns the unfiltered Arr item list.
-        anime_mappings (dict[str, dict[str, Any]] | None): Kometa Anime-IDs flat
-            {anilist_id: mapping} dict, scanned directly (once, building all id
-            sets in one pass).
-        fields (tuple[IdField, ...]): Id spaces to filter by; one set is built
-            per field, in order.
-        anibridge_id_sets (tuple[set[Any], ...]): Precomputed AniBridge id sets,
-            one per ``fields`` entry in the same order (pass ``set()`` when
-            AniBridge is disabled).
+        fields (tuple[IdField, ...]): Id spaces to filter by, in order.
+        anime_id_sets (tuple[set[Any], ...]): Anime-IDs candidate sets, one per
+            ``fields`` entry in the same order.
+        anibridge_id_sets (tuple[set[Any], ...]): AniBridge candidate sets, one
+            per ``fields`` entry in the same order (pass ``set()`` when disabled).
     """
 
-    # One candidate set per id space, built in a single pass over the mappings
-    matched_sets: list[set[Any]] = [set() for _ in fields]
-    if anime_mappings:
-        for entry in anime_mappings.values():
-            for i, field in enumerate(fields):
-                value = entry.get(field.mapping_key)
-                if value is not None:
-                    matched_sets[i].add(value)
-
-    # AniBridge exposes precomputed id sets (no per-call scan needed)
-    for i, extra in enumerate(anibridge_id_sets):
-        matched_sets[i] |= extra
+    # One candidate set per id space: the two sources' sets unioned.
+    matched_sets: list[set[Any]] = [
+        anime | bridge
+        for anime, bridge in zip(anime_id_sets, anibridge_id_sets, strict=True)
+    ]
 
     # Track kept item ids in a set: "item not in kept" on a growing list is O(n)
     # per check (and compares whole item objects), making the scan quadratic on
@@ -163,8 +164,8 @@ def collect_anime_items[ItemT: ArrItem](
 
         # Keep the item if it matches in any id space
         if any(
-            getattr(item, field.item_attr) in matched_sets[i]
-            for i, field in enumerate(fields)
+            getattr(item, field.item_attr) in matched
+            for field, matched in zip(fields, matched_sets, strict=True)
         ):
             kept.append(item)
             seen_ids.add(item.id)
@@ -176,7 +177,7 @@ def collect_anime_items[ItemT: ArrItem](
 
 def collect_anime_movies(
     radarr_client: RadarrClient,
-    anime_mappings: dict[str, dict[str, Any]] | None,
+    mappings: AnimeIdSets,
     anibridge: AniBridge | None,
 ) -> list[RadarrItem]:
     """Radarr movies that have an AniList mapping, sorted by title.
@@ -188,16 +189,17 @@ def collect_anime_movies(
 
     Args:
         radarr_client (RadarrClient): Client to fetch the movie list from.
-        anime_mappings (dict[str, dict[str, Any]] | None): Kometa Anime-IDs flat
-            {anilist_id: mapping} dict, scanned directly.
-        anibridge (object | None): AniBridge mappings, exposing precomputed
+        mappings (AnimeIdSets): Resolver exposing ``anime_id_set(column)`` for the
+            Anime-IDs candidate sets.
+        anibridge (AniBridge | None): AniBridge view, exposing precomputed
             ``all_tmdb_movie_ids`` / ``all_imdb_ids`` sets.
     """
 
+    fields = (IdField("tmdb_movie_id", "tmdbId"), IdField("imdb_id", "imdbId"))
     return collect_anime_items(
         radarr_client.all_movies,
-        anime_mappings,
-        (IdField("tmdb_movie_id", "tmdbId"), IdField("imdb_id", "imdbId")),
+        fields,
+        tuple(mappings.anime_id_set(f.mapping_key) for f in fields),
         (
             anibridge.all_tmdb_movie_ids if anibridge else set(),
             anibridge.all_imdb_ids if anibridge else set(),

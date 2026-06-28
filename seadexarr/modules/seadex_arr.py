@@ -248,17 +248,14 @@ class SeaDexArr:
         """
 
         # Unpack the injected collaborators into the attribute names the run loop
-        # and pipeline methods read directly. anime_mappings / anidb_mappings /
-        # anibridge are read off the shared resolver (read-only; it owns them).
+        # and pipeline methods read directly. The mapping sources are reached
+        # through the shared resolver (self._mappings), which owns them.
         self._config = deps.config
         self._arr_config = deps.arr_config
         self.config_file = deps.config_file
         self.session = deps.session
         self.qbit = deps.qbit
         self._mappings = deps.mappings
-        self.anime_mappings = deps.mappings.anime_mappings
-        self.anidb_mappings = deps.mappings.anidb_mappings
-        self.anibridge = deps.mappings.anibridge
         self.logger = deps.logger
         self._seadex = deps.seadex
         self.cache_file = deps.cache_file
