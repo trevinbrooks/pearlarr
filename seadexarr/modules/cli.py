@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import contextlib
 import logging
 import os
@@ -5,20 +7,27 @@ import shutil
 import sqlite3
 import time
 from datetime import datetime, timedelta
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import typer
 from pydantic import ValidationError
 
-from .cache import CacheStore
+from .boot_view import BootView, make_boot_view
 from .config import AppConfig, Arr
 from .log import setup_logger
 from .manual_import import ImportWaitMode
-from .mappings import MappingResolver
 from .runlock import single_instance_lock
-from .seadex_arr import RunDeps, SeaDexArr
-from .seadex_radarr import RadarrSync
-from .seadex_sonarr import SonarrSync
+
+if TYPE_CHECKING:
+    # Imported only for annotations - the runtime import lives in _build_shared, so
+    # the resolver's deps aren't pulled at CLI module load (see the note above).
+    from .mappings import MappingResolver
+
+# The heavy clients (qBittorrent / arrapi / the SeaDex+httpx chain via cache) are
+# imported lazily inside the functions that use them, NOT at module load, so the
+# CLI starts and prints its title without paying ~150ms+ for libraries a `--help`
+# or a config/cache subcommand never touches. ``ImportWaitMode`` stays eager: it
+# rides a typer command signature, which typer resolves at invocation.
 
 seadexarr_cli = typer.Typer(name="seadexarr_cli")
 seadexarr_run = typer.Typer(name="run")
@@ -69,6 +78,7 @@ def _build_shared(
     config: str,
     logger: logging.Logger,
     mappings_db: str,
+    boot: BootView,
 ) -> tuple[AppConfig, MappingResolver] | None:
     """Load the config once and build the id-mapping resolver both arrs share.
 
@@ -87,8 +97,11 @@ def _build_shared(
     needs to fix their config or a source endpoint was unreachable.
     """
 
+    from .mappings import MappingResolver
+
     try:
-        app_config = AppConfig.load(config)
+        with boot.step("Reading config"):
+            app_config = AppConfig.load(config)
     except FileNotFoundError:
         logger.error(
             f"No config file at {config} - a starter template was written; fill it in and re-run. Skipping this run.",
@@ -107,15 +120,20 @@ def _build_shared(
         return None
 
     try:
-        resolver = MappingResolver(
-            cache_time=app_config.advanced.cache_time,
-            ignore_anilist_ids=app_config.seadex.ignore_anilist_ids,
-            anime_mappings_cfg=app_config.mappings.anime_mappings,
-            anidb_mappings_cfg=app_config.mappings.anidb_mappings,
-            anibridge_mappings_cfg=app_config.mappings.anibridge_mappings,
-            mappings_db=mappings_db,
-            logger=logger,
-        )
+        with boot.step("Refreshing mappings") as mapping_step:
+            resolver = MappingResolver(
+                cache_time=app_config.advanced.cache_time,
+                ignore_anilist_ids=app_config.seadex.ignore_anilist_ids,
+                anime_mappings_cfg=app_config.mappings.anime_mappings,
+                anidb_mappings_cfg=app_config.mappings.anidb_mappings,
+                anibridge_mappings_cfg=app_config.mappings.anibridge_mappings,
+                mappings_db=mappings_db,
+                logger=logger,
+                progress=mapping_step,
+            )
+            # Overwrite the per-MB download detail with the final "which sources"
+            # note, so the graduated line reads e.g. "anime-ids · anidb · anibridge".
+            mapping_step.note(resolver.sources_summary())
     except Exception:
         logger.error(
             "Could not fetch/parse the id-mapping sources; skipping this run",
@@ -163,53 +181,77 @@ def _run_arrs(
             )
             return False
 
-        # The parsed/indexed mapping cache lives beside cache.db in the data dir.
-        mappings_db = os.path.join(data_dir, "mappings.db")
-        shared = _build_shared(config, logger, mappings_db)
-        if shared is None:
-            return False
+        # The startup cockpit: an instant brand title, then a live spinner over the
+        # pre-scan IO (config, mappings, cache, qBittorrent, library fetch,
+        # prefetch). Built from the logger's console so it degrades to a calm log
+        # digest on a non-TTY, and closed in the finally so the terminal is always
+        # restored even on an early failure.
+        boot = make_boot_view(logger)
+        boot.banner()
+        # Pull the heavy run machinery now - after the instant title, before the
+        # cockpit's first step - so this one-time import cost lands in the gap
+        # between the banner and the spinner rather than stalling a live step.
+        from .seadex_arr import RunDeps, SeaDexArr
+        from .seadex_radarr import RadarrSync
+        from .seadex_sonarr import SonarrSync
 
-        app_config, mappings = shared
         try:
-            for arr_name, item_id in arrs:
-                services = None
-                try:
-                    deps = RunDeps.build(
-                        arr_name,
-                        config,
-                        cache,
-                        logger,
-                        mappings=mappings,
-                        app_config=app_config,
-                        cache_legacy=cache_legacy,
-                    )
-                    services = SeaDexArr(deps, arr_name)
-                    match arr_name:
-                        case Arr.SONARR:
-                            services.run_sync(
-                                SonarrSync(deps, services),
-                                arr=arr_name,
-                                item_id=item_id,
-                                dry_run=dry_run,
-                                import_wait_mode=import_wait_mode,
-                            )
-                        case Arr.RADARR:
-                            services.run_sync(
-                                RadarrSync(deps, services),
-                                arr=arr_name,
-                                item_id=item_id,
-                                dry_run=dry_run,
-                                import_wait_mode=import_wait_mode,
-                            )
-                except Exception:
-                    logger.error(f"Unexpected error during {arr_name.capitalize()} run", exc_info=True)
-                finally:
-                    if services is not None:
-                        services.close()
+            # The parsed/indexed mapping cache lives beside cache.db in the data dir.
+            mappings_db = os.path.join(data_dir, "mappings.db")
+            shared = _build_shared(config, logger, mappings_db, boot)
+            if shared is None:
+                return False
+
+            app_config, mappings = shared
+            try:
+                for arr_name, item_id in arrs:
+                    services = None
+                    try:
+                        deps = RunDeps.build(
+                            arr_name,
+                            config,
+                            cache,
+                            logger,
+                            mappings=mappings,
+                            app_config=app_config,
+                            cache_legacy=cache_legacy,
+                            boot=boot,
+                        )
+                        services = SeaDexArr(deps, arr_name)
+                        match arr_name:
+                            case Arr.SONARR:
+                                services.run_sync(
+                                    SonarrSync(deps, services),
+                                    arr=arr_name,
+                                    item_id=item_id,
+                                    dry_run=dry_run,
+                                    import_wait_mode=import_wait_mode,
+                                    boot=boot,
+                                )
+                            case Arr.RADARR:
+                                services.run_sync(
+                                    RadarrSync(deps, services),
+                                    arr=arr_name,
+                                    item_id=item_id,
+                                    dry_run=dry_run,
+                                    import_wait_mode=import_wait_mode,
+                                    boot=boot,
+                                )
+                    except Exception:
+                        logger.error(f"Unexpected error during {arr_name.capitalize()} run", exc_info=True)
+                    finally:
+                        # Cap this arr's boot section so the next arr opens a fresh
+                        # one; a no-op on the happy path (run_sync already ended it
+                        # before scanning), the safety net when a step failed.
+                        boot.end_section()
+                        if services is not None:
+                            services.close()
+            finally:
+                # The resolver owns mappings.db (shared across both arrs); close it once
+                # the cycle is done so the connection / WAL handles are released.
+                mappings.close()
         finally:
-            # The resolver owns mappings.db (shared across both arrs); close it once
-            # the cycle is done so the connection / WAL handles are released.
-            mappings.close()
+            boot.close()
 
         return True
 
@@ -243,15 +285,13 @@ def run_scheduled() -> None:
 
     while True:
         logger = setup_logger(log_level="INFO")
-        logger.info("Starting SeaDexArr in scheduled mode")
-
-        present_time = datetime.now().strftime("%H:%M")
-        logger.info(f"Time is {present_time}. Starting scheduled run")
 
         # Build the shared config + id-mapping resolver once and run both arrs
         # (one config read + one download/parse per cycle, reused by both). On a
         # config/source failure _build_shared logs the cause and the cycle is
-        # skipped, so it's retried next pass rather than crashing.
+        # skipped, so it's retried next pass rather than crashing. No ad-hoc
+        # preamble here: the branded title (logged by _run_arrs) leads each cycle,
+        # so the scheduled path reads the same as a single run.
         _run_arrs(
             [(Arr.RADARR, None), (Arr.SONARR, None)],
             config=paths.config,
@@ -260,9 +300,8 @@ def run_scheduled() -> None:
             logger=logger,
         )
 
-        next_run_time = datetime.now() + timedelta(hours=schedule_time)
-        next_run_time = next_run_time.strftime("%H:%M")
-        logger.info(f"Scheduled run complete - next run at {next_run_time}")
+        next_run_time = (datetime.now() + timedelta(hours=schedule_time)).strftime("%H:%M")
+        logger.info(f"Next scheduled run at {next_run_time}")
 
         time.sleep(schedule_time * 3600)
 
@@ -427,6 +466,8 @@ def cache_remove() -> bool:
 def cache_stats() -> bool:
     """Print cache health: per-block row counts and on-disk size."""
 
+    from .cache import CacheStore
+
     paths = _paths()
     if not os.path.exists(paths.cache):
         raise FileNotFoundError(f"File {paths.cache} not found")
@@ -455,6 +496,8 @@ def cache_stats() -> bool:
 @seadexarr_cache.command("check")
 def cache_check() -> bool:
     """Run a SQLite integrity check on the cache database and print the result."""
+
+    from .cache import CacheStore
 
     paths = _paths()
     if not os.path.exists(paths.cache):

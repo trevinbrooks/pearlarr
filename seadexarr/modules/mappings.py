@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, StrEnum
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
@@ -200,6 +200,17 @@ def _file_digest(path: str) -> str:
     return h.hexdigest()
 
 
+class DownloadProgress(Protocol):
+    """A sink for streaming download progress - drives the boot cockpit's bar.
+
+    Structural, so the boot view's step handle satisfies it without this data
+    module importing the UI layer. ``fraction`` is 0-1 download completion;
+    ``detail`` is a short human note (the file + MB).
+    """
+
+    def progress(self, fraction: float, detail: str | None = None) -> None: ...
+
+
 def _download_file(
     url: str,
     dest: str,
@@ -207,13 +218,16 @@ def _download_file(
     timeout: int,
     logger: logging.Logger | None,
     label: str,
+    progress: DownloadProgress | None = None,
 ) -> None:
     """Stream ``url`` to ``dest`` with a socket timeout and throttled progress.
 
     Writes to a ``.part`` temp and atomically renames on success, so a failed or
     stalled download never leaves a truncated source file for the next run to
     digest and trust. A per-read timeout bounds a stall (the read raises rather
-    than blocking forever); progress is logged about once per MB.
+    than blocking forever). Progress is reported about once per MB - to the boot
+    cockpit's live bar when a ``progress`` sink is given, else (standalone use) as
+    a throttled DEBUG line.
     """
 
     tmp = dest + ".part"
@@ -229,13 +243,12 @@ def _download_file(
                     break
                 out.write(chunk)
                 got += len(chunk)
-                if logger is not None and got >= next_mark:
-                    if total:
-                        logger.info(
-                            f"  ...downloading {label}: {got >> 20}/{total >> 20} MB ({got * 100 // total}%)",
-                        )
-                    else:
-                        logger.info(f"  ...downloading {label}: {got >> 20} MB")
+                if got >= next_mark:
+                    if progress is not None and total:
+                        progress.progress(got / total, f"{label} · {got >> 20}/{total >> 20} MB")
+                    elif logger is not None:
+                        suffix = f"{got >> 20}/{total >> 20} MB ({got * 100 // total}%)" if total else f"{got >> 20} MB"
+                        logger.debug(f"  ...downloading {label}: {suffix}")
                     next_mark = got + (1 << 20)
         os.replace(tmp, dest)
     finally:
@@ -367,6 +380,7 @@ class MappingResolver:
         anibridge_mappings_cfg: AniBridgeGraph | bool | None,
         mappings_db: str = ":memory:",
         logger: logging.Logger | None = None,
+        progress: DownloadProgress | None = None,
     ) -> None:
         """Open the store and load (parse-if-changed) the mapping sources.
 
@@ -382,12 +396,17 @@ class MappingResolver:
                 the anibridge graph, or a raw anibridge graph dict.
             mappings_db (str): Path to the SQLite mapping cache; defaults to an
                 in-memory db (tests / pre-parsed configs).
-            logger (logging.Logger | None): For download/parse visibility.
+            logger (logging.Logger | None): For download/parse visibility (DEBUG;
+                the boot cockpit owns the INFO-level startup narrative).
+            progress (DownloadProgress | None): The boot cockpit's step handle, fed
+                streaming download progress for the live bar. Defaults to None (no
+                cockpit: progress falls back to throttled DEBUG lines).
         """
 
         self.cache_time = cache_time
         self.ignore_anilist_ids = ignore_anilist_ids
         self.logger = logger
+        self._progress = progress
 
         # Memoize get_anilist_ids per identifying key, so the prefetch pass and the
         # main loop don't recompute (and re-query) it twice per item.
@@ -480,13 +499,17 @@ class MappingResolver:
 
         if not os.path.exists(file):
             self._log(f"Downloading {label}")
-            _download_file(url, file, timeout=DOWNLOAD_TIMEOUT_S, logger=self.logger, label=label)
+            _download_file(
+                url, file, timeout=DOWNLOAD_TIMEOUT_S, logger=self.logger, label=label, progress=self._progress
+            )
             return
 
         age = datetime.now() - datetime.fromtimestamp(os.path.getmtime(file))
         if age.days >= self.cache_time:
             self._log(f"Refreshing {label} (cached {age.days}d >= {self.cache_time}d)")
-            _download_file(url, file, timeout=DOWNLOAD_TIMEOUT_S, logger=self.logger, label=label)
+            _download_file(
+                url, file, timeout=DOWNLOAD_TIMEOUT_S, logger=self.logger, label=label, progress=self._progress
+            )
 
     def _load_anime_ids(self) -> None:
         """Download + (re)index the Kometa Anime-IDs map only if its content changed."""
@@ -534,10 +557,27 @@ class MappingResolver:
         self.anibridge = AniBridge.from_store(self._store)
 
     def _log(self, message: str) -> None:
-        """Emit an INFO line if a logger was injected (no-op otherwise)."""
+        """Emit a DEBUG line if a logger was injected (no-op otherwise).
+
+        The boot cockpit owns the INFO-level startup narrative (the "Refreshing
+        mappings" step + its live bar + finish line), so these per-source
+        download/parse/cache-hit notes stay at DEBUG to keep a normal run calm.
+        """
 
         if self.logger is not None:
-            self.logger.info(message)
+            self.logger.debug(message)
+
+    def sources_summary(self) -> str:
+        """A compact "which sources are active" note for the boot step detail."""
+
+        names: list[str] = []
+        if self._anime_enabled:
+            names.append("anime-ids")
+        if self._anidb_enabled:
+            names.append("anidb")
+        if self.anibridge is not None:
+            names.append("anibridge")
+        return " · ".join(names) if names else "none enabled"
 
     def close(self) -> None:
         """Close the mapping store (idempotent); call once per cycle at teardown."""

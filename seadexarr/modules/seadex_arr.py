@@ -12,11 +12,13 @@ from seadex import EntryRecord
 
 from . import coverage as _coverage
 from .anilist_gateway import AniListGateway
+from .boot_view import BootView, NullBootView
 from .cache import UPDATED_AT_STR_FORMAT, CacheRecord, CacheStore
 from .config import PRIVATE_TRACKERS, AppConfig, Arr, ArrSettings
 from .log import (
     EntryState,
     LogFormatter,
+    count_noun,
     indent_string,
     setup_logger,
 )
@@ -102,6 +104,7 @@ class RunDeps:
         mappings: MappingResolver,
         app_config: AppConfig | None = None,
         cache_legacy: str | None = None,
+        boot: BootView | None = None,
     ) -> "RunDeps":
         """Construct the shared collaborators in dependency order.
 
@@ -119,7 +122,12 @@ class RunDeps:
                 run. Defaults to None, which loads it here.
             cache_legacy (str | None, optional): Path to a legacy ``cache.json`` to
                 migrate into ``cache.db`` when no db exists yet. Defaults to None.
+            boot (BootView | None, optional): The startup cockpit; the qBittorrent
+                login and cache open graduate into it as steps. Defaults to None (a
+                no-op view), so the standalone path runs without a cockpit.
         """
+
+        boot = boot if boot is not None else NullBootView()
 
         # Load, validate, and expose the config file as typed settings. AppConfig
         # owns the file lifecycle (copy-template-if-missing, parse, validate) and is
@@ -151,12 +159,13 @@ class RunDeps:
                 password=password,
                 **app_config.qbittorrent.options,
             )
-            try:
-                client.auth_log_in()
-            except qbittorrentapi.LoginFailed:
-                raise ValueError(
-                    "qBittorrent login failed - check the qbittorrent host and credentials in your config",
-                )
+            with boot.step("Connecting to qBittorrent"):
+                try:
+                    client.auth_log_in()
+                except qbittorrentapi.LoginFailed:
+                    raise ValueError(
+                        "qBittorrent login failed - check the qbittorrent host and credentials in your config",
+                    )
             qbit = client
 
         # Load the cache (or create its schema) and reconcile the descriptor against
@@ -164,12 +173,13 @@ class RunDeps:
         # store that reads the file fresh, so a scheduled Radarr->Sonarr cycle hands
         # off through cache.db rather than shared memory. A legacy cache.json (if
         # present and there's no db yet) is migrated on the first real save.
-        cache_store = CacheStore.load(
-            cache,
-            config_checksum=app_config.checksum(),
-            migrate_from=cache_legacy,
-            logger=logger,
-        )
+        with boot.step("Opening cache"):
+            cache_store = CacheStore.load(
+                cache,
+                config_checksum=app_config.checksum(),
+                migrate_from=cache_legacy,
+                logger=logger,
+            )
 
         # AniList client gateway: owns the in-memory meta cache (al_cache) and the
         # persisted anilist_meta block.
@@ -839,6 +849,7 @@ class SeaDexArr:
         item_id: int | None,
         dry_run: bool,
         import_wait_mode: ImportWaitMode | None = None,
+        boot: BootView | None = None,
     ) -> bool:
         """Shared run scaffolding for both Arr syncers
 
@@ -862,7 +873,12 @@ class SeaDexArr:
             import_wait_mode (ImportWaitMode | None): The CLI ``--import-wait-mode``
                 override, resolved cli > config > default. None falls back to the
                 configured ``import_wait_mode``.
+            boot (BootView | None): The startup cockpit; the library fetch and the
+                metadata prefetch graduate into it as steps, and it is torn down
+                right before the per-item scan begins. Defaults to None (no-op view).
         """
+
+        boot = boot if boot is not None else NullBootView()
 
         # Whether this is a no-op preview - consulted by the mutating helpers
         self.dry_run = dry_run
@@ -891,32 +907,43 @@ class SeaDexArr:
         if self._import_wait_mode is not ImportWaitMode.OFF and not self._is_preview():
             self._prune_expired_pending()
 
-        all_items: list[ItemT] = strategy.get_items()
+        # Fetch the library (the long pre-scan network wait) inside the cockpit so
+        # the spinner animates through it; the count graduates as the step's detail.
+        with boot.step(f"Connecting to {arr.capitalize()}") as connecting:
+            all_items: list[ItemT] = strategy.get_items()
 
-        # If we're targeting a single item, filter down to it
-        if item_id is not None:
-            all_items = strategy.filter_to_single(all_items, item_id)
+            # If we're targeting a single item, filter down to it
+            if item_id is not None:
+                all_items = strategy.filter_to_single(all_items, item_id)
 
-        n_items = len(all_items)
-
-        self._reporter.log_arr_start(arr, n_items)
+            n_items = len(all_items)
+            connecting.note(
+                count_noun(n_items, "movie") if arr is Arr.RADARR else count_noun(n_items, "series", "series"),
+            )
 
         # Warm the AniList cache before the per-item loop: reuse what past runs
         # fetched, then batch-fetch (id_in pages) everything still missing, so the
         # loop rarely hits AniList one id at a time and trips its rate limit.
-        self._anilist.load_cache()
-        prefetch_ids: set[int] = set()
-        for item in all_items:
-            if not item.monitored and self._arr_config.ignore_unmonitored:
-                continue
-            prefetch_ids.update(
-                strategy.item_anilist_ids(item, log_ignored=False),
-            )
-        self._anilist.prefetch(prefetch_ids, preview=self._is_preview())
-        # Bulk-fetch SeaDex entries for the same ids in batched OR-filter queries,
-        # collapsing the per-id from_id round-trips (one per library id, just to read
-        # updated_at) into a handful. entry() then serves from this warmed cache.
-        self._seadex.prefetch(prefetch_ids)
+        with boot.step("Prefetching metadata"):
+            self._anilist.load_cache()
+            prefetch_ids: set[int] = set()
+            for item in all_items:
+                if not item.monitored and self._arr_config.ignore_unmonitored:
+                    continue
+                prefetch_ids.update(
+                    strategy.item_anilist_ids(item, log_ignored=False),
+                )
+            self._anilist.prefetch(prefetch_ids, preview=self._is_preview())
+            # Bulk-fetch SeaDex entries for the same ids in batched OR-filter queries,
+            # collapsing the per-id from_id round-trips (one per library id, just to read
+            # updated_at) into a handful. entry() then serves from this warmed cache.
+            self._seadex.prefetch(prefetch_ids)
+
+        # Tear the cockpit down BEFORE the per-item scan logs anything, so the scan
+        # never reflows above a stale spinner; the "ready in Xs" capstone lands here.
+        boot.end_section()
+
+        self._reporter.log_arr_start(arr, n_items)
 
         for item_idx, item in enumerate(all_items):
             try:
