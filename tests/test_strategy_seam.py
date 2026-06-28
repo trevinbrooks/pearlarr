@@ -17,7 +17,7 @@ from seadexarr.modules.manual_import import (
 )
 from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.seadex_radarr import RadarrSync
-from seadexarr.modules.seadex_sonarr import SonarrSync
+from seadexarr.modules.seadex_sonarr import SonarrSync, sonarr_series_fingerprint
 from seadexarr.modules.seadex_types import (
     CommandResource,
     Language,
@@ -111,13 +111,16 @@ class TestRunStartHook:
     """get_items doubles as the run-start hook: it resets the per-run scratch."""
 
     def test_sonarr_get_items_clears_ep_list_cache(self) -> None:
+        series = [_Item(id=5), _Item(id=7)]
         strat = make_bare_instance(SonarrSync, _ep_list_cache={5: ["stale"]})
-        strat.get_all_sonarr_series = mock.MagicMock(return_value=["series"])
+        strat.get_all_sonarr_series = mock.MagicMock(return_value=series)
 
         result = strat.get_items()
 
-        assert result == ["series"]
+        assert result == series
         assert strat._ep_list_cache == {}
+        # The run-start hook also fingerprints the current series-id set.
+        assert strat._series_fp == sonarr_series_fingerprint([5, 7])
 
 
 class TestProcessAlIdThreadsServices:

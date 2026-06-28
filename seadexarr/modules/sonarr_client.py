@@ -35,6 +35,10 @@ from .seadex_types import (
 # (uncached remote files) still completes.
 MANUAL_IMPORT_TIMEOUT_S = 120
 
+# (connect, read) timeout for the episode/parse GETs, so a hung Sonarr surfaces
+# as a transient miss rather than blocking the (now concurrent) sweep.
+SONARR_REQUEST_TIMEOUT_S = (5, 30)
+
 
 class SonarrClient:
     """Thin wrapper over the Sonarr API (``arrapi`` + two raw endpoints)."""
@@ -72,7 +76,7 @@ class SonarrClient:
         # client boundary into the project's typed shape.
         return cast("list[SonarrItem]", self._api.all_series())
 
-    def episodes(self, series_id: int) -> list[SonarrEpisode] | None:
+    def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
         """All episodes for a series, season/episode-sorted (``/api/v3/episode``).
 
         Returns None (with a warning) if Sonarr is unreachable, so the caller can
@@ -80,6 +84,10 @@ class SonarrClient:
 
         Args:
             series_id (int): Series ID in Sonarr.
+            quiet (bool): Suppress the unreachable-warning. The concurrent
+                episode prefetch passes this so a transient miss isn't logged
+                from a worker thread - it is retried, and logged if it still
+                fails, on the main thread when ``get_ep_list`` re-fetches.
         """
 
         eps_req_url = (
@@ -89,12 +97,20 @@ class SonarrClient:
             f"includeEpisodeFile=true&"
             f"apikey={self._api_key}"
         )
-        eps_req = self._session.get(eps_req_url)
+        try:
+            eps_req = self._session.get(eps_req_url, timeout=SONARR_REQUEST_TIMEOUT_S)
+        except requests.RequestException:
+            if not quiet:
+                self._logger.warning(
+                    "Could not fetch episode data from Sonarr; it may be unreachable",
+                )
+            return None
 
         if eps_req.status_code != 200:
-            self._logger.warning(
-                "Could not fetch episode data from Sonarr; it may be unreachable",
-            )
+            if not quiet:
+                self._logger.warning(
+                    "Could not fetch episode data from Sonarr; it may be unreachable",
+                )
             return None
 
         # response.json() is untyped; the episode endpoint returns a JSON array
@@ -112,19 +128,26 @@ class SonarrClient:
         )
         return [SonarrEpisode.from_api(ep) for ep in raw_eps]
 
-    def parse(self, filename: str) -> list[dict[str, int]]:
+    def parse(self, filename: str) -> list[dict[str, int]] | None:
         """Ask Sonarr to parse a single filename into season/episode numbers.
 
         Only the season/episode mapping is returned - the file size is filled in
         by the caller, since it comes from the SeaDex file list rather than from
         Sonarr.
 
+        Distinguishes a clean response from a transient failure so the caller can
+        safely negative-cache the former without poisoning the latter: an empty
+        list is a *confirmed* "Sonarr matched no episode" (200, cacheable),
+        whereas None is a request failure (non-200 / connection error after the
+        session's retries) that must NOT be cached.
+
         Args:
             filename (str): Filename to parse (basename, not full path).
 
         Returns:
-            list[dict[str, int]]: List of {"season", "episode"} dicts (empty if
-                Sonarr couldn't parse the filename).
+            list[dict[str, int]] | None: {"season", "episode"} dicts on a clean
+                200 (empty when Sonarr genuinely matched nothing), or None when
+                the request failed.
         """
 
         d = {"title": filename, "apikey": self._api_key}
@@ -132,7 +155,15 @@ class SonarrClient:
 
         # Parse through Sonarr
         parse_req_url = f"{self._url}/api/v3/parse?{d_enc}"
-        parse_req = self._session.get(parse_req_url)
+        try:
+            parse_req = self._session.get(parse_req_url, timeout=SONARR_REQUEST_TIMEOUT_S)
+        except requests.RequestException:
+            self._logger.warning(
+                indent_string(
+                    f"Could not parse {filename} via Sonarr (request failed); skipping file",
+                ),
+            )
+            return None
 
         if parse_req.status_code != 200:
             self._logger.warning(
@@ -140,7 +171,7 @@ class SonarrClient:
                     f"Could not parse {filename} via Sonarr (status code {parse_req.status_code}); skipping file",
                 ),
             )
-            return []
+            return None
 
         # response.json() is untyped; the parse endpoint returns a ParseResource
         # JSON object whose "episodes" is an array of EpisodeResource objects, so

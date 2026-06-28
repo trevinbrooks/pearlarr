@@ -88,6 +88,10 @@ class RadarrSync(ArrSync[RadarrItem]):
         )
 
     @override
+    def prefetch_episodes(self, items: list[RadarrItem]) -> None:
+        """No-op: movies have no episode lists to warm."""
+
+    @override
     def process_al_id(
         self,
         arr: Arr,

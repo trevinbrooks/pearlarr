@@ -1,5 +1,8 @@
+import concurrent.futures
+import hashlib
 import os
 import time
+from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any, override
 
@@ -112,6 +115,24 @@ NON_VIDEO_EXTENSIONS = {
     ".rar",
     ".zip",
     ".7z",
+    # Audio tracks + rip sidecars (OSTs, EAC logs/cuesheets) bundled in releases:
+    # never an episode. ``.mka`` is Matroska audio (the video ``.mkv`` is kept).
+    ".flac",
+    ".mka",
+    ".wav",
+    ".aac",
+    ".ac3",
+    ".dts",
+    ".dtshd",
+    ".mp3",
+    ".ogg",
+    ".opus",
+    ".m4a",
+    ".wv",
+    ".tak",
+    ".ape",
+    ".cue",
+    ".log",
 }
 
 # How long a persisted Sonarr /parse result stays usable before it's re-queried.
@@ -119,6 +140,33 @@ NON_VIDEO_EXTENSIONS = {
 # the current library, so a wrong-but-non-empty match could otherwise be trusted
 # forever; re-validate monthly so such an entry self-heals.
 SONARR_PARSE_CACHE_TTL_DAYS = 30
+
+# How long a NEGATIVE (confirmed empty) parse result stays usable. Pinned to the
+# series-id set (see sonarr_series_fingerprint) so adding the series self-heals
+# it; this TTL is only a backstop, so it is short.
+SONARR_PARSE_NEG_CACHE_TTL_DAYS = 7
+
+# Bounded concurrency for the episode/parse network fan-out. Only used when
+# advanced.sleep_time == 0; must stay <= the session's pool_maxsize (RunDeps.build).
+# Episode fetches are I/O-bound, but a typical Sonarr (often behind a reverse
+# proxy) saturates around ~10-12 concurrent, so larger values don't help.
+SONARR_FETCH_WORKERS = 12
+
+
+def sonarr_series_fingerprint(series_ids: Iterable[int]) -> str:
+    """Stable fingerprint of the current Sonarr series-id set.
+
+    Invalidates negative ``/parse`` records: an empty parse almost always means
+    the file's series isn't present, so a new series id flips the fingerprint and
+    re-parses the affected entries. ``hashlib`` (not ``hash()``) for stability
+    across processes.
+
+    Args:
+        series_ids (Iterable[int]): Current Sonarr series ids (sorted/de-duped).
+    """
+
+    joined = ",".join(str(i) for i in sorted(set(series_ids)))
+    return hashlib.sha1(joined.encode("utf-8")).hexdigest()[:16]
 
 
 def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
@@ -304,6 +352,12 @@ class SonarrSync(ArrSync[SonarrItem]):
         # top of each run (in get_items, the run-start hook).
         self._ep_list_cache: dict[int, list[SonarrEpisode]] = {}
 
+        # Fingerprint of the current Sonarr series-id set, recomputed each run in
+        # get_items. Pins negative ``/parse`` cache records to the library state
+        # so they self-heal when a missing series is added (see
+        # ``sonarr_series_fingerprint`` and ``_sonarr_parse_is_fresh``).
+        self._series_fp: str = ""
+
         # Per-run caches of the Sonarr quality-definition / language lists, used
         # to resolve a quality name / language names into the manual-import
         # payload objects. Fetched lazily on the first import and then reused for
@@ -373,7 +427,11 @@ class SonarrSync(ArrSync[SonarrItem]):
         self._parse_info_cache = {}
         self._warned_unplaceable = set()
         self._last_refresh_monotonic = None
-        return self.get_all_sonarr_series()
+        series = self.get_all_sonarr_series()
+        # Fingerprint the current series-id set once per run for negative-parse
+        # cache invalidation (see sonarr_series_fingerprint).
+        self._series_fp = sonarr_series_fingerprint(s.id for s in series)
+        return series
 
     @override
     def filter_to_single(self, items: list[SonarrItem], item_id: int) -> list[SonarrItem]:
@@ -399,6 +457,73 @@ class SonarrSync(ArrSync[SonarrItem]):
             imdb_id=item.imdbId,
             log_ignored=log_ignored,
         )
+
+    def _fetch_workers(self) -> int:
+        """Concurrency for the episode / parse network fan-out.
+
+        Sequential (1) whenever a rate-limit throttle is requested
+        (``advanced.sleep_time > 0``), so the bounded pool never bypasses the
+        user's intended throttle; otherwise the bounded pool size.
+        """
+
+        if self._config.advanced.sleep_time > 0:
+            return 1
+        return SONARR_FETCH_WORKERS
+
+    @override
+    def prefetch_episodes(self, items: list[SonarrItem]) -> None:
+        """Warm the per-series episode lists CONCURRENTLY before the scan loop.
+
+        One sequential ``/api/v3/episode`` round-trip per processed series is the
+        dominant sweep cost (~30s here). Fetching them up front over a bounded
+        thread pool collapses that to a few seconds while keeping every list
+        FRESH - the grab/skip decision reads each episode's existing file, so the
+        lists are deliberately not persisted across runs. Only the network fetch
+        runs in the pool; the in-memory ``_ep_list_cache`` is populated on the
+        main thread (the cache and mappings are not thread-safe). A series whose
+        fetch fails is left unwarmed and re-fetched (and logged) by
+        ``get_ep_list`` on the main thread during the loop.
+
+        Args:
+            items (list[SonarrItem]): The run's series list (already narrowed for
+                a single-series run).
+        """
+
+        # The series we'll actually process: monitored (unless unmonitored are
+        # ignored) and carrying at least one AniList mapping. item_anilist_ids is
+        # memoized, so re-resolving here on the main thread is ~free.
+        series_ids: list[int] = []
+        seen: set[int] = set()
+        for item in items:
+            if item.id in seen:
+                continue
+            if not item.monitored and self._config.sonarr.ignore_unmonitored:
+                continue
+            if not self.item_anilist_ids(item, log_ignored=False):
+                continue
+            seen.add(item.id)
+            series_ids.append(item.id)
+
+        if not series_ids:
+            return
+
+        def warm(series_id: int) -> tuple[int, list[SonarrEpisode] | None]:
+            # quiet: a transient miss here isn't logged from a worker; get_ep_list
+            # retries and logs it on the main thread if it still fails.
+            return series_id, self.sonarr.episodes(series_id, quiet=True)
+
+        workers = min(self._fetch_workers(), len(series_ids))
+        if workers <= 1:
+            for sid in series_ids:
+                eps = self.sonarr.episodes(sid, quiet=True)
+                if eps is not None:
+                    self._ep_list_cache[sid] = eps
+            return
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            for sid, eps in pool.map(warm, series_ids):
+                if eps is not None:
+                    self._ep_list_cache[sid] = eps
 
     @override
     def process_al_id(
@@ -1538,20 +1663,99 @@ class SonarrSync(ArrSync[SonarrItem]):
         return sonarr_release_dict
 
     @staticmethod
-    def _sonarr_parse_is_fresh(record: dict[str, Any] | None, cutoff: datetime) -> bool:
-        """True if a persisted parse record has episodes and is within TTL
+    def _sonarr_parse_is_fresh(
+        record: dict[str, Any] | None,
+        *,
+        cutoff: datetime,
+        neg_cutoff: datetime,
+        series_fp: str,
+    ) -> bool:
+        """True if a persisted parse record is still usable.
 
-        Legacy list-form entries (pre-TTL, no timestamp) are treated as stale so
-        they are re-queried once and upgraded to the timestamped form. ``cutoff``
-        is computed once per call to :meth:`parse_episodes_from_seadex` and threaded
-        in, so ``datetime.now()`` isn't recomputed for every SeaDex file.
+        Positive (has episodes): stable mapping, valid for the 30-day ``cutoff``.
+        Negative (empty): valid only while the series-id set is unchanged
+        (matching ``series_fp``) and within the short ``neg_cutoff`` backstop, so
+        a newly-added series self-heals. Legacy records (no fp) read stale.
         """
-        return record_is_fresh(
-            record,
-            payload_key="episodes",
-            ttl_days=SONARR_PARSE_CACHE_TTL_DAYS,
-            cutoff=cutoff,
-        )
+
+        if not isinstance(record, dict):
+            return False
+        if record.get("episodes"):
+            return record_is_fresh(
+                record,
+                payload_key="episodes",
+                ttl_days=SONARR_PARSE_CACHE_TTL_DAYS,
+                cutoff=cutoff,
+            )
+        if record.get("series_fp") != series_fp:
+            return False
+        stamp = record.get("fetched_at")
+        if not isinstance(stamp, str):
+            return False
+        try:
+            return datetime.strptime(stamp, UPDATED_AT_STR_FORMAT) >= neg_cutoff
+        except ValueError:
+            return False
+
+    def _warm_parse_cache(
+        self,
+        seadex_dict: SeadexDict,
+        *,
+        now_str: str,
+        cutoff: datetime,
+        neg_cutoff: datetime,
+    ) -> None:
+        """Concurrently parse the not-yet-cached files for one release.
+
+        Cold-cache pre-pass: collapses the per-file ``/parse`` latency the same
+        way ``prefetch_episodes`` does for episodes, deduping repeats across
+        overlapping release groups. The mapping loop then reads from the warm
+        cache. Only ``sonarr.parse`` runs in the pool; cache reads/writes stay on
+        the main thread. No-op when sequential (``sleep_time > 0``) or warm.
+        """
+
+        workers = self._fetch_workers()
+        if workers <= 1:
+            return
+
+        pending: list[str] = []
+        seen: set[str] = set()
+        for srg_item in seadex_dict.values():
+            for url_item in srg_item.urls.values():
+                for seadex_file in url_item.files:
+                    f = os.path.basename(seadex_file)
+                    if f in seen or not self._is_video_candidate(f):
+                        continue
+                    seen.add(f)
+                    record = self.cache_store.get_sonarr_parse(f)
+                    if record is not None and self._sonarr_parse_is_fresh(
+                        record,
+                        cutoff=cutoff,
+                        neg_cutoff=neg_cutoff,
+                        series_fp=self._series_fp,
+                    ):
+                        continue
+                    pending.append(f)
+
+        if len(pending) <= 1:
+            return
+
+        def fetch(name: str) -> tuple[str, list[dict[str, int]] | None]:
+            return name, self.sonarr.parse(name)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(workers, len(pending))) as pool:
+            results = list(pool.map(fetch, pending))
+
+        for name, result in results:
+            if result is None:  # request failed: don't cache a transient miss
+                continue
+            if result:
+                self.cache_store.put_sonarr_parse(name, {"fetched_at": now_str, "episodes": result})
+            else:
+                self.cache_store.put_sonarr_parse(
+                    name,
+                    {"fetched_at": now_str, "episodes": [], "series_fp": self._series_fp},
+                )
 
     def parse_episodes_from_seadex(
         self,
@@ -1573,13 +1777,11 @@ class SonarrSync(ArrSync[SonarrItem]):
             seadex_dict (dict): Dictionary of seadex releases
         """
 
-        # Per filename the cache facade stores
-        # {"fetched_at": <str>, "episodes": [{"season", "episode"}]}, shared across
-        # runs via the cache db; fetched_at lets entries expire (TTL).
+        # Record shape per filename: {"fetched_at", "episodes"[, "series_fp"]}.
+        # Cutoffs computed once per call (not per file).
         now_str = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
-        # Compute the TTL cutoff once for the whole run of files rather than
-        # re-deriving datetime.now() in the per-file freshness check below.
         cutoff = datetime.now() - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS)
+        neg_cutoff = datetime.now() - timedelta(days=SONARR_PARSE_NEG_CACHE_TTL_DAYS)
 
         # Evict parse records aged past that same cutoff so the block stops growing
         # without bound. Staged like the writes below (committed at the run's save
@@ -1590,6 +1792,10 @@ class SonarrSync(ArrSync[SonarrItem]):
             self.logger.debug(
                 indent_string(f"Evicted {evicted} stale Sonarr parse record(s)"),
             )
+
+        # Concurrently warm the cache for any not-yet-cached files so the mapping
+        # loop below reads them as hits (no-op when sequential or already warm).
+        self._warm_parse_cache(seadex_dict, now_str=now_str, cutoff=cutoff, neg_cutoff=neg_cutoff)
 
         for release_group_item in seadex_dict.values():
             # Set up an overall "all episodes" list (bound locally so the
@@ -1620,23 +1826,33 @@ class SonarrSync(ArrSync[SonarrItem]):
                     # Sonarr and remember the result with a timestamp so it
                     # expires (re-validates) rather than being trusted forever
                     record = self.cache_store.get_sonarr_parse(f)
-                    # ``record`` is the open cache record ``dict[str, Any] | None``;
-                    # the freshness check already implies a non-None dict whose
-                    # ``episodes`` mirror ``sonarr.parse``'s ``list[dict[str, int]]``,
-                    # so pin that element type back on (the store is untyped JSON).
-                    if record is not None and self._sonarr_parse_is_fresh(record, cutoff):
+                    # ``episodes`` is untyped JSON; pin the element type back on.
+                    if record is not None and self._sonarr_parse_is_fresh(
+                        record,
+                        cutoff=cutoff,
+                        neg_cutoff=neg_cutoff,
+                        series_fp=self._series_fp,
+                    ):
                         parsed: list[dict[str, int]] = record["episodes"]
+                        if not parsed:
+                            continue
                     else:
-                        parsed = self.sonarr.parse(f)
+                        result = self.sonarr.parse(f)
 
-                        if len(parsed) == 0:
+                        # None = request failed: skip without caching a transient miss.
+                        if result is None:
+                            continue
+                        parsed = result
+
+                        if not parsed:
                             self.logger.debug(
-                                indent_string(
-                                    f"Sonarr could not parse episode for {f}",
-                                ),
+                                indent_string(f"Sonarr could not parse episode for {f}"),
                             )
-                            # Deliberately not cached: a miss may just mean the
-                            # series isn't in Sonarr yet
+                            # Negative-cache (series-fp pinned) so it's not re-parsed every run.
+                            self.cache_store.put_sonarr_parse(
+                                f,
+                                {"fetched_at": now_str, "episodes": [], "series_fp": self._series_fp},
+                            )
                             continue
 
                         self.cache_store.put_sonarr_parse(

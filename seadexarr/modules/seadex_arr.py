@@ -8,7 +8,9 @@ from typing import Any, cast, final
 
 import qbittorrentapi
 import requests
+from requests.adapters import HTTPAdapter
 from seadex import EntryRecord
+from urllib3.util.retry import Retry
 
 from . import coverage as _coverage
 from .anilist_gateway import AniListGateway
@@ -141,8 +143,25 @@ class RunDeps:
         if logger is None:
             logger = setup_logger(log_level=app_config.advanced.log_level)
 
-        # A single keep-alive session shared by the raw Sonarr/Radarr API calls.
+        # Shared keep-alive session for the raw Sonarr/Radarr calls. Retries
+        # transient failures on idempotent GETs only (POSTs never retry, so a
+        # command can't double-fire); pool_maxsize must stay >= the sweep's fetch
+        # concurrency (SONARR_FETCH_WORKERS) so parallel GETs don't queue.
+        # raise_on_status=False lets a still-5xx response return for the callers'
+        # status checks. Per-request timeouts are at the call sites.
         session = requests.Session()
+        retry = Retry(
+            total=3,
+            connect=3,
+            read=3,
+            backoff_factor=0.5,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset({"GET"}),
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry, pool_connections=16, pool_maxsize=16)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
 
         # qbit. None unless host/username/password are all set; with any unset, no
         # client is created and the app treats `qbit is None` as "no client ->
@@ -938,6 +957,11 @@ class SeaDexArr:
             # collapsing the per-id from_id round-trips (one per library id, just to read
             # updated_at) into a handful. entry() then serves from this warmed cache.
             self._seadex.prefetch(prefetch_ids)
+            # Warm the per-item episode lists concurrently (Sonarr only; Radarr
+            # no-ops). Kept FRESH - not cached across runs - so the grab/skip
+            # decision still reads current Sonarr file state; this only collapses
+            # the sequential per-series fetch latency.
+            strategy.prefetch_episodes(all_items)
 
         # Tear the cockpit down BEFORE the per-item scan logs anything, so the scan
         # never reflows above a stale spinner; the "ready in Xs" capstone lands here.

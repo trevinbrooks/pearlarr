@@ -63,6 +63,15 @@ class ArrSync[ItemT: ArrItem](ABC):
         """Resolve the AniList ids mapped to one Arr item."""
 
     @abstractmethod
+    def prefetch_episodes(self, items: list[ItemT]) -> None:
+        """Warm per-item network caches concurrently before the scan loop.
+
+        Called once in the pre-scan prefetch step, beside the AniList/SeaDex bulk
+        prefetches. ``SonarrSync`` fans the per-series ``/api/v3/episode`` fetches
+        out over a bounded pool; ``RadarrSync`` is a no-op (no episodes).
+        """
+
+    @abstractmethod
     def process_al_id(
         self,
         arr: Arr,
