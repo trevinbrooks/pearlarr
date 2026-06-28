@@ -34,6 +34,7 @@ from seadexarr.modules.seadex_types import (
     SonarrEpisode,
 )
 from seadexarr.modules.sonarr_episodes import SonarrEpisodes
+from seadexarr.modules.sonarr_mapper import FileEpisodeMapper
 from seadexarr.modules.sonarr_parse import SonarrParseCache
 
 # Map each flat (group-local) setting name to its config group, derived straight from
@@ -659,8 +660,10 @@ def make_sonarr_sync(**attrs: Any) -> SonarrSync:
     defaults.update(attrs)
     episodes = defaults.pop("_episodes", None)
     parse = defaults.pop("_parse", None)
+    mapper = defaults.pop("_mapper", None)
     ep_cache = defaults.pop("_ep_list_cache", {})
     series_fp = defaults.pop("_series_fp", "")
+    parse_info = defaults.pop("_parse_info_cache", {})
     strat = make_bare_instance(SonarrSync, **defaults)
     if episodes is None:
         episodes = make_sonarr_episodes(
@@ -685,7 +688,27 @@ def make_sonarr_sync(**attrs: Any) -> SonarrSync:
             logger=defaults.get("logger"),
         )
     strat._parse = parse
+    if mapper is None:
+        # Same sonarr client as the strat so import_completed's on-disk /parse hits
+        # the test's scripted mock; routes the per-run on-disk parse cache here.
+        mapper = make_sonarr_mapper(
+            sonarr=defaults.get("sonarr"),
+            _parse_info_cache=parse_info,
+        )
+    strat._mapper = mapper
     return strat
+
+
+def make_sonarr_mapper(**attrs: Any) -> FileEpisodeMapper:
+    """A bare ``FileEpisodeMapper`` with ``__init__`` bypassed and only ``attrs`` set.
+
+    The tests assign just what the method under test reads (``sonarr`` for the
+    on-disk ``/parse``); the per-run on-disk parse cache defaults empty.
+    """
+
+    defaults: dict[str, Any] = {"_parse_info_cache": {}}
+    defaults.update(attrs)
+    return make_bare_instance(FileEpisodeMapper, **defaults)
 
 
 def make_sonarr_parse(**attrs: Any) -> SonarrParseCache:
