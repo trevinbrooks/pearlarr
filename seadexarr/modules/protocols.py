@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Protocol
 
-from .config import Arr
 from .manual_import import ImportProbe, PendingImport
 from .mappings import MappingEntry
 from .seadex_types import ArrItem
@@ -104,7 +103,6 @@ class ArrSync[ItemT: ArrItem](ABC):
     @abstractmethod
     def process_al_id(
         self,
-        arr: Arr,
         item: ItemT,
         item_title: str,
         al_id: int,

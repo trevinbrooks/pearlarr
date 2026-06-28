@@ -4,7 +4,7 @@ import logging
 from seadex import EntryRecord
 
 from .cache import CacheStore
-from .config import PRIVATE_TRACKERS, AppConfig, Arr
+from .config import PRIVATE_TRACKERS, AppConfig
 from .log import LogFormatter, indent_string
 from .planner import DownloadPlanner
 from .reporter import RunContext
@@ -188,7 +188,6 @@ class SeadexReleaseFilter:
         self,
         al_id: int,
         seadex_dict: SeadexDict,
-        arr: Arr,
         arr_release_dict: ArrReleaseDict,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> tuple[list[str | None], SeadexDict]:
@@ -202,11 +201,11 @@ class SeadexReleaseFilter:
         Args:
             al_id: AniList ID
             seadex_dict: Dictionary of SeaDex releases
-            arr: Type of arr instance
             arr_release_dict: Dictionary of arr release properties
             ep_list: List of episodes. Defaults to None
         """
 
+        arr = self._ctx.arr
         result = self._planner.plan(
             seadex_dict=seadex_dict,
             arr=arr,

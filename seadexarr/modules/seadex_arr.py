@@ -271,7 +271,6 @@ class GrabRequest:
     still writes ``torrent_hashes`` into it before saving).
     """
 
-    arr: Arr
     al_id: int
     item_title: str
     anilist_title: str
@@ -381,7 +380,7 @@ class SeaDexArr:
 
         return self.cache_store.check_al_id_in_cache(arr, al_id, seadex_entry)
 
-    def al_id_needs_scan(self, arr: Arr, al_id: int) -> bool:
+    def al_id_needs_scan(self, al_id: int) -> bool:
         """Side-effect-free mirror of process_al_id's no-entry + cached_entry_skip
         gates: True iff the per-id loop would actually process this id.
 
@@ -396,7 +395,7 @@ class SeaDexArr:
             return False
         if self._config.seadex.ignore_seadex_update_times:
             return True
-        return not self.cache_store.check_al_id_in_cache(arr, al_id, sd_entry)
+        return not self.cache_store.check_al_id_in_cache(self._ctx.arr, al_id, sd_entry)
 
     def get_anilist_ids(
         self,
@@ -482,13 +481,12 @@ class SeaDexArr:
         self,
         al_id: int,
         seadex_dict: SeadexDict,
-        arr: Arr,
         arr_release_dict: ArrReleaseDict,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> tuple[list[str | None], SeadexDict]:
         """Apply the download plan, stamping public_only skips onto ctx (delegates)."""
 
-        return self._filter.filter_downloads(al_id, seadex_dict, arr, arr_release_dict, ep_list)
+        return self._filter.filter_downloads(al_id, seadex_dict, arr_release_dict, ep_list)
 
     def add_torrent(
         self,
@@ -685,7 +683,6 @@ class SeaDexArr:
 
     def update_cache(
         self,
-        arr: Arr,
         al_id: int,
         cache_details: CacheRecord | None = None,
     ) -> bool:
@@ -694,17 +691,15 @@ class SeaDexArr:
         The run's save points flush it; see ``CacheStore.update_cache``.
 
         Args:
-            arr (Arr): Arr instance
             al_id (int): AniList ID
             cache_details (CacheRecord): Details for the cache entry. Defaults
                 to None
         """
 
-        return self.cache_store.update_cache(arr, al_id, cache_details)
+        return self.cache_store.update_cache(self._ctx.arr, al_id, cache_details)
 
     def no_releases_skip(
         self,
-        arr: Arr,
         al_id: int,
         cache_details: CacheRecord,
     ) -> bool:
@@ -716,7 +711,6 @@ class SeaDexArr:
         share one definition instead of a byte-for-byte duplicated block.
 
         Args:
-            arr (Arr): Arr instance the entry is cached under.
             al_id (int): AniList ID.
             cache_details (CacheRecord): Cache record assembled for this id.
 
@@ -725,7 +719,7 @@ class SeaDexArr:
         """
 
         self.log_no_seadex_releases()
-        self.update_cache(arr=arr, al_id=al_id, cache_details=cache_details)
+        self.update_cache(al_id=al_id, cache_details=cache_details)
         time.sleep(self._config.advanced.sleep_time)
         return False
 
@@ -938,7 +932,6 @@ class SeaDexArr:
                     # (the in-block check fires after every add, so torrents_added
                     # can't reach the cap without process_al_id stopping first).
                     if strategy.process_al_id(
-                        arr=arr,
                         item=item,
                         item_title=item_title,
                         al_id=al_id,
@@ -971,7 +964,7 @@ class SeaDexArr:
         # Run the end-of-run blocking pass (blocking/hybrid only), then persist
         # the run and log the summary. Per-title update_cache calls only mutate
         # memory, so this finalize is what actually saves (and sorts by id).
-        self._finalize_run(arr)
+        self._finalize_run()
 
         return True
 
@@ -1006,7 +999,6 @@ class SeaDexArr:
 
     def cached_entry_skip(
         self,
-        arr: Arr,
         al_id: int,
         sd_entry: EntryRecord,
         sd_url: str,
@@ -1022,7 +1014,6 @@ class SeaDexArr:
         already-backfilled path.
 
         Args:
-            arr (Arr): Which Arr is being run
             al_id (int): AniList id being processed
             sd_entry (EntryRecord): Resolved SeaDex entry
             sd_url (str): SeaDex entry URL stored on the backfilled record
@@ -1032,7 +1023,7 @@ class SeaDexArr:
 
         # One read of the whole row serves both the freshness check and the
         # url-backfill check below (was a SELECT updated_at + a SELECT url).
-        entry = self.cache_store.get_entry(arr, al_id)
+        entry = self.cache_store.get_entry(self._ctx.arr, al_id)
         # Mirrors check_al_id_in_cache: absent, or a timestamp that no longer matches
         # SeaDex's, means re-process (don't skip).
         if entry is None or entry.updated_at != sd_entry.updated_at.strftime(UPDATED_AT_STR_FORMAT):
@@ -1045,11 +1036,10 @@ class SeaDexArr:
         # season/episode coverage). One-time per old entry.
         if not entry.url:
             self.update_cache(
-                arr=arr,
                 al_id=al_id,
                 cache_details={"url": sd_url, "coverage": coverage()},
             )
-        self._reporter.log_cached_entry(self._ctx, arr, al_id)
+        self._reporter.log_cached_entry(self._ctx, self._ctx.arr, al_id)
         return True
 
     def grab_and_cache(self, req: GrabRequest) -> bool:
@@ -1093,7 +1083,6 @@ class SeaDexArr:
         if added_this_title > 0 or not self._ctx.public_only_skipped:
             req.cache_details.update({"torrent_hashes": req.torrent_hashes})
             self.update_cache(
-                arr=req.arr,
                 al_id=req.al_id,
                 cache_details=req.cache_details,
             )
@@ -1132,7 +1121,7 @@ class SeaDexArr:
         # to preserve ordering even though it's only used in the push below.
         anilist_thumb = self._anilist.thumb(req.al_id)
         fields = self._notifier.build_fields(
-            arr=req.arr,
+            arr=self._ctx.arr,
             release_group=req.release_group,
             seadex_dict=req.seadex_dict,
         )
@@ -1675,7 +1664,7 @@ class SeaDexArr:
         self.cache_store.drop_pending(self._ctx.arr, infohash)
         self._ctx.pending_imports = [p for p in self._ctx.pending_imports if p.infohash != infohash]
 
-    def _finalize_run(self, arr: Arr) -> None:
+    def _finalize_run(self) -> None:
         """Shared run tail: reconcile + tally, print the summary, THEN block.
 
         The ordering corrects the old "exited right away" + detached-tally
@@ -1706,7 +1695,7 @@ class SeaDexArr:
 
         self._reporter.log_run_summary(
             self._ctx,
-            arr,
+            self._ctx.arr,
             is_preview=preview,
             has_client=self.qbit is not None,
             import_wait_mode=self._ctx.import_wait_mode,
@@ -1727,17 +1716,17 @@ class SeaDexArr:
                 # waited. It swallows its own errors so a bad webhook can never
                 # skip the cache save in the finally below.
                 if result is not None and result.waited:
-                    self._notify_wait_complete(arr, result)
+                    self._notify_wait_complete(result)
         finally:
             self.cache_store.save(preview=preview)
 
-    def _notify_wait_complete(self, arr: Arr, result: WaitResult) -> None:
+    def _notify_wait_complete(self, result: WaitResult) -> None:
         """Push the completion notification, gated on ``wait_notify``; swallow errors."""
 
         if not self._config.notifications.wait_notify:
             return
         try:
-            _ = self._notifier.push_wait_summary(arr=arr, result=result)
+            _ = self._notifier.push_wait_summary(arr=self._ctx.arr, result=result)
         except Exception:
             self.logger.debug("wait completion notification failed", exc_info=True)
 

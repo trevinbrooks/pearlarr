@@ -102,7 +102,6 @@ class RadarrSync(ArrSync[RadarrItem]):
     @override
     def process_al_id(
         self,
-        arr: Arr,
         item: RadarrItem,
         item_title: str,
         al_id: int,
@@ -125,7 +124,7 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         # Skip if already cached. Movies have no episode coverage, so the
         # one-time backfill on a legacy record is just the URL.
-        if run.cached_entry_skip(arr, al_id, sd_entry, sd_url, lambda: ""):
+        if run.cached_entry_skip(al_id, sd_entry, sd_url, lambda: ""):
             return False
 
         # Resolve the AniList title, then log the active entry (a movie has no
@@ -158,7 +157,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
-            return run.no_releases_skip(arr, al_id, cache_details)
+            return run.no_releases_skip(al_id, cache_details)
 
         self.logger.debug(
             indent_string(
@@ -176,13 +175,11 @@ class RadarrSync(ArrSync[RadarrItem]):
         torrent_hashes, seadex_dict = run.filter_seadex_downloads(
             al_id=al_id,
             seadex_dict=seadex_dict,
-            arr=arr,
             arr_release_dict=radarr_release_dict,
         )
 
         return run.grab_and_cache(
             GrabRequest(
-                arr=arr,
                 al_id=al_id,
                 item_title=item_title,
                 anilist_title=anilist_title,

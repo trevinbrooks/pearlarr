@@ -262,23 +262,23 @@ class TestAlIdNeedsScan:
 
     def test_no_seadex_entry_does_not_need_scan(self) -> None:
         run = self._run(entry=None, cache=FakeCacheStore())
-        assert run.al_id_needs_scan(Arr.SONARR, 7) is False
+        assert run.al_id_needs_scan(7) is False
 
     def test_uncached_entry_needs_scan(self) -> None:
         run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=FakeCacheStore())
-        assert run.al_id_needs_scan(Arr.SONARR, 7) is True
+        assert run.al_id_needs_scan(7) is True
 
     def test_cached_and_matching_does_not_need_scan(self) -> None:
         cache = FakeCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
         run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=cache)
-        assert run.al_id_needs_scan(Arr.SONARR, 7) is False
+        assert run.al_id_needs_scan(7) is False
 
     def test_cached_but_stale_needs_scan(self) -> None:
         cache = FakeCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
         run = self._run(entry=_entry(datetime(2022, 6, 6)), cache=cache)
-        assert run.al_id_needs_scan(Arr.SONARR, 7) is True
+        assert run.al_id_needs_scan(7) is True
 
     def test_ignore_update_times_forces_scan_when_entry_exists(self) -> None:
         # A matching cached entry is normally skipped; ignore_seadex_update_times
@@ -290,12 +290,12 @@ class TestAlIdNeedsScan:
             cache=cache,
             ignore_seadex_update_times=True,
         )
-        assert run.al_id_needs_scan(Arr.SONARR, 7) is True
+        assert run.al_id_needs_scan(7) is True
 
     def test_ignore_update_times_still_skips_when_no_entry(self) -> None:
         # No SeaDex entry -> al_id_prologue would skip regardless of the flag.
         run = self._run(entry=None, cache=FakeCacheStore(), ignore_seadex_update_times=True)
-        assert run.al_id_needs_scan(Arr.SONARR, 7) is False
+        assert run.al_id_needs_scan(7) is False
 
 
 class TestPrefetchSkipsUnchanged:
@@ -310,7 +310,7 @@ class TestPrefetchSkipsUnchanged:
         sonarr.episodes.side_effect = lambda sid, quiet=False: [f"ep{sid}"]
         services = mock.MagicMock()
         services.get_anilist_ids.side_effect = lambda **kw: {kw["tvdb_id"]: object()}
-        services.al_id_needs_scan.side_effect = lambda arr, al_id: al_id in needs_scan
+        services.al_id_needs_scan.side_effect = lambda al_id: al_id in needs_scan
         strat = make_sonarr_sync(
             sonarr=sonarr,
             _services=services,
@@ -338,7 +338,7 @@ class TestPrefetchSkipsUnchanged:
         sonarr.episodes.side_effect = lambda sid, quiet=False: [f"ep{sid}"]
         services = mock.MagicMock()
         services.get_anilist_ids.side_effect = lambda **kw: {10: object(), 11: object()}
-        services.al_id_needs_scan.side_effect = lambda arr, al_id: al_id == 11
+        services.al_id_needs_scan.side_effect = lambda al_id: al_id == 11
         strat = make_sonarr_sync(
             sonarr=sonarr,
             _services=services,

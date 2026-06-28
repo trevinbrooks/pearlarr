@@ -381,6 +381,10 @@ def make_arr(**overrides: Any) -> SeaDexArr:
         # The engine reads per-arr flags (e.g. ignore_unmonitored) off _arr_config,
         # the Sonarr view of the same shared config.
         "_arr_config": config.for_arr(Arr.SONARR),
+        # The real __init__ always sets a RunContext; faithful default so methods
+        # that read self._ctx.arr (the run-arr methods) work without each test
+        # wiring one. Override with _ctx=... for a specific run state.
+        "_ctx": RunContext(arr=Arr.SONARR),
     }
     defaults.update(overrides)
     return make_bare_instance(SeaDexArr, **defaults)

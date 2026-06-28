@@ -771,7 +771,7 @@ class TestFinalizeRunOrdering:
             "_run_monitor",
             side_effect=lambda *a, **k: calls.append("monitor"),
         ):
-            engine._finalize_run(Arr.SONARR)
+            engine._finalize_run()
 
         assert calls == ["summary", "monitor", "save"]
 
@@ -789,7 +789,7 @@ class TestFinalizeRunOrdering:
             "_run_monitor",
             side_effect=lambda *a, **k: calls.append("monitor"),
         ):
-            engine._finalize_run(Arr.SONARR)
+            engine._finalize_run()
 
         assert "monitor" not in calls
         assert calls == ["summary", "save"]
@@ -804,7 +804,7 @@ class TestFinalizeRunOrdering:
             "_run_monitor",
             side_effect=lambda *a, **k: calls.append("monitor"),
         ):
-            engine._finalize_run(Arr.SONARR)
+            engine._finalize_run()
 
         assert "monitor" not in calls
 

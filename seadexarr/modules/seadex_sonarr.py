@@ -543,7 +543,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             al_ids = self.item_anilist_ids(item, log_ignored=False)
             if not al_ids:
                 continue
-            if not any(run.al_id_needs_scan(Arr.SONARR, aid) for aid in al_ids):
+            if not any(run.al_id_needs_scan(aid) for aid in al_ids):
                 continue
             seen.add(item.id)
             series_ids.append(item.id)
@@ -577,7 +577,6 @@ class SonarrSync(ArrSync[SonarrItem]):
     @override
     def process_al_id(
         self,
-        arr: Arr,
         item: SonarrItem,
         item_title: str,
         al_id: int,
@@ -602,7 +601,6 @@ class SonarrSync(ArrSync[SonarrItem]):
         # the URL and the season/episode coverage; the coverage needs the episode
         # list, so it's resolved lazily, only when the backfill actually runs.
         if run.cached_entry_skip(
-            arr,
             al_id,
             sd_entry,
             sd_url,
@@ -720,7 +718,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
 
         if len(seadex_dict) == 0:
-            return run.no_releases_skip(arr, al_id, cache_details)
+            return run.no_releases_skip(al_id, cache_details)
 
         self.logger.debug(
             indent_string(
@@ -744,7 +742,6 @@ class SonarrSync(ArrSync[SonarrItem]):
         torrent_hashes, seadex_dict = run.filter_seadex_downloads(
             al_id=al_id,
             seadex_dict=seadex_dict,
-            arr=arr,
             arr_release_dict=sonarr_release_dict,
             ep_list=ep_list,
         )
@@ -771,7 +768,6 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         return run.grab_and_cache(
             GrabRequest(
-                arr=arr,
                 al_id=al_id,
                 item_title=item_title,
                 anilist_title=anilist_title,

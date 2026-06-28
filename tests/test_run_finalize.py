@@ -61,8 +61,8 @@ class TestCapReachedFinalizesOnce:
         assert result is True
         # The cap stopped the scan after the first id: the second item is never reached.
         strategy.process_al_id.assert_called_once()
-        # ...and the single post-loop finalize ran exactly once with the arr.
-        finalize.assert_called_once_with(Arr.SONARR)
+        # ...and the single post-loop finalize ran exactly once (reads ctx.arr now).
+        finalize.assert_called_once_with()
 
 
 class TestGrabReturnsPureBool:
@@ -88,7 +88,6 @@ class TestGrabReturnsPureBool:
         engine._ctx.torrents_added = 1  # already at the cap of 1
 
         req = GrabRequest(
-            arr=Arr.SONARR,
             al_id=1,
             item_title="Show",
             anilist_title="Show",
