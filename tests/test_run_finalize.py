@@ -52,6 +52,7 @@ class TestCapReachedFinalizesOnce:
             _anilist=anilist,
             _seadex=seadex,
             _reporter=mock.MagicMock(),
+            _filter=mock.MagicMock(),  # begin_run binds it; a stub absorbs the no-op
             _finalize_run=finalize,
         )
 

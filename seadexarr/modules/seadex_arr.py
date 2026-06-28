@@ -1,4 +1,3 @@
-import copy
 import logging
 import os
 import time
@@ -17,12 +16,11 @@ from . import coverage as _coverage
 from .anilist_gateway import AniListGateway
 from .boot_view import BootView, NullBootView
 from .cache import UPDATED_AT_STR_FORMAT, CacheRecord, CacheStore
-from .config import PRIVATE_TRACKERS, AppConfig, Arr, ArrSettings
+from .config import AppConfig, Arr, ArrSettings
 from .log import (
     EntryState,
     LogFormatter,
     count_noun,
-    indent_string,
     setup_logger,
 )
 from .manual_import import (
@@ -43,12 +41,12 @@ from .notify import Notifier
 from .planner import DownloadPlanner
 from .protocols import ArrSync, ImportCompleter
 from .reporter import GrabRecord, NeedsActionRecord, RunContext, RunReporter
+from .seadex_filter import SeadexReleaseFilter
 from .seadex_gateway import SeaDexGateway
 from .seadex_types import (
     ArrItem,
     ArrReleaseDict,
     SeadexDict,
-    SeadexReleaseGroupItem,
     SeadexUrlItem,
     SonarrEpisode,
 )
@@ -348,6 +346,17 @@ class SeaDexArr:
         # here - its dry_run=False + OFF wait mode keep every preview / pending-
         # import path a safe no-op - so the object is usable before run_sync.
         self._ctx = RunContext(arr=arr)
+
+        # Engine-internal collaborators, built from the unpacked deps + the
+        # placeholder ctx. begin_run rebinds their ctx at the top of each run.
+        self._filter = SeadexReleaseFilter(
+            config=self._config,
+            planner=self._planner,
+            cache_store=self.cache_store,
+            logger=self.logger,
+            log_fmt=self.log_fmt,
+            ctx=self._ctx,
+        )
         self.begin_run(self._ctx)
 
     def close(self) -> None:
@@ -455,141 +464,19 @@ class SeaDexArr:
 
         return anilist_title
 
-    def get_seadex_dict(
-        self,
-        sd_entry: EntryRecord,
-    ) -> SeadexDict:
-        """Parse and filter SeaDex request
+    def get_seadex_dict(self, sd_entry: EntryRecord) -> SeadexDict:
+        """Parse and filter a SeaDex entry into the run's release dict (delegates)."""
 
-        Args:
-            sd_entry: SeaDex API query
-        """
-
-        # The torrent records are only read here (a fresh dict is built per
-        # release group below), so iterate them directly rather than deep-copying
-        # the whole list of model objects on every entry.
-
-        # Filter out any tags
-        ignore_tags = set(self._config.seadex.ignore_tags)
-        final_torrent_list = [t for t in sd_entry.torrents if ignore_tags.isdisjoint(t.tags)]
-
-        # Filter down by allowed trackers
-        final_torrent_list = [t for t in final_torrent_list if t.tracker.casefold() in self._config.seadex.trackers]
-
-        # Pull out torrents tagged as best, so long as at least one
-        # is tagged as best. Keep a copy so we can fall back if audio
-        # preferences otherwise downgrade quality
-        best_torrents = [t for t in final_torrent_list if t.is_best]
-        any_best = len(best_torrents) > 0
-
-        # Narrow to 'best' releases when any exist
-        if self._config.seadex.want_best and any_best:
-            candidates = best_torrents
-        else:
-            candidates = final_torrent_list
-
-        # Prefer dual-audio releases, but only when at least one exists
-        if self._config.seadex.prefer_dual_audio:
-            duals = [t for t in candidates if t.is_dual_audio]
-            if len(duals) > 0:
-                candidates = duals
-        # Otherwise prefer non-dual-audio
-        else:
-            non_duals = [t for t in candidates if not t.is_dual_audio]
-            if len(non_duals) > 0:
-                candidates = non_duals
-
-        # Pull out release groups, URLs, and various other useful info as a
-        # dictionary
-        seadex_release_groups: SeadexDict = {}
-        for t in candidates:
-            if t.release_group not in seadex_release_groups:
-                seadex_release_groups[t.release_group] = SeadexReleaseGroupItem(urls={}, tags=t.tags)
-
-            seadex_release_groups[t.release_group].urls[t.url] = SeadexUrlItem(
-                url=t.url,
-                files=[f.name for f in t.files],
-                size=[f.size for f in t.files],
-                tracker=t.tracker,
-                is_public=t.tracker.is_public() and t.tracker.casefold() not in PRIVATE_TRACKERS,
-                is_dual_audio=t.is_dual_audio,
-                hash=t.infohash,
-                download=False,
-            )
-
-        # If we only want public releases, then within each release group drop
-        # any private URLs, so long as that group also has a public option. We
-        # deliberately do this per-group rather than across the whole list: a
-        # group that only has a private URL is kept for now and only filtered
-        # out later if the Arr doesn't already have a matching download (see
-        # reduce_overlapping_downloads)
-        if self._config.seadex.public_only:
-            for release_group_item in seadex_release_groups.values():
-                urls = release_group_item.urls
-                has_public = any(u.is_public for u in urls.values())
-                if has_public:
-                    release_group_item.urls = {url: u for url, u in urls.items() if u.is_public}
-
-        return seadex_release_groups
+        return self._filter.build(sd_entry)
 
     def filter_seadex_interactive(
         self,
         seadex_dict: SeadexDict,
         sd_entry: EntryRecord,
     ) -> SeadexDict:
-        """If multiple matches are found, let the user filter them interactively
+        """Interactively pick which release group(s) to grab (delegates)."""
 
-        Args:
-            seadex_dict: Dictionary of SeaDex releases
-            sd_entry: SeaDex entry
-        """
-
-        self.logger.warning("Multiple releases found - pick which to grab")
-        self.logger.info(
-            indent_string("SeaDex notes:"),
-        )
-
-        notes = sd_entry.notes.split("\n")
-        for n in notes:
-            self.logger.warning(
-                indent_string(n),
-            )
-        self.logger.warning(
-            indent_string(""),
-        )
-
-        all_srgs = list(seadex_dict.keys())
-        for s_i, s in enumerate(all_srgs):
-            self.logger.warning(
-                indent_string(f"[{s_i}]: {s}"),
-            )
-
-        srgs_to_grab = input(
-            "Which release group(s)? Enter one number, a comma-separated list, or leave blank for all: ",
-        )
-
-        srgs_to_grab = srgs_to_grab.split(",")
-
-        # Remove any blank entries
-        while "" in srgs_to_grab:
-            srgs_to_grab.remove("")
-
-        # If we have some selections, parse down
-        if len(srgs_to_grab) > 0:
-            seadex_dict_filtered = {}
-            for srg_idx in srgs_to_grab:
-                try:
-                    srg = all_srgs[int(srg_idx)]
-                except IndexError:
-                    self.logger.warning(
-                        indent_string(f"Index {srg_idx} is out of range"),
-                    )
-                    continue
-                seadex_dict_filtered[srg] = copy.deepcopy(seadex_dict[srg])
-
-            seadex_dict = seadex_dict_filtered
-
-        return seadex_dict
+        return self._filter.interactive_pick(seadex_dict, sd_entry)
 
     def filter_seadex_downloads(
         self,
@@ -599,48 +486,9 @@ class SeaDexArr:
         arr_release_dict: ArrReleaseDict,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> tuple[list[str | None], SeadexDict]:
-        """Flip the switch on whether we're downloading this torrent or not
+        """Apply the download plan, stamping public_only skips onto ctx (delegates)."""
 
-        Thin orchestrator seam over the DownloadPlanner: pass it the entry's
-        cached hashes, then apply the plan's private-only skip outcome back onto
-        the run state the grab/cache tail still reads (the SkipNotice log lines,
-        the public_only_skipped flag, and the skipped group names). This
-        translation back to ``self`` is transitional; it unwinds when the
-        add_torrent / grab_and_cache knot is untied behind RunContext.
-
-        Args:
-            al_id: AniList ID
-            seadex_dict: Dictionary of SeaDex releases
-            arr: Type of arr instance
-            arr_release_dict: Dictionary of arr release properties
-            ep_list: List of episodes. Defaults to None
-        """
-
-        result = self._planner.plan(
-            seadex_dict=seadex_dict,
-            arr=arr,
-            arr_release_dict=arr_release_dict,
-            cached_hashes=self.cache_store.torrent_hashes(arr, al_id),
-            ep_list=ep_list,
-        )
-
-        # The planner reports what to log rather than logging it; render each
-        # private-only skip exactly as the inline call used to.
-        for notice in result.skip_notices:
-            self.log_fmt.detail(
-                "skipped",
-                f"{', '.join(notice.groups)} {notice.reason}",
-                value_style="yellow",
-                level=notice.level,
-            )
-
-        # Carry the skip flag/groups onto the run context (reset per title in the
-        # prologue; add_torrent may append more before grab_and_cache reads them).
-        if result.public_only_skipped:
-            self._ctx.public_only_skipped = True
-            self._ctx.public_only_groups.extend(result.public_only_groups)
-
-        return result.torrent_hashes, result.seadex_dict
+        return self._filter.filter_downloads(al_id, seadex_dict, arr, arr_release_dict, ep_list)
 
     def add_torrent(
         self,
@@ -886,11 +734,11 @@ class SeaDexArr:
 
         Two-phase bind: called once with the placeholder ctx in ``__init__`` (so
         pre-run paths are safe) and again from ``run_sync`` right after
-        ``reset_run_stats`` swaps in the run's real ctx. A no-op today; the Phase B
-        collaborator extractions rebind their bound ctx here.
+        ``reset_run_stats`` swaps in the run's real ctx, so every collaborator
+        rebinds to the fresh ctx.
         """
 
-        del ctx
+        self._filter.begin_run(ctx)
 
     def reset_run_stats(
         self,

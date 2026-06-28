@@ -21,7 +21,9 @@ from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT, CachedEntry, CacheFie
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, PendingImport
 from seadexarr.modules.planner import DownloadPlanner
+from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.seadex_arr import SeaDexArr
+from seadexarr.modules.seadex_filter import SeadexReleaseFilter
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
     EpisodeRecord,
@@ -382,6 +384,30 @@ def make_arr(**overrides: Any) -> SeaDexArr:
     }
     defaults.update(overrides)
     return make_bare_instance(SeaDexArr, **defaults)
+
+
+def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
+    """Build a ``SeadexReleaseFilter`` with only what its methods read.
+
+    Config-backed flags (e.g. ``want_best``, ``public_only``) route through an
+    in-memory ``AppConfig``; the rest pass straight to the constructor. Mirrors
+    ``make_arr``'s override routing so the ``build`` characterization tests read
+    the same as the old ``get_seadex_dict`` ones.
+    """
+
+    logger = make_logger()
+    config_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CONFIG_SETTING_NAMES}
+    config = make_config(**config_overrides)
+    defaults: dict[str, Any] = {
+        "config": config,
+        "planner": make_planner(),
+        "cache_store": FakeCacheStore(),
+        "logger": logger,
+        "log_fmt": mock.MagicMock(),
+        "ctx": RunContext(arr=Arr.SONARR),
+    }
+    defaults.update(overrides)
+    return SeadexReleaseFilter(**defaults)
 
 
 def make_planner(**overrides: Any) -> DownloadPlanner:
