@@ -17,6 +17,7 @@ narrow :class:`~.protocols.ImportCompleter` protocol.
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -26,6 +27,7 @@ from .cache import UPDATED_AT_STR_FORMAT, CacheStore
 from .config import AppConfig
 from .manual_import import (
     ImportProbe,
+    ImportProgress,
     ImportReadiness,
     Outcome,
     PendingImport,
@@ -192,6 +194,18 @@ class ImportWaitManager:
                 exc_info=True,
             )
             return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
+
+    def import_progress(self, pending: PendingImport) -> ImportProgress:
+        """Cheap, read-only files-landed count for the wait bar (Tier-2 poll).
+
+        Delegates to the active strategy; never refreshes downloads, reads the
+        queue, or issues a command (the strategy contract enforces that). An
+        indeterminate zero when no strategy is bound.
+        """
+
+        if self._active_strategy is None:
+            return ImportProgress(0, 0, determinate=False)
+        return self._active_strategy.import_progress(pending)
 
     def _this_run_infohashes(self) -> set[str]:
         """Infohashes grabbed THIS run - excluded from the carried-over passes.
@@ -365,6 +379,7 @@ class ImportWaitManager:
                 self.logger,
                 poll_s=self._config.imports.poll_interval,
                 digest_interval=self._config.imports.digest_interval,
+                time_source=clock,
             )
 
         poll_s = self._config.imports.poll_interval
@@ -390,7 +405,7 @@ class ImportWaitManager:
                         mp.advance(record)
                     view.update(mp.snapshot(clock() - mp.start))
                     if mp.active:
-                        nap(poll_s)
+                        self._progress_wait(mp, records, view, clock, nap, poll_s)
                 except KeyboardInterrupt:
                     self.logger.info(f"Wait interrupted; {len(mp.active)} left pending")
                     break
@@ -399,6 +414,41 @@ class ImportWaitManager:
                 view.close()
 
         return WaitResult(tuple(mp.results), elapsed_s=clock() - mp.start)
+
+    def _progress_wait(
+        self,
+        mp: "MonitorPass",
+        records: list[PendingImport],
+        view: WaitView,
+        clock: Callable[[], float],
+        nap: Callable[[float], None],
+        poll_s: int,
+    ) -> None:
+        """Sleep one heavy-poll interval, refreshing the "files inserted" bar between.
+
+        Splits the inter-poll ``nap`` into ``progress_poll_interval`` slices: between
+        the heavy cycles it re-reads only the cheap episode-file count (never the
+        throttled refresh / queue / qBittorrent) to advance each importing row's bar
+        and promote a row the instant its files all land. Falls back to one plain
+        ``nap(poll_s)`` when the fast poll is disabled (<= 0) or no faster than the
+        heavy poll. A ``KeyboardInterrupt`` during a slice propagates to the caller's
+        break, as a plain ``nap`` would.
+        """
+
+        progress_s = self._config.imports.progress_poll_interval
+        if progress_s <= 0 or progress_s >= poll_s:
+            nap(poll_s)
+            return
+        deadline = clock() + poll_s
+        while mp.active:
+            remaining = deadline - clock()
+            if remaining <= 0:
+                return
+            nap(min(progress_s, remaining))
+            if not mp.active:
+                return
+            if mp.refresh_progress(records):
+                view.update(mp.snapshot(clock() - mp.start))
 
     def _monitor_working_set(self) -> list[PendingImport]:
         """Dedup ``_ctx.pending_imports`` + rehydrated store records by infohash.
@@ -590,13 +640,64 @@ class MonitorPass:
             self._terminal(Outcome.NOTHING_TO_IMPORT, h, label)
         else:
             # RETRY / copy in flight: the command was accepted but the files
-            # haven't landed yet (or Sonarr is still scanning).
+            # haven't landed yet (or Sonarr is still scanning). Seed the "files
+            # inserted" bar from the probe counts - determinate only when the seed
+            # map is whole (target_count > 0); otherwise an indeterminate row.
+            total = probe.target_count
+            done = probe.imported_count
             self.views[h] = TorrentView(
                 key=h,
                 label=label,
                 phase=Phase.IMPORTING,
-                fraction=1.0,
+                fraction=(done / total if total else 1.0),
+                import_done=(done if total else None),
+                import_total=(total if total else None),
                 phase_elapsed_s=self.now() - self.import_start[h],
                 phase_timeout_s=self.import_timeout,
                 command_issued=probe.command_issued,
             )
+
+    def refresh_progress(self, records: list[PendingImport]) -> bool:
+        """Cheap Tier-2 pass: refresh each importing row's "files inserted" bar.
+
+        For every still-active row currently in the IMPORTING phase, asks the
+        strategy for a read-only files-landed count (no refresh / queue / command)
+        and either PROMOTES the row to IMPORTED the instant every intended file is
+        present - the same verified-files signal the heavy poll gates on, only seen
+        sooner - or advances its bar when the count changed. Returns whether
+        anything changed, so the caller re-pushes a snapshot only when there is
+        something new. Never raises: a failed progress poll is skipped, leaving the
+        row's last bar in place.
+        """
+
+        changed = False
+        for record in records:
+            h = record.infohash
+            if h not in self.active:
+                continue
+            view = self.views.get(h)
+            if view is None or view.phase is not Phase.IMPORTING:
+                continue
+            try:
+                progress = self._mgr.import_progress(record)
+            except Exception:
+                self._mgr.logger.debug(f"import progress poll for {h} failed", exc_info=True)
+                continue
+            # Indeterminate (partial seed map) -> no bar, no promotion; leave the
+            # row to the heavy poll's repaired done-check.
+            if not progress.determinate or progress.total <= 0:
+                continue
+            label = record.title or record.infohash
+            if progress.done >= progress.total:
+                self._terminal(Outcome.IMPORTED, h, label)
+                changed = True
+            elif (progress.done, progress.total) != (view.import_done, view.import_total):
+                self.views[h] = replace(
+                    view,
+                    fraction=progress.done / progress.total,
+                    import_done=progress.done,
+                    import_total=progress.total,
+                    phase_elapsed_s=self.now() - self.import_start.get(h, self.now()),
+                )
+                changed = True
+        return changed

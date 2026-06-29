@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Protocol
 
-from .manual_import import ImportProbe, PendingImport
+from .manual_import import ImportProbe, ImportProgress, PendingImport
 from .mappings import MappingEntry
 from .seadex_types import ArrItem
 
@@ -34,6 +34,8 @@ class ImportCompleter(Protocol):
         force: bool = False,
         at_deadline: bool = False,
     ) -> ImportProbe: ...
+
+    def import_progress(self, pending: PendingImport) -> ImportProgress: ...
 
 
 class ArrSync[ItemT: ArrItem](ABC):
@@ -161,4 +163,16 @@ class ArrSync[ItemT: ArrItem](ABC):
             ImportProbe: the readiness (drop / retry / leave) plus whether the
             intended episode files are verified present (``files_present``) and
             whether an import command was just accepted (``command_issued``).
+        """
+
+    @abstractmethod
+    def import_progress(self, pending: PendingImport) -> ImportProgress:
+        """Cheap, read-only "files inserted" count for the wait cockpit's bar.
+
+        Called between the heavy ``import_completed`` polls (the Tier-2 fast poll)
+        to fill the importing row's bar as files land and to promote the row once
+        every intended file is present. MUST NOT refresh downloads, read the queue,
+        or issue commands - only the fresh episode files. ``SonarrSync`` counts the
+        seed targets that now hold the recommended release; ``RadarrSync`` records
+        no pending imports, so it returns an indeterminate zero.
         """

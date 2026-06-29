@@ -4,7 +4,7 @@ from .cache import CacheRecord
 from .config import Arr
 from .grab_pipeline import GrabRequest
 from .log import indent_string
-from .manual_import import ImportProbe, ImportReadiness, PendingImport
+from .manual_import import ImportProbe, ImportProgress, ImportReadiness, PendingImport
 from .mappings import MappingEntry, TmdbType
 from .protocols import ArrSync, EpisodeProgress
 from .radarr_client import collect_anime_movies, make_radarr_client
@@ -222,6 +222,17 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         del pending, content_path, force, at_deadline
         return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
+
+    @override
+    def import_progress(self, pending: PendingImport) -> ImportProgress:
+        """No-op: Radarr records no pending imports, so this is never reached.
+
+        Returns an indeterminate zero (the safest value - shows no bar, promotes
+        nothing) to satisfy the :class:`~.protocols.ArrSync` contract.
+        """
+
+        del pending
+        return ImportProgress(0, 0, determinate=False)
 
     # --- Radarr domain logic ------------------------------------------------
 

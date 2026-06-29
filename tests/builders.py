@@ -729,19 +729,24 @@ def import_probe(
     *,
     files_present: bool = True,
     command_issued: bool = False,
+    imported_count: int = 0,
+    target_count: int = 0,
 ) -> ImportProbe:
     """An :class:`ImportProbe` with the common "files verified imported" defaults.
 
     The default is the verified-import outcome (``IMPORTED`` + ``files_present``);
     pass ``readiness=RETRY, files_present=False, command_issued=True`` for the
     "command accepted, copy in flight" case, or ``files_present=False`` for a not-
-    yet-ready poll.
+    yet-ready poll. ``imported_count``/``target_count`` seed the "files inserted"
+    bar (0/0 -> an indeterminate importing row).
     """
 
     return ImportProbe(
         readiness=readiness,
         files_present=files_present,
         command_issued=command_issued,
+        imported_count=imported_count,
+        target_count=target_count,
     )
 
 

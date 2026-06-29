@@ -20,7 +20,7 @@ import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from enum import Enum, StrEnum, auto
-from typing import Any
+from typing import Any, NamedTuple
 
 from .seadex_types import (
     CommandResource,
@@ -190,11 +190,34 @@ class ImportProbe:
             present in Sonarr. Only this promotes a record to ``imported``.
         command_issued (bool): Whether a manual-import command was accepted this
             poll (its copy may still be in flight - so not yet ``files_present``).
+        imported_count (int): How many of the intended episodes already hold the
+            recommended file - the "files inserted" bar numerator. Meaningful only
+            with ``target_count`` > 0 (a complete seed map); 0 otherwise.
+        target_count (int): The intended-episode denominator for the bar, fixed to
+            the persisted seed set so the bar can't rescale mid-import. 0 means the
+            seed map is incomplete, so the importing row stays indeterminate.
     """
 
     readiness: ImportReadiness
     files_present: bool
     command_issued: bool
+    imported_count: int = 0
+    target_count: int = 0
+
+
+class ImportProgress(NamedTuple):
+    """A cheap, read-only files-landed count for the wait cockpit's import bar.
+
+    Returned by the strategy's ``import_progress`` (the Tier-2 poll): no refresh,
+    no queue, no command - just the fresh episode files counted against the seed
+    set. ``determinate`` is True only when the persisted seed map covers every
+    intended file, so ``done``/``total`` are the true full set; when False the
+    importing row stays indeterminate (spinner only) and must NOT promote.
+    """
+
+    done: int
+    total: int
+    determinate: bool
 
 
 class OutcomeCategory(Enum):

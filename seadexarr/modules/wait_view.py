@@ -19,14 +19,17 @@ small interface either way.
 """
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from collections import Counter
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from enum import Enum, auto
 from typing import final, override
 
-from rich.console import Console, Group
+from rich.console import Console, ConsoleOptions, Group, RenderResult
 from rich.live import Live
+from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
@@ -47,6 +50,9 @@ MIN_LIVE_ROWS = 4
 # Rows reserved for the banner, header, overflow line and a little breathing room
 # when clamping the body to the terminal height.
 _RESERVED_ROWS = 8
+# rich's own refresh cadence: the spinner animates and the per-row + header timers
+# tick at this rate BETWEEN the engine's polls, off rich's background thread.
+_REFRESH_PER_SECOND = 12.5
 
 
 class Phase(Enum):
@@ -86,6 +92,10 @@ class TorrentView:
     phase_elapsed_s: float = 0.0
     phase_timeout_s: float = 0.0
     command_issued: bool = False
+    # "Files inserted" bar for an IMPORTING row: both set -> a determinate
+    # done/total bar; both None -> indeterminate (just the "importing" note).
+    import_done: int | None = None
+    import_total: int | None = None
     outcome: Outcome | None = None
 
 
@@ -218,6 +228,9 @@ class RowModel:
     eta: str = ""
     size: str = ""
     note: str = ""
+    # Draw a determinate block bar for ``fraction`` (downloads always; an importing
+    # row only when its files-inserted count is known). Else a status word.
+    show_bar: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,6 +249,7 @@ def make_wait_view(
     *,
     poll_s: int,
     digest_interval: int = 300,
+    time_source: Callable[[], float] = time.monotonic,
 ) -> "WaitView":
     """Build a live cockpit on a capable TTY, else a calm log digest.
 
@@ -245,12 +259,15 @@ def make_wait_view(
             mid-wait reflows ABOVE the region).
         poll_s (int): The poll cadence - the floor for the non-TTY digest interval.
         digest_interval (int): Target seconds between non-TTY aggregate pulses.
+        time_source (Callable[[], float]): Monotonic clock the live cockpit uses to
+            tick its spinner/timers between polls; injectable so a test (and the
+            monitor) can share one deterministic clock.
     """
 
     console = console_of(logger)
     caps = detect_capabilities(console)
     if console is not None and caps.live:
-        return LiveWaitView(console, caps, logger)
+        return LiveWaitView(console, caps, logger, time_source=time_source)
     return LogWaitView(
         logger,
         caps,
@@ -327,9 +344,22 @@ def _row_model(torrent: TorrentView) -> RowModel:
             speed="stalled" if torrent.speed_bps is None else f"{_human_bytes(torrent.speed_bps)}/s",
             eta="" if torrent.eta_s is None else _compact_eta(torrent.eta_s),
             size=size,
+            show_bar=True,
         )
     if torrent.phase is Phase.IMPORTING:
-        note = LogFormatter.format_elapsed(torrent.phase_elapsed_s)
+        elapsed = LogFormatter.format_elapsed(torrent.phase_elapsed_s)
+        if torrent.import_total:
+            # Determinate "files inserted" bar: count in the pct slot, the elapsed
+            # timer in the eta slot (the speed slot stays blank - import has none).
+            return RowModel(
+                label=torrent.label,
+                phase=torrent.phase,
+                fraction=max(0.0, min(1.0, torrent.fraction)),
+                pct=f"{torrent.import_done}/{torrent.import_total}",
+                eta=elapsed,
+                show_bar=True,
+            )
+        note = elapsed
         if torrent.command_issued:
             note += " (copy in flight)"
         return RowModel(label=torrent.label, phase=torrent.phase, fraction=1.0, note=note)
@@ -494,16 +524,32 @@ class _DurableWaitView(WaitView):
         """Stop any live region / restore the terminal (idempotent)."""
 
 
+@dataclass(frozen=True, slots=True)
+class _FrameAnchor:
+    """The last snapshot the engine pushed + the monotonic instant it was pushed.
+
+    Swapped atomically by :meth:`LiveWaitView._render` and read by the refresh
+    thread, so a render pairs the latest snapshot with the time to roll it forward.
+    """
+
+    snapshot: WaitSnapshot
+    pushed_at: float
+
+
 @final
 class LiveWaitView(_DurableWaitView):
-    """The sticky terminal cockpit: a rebuilt-per-poll ``rich.Live`` region.
+    """The sticky terminal cockpit: a self-animating ``rich.Live`` region.
 
-    Single-threaded by contract (``auto_refresh=False``): the engine's poll loop
-    calls :meth:`update` and we rebuild + refresh explicitly, so no background
-    thread contends with the logging handler that shares this Console. The region
-    holds only in-flight rows under an aggregate header; finished torrents already
-    graduated to scrollback. ``transient=True`` erases the box on close, leaving
-    the durable ledger + summary.
+    ``auto_refresh=True`` (like the boot cockpit): rich re-renders on its own
+    refresh thread, so the per-row + header elapsed timers tick and the importing
+    spinner animates BETWEEN the engine's polls, not only when a snapshot is pushed.
+    The engine's :meth:`update` just swaps the immutable :class:`_FrameAnchor`; a
+    persistent :class:`_LiveFrame` rebuilds the frame from it each tick, rolling the
+    elapsed clocks forward by the time since the push. The shared Console lock
+    serializes that thread against the logging handler, so a line logged mid-wait
+    reflows ABOVE the region. The region holds only in-flight rows under an
+    aggregate header (finished torrents graduated to scrollback); ``transient=True``
+    erases the box on close, leaving the durable ledger + summary.
     """
 
     def __init__(
@@ -511,29 +557,71 @@ class LiveWaitView(_DurableWaitView):
         console: Console,
         caps: Capabilities,
         logger: logging.Logger,
+        *,
+        time_source: Callable[[], float] = time.monotonic,
     ) -> None:
         super().__init__(logger, caps)
         self._console = console
+        self._time_source = time_source
         self._live: Live | None = None
+        self._spinner: Spinner | None = None
+        self._anchor: _FrameAnchor | None = None
 
     @override
     def _render(self, snapshot: WaitSnapshot) -> None:
+        # Atomic swap: the refresh thread reads whichever anchor is current, never a
+        # torn one (single attribute assignment under the GIL).
+        self._anchor = _FrameAnchor(snapshot, self._time_source())
         if self._live is None:
+            self._spinner = Spinner("dots" if self._caps.unicode else "line", style="yellow")
             self._live = Live(
                 console=self._console,
-                auto_refresh=False,
+                auto_refresh=True,
+                refresh_per_second=_REFRESH_PER_SECOND,
                 transient=True,
                 redirect_stdout=False,
                 redirect_stderr=False,
             )
             self._live.start()
-        self._live.update(self._frame(live_model(snapshot, self._caps)), refresh=True)
+            # One persistent self-recomputing renderable; the engine only swaps the
+            # anchor from here on, rich's thread re-renders this between polls.
+            self._live.update(_LiveFrame(self._current_group, self._logger), refresh=True)
 
     @override
     def _teardown(self) -> None:
         if self._live is not None:
             self._live.stop()
             self._live = None
+            self._spinner = None
+
+    def _current_group(self) -> Group:
+        """Build the frame for the CURRENT instant - ticks timers + spinner forward.
+
+        Called on each of rich's refresh ticks (via :class:`_LiveFrame`). Rolls the
+        last pushed snapshot's elapsed clocks forward by the time since it was
+        pushed, so the timers advance between polls; the pure :func:`live_model`
+        reducer still sees explicit elapsed values (no clock of its own).
+        """
+
+        anchor = self._anchor
+        if anchor is None:
+            return Group()
+        offset = max(0.0, self._time_source() - anchor.pushed_at)
+        return self._frame(live_model(self._advance(anchor.snapshot, offset), self._caps))
+
+    @staticmethod
+    def _advance(snapshot: WaitSnapshot, offset: float) -> WaitSnapshot:
+        """The snapshot with its in-flight elapsed clocks rolled forward by ``offset``."""
+
+        if offset <= 0.0:
+            return snapshot
+        torrents = tuple(
+            torrent
+            if torrent.phase is Phase.TERMINAL
+            else replace(torrent, phase_elapsed_s=torrent.phase_elapsed_s + offset)
+            for torrent in snapshot.torrents
+        )
+        return replace(snapshot, torrents=torrents, elapsed_s=snapshot.elapsed_s + offset)
 
     def _frame(self, model: LiveModel) -> Group:
         parts: list[Text | Table] = [self._header(model)]
@@ -584,9 +672,13 @@ class LiveWaitView(_DurableWaitView):
         *,
         show_speed: bool,
         show_size: bool,
-    ) -> list[Text]:
-        marker = self._marker(row.phase)
-        cells: list[Text] = [marker, Text(row.label)]
+    ) -> list[Text | Spinner]:
+        # One shared spinner animates every importing row in sync; the static glyph
+        # is the fallback (no live region, or any other phase).
+        marker: Text | Spinner = (
+            self._spinner if row.phase is Phase.IMPORTING and self._spinner is not None else self._marker(row.phase)
+        )
+        cells: list[Text | Spinner] = [marker, Text(row.label)]
         if bar_width:
             cells.append(self._bar_or_status(row, bar_width))
         # pct column doubles as the importing note when there's no % to show.
@@ -606,7 +698,7 @@ class LiveWaitView(_DurableWaitView):
         return Text("·" if self._caps.unicode else ".", style="grey50")
 
     def _bar_or_status(self, row: RowModel, bar_width: int) -> Text:
-        if row.phase is Phase.DOWNLOADING:
+        if row.show_bar:
             return self._block_bar(row.fraction, bar_width)
         word = "importing" if row.phase is Phase.IMPORTING else "queued"
         style = "yellow" if row.phase is Phase.IMPORTING else "grey50"
@@ -621,6 +713,30 @@ class LiveWaitView(_DurableWaitView):
     def _truncate(self, text: Text) -> Text:
         text.truncate(self._caps.width, overflow="ellipsis")
         return text
+
+
+@final
+class _LiveFrame:
+    """A self-recomputing renderable for :class:`LiveWaitView`'s ``rich.Live``.
+
+    rich re-renders this on its background refresh thread, so it rebuilds the frame
+    from the view's current anchor each tick - ticking timers and animating the
+    spinner between the engine's polls. Total by contract: a render bug degrades to
+    an empty frame logged at debug, it never crashes the refresh thread.
+    """
+
+    def __init__(self, get_group: Callable[[], Group], logger: logging.Logger) -> None:
+        self._get_group = get_group
+        self._logger = logger
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        del console, options
+        try:
+            group = self._get_group()
+        except Exception:
+            self._logger.debug("wait frame render failed", exc_info=True)
+            return
+        yield group
 
 
 @final

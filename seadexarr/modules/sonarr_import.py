@@ -16,6 +16,7 @@ Extracted from :class:`~.seadex_sonarr.SonarrSync`. Two collaborators:
 
 import os
 import time
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -23,9 +24,11 @@ from .cache import UPDATED_AT_STR_FORMAT
 from .config import Arr
 from .log import indent_string
 from .manual_import import (
+    EpisodeFileStatus,
     ImportAction,
     ImportDecision,
     ImportProbe,
+    ImportProgress,
     ImportReadiness,
     PendingImport,
     QueueRecordView,
@@ -604,27 +607,44 @@ class ImportReconciler:
         episodes_by_id = {ep.id: ep for ep in episodes if ep.id}
         recommended = self._recommended_groups(pending.series_id, pending.release_group)
 
+        # "Files inserted" bar counts, pinned to the seed set so the denominator
+        # never rescales mid-import. Determinate only when the seed map covers every
+        # intended file; an incomplete map reports 0/0 so the importing row stays
+        # indeterminate (a partial seed must never show a misleading bar) and only
+        # the manual import's repaired done-check below can finish it.
+        seeded_targets = self._pending_target_ids(pending)
+        seed_complete = bool(seeded_targets) and self._seed_map_is_complete(pending)
+        seed_statuses = episode_file_statuses(seeded_targets, episodes_by_id, recommended) if seed_complete else {}
+        done = self._recommended_count(seed_statuses)
+        total = len(seeded_targets) if seed_complete else 0
+
+        def probe(readiness: ImportReadiness, *, files_present: bool, command_issued: bool) -> ImportProbe:
+            return ImportProbe(
+                readiness,
+                files_present=files_present,
+                command_issued=command_issued,
+                imported_count=done,
+                target_count=total,
+            )
+
         # Fast path: when our grab-time map already covers every video file, the
         # done-check is trustworthy without scanning the folder. An incomplete map
         # falls through to the manual import, which repairs it from the on-disk
         # files and re-checks against the complete set.
-        seeded_targets = self._pending_target_ids(pending)
-        if seeded_targets and self._seed_map_is_complete(pending):
-            statuses = episode_file_statuses(seeded_targets, episodes_by_id, recommended)
-            if all_targets_done(statuses):
-                self.logger.debug(
-                    indent_string(f"{label}: already imported (recommended files present)"),
-                )
-                return ImportProbe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
+        if seed_complete and all_targets_done(seed_statuses):
+            self.logger.debug(
+                indent_string(f"{label}: already imported (recommended files present)"),
+            )
+            return probe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
 
         _download_id, queue_records = self._executor.queue_record_views(pending.infohash)
         verdict = classify_queue(queue_records)
         if verdict is QueueVerdict.WAIT:
             self.logger.debug(indent_string(f"{label}: Sonarr is importing; waiting"))
-            return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
+            return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
         if verdict is QueueVerdict.PENDING_CLEAN and not force:
             self.logger.debug(indent_string(f"{label}: Sonarr has it pending; waiting"))
-            return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
+            return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         # A ManualImport we (or a prior run) already POSTed may still be running
         # server-side after Sonarr dropped the torrent from the regular queue - so
@@ -642,16 +662,42 @@ class ImportReconciler:
             self.logger.debug(
                 indent_string(f"{label}: a ManualImport is already in flight; waiting"),
             )
-            return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
+            return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         # STEP_IN, an empty queue, or a forced clean-pending: drive our import.
-        return self._executor.run_manual_import(
+        result = self._executor.run_manual_import(
             pending,
             content_path,
             episodes_by_id=episodes_by_id,
             recommended_groups=recommended,
             at_deadline=at_deadline,
         )
+        return replace(result, imported_count=done, target_count=total)
+
+    def import_progress(self, pending: PendingImport) -> ImportProgress:
+        """Cheap, read-only "files inserted" count for one record (the Tier-2 bar).
+
+        Reads ONLY the fresh episode files - never the throttled refresh, the queue,
+        or qBittorrent - and counts the seed targets that now hold the recommended
+        release. ``determinate`` is False (and the counts 0) unless the seed map is
+        whole, so a partial seed never shows a misleading bar or promotes early; that
+        decision is left to the heavy poll's repaired done-check.
+        """
+
+        seeded_targets = self._pending_target_ids(pending)
+        if not seeded_targets or not self._seed_map_is_complete(pending):
+            return ImportProgress(0, 0, determinate=False)
+        episodes = self._episodes.episodes_for_series(pending.series_id)
+        episodes_by_id = {ep.id: ep for ep in episodes if ep.id}
+        recommended = self._recommended_groups(pending.series_id, pending.release_group)
+        statuses = episode_file_statuses(seeded_targets, episodes_by_id, recommended)
+        return ImportProgress(self._recommended_count(statuses), len(seeded_targets), determinate=True)
+
+    @staticmethod
+    def _recommended_count(statuses: dict[int, EpisodeFileStatus]) -> int:
+        """How many target episodes already hold the recommended release (bar numerator)."""
+
+        return sum(1 for status in statuses.values() if status is EpisodeFileStatus.RECOMMENDED)
 
     def _series_pending_records(self, series_id: int) -> list[dict[str, Any]]:
         """Raw durable pending records for one series (any release group).

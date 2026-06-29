@@ -15,6 +15,7 @@ import re
 from typing import override
 
 from rich.console import Console
+from rich.spinner import Spinner
 
 from seadexarr.modules.log import RichConsoleHandler
 from seadexarr.modules.manual_import import Outcome, OutcomeCategory
@@ -28,6 +29,7 @@ from seadexarr.modules.wait_view import (
     WaitResult,
     WaitSnapshot,
     _DurableWaitView,
+    _FrameAnchor,
     graduations,
     live_model,
     make_wait_view,
@@ -71,6 +73,25 @@ def _downloading(key: str, label: str, frac: float) -> TorrentView:
 
 def _terminal(key: str, label: str, outcome: Outcome) -> TorrentView:
     return TorrentView(key=key, label=label, phase=Phase.TERMINAL, outcome=outcome)
+
+
+def _importing(key: str, label: str, *, done: int, total: int, elapsed: float) -> TorrentView:
+    return TorrentView(
+        key=key,
+        label=label,
+        phase=Phase.IMPORTING,
+        fraction=(done / total if total else 1.0),
+        import_done=done,
+        import_total=total,
+        phase_elapsed_s=elapsed,
+        command_issued=True,
+    )
+
+
+def _render_to_text(renderable: object, *, width: int = 100) -> str:
+    console = Console(file=io.StringIO(), force_terminal=True, width=width)
+    console.print(renderable)
+    return _plain(console)
 
 
 # --- factory / capability probe ------------------------------------------------
@@ -147,6 +168,82 @@ def test_live_graduations_reach_the_file_log_not_just_the_console() -> None:
     assert "Frieren" in file_text
     assert "imported" in file_text
     assert "wait complete" in file_text
+
+
+def test_live_frame_ticks_timer_between_polls() -> None:
+    # The cockpit's elapsed timer must advance off rich's refresh between the
+    # engine's polls: _current_group rolls the last anchor forward by now-pushed_at.
+    # Driven deterministically through a fake clock, NOT the background thread.
+    logger, _ = _logger_with_console(force_terminal=True)
+    caps = Capabilities(live=True, color=False, unicode=True, width=100, height=40)
+    now = [0.0]
+    view = LiveWaitView(Console(file=io.StringIO()), caps, logger, time_source=lambda: now[0])
+    snap = WaitSnapshot((_importing("h", "Show", done=2, total=12, elapsed=64),), elapsed_s=64)
+    view._anchor = _FrameAnchor(snap, 0.0)  # pushed at t0=0
+
+    at_push = _render_to_text(view._current_group())
+    now[0] = 5.0  # 5s later, no new snapshot pushed
+    later = _render_to_text(view._current_group())
+
+    assert "1m 04s" in at_push  # 64s at push
+    assert "1m 09s" in later  # 69s after the 5s tick
+
+
+def test_live_frame_renders_the_import_bar_and_count() -> None:
+    logger, _ = _logger_with_console(force_terminal=True)
+    caps = Capabilities(live=True, color=False, unicode=True, width=100, height=40)
+    view = LiveWaitView(Console(file=io.StringIO()), caps, logger)
+    snap = WaitSnapshot((_importing("h", "Show", done=8, total=12, elapsed=64),), elapsed_s=64)
+    view._anchor = _FrameAnchor(snap, 0.0)
+
+    text = _render_to_text(view._current_group())
+
+    assert "8/12" in text
+    assert "█" in text  # a determinate block bar, not the "importing" word
+
+
+def test_live_view_uses_a_spinner_for_importing_rows() -> None:
+    # The importing marker is the shared animated spinner (the activity indicator),
+    # not the static glyph.
+    logger, _ = _logger_with_console(force_terminal=True)
+    view = make_wait_view(logger, poll_s=30)
+    assert isinstance(view, LiveWaitView)
+    view.update(WaitSnapshot((_importing("h", "Show", done=1, total=3, elapsed=5),), elapsed_s=5))
+    try:
+        assert view._spinner is not None
+        row = live_model(
+            WaitSnapshot((_importing("h", "Show", done=1, total=3, elapsed=5),), elapsed_s=5), view._caps
+        ).rows[0]
+        cells = view._row_cells(row, 16, show_speed=True, show_size=True)
+        assert isinstance(cells[0], Spinner)
+    finally:
+        view.close()
+
+
+def test_spinner_frame_advances_in_a_table_cell() -> None:
+    # Rich draws a Spinner from console.get_time(); prove the glyph actually cycles
+    # over time when the spinner is a Table.grid cell (the cockpit's layout), not
+    # just the boot view's Padding. The view's timer is frozen (time_source -> 0) so
+    # the ONLY thing that can differ between the two frames is the spinner itself.
+    now = [0.0]
+    console = Console(file=io.StringIO(), force_terminal=True, width=100, get_time=lambda: now[0])
+    caps = Capabilities(live=True, color=False, unicode=True, width=100, height=40)
+    logger, _ = _logger_with_console(force_terminal=True)
+    view = LiveWaitView(Console(file=io.StringIO()), caps, logger, time_source=lambda: 0.0)
+    view._spinner = Spinner("dots", style="yellow")
+    snap = WaitSnapshot((_importing("h", "Show", done=1, total=3, elapsed=5),), elapsed_s=5)
+    view._anchor = _FrameAnchor(snap, 0.0)
+
+    def frame_at(t: float) -> str:
+        now[0] = t
+        stream = console.file
+        assert isinstance(stream, io.StringIO)
+        _ = stream.seek(0)
+        stream.truncate(0)
+        console.print(view._current_group())
+        return _ANSI.sub("", stream.getvalue())
+
+    assert frame_at(0.0) != frame_at(0.5)  # the dots spinner cycled across ~6 frames
 
 
 # --- log digest ----------------------------------------------------------------
@@ -226,6 +323,34 @@ def test_live_model_header_reports_aggregate() -> None:
     assert model.left_text == "waiting 1/2"
     assert "MB/s" in model.right_text  # aggregate download speed
     assert 0.0 < model.overall_fraction < 1.0
+
+
+def test_live_model_importing_determinate_bar() -> None:
+    # A known files-inserted count -> a determinate bar with a "done/total" label.
+    caps = Capabilities(live=True, color=True, unicode=True, width=100, height=40)
+    snap = WaitSnapshot((_importing("h", "Show", done=8, total=12, elapsed=64),), elapsed_s=64)
+
+    row = live_model(snap, caps).rows[0]
+
+    assert row.show_bar is True
+    assert row.pct == "8/12"
+    assert 0.0 < row.fraction < 1.0
+    assert row.eta == "1m 04s"  # elapsed timer rides the eta slot
+
+
+def test_live_model_importing_is_indeterminate_without_a_total() -> None:
+    # No seed-complete count -> the old indeterminate row (no bar, "copy in flight").
+    caps = Capabilities(live=True, color=True, unicode=True, width=100, height=40)
+    snap = WaitSnapshot(
+        (TorrentView("h", "Show", Phase.IMPORTING, command_issued=True, phase_elapsed_s=10),),
+        elapsed_s=10,
+    )
+
+    row = live_model(snap, caps).rows[0]
+
+    assert row.show_bar is False
+    assert row.pct == ""
+    assert "copy in flight" in row.note
 
 
 # --- WaitResult ----------------------------------------------------------------

@@ -23,6 +23,7 @@ from unittest import mock
 from seadexarr.modules.manual_import import (
     CandidateFile,
     EpisodeAssignment,
+    ImportProgress,
     ImportReadiness,
     ParsedQuality,
     QueueRecordView,
@@ -629,6 +630,75 @@ class TestYamadaEndToEnd:
         assigned = {f["episodeIds"][0]: f for f in files}
         assert set(assigned) == {8030, 8031}
         assert all(f["seriesId"] == 213 for f in files)
+
+    def test_import_completed_probe_carries_seed_complete_counts(self) -> None:
+        # A complete seed map -> the probe carries the determinate "files inserted"
+        # counts (none landed yet here -> 0 / N), pinned to the seed set.
+        strat, sonarr, seadex_files = _yamada_strat()
+        del sonarr
+        ep_map = {name: [8030 + i] for i, name in enumerate(seadex_files)}
+        pending = pending_import(
+            infohash="2222222222222222222222222222222222222222",
+            series_id=213,
+            release_group="Headpatter",
+            file_episode_map=ep_map,
+            episode_ids=[],
+            ordered_episode_ids=[v[0] for v in ep_map.values()],
+            seadex_files=seadex_files,
+            seadex_sizes=[0] * len(seadex_files),
+        )
+
+        probe = strat.import_completed(pending, "/downloads/yamada")
+
+        assert probe.target_count == len(seadex_files)
+        assert probe.imported_count == 0
+
+    def test_import_progress_is_read_only_and_counts_seed_targets(self) -> None:
+        # The Tier-2 fast poll: a determinate count over the seed targets, reading
+        # ONLY the episode files - never the refresh / queue / execute pipeline.
+        strat, sonarr, seadex_files = _yamada_strat()
+        ep_map = {name: [8030 + i] for i, name in enumerate(seadex_files)}
+        pending = pending_import(
+            infohash="4444444444444444444444444444444444444444",
+            series_id=213,
+            release_group="Headpatter",
+            file_episode_map=ep_map,
+            episode_ids=[],
+            ordered_episode_ids=[v[0] for v in ep_map.values()],
+            seadex_files=seadex_files,
+            seadex_sizes=[0] * len(seadex_files),
+        )
+
+        progress = strat.import_progress(pending)
+
+        assert progress.determinate is True
+        assert progress.total == len(seadex_files)
+        assert progress.done == 0  # no episode holds a recommended file yet
+        sonarr.episodes.assert_called()  # the one read it does make
+        sonarr.manual_import_execute.assert_not_called()
+        sonarr.refresh_monitored_downloads.assert_not_called()
+        sonarr.queue.assert_not_called()
+
+    def test_import_progress_indeterminate_when_seed_map_incomplete(self) -> None:
+        # No (or partial) seed map -> indeterminate zero, and it never even fetches:
+        # the importing row stays a spinner, promotion is left to the heavy poll.
+        strat, sonarr, seadex_files = _yamada_strat()
+        pending = pending_import(
+            infohash="3333333333333333333333333333333333333333",
+            series_id=213,
+            release_group="Headpatter",
+            file_episode_map={},  # the real grab-time gap
+            episode_ids=[],
+            ordered_episode_ids=[8030, 8031, 8032],
+            seadex_files=seadex_files,
+            seadex_sizes=[0] * len(seadex_files),
+        )
+
+        progress = strat.import_progress(pending)
+
+        assert progress == ImportProgress(0, 0, determinate=False)
+        sonarr.episodes.assert_not_called()
+        sonarr.manual_import_execute.assert_not_called()
 
     def test_specials_import_with_empty_resolved_set(self) -> None:
         # THE headline regression: the ACTUAL on-disk stuck record is pre-fix - EMPTY

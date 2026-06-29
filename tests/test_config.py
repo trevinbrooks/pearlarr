@@ -96,12 +96,18 @@ class TestDefaults:
         assert imp.wait_timeout == 3600
         assert imp.ready_timeout == 600
         assert imp.poll_interval == 30
+        assert imp.progress_poll_interval == 5
         assert imp.mode == "auto"
         assert imp.default_quality is None
         assert imp.languages_dual == ["Japanese", "English"]
         assert imp.languages_single == ["Japanese"]
         assert imp.pending_max_age_days == 14
         assert imp.digest_interval == 300
+
+    def test_progress_poll_interval_zero_disables_the_fast_poll(self) -> None:
+        # 0 is the documented "disable the cheap progress poll" value.
+        assert ImportsSettings.model_validate({"progress_poll_interval": 0}).progress_poll_interval == 0
+        assert ImportsSettings.model_validate({"progress_poll_interval": 3}).progress_poll_interval == 3
 
     def test_nested_explicit_values_override(self) -> None:
         cfg = AppConfig.model_validate(

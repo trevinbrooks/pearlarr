@@ -19,6 +19,7 @@ from seadexarr.modules.cache import CacheStore
 from seadexarr.modules.config import Arr
 from seadexarr.modules.import_wait import ImportWaitManager
 from seadexarr.modules.manual_import import (
+    ImportProgress,
     ImportReadiness,
     ImportWaitMode,
     Outcome,
@@ -236,6 +237,9 @@ def make_orchestration_manager(
         _reporter=mock.MagicMock(),
         cache_store=FakeCacheStore(),
     )
+    # Default the Tier-2 fast poll to an indeterminate no-op so the heavy-poll tests
+    # are unaffected by it; the Tier-2 tests override this on the returned strategy.
+    strategy.import_progress.return_value = ImportProgress(0, 0, determinate=False)
     mgr._ctx = RunContext(arr=Arr.SONARR, pending_imports=list(pending or []))
     for record in store_records or []:
         mgr.cache_store.put_pending(Arr.SONARR, record["infohash"], record)
@@ -549,6 +553,79 @@ class TestRunMonitor:
         assert view.saw("h", Phase.IMPORTING)  # cycle 1, copy in flight
         assert view.final("h").outcome is Outcome.IMPORTED  # cycle 2, files landed
         assert mgr._pending_store() == {}
+
+    def test_tier2_fast_poll_fills_bar_and_promotes_before_next_heavy_poll(self) -> None:
+        # Between heavy polls the cheap progress poll fills the "files inserted" bar
+        # as files land and promotes the row to IMPORTED the instant all are present
+        # - no second (heavy) import_completed poll, no RefreshMonitoredDownloads.
+        strategy = mock.MagicMock()
+        strategy.import_completed.return_value = import_probe(
+            ImportReadiness.RETRY,
+            files_present=False,
+            command_issued=True,
+        )
+        strategy.import_progress.side_effect = [
+            ImportProgress(1, 3, determinate=True),
+            ImportProgress(2, 3, determinate=True),
+            ImportProgress(3, 3, determinate=True),  # all present -> promote
+        ]
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending.to_json()],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
+            progress_poll_interval=5,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=5)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        # Only ONE heavy poll; the fast poll did the rest.
+        assert strategy.import_completed.call_count == 1
+        assert strategy.import_progress.call_count == 3
+        # The bar advanced (2/3 seen) before the row finished.
+        assert any(
+            t.key == "h" and t.import_done == 2 and t.import_total == 3
+            for snap in view.snapshots
+            for t in snap.torrents
+        )
+        assert view.final("h").outcome is Outcome.IMPORTED
+        assert mgr._pending_store() == {}
+
+    def test_tier2_disabled_skips_the_fast_poll(self) -> None:
+        # progress_poll_interval=0 -> no cheap poll at all; the heavy poll alone
+        # drives completion (the bar simply steps once per poll).
+        strategy = mock.MagicMock()
+        strategy.import_completed.side_effect = [
+            import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
+            import_probe(ImportReadiness.RETRY, files_present=True, command_issued=True),
+        ]
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending.to_json()],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
+            progress_poll_interval=0,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=30)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        strategy.import_progress.assert_not_called()
+        assert strategy.import_completed.call_count == 2
+        assert view.final("h").outcome is Outcome.IMPORTED
 
     def test_importing_at_deadline_left_without_warning(self) -> None:
         # The copy never lands within import_ready_timeout: the final attempt

@@ -8,6 +8,7 @@ from .grab_pipeline import GrabRequest
 from .log import EntryState, indent_string
 from .manual_import import (
     ImportProbe,
+    ImportProgress,
     ImportWaitMode,
     PendingImport,
 )
@@ -468,3 +469,9 @@ class SonarrSync(ArrSync[SonarrItem]):
             force=force,
             at_deadline=at_deadline,
         )
+
+    @override
+    def import_progress(self, pending: PendingImport) -> ImportProgress:
+        """Cheap read-only files-landed count for the wait bar (delegated)."""
+
+        return self._reconciler.import_progress(pending)
