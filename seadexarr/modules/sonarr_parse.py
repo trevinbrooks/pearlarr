@@ -246,7 +246,12 @@ class SonarrParseCache:
             return
 
         def fetch(name: str) -> tuple[str, list[dict[str, int]] | None]:
-            return name, self.sonarr.parse(name)
+            # A RAISE degrades to a transient miss (None: not cached, re-parsed on
+            # demand) so one bad file can't abort the concurrent warm sweep.
+            try:
+                return name, self.sonarr.parse(name)
+            except Exception:
+                return name, None
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(workers, len(pending))) as pool:
             results = list(pool.map(fetch, pending))

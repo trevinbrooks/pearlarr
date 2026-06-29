@@ -209,6 +209,22 @@ class TestPrefetchEpisodes:
         eps.prefetch([_item(9)])
         assert eps._ep_list_cache == {}
 
+    def test_raising_series_does_not_abort_sweep(self) -> None:
+        # CB5: a worker that RAISES (e.g. a non-JSON 200 response) must not abort the
+        # whole concurrent sweep; that series is left unwarmed, the rest still warm.
+        eps, sonarr = self._eps(mapped={1, 2})
+
+        def episodes(sid: int, quiet: bool = False) -> list[str] | None:
+            if sid == 1:
+                raise ValueError("boom")
+            return ["ep2"]
+
+        sonarr.episodes.side_effect = episodes
+        warmed = eps.prefetch([_item(1), _item(2)])
+
+        assert eps._ep_list_cache == {2: ["ep2"]}  # 1 raised -> unwarmed; 2 warmed
+        assert warmed == 2  # both attempted
+
     def test_sequential_path_matches_concurrent(self) -> None:
         eps, _ = self._eps(mapped={1, 2}, sleep_time=2)
         eps.prefetch([_item(1), _item(2)])

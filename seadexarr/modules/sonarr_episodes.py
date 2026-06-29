@@ -252,8 +252,13 @@ class SonarrEpisodes:
 
         def warm(series_id: int) -> tuple[int, list[SonarrEpisode] | None]:
             # quiet: a transient miss here isn't logged from a worker; get_ep_list
-            # retries and logs it on the main thread if it still fails.
-            return series_id, self.sonarr.episodes(series_id, quiet=True)
+            # retries and logs it on the main thread if it still fails. A RAISE (not
+            # just a None return) degrades to None too, so one bad series can't abort
+            # the whole concurrent sweep (the docstring's per-series degradation).
+            try:
+                return series_id, self.sonarr.episodes(series_id, quiet=True)
+            except Exception:
+                return series_id, None
 
         # submit + as_completed (not pool.map): advance the bar as each series
         # FINISHES, so a slow series doesn't freeze the bar then jump. max_workers=1
