@@ -842,12 +842,13 @@ class RunReporter:
                 self.log_fmt.detail("group", recommendation, value_style="cyan")
 
         # Per-release outcome (qBittorrent path; a dry run has no names to show).
-        # str(): name is None for hashless/private torrents (renders "None" as before).
+        # A hashless/private torrent has no name, so fall back to the release group
+        # rather than rendering the literal "None".
         for r in results:
             if r.added:
-                self.log_fmt.detail("added", str(r.name), value_style="green")
+                self.log_fmt.detail("added", r.name or r.group, value_style="green")
             elif r.outcome is AddOutcome.ALREADY_ADDED:
-                self.log_fmt.detail("downloading", str(r.name), value_style="yellow")
+                self.log_fmt.detail("downloading", r.name or r.group, value_style="yellow")
 
         return True
 

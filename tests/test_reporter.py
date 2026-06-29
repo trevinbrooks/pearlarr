@@ -341,6 +341,18 @@ class TestLogSeadexAction:
         assert "added" in joined
         assert "Show-NAN0" in joined
 
+    def test_added_hashless_release_shows_group_not_none(self) -> None:
+        # A hashless/private torrent has name=None; the row must fall back to the
+        # release group, never render the literal "None".
+        logged, messages = _action_messages(
+            _make_reporter(),
+            [ReleaseOutcome(outcome=AddOutcome.ADDED, name=None, group="NAN0")],
+        )
+        joined = "\n".join(messages)
+
+        assert logged is True
+        assert "None" not in joined  # the bug rendered "added : None"
+
     def test_already_downloading_status_monitor_active(self) -> None:
         logged, messages = _action_messages(
             _make_reporter(),
