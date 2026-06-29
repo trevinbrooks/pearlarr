@@ -297,7 +297,10 @@ class DownloadPlanner:
             for url_item in seadex_urls.values():
                 url_hash = url_item.hash
 
-                # If the URL is already in the hash cache, then append but don't set to download
+                # Dedup by infohash. KNOWN LIMITATION of this opt-in mode: a hashless
+                # (private) release has url_hash=None and the cache keeps a single None
+                # marker, so a 2nd DISTINCT hashless release for an entry collapses to it
+                # and is skipped (the first run still grabs all hashless releases present).
                 torrent_hashes.append(url_hash)
                 if url_hash not in cached_hashes:
                     self.logger.debug(
@@ -307,6 +310,13 @@ class DownloadPlanner:
                     )
 
                     url_item.download = True
+
+                elif url_hash is None:
+                    self.logger.debug(
+                        indent_string(
+                            "Hashless release already represented by the cache's None marker; skipping (see above)",
+                        ),
+                    )
 
                 else:
                     self.logger.debug(
