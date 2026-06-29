@@ -7,6 +7,7 @@ built bare (``object.__new__``) so no live Sonarr/Radarr client is constructed.
 """
 
 import logging
+from types import SimpleNamespace
 from unittest import mock
 
 from seadexarr.modules.log import EntryState
@@ -974,3 +975,38 @@ class TestResolveLanguageObjects:
         result = resolve_language_objects(["japanese"], defs)
 
         assert result == [{"id": 8, "name": "Japanese"}]
+
+
+class TestRadarrReleaseDict:
+    """get_radarr_release_dict accumulates sizes per group and never hard-errors."""
+
+    def test_multiple_distinct_groups_kept_not_errored(self) -> None:
+        # VU3: 2 distinct groups no longer raise (which skipped the movie every run);
+        # the dict carries both so the planner dedups against each.
+        radarr = mock.MagicMock()
+        radarr.movie_files.return_value = [
+            SimpleNamespace(release_group="A", size=100),
+            SimpleNamespace(release_group="B", size=200),
+        ]
+        strat = make_bare_instance(RadarrSync, radarr=radarr)
+
+        assert strat.get_radarr_release_dict(7) == {"A": [100], "B": [200]}
+
+    def test_same_group_sizes_accumulate(self) -> None:
+        # CB6: two files of one group keep BOTH sizes (the old comprehension collapsed
+        # to the last).
+        radarr = mock.MagicMock()
+        radarr.movie_files.return_value = [
+            SimpleNamespace(release_group="A", size=100),
+            SimpleNamespace(release_group="A", size=200),
+        ]
+        strat = make_bare_instance(RadarrSync, radarr=radarr)
+
+        assert strat.get_radarr_release_dict(7) == {"A": [100, 200]}
+
+    def test_no_files_returns_none_marker(self) -> None:
+        radarr = mock.MagicMock()
+        radarr.movie_files.return_value = []
+        strat = make_bare_instance(RadarrSync, radarr=radarr)
+
+        assert strat.get_radarr_release_dict(7) == {None: [None]}

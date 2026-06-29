@@ -244,19 +244,17 @@ class RadarrSync(ArrSync[RadarrItem]):
             radarr_movie_id (int): ID for movie in Radarr
         """
 
-        # A movie is a single file per release group; wrap its size in a
-        # one-element list so the value matches the shared ArrReleaseDict shape
-        # (Sonarr accumulates a per-episode list).
-        radarr_release_dict: ArrReleaseDict = {
-            mf.release_group: [mf.size] for mf in self.radarr.movie_files(radarr_movie_id)
-        }
-
-        # If we have multiple options, throw up an error
-        if len(radarr_release_dict) > 1:
-            raise ValueError(f"Multiple files found for movie {radarr_movie_id}")
+        # Accumulate sizes per release group (a movie can carry several files - an
+        # upgrade or a multi-edition); the user has all of them, so the planner dedups
+        # against each. Mirrors Sonarr's per-episode accumulation rather than collapsing
+        # to one file (which dropped the other sizes) or hard-erroring on >1 group
+        # (which skipped the movie every run).
+        radarr_release_dict: ArrReleaseDict = {}
+        for mf in self.radarr.movie_files(radarr_movie_id):
+            radarr_release_dict.setdefault(mf.release_group, []).append(mf.size)
 
         # If we have nothing, return None
-        elif len(radarr_release_dict) == 0:
+        if not radarr_release_dict:
             radarr_release_dict = {None: [None]}
 
         return radarr_release_dict
