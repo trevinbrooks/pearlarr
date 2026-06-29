@@ -174,9 +174,11 @@ class SeadexReleaseFilter:
             for srg_idx in srgs_to_grab:
                 try:
                     srg = all_srgs[int(srg_idx)]
-                except IndexError:
+                except (ValueError, IndexError):
+                    # ValueError: a non-numeric entry (a typo); IndexError: out of
+                    # range. Skip the bad token instead of abandoning the whole entry.
                     self.logger.warning(
-                        indent_string(f"Index {srg_idx} is out of range"),
+                        indent_string(f"Skipping invalid selection: {srg_idx!r}"),
                     )
                     continue
                 seadex_dict_filtered[srg] = copy.deepcopy(seadex_dict[srg])

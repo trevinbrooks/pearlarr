@@ -6,8 +6,9 @@ computation, and the public_only per-group private-url drop.
 """
 
 from typing import Any
+from unittest import mock
 
-from tests.builders import FakeEntry, FakeTorrent, FakeTracker, make_release_filter
+from tests.builders import FakeEntry, FakeTorrent, FakeTracker, make_release_filter, rg_group
 
 
 def _entry(*torrents: FakeTorrent) -> Any:
@@ -91,3 +92,15 @@ class TestGetSeadexDict:
         )
         result = filt.build(entry)
         assert set(result["A"].urls) == {"priv"}
+
+
+class TestInteractivePick:
+    def test_tolerates_non_numeric_input(self) -> None:
+        # A non-numeric pick (a typo) must not crash the entry with an uncaught
+        # ValueError; the bad token is skipped with a warning, so nothing is selected.
+        filt = make_release_filter()
+        seadex_dict = {"GroupA": rg_group({})}
+        sd_entry = mock.MagicMock(notes="some notes")
+        with mock.patch("builtins.input", return_value="x"):
+            result = filt.interactive_pick(seadex_dict, sd_entry)
+        assert result == {}
