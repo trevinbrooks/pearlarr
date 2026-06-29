@@ -25,6 +25,21 @@ class TestGetSeadexDict:
         )
         assert set(filt.build(entry)) == {"A"}
 
+    def test_ignore_tags_match_is_case_insensitive(self) -> None:
+        # The seadex Tag is a str-enum whose value is canonical-case ("Dolby Vision");
+        # a natural-case config rule ("dolby vision") must still filter that release.
+        filt = make_release_filter(
+            ignore_tags=["dolby vision"],
+            trackers={"nyaa"},
+            want_best=False,
+            prefer_dual_audio=False,
+        )
+        entry = _entry(
+            FakeTorrent(release_group="HDR", url="u1", tracker=FakeTracker("Nyaa", True), tags=["Dolby Vision"]),
+            FakeTorrent(release_group="SDR", url="u2", tracker=FakeTracker("Nyaa", True)),
+        )
+        assert set(filt.build(entry)) == {"SDR"}
+
     def test_want_best_narrows_to_best(self) -> None:
         filt = make_release_filter(want_best=True, prefer_dual_audio=False)
         entry = _entry(

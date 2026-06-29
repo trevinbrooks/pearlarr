@@ -62,9 +62,10 @@ class SeadexReleaseFilter:
         # release group below), so iterate them directly rather than deep-copying
         # the whole list of model objects on every entry.
 
-        # Filter out any tags
-        ignore_tags = set(self._config.seadex.ignore_tags)
-        final_torrent_list = [t for t in sd_entry.torrents if ignore_tags.isdisjoint(t.tags)]
+        # Filter out any tags. Casefold both sides (config strings vs the seadex Tag
+        # str-enum's canonical case) so a natural-case rule like "dolby vision" matches.
+        ignore_tags = {tag.casefold() for tag in self._config.seadex.ignore_tags}
+        final_torrent_list = [t for t in sd_entry.torrents if ignore_tags.isdisjoint(tag.casefold() for tag in t.tags)]
 
         # Filter down by allowed trackers
         final_torrent_list = [t for t in final_torrent_list if t.tracker.casefold() in self._config.seadex.trackers]
