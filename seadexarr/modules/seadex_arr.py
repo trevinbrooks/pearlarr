@@ -739,14 +739,23 @@ class SeaDexArr:
                     # original per-item post-loop max check is redundant with this
                     # (the in-block check fires after every add, so torrents_added
                     # can't reach the cap without process_al_id stopping first).
-                    if strategy.process_al_id(
-                        item=item,
-                        item_title=item_title,
-                        al_id=al_id,
-                        mapping=mapping,
-                    ):
-                        cap_reached = True
-                        break
+                    try:
+                        if strategy.process_al_id(
+                            item=item,
+                            item_title=item_title,
+                            al_id=al_id,
+                            mapping=mapping,
+                        ):
+                            cap_reached = True
+                            break
+                    except Exception as e:
+                        # Contain a per-id failure to THIS AniList id: a transient error
+                        # on one season must not skip the item's other seasons.
+                        self.logger.error(
+                            f"{item_title} (anilist {al_id}): unexpected error: {e}",
+                            exc_info=True,
+                        )
+                        continue
 
                 if cap_reached:
                     break

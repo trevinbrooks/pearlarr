@@ -64,3 +64,52 @@ class TestCapReachedFinalizesOnce:
         strategy.process_al_id.assert_called_once()
         # ...and the single post-loop finalize ran exactly once (reads ctx.arr now).
         finalize.assert_called_once_with()
+
+
+class TestPerIdErrorContainment:
+    """One AniList id's failure is contained to that id, not the whole item."""
+
+    def test_one_al_id_error_does_not_skip_siblings(self) -> None:
+        logger = mock.MagicMock()
+        strategy: Any = mock.MagicMock()
+        strategy.get_items.return_value = [_item("A")]
+        strategy.item_anilist_ids.return_value = {1: object(), 2: object()}
+        strategy.warms_episodes = False
+        strategy.prefetch_episodes.return_value = 0
+        strategy.pending_import_series_id.return_value = None
+
+        seen: list[int] = []
+
+        def process(*, item: Any, item_title: str, al_id: int, mapping: Any) -> bool:
+            seen.append(al_id)
+            if al_id == 1:
+                raise ValueError("boom on the first id")
+            return False
+
+        strategy.process_al_id.side_effect = process
+
+        anilist = mock.MagicMock()
+        anilist.prefetch.return_value = 0
+        seadex = mock.MagicMock()
+        seadex.prefetch.return_value = 0
+
+        engine = make_bare_instance(
+            SeaDexArr,
+            qbit=None,
+            logger=logger,
+            _config=make_config(),
+            _arr_config=mock.MagicMock(),
+            _anilist=anilist,
+            _seadex=seadex,
+            _reporter=mock.MagicMock(),
+            _filter=mock.MagicMock(),
+            _grab_pipeline=mock.MagicMock(),
+            _wait_manager=mock.MagicMock(),
+            _finalize_run=mock.MagicMock(),
+        )
+
+        engine.run_sync(strategy, arr=Arr.SONARR, item_id=None, dry_run=True)
+
+        # The first id raised but was contained: the sibling id 2 is still processed.
+        assert seen == [1, 2]
+        assert logger.error.called  # the per-id failure was logged
