@@ -880,6 +880,7 @@ def assign_episode_ids(
     parsed_by_file: Mapping[str, ParsedFileInfo | None],
     ordered_episode_ids: Sequence[int],
     ep_id_map: Mapping[tuple[int, int], int],
+    allow_unscoped: bool | None = None,
 ) -> EpisodeAssignment:
     """Map a torrent's on-disk files to OUR resolved episode ids - names never override.
 
@@ -914,6 +915,10 @@ def assign_episode_ids(
         ep_id_map (Mapping[tuple[int, int], int]): ``(season, episode) -> id`` over
             ALL the series' episodes; membership in the resolved set does the
             scoping, so an exact parse outside our entry is rejected.
+        allow_unscoped (bool | None): Scope-gate override; None (default) derives it
+            from an empty ``ordered_episode_ids``. A caller that pre-subtracts
+            already-placed ids passes it explicitly (off its FULL resolved set) so a
+            fully-seeded record isn't mistaken for "no scope to enforce".
 
     Returns:
         EpisodeAssignment: the placed files and the skipped ones.
@@ -924,8 +929,11 @@ def assign_episode_ids(
     # With NO resolved set to scope against, the exact leg falls back to the live
     # series episode map (a correctly-named file still lands on its real episode);
     # the absolute/positional legs stay disabled below (no leftover ids), so an
-    # ambiguous file is skipped, never guessed.
-    allow_unscoped = not resolved_set
+    # ambiguous file is skipped, never guessed. A caller that pre-subtracts seeded
+    # ids passes allow_unscoped explicitly (off the FULL resolved set), so a fully-
+    # seeded record's empty remainder doesn't masquerade as "no scope".
+    if allow_unscoped is None:
+        allow_unscoped = not resolved_set
 
     assigned: dict[str, list[int]] = {}
     used: set[int] = set()

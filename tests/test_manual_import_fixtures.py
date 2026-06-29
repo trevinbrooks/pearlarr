@@ -21,6 +21,7 @@ from typing import Any
 from unittest import mock
 
 from seadexarr.modules.manual_import import (
+    CandidateFile,
     EpisodeAssignment,
     ImportReadiness,
     ParsedQuality,
@@ -29,6 +30,7 @@ from seadexarr.modules.manual_import import (
     assign_episode_ids,
     classify_queue,
     manual_import_in_flight,
+    normalize_basename,
     parse_se_from_filename,
     quality_axes_from_model,
     resolve_quality,
@@ -46,6 +48,7 @@ from .builders import (
     FakeCacheStore,
     make_config,
     make_logger,
+    make_sonarr_mapper,
     make_sonarr_sync,
     pending_import,
 )
@@ -311,6 +314,62 @@ class TestAssignGuards:
 
         assert result.assigned == {}
         assert sorted(result.skipped) == sorted(files)
+
+
+def _cand(basename: str) -> CandidateFile:
+    return CandidateFile(
+        basename=basename,
+        path=f"/dl/{basename}",
+        quality=None,
+        is_sample=False,
+        is_already_imported=False,
+    )
+
+
+class TestAssignScopeGate:
+    """CB3: allow_unscoped must key off the FULL resolved set, not the post-seed remainder."""
+
+    def test_explicit_allow_unscoped_false_keeps_scope_on_empty_set(self) -> None:
+        # An empty resolved set but allow_unscoped pinned False (what the mapper passes
+        # for a fully-seeded record): a correctly-named but out-of-scope file is
+        # skipped, NOT placed on the live map.
+        parsed = {"x.mkv": _pinfo(season=1, episodes=(1,))}
+        ep_id_map = {(1, 1): 8033}
+
+        result = assign_episode_ids(["x.mkv"], parsed, [], ep_id_map, allow_unscoped=False)
+
+        assert result.assigned == {}
+        assert result.skipped == ["x.mkv"]
+
+    def test_fully_seeded_record_skips_out_of_scope_on_disk_leftover(self) -> None:
+        # A fully-seeded record (every resolved episode already seeded) whose batch
+        # folder also holds an OUT-OF-SCOPE file (a season-2 file in a season-1 grab).
+        # The leftover must be skipped - not imported via the allow_unscoped fallback -
+        # and the grab-time seed map must stay un-contaminated by the self-heal.
+        seed_name = "Show - 01 [1080p].mkv"
+        leftover_name = "Show - S02E01 [1080p].mkv"
+        pending = pending_import(
+            file_episode_map={seed_name: [101]},
+            episode_ids=[101],
+            ordered_episode_ids=[101],
+            seadex_files=[seed_name],
+        )
+        sonarr = mock.MagicMock()
+        sonarr.parse_episode_info.return_value = _pinfo(season=2, episodes=(1,))
+        mapper = make_sonarr_mapper(sonarr=sonarr)
+
+        candidates = {
+            normalize_basename(seed_name): _cand(seed_name),
+            normalize_basename(leftover_name): _cand(leftover_name),
+        }
+        ep_id_map = {(1, 1): 101, (2, 1): 999}  # 999 is OUTSIDE the resolved {101}
+
+        merged, skipped = mapper.assign(pending, candidates, ep_id_map)
+
+        placed_ids = {i for ids in merged.values() for i in ids}
+        assert 999 not in placed_ids
+        assert normalize_basename(leftover_name) in skipped
+        assert pending.file_episode_map == {seed_name: [101]}
 
     def test_count_mismatch_skips(self) -> None:
         # Two absolute files but three resolved ids -> not a clean 1:1 -> skip both.

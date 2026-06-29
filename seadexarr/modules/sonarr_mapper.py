@@ -180,6 +180,10 @@ class FileEpisodeMapper:
             parsed_by_file,
             leftover_resolved,
             ep_id_map,
+            # Gate on the FULL resolved set, not the post-seed remainder: a fully-
+            # seeded record (empty leftover_resolved) must keep scope enforced, or
+            # an out-of-scope on-disk leftover would be imported (allow_unscoped).
+            allow_unscoped=not resolved_ids,
         )
 
         # Self-heal: keep every fresh placement on the record for the run.
