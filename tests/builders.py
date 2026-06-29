@@ -24,7 +24,7 @@ from seadexarr.modules.import_wait import ImportWaitManager
 from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.reporter import RunContext
-from seadexarr.modules.seadex_arr import SeaDexArr
+from seadexarr.modules.seadex_arr import RunDeps, SeaDexArr
 from seadexarr.modules.seadex_filter import SeadexReleaseFilter
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
@@ -406,6 +406,40 @@ def make_arr(**overrides: Any) -> SeaDexArr:
     }
     defaults.update(overrides)
     return make_bare_instance(SeaDexArr, **defaults)
+
+
+def make_run_deps(**overrides: Any) -> RunDeps:
+    """A real ``RunDeps`` (fakes/mocks) to drive the REAL ``SeaDexArr`` / ``SonarrSync``
+    ``__init__`` + ``begin_run`` rebind - the construction seam ``make_bare_instance``
+    bypasses.
+
+    The config carries a Sonarr url/api_key so ``SonarrSync``'s ``require_connection``
+    passes; ``qbit`` is ``None`` (preview, no auth); ``cache_store`` is the in-memory
+    ``FakeCacheStore`` so the staged-write sharing can be asserted by identity. Pass
+    ``config=`` / ``cache_store=`` (or any field) to override.
+    """
+
+    config = overrides.pop("config", None) or make_config(url="http://sonarr", api_key="key")
+    defaults: dict[str, Any] = {
+        "config": config,
+        "arr_config": config.for_arr(Arr.SONARR),
+        "config_file": "",
+        "session": mock.MagicMock(),
+        "qbit": None,
+        "mappings": mock.MagicMock(),
+        "logger": make_logger(),
+        "seadex": mock.MagicMock(),
+        "cache_file": "",
+        "cache_store": FakeCacheStore(),
+        "anilist": mock.MagicMock(),
+        "torrents": mock.MagicMock(),
+        "notifier": mock.MagicMock(),
+        "planner": make_planner(),
+        "log_fmt": mock.MagicMock(),
+        "reporter": mock.MagicMock(),
+    }
+    defaults.update(overrides)
+    return RunDeps(**defaults)
 
 
 def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
