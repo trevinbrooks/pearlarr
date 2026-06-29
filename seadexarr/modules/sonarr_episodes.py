@@ -15,6 +15,7 @@ from collections.abc import Iterable
 from . import coverage as _coverage
 from .anilist import get_anilist_format, get_anilist_n_eps
 from .config import AppConfig
+from .log import indent_string
 from .mappings import MappingEntry, MappingMode
 from .protocols import EpisodeProgress
 from .radarr_client import IdField, collect_anime_items
@@ -153,6 +154,7 @@ class SonarrEpisodes:
         # re-binds it), so reassigning .al_cache here stays visible everywhere.
         self._anilist = deps.anilist
         self.log_fmt = deps.log_fmt
+        self.logger = deps.logger
 
         # Per-run cache of the raw Sonarr episode fetch, keyed by series id. A
         # multi-season series maps to several AniList ids, each of which would
@@ -345,6 +347,17 @@ class SonarrEpisodes:
             final_ep_list = [ep for ep in ep_list if check_ep_by_anime_ids(ep=ep, tvdb_season=tvdb_season)]
         else:
             tvdb_mappings = mapping.tvdb_mappings or {}
+            if not tvdb_mappings:
+                # AniBridge knows this series but parsed no usable per-season ranges;
+                # skip loudly rather than silently selecting zero episodes (the
+                # anime-id fallback would grab the whole series, which is worse).
+                self.logger.warning(
+                    indent_string(
+                        f"AniBridge has no usable season ranges for series id {sonarr_series_id} "
+                        f"(tvdb {mapping.tvdb_id}, anilist {al_id}); skipping",
+                    ),
+                )
+                return []
             final_ep_list = [ep for ep in ep_list if check_ep_by_anibridge(ep=ep, tvdb_mappings=tvdb_mappings)]
 
         # For OVAs and movies, the offsets can often be wrong, so if we have specific mappings
