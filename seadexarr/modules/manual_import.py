@@ -388,21 +388,20 @@ class QueueVerdict(Enum):
     """What Sonarr's queue says to do with a tracked download THIS poll.
 
     Derived purely from the queue records sharing a ``downloadId`` (a season pack
-    has one record per episode), reading ``trackedDownloadState`` AND
-    ``trackedDownloadStatus`` AND whether ``statusMessages`` is populated - the
-    last two disambiguate a healthy pending item from a stuck/blocked one, which
-    the state alone cannot. "Already imported" is NOT decided here (a successful
-    import is removed from the queue); the caller reads the episode files for that.
+    has one record per episode), reading ``trackedDownloadState`` (status is read
+    only to bucket non-pending failures). "Already imported" is NOT decided here (a
+    successful import is removed from the queue); the caller reads the episode files.
 
     ``WAIT`` -> something is genuinely in motion (downloading / importing); let
     Sonarr finish so we never race an in-flight import.
-    ``PENDING_CLEAN`` -> a clean ``importPending`` (status ok, no messages):
-    Sonarr parsed it and is waiting to import. With Completed Download Handling on
-    it will import shortly; with CDH off it sits here forever - so the caller waits
-    a grace, then forces our import.
+    ``PENDING_CLEAN`` -> any ``importPending`` record, regardless of its status or
+    status messages: Sonarr parsed it and is waiting to import. With Completed
+    Download Handling on it will import shortly; with CDH off it sits here forever -
+    so the caller waits a grace, then forces our import. Stepping in on a still-
+    pending record would race Sonarr's own import and double-import.
     ``STEP_IN`` -> Sonarr can't / won't progress it (``importBlocked`` / ``failed`` /
-    ``ignored`` / status ``error`` / a pending item carrying warnings), or it isn't
-    tracking the download at all (empty); drive our authoritative manual import.
+    ``failedPending`` / ``ignored``), or it isn't tracking the download at all
+    (empty); drive our authoritative manual import.
     """
 
     WAIT = auto()
@@ -450,8 +449,8 @@ def classify_queue(records: list[QueueRecordView]) -> QueueVerdict:
 
       1. anything in motion (downloading / importing / ...) -> ``WAIT`` (never race
          an in-flight Sonarr import; re-evaluate next poll).
-      2. any troubled record (``importBlocked`` / ``failed`` / ``ignored`` / status
-         ``error``) -> ``STEP_IN``.
+      2. any troubled record (``importBlocked`` / ``failed`` / ``failedPending`` /
+         ``ignored``) -> ``STEP_IN``.
       3. any ``importPending`` -> ``PENDING_CLEAN``, regardless of its status or
          status messages. Sonarr is mid-import, so we wait for it to settle rather
          than step in - stepping in on a still-pending record races Sonarr's own
@@ -473,10 +472,12 @@ def classify_queue(records: list[QueueRecordView]) -> QueueVerdict:
     clean_pending = False
     for record in records:
         state = record.state.casefold()
-        status = record.status.casefold()
+        # Bucket by state only: status="error" is structurally coupled to the
+        # failedPending step-in state, so reading it separately is redundant - and
+        # would wrongly route an importPending record to STEP_IN (a double-import).
         if state in _QUEUE_IN_MOTION_STATES:
             in_motion = True
-        elif state in _QUEUE_STEP_IN_STATES or status == "error":
+        elif state in _QUEUE_STEP_IN_STATES:
             troubled = True
         elif state == "importpending":
             clean_pending = True

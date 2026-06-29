@@ -619,7 +619,7 @@ def _qrecord(state: str, status: str = "ok", *, messages: bool = False) -> Queue
 
 
 class TestClassifyQueue:
-    """classify_queue reads state + status + statusMessages into one verdict."""
+    """classify_queue buckets queue records by trackedDownloadState into one verdict."""
 
     def test_empty_steps_in(self) -> None:
         assert classify_queue([]) is QueueVerdict.STEP_IN
@@ -640,6 +640,13 @@ class TestClassifyQueue:
 
     def test_pending_with_messages_is_pending_clean(self) -> None:
         assert classify_queue([_qrecord("importPending", "ok", messages=True)]) is QueueVerdict.PENDING_CLEAN
+
+    def test_pending_with_error_status_is_pending_clean(self) -> None:
+        # An importPending record waits regardless of status, including "error":
+        # bucketing is by state, so it never routes to STEP_IN (which would race
+        # Sonarr's import and double-import). Sonarr couples error with failedPending,
+        # so this also hardens the invariant against a future queue-state shape.
+        assert classify_queue([_qrecord("importPending", "error")]) is QueueVerdict.PENDING_CLEAN
 
     def test_downloading_waits(self) -> None:
         assert classify_queue([_qrecord("downloading")]) is QueueVerdict.WAIT
