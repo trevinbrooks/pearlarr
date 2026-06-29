@@ -75,6 +75,21 @@ class MappingMode(Enum):
     ANIBRIDGE = "anibridge"
 
 
+class MappingSource(Enum):
+    """Which producer a resolved mapping came from (its provenance).
+
+    Distinct from :class:`MappingMode`: ``mode`` is the episode strategy (derived
+    from ``tvdb_mappings`` presence), ``source`` is the producer. They correlate
+    but are not the same: a *degraded* AniBridge entry (imdb/tmdb-resolved, so it
+    carries no tvdb season ranges) is ``mode ANIME_IDS`` yet ``source ANIBRIDGE`` -
+    the only signal that separates it from a legit Kometa whole-series entry
+    (also ``mode ANIME_IDS``, but ``source ANIME_IDS``).
+    """
+
+    ANIBRIDGE = "anibridge"
+    ANIME_IDS = "anime_ids"
+
+
 @dataclass(frozen=True, slots=True)
 class MappingEntry:
     """One resolved AniList mapping, as the sync strategies consume it.
@@ -95,6 +110,7 @@ class MappingEntry:
     tmdb_movie_id: int | None = None
     imdb_id: str | None = None
     anidb_id: int | None = None
+    source: MappingSource = MappingSource.ANIME_IDS
 
     @property
     def mode(self) -> MappingMode:
@@ -127,6 +143,9 @@ def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> Ma
     # _anime_ids_rows (a JSON null would otherwise violate the int fields).
     season = raw.get("tvdb_season", -1)
     epoffset = raw.get("tvdb_epoffset", 0)
+    # Both AniBridge backings tag their entries source="anibridge"; a Kometa-style
+    # raw dict (no key) is ANIME_IDS, so this derives provenance for either producer.
+    source = MappingSource.ANIBRIDGE if raw.get("source") == "anibridge" else MappingSource.ANIME_IDS
     return MappingEntry(
         anilist_id=anilist_id,
         tvdb_id=raw.get("tvdb_id"),
@@ -136,6 +155,7 @@ def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> Ma
         tmdb_movie_id=raw.get("tmdb_movie_id"),
         imdb_id=raw.get("imdb_id"),
         anidb_id=raw.get("anidb_id"),
+        source=source,
     )
 
 
@@ -156,7 +176,21 @@ def _entry_from_anime_row(row: AnimeIdRow) -> MappingEntry:
         tmdb_movie_id=row.tmdb_movie_id,
         imdb_id=row.imdb_id,
         anidb_id=row.anidb_id,
+        source=MappingSource.ANIME_IDS,
     )
+
+
+def _is_degraded_anibridge(entry: MappingEntry) -> bool:
+    """An AniBridge entry resolved via imdb/tmdb only - no usable tvdb mapping.
+
+    Such an entry carries ``source ANIBRIDGE`` but ``tvdb_mappings is None`` (so
+    ``mode ANIME_IDS`` with the default ``tvdb_season=-1``). In a TVDB/Sonarr
+    context that drives a wrong-episode grab and shadows a precise Kometa season,
+    so Kometa must override it there. A rich AniBridge entry (``tvdb_mappings`` set,
+    incl. an empty ``{}``) is NOT degraded.
+    """
+
+    return entry.source is MappingSource.ANIBRIDGE and entry.tvdb_mappings is None
 
 
 def _validate_ids(
@@ -751,10 +785,16 @@ class MappingResolver:
 
         # Add the first row seen for each AniList id (rows come back in first-seen
         # order), matching the previous "don't clobber an id another query already
-        # produced" behaviour.
+        # produced" behaviour - EXCEPT a degraded AniBridge entry, which Kometa
+        # overrides in the Sonarr/tvdb context only (tvdb_id passed). There its
+        # missing season ranges drive a wrong-episode grab, so Kometa's explicit
+        # season wins; Radarr (no tvdb_id) keeps AniBridge primary, since the entry
+        # value is unused for movies and overriding would silently flip the
+        # documented "AniBridge is primary" precedence.
         def merge(column: str, value: object) -> None:
             for row in self._store.anime_ids_lookup(column, value):
-                if row.anilist_id not in anilist_mappings:
+                existing = anilist_mappings.get(row.anilist_id)
+                if existing is None or (tvdb_id is not None and _is_degraded_anibridge(existing)):
                     anilist_mappings[row.anilist_id] = _entry_from_anime_row(row)
 
         if tvdb_id is not None:

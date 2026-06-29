@@ -15,7 +15,7 @@ from collections.abc import Iterable
 from . import coverage as _coverage
 from .anilist import get_anilist_format, get_anilist_n_eps
 from .config import AppConfig
-from .mappings import MappingEntry, MappingMode
+from .mappings import MappingEntry, MappingMode, MappingSource
 from .protocols import EpisodeProgress
 from .radarr_client import IdField, collect_anime_items
 from .seadex_arr import RunDeps, SeaDexArr
@@ -341,6 +341,11 @@ class SonarrEpisodes:
         # mode rather than re-branching on a string for every episode; the
         # comprehension preserves ep_list order, exactly as the append loop did.
         if mode is MappingMode.ANIME_IDS:
+            if mapping.source is MappingSource.ANIBRIDGE:
+                # Degraded AniBridge entry (imdb/tmdb-resolved, so no tvdb season
+                # ranges): tvdb_season=-1 would otherwise grab the wrong episodes.
+                # Skip; process_al_id surfaces NO_EPISODES + the AniBridge warning.
+                return []
             final_ep_list = [ep for ep in ep_list if check_ep_by_anime_ids(ep=ep, tvdb_season=tvdb_season)]
         else:
             tvdb_mappings = mapping.tvdb_mappings or {}

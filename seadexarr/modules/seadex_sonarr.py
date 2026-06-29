@@ -11,7 +11,7 @@ from .manual_import import (
     ImportWaitMode,
     PendingImport,
 )
-from .mappings import MappingEntry, MappingMode
+from .mappings import MappingEntry, MappingSource
 from .planner import get_episode_keys
 from .protocols import ArrSync, EpisodeProgress
 from .radarr_client import (
@@ -327,9 +327,12 @@ class SonarrSync(ArrSync[SonarrItem]):
             # Resolved zero episodes (season not in Sonarr, offset past the end, or
             # AniBridge with no ranges): skip, don't mislabel "unmonitored" or grab orphans.
             run.log_entry_status(EntryState.NO_EPISODES, anilist_title)
-            if mapping.mode is MappingMode.ANIBRIDGE and not mapping.tvdb_mappings:
-                # Surface the AniBridge no-usable-ranges case LOUDLY (distinct from a
+            if mapping.source is MappingSource.ANIBRIDGE and not mapping.tvdb_mappings:
+                # Surface any AniBridge no-usable-ranges case LOUDLY (distinct from a
                 # Sonarr-library gap): a WARNING under the skip row naming the cause.
+                # Keys off source, so it covers BOTH an empty-{} tvdb entry (mode
+                # ANIBRIDGE) and a degraded imdb/tmdb-resolved entry (mode ANIME_IDS),
+                # while a legit Kometa whole-series entry (source ANIME_IDS) stays quiet.
                 self.logger.warning(
                     indent_string("AniBridge has no usable season ranges for this series; skipping"),
                 )

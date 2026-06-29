@@ -16,7 +16,7 @@ from seadexarr.modules.manual_import import (
     PendingImport,
     resolve_language_objects,
 )
-from seadexarr.modules.mappings import MappingEntry
+from seadexarr.modules.mappings import MappingEntry, MappingSource
 from seadexarr.modules.seadex_radarr import RadarrSync
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
@@ -207,9 +207,11 @@ class TestProcessAlIdThreadsServices:
         logger.warning.assert_not_called()  # anime-id empty is NOT the AniBridge case
 
     def test_sonarr_anibridge_empty_map_skips_with_warning(self) -> None:
-        # The AniBridge no-usable-ranges case (tvdb_mappings={} -> mode ANIBRIDGE): the
-        # NO_EPISODES skip PLUS a visible WARNING naming the cause. Fails on the unfixed
-        # path, which silently grabbed nothing / mislabeled the entry.
+        # The AniBridge no-usable-ranges case (a real empty-{} tvdb entry: source
+        # ANIBRIDGE, mode ANIBRIDGE): the NO_EPISODES skip PLUS a visible WARNING
+        # naming the cause. The warning keys off source (so it also covers the
+        # degraded imdb/tmdb case), so the entry must carry source=ANIBRIDGE as a
+        # real one does. Fails on the unfixed path, which silently grabbed nothing.
         run = mock.MagicMock()
         run.al_id_prologue.return_value = mock.MagicMock()
         run.cached_entry_skip.return_value = False
@@ -226,7 +228,12 @@ class TestProcessAlIdThreadsServices:
             logger=logger,
         )
 
-        result = strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5, tvdb_mappings={}))
+        result = strat.process_al_id(
+            _Item(id=1),
+            "Title",
+            5,
+            MappingEntry(anilist_id=5, tvdb_mappings={}, source=MappingSource.ANIBRIDGE),
+        )
 
         assert result is False
         run.log_entry_status.assert_called_once_with(EntryState.NO_EPISODES, "Title")

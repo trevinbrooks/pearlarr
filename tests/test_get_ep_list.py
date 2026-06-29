@@ -10,7 +10,7 @@ whole-season-covered case must NOT be treated as empty.
 from unittest import mock
 
 from seadexarr.modules.mappings import MappingEntry
-from seadexarr.modules.sonarr_episodes import check_ep_by_anibridge
+from seadexarr.modules.sonarr_episodes import check_ep_by_anibridge, check_ep_by_anime_ids
 
 from .builders import make_sonarr_episodes, sonarr_ep
 
@@ -38,3 +38,17 @@ def test_empty_map_is_distinct_from_whole_season_marker() -> None:
     ep = sonarr_ep(1, 1)
     assert check_ep_by_anibridge(ep=ep, tvdb_mappings={}) is False
     assert check_ep_by_anibridge(ep=ep, tvdb_mappings={1: []}) is True
+
+
+def test_season_zero_is_grabbed_at_season_zero_but_dropped_at_minus_one() -> None:
+    """Movies-as-specials live in season 0 and must grab at ``tvdb_season=0``.
+
+    The VU1 fix matters here: a degraded AniBridge entry carries ``tvdb_season=-1``,
+    which DROPS every season-0 episode (``-1 & season 0 -> False``), so a movie
+    shadowed to -1 was never grabbed as a special. Restoring Kometa's season 0
+    (Part 1) makes the s0 episode selectable again.
+    """
+
+    s0 = sonarr_ep(0, 1)
+    assert check_ep_by_anime_ids(ep=s0, tvdb_season=0) is True  # grabbed as a special
+    assert check_ep_by_anime_ids(ep=s0, tvdb_season=-1) is False  # the shadowing -1 drops it

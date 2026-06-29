@@ -11,6 +11,7 @@ coverage before.
 import json
 import os
 import time
+from types import SimpleNamespace
 from unittest import mock
 from xml.etree import ElementTree
 
@@ -22,10 +23,12 @@ from seadexarr.modules.mapping_store import MappingStore
 from seadexarr.modules.mappings import (
     MappingMode,
     MappingResolver,
+    MappingSource,
     TmdbType,
     _entry_from_raw,
 )
 from seadexarr.modules.paths import resolve_paths
+from seadexarr.modules.sonarr_episodes import SonarrEpisodes
 from tests.builders import make_bare_instance
 
 # --------------------------------------------------------------------------- #
@@ -247,6 +250,100 @@ class TestGetAnilistIdsMerge:
             assert mappings[269].tvdb_mappings == {2: [(1, 21)], 3: [(1, 9), (11, 12)]}
         finally:
             resolver.close()
+
+
+class TestVu1DegradedAniBridge:
+    """VU1: an AniBridge id reachable via imdb but not tvdb is 'degraded' (no tvdb
+    season ranges). In the Sonarr/tvdb context it must defer to Kometa (which has
+    the precise season) and, with no Kometa fallback, skip rather than grab the
+    wrong episodes - while Radarr's AniBridge-primary precedence stays untouched.
+    """
+
+    def test_sonarr_context_kometa_overrides_degraded(self) -> None:
+        # AniBridge resolves AniList 400 ONLY via imdb (imdb_show:tt400, no tvdb_show)
+        # -> a degraded entry. Kometa carries the precise season for the same id on
+        # the series' tvdb. In the Sonarr context (tvdb_id passed) Kometa must win.
+        resolver = MappingResolver(
+            cache_time=1,
+            ignore_anilist_ids=set(),
+            anime_mappings_cfg={"k": {"anilist_id": 400, "tvdb_id": 555, "tvdb_season": 2, "imdb_id": "tt400"}},
+            anidb_mappings_cfg=False,
+            anibridge_mappings_cfg={"anilist:400": {"imdb_show:tt400": {}}},
+        )
+        try:
+            mappings, _dropped = resolver.get_anilist_ids(tvdb_id=555, imdb_id="tt400")
+            entry = mappings[400]
+            assert entry.source is MappingSource.ANIME_IDS  # Kometa won, not the degraded AniBridge entry
+            assert entry.tvdb_season == 2  # the precise season is no longer shadowed
+        finally:
+            resolver.close()
+
+    def test_sonarr_movie_as_special_keeps_kometa_season_zero(self) -> None:
+        # A movie-as-special: Kometa attaches AniList 600 to series 555 at
+        # tvdb_season=0, while AniBridge carries it via the movie's imdb (degraded)
+        # that the series' imdbId collides with. The Sonarr-context override must
+        # restore Kometa's season 0 - without it the degraded -1 shadows season 0,
+        # and check_ep_by_anime_ids DROPS every s0 episode (`-1 & season 0 -> False`),
+        # so the special is never grabbed. Guards that the fix does not break (it
+        # RESTORES) Sonarr grabbing movies as specials.
+        resolver = MappingResolver(
+            cache_time=1,
+            ignore_anilist_ids=set(),
+            anime_mappings_cfg={"k": {"anilist_id": 600, "tvdb_id": 555, "tvdb_season": 0, "imdb_id": "tt600"}},
+            anidb_mappings_cfg=False,
+            anibridge_mappings_cfg={"anilist:600": {"imdb_movie:tt600": {}}},
+        )
+        try:
+            mappings, _dropped = resolver.get_anilist_ids(tvdb_id=555, imdb_id="tt600")
+            entry = mappings[600]
+            assert entry.source is MappingSource.ANIME_IDS  # Kometa restored, not the degraded -1
+            assert entry.tvdb_season == 0  # season 0 preserved -> the special is still selectable
+        finally:
+            resolver.close()
+
+    def test_radarr_context_preserves_anibridge_precedence(self) -> None:
+        # The SAME degraded shape for a movie (tmdb_movie/imdb, never tvdb-scoped):
+        # in the Radarr context (NO tvdb_id) the override must NOT fire, so AniBridge
+        # stays the winning source - the documented "AniBridge is primary" invariant.
+        resolver = MappingResolver(
+            cache_time=1,
+            ignore_anilist_ids=set(),
+            anime_mappings_cfg={"k": {"anilist_id": 401, "tmdb_movie_id": 888, "imdb_id": "tt401"}},
+            anidb_mappings_cfg=False,
+            anibridge_mappings_cfg={"anilist:401": {"tmdb_movie:888": {}, "imdb_movie:tt401": {}}},
+        )
+        try:
+            mappings, _dropped = resolver.get_anilist_ids(tmdb_id=888, imdb_id="tt401", tmdb_type=TmdbType.MOVIE)
+            assert mappings[401].source is MappingSource.ANIBRIDGE  # AniBridge stays primary
+        finally:
+            resolver.close()
+
+    def test_imdb_only_degraded_entry_makes_sonarr_skip(self) -> None:
+        # End-to-end: the resolver emits a degraded entry (no Kometa fallback), and
+        # feeding THAT real entry to get_ep_list returns [] - the series is skipped,
+        # not whole-series-grabbed. Anchors the fix to the state the pipeline emits.
+        resolver = MappingResolver(
+            cache_time=1,
+            ignore_anilist_ids=set(),
+            anime_mappings_cfg=False,  # no Kometa fallback
+            anidb_mappings_cfg=False,
+            anibridge_mappings_cfg={"anilist:500": {"imdb_show:tt500": {}}},
+        )
+        try:
+            mappings, _dropped = resolver.get_anilist_ids(tvdb_id=777, imdb_id="tt500")
+        finally:
+            resolver.close()
+        degraded = mappings[500]
+        assert degraded.source is MappingSource.ANIBRIDGE
+        assert degraded.mode is MappingMode.ANIME_IDS  # no tvdb ranges -> would have grabbed wrong eps
+        assert degraded.tvdb_mappings is None
+
+        episodes = make_bare_instance(
+            SonarrEpisodes,
+            _ep_list_cache={777: [SimpleNamespace(season_number=s, episode_number=1) for s in (1, 2, 3)]},
+        )
+        # A non-empty series, yet the degraded entry resolves to NO episodes (skip).
+        assert episodes.get_ep_list(sonarr_series_id=777, al_id=500, mapping=degraded) == []
 
 
 # --------------------------------------------------------------------------- #
