@@ -9,6 +9,7 @@ built bare (``object.__new__``) so no live Sonarr/Radarr client is constructed.
 import logging
 from unittest import mock
 
+from seadexarr.modules.log import EntryState
 from seadexarr.modules.manual_import import (
     ImportReadiness,
     PendingImport,
@@ -176,6 +177,30 @@ class TestProcessAlIdThreadsServices:
 
         assert strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5)) is False
         run.al_id_prologue.assert_called_once_with(5)
+
+    def test_sonarr_no_episodes_resolved_skips_explicitly(self) -> None:
+        # get_ep_list resolves to [] (season not in Sonarr / offset past the end /
+        # empty AniBridge map): skip with the NO_EPISODES status, never mislabeled
+        # "unmonitored" and never falling through to grab orphan releases.
+        run = mock.MagicMock()
+        run.al_id_prologue.return_value = mock.MagicMock()  # a SeaDex entry exists
+        run.cached_entry_skip.return_value = False
+        run.get_anilist_title.return_value = "Title"
+        episodes = mock.MagicMock()
+        episodes.get_ep_list.return_value = []
+        strat = make_bare_instance(
+            SonarrSync,
+            _services=run,
+            _episodes=episodes,
+            _config=make_config(sleep_time=0),
+            ignore_movies_in_radarr=False,
+        )
+
+        result = strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5))
+
+        assert result is False
+        run.log_entry_status.assert_called_once_with(EntryState.NO_EPISODES, "Title")
+        run.log_al_title.assert_not_called()
 
 
 def _ep_with_file(ep_id: int, *, group: str | None) -> SonarrEpisode:

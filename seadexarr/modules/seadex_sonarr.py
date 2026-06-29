@@ -324,6 +324,13 @@ class SonarrSync(ArrSync[SonarrItem]):
         if ep_list is None:
             return False
 
+        if not ep_list:
+            # Resolved zero episodes (season not in Sonarr, offset past the end, or
+            # AniBridge with no ranges): skip, don't mislabel "unmonitored" or grab orphans.
+            run.log_entry_status(EntryState.NO_EPISODES, anilist_title)
+            time.sleep(self._config.advanced.sleep_time)
+            return False
+
         # If all episodes are unmonitored, then skip if ignore_unmonitored is switched on
         ep_list_monitored = [ep.monitored for ep in ep_list]
         if not any(ep_list_monitored) and self._config.sonarr.ignore_unmonitored:

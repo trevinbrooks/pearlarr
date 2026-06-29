@@ -432,6 +432,7 @@ class EntryState(StrEnum):
     CHECKING = "checking"
     UNMONITORED = "unmonitored"
     NO_MAPPING = "no mapping"
+    NO_EPISODES = "no episodes"
     IGNORED = "ignored"
     NO_ENTRY = "no entry"
     QUEUED = "queued"
