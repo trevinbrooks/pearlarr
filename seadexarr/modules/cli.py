@@ -162,7 +162,7 @@ def _run_arrs(
         # Pull the heavy run machinery now - after the instant title, before the
         # cockpit's first step - so this one-time import cost lands in the gap
         # between the banner and the spinner rather than stalling a live step.
-        from .seadex_arr import RunDeps, SeaDexArr
+        from .seadex_arr import QbitConnectionError, RunDeps, SeaDexArr
         from .seadex_radarr import RadarrSync
         from .seadex_sonarr import SonarrSync
 
@@ -207,6 +207,10 @@ def _run_arrs(
                                     import_wait_mode=import_wait_mode,
                                     boot=boot,
                                 )
+                    except QbitConnectionError as e:
+                        # A user-facing config problem (wrong host/credentials): a clean
+                        # one-line message, not a stack trace under "unexpected error".
+                        logger.error(str(e))
                     except Exception:
                         logger.error(f"Unexpected error during {arr_name.capitalize()} run", exc_info=True)
                     finally:

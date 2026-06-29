@@ -46,6 +46,14 @@ from .wait_view import (
 )
 
 
+class QbitConnectionError(Exception):
+    """qBittorrent auth/connection failed - a user-facing config problem.
+
+    Raised from ``RunDeps.build`` so the cli reports it as a clean one-line message
+    (wrong host / credentials) instead of a stack trace under "unexpected error".
+    """
+
+
 @dataclass(frozen=True)
 class RunDeps:
     """The shared leaf collaborators for one Arr run, built once at the root.
@@ -167,10 +175,12 @@ class RunDeps:
             with boot.step("Connecting to qBittorrent"):
                 try:
                     client.auth_log_in()
-                except qbittorrentapi.LoginFailed:
-                    raise ValueError(
-                        "qBittorrent login failed - check the qbittorrent host and credentials in your config",
-                    )
+                except qbittorrentapi.APIConnectionError as e:
+                    # LoginFailed (bad credentials) subclasses APIConnectionError, so
+                    # this one arm covers both a wrong host and wrong credentials.
+                    raise QbitConnectionError(
+                        "qBittorrent connection failed - check the qbittorrent host and credentials in your config",
+                    ) from e
             qbit = client
 
         # Load the cache (or create its schema) and reconcile the descriptor against
