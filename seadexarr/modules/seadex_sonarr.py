@@ -11,7 +11,7 @@ from .manual_import import (
     ImportWaitMode,
     PendingImport,
 )
-from .mappings import MappingEntry
+from .mappings import MappingEntry, MappingMode
 from .planner import get_episode_keys
 from .protocols import ArrSync, EpisodeProgress
 from .radarr_client import (
@@ -327,6 +327,12 @@ class SonarrSync(ArrSync[SonarrItem]):
             # Resolved zero episodes (season not in Sonarr, offset past the end, or
             # AniBridge with no ranges): skip, don't mislabel "unmonitored" or grab orphans.
             run.log_entry_status(EntryState.NO_EPISODES, anilist_title)
+            if mapping.mode is MappingMode.ANIBRIDGE and not mapping.tvdb_mappings:
+                # Surface the AniBridge no-usable-ranges case LOUDLY (distinct from a
+                # Sonarr-library gap): a WARNING under the skip row naming the cause.
+                self.logger.warning(
+                    indent_string("AniBridge has no usable season ranges for this series; skipping"),
+                )
             time.sleep(self._config.advanced.sleep_time)
             return False
 

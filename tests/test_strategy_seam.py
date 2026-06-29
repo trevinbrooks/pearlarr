@@ -179,21 +179,23 @@ class TestProcessAlIdThreadsServices:
         run.al_id_prologue.assert_called_once_with(5)
 
     def test_sonarr_no_episodes_resolved_skips_explicitly(self) -> None:
-        # get_ep_list resolves to [] (season not in Sonarr / offset past the end /
-        # empty AniBridge map): skip with the NO_EPISODES status, never mislabeled
-        # "unmonitored" and never falling through to grab orphan releases.
+        # An anime-id mapping that resolves to [] (season not in Sonarr / offset past
+        # the end): skip with the NO_EPISODES status, never mislabeled "unmonitored"
+        # and never falling through to grab orphans - and NO AniBridge warning.
         run = mock.MagicMock()
         run.al_id_prologue.return_value = mock.MagicMock()  # a SeaDex entry exists
         run.cached_entry_skip.return_value = False
         run.get_anilist_title.return_value = "Title"
         episodes = mock.MagicMock()
         episodes.get_ep_list.return_value = []
+        logger = mock.MagicMock()
         strat = make_bare_instance(
             SonarrSync,
             _services=run,
             _episodes=episodes,
             _config=make_config(sleep_time=0),
             ignore_movies_in_radarr=False,
+            logger=logger,
         )
 
         result = strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5))
@@ -201,6 +203,34 @@ class TestProcessAlIdThreadsServices:
         assert result is False
         run.log_entry_status.assert_called_once_with(EntryState.NO_EPISODES, "Title")
         run.log_al_title.assert_not_called()
+        logger.warning.assert_not_called()  # anime-id empty is NOT the AniBridge case
+
+    def test_sonarr_anibridge_empty_map_skips_with_warning(self) -> None:
+        # The AniBridge no-usable-ranges case (tvdb_mappings={} -> mode ANIBRIDGE): the
+        # NO_EPISODES skip PLUS a visible WARNING naming the cause. Fails on the unfixed
+        # path, which silently grabbed nothing / mislabeled the entry.
+        run = mock.MagicMock()
+        run.al_id_prologue.return_value = mock.MagicMock()
+        run.cached_entry_skip.return_value = False
+        run.get_anilist_title.return_value = "Title"
+        episodes = mock.MagicMock()
+        episodes.get_ep_list.return_value = []
+        logger = mock.MagicMock()
+        strat = make_bare_instance(
+            SonarrSync,
+            _services=run,
+            _episodes=episodes,
+            _config=make_config(sleep_time=0),
+            ignore_movies_in_radarr=False,
+            logger=logger,
+        )
+
+        result = strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5, tvdb_mappings={}))
+
+        assert result is False
+        run.log_entry_status.assert_called_once_with(EntryState.NO_EPISODES, "Title")
+        run.log_al_title.assert_not_called()
+        assert logger.warning.called  # AniBridge-specific notice surfaced
 
 
 def _ep_with_file(ep_id: int, *, group: str | None) -> SonarrEpisode:
