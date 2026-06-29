@@ -192,6 +192,15 @@ class TestStrictValidation:
         with pytest.raises(ValidationError):
             ImportsSettings.model_validate({"wait_mode": "bogus"})
 
+    def test_import_mode_accepts_documented_values(self) -> None:
+        assert ImportsSettings.model_validate({"mode": "move"}).mode == "move"
+        assert ImportsSettings.model_validate({"mode": "copy"}).mode == "copy"
+
+    def test_import_mode_invalid_raises(self) -> None:
+        # Strict: a typo'd importMode is a ValidationError at load, not a Sonarr API error.
+        with pytest.raises(ValidationError):
+            ImportsSettings.model_validate({"mode": "moove"})
+
     def test_wait_mode_unquoted_yaml_off_maps_to_off(self) -> None:
         # YAML 1.1 parses a bare `off` (the documented disabled value) as the bool
         # False; it must still resolve to OFF rather than failing enum validation and

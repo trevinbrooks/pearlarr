@@ -4,7 +4,7 @@ import shutil
 import sys
 from enum import StrEnum
 from logging.handlers import RotatingFileHandler
-from typing import Any, Protocol, TypedDict, cast, override
+from typing import Protocol, TypedDict, cast, override
 
 from rich.console import Console
 from rich.rule import Rule
@@ -494,7 +494,7 @@ def indent_string(
 
 def kv_string(
     key: str,
-    value: Any,
+    value: str | Text,
     key_width: int = KEY_WIDTH,
     indent: int = 1,
     sep: str = " :",
@@ -681,7 +681,7 @@ class LogFormatter:
     def detail(
         self,
         label: str,
-        value: Any,
+        value: str | Text,
         value_style: str | None = None,
         level: int = logging.INFO,
         tail: str | None = None,

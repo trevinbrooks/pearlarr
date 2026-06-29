@@ -1,7 +1,6 @@
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any
 
 import qbittorrentapi
 from rich.text import Text
@@ -236,8 +235,8 @@ class RunReporter:
         # "needs action" (12) is the widest key here, vs. "missing episodes" (16)
         # in entry details. A heavy rule separates the two blocks, so the differing
         # colon columns never sit adjacent. Wrap the formatter to fix width at 12.
-        def summary_kv(key: str, value: Any, **kwargs: Any) -> bool:
-            return self.log_fmt.kv(key, value, key_width=12, **kwargs)
+        def summary_kv(key: str, value: str, *, value_style: str | None = None) -> bool:
+            return self.log_fmt.kv(key, value, key_width=12, value_style=value_style)
 
         # A needs-action entry in the summary, rendered with the same labeled
         # gutter as added_detail so the two blocks read alike: the title hangs at
@@ -377,7 +376,7 @@ class RunReporter:
         # A single guidance line if anything was skipped purely for being
         # private-only, rather than repeating it per-entry during the run. Kept
         # at indent 1, so it reads as part of the summary block, not detached.
-        public_only_skipped = any("public_only" in (item.reason or "") for item in needs)
+        public_only_skipped = any("public_only" in item.reason for item in needs)
         if public_only_skipped:
             self.logger.info(
                 indent_string(
@@ -530,7 +529,7 @@ class RunReporter:
             incomplete (bool): Flag the SeaDex entry as incomplete. Defaults False
         """
 
-        rows = [row for row in (("files", coverage), ("link", url)) if row[1]]
+        rows = [(label, value) for label, value in (("files", coverage), ("link", url)) if value]
         if not rows:
             return False
 
@@ -792,7 +791,7 @@ class RunReporter:
         "waiting to import"); the genuine "you already own it" never reaches here
         (that's the any_to_download=False path). The block is, in order: the status
         line, then each recommended release group, then the per-release outcome
-        (added / downloading / kept).
+        (added / downloading).
 
         Args:
             seadex_dict (dict): SeaDex entries (used for the recommended groups)
@@ -830,12 +829,6 @@ class RunReporter:
             if monitor_active:
                 message += " - waiting to import"
             self.log_fmt.detail("status", message, value_style="yellow")
-        else:
-            self.log_fmt.detail(
-                "status",
-                "your copy matches SeaDex's pick - keeping it",
-                value_style="green",
-            )
 
         # The release group(s) we recommend (those flagged for download), tags too
         for srg, srg_item in seadex_dict.items():
@@ -848,14 +841,13 @@ class RunReporter:
                     recommendation = srg
                 self.log_fmt.detail("group", recommendation, value_style="cyan")
 
-        # Per-release outcome (qBittorrent path; a dry run has no names to show)
+        # Per-release outcome (qBittorrent path; a dry run has no names to show).
+        # str(): name is None for hashless/private torrents (renders "None" as before).
         for r in results:
             if r.added:
-                self.log_fmt.detail("added", r.name, value_style="green")
+                self.log_fmt.detail("added", str(r.name), value_style="green")
             elif r.outcome is AddOutcome.ALREADY_ADDED:
-                self.log_fmt.detail("downloading", r.name, value_style="yellow")
-            else:
-                self.log_fmt.detail("kept", r.name)
+                self.log_fmt.detail("downloading", str(r.name), value_style="yellow")
 
         return True
 

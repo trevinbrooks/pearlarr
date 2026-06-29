@@ -209,7 +209,9 @@ class ImportsSettings(_ConfigBase):
     wait_timeout: int = 3600
     ready_timeout: int = 600
     poll_interval: int = 30
-    mode: str = "auto"
+    # Sonarr importMode, forwarded verbatim (sonarr_client.manual_import_execute).
+    # Constrained so a typo is a clean ValidationError at load, not a Sonarr API error.
+    mode: Literal["auto", "move", "copy"] = "auto"
     default_quality: str | None = None
     languages_dual: list[str] = Field(default_factory=lambda: list(_LANGUAGES_DUAL_DEFAULT))
     languages_single: list[str] = Field(default_factory=lambda: list(_LANGUAGES_SINGLE_DEFAULT))
