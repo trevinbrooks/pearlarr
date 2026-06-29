@@ -31,6 +31,7 @@ from seadexarr.modules.seadex_types import (
     EpisodeRecord,
     ManualImportCandidate,
     QualityModel,
+    SeadexDict,
     SeadexReleaseGroupItem,
     SeadexUrlItem,
     SonarrEpisode,
@@ -96,6 +97,18 @@ def _resolve_setting(key: str) -> tuple[str, str]:
 # The override keys make_arr routes into self._config (rather than onto the bare
 # engine as a direct attribute/collaborator).
 _CONFIG_SETTING_NAMES = frozenset(_FIELD_GROUP) | frozenset(_FLAT_ALIASES)
+
+
+def _split_config(overrides: dict[str, Any]) -> AppConfig:
+    """Pop the config-routed keys out of ``overrides`` (IN PLACE) and build the config.
+
+    Mutates ``overrides``: the builders' later ``defaults.update(overrides)`` relies on
+    the config keys having been removed - else e.g. ``public_only`` would be set as a
+    bare engine attribute the code never reads instead of routing to ``self._config``.
+    """
+
+    config_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CONFIG_SETTING_NAMES}
+    return make_config(**config_overrides)
 
 
 def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
@@ -375,12 +388,10 @@ def make_arr(**overrides: Any) -> SeaDexArr:
 
     logger = make_logger()
 
-    # Config-backed flags are read via self._config after Phase 5b; route any
-    # passed as overrides through an in-memory AppConfig, leaving the rest as
-    # direct attributes/collaborators.
-    config_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CONFIG_SETTING_NAMES}
-
-    config = make_config(**config_overrides)
+    # Config-backed flags are read via self._config after Phase 5b; route any passed
+    # as overrides through an in-memory AppConfig (popped from overrides in place),
+    # leaving the rest as direct attributes/collaborators.
+    config = _split_config(overrides)
     defaults: dict[str, Any] = {
         "logger": logger,
         "log_fmt": mock.MagicMock(),
@@ -407,8 +418,7 @@ def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
     """
 
     logger = make_logger()
-    config_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CONFIG_SETTING_NAMES}
-    config = make_config(**config_overrides)
+    config = _split_config(overrides)
     defaults: dict[str, Any] = {
         "config": config,
         "planner": make_planner(),
@@ -441,7 +451,7 @@ class FakeTorrents:
         self,
         *,
         url: str,
-        tracker: object,
+        tracker: Tracker,
         torrent_hash: str | None,
         preview: bool,
     ) -> tuple[AddOutcome, str | None]:
@@ -450,7 +460,7 @@ class FakeTorrents:
         return self._by_hash[torrent_hash]
 
 
-def one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/view/1") -> dict:
+def one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/view/1") -> SeadexDict:
     """A one-release ``SeadexDict`` flagged for download on a public tracker.
 
     The builder defaults the tracker to ``OTHER`` (not in the selected set), so
@@ -472,8 +482,7 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
     non-preview run or ``qbit=None`` to exercise the preview short-circuit.
     """
 
-    config_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CONFIG_SETTING_NAMES}
-    config = make_config(**config_overrides)
+    config = _split_config(overrides)
     notifier = mock.MagicMock()
     notifier.enabled = False
     defaults: dict[str, Any] = {
@@ -502,8 +511,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     qbit + strategy + store it exercises.
     """
 
-    config_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CONFIG_SETTING_NAMES}
-    config = make_config(**config_overrides)
+    config = _split_config(overrides)
     defaults: dict[str, Any] = {
         "_config": config,
         "cache_store": FakeCacheStore(),
