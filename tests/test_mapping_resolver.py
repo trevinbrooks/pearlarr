@@ -10,6 +10,8 @@ coverage before.
 
 import json
 import os
+import time
+from unittest import mock
 from xml.etree import ElementTree
 
 import pytest
@@ -24,6 +26,7 @@ from seadexarr.modules.mappings import (
     _entry_from_raw,
 )
 from seadexarr.modules.paths import resolve_paths
+from tests.builders import make_bare_instance
 
 # --------------------------------------------------------------------------- #
 # AniBridge: SQL backing must equal the graph backing (the oracle)
@@ -516,3 +519,36 @@ class TestRealDataParity:
                     assert resolver.anidb_mapping_dict(anidb_id, season) == expected
         finally:
             resolver.close()
+
+
+def _boom(*_a: object, **_k: object) -> None:
+    raise OSError("connection reset by peer")
+
+
+class TestMaybeDownloadFailOpen:
+    """A refresh blip falls open to the cached file; a first-ever download stays fatal."""
+
+    def test_refresh_failure_falls_open_to_cached_file(self, tmp_path, monkeypatch) -> None:
+        # A stale-but-valid cached source whose refresh download fails on a transient
+        # error must NOT abort the run: fall open to the on-disk copy and warn.
+        source = tmp_path / "anime_ids.json"
+        source.write_text("{}")
+        old = time.time() - 10 * 86400  # 10 days old, past cache_time
+        os.utime(source, (old, old))
+        monkeypatch.setattr(m, "_download_file", _boom)
+
+        logger = mock.MagicMock()
+        resolver = make_bare_instance(MappingResolver, logger=logger, _progress=None, cache_time=1)
+        resolver._maybe_download(str(source), "https://example/anime_ids.json", "anime_ids.json")
+
+        assert logger.warning.called
+        assert source.exists()  # the cached copy is left intact
+
+    def test_first_ever_download_failure_still_propagates(self, tmp_path, monkeypatch) -> None:
+        # With no file on disk there is nothing to fall open to, so a first-ever
+        # download failure stays fatal (the run cannot proceed without the source).
+        monkeypatch.setattr(m, "_download_file", _boom)
+        resolver = make_bare_instance(MappingResolver, logger=mock.MagicMock(), _progress=None, cache_time=1)
+
+        with pytest.raises(OSError):
+            resolver._maybe_download(str(tmp_path / "missing.json"), "https://example/x.json", "x")

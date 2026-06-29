@@ -520,9 +520,16 @@ class MappingResolver:
         age = datetime.now() - datetime.fromtimestamp(os.path.getmtime(file))
         if age.days >= self.cache_time:
             self._log(f"Refreshing {label} (cached {age.days}d >= {self.cache_time}d)")
-            _download_file(
-                url, file, timeout=DOWNLOAD_TIMEOUT_S, logger=self.logger, label=label, progress=self._progress
-            )
+            try:
+                _download_file(
+                    url, file, timeout=DOWNLOAD_TIMEOUT_S, logger=self.logger, label=label, progress=self._progress
+                )
+            except OSError as e:
+                # A transient blip refreshing a stale-but-valid cached source must not abort
+                # the run: the atomic .part write left the cached file intact, so fall open to
+                # it and warn (next cycle re-attempts). A first-ever download above stays fatal.
+                if self.logger is not None:
+                    self.logger.warning(f"Could not refresh {label} ({e}); using the cached copy")
 
     def _load_anime_ids(self) -> None:
         """Download + (re)index the Kometa Anime-IDs map only if its content changed."""
