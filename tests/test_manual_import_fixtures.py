@@ -434,7 +434,6 @@ class TestClassifyRealQueue:
             view = QueueRecordView(
                 state=rec.get("trackedDownloadState", ""),
                 status=rec.get("trackedDownloadStatus", ""),
-                has_messages=bool(rec.get("statusMessages")),
             )
             views.setdefault(rec["downloadId"], []).append(view)
         return views

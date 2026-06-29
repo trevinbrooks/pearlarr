@@ -558,7 +558,6 @@ class TestImportCompletedPayload:
             infohash="HASH",
             file_episode_map={"Show - 01 [1080p].mkv": [101]},
             episode_ids=[101],
-            season_number=1,
         )
         # The candidate carries a *different* in-context quality and no
         # authoritative episode/series info; the payload must ignore those.

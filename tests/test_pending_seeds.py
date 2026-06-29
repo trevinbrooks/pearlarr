@@ -57,7 +57,6 @@ class TestBuildPendingSeeds:
         assert seed.file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
         assert seed.seadex_files == ["Show - 01.mkv"]
         assert seed.seadex_sizes == [1000]
-        assert seed.season_number == 1
         # A single-file torrent gets the flat fallback (its one file's ids).
         assert seed.episode_ids == [101]
 
@@ -95,35 +94,6 @@ class TestBuildPendingSeeds:
         # The cross-file union bug fix: a multi-file pack carries NO flat fallback,
         # so the single-file rule can never stamp the whole season onto one file.
         assert seed.episode_ids == []
-        assert seed.season_number == 1
-
-    def test_mixed_seasons_leaves_season_number_none(self) -> None:
-        ep_list = [_ep(101, 1, 1), _ep(201, 2, 1)]
-        parse_cache = {
-            "S01.mkv": {"episodes": [{"season": 1, "episode": 1}]},
-            "S02.mkv": {"episodes": [{"season": 2, "episode": 1}]},
-        }
-        seadex_dict = {
-            "RG": rg_group(
-                {
-                    "u1": url_item(
-                        files=["S01.mkv", "S02.mkv"],
-                        size=[1, 2],
-                        infohash="h1",
-                        download=True,
-                    ),
-                },
-            ),
-        }
-
-        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
-            seadex_dict=seadex_dict,
-            ep_list=ep_list,
-            sonarr_series_id=7,
-            anilist_title="Show",
-        )
-
-        assert seeds["h1"].season_number is None
 
     def test_unparsed_video_still_seeded_for_import_time_repair(self) -> None:
         # No grab-time parse hit -> an empty map, but the seed is STILL persisted

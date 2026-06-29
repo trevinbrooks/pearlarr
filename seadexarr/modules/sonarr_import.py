@@ -182,7 +182,6 @@ class ImportExecutor:
                 QueueRecordView(
                     state=record.state,
                     status=record.status or "",
-                    has_messages=record.has_messages,
                 ),
             )
         return download_id if download_id else infohash, views
@@ -528,7 +527,6 @@ class ImportReconciler:
                 # Best-effort grab-time mapping, keyed by NORMALIZED basename so it
                 # matches the on-disk leaves at import time (NFC/NFD-safe).
                 file_episode_map: dict[str, list[int]] = {}
-                seasons: set[int] = set()
                 for base in video_files:
                     record = self.cache_store.get_sonarr_parse(base)
                     if not record:
@@ -537,9 +535,6 @@ class ImportReconciler:
                     file_ids = episode_ids_for_parsed(parsed, ep_id_map)
                     if file_ids:
                         file_episode_map[normalize_basename(base)] = file_ids
-                        seasons.update(ep["season"] for ep in parsed if ep.get("season") is not None)
-
-                season_number = seasons.pop() if len(seasons) == 1 else None
 
                 # The flat fallback is a legitimate guess ONLY for a genuine
                 # single-file torrent; a multi-file pack leaves it empty so the
@@ -555,7 +550,6 @@ class ImportReconciler:
                     episode_ids=episode_ids,
                     release_group=srg,
                     is_dual_audio=url_item.is_dual_audio,
-                    season_number=season_number,
                     seadex_files=video_files,
                     seadex_sizes=video_sizes,
                     title=anilist_title,

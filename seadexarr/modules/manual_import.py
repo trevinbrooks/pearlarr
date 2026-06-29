@@ -420,13 +420,10 @@ class QueueRecordView:
     Args:
         state (str): ``trackedDownloadState`` (e.g. ``importPending``).
         status (str): ``trackedDownloadStatus`` (``ok`` / ``warning`` / ``error``).
-        has_messages (bool): Whether ``statusMessages`` was non-empty (a populated
-            message array on a pending item means trouble, not progress).
     """
 
     state: str
     status: str
-    has_messages: bool
 
 
 # trackedDownloadState values (camelCase from Sonarr, compared case-folded) that
@@ -603,8 +600,6 @@ class PendingImport:
         release_group (str): The SeaDex release group (authoritative).
         is_dual_audio (bool): Whether the SeaDex release is dual-audio; selects
             the dual vs. single language list.
-        season_number (int | None): The single season, or None for multi-season
-            / absolute-numbered packs.
         seadex_files (list[str]): SeaDex filenames, for our regex quality parse.
         seadex_sizes (list[int]): File sizes parallel to ``seadex_files``, for the
             order-based last-resort mapping of a fully-unparseable sequential pack.
@@ -624,7 +619,6 @@ class PendingImport:
     episode_ids: list[int]
     release_group: str
     is_dual_audio: bool
-    season_number: int | None
     seadex_files: list[str]
     seadex_sizes: list[int]
     title: str | None
@@ -658,7 +652,6 @@ class PendingImport:
             episode_ids=raw.get("episode_ids", []),
             release_group=raw.get("release_group", ""),
             is_dual_audio=raw.get("is_dual_audio", False),
-            season_number=raw.get("season_number"),
             seadex_files=raw.get("seadex_files", []),
             seadex_sizes=raw.get("seadex_sizes", []),
             title=raw.get("title"),

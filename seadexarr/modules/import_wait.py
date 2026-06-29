@@ -18,7 +18,7 @@ import logging
 import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Any, cast
+from typing import Any
 
 import qbittorrentapi
 
@@ -88,7 +88,7 @@ class ImportWaitManager:
         self._ctx = ctx
         self._active_strategy = strategy
 
-    def _pending_store(self) -> dict[str, Any]:
+    def _pending_store(self) -> dict[str, dict[str, Any]]:
         """A snapshot of the per-Arr ``{infohash -> record}`` pending store.
 
         Thin read wrapper over :meth:`CacheStore.get_pending`: returns a fresh
@@ -97,16 +97,13 @@ class ImportWaitManager:
         in ``_register_pending_import`` and :meth:`CacheStore.drop_pending` in
         ``drop_pending``). Every other caller only iterates it read-only.
 
-        Each value is the JSON form of a :class:`PendingImport`
-        (``to_json()``/``from_json(raw: dict[str, Any])``), i.e. genuinely-open
-        cache JSON. ``get_pending`` types its values as ``dict[str, Any]``, but the
-        cache is untyped on disk (a hand-edited or legacy db can carry a non-dict
-        value), so the values are widened back to ``Any`` and consumers defensively
-        ``isinstance(raw, dict)``-narrow each one before reading it (see
-        :meth:`snapshot_pending_for_series`, mirroring ``_series_pending_records``).
+        Each value is the JSON form of a :class:`PendingImport`, rehydrated via
+        :meth:`PendingImport.from_json`. :meth:`CacheStore.get_pending` already
+        types its values precisely (``dict[str, dict[str, Any]]``), so they pass
+        straight through with no widening or per-value narrowing.
         """
 
-        return cast("dict[str, Any]", self.cache_store.get_pending(self._ctx.arr))
+        return self.cache_store.get_pending(self._ctx.arr)
 
     def poll_torrent(self, infohash: str) -> TorrentProbe:
         """Poll qBittorrent once for a torrent's terminal/in-progress state.
@@ -265,8 +262,7 @@ class ImportWaitManager:
         # Fresh per call and SQL-filtered to this series (so a record dropped earlier
         # this run is already absent) - replaces a full get_pending scan + Python
         # series filter once per series. The ``record ->> 'series_id'`` match only
-        # returns JSON objects, so each value is already a typed record (no defensive
-        # isinstance/cast like the Any-typed _pending_store() consumers need).
+        # returns JSON objects, so each value is already a typed record.
         for infohash, record in self.cache_store.get_pending_for_series(self._ctx.arr, series_id).items():
             # Skip this-run grabs: they're already reported as `added`, so a
             # `queued`/`importing`/`imported` row here would be a double report.

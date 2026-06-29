@@ -673,7 +673,6 @@ def pending_import(**overrides: Any) -> PendingImport:
         "episode_ids": [101],
         "release_group": "SubGroup",
         "is_dual_audio": False,
-        "season_number": 1,
         "seadex_files": ["Show - 01 [1080p].mkv"],
         "seadex_sizes": [1000],
         "title": "Show",

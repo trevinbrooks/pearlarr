@@ -399,8 +399,8 @@ class SonarrClient:
 
         Each raw ``QueueResource`` is narrowed to a
         :class:`~.seadex_types.QueueRecord` (``download_id`` / ``state`` /
-        ``status`` / ``has_messages``) via its ``from_api`` at this client
-        boundary, so the wait decision never touches the raw DTO.
+        ``status``) via its ``from_api`` at this client boundary, so the wait
+        decision never touches the raw DTO.
 
         Returns an empty list (with a warning) on a non-200, so the caller treats
         "couldn't read the queue" as "not tracked" and falls back to its own scan.

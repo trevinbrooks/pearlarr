@@ -507,27 +507,20 @@ class QueueRecord:
     The wait/import decision consults only ``download_id`` (the infohash Sonarr
     stores uppercased, matched case-insensitively to pick a torrent's records -
     ``string | null`` in the schema), ``state``
-    (``trackedDownloadState``: ``downloading`` / ``importPending`` / ...),
-    ``status`` (``trackedDownloadStatus``: ``ok`` / ``warning`` / ``error``) and
-    whether ``statusMessages`` is populated (a message array on a pending item
-    signals trouble, not progress). ``state``/``status`` are the ``string | null``
-    rendering of their schema enums. Parsed at the client boundary via
-    :meth:`from_api`, mirroring :class:`SonarrEpisode`.
+    (``trackedDownloadState``: ``downloading`` / ``importPending`` / ...) and
+    ``status`` (``trackedDownloadStatus``: ``ok`` / ``warning`` / ``error``).
+    ``state``/``status`` are the ``string | null`` rendering of their schema
+    enums. Parsed at the client boundary via :meth:`from_api`, mirroring
+    :class:`SonarrEpisode`.
     """
 
     download_id: str | None = None
     state: str | None = None
     status: str | None = None
-    has_messages: bool = False
 
     @classmethod
     def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Build from one raw ``QueueResource`` dict (filters unknown keys).
-
-        ``statusMessages`` is folded to a single ``has_messages`` bool here (a
-        non-empty array means trouble), so the decision path never walks the
-        message objects.
-        """
+        """Build from one raw ``QueueResource`` dict (filters unknown keys)."""
 
         download_id = raw.get("downloadId")
         state = raw.get("trackedDownloadState")
@@ -536,7 +529,6 @@ class QueueRecord:
             download_id=download_id if isinstance(download_id, str) else None,
             state=state if isinstance(state, str) else None,
             status=status if isinstance(status, str) else None,
-            has_messages=bool(raw.get("statusMessages")),
         )
 
 

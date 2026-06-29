@@ -493,7 +493,6 @@ class TestPendingImportRoundTrip:
             episode_ids=[11, 12],
             release_group="Era-Raws",
             is_dual_audio=True,
-            season_number=2,
             seadex_files=["ep1.mkv", "ep2.mkv"],
             seadex_sizes=[1000, 2000],
             title="Some Show",
@@ -519,7 +518,6 @@ class TestPendingImportRoundTrip:
             "episode_ids": [1],
             "release_group": "RG",
             "is_dual_audio": False,
-            "season_number": 1,
             "seadex_files": ["a.mkv"],
             "title": "T",
             "added_at": "2026-06-24 00:00:00",
@@ -544,7 +542,6 @@ class TestPendingImportRoundTrip:
             episode_ids=[],
             release_group="RG",
             is_dual_audio=False,
-            season_number=None,
             seadex_files=[],
             seadex_sizes=[],
             title=None,
@@ -614,8 +611,8 @@ def test_import_readiness_members_exist() -> None:
     assert {o.name for o in ImportReadiness} == {"IMPORTED", "RETRY", "LEAVE"}
 
 
-def _qrecord(state: str, status: str = "ok", *, messages: bool = False) -> QueueRecordView:
-    return QueueRecordView(state=state, status=status, has_messages=messages)
+def _qrecord(state: str, status: str = "ok") -> QueueRecordView:
+    return QueueRecordView(state=state, status=status)
 
 
 class TestClassifyQueue:
@@ -637,9 +634,6 @@ class TestClassifyQueue:
         # Any importPending waits (PENDING_CLEAN), even with a warning: stepping in
         # on a still-pending record races Sonarr's import and double-imports.
         assert classify_queue([_qrecord("importPending", "warning")]) is QueueVerdict.PENDING_CLEAN
-
-    def test_pending_with_messages_is_pending_clean(self) -> None:
-        assert classify_queue([_qrecord("importPending", "ok", messages=True)]) is QueueVerdict.PENDING_CLEAN
 
     def test_pending_with_error_status_is_pending_clean(self) -> None:
         # An importPending record waits regardless of status, including "error":
