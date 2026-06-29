@@ -221,6 +221,13 @@ class TestNormalization:
     def test_trackers_default_is_public_plus_private(self) -> None:
         assert SeadexSettings().trackers == PUBLIC_TRACKERS | PRIVATE_TRACKERS
 
+    def test_trackers_explicit_empty_coalesces_to_default(self) -> None:
+        # An explicit `[]` (or "") must coalesce to all trackers, not match nothing -
+        # mirroring the languages validator. Empty means "no restriction", never a
+        # silent grab-nothing. (A bare `trackers:` -> None is dropped to the default.)
+        assert SeadexSettings.model_validate({"trackers": []}).trackers == PUBLIC_TRACKERS | PRIVATE_TRACKERS
+        assert SeadexSettings.model_validate({"trackers": ""}).trackers == PUBLIC_TRACKERS | PRIVATE_TRACKERS
+
     def test_trackers_explicit_are_casefolded(self) -> None:
         assert SeadexSettings.model_validate({"trackers": ["Nyaa", "AB"]}).trackers == {"nyaa", "ab"}
 

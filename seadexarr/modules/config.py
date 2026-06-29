@@ -173,14 +173,19 @@ class SeadexSettings(_ConfigBase):
     def _casefold_trackers(cls, value: Any) -> Any:
         """Casefold explicit trackers so membership tests match SeaDex's names.
 
-        Only fires when ``trackers`` is provided; an absent/blank value takes the
-        ``PUBLIC | PRIVATE`` default_factory (already casefolded). A scalar string is
-        treated as a single tracker rather than iterated character-by-character (so
-        ``trackers: Nyaa`` yields ``{"nyaa"}``, not ``{"n", "y", "a"}``); a non-iterable
+        An absent ``trackers`` key takes the ``PUBLIC | PRIVATE`` default_factory; an
+        explicit empty list/string coalesces to that same default here (empty means "no
+        restriction", never "match nothing" - which would silently grab nothing,
+        mirroring the languages validator). A scalar string is one tracker, not iterated
+        character-by-character (``trackers: Nyaa`` -> ``{"nyaa"}``); a non-iterable scalar
         raises ``ValueError`` so it surfaces as a clean ``ValidationError`` instead of a
         raw ``TypeError`` that would escape the cli's error handler.
         """
 
+        if isinstance(value, (str, list, set, tuple)) and not value:
+            # Explicit empty trackers (`[]` or "") coalesce to all trackers: empty means
+            # "no restriction", never "match nothing" (which would silently grab nothing).
+            return PUBLIC_TRACKERS | PRIVATE_TRACKERS
         if isinstance(value, str):
             value = [value]
         elif not isinstance(value, (list, set, tuple)):
