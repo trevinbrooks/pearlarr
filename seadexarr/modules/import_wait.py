@@ -604,4 +604,3 @@ class MonitorPass:
                 phase_timeout_s=self.import_timeout,
                 command_issued=probe.command_issued,
             )
-

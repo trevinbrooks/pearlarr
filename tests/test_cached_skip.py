@@ -93,6 +93,4 @@ class TestCrossArrLookupHonorsParam:
         run = make_arr(_reporter=reporter, _ctx=RunContext(arr=Arr.SONARR))
         run.log_cached_entry(Arr.RADARR, 7, state=EntryState.IN_RADARR)
         # The reporter delegate receives the explicit cross-arr value, not ctx.arr.
-        reporter.log_cached_entry.assert_called_once_with(
-            run._ctx, Arr.RADARR, 7, state=EntryState.IN_RADARR
-        )
+        reporter.log_cached_entry.assert_called_once_with(run._ctx, Arr.RADARR, 7, state=EntryState.IN_RADARR)
