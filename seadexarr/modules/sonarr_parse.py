@@ -11,7 +11,7 @@ from the episode collaborator that computes it.
 import concurrent.futures
 import os
 from datetime import datetime, timedelta
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, NotRequired, TypedDict, cast
 
 from .cache import UPDATED_AT_STR_FORMAT, record_is_fresh
 from .log import indent_string
@@ -127,6 +127,20 @@ class ParseWindow(NamedTuple):
     series_fp: str
 
 
+class SonarrParseRecord(TypedDict):
+    """One persisted Sonarr ``/parse`` cache record, keyed by filename.
+
+    ``fetched_at`` stamps the record for TTL eviction; ``episodes`` is the parsed
+    season/episode list (empty for a negative record). ``series_fp`` is
+    ``NotRequired`` because only a negative record carries it (pinning it to the
+    series-id set) - the freshness reader dispatches on exactly that presence.
+    """
+
+    fetched_at: str
+    episodes: list[dict[str, int]]
+    series_fp: NotRequired[str]
+
+
 class SonarrParseCache:
     """Owns the grab-time ``/parse`` + the durable, freshness-checked parse cache.
 
@@ -167,17 +181,18 @@ class SonarrParseCache:
 
         if not isinstance(record, dict):
             return False
-        if record.get("episodes"):
+        typed = cast("SonarrParseRecord", record)
+        if typed.get("episodes"):
             return record_is_fresh(
                 record,
                 payload_key="episodes",
                 ttl_days=SONARR_PARSE_CACHE_TTL_DAYS,
                 cutoff=window.cutoff,
             )
-        if record.get("series_fp") != window.series_fp:
+        if typed.get("series_fp") != window.series_fp:
             return False
         try:
-            return datetime.strptime(record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT) >= window.neg_cutoff
+            return datetime.strptime(typed.get("fetched_at", ""), UPDATED_AT_STR_FORMAT) >= window.neg_cutoff
         except (TypeError, ValueError):
             return False
 
@@ -189,10 +204,10 @@ class SonarrParseCache:
         freshness reader dispatches on exactly that presence.
         """
 
-        record: dict[str, Any] = {"fetched_at": window.now_str, "episodes": episodes}
+        record: SonarrParseRecord = {"fetched_at": window.now_str, "episodes": episodes}
         if not episodes:
             record["series_fp"] = window.series_fp
-        self.cache_store.put_sonarr_parse(filename, record)
+        self.cache_store.put_sonarr_parse(filename, cast("dict[str, Any]", record))
 
     def _warm_parse_cache(
         self,
@@ -265,7 +280,6 @@ class SonarrParseCache:
                 records (from the episode collaborator).
         """
 
-        # Record shape per filename: {"fetched_at", "episodes"[, "series_fp"]}.
         # Cutoffs computed once per call (not per file).
         window = ParseWindow(
             now_str=datetime.now().strftime(UPDATED_AT_STR_FORMAT),

@@ -77,9 +77,10 @@ class SonarrSync(ArrSync[SonarrItem]):
         """Stand up the Sonarr client from the injected shared collaborators.
 
         Args:
-            deps (RunDeps): The shared collaborators; the config/session/mappings/
-                cache/AniList gateway/log formatter this strategy needs are read
-                off it.
+            deps (RunDeps): The shared collaborators; the config/session/mappings
+                this strategy reads directly are unpacked off it, and it's handed
+                to the Sonarr collaborators for the cache/AniList gateway/log
+                formatter they read.
             services (RunServices): The run machinery the per-id hooks call into.
         """
 
@@ -89,8 +90,6 @@ class SonarrSync(ArrSync[SonarrItem]):
         self.logger = deps.logger
         self._mappings = deps.mappings
         self.anibridge = deps.mappings.anibridge
-        self.cache_store = deps.cache_store
-        self.log_fmt = deps.log_fmt
 
         # Set up Sonarr (connection keys are required only now, when a Sonarr run runs)
         sonarr_url, sonarr_api_key = self._config.require_connection(Arr.SONARR)

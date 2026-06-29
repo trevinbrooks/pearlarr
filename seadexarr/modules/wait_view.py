@@ -150,8 +150,9 @@ class WaitOutcomeRow:
 class WaitResult:
     """The outcome of a whole wait pass - what the report + notification render.
 
-    Returned by :meth:`SeaDexArr._run_monitor` so the end-of-run tail can write a
-    durable report and push a completion notification without re-deriving state.
+    Returned by :meth:`ImportWaitManager.run_monitor` so the end-of-run tail can
+    write a durable report and push a completion notification without re-deriving
+    state.
     """
 
     rows: tuple[WaitOutcomeRow, ...]

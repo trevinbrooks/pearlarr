@@ -34,12 +34,6 @@ from .torrents import AddOutcome, ReleaseOutcome, TorrentService
 class GrabRequest:
     """The resolved per-id payload for the shared grab tail.
 
-    Both strategies build this at the tail of ``process_al_id`` - once the
-    Arr-specific ``seadex_dict`` and release-group info are resolved - and hand it
-    to :meth:`GrabPipeline.grab_and_cache`. Bundling the values that used to thread
-    ``grab_and_cache`` -> ``_grab`` -> ``add_torrent`` as one frozen object
-    collapses that trampoline.
-
     ``cache_details`` is the run's mutable :class:`CacheRecord` accumulator: the
     frozen field pins the reference, not the dict's contents (``grab_and_cache``
     still writes ``torrent_hashes`` into it before saving).
@@ -52,7 +46,7 @@ class GrabRequest:
     seadex_dict: SeadexDict
     torrent_hashes: list[str | None]
     cache_details: CacheRecord
-    release_group: str | list[str | None] | None
+    release_group: list[str | None] | None
     pending_seeds: dict[str, PendingImport] | None = None
 
 
@@ -303,8 +297,9 @@ class GrabPipeline:
                     value_style="blue",
                 )
         elif self._grab(req):
-            # max_torrents_to_add reached: cache saved and summary logged inside
-            # _grab; stop the whole run.
+            # max_torrents_to_add reached: _grab logged the cap and the run stops
+            # here (the per-title cache update below is deliberately skipped); the
+            # engine's single finalize site does the actual cache save.
             return True
 
         # Work out whether THIS title actually grabbed anything
@@ -348,8 +343,9 @@ class GrabPipeline:
         """Add this title's torrents, notify, and honour the run-wide cap.
 
         Runs only when there's something to download. Returns True once
-        max_torrents_to_add has been reached (cache saved and summary logged
-        here) so the caller stops the whole run; otherwise False.
+        max_torrents_to_add has been reached (the cap notice is logged here; the
+        engine's finalize site does the cache save) so the caller stops the whole
+        run; otherwise False.
         """
 
         # Resolve the AniList cover thumbnail (via the gateway) and build the

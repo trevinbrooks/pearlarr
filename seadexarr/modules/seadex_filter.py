@@ -70,9 +70,9 @@ class SeadexReleaseFilter:
         # Filter down by allowed trackers
         final_torrent_list = [t for t in final_torrent_list if t.tracker.casefold() in self._config.seadex.trackers]
 
-        # Pull out torrents tagged as best, so long as at least one
-        # is tagged as best. Keep a copy so we can fall back if audio
-        # preferences otherwise downgrade quality
+        # Find the 'best'-tagged releases up front: we narrow to them first (when
+        # want_best is set and any exist), then apply the audio-preference filter
+        # on that narrowed set below.
         best_torrents = [t for t in final_torrent_list if t.is_best]
         any_best = len(best_torrents) > 0
 

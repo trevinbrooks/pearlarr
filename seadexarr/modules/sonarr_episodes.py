@@ -71,7 +71,7 @@ def check_ep_by_anime_ids(
     """Check whether to include an episode by Anime ID style
 
     Args:
-        ep (dict): Dictionary of episode info
+        ep (SonarrEpisode): Episode info
         tvdb_season (int): TVDB season number
     """
 
@@ -93,9 +93,9 @@ def check_ep_by_anibridge(
     """Check whether a Sonarr episode is covered by an AniBridge mapping.
 
     Args:
-        ep (dict): Sonarr episode info (seasonNumber, episodeNumber)
-        tvdb_mappings (dict): season (int) -> list of inclusive (start, end)
-            TVDB episode ranges. An empty list matches the whole season; an
+        ep (SonarrEpisode): Sonarr episode info (season_number, episode_number)
+        tvdb_mappings (TvdbMappings): season (int) -> list of inclusive (start,
+            end) TVDB episode ranges. An empty list matches the whole season; an
             end of None is open-ended.
     """
 
@@ -230,13 +230,7 @@ class SonarrEpisodes:
             still counts.
         """
 
-        # The series we'll actually process: monitored (unless unmonitored are
-        # ignored), carrying at least one AniList mapping, and with at least one id
-        # the per-id loop won't short-circuit on (no SeaDex entry, or cached and
-        # unchanged - al_id_needs_scan). get_anilist_ids is memoized and the
-        # predicate hits only warmed caches, so this stays ~free on the main thread.
-        # get_ep_list still lazily warms any series we under-skip here, so the gate
-        # only ever saves a round-trip; it never changes the grab/skip outcome.
+        # Build the needs-scan subset (see docstring): skip series the per-id loop would short-circuit on.
         run = self._services
         series_ids: list[int] = []
         seen: set[int] = set()

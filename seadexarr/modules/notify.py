@@ -115,7 +115,7 @@ class Notifier:
         self,
         *,
         arr: str,
-        release_group: str | list[str | None] | None,
+        release_group: list[str | None] | None,
         seadex_dict: SeadexDict,
     ) -> list[dict[str, str]]:
         """Build the Discord embed fields for a grab.
@@ -128,23 +128,21 @@ class Notifier:
 
         Args:
             arr (str): Type of arr instance
-            release_group (str | list[str | None] | None): Arr release group(s)
+            release_group (list[str | None] | None): Arr release group(s)
             seadex_dict (dict): Dictionary of SeaDex releases
         """
 
         fields: list[EmbedField] = []
 
-        # The first field should be the Arr group. If it's empty, mention it's
-        # missing. Each branch allocates a fresh list, so the caller's
-        # release_group is never mutated (no defensive copy needed).
+        # The first field names the Arr's current release group(s); fall back to
+        # "None" when there isn't one. Each branch allocates a fresh list, so the
+        # caller's release_group is never mutated (no defensive copy needed).
         if not release_group:
             names = ["None"]
-        elif isinstance(release_group, str):
-            names = [release_group]
         else:
-            # The list can statically carry None entries (the Arr release dict
-            # keys typed str | None); drop them so the joined value is str-only.
-            names = [group for group in release_group if group is not None]
+            # Both Arrs pass the release-dict keys (str | None); drop the blank /
+            # None entries, falling back to "None" if that empties the list.
+            names = [group for group in release_group if group] or ["None"]
 
         fields.append(
             EmbedField(

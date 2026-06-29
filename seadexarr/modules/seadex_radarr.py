@@ -188,7 +188,7 @@ class RadarrSync(ArrSync[RadarrItem]):
                 seadex_dict=seadex_dict,
                 torrent_hashes=torrent_hashes,
                 cache_details=cache_details,
-                release_group=radarr_release_group,
+                release_group=[radarr_release_group],
             ),
         )
 
