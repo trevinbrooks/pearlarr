@@ -34,6 +34,7 @@ from .mapping_store import (
     SOURCE_ANIBRIDGE,
     SOURCE_ANIDB,
     SOURCE_ANIME_IDS,
+    AnimeIdRow,
     MappingStore,
 )
 from .paths import resolve_paths
@@ -122,11 +123,15 @@ def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> Ma
             keys are read.
     """
 
+    # Coalesce a present-but-null season/epoffset to the sentinel, matching
+    # _anime_ids_rows (a JSON null would otherwise violate the int fields).
+    season = raw.get("tvdb_season", -1)
+    epoffset = raw.get("tvdb_epoffset", 0)
     return MappingEntry(
         anilist_id=anilist_id,
         tvdb_id=raw.get("tvdb_id"),
-        tvdb_season=raw.get("tvdb_season", -1),
-        tvdb_epoffset=raw.get("tvdb_epoffset", 0),
+        tvdb_season=-1 if season is None else season,
+        tvdb_epoffset=0 if epoffset is None else epoffset,
         tvdb_mappings=raw.get("tvdb_mappings"),
         tmdb_movie_id=raw.get("tmdb_movie_id"),
         imdb_id=raw.get("imdb_id"),
@@ -134,27 +139,23 @@ def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> Ma
     )
 
 
-def _entry_from_anime_row(row: tuple[Any, ...]) -> MappingEntry:
-    """Build a :class:`MappingEntry` from a stored anime_ids row.
+def _entry_from_anime_row(row: AnimeIdRow) -> MappingEntry:
+    """Build a :class:`MappingEntry` from a stored :class:`AnimeIdRow`.
 
     The SQL twin of :func:`_entry_from_raw` for Kometa records: a row never
     carries ``tvdb_mappings`` (only AniBridge does), so ``mode`` is ANIME_IDS.
-
-    Args:
-        row: ``(anilist_id, tvdb_id, tvdb_season, tvdb_epoffset, tmdb_movie_id,
-            tmdb_show_id, imdb_id, anidb_id)`` as stored.
+    ``row.tmdb_show_id`` has no MappingEntry field, so it is simply not read.
     """
 
-    anilist_id, tvdb_id, tvdb_season, tvdb_epoffset, tmdb_movie_id, _tmdb_show_id, imdb_id, anidb_id = row
     return MappingEntry(
-        anilist_id=anilist_id,
-        tvdb_id=tvdb_id,
-        tvdb_season=tvdb_season,
-        tvdb_epoffset=tvdb_epoffset,
+        anilist_id=row.anilist_id,
+        tvdb_id=row.tvdb_id,
+        tvdb_season=row.tvdb_season,
+        tvdb_epoffset=row.tvdb_epoffset,
         tvdb_mappings=None,
-        tmdb_movie_id=tmdb_movie_id,
-        imdb_id=imdb_id,
-        anidb_id=anidb_id,
+        tmdb_movie_id=row.tmdb_movie_id,
+        imdb_id=row.imdb_id,
+        anidb_id=row.anidb_id,
     )
 
 
@@ -265,7 +266,7 @@ def _parse_anime_mappings(path: str) -> AnimeIdsMap:
         return cast("AnimeIdsMap", json.load(f))
 
 
-def _anime_ids_rows(anime_mappings: AnimeIdsMap) -> list[tuple[Any, ...]]:
+def _anime_ids_rows(anime_mappings: AnimeIdsMap) -> list[AnimeIdRow]:
     """Flatten the Kometa map into anime_ids store rows (first-seen order).
 
     Every record yields a row (a NULL ``anilist_id`` is kept, so the library-filter
@@ -275,7 +276,7 @@ def _anime_ids_rows(anime_mappings: AnimeIdsMap) -> list[tuple[Any, ...]]:
     entry is identical.
     """
 
-    rows: list[tuple[Any, ...]] = []
+    rows: list[AnimeIdRow] = []
     for record in anime_mappings.values():
         # ``.get(key, default)`` only substitutes the default for an ABSENT key; a
         # present-but-null JSON value (``"tvdb_season": null``) returns None, which
@@ -286,15 +287,18 @@ def _anime_ids_rows(anime_mappings: AnimeIdsMap) -> list[tuple[Any, ...]]:
         season = record.get("tvdb_season", -1)
         epoffset = record.get("tvdb_epoffset", 0)
         rows.append(
-            (
-                record.get("anilist_id"),
-                record.get("tvdb_id"),
-                -1 if season is None else season,
-                0 if epoffset is None else epoffset,
-                record.get("tmdb_movie_id"),
-                record.get("tmdb_show_id"),
-                record.get("imdb_id"),
-                record.get("anidb_id"),
+            AnimeIdRow(
+                # NULL anilist_id is kept here but filtered out at query time; the
+                # field is typed int per that IS NOT NULL contract, so cast the
+                # producer's nullable value (it rides through as a stored NULL).
+                anilist_id=cast("int", record.get("anilist_id")),
+                tvdb_id=record.get("tvdb_id"),
+                tvdb_season=-1 if season is None else season,
+                tvdb_epoffset=0 if epoffset is None else epoffset,
+                tmdb_movie_id=record.get("tmdb_movie_id"),
+                tmdb_show_id=record.get("tmdb_show_id"),
+                imdb_id=record.get("imdb_id"),
+                anidb_id=record.get("anidb_id"),
             ),
         )
     return rows
@@ -606,7 +610,7 @@ class MappingResolver:
 
     # -- library-filter id sets ---------------------------------------------
 
-    def anime_id_set(self, column: str) -> set[Any]:
+    def anime_id_set(self, column: str) -> set[int | str]:
         """DISTINCT external ids the Anime-IDs source carries for ``column``.
 
         Backs the library-filter candidate sets (symmetric with AniBridge's
@@ -615,7 +619,7 @@ class MappingResolver:
         """
 
         if not self._anime_enabled:
-            return set()
+            return set[int | str]()
         return self._store.anime_ids_distinct(column)
 
     @property
@@ -750,9 +754,8 @@ class MappingResolver:
         # produced" behaviour.
         def merge(column: str, value: object) -> None:
             for row in self._store.anime_ids_lookup(column, value):
-                anilist_id = cast("int", row[0])
-                if anilist_id not in anilist_mappings:
-                    anilist_mappings[anilist_id] = _entry_from_anime_row(row)
+                if row.anilist_id not in anilist_mappings:
+                    anilist_mappings[row.anilist_id] = _entry_from_anime_row(row)
 
         if tvdb_id is not None:
             merge("tvdb_id", tvdb_id)

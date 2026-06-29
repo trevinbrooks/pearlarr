@@ -39,7 +39,7 @@ import contextlib
 import logging
 import sqlite3
 from collections.abc import Callable, Iterable
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 from .sqlite_util import connect, is_corruption, quarantine_corrupt
 
@@ -88,13 +88,12 @@ CREATE INDEX IF NOT EXISTS ix_anime_ids_tmdb_show  ON anime_ids (tmdb_show_id);
 CREATE INDEX IF NOT EXISTS ix_anime_ids_imdb       ON anime_ids (imdb_id);
 
 CREATE TABLE IF NOT EXISTS anibridge_entry (
-    anilist_id         INTEGER PRIMARY KEY,
-    anidb_id           INTEGER,
-    imdb_id            TEXT,
-    tmdb_movie_id      INTEGER,
-    mal_id             INTEGER,
-    first_tvdb_id      INTEGER,
-    first_tmdb_show_id INTEGER
+    anilist_id    INTEGER PRIMARY KEY,
+    anidb_id      INTEGER,
+    imdb_id       TEXT,
+    tmdb_movie_id INTEGER,
+    mal_id        INTEGER,
+    first_tvdb_id INTEGER
 );
 
 -- ext_id mixes int (tvdb/tmdb) and str (imdb). The column is declared BLOB so it
@@ -170,12 +169,34 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-class AniBridgeEntryRow(NamedTuple):
-    """One stored ``anibridge_entry`` row: the computed ``_consumer_entry`` picks.
+class AnimeIdRow(NamedTuple):
+    """One stored ``anime_ids`` row, in column order.
 
-    A typed record (not a positional ``tuple[object, ...]``) so the consumer reads
-    precise, named fields. Tuple-compatible, so it's built straight from a fetched
-    row with ``AniBridgeEntryRow(*row)``.
+    A typed record (not a positional ``tuple[object, ...]``) shared by the whole
+    pipeline - ``_anime_ids_rows`` builds it, ``replace_anime_ids`` inserts it,
+    ``anime_ids_lookup`` returns it, ``_entry_from_anime_row`` reads named fields -
+    so the four column lists can't silently transpose. ``anilist_id`` is typed
+    ``int`` because the only consumer (``anime_ids_lookup``) filters
+    ``anilist_id IS NOT NULL``, even though the column itself is nullable.
+    """
+
+    anilist_id: int
+    tvdb_id: int | None
+    tvdb_season: int
+    tvdb_epoffset: int
+    tmdb_movie_id: int | None
+    tmdb_show_id: int | None
+    imdb_id: str | None
+    anidb_id: int | None
+
+
+class AniBridgeEntryRow(NamedTuple):
+    """One ``anibridge_entry`` row: the computed ``_consumer_entry`` picks.
+
+    A typed record (not a positional ``tuple[object, ...]``) shared by the producer
+    (``AniBridge.to_rows``) and the consumer (``anibridge_entries_for``), so the two
+    column lists agree by construction. Tuple-compatible, so it's built straight
+    from a fetched row with ``AniBridgeEntryRow(*row)``.
     """
 
     anilist_id: int
@@ -184,7 +205,24 @@ class AniBridgeEntryRow(NamedTuple):
     tmdb_movie_id: int | None
     mal_id: int | None
     first_tvdb_id: int | None
-    first_tmdb_show_id: int | None
+
+
+class AniBridgeXrefRow(NamedTuple):
+    """One ``anibridge_xref`` reverse-index row (``axis`` -> ext id -> AniList id)."""
+
+    axis: str
+    ext_id: int | str
+    anilist_id: int
+
+
+class AniBridgeRangeRow(NamedTuple):
+    """One ``anibridge_tvdb_range`` row; a NULL ``start_ep`` marks an empty season."""
+
+    anilist_id: int
+    tvdb_id: int
+    season: int
+    start_ep: int | None
+    end_ep: int | None
 
 
 class MappingStore:
@@ -272,13 +310,12 @@ class MappingStore:
             self._conn.rollback()
             raise
 
-    def replace_anime_ids(self, digest: str, rows: Iterable[tuple[object, ...]]) -> None:
+    def replace_anime_ids(self, digest: str, rows: Iterable[AnimeIdRow]) -> None:
         """Atomically replace the anime_ids rows.
 
         Args:
             digest (str): sha256 of the source file (or :data:`INLINE_DIGEST`).
-            rows: ``(anilist_id, tvdb_id, tvdb_season, tvdb_epoffset, tmdb_movie_id,
-                tmdb_show_id, imdb_id, anidb_id)`` tuples.
+            rows: :class:`AnimeIdRow` tuples (column order), one per Kometa record.
         """
 
         def write(conn: sqlite3.Connection) -> None:
@@ -293,25 +330,24 @@ class MappingStore:
     def replace_anibridge(
         self,
         digest: str,
-        entries: Iterable[tuple[object, ...]],
-        xrefs: Iterable[tuple[object, ...]],
-        ranges: Iterable[tuple[object, ...]],
+        entries: Iterable[AniBridgeEntryRow],
+        xrefs: Iterable[AniBridgeXrefRow],
+        ranges: Iterable[AniBridgeRangeRow],
     ) -> None:
         """Atomically replace the anibridge tables.
 
         Args:
             digest (str): sha256 of the source file (or :data:`INLINE_DIGEST`).
-            entries: ``(anilist_id, anidb_id, imdb_id, tmdb_movie_id, mal_id,
-                first_tvdb_id, first_tmdb_show_id)`` tuples.
-            xrefs: ``(axis, ext_id, anilist_id)`` reverse-index tuples.
-            ranges: ``(anilist_id, tvdb_id, season, start_ep, end_ep)`` tuples;
-                ``start_ep`` NULL marks a present-but-empty season.
+            entries: :class:`AniBridgeEntryRow` tuples (the computed consumer picks).
+            xrefs: :class:`AniBridgeXrefRow` reverse-index tuples.
+            ranges: :class:`AniBridgeRangeRow` tuples; ``start_ep`` NULL marks a
+                present-but-empty season.
         """
 
         def write(conn: sqlite3.Connection) -> None:
             conn.executemany(
                 "INSERT INTO anibridge_entry (anilist_id, anidb_id, imdb_id, tmdb_movie_id, "
-                "mal_id, first_tvdb_id, first_tmdb_show_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "mal_id, first_tvdb_id) VALUES (?, ?, ?, ?, ?, ?)",
                 entries,
             )
             conn.executemany(
@@ -354,26 +390,26 @@ class MappingStore:
 
     # -- anime_ids queries ---------------------------------------------------
 
-    def anime_ids_lookup(self, column: str, value: object) -> list[tuple[object, ...]]:
-        """anime_ids rows matching ``column == value``, in first-seen (rowid) order.
+    def anime_ids_lookup(self, column: str, value: object) -> list[AnimeIdRow]:
+        """:class:`AnimeIdRow`s matching ``column == value``, in first-seen (rowid) order.
 
-        Returns the full row tuple ``(anilist_id, tvdb_id, tvdb_season,
-        tvdb_epoffset, tmdb_movie_id, tmdb_show_id, imdb_id, anidb_id)`` so the
-        caller can build a ``MappingEntry``. Rows with no ``anilist_id`` are
-        excluded (the former reverse index skipped them); ``column`` must be one of
-        :data:`_ANIME_ID_COLUMNS` (it is interpolated, so it is allowlisted).
+        Returns the full row so the caller can build a ``MappingEntry``. Rows with no
+        ``anilist_id`` are excluded (the former reverse index skipped them); ``column``
+        must be one of :data:`_ANIME_ID_COLUMNS` (it is interpolated, so it is
+        allowlisted). The SELECT column order matches :class:`AnimeIdRow`'s fields.
         """
 
         if column not in _ANIME_ID_COLUMNS:
             raise ValueError(f"Unknown anime_ids column: {column!r}")
-        return self._conn.execute(
+        rows = self._conn.execute(
             "SELECT anilist_id, tvdb_id, tvdb_season, tvdb_epoffset, tmdb_movie_id, "
             f"tmdb_show_id, imdb_id, anidb_id FROM anime_ids "
             f"WHERE {column} = ? AND anilist_id IS NOT NULL ORDER BY rowid",
             (value,),
         ).fetchall()
+        return [AnimeIdRow(*row) for row in rows]
 
-    def anime_ids_distinct(self, column: str) -> set[object]:
+    def anime_ids_distinct(self, column: str) -> set[int | str]:
         """The set of DISTINCT non-null ``column`` values in anime_ids.
 
         Used to build the library-filter candidate sets without scanning the map.
@@ -384,7 +420,8 @@ class MappingStore:
         rows = self._conn.execute(
             f"SELECT DISTINCT {column} FROM anime_ids WHERE {column} IS NOT NULL",
         ).fetchall()
-        return {r[0] for r in rows}
+        # Untyped SQL boundary: each id column is an int (tvdb/tmdb) or str (imdb).
+        return cast("set[int | str]", {r[0] for r in rows})
 
     # -- anibridge queries ---------------------------------------------------
 
@@ -398,8 +435,7 @@ class MappingStore:
         """
 
         rows = self._conn.execute(
-            "SELECT x.anilist_id, e.anidb_id, e.imdb_id, e.tmdb_movie_id, e.mal_id, "
-            "e.first_tvdb_id, e.first_tmdb_show_id "
+            "SELECT x.anilist_id, e.anidb_id, e.imdb_id, e.tmdb_movie_id, e.mal_id, e.first_tvdb_id "
             "FROM anibridge_xref x JOIN anibridge_entry e ON e.anilist_id = x.anilist_id "
             "WHERE x.axis = ? AND x.ext_id = ?",
             (axis, ext_id),
@@ -430,14 +466,15 @@ class MappingStore:
             (axis, ext_id, tvdb_id),
         ).fetchall()
 
-    def anibridge_distinct(self, axis: str) -> set[object]:
+    def anibridge_distinct(self, axis: str) -> set[int | str]:
         """The set of all ext ids on ``axis`` (for the library-filter id sets)."""
 
         rows = self._conn.execute(
             "SELECT DISTINCT ext_id FROM anibridge_xref WHERE axis = ?",
             (axis,),
         ).fetchall()
-        return {r[0] for r in rows}
+        # Untyped SQL boundary: ext_id is an int (tvdb/tmdb) or str (imdb).
+        return cast("set[int | str]", {r[0] for r in rows})
 
     def anibridge_len(self) -> int:
         """Number of AniList entries (backs ``AniBridge.__len__`` / ``__bool__``)."""

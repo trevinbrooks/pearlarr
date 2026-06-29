@@ -15,12 +15,13 @@ from seadexarr.modules.mapping_store import (
     SCHEMA_VERSION,
     SOURCE_ANIDB,
     SOURCE_ANIME_IDS,
+    AnimeIdRow,
     MappingStore,
 )
 
 # (anilist_id, tvdb_id, tvdb_season, tvdb_epoffset, tmdb_movie_id, tmdb_show_id, imdb_id, anidb_id)
-ROW = (100, 200, 2, 3, None, None, "tt100", 50)
-ROW2 = (101, 201, -1, 0, None, None, None, None)
+ROW = AnimeIdRow(100, 200, 2, 3, None, None, "tt100", 50)
+ROW2 = AnimeIdRow(101, 201, -1, 0, None, None, None, None)
 
 
 class TestFreshnessGate:
@@ -59,7 +60,7 @@ class TestAtomicReplace:
         store = MappingStore.open(":memory:")
         store.replace_anime_ids("d1", [ROW])
 
-        def exploding_rows() -> Iterator[tuple[object, ...]]:
+        def exploding_rows() -> Iterator[AnimeIdRow]:
             yield ROW2
             raise RuntimeError("boom mid-populate")
 
