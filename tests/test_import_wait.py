@@ -1071,6 +1071,8 @@ class TestFinalizeRunOrdering:
         engine._finalize_run()
 
         assert "monitor" not in calls
+        # Even short-circuited, the summary still prints and the save still runs last.
+        assert calls == ["summary", "save"]
 
 
 class TestDropPending:

@@ -591,6 +591,8 @@ class TestImportCompletedQueueState:
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
         assert len(sonarr.candidate_calls) == 1
+        # Stepping in must ISSUE the import, not just scan candidates.
+        assert len(sonarr.execute_calls) == 1
 
 
 def _inflight_manual_import(infohash: str, *, status: str = "started") -> CommandResource:
@@ -686,6 +688,7 @@ class TestInFlightManualImportGuard:
 
         probe = strat.import_completed(pending, "/d")
 
+        assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
 
@@ -746,8 +749,10 @@ class TestImportCompletedPayload:
             quality_defs=quality_defs,
         )
 
-        strat.import_completed(pending, "/d")
+        probe = strat.import_completed(pending, "/d")
 
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.command_issued is True
         entry = sonarr.execute_calls[0][0][0]
         quality = entry.get("quality")
         assert quality is not None
@@ -779,8 +784,10 @@ class TestImportCompletedPayload:
             quality_defs=quality_defs,
         )
 
-        strat.import_completed(pending, "/d")
+        probe = strat.import_completed(pending, "/d")
 
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.command_issued is True
         entry = sonarr.execute_calls[0][0][0]
         quality = entry.get("quality")
         assert quality is not None
@@ -820,8 +827,10 @@ class TestImportCompletedPayload:
         ]
         strat, sonarr = _make_sonarr_for_import(candidates=candidates)
 
-        strat.import_completed(pending, "/d")
+        probe = strat.import_completed(pending, "/d")
 
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.command_issued is True
         paths = [f["path"] for f in sonarr.execute_calls[0][0]]
         assert paths == ["/d/Show - 01 [1080p].mkv"]
 
@@ -952,8 +961,10 @@ class TestImportCompletedPayload:
             config_overrides={"import_languages_dual": ["Japanese", "English"]},
         )
 
-        strat.import_completed(pending, "/d")
+        probe = strat.import_completed(pending, "/d")
 
+        assert probe.readiness is ImportReadiness.RETRY
+        assert probe.command_issued is True
         names = [lang["name"] for lang in sonarr.execute_calls[0][0][0]["languages"]]
         assert names == ["Japanese", "English"]
 
@@ -964,11 +975,14 @@ class TestImportCompletedPayload:
             episode_ids=[101],
         )
         candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
-        strat, _ = _make_sonarr_for_import(candidates=[candidate], cmd_id=None)
+        strat, sonarr = _make_sonarr_for_import(candidates=[candidate], cmd_id=None)
 
         probe = strat.import_completed(pending, "/d")
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is False
+        # The execute WAS attempted (Sonarr rejected it -> command_issued False); a
+        # regression returning RETRY without even trying would still set False here.
+        assert len(sonarr.execute_calls) == 1
 
     def test_quality_defs_and_languages_cached_per_run(self) -> None:
         # Quality definitions + languages are fetched lazily ONCE and cached on the
