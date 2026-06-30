@@ -18,7 +18,7 @@ from typing import NamedTuple
 import pytest
 from seadex import EntryRecord
 
-from seadexarr.modules.log import EntryState, LogFormatter
+from seadexarr.modules.log import EntryState
 from seadexarr.modules.manual_import import (
     ImportReadiness,
     PendingImport,
@@ -50,6 +50,7 @@ from .builders import (
     make_sonarr_sync,
     manual_candidate,
     pending_import,
+    sonarr_ep,
 )
 from .fakes import CaptureHandler, FakeSonarrClient
 
@@ -231,7 +232,7 @@ class TestRunStartHook:
 
     def test_sonarr_get_items_clears_ep_list_cache(self) -> None:
         series: list[SonarrItem] = [_Item(id=5), _Item(id=7)]
-        strat = make_sonarr_sync(_ep_list_cache={5: ["stale"]})
+        strat = make_sonarr_sync(ep_list_cache={5: [sonarr_ep(1, 1)]})
 
         def _all_series() -> list[SonarrItem]:
             return series
@@ -401,9 +402,7 @@ def _make_sonarr_for_import(
     overrides: dict[str, list[str]] = config_overrides or {}
     strat = make_sonarr_sync(
         sonarr=sonarr,
-        logger=make_logger(),
-        log_fmt=LogFormatter(make_logger()),
-        _config=make_config(**overrides),
+        config=make_config(**overrides),
         cache_store=FakeCacheStore(),
     )
     return strat, sonarr

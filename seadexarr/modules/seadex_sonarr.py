@@ -25,7 +25,7 @@ from .seadex_types import (
     SeadexDict,
     SonarrItem,
 )
-from .sonarr_client import SonarrClient
+from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes
 from .sonarr_import import ImportExecutor, ImportReconciler
 from .sonarr_mapper import FileEpisodeMapper
@@ -74,7 +74,13 @@ class SonarrSync(ArrSync[SonarrItem]):
     the per-id hooks call the shared pipeline through it.
     """
 
-    def __init__(self, deps: RunDeps, services: SeaDexArr) -> None:
+    def __init__(
+        self,
+        deps: RunDeps,
+        services: SeaDexArr,
+        *,
+        sonarr_client: AbstractSonarrClient | None = None,
+    ) -> None:
         """Stand up the Sonarr client from the injected shared collaborators.
 
         Args:
@@ -83,6 +89,11 @@ class SonarrSync(ArrSync[SonarrItem]):
                 to the Sonarr collaborators for the cache/AniList gateway/log
                 formatter they read.
             services (RunServices): The run machinery the per-id hooks call into.
+            sonarr_client (AbstractSonarrClient | None): A pre-built client to use
+                instead of constructing the real network-validating
+                :class:`SonarrClient`. Defaults to None (build the real one); tests
+                inject a scripted fake through this typed seam, so the real
+                ``__init__`` + collaborator wiring runs without a network.
         """
 
         self._services = services
@@ -92,18 +103,20 @@ class SonarrSync(ArrSync[SonarrItem]):
         self._mappings = deps.mappings
         self.anibridge = deps.mappings.anibridge
 
-        # Set up Sonarr (connection keys are required only now, when a Sonarr run runs)
-        sonarr_url, sonarr_api_key = self._config.require_connection(Arr.SONARR)
-
-        # self.session (a shared keep-alive requests.Session) comes from the
-        # injected deps and is handed to the client; parse in particular fires one
-        # request per file, so reusing it removes a per-file handshake.
-        self.sonarr = SonarrClient(
-            url=sonarr_url,
-            api_key=sonarr_api_key,
-            session=self.session,
-            logger=self.logger,
-        )
+        # Set up Sonarr. An injected client (tests) is used as-is; otherwise the
+        # connection keys are required only now (when a Sonarr run runs) and the
+        # real client is built over the shared keep-alive session (parse fires one
+        # request per file, so reusing it removes a per-file handshake).
+        if sonarr_client is not None:
+            self.sonarr: AbstractSonarrClient = sonarr_client
+        else:
+            sonarr_url, sonarr_api_key = self._config.require_connection(Arr.SONARR)
+            self.sonarr = SonarrClient(
+                url=sonarr_url,
+                api_key=sonarr_api_key,
+                session=self.session,
+                logger=self.logger,
+            )
 
         # Episode-domain collaborator: owns the per-run episode cache + series-id
         # fingerprint and the (series, al_id, mapping) -> episodes resolution. Built

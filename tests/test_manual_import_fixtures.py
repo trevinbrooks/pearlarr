@@ -19,7 +19,6 @@ import json
 from pathlib import Path
 
 from seadexarr.modules.config import AppConfig
-from seadexarr.modules.log import LogFormatter
 from seadexarr.modules.manual_import import (
     CandidateFile,
     EpisodeAssignment,
@@ -49,7 +48,6 @@ from seadexarr.modules.seadex_types import (
 from .builders import (
     FakeCacheStore,
     make_config,
-    make_logger,
     make_sonarr_mapper,
     make_sonarr_sync,
     pending_import,
@@ -607,9 +605,7 @@ def _yamada_strat(config: AppConfig | None = None) -> tuple[SonarrSync, FakeSona
 
     strat = make_sonarr_sync(
         sonarr=sonarr,
-        logger=make_logger(),
-        log_fmt=LogFormatter(make_logger()),
-        _config=config or make_config(),
+        config=config or make_config(),
         cache_store=FakeCacheStore(),
     )
     return strat, sonarr, seadex_files

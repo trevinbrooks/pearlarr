@@ -15,27 +15,13 @@ from seadexarr.modules.manual_import import normalize_basename
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import SonarrEpisode
 
-from .builders import FakeCacheStore, make_config, make_logger, make_sonarr_sync, rg_group, url_item
+from .builders import FakeCacheStore, make_config, make_sonarr_sync, rg_group, url_item
+from .fakes import FakeSonarrClient
 
 # One persisted ``/parse`` cache shape: ``filename -> {"episodes": [{season, episode}]}``.
 # The seed builder reads ``record["episodes"]`` straight off this (no freshness stamp),
 # so the test records carry only that key.
 type ParseCache = dict[str, dict[str, list[dict[str, int]]]]
-
-
-class _FakeSonarrParse:
-    """Stands in for the ``SonarrClient`` the parse cache calls.
-
-    ``SonarrParseCache.parse_episodes_from_seadex`` only touches ``sonarr.parse``;
-    this scripts that one result so the parse pass populates the shared cache itself.
-    """
-
-    def __init__(self, result: list[dict[str, int]] | None) -> None:
-        self._result = result
-
-    def parse(self, filename: str) -> list[dict[str, int]] | None:
-        del filename
-        return self._result
 
 
 def _strat(parse_cache: ParseCache) -> SonarrSync:
@@ -167,13 +153,12 @@ class TestParseWriteVisibleToSeeds:
     run is visible to the seed read - the staged-write invariant the split risks."""
 
     def test_parse_write_feeds_seed_build(self) -> None:
-        sonarr = _FakeSonarrParse([{"season": 1, "episode": 1}])
+        sonarr = FakeSonarrClient(parse=[{"season": 1, "episode": 1}])
         # No pre-seed: the parse pass must populate the shared cache itself.
         strat = make_sonarr_sync(
             sonarr=sonarr,
-            _config=make_config(sleep_time=2),  # sequential: deterministic, no warm pool
+            config=make_config(sleep_time=2),  # sequential: deterministic, no warm pool
             cache_store=FakeCacheStore(),
-            logger=make_logger(),
         )
         ep_list = [_ep(101, 1, 1)]
         seadex_dict = {

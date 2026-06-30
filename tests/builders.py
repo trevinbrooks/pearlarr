@@ -46,11 +46,13 @@ from seadexarr.modules.seadex_types import (
     SeadexUrlItem,
     SonarrEpisode,
 )
+from seadexarr.modules.sonarr_client import AbstractSonarrClient
 from seadexarr.modules.sonarr_episodes import SonarrEpisodes
-from seadexarr.modules.sonarr_import import ImportExecutor, ImportReconciler
 from seadexarr.modules.sonarr_mapper import FileEpisodeMapper
 from seadexarr.modules.sonarr_parse import SonarrParseCache
 from seadexarr.modules.torrents import AddOutcome, TorrentService
+
+from .fakes import FakeSonarrClient
 
 # Map each flat (group-local) setting name to its config group, derived straight from
 # AppConfig's own field tree so it can't drift into a stale subset: adding a 9th
@@ -910,125 +912,36 @@ def make_sonarr_episodes(**attrs: Any) -> SonarrEpisodes:
     return make_bare_instance(SonarrEpisodes, **defaults)
 
 
-def make_sonarr_sync(**attrs: Any) -> SonarrSync:
-    """A bare ``SonarrSync`` with ``__init__`` bypassed and only ``attrs`` set.
+def make_sonarr_sync(
+    *,
+    sonarr: AbstractSonarrClient | None = None,
+    config: AppConfig | None = None,
+    cache_store: AbstractCacheStore | None = None,
+    ep_list_cache: dict[int, list[SonarrEpisode]] | None = None,
+) -> SonarrSync:
+    """Build a ``SonarrSync`` through its REAL ``__init__``, injecting a typed client.
 
-    Mirrors ``make_arr`` / ``make_bare_instance``: no live Sonarr client is built,
-    so the tests assign just the collaborators the method under test reads
-    (``sonarr``, ``logger``, ``_config``, and the per-run caches).
-
-    The episode-domain state (``_ep_list_cache`` / ``_series_fp``) lives on the
-    ``SonarrEpisodes`` collaborator now, and the four per-run import caches
-    (``_quality_defs_cache`` / ``_languages_cache`` / ``_warned_unplaceable`` /
-    ``_last_refresh_monotonic``) on the ``ImportExecutor`` collaborator, exactly as
-    the real ``__init__`` builds them - so a test still passes those field names and
-    they are routed to the right collaborator (the executor sharing the strat's
-    mapper + client/config/logger). Pass ``_episodes=`` / ``_executor=`` to override
-    a whole collaborator.
+    Shrunk from the old hand-rebuilt collaborator graph (~12 private field names,
+    zero type-checking): builds a real ``RunDeps`` + engine and calls the real
+    constructor, passing the scripted client through the typed ``sonarr_client``
+    seam (default a blank ``FakeSonarrClient``). So the real two-phase wiring runs -
+    the collaborators all share the injected client + the strat's ``cache_store`` by
+    identity, exactly as production builds them - and a wrong/incomplete fake is a
+    pyright error AND un-instantiable, not a silently-set dead attribute.
+    ``ep_list_cache`` seeds the episode collaborator's per-run cache after
+    construction (``__init__`` builds it empty), for the run-start-reset tests.
     """
 
-    defaults: dict[str, Any] = {}
-    defaults.update(attrs)
-    episodes = defaults.pop("_episodes", None)
-    parse = defaults.pop("_parse", None)
-    mapper = defaults.pop("_mapper", None)
-    executor = defaults.pop("_executor", None)
-    reconciler = defaults.pop("_reconciler", None)
-    ep_cache = defaults.pop("_ep_list_cache", {})
-    series_fp = defaults.pop("_series_fp", "")
-    parse_info = defaults.pop("_parse_info_cache", {})
-    quality_defs = defaults.pop("_quality_defs_cache", None)
-    languages = defaults.pop("_languages_cache", None)
-    warned = defaults.pop("_warned_unplaceable", set())
-    last_refresh = defaults.pop("_last_refresh_monotonic", None)
-    strat = make_bare_instance(SonarrSync, **defaults)
-    if episodes is None:
-        episodes = make_sonarr_episodes(
-            sonarr=defaults.get("sonarr"),
-            _services=defaults.get("_services"),
-            _config=defaults.get("_config"),
-            _mappings=defaults.get("_mappings"),
-            anibridge=defaults.get("anibridge"),
-            _anilist=defaults.get("_anilist"),
-            log_fmt=defaults.get("log_fmt"),
-            _ep_list_cache=ep_cache,
-            _series_fp=series_fp,
-        )
-    strat._episodes = episodes
-    if parse is None:
-        # Share the SAME cache_store as the strat so a parse write is visible to
-        # the seed builder's read later in the run (the staged-write invariant).
-        parse = make_sonarr_parse(
-            sonarr=defaults.get("sonarr"),
-            _config=defaults.get("_config"),
-            cache_store=defaults.get("cache_store"),
-            logger=defaults.get("logger"),
-        )
-    strat._parse = parse
-    if mapper is None:
-        # Same sonarr client as the strat so import_completed's on-disk /parse hits
-        # the test's scripted mock; routes the per-run on-disk parse cache here.
-        mapper = make_sonarr_mapper(
-            sonarr=defaults.get("sonarr"),
-            _parse_info_cache=parse_info,
-        )
-    strat._mapper = mapper
-    if executor is None:
-        # Share the strat's mapper + client/config/logger so the import_completed-
-        # driven tests exercise the same objects (and the same on-disk /parse mock);
-        # routes the four per-run import caches here.
-        executor = make_import_executor(
-            sonarr=defaults.get("sonarr"),
-            _config=defaults.get("_config"),
-            logger=defaults.get("logger"),
-            _mapper=mapper,
-            _quality_defs_cache=quality_defs,
-            _languages_cache=languages,
-            _warned_unplaceable=warned,
-            _last_refresh_monotonic=last_refresh,
-        )
-    strat._executor = executor
-    if reconciler is None:
-        # Composes the strat's episodes + executor, sharing the same cache_store so
-        # build_pending_seeds reads back the parse writes (the staged-write invariant).
-        reconciler = make_import_reconciler(
-            _episodes=episodes,
-            _executor=executor,
-            cache_store=defaults.get("cache_store"),
-            logger=defaults.get("logger"),
-        )
-    strat._reconciler = reconciler
+    deps = make_run_deps(config=config, cache_store=cache_store)
+    services = SeaDexArr(deps, Arr.SONARR)
+    strat = SonarrSync(
+        deps,
+        services,
+        sonarr_client=sonarr if sonarr is not None else FakeSonarrClient(),
+    )
+    if ep_list_cache is not None:
+        strat._episodes._ep_list_cache = ep_list_cache
     return strat
-
-
-def make_import_executor(**attrs: Any) -> ImportExecutor:
-    """A bare ``ImportExecutor`` with ``__init__`` bypassed and only ``attrs`` set.
-
-    The tests assign just what the method under test reads (``sonarr`` for the
-    manual-import calls, ``_mapper`` for the file->episode map, ``_config`` /
-    ``logger``); the four per-run caches default to their run-start values (None /
-    empty) so the lazy-fetch + warn-once paths run unless a test pre-seeds them.
-    """
-
-    defaults: dict[str, Any] = {
-        "_quality_defs_cache": None,
-        "_languages_cache": None,
-        "_warned_unplaceable": set(),
-        "_last_refresh_monotonic": None,
-    }
-    defaults.update(attrs)
-    return make_bare_instance(ImportExecutor, **defaults)
-
-
-def make_import_reconciler(**attrs: Any) -> ImportReconciler:
-    """A bare ``ImportReconciler`` with ``__init__`` bypassed and only ``attrs`` set.
-
-    The reconciler holds no per-run caches; it composes ``_episodes`` + ``_executor``
-    and reads ``cache_store`` / ``logger``, so a test sets just those (the tests
-    mostly drive it through the strat's import_completed / build_pending_seeds).
-    """
-
-    return make_bare_instance(ImportReconciler, **attrs)
 
 
 def make_sonarr_mapper(**attrs: Any) -> FileEpisodeMapper:
