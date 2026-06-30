@@ -1393,7 +1393,7 @@ def resolve_quality(
 
 
 def resolve_language_objects(
-    names: Sequence[object],
+    names: Sequence[object] | None,
     lang_defs: list[Language],
 ) -> list[Language]:
     """Resolve language names to Sonarr ``{id, name}`` language objects.
@@ -1403,16 +1403,18 @@ def resolve_language_objects(
     in request order, skipping any name with no match (so an unknown configured
     language is simply dropped rather than failing the import).
 
-    ``names`` is typed ``Sequence[object]`` rather than ``list[str]`` because the
-    contract is "configured language names" but the *runtime* value is sourced
+    ``names`` is typed ``Sequence[object] | None`` rather than ``list[str]`` because
+    the contract is "configured language names" but the *runtime* value is sourced
     from open YAML: a blank/malformed ``import_languages_*`` key can hand this a
-    ``None`` or a non-string entry (a bare int, etc.). The per-entry ``isinstance``
-    guard below is therefore live, not dead - the honest looser type is what keeps
-    it necessary while still accepting the documented ``list[str]`` callers pass.
+    ``None`` or a non-string entry (a bare int, etc.). The ``names or []`` guard and
+    the per-entry ``isinstance`` check below are therefore live, not dead - the
+    honest looser type is what keeps them necessary while still accepting the
+    documented ``list[str]`` callers pass.
 
     Args:
-        names (Sequence[object]): Language names to resolve (e.g. ``["Japanese"]``);
-            non-string entries from a malformed config are skipped.
+        names (Sequence[object] | None): Language names to resolve (e.g.
+            ``["Japanese"]``); ``None`` or non-string entries from a malformed
+            config are tolerated (``None`` -> no languages, bad entries skipped).
         lang_defs (list[Language]): The ``/api/v3/language`` list; each entry has
             ``id`` and ``name`` (a ``LanguageResource`` ``{id, name}``).
 

@@ -1,3 +1,4 @@
+# pyright: strict
 """Characterization tests for the pure manual-import helpers.
 
 Pins the deterministic decision helpers in
@@ -9,8 +10,6 @@ selection, the wait-mode resolution, and the :class:`PendingImport` JSON
 round-trip. All pure, no network or disk; :class:`SonarrEpisode` is built directly
 via :meth:`SonarrEpisode.from_api`.
 """
-
-from typing import cast
 
 from seadexarr.modules.manual_import import (
     CandidateFile,
@@ -64,7 +63,7 @@ def _ep(
 ) -> SonarrEpisode:
     """A ``SonarrEpisode`` from the raw fields the helpers read."""
 
-    raw: dict = {"id": ep_id, "seasonNumber": season, "episodeNumber": episode}
+    raw: dict[str, object] = {"id": ep_id, "seasonNumber": season, "episodeNumber": episode}
     if file_id:
         raw["episodeFileId"] = file_id
         raw["episodeFile"] = {"releaseGroup": group}
@@ -238,7 +237,7 @@ def _command(
     *,
     name: str = "ManualImport",
     status: str = "started",
-    files: list[dict] | None = None,
+    files: list[dict[str, object]] | None = None,
 ) -> CommandResource:
     """A ``CommandResource`` from the raw command fields the guard reads."""
 
@@ -659,10 +658,9 @@ class TestResolveLanguageObjectsDefensive:
 
     def test_none_names_returns_empty(self) -> None:
         defs: list[Language] = [{"id": 8, "name": "Japanese"}]
-        names = cast("list[str]", None)
-        assert resolve_language_objects(names, defs) == []
+        assert resolve_language_objects(None, defs) == []
 
     def test_non_string_names_are_skipped(self) -> None:
         defs: list[Language] = [{"id": 8, "name": "Japanese"}]
-        names = cast("list[str]", [None, 5, "Japanese"])
+        names: list[object] = [None, 5, "Japanese"]
         assert resolve_language_objects(names, defs) == [{"id": 8, "name": "Japanese"}]
