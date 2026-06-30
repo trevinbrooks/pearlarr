@@ -1,3 +1,7 @@
+# pyright: strict
+# pyright: reportPrivateUsage=false
+# These assert on the engine/strategy's private wiring (_filter / _ctx / _parse /
+# _reconciler), which strict re-flags; the repo disables reportPrivateUsage for tests.
 """Construction-seam tests: the REAL ``__init__`` + ``begin_run`` rebind.
 
 The rest of the suite builds the engine/strategy via ``make_bare_instance``
@@ -7,7 +11,7 @@ collaborator wiring and the ``begin_run`` two-phase rebind have an in-suite guar
 (previously only an offline smoke).
 """
 
-from unittest import mock
+import pytest
 
 from seadexarr.modules.config import Arr
 from seadexarr.modules.seadex_arr import SeaDexArr
@@ -31,16 +35,28 @@ def test_engine_begin_run_rebinds_all_ctx_collaborators() -> None:
     assert all(c._ctx is engine._ctx for c in holders)  # ...and all rebound to it
 
 
-def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:
+class _FakeSonarrClient:
+    """A no-op stand-in for the network-validating ``SonarrClient`` constructor.
+
+    ``SonarrSync.__init__`` builds a ``SonarrClient`` (which validates its
+    connection on construction) and only passes it to sub-collaborators that store
+    it; this swallows the construction kwargs so the wiring runs without a network.
+    """
+
+    def __init__(self, **kwargs: object) -> None:
+        del kwargs
+
+
+def test_sonarr_sync_init_shares_cache_store_for_staged_writes(monkeypatch: pytest.MonkeyPatch) -> None:
     # The parse-cache writer (SonarrParseCache) and the seed reader (ImportReconciler)
     # must share the strat's cache_store by identity, or a staged parse write would not
     # be visible to build_pending_seeds.
     deps = make_run_deps()
     engine = SeaDexArr(deps, Arr.SONARR)
-    # The SonarrClient validates its connection on construction; stub it so the test
-    # exercises the (network-independent) collaborator wiring, not a live Sonarr.
-    with mock.patch("seadexarr.modules.seadex_sonarr.SonarrClient"):
-        strat = SonarrSync(deps, engine)
+    # The SonarrClient validates its connection on construction; swap it for a no-op
+    # so the test exercises the (network-independent) collaborator wiring.
+    monkeypatch.setattr("seadexarr.modules.seadex_sonarr.SonarrClient", _FakeSonarrClient)
+    strat = SonarrSync(deps, engine)
 
     assert strat._parse.cache_store is deps.cache_store
     assert strat._reconciler.cache_store is deps.cache_store
