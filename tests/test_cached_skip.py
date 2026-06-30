@@ -23,7 +23,7 @@ from .builders import FakeCacheStore, make_arr, make_entry_record
 
 class _RecordingReporter:
     """Records ``log_cached_entry`` calls, so the cross-arr param is asserted on
-    recorded state instead of a ``MagicMock`` interaction."""
+    recorded state."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[RunContext, Arr, int, EntryState]] = []

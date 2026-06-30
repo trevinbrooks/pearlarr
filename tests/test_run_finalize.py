@@ -10,7 +10,7 @@ double-finalize or skip the blocking/import pass on the cap-reached break.
 The strategy is the shared typed :class:`FakeStrategy` (an ``ArrSync`` recording
 its ``process_al_id`` calls), the engine's collaborators are small typed fakes,
 and ``_finalize_run`` is replaced by a typed recorder - so the contracts are
-pinned by asserting recorded state, not ``MagicMock`` call interactions.
+pinned by asserting recorded state.
 """
 
 import logging

@@ -124,8 +124,7 @@ class _FakeSession:
     """A ``requests.Session`` stand-in scripting one ``get`` outcome.
 
     ``boom`` raises a ``ConnectionError`` (the transient path ``parse`` swallows);
-    otherwise ``get`` returns the scripted status + body. Replaces a ``MagicMock``
-    session whose ``get`` was wired inline.
+    otherwise ``get`` returns the scripted status + body.
     """
 
     def __init__(self, *, status: int, body: dict[str, list[dict[str, int]]], boom: bool) -> None:
@@ -235,7 +234,7 @@ class _Sonarr:
     series (``_eps_for``); ``return_none`` degrades every fetch to a transient
     miss, and ``raise_on`` makes the listed ids raise (the worker-degradation
     case). Records each ``(series_id, quiet)`` call so the dedup / not-fetched /
-    quiet assertions read recorded state instead of a ``MagicMock`` interaction.
+    quiet assertions read recorded state.
     """
 
     def __init__(self, *, return_none: bool = False, raise_on: set[int] | None = None) -> None:
@@ -258,8 +257,7 @@ class _Services:
     ``get_anilist_ids`` resolves a series' tvdb id to its ``{al_id -> mapping}``
     dict (``identity`` returns ``{tvdb_id: mapping}`` for any series, mirroring the
     always-mapped helper); ``al_id_needs_scan`` is the per-id needs-scan gate
-    (``needs_scan=None`` reports every id as scannable, mirroring the truthy
-    ``MagicMock`` default).
+    (``needs_scan=None`` reports every id as scannable).
     """
 
     def __init__(
@@ -295,7 +293,7 @@ class TestPrefetchEpisodes:
     def _eps(self, *, mapped: set[int], sleep_time: int = 0) -> tuple[SonarrEpisodes, _Sonarr]:
         sonarr = _Sonarr()
         # Only "mapped" series resolve to a non-empty AniList mapping; needs_scan
-        # defaults to "every id scannable" (the truthy MagicMock default).
+        # defaults to "every id scannable".
         services = _Services(mapping={sid: _ids(1) for sid in mapped})
         eps = make_sonarr_episodes(
             sonarr=sonarr,
@@ -480,7 +478,7 @@ class _ParseSonarr:
 
     ``parse_episodes_from_seadex`` only touches ``sonarr.parse``; this scripts the
     one result and records the calls so the not-parsed assertions read recorded
-    state instead of a ``MagicMock`` interaction.
+    state.
     """
 
     def __init__(self, result: list[dict[str, int]] | None) -> None:

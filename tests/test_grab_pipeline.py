@@ -38,7 +38,7 @@ def _stub_add_torrent(
 
     Returns a fixed ``(n_added, results)`` so ``_grab``'s cap-reached return is
     exercised without a real qBittorrent add - the bool the engine's single
-    finalize site keys off (replacing a ``MagicMock`` with the same return value).
+    finalize site keys off.
     """
 
     del torrent_dict, pending_seeds

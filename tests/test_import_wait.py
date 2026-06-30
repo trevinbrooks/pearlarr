@@ -15,9 +15,8 @@ engine's ``_finalize_run`` orchestration (which drives the manager's passes) is
 pinned via a real engine with an attached manager at the bottom of the file.
 
 Every collaborator the manager drives - the strategy's import hooks, the snapshot
-reporter, qBittorrent - is a small typed fake recording what a test asserts (no
-``MagicMock``), so the contracts are pinned by recorded state rather than mock
-call interactions.
+reporter, qBittorrent - is a small typed fake recording what a test asserts, so
+the contracts are pinned by recorded state.
 """
 
 from dataclasses import dataclass
@@ -237,13 +236,13 @@ class _ImportCall:
 class _RecordingStrategy(FakeStrategy):
     """A :class:`FakeStrategy` that records + scripts the two import hooks the manager drives.
 
-    Replaces a ``MagicMock`` strategy: ``import_completed`` records each call's
-    force/at_deadline flags (asserted on ``import_calls``) and dispenses a scripted
-    :class:`ImportProbe` - a single ``completed`` repeated, a ``completed_sequence``
-    advanced per call (clamped to its last), or a ``completed_error`` raised (the
-    swallowed-import path). ``import_progress`` likewise records (``progress_calls``)
-    and dispenses an :class:`ImportProgress`, defaulting to an indeterminate zero -
-    the Tier-2 fast-poll no-op the heavy-poll tests rely on.
+    ``import_completed`` records each call's force/at_deadline flags (asserted on
+    ``import_calls``) and dispenses a scripted :class:`ImportProbe` - a single
+    ``completed`` repeated, a ``completed_sequence`` advanced per call (clamped to its
+    last), or a ``completed_error`` raised (the swallowed-import path).
+    ``import_progress`` likewise records (``progress_calls``) and dispenses an
+    :class:`ImportProgress`, defaulting to an indeterminate zero - the Tier-2
+    fast-poll no-op the heavy-poll tests rely on.
     """
 
     def __init__(
@@ -310,7 +309,7 @@ class _SnapshotCall:
 
 class _RecordingReporter:
     """Records ``log_pending_snapshot`` calls, so the inline-snapshot / no-double-report
-    contracts are asserted on recorded state instead of a ``MagicMock`` interaction."""
+    contracts are asserted on recorded state."""
 
     def __init__(self) -> None:
         self.snapshot_calls: list[_SnapshotCall] = []
@@ -989,8 +988,7 @@ class _FinalizeWaitManager:
     an empty store and appending nothing), and ``run_monitor`` appends the
     ``"monitor"`` ordering marker. The real ``run_monitor`` returns early on the
     empty working set these tests build - recording nothing - so a recording
-    stand-in is what makes the monitor step observable (the role the original
-    ``patch.object(run_monitor)`` played).
+    stand-in is what makes the monitor step observable.
     """
 
     def __init__(self, calls: list[str]) -> None:
@@ -1013,9 +1011,8 @@ def _finalize_engine(calls: list[str], *, qbit: object, mode: ImportWaitMode) ->
     The reporter, cache store, and wait manager are typed recorders (a
     ``_FinalizeReporter`` / ``_RecordingCacheStore`` / ``_FinalizeWaitManager``), so
     ``_finalize_run``'s ordering is asserted on the recorded ``calls`` list without a
-    live Sonarr/qBittorrent or any ``MagicMock``. The fake wait manager's
-    reconcile/tally are silent no-ops and its ``run_monitor`` records the ``"monitor"``
-    marker.
+    live Sonarr/qBittorrent. The fake wait manager's reconcile/tally are silent
+    no-ops and its ``run_monitor`` records the ``"monitor"`` marker.
     """
 
     engine = make_bare_instance(

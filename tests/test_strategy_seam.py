@@ -92,9 +92,9 @@ class _FakeRunServices:
 
     Carries ONLY the methods the ``ArrSync`` hooks call; each scriptable result is
     a constructor arg, and the methods whose call a test asserts RECORD it - so the
-    contract is pinned by recorded state, not a ``MagicMock`` interaction. Absorbed
-    as a bare attribute by ``make_bare_instance``, so it need not satisfy the full
-    ``RunServices`` protocol; it only answers what the hook under test reaches.
+    contract is pinned by recorded state. Absorbed as a bare attribute by
+    ``make_bare_instance``, so it need not satisfy the full ``RunServices`` protocol;
+    it only answers what the hook under test reaches.
     """
 
     def __init__(

@@ -27,8 +27,7 @@ class _FakeSonarrParse:
     """Stands in for the ``SonarrClient`` the parse cache calls.
 
     ``SonarrParseCache.parse_episodes_from_seadex`` only touches ``sonarr.parse``;
-    this scripts that one result so the parse pass populates the shared cache itself
-    (replacing a ``MagicMock`` whose ``parse.return_value`` was set inline).
+    this scripts that one result so the parse pass populates the shared cache itself.
     """
 
     def __init__(self, result: list[dict[str, int]] | None) -> None:

@@ -5,7 +5,7 @@ The home for fakes used across more than one test module, written to type-check
 at strict (no ``MagicMock``, no ``Any``). The guiding pattern: where a collaborator
 is injected behind a typed seam (``ArrSync``, ``AbstractCacheStore``), a small
 concrete fake implements it and records what a test needs to assert - so contracts
-are pinned by recorded state, not ``MagicMock`` call interactions.
+are pinned by recorded state.
 
 Collaborators that the run machinery only reads as bare attributes (absorbed as
 ``Any`` by ``make_bare_instance``) don't need a shared fake; keep those local to
@@ -51,9 +51,8 @@ class FakeStrategy(ArrSync[FakeArrItem]):
 
     Records each ``process_al_id`` call (the al_id) and lets a test script the
     items, the resolved AniList ids, and whether ``process_al_id`` returns the
-    cap-reached sentinel or raises - replacing a ``MagicMock`` strategy whose
-    ``assert_called`` pinned the contract. The import hooks raise unless a test
-    that drives them overrides this fake.
+    cap-reached sentinel or raises. The import hooks raise unless a test that
+    drives them overrides this fake.
     """
 
     def __init__(
@@ -124,9 +123,9 @@ class FakeSonarrClient:
     Each read returns a per-instance field a test presets or reassigns mid-test
     (e.g. ``fake.episodes_return = [...]``); the two import commands RECORD their
     typed call args, so a test asserts on recorded state (``execute_calls`` /
-    ``candidate_calls``) instead of a ``MagicMock`` ``assert_called`` / ``call_args``.
-    Absorbed as ``Any`` by ``make_sonarr_sync(sonarr=...)``, so it need not subclass
-    the real client - it only has to answer the methods the strategy/executor call.
+    ``candidate_calls``). Absorbed as ``Any`` by ``make_sonarr_sync(sonarr=...)``, so
+    it need not subclass the real client - it only has to answer the methods the
+    strategy/executor call.
     """
 
     def __init__(
@@ -157,9 +156,8 @@ class FakeSonarrClient:
             command_status if command_status is not None else CommandResource(status="completed")
         )
         self.refresh_count = refresh_count
-        # Recorded calls (the typed replacement for MagicMock's assert_called /
-        # call_args / call_count): the import commands keep their full args; the
-        # plain reads keep a count / arg-list so a test can assert (not-)called.
+        # Recorded calls: the import commands keep their full args; the plain reads
+        # keep a count / arg-list so a test can assert (not-)called.
         self.candidate_calls: list[tuple[PendingImport, bool]] = []
         self.execute_calls: list[tuple[list[ManualImportFile], str]] = []
         self.queue_calls: int = 0
