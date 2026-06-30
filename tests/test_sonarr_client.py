@@ -14,6 +14,7 @@ shape is read off ``rsps.calls[-1].request.url``.
 
 import logging
 
+import pytest
 import requests
 import responses
 from responses import matchers
@@ -22,6 +23,7 @@ from seadexarr.modules.manual_import import PendingImport
 from seadexarr.modules.seadex_types import (
     CommandResource,
     ManualImportFile,
+    ParsedFileInfo,
     QueueRecord,
 )
 from seadexarr.modules.sonarr_client import SonarrClient
@@ -101,6 +103,181 @@ def test_queue_non_200_returns_empty() -> None:
         assert client.queue() == []
 
 
+# --- episodes() -------------------------------------------------------------
+
+
+def test_episodes_decodes_sorted_and_builds_request() -> None:
+    """``episodes()`` pulls one series' episodes season/episode-sorted, narrowing
+    each to a ``SonarrEpisode``; the request pins seriesId + the include flags.
+    """
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/episode", json=sonarr_fixture("episodes_228_bahamut.json"))
+        episodes = client.episodes(228)
+        url = rsps.calls[-1].request.url
+
+    assert episodes is not None
+    assert len(episodes) == 13
+    # sorted: the lone S00 special leads, S01E12 trails (decode + order in one).
+    assert (episodes[0].season_number, episodes[0].episode_number, episodes[0].id) == (0, 1, 8475)
+    assert (episodes[-1].season_number, episodes[-1].episode_number, episodes[-1].id) == (1, 12, 8487)
+    assert url is not None
+    assert "seriesId=228" in url
+    assert "includeImages=false" in url
+    assert "includeEpisodeFile=true" in url
+    assert "apikey=testkey" in url
+
+
+def test_episodes_non_200_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """A non-200 episode read returns None and warns (the caller skips the id)."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/episode", status=500)
+        with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
+            result = client.episodes(228)
+
+    assert result is None
+    assert any(r.levelno == logging.WARNING for r in caplog.records)
+
+
+def test_episodes_quiet_suppresses_unreachable_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """``quiet=True`` still returns None on a non-200 but emits NO warning - the
+    concurrent prefetch path, retried/logged on the main thread instead.
+    """
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/episode", status=500)
+        with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
+            result = client.episodes(228, quiet=True)
+
+    assert result is None
+    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
+
+def test_episodes_request_error_returns_none() -> None:
+    """A transient request error (connection drop) is swallowed to None."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/episode", body=requests.exceptions.ConnectionError("boom"))
+        assert client.episodes(228, quiet=True) is None
+
+
+# --- parse() ----------------------------------------------------------------
+
+
+def test_parse_skips_entries_missing_season_or_episode() -> None:
+    """``parse()`` drops any parsed entry missing a season OR episode number,
+    keeping only the fully-resolved ``{season, episode}`` mappings.
+    """
+
+    body: dict[str, object] = {
+        "episodes": [
+            {"seasonNumber": 1, "episodeNumber": 1},
+            {"episodeNumber": 5},  # no seasonNumber -> dropped
+        ],
+    }
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/parse", json=body)
+        parsed = client.parse("Cool.Anime.S01E01.mkv")
+
+    assert parsed == [{"season": 1, "episode": 1}]
+
+
+def test_parse_clean_no_match_returns_empty_list() -> None:
+    """A clean 200 where Sonarr matched no episode returns ``[]`` (a *confirmed*
+    no-match the caller may negative-cache) - distinct from a failure's None.
+    """
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/parse", json={"episodes": []})
+        assert client.parse("Unmatched.Release.mkv") == []
+
+
+def test_parse_non_200_returns_none() -> None:
+    """A non-200 parse returns None (a failure that must NOT be cached)."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/parse", status=500)
+        assert client.parse("Cool.Anime.S01E01.mkv") is None
+
+
+def test_parse_request_error_returns_none() -> None:
+    """A transient request error returns None (also uncacheable)."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/parse", body=requests.exceptions.ConnectionError("boom"))
+        assert client.parse("Cool.Anime.S01E01.mkv") is None
+
+
+# --- parse_episode_info() (series-AGNOSTIC parsedEpisodeInfo) ----------------
+
+
+def test_parse_episode_info_decodes_season_episode() -> None:
+    """An ``SxxExx`` release decodes to its season + episode numbers; the request
+    carries the title + apikey.
+    """
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/parse", json=sonarr_fixture("parse_bahamut_s01e01.json"))
+        info = client.parse_episode_info("Bahamut.S01E01.mkv")
+        url = rsps.calls[-1].request.url
+
+    assert info == ParsedFileInfo(
+        season_number=1,
+        episode_numbers=(1,),
+        absolute_episode_numbers=(),
+        special=False,
+    )
+    assert url is not None
+    assert "title=" in url
+    assert "apikey=testkey" in url
+
+
+def test_parse_episode_info_decodes_absolute() -> None:
+    """An absolute-numbered release decodes to its absolute numbers (season 0, no
+    SxxExx episode numbers) - the case Sonarr's series-matched parse misses.
+    """
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/parse", json=sonarr_fixture("parse_toloveru_abs14.json"))
+        info = client.parse_episode_info("ToLoveRu.-.14.mkv")
+
+    assert info == ParsedFileInfo(
+        season_number=0,
+        episode_numbers=(),
+        absolute_episode_numbers=(14,),
+        special=False,
+    )
+
+
+def test_parse_episode_info_non_200_returns_none() -> None:
+    """A non-200 parse leaves the file for retry (returns None)."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/parse", status=500)
+        assert client.parse_episode_info("Bahamut.S01E01.mkv") is None
+
+
+def test_parse_episode_info_request_error_returns_none() -> None:
+    """A transient request error leaves the file for retry (returns None)."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/parse", body=requests.exceptions.ConnectionError("boom"))
+        assert client.parse_episode_info("Bahamut.S01E01.mkv") is None
+
+
 # --- manual_import_candidates() ---------------------------------------------
 
 
@@ -131,6 +308,26 @@ def test_manual_import_candidates_decodes_and_uppercases_downloadid() -> None:
     assert url is not None
     assert "downloadId=ABCDEF0123456789ABCDEF0123456789ABCDEF01" in url
     assert "filterExistingFiles=false" in url
+
+
+def test_manual_import_candidates_non_200_returns_none() -> None:
+    """A non-200 scan returns None (caller keeps waiting / re-asks)."""
+
+    pending = _make_pending(infohash="a" * 40, title="Yamada-kun")
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/manualimport", status=500)
+        assert client.manual_import_candidates(pending=pending) is None
+
+
+def test_manual_import_candidates_request_error_returns_none() -> None:
+    """A transient request error (slow mount / drop) returns None, not []."""
+
+    pending = _make_pending(infohash="a" * 40, title="Yamada-kun")
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/manualimport", body=requests.exceptions.ConnectionError("boom"))
+        assert client.manual_import_candidates(pending=pending) is None
 
 
 # --- manual_import_execute() / refresh_monitored_downloads() (POST /command) -
@@ -252,6 +449,15 @@ def test_list_commands_decodes_with_nested_files() -> None:
     assert first.files[0].episode_ids == (6605,)
 
 
+def test_list_commands_non_200_returns_empty() -> None:
+    """A non-200 command list reads as "nothing in flight" (empty list)."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/command", status=503)
+        assert client.list_commands() == []
+
+
 # --- quality_definitions() / languages() ------------------------------------
 
 
@@ -281,3 +487,21 @@ def test_languages_returns_raw_list() -> None:
         result = client.languages()
 
     assert result == [{"id": 1, "name": "English"}, {"id": 8, "name": "Japanese"}]
+
+
+def test_quality_definitions_non_200_returns_empty() -> None:
+    """A non-200 quality-definitions read falls back to an empty list."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/qualitydefinition", status=500)
+        assert client.quality_definitions() == []
+
+
+def test_languages_non_200_returns_empty() -> None:
+    """A non-200 languages read falls back to an empty list."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/language", status=500)
+        assert client.languages() == []
