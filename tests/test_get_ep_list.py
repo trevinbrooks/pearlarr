@@ -1,3 +1,4 @@
+# pyright: strict
 """``SonarrEpisodes.get_ep_list`` AniBridge empty-season-map handling.
 
 Pins the fix for the latent AniBridge bug: a mapping whose ``tvdb_mappings`` is an
@@ -7,19 +8,33 @@ ranges) resolves to ``[]`` instead of silently selecting episodes. The caller
 whole-season-covered case must NOT be treated as empty.
 """
 
-from unittest import mock
-
 from seadexarr.modules.mappings import MappingEntry
+from seadexarr.modules.seadex_types import SonarrEpisode
 from seadexarr.modules.sonarr_episodes import check_ep_by_anibridge, check_ep_by_anime_ids
 
 from .builders import make_sonarr_episodes, sonarr_ep
 
 
+class _FakeSonarr:
+    """Minimal Sonarr-client stand-in: ``episodes`` returns a fixed list.
+
+    ``get_ep_list`` reaches the empty-map short-circuit only after the per-series
+    episode fetch, so the fake just returns the scripted list (called positionally,
+    no ``quiet``).
+    """
+
+    def __init__(self, ep_list: list[SonarrEpisode]) -> None:
+        self._ep_list = ep_list
+
+    def episodes(self, series_id: int) -> list[SonarrEpisode]:
+        del series_id
+        return self._ep_list
+
+
 def test_empty_anibridge_season_map_resolves_to_no_episodes() -> None:
     """An empty ``tvdb_mappings`` -> ``[]`` (no silent grab; caller logs the skip)."""
 
-    sonarr = mock.MagicMock()
-    sonarr.episodes.return_value = [sonarr_ep(1, 1)]
+    sonarr = _FakeSonarr([sonarr_ep(1, 1)])
     episodes = make_sonarr_episodes(sonarr=sonarr)
 
     mapping = MappingEntry(anilist_id=123, tvdb_id=456, tvdb_mappings={})

@@ -1,3 +1,4 @@
+# pyright: strict
 """Characterization tests for the ``MappingEntry`` resolution boundary.
 
 These pin the two producer paths (Kometa Anime-IDs and AniBridge) end-to-end
@@ -12,13 +13,14 @@ import dataclasses
 
 import pytest
 
-from seadexarr.modules.mappings import MappingEntry, MappingMode, MappingResolver
+from seadexarr.modules.anibridge import AniBridgeGraph
+from seadexarr.modules.mappings import AnimeIdsMap, MappingEntry, MappingMode, MappingResolver
 
 
 def _resolver(
     *,
-    anime_mappings_cfg: dict | bool | None = False,
-    anibridge_mappings_cfg: dict | bool | None = False,
+    anime_mappings_cfg: AnimeIdsMap | bool | None = False,
+    anibridge_mappings_cfg: AniBridgeGraph | bool | None = False,
 ) -> MappingResolver:
     """Build a resolver from in-memory configs, all on-disk sources disabled."""
 

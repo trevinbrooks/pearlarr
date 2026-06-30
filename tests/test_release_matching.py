@@ -1,3 +1,4 @@
+# pyright: strict
 """Characterization tests for the pure release-matching helpers.
 
 These functions move to ``planner.py`` in Phase 1; pinning them here proves the
@@ -16,7 +17,8 @@ from seadexarr.modules.seadex_types import (
     SeadexReleaseGroupItem,
     SeadexUrlItem,
 )
-from tests.builders import sonarr_ep
+
+from .builders import sonarr_ep
 
 
 class TestNormalizeRg:

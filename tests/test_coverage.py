@@ -1,3 +1,4 @@
+# pyright: strict
 """Characterization tests for the episode-coverage formatting helpers.
 
 These helpers live in ``coverage.py``.
@@ -9,7 +10,8 @@ from seadexarr.modules.coverage import (
     format_episode_coverage,
 )
 from seadexarr.modules.seadex_types import EpisodeRecord
-from tests.builders import sonarr_ep
+
+from .builders import sonarr_ep
 
 
 class TestFormatEpisodeCoverage:
