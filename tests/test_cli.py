@@ -1,3 +1,4 @@
+# pyright: strict
 """Tests for the ``seadexarr cache`` CLI commands.
 
 Pins the two behaviours the commands must guarantee around the SQLite cache:
@@ -14,6 +15,10 @@ Each test points ``resolve_paths()`` at its own ``tmp_path`` via ``SEADEX_ARR_DA
 and calls the command functions directly (they return ``bool``).
 """
 
+from pathlib import Path
+
+import pytest
+
 from seadexarr.modules.cache import CacheStore
 from seadexarr.modules.cli import (
     cache_backup,
@@ -26,7 +31,7 @@ from seadexarr.modules.config import Arr
 from seadexarr.modules.runlock import single_instance_lock
 
 
-def _build_cache(tmp_path) -> None:
+def _build_cache(tmp_path: Path) -> None:
     """Write a real on-disk ``cache.db`` under ``tmp_path`` holding one entry.
 
     Uses the normal load -> stage -> ``save(preview=False)`` path, which promotes
@@ -41,7 +46,7 @@ def _build_cache(tmp_path) -> None:
 
 
 class TestCacheRoundTrip:
-    def test_backup_then_restore_preserves_data(self, tmp_path, monkeypatch) -> None:
+    def test_backup_then_restore_preserves_data(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
 
@@ -63,7 +68,7 @@ class TestCacheRoundTrip:
         finally:
             store.close()
 
-    def test_remove_deletes_db_and_sidecars(self, tmp_path, monkeypatch) -> None:
+    def test_remove_deletes_db_and_sidecars(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
         (tmp_path / "cache.db-wal").write_text("stale")
@@ -76,7 +81,12 @@ class TestCacheRoundTrip:
 
 
 class TestHealthyDiagnostics:
-    def test_stats_and_check_report_a_healthy_db(self, tmp_path, monkeypatch, capsys) -> None:
+    def test_stats_and_check_report_a_healthy_db(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
         monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
 
@@ -88,7 +98,12 @@ class TestHealthyDiagnostics:
 class TestCorruptDatabaseIsReportedNotCrashed:
     """Finding #4: a corrupt cache.db is reported cleanly, never tracebacks."""
 
-    def test_check_on_corrupt_db_returns_false_without_raising(self, tmp_path, monkeypatch, capsys) -> None:
+    def test_check_on_corrupt_db_returns_false_without_raising(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
         monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
         (tmp_path / "cache.db").write_text("not a database")
 
@@ -97,14 +112,24 @@ class TestCorruptDatabaseIsReportedNotCrashed:
         assert cache_check() is False
         assert "integrity" in capsys.readouterr().out
 
-    def test_stats_on_corrupt_db_returns_false_without_raising(self, tmp_path, monkeypatch, capsys) -> None:
+    def test_stats_on_corrupt_db_returns_false_without_raising(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
         monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
         (tmp_path / "cache.db").write_text("not a database")
 
         assert cache_stats() is False
         assert "cache stats" in capsys.readouterr().out
 
-    def test_backup_on_corrupt_db_returns_false_without_raising(self, tmp_path, monkeypatch, capsys) -> None:
+    def test_backup_on_corrupt_db_returns_false_without_raising(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
         monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
         (tmp_path / "cache.db").write_text("not a database")
 
@@ -117,7 +142,7 @@ class TestCorruptDatabaseIsReportedNotCrashed:
 class TestActiveRunGuard:
     """Finding #5: destructive commands refuse while a run holds the lock."""
 
-    def test_remove_refuses_while_a_run_holds_the_lock(self, tmp_path, monkeypatch) -> None:
+    def test_remove_refuses_while_a_run_holds_the_lock(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
 
@@ -127,7 +152,7 @@ class TestActiveRunGuard:
             assert cache_remove() is False
         assert (tmp_path / "cache.db").exists()
 
-    def test_restore_refuses_while_a_run_holds_the_lock(self, tmp_path, monkeypatch) -> None:
+    def test_restore_refuses_while_a_run_holds_the_lock(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
         assert cache_backup() is True

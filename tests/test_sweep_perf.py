@@ -1,15 +1,24 @@
+# pyright: strict
+# pyright: reportPrivateUsage=false
+# These read the episode collaborator's private per-run state (eps._ep_list_cache /
+# eps._config) and call the private SonarrParseCache._sonarr_parse_is_fresh; strict
+# re-flags that and the repo disables reportPrivateUsage for tests.
 """Tests for the Sonarr sweep speedups: negative parse-cache, the series-id
 fingerprint, the worker gating, and the concurrent fresh episode prefetch."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Any
-from unittest import mock
+
+import requests
+from seadex import EntryRecord
 
 from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
 from seadexarr.modules.config import Arr
-from seadexarr.modules.seadex_sonarr import SonarrClient
+from seadexarr.modules.mappings import MappingEntry
+from seadexarr.modules.seadex_arr import SeaDexArr
+from seadexarr.modules.seadex_types import SeadexDict, SonarrEpisode
+from seadexarr.modules.sonarr_client import SonarrClient
 from seadexarr.modules.sonarr_episodes import (
     SONARR_FETCH_WORKERS,
     SonarrEpisodes,
@@ -22,15 +31,18 @@ from seadexarr.modules.sonarr_parse import (
     ParseWindow,
     SonarrParseCache,
 )
-from tests.builders import (
+
+from .builders import (
     FakeCacheStore,
     make_arr,
     make_bare_instance,
     make_config,
+    make_entry_record,
     make_logger,
     make_sonarr_episodes,
     make_sonarr_parse,
     rg_group,
+    sonarr_ep,
     url_item,
 )
 
@@ -43,7 +55,7 @@ def _stamp(days_ago: float) -> str:
     return (_NOW - timedelta(days=days_ago)).strftime(UPDATED_AT_STR_FORMAT)
 
 
-def _fresh(record: dict[str, Any], *, series_fp: str = "fp") -> bool:
+def _fresh(record: dict[str, object] | None, *, series_fp: str = "fp") -> bool:
     return SonarrParseCache._sonarr_parse_is_fresh(
         record,
         window=ParseWindow(
@@ -74,15 +86,19 @@ class TestSonarrParseIsFresh:
         assert not _fresh({"fetched_at": _stamp(40), "episodes": [{"season": 1, "episode": 1}]})
 
     def test_negative_fresh_when_fp_matches_and_within_backstop(self) -> None:
-        rec = {"fetched_at": _stamp(2), "episodes": [], "series_fp": "fp"}
+        rec: dict[str, object] = {"fetched_at": _stamp(2), "episodes": [], "series_fp": "fp"}
         assert _fresh(rec, series_fp="fp")
 
     def test_negative_stale_on_fp_mismatch(self) -> None:
-        rec = {"fetched_at": _stamp(2), "episodes": [], "series_fp": "old"}
+        rec: dict[str, object] = {"fetched_at": _stamp(2), "episodes": [], "series_fp": "old"}
         assert not _fresh(rec, series_fp="fp")
 
     def test_negative_stale_beyond_backstop_ttl(self) -> None:
-        rec = {"fetched_at": _stamp(SONARR_PARSE_NEG_CACHE_TTL_DAYS + 1), "episodes": [], "series_fp": "fp"}
+        rec: dict[str, object] = {
+            "fetched_at": _stamp(SONARR_PARSE_NEG_CACHE_TTL_DAYS + 1),
+            "episodes": [],
+            "series_fp": "fp",
+        }
         assert not _fresh(rec, series_fp="fp")
 
     def test_legacy_empty_without_fp_is_stale(self) -> None:
@@ -90,21 +106,49 @@ class TestSonarrParseIsFresh:
         assert not _fresh({"fetched_at": _stamp(1), "episodes": []})
 
     def test_non_dict_is_stale(self) -> None:
-        assert not _fresh(None)  # type: ignore[arg-type]
+        assert not _fresh(None)
+
+
+class _FakeResponse:
+    """A minimal ``requests``-style response: ``status_code`` + a JSON body."""
+
+    def __init__(self, status_code: int, body: dict[str, list[dict[str, int]]]) -> None:
+        self.status_code = status_code
+        self._body = body
+
+    def json(self) -> dict[str, list[dict[str, int]]]:
+        return self._body
+
+
+class _FakeSession:
+    """A ``requests.Session`` stand-in scripting one ``get`` outcome.
+
+    ``boom`` raises a ``ConnectionError`` (the transient path ``parse`` swallows);
+    otherwise ``get`` returns the scripted status + body. Replaces a ``MagicMock``
+    session whose ``get`` was wired inline.
+    """
+
+    def __init__(self, *, status: int, body: dict[str, list[dict[str, int]]], boom: bool) -> None:
+        self._status = status
+        self._body = body
+        self._boom = boom
+
+    def get(self, url: str, timeout: tuple[int, int] | None = None) -> _FakeResponse:
+        del url, timeout
+        if self._boom:
+            raise requests.ConnectionError("down")
+        return _FakeResponse(self._status, self._body)
 
 
 class TestParseClientTransientVsEmpty:
-    def _client(self, *, status: int, body: dict[str, Any] | None = None, boom: bool = False) -> SonarrClient:
-        session = mock.MagicMock()
-        if boom:
-            import requests
-
-            session.get.side_effect = requests.ConnectionError("down")
-        else:
-            resp = mock.MagicMock()
-            resp.status_code = status
-            resp.json.return_value = body or {}
-            session.get.return_value = resp
+    def _client(
+        self,
+        *,
+        status: int,
+        body: dict[str, list[dict[str, int]]] | None = None,
+        boom: bool = False,
+    ) -> SonarrClient:
+        session = _FakeSession(status=status, body=body or {}, boom=boom)
         return make_bare_instance(
             SonarrClient,
             _url="http://sonarr",
@@ -162,6 +206,18 @@ def _item(series_id: int, *, monitored: bool = True) -> _Series:
     )
 
 
+def _eps_for(series_id: int) -> list[SonarrEpisode]:
+    """A distinguishable one-episode list per series (episode_number == series id)."""
+
+    return [sonarr_ep(1, series_id)]
+
+
+def _ids(*al_ids: int) -> dict[int, MappingEntry]:
+    """A ``{al_id -> mapping}`` dict; only the keys are read by the prefetch gate."""
+
+    return {aid: MappingEntry(anilist_id=aid) for aid in al_ids}
+
+
 class _Recorder:
     """An ``EpisodeProgress`` sink that records every ``progress`` call."""
 
@@ -172,13 +228,75 @@ class _Recorder:
         self.calls.append((fraction, detail))
 
 
+class _Sonarr:
+    """A scripted Sonarr client for the prefetch warm.
+
+    By default ``episodes(sid)`` returns a distinguishable one-episode list per
+    series (``_eps_for``); ``return_none`` degrades every fetch to a transient
+    miss, and ``raise_on`` makes the listed ids raise (the worker-degradation
+    case). Records each ``(series_id, quiet)`` call so the dedup / not-fetched /
+    quiet assertions read recorded state instead of a ``MagicMock`` interaction.
+    """
+
+    def __init__(self, *, return_none: bool = False, raise_on: set[int] | None = None) -> None:
+        self.return_none = return_none
+        self.raise_on: set[int] = set(raise_on or set())
+        self.calls: list[tuple[int, bool]] = []
+
+    def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
+        self.calls.append((series_id, quiet))
+        if series_id in self.raise_on:
+            raise ValueError("boom")
+        if self.return_none:
+            return None
+        return _eps_for(series_id)
+
+
+class _Services:
+    """A stand-in for the run machinery the prefetch consults.
+
+    ``get_anilist_ids`` resolves a series' tvdb id to its ``{al_id -> mapping}``
+    dict (``identity`` returns ``{tvdb_id: mapping}`` for any series, mirroring the
+    always-mapped helper); ``al_id_needs_scan`` is the per-id needs-scan gate
+    (``needs_scan=None`` reports every id as scannable, mirroring the truthy
+    ``MagicMock`` default).
+    """
+
+    def __init__(
+        self,
+        *,
+        mapping: dict[int, dict[int, MappingEntry]] | None = None,
+        identity: bool = False,
+        needs_scan: set[int] | None = None,
+    ) -> None:
+        self._mapping = mapping or {}
+        self._identity = identity
+        self._needs_scan = needs_scan
+
+    def get_anilist_ids(
+        self,
+        *,
+        tvdb_id: int,
+        imdb_id: str | None = None,
+        log_ignored: bool = True,
+    ) -> dict[int, MappingEntry]:
+        del imdb_id, log_ignored
+        if self._identity:
+            return {tvdb_id: MappingEntry(anilist_id=tvdb_id)}
+        return self._mapping.get(tvdb_id, {})
+
+    def al_id_needs_scan(self, al_id: int) -> bool:
+        if self._needs_scan is None:
+            return True
+        return al_id in self._needs_scan
+
+
 class TestPrefetchEpisodes:
-    def _eps(self, *, mapped: set[int], sleep_time: int = 0) -> tuple[SonarrEpisodes, mock.MagicMock]:
-        sonarr = mock.MagicMock()
-        sonarr.episodes.side_effect = lambda sid, quiet=False: [f"ep{sid}"] if sid in mapped else None
-        services = mock.MagicMock()
-        # Only "mapped" series resolve to a non-empty AniList mapping.
-        services.get_anilist_ids.side_effect = lambda **kw: {1: object()} if kw["tvdb_id"] in mapped else {}
+    def _eps(self, *, mapped: set[int], sleep_time: int = 0) -> tuple[SonarrEpisodes, _Sonarr]:
+        sonarr = _Sonarr()
+        # Only "mapped" series resolve to a non-empty AniList mapping; needs_scan
+        # defaults to "every id scannable" (the truthy MagicMock default).
+        services = _Services(mapping={sid: _ids(1) for sid in mapped})
         eps = make_sonarr_episodes(
             sonarr=sonarr,
             _services=services,
@@ -189,23 +307,23 @@ class TestPrefetchEpisodes:
     def test_warms_only_mapped_series(self) -> None:
         eps, _ = self._eps(mapped={1, 2})
         eps.prefetch([_item(1), _item(2), _item(3)])
-        assert eps._ep_list_cache == {1: ["ep1"], 2: ["ep2"]}
+        assert eps._ep_list_cache == {1: _eps_for(1), 2: _eps_for(2)}
 
     def test_skips_unmonitored_when_ignored(self) -> None:
         eps, _ = self._eps(mapped={1, 2})
         eps._config = make_config(sleep_time=0, ignore_unmonitored=True)
         eps.prefetch([_item(1, monitored=False), _item(2)])
-        assert eps._ep_list_cache == {2: ["ep2"]}
+        assert eps._ep_list_cache == {2: _eps_for(2)}
 
     def test_dedups_series_ids(self) -> None:
         eps, sonarr = self._eps(mapped={1})
         eps.prefetch([_item(1), _item(1)])
-        assert sonarr.episodes.call_count == 1
+        assert len(sonarr.calls) == 1
 
     def test_none_result_not_cached(self) -> None:
         # series 9 is a candidate (resolves a mapping) but episodes() returns None.
         eps, sonarr = self._eps(mapped={9})
-        sonarr.episodes.side_effect = lambda sid, quiet=False: None
+        sonarr.return_none = True
         eps.prefetch([_item(9)])
         assert eps._ep_list_cache == {}
 
@@ -213,22 +331,16 @@ class TestPrefetchEpisodes:
         # CB5: a worker that RAISES (e.g. a non-JSON 200 response) must not abort the
         # whole concurrent sweep; that series is left unwarmed, the rest still warm.
         eps, sonarr = self._eps(mapped={1, 2})
-
-        def episodes(sid: int, quiet: bool = False) -> list[str] | None:
-            if sid == 1:
-                raise ValueError("boom")
-            return ["ep2"]
-
-        sonarr.episodes.side_effect = episodes
+        sonarr.raise_on = {1}
         warmed = eps.prefetch([_item(1), _item(2)])
 
-        assert eps._ep_list_cache == {2: ["ep2"]}  # 1 raised -> unwarmed; 2 warmed
+        assert eps._ep_list_cache == {2: _eps_for(2)}  # 1 raised -> unwarmed; 2 warmed
         assert warmed == 2  # both attempted
 
     def test_sequential_path_matches_concurrent(self) -> None:
         eps, _ = self._eps(mapped={1, 2}, sleep_time=2)
         eps.prefetch([_item(1), _item(2)])
-        assert eps._ep_list_cache == {1: ["ep1"], 2: ["ep2"]}
+        assert eps._ep_list_cache == {1: _eps_for(1), 2: _eps_for(2)}
 
     def test_returns_warmed_count(self) -> None:
         # Only mapped, monitored series are warmed: 3 is unmapped, so 2 warmed.
@@ -249,20 +361,28 @@ class TestPrefetchEpisodes:
         # series 9 is a candidate (resolves a mapping) but episodes() returns None.
         # It's still attempted, so it counts toward the return value + the bar.
         eps, sonarr = self._eps(mapped={9})
-        sonarr.episodes.side_effect = lambda sid, quiet=False: None
+        sonarr.return_none = True
         rec = _Recorder()
         assert eps.prefetch([_item(9)], progress=rec) == 1
         assert eps._ep_list_cache == {}  # nothing cached
         assert rec.calls[-1] == (1.0, "1/1")  # but progress still completed
 
 
-def _entry(dt: datetime) -> Any:
-    """A stand-in SeaDex entry exposing only ``updated_at`` (typed Any)."""
+def _entry(dt: datetime) -> EntryRecord:
+    """A real SeaDex entry stamped at ``dt`` (only ``updated_at`` is read)."""
 
-    class _Entry:
-        updated_at = dt
+    return make_entry_record(updated_at=dt)
 
-    return _Entry()
+
+class _Seadex:
+    """A SeaDex gateway stand-in returning one fixed entry for any al_id."""
+
+    def __init__(self, entry: EntryRecord | None) -> None:
+        self._entry = entry
+
+    def entry(self, al_id: int) -> EntryRecord | None:
+        del al_id
+        return self._entry
 
 
 class TestAlIdNeedsScan:
@@ -272,10 +392,8 @@ class TestAlIdNeedsScan:
     fix). Pinned against the same cases as ``cached_entry_skip``."""
 
     @staticmethod
-    def _run(*, entry: Any, cache: FakeCacheStore, **cfg: Any):
-        seadex = mock.MagicMock()
-        seadex.entry.return_value = entry
-        return make_arr(_seadex=seadex, cache_store=cache, **cfg)
+    def _run(*, entry: EntryRecord | None, cache: FakeCacheStore, **cfg: object) -> SeaDexArr:
+        return make_arr(_seadex=_Seadex(entry), cache_store=cache, **cfg)
 
     def test_no_seadex_entry_does_not_need_scan(self) -> None:
         run = self._run(entry=None, cache=FakeCacheStore())
@@ -320,14 +438,11 @@ class TestPrefetchSkipsUnchanged:
     series whose every SeaDex entry is unchanged (or absent) is no longer fetched -
     the regression this change fixes."""
 
-    def _eps(self, *, needs_scan: set[int]) -> tuple[SonarrEpisodes, mock.MagicMock]:
+    def _eps(self, *, needs_scan: set[int]) -> tuple[SonarrEpisodes, _Sonarr]:
         # Each series maps to a single al_id equal to its id, so a series is warmed
         # iff that id is in ``needs_scan``.
-        sonarr = mock.MagicMock()
-        sonarr.episodes.side_effect = lambda sid, quiet=False: [f"ep{sid}"]
-        services = mock.MagicMock()
-        services.get_anilist_ids.side_effect = lambda **kw: {kw["tvdb_id"]: object()}
-        services.al_id_needs_scan.side_effect = lambda al_id: al_id in needs_scan
+        sonarr = _Sonarr()
+        services = _Services(identity=True, needs_scan=needs_scan)
         eps = make_sonarr_episodes(
             sonarr=sonarr,
             _services=services,
@@ -338,41 +453,54 @@ class TestPrefetchSkipsUnchanged:
     def test_skips_series_with_no_scannable_id(self) -> None:
         eps, sonarr = self._eps(needs_scan={1})
         assert eps.prefetch([_item(1), _item(2)]) == 1
-        assert eps._ep_list_cache == {1: ["ep1"]}  # series 2 never fetched
-        sonarr.episodes.assert_called_once_with(1, quiet=True)
+        assert eps._ep_list_cache == {1: _eps_for(1)}  # series 2 never fetched
+        assert sonarr.calls == [(1, True)]
 
     def test_warms_none_when_all_unchanged(self) -> None:
         eps, sonarr = self._eps(needs_scan=set())
         assert eps.prefetch([_item(1), _item(2)]) == 0
         assert eps._ep_list_cache == {}
-        sonarr.episodes.assert_not_called()
+        assert sonarr.calls == []
 
     def test_warms_series_with_any_scannable_id(self) -> None:
         # A series whose mapping carries a stale id alongside a fresh one is warmed.
-        sonarr = mock.MagicMock()
-        sonarr.episodes.side_effect = lambda sid, quiet=False: [f"ep{sid}"]
-        services = mock.MagicMock()
-        services.get_anilist_ids.side_effect = lambda **kw: {10: object(), 11: object()}
-        services.al_id_needs_scan.side_effect = lambda al_id: al_id == 11
+        sonarr = _Sonarr()
+        services = _Services(mapping={5: _ids(10, 11)}, needs_scan={11})
         eps = make_sonarr_episodes(
             sonarr=sonarr,
             _services=services,
             _config=make_config(sleep_time=0),
         )
         assert eps.prefetch([_item(5)]) == 1
-        assert eps._ep_list_cache == {5: ["ep5"]}
+        assert eps._ep_list_cache == {5: _eps_for(5)}
+
+
+class _ParseSonarr:
+    """A scripted Sonarr ``/parse`` client recording each parsed filename.
+
+    ``parse_episodes_from_seadex`` only touches ``sonarr.parse``; this scripts the
+    one result and records the calls so the not-parsed assertions read recorded
+    state instead of a ``MagicMock`` interaction.
+    """
+
+    def __init__(self, result: list[dict[str, int]] | None) -> None:
+        self._result = result
+        self.calls: list[str] = []
+
+    def parse(self, filename: str) -> list[dict[str, int]] | None:
+        self.calls.append(filename)
+        return self._result
 
 
 class TestParseEpisodesNegativeCache:
     def _parse(
         self,
         *,
-        parse_result: Any,
+        parse_result: list[dict[str, int]] | None,
         sleep_time: int = 0,
-        sonarr_parse: dict[str, dict[str, Any]] | None = None,
-    ) -> tuple[SonarrParseCache, mock.MagicMock]:
-        sonarr = mock.MagicMock()
-        sonarr.parse.return_value = parse_result
+        sonarr_parse: dict[str, dict[str, object]] | None = None,
+    ) -> tuple[SonarrParseCache, _ParseSonarr]:
+        sonarr = _ParseSonarr(parse_result)
         parse = make_sonarr_parse(
             sonarr=sonarr,
             _config=make_config(sleep_time=sleep_time),
@@ -382,7 +510,7 @@ class TestParseEpisodesNegativeCache:
         return parse, sonarr
 
     @staticmethod
-    def _dict(*files: str) -> dict[str, Any]:
+    def _dict(*files: str) -> SeadexDict:
         return {"GroupA": rg_group({"u": url_item(files=list(files), size=[100] * len(files))})}
 
     def test_genuine_empty_is_negative_cached_with_fp(self) -> None:
@@ -399,7 +527,7 @@ class TestParseEpisodesNegativeCache:
         assert parse.cache_store.get_sonarr_parse("[X] Show - 01.mkv") is None
 
     def test_fresh_negative_hit_skips_network(self) -> None:
-        seeded = {
+        seeded: dict[str, dict[str, object]] = {
             "[X] Show - 01.mkv": {
                 "fetched_at": datetime.now().strftime(UPDATED_AT_STR_FORMAT),
                 "episodes": [],
@@ -408,12 +536,12 @@ class TestParseEpisodesNegativeCache:
         }
         parse, sonarr = self._parse(parse_result=[], sonarr_parse=seeded)
         parse.parse_episodes_from_seadex(self._dict("[X] Show - 01.mkv"), series_fp="fp")
-        sonarr.parse.assert_not_called()
+        assert sonarr.calls == []
 
     def test_audio_file_never_parsed(self) -> None:
         parse, sonarr = self._parse(parse_result=[])
         parse.parse_episodes_from_seadex(self._dict("[X] OST - 01.flac"), series_fp="fp")
-        sonarr.parse.assert_not_called()
+        assert sonarr.calls == []
 
     def test_concurrent_pass_negative_caches_each_file(self) -> None:
         parse, _ = self._parse(parse_result=[], sleep_time=0)

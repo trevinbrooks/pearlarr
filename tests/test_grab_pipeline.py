@@ -1,3 +1,7 @@
+# pyright: strict
+# pyright: reportPrivateUsage=false
+# The add-path assertions read the pipeline's private wiring (_grab / _ctx), which
+# strict re-flags; the repo disables reportPrivateUsage for tests.
 """Unit tests for the grab "produce" side (:class:`GrabPipeline`).
 
 Pin the add path - ``_add_one_url`` registering durable :class:`PendingImport`
@@ -7,12 +11,14 @@ Built bare (``object.__new__`` via ``make_bare_instance``) so no live qBittorren
 login happens; the client ``add`` is faked by ``FakeTorrents``.
 """
 
-from unittest import mock
+from collections.abc import Mapping
 
 from seadexarr.modules.config import Arr
 from seadexarr.modules.grab_pipeline import GrabPipeline, GrabRequest
-from seadexarr.modules.manual_import import ImportWaitMode
+from seadexarr.modules.manual_import import ImportWaitMode, PendingImport
 from seadexarr.modules.reporter import RunContext
+from seadexarr.modules.seadex_types import SeadexDict
+from seadexarr.modules.torrents import ReleaseOutcome
 
 from .builders import (
     CLIENT_SENTINEL,
@@ -22,6 +28,21 @@ from .builders import (
     one_release_dict,
     pending_import,
 )
+
+
+def _stub_add_torrent(
+    torrent_dict: SeadexDict,
+    pending_seeds: dict[str, PendingImport] | None = None,
+) -> tuple[int, list[ReleaseOutcome]]:
+    """Replaces ``GrabPipeline.add_torrent`` for the cap-return test.
+
+    Returns a fixed ``(n_added, results)`` so ``_grab``'s cap-reached return is
+    exercised without a real qBittorrent add - the bool the engine's single
+    finalize site keys off (replacing a ``MagicMock`` with the same return value).
+    """
+
+    del torrent_dict, pending_seeds
+    return 1, []
 
 
 def _pipeline(
@@ -42,7 +63,7 @@ def _pipeline(
     )
 
 
-def _pending(pipeline: GrabPipeline) -> dict:
+def _pending(pipeline: GrabPipeline) -> Mapping[str, object]:
     """The pipeline's durable per-arr pending store (what the engine reads back)."""
 
     return pipeline.cache_store.get_pending(Arr.SONARR)
@@ -61,7 +82,7 @@ class TestGrabReturnsPureBool:
         pipeline = make_grab_pipeline(
             qbit=None,
             max_torrents_to_add=1,
-            add_torrent=mock.MagicMock(return_value=(1, [])),
+            add_torrent=_stub_add_torrent,
         )
         pipeline._ctx.torrents_added = 1  # already at the cap of 1
 

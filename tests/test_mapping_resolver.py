@@ -1,3 +1,6 @@
+# pyright: strict
+# pyright: reportPrivateUsage=false
+# Drives module-private resolver internals under test (_entry_from_raw, m._parse_*, resolver._maybe_download).
 """Parity + edge tests for the SQL-backed ``MappingResolver`` / ``AniBridge``.
 
 The SQL backings must reproduce the in-memory implementations exactly. AniBridge's
@@ -9,18 +12,23 @@ coverage before.
 """
 
 import json
+import logging
 import os
 import time
+from pathlib import Path
 from types import SimpleNamespace
-from unittest import mock
+from typing import TypedDict
 from xml.etree import ElementTree
 
 import pytest
 
 import seadexarr.modules.mappings as m
-from seadexarr.modules.anibridge import AniBridge
-from seadexarr.modules.mapping_store import MappingStore
+from seadexarr.modules.anibridge import AniBridge, AniBridgeGraph
+from seadexarr.modules.mapping_store import AnimeIdRow, MappingStore
 from seadexarr.modules.mappings import (
+    AnimeIdsMap,
+    AnimeIdsRecord,
+    MappingEntry,
     MappingMode,
     MappingResolver,
     MappingSource,
@@ -29,13 +37,14 @@ from seadexarr.modules.mappings import (
 )
 from seadexarr.modules.paths import resolve_paths
 from seadexarr.modules.sonarr_episodes import SonarrEpisodes
-from tests.builders import make_bare_instance
+
+from .builders import make_bare_instance
 
 # --------------------------------------------------------------------------- #
 # AniBridge: SQL backing must equal the graph backing (the oracle)
 # --------------------------------------------------------------------------- #
 
-GRAPH = {
+GRAPH: AniBridgeGraph = {
     "anilist:269": {
         "tvdb_show:74796:s2": {"21-41": "1-21"},
         "tvdb_show:74796:s3": {"42-50": "1-9,11-12"},  # multi-segment range
@@ -60,7 +69,7 @@ GRAPH = {
 }
 
 
-def _ab_pair(graph: dict) -> tuple[AniBridge, AniBridge, MappingStore]:
+def _ab_pair(graph: AniBridgeGraph) -> tuple[AniBridge, AniBridge, MappingStore]:
     """(graph-backed oracle, SQL-backed view, store) over the same graph."""
 
     graph_ab = AniBridge(graph)
@@ -120,7 +129,7 @@ class TestAniBridgeParity:
 # anime_ids: SQL lookups must equal the former reverse-index merge
 # --------------------------------------------------------------------------- #
 
-AMAP = {
+AMAP: AnimeIdsMap = {
     "A": {"anilist_id": 100, "tvdb_id": 200, "tvdb_season": 2, "tvdb_epoffset": 3, "imdb_id": "tt100", "anidb_id": 50},
     "B": {"anilist_id": 101, "tvdb_id": 200},  # same tvdb id, 2nd anilist
     "C": {"anilist_id": 100, "tvdb_id": 200, "tvdb_season": 9},  # dup anilist -> first wins
@@ -130,10 +139,19 @@ AMAP = {
 }
 
 
-def _anime_oracle(amap: dict, **kw: object) -> dict[int, object]:
+class LookupKwargs(TypedDict, total=False):
+    """The identifying-id kwargs an anime-mappings lookup accepts (all optional)."""
+
+    tvdb_id: int
+    tmdb_id: int
+    imdb_id: str
+    tmdb_type: TmdbType
+
+
+def _anime_oracle(amap: AnimeIdsMap, **kw: object) -> dict[int, MappingEntry]:
     """Inline twin of the former reverse-index + no-clobber merge (the oracle)."""
 
-    index: dict[str, dict[object, list[dict]]] = {
+    index: dict[str, dict[object, list[AnimeIdsRecord]]] = {
         "tvdb_id": {},
         "tmdb_movie_id": {},
         "tmdb_show_id": {},
@@ -147,7 +165,7 @@ def _anime_oracle(amap: dict, **kw: object) -> dict[int, object]:
             if value is not None:
                 bucket.setdefault(value, []).append(rec)
 
-    result: dict[int, object] = {}
+    result: dict[int, MappingEntry] = {}
 
     def merge(field: str, value: object) -> None:
         for rec in index[field].get(value, []):
@@ -176,7 +194,7 @@ class TestAnimeIdsParity:
             {"tvdb_id": 424242},  # no match -> empty
         ],
     )
-    def test_lookup_matches_oracle(self, kwargs: dict) -> None:
+    def test_lookup_matches_oracle(self, kwargs: LookupKwargs) -> None:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
@@ -429,7 +447,9 @@ class TestAnidbMappingDict:
 
 
 class TestDigestGate:
-    def test_unchanged_file_is_not_reparsed_changed_file_is(self, tmp_path, monkeypatch) -> None:
+    def test_unchanged_file_is_not_reparsed_changed_file_is(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         source = tmp_path / "anime_ids.json"
         source.write_text(json.dumps({"A": {"anilist_id": 1, "tvdb_id": 10}}))
         db = str(tmp_path / "mappings.db")
@@ -441,7 +461,7 @@ class TestDigestGate:
         calls = {"n": 0}
         real_parse = m._parse_anime_mappings
 
-        def counting_parse(path: str) -> object:
+        def counting_parse(path: str) -> AnimeIdsMap:
             calls["n"] += 1
             return real_parse(path)
 
@@ -474,7 +494,7 @@ class TestDigestGate:
 
 
 class TestConstructionFailureClosesStore:
-    def test_store_closed_when_build_raises(self, monkeypatch) -> None:
+    def test_store_closed_when_build_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # A non-DatabaseError from _build must still close the store (the resolver
         # is never returned, so no one else can). Spy on close().
         closed = {"n": 0}
@@ -486,7 +506,7 @@ class TestConstructionFailureClosesStore:
 
         monkeypatch.setattr(MappingStore, "close", spy_close)
 
-        def boom(_amap: object) -> list:
+        def boom(_amap: AnimeIdsMap) -> list[AnimeIdRow]:
             raise ValueError("parse blew up")
 
         monkeypatch.setattr(m, "_anime_ids_rows", boom)
@@ -516,7 +536,7 @@ _REAL_ANIBRIDGE = os.path.join(_REAL_DIR, m.ANIBRIDGE_MAPPINGS_FILE)
 _HAVE_REAL = all(os.path.exists(f) for f in (_REAL_ANIME_IDS, _REAL_ANIDB, _REAL_ANIBRIDGE))
 
 
-def _anidb_oracle(root: ElementTree.Element, anidb_id: int, tvdb_season: int) -> dict:
+def _anidb_oracle(root: ElementTree.Element, anidb_id: int, tvdb_season: int) -> dict[int, dict[int, int]]:
     """Guarded reimplementation of the former anidb_anime_by_id + parse + raise."""
 
     items = [a for a in root.findall("anime") if a.get("anidbid") == str(anidb_id)]
@@ -545,7 +565,7 @@ def _anidb_oracle(root: ElementTree.Element, anidb_id: int, tvdb_season: int) ->
 class TestRealDataParity:
     def test_anibridge_sql_matches_graph_over_all_ids(self) -> None:
         with open(_REAL_ANIBRIDGE) as f:
-            graph = json.load(f)
+            graph: AniBridgeGraph = json.load(f)
         graph_ab = AniBridge(graph)
         store = MappingStore.open(":memory:")
         store.replace_anibridge("d", *graph_ab.to_rows())
@@ -626,7 +646,9 @@ def _boom(*_a: object, **_k: object) -> None:
 class TestMaybeDownloadFailOpen:
     """A refresh blip falls open to the cached file; a first-ever download stays fatal."""
 
-    def test_refresh_failure_falls_open_to_cached_file(self, tmp_path, monkeypatch) -> None:
+    def test_refresh_failure_falls_open_to_cached_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
         # A stale-but-valid cached source whose refresh download fails on a transient
         # error must NOT abort the run: fall open to the on-disk copy and warn.
         source = tmp_path / "anime_ids.json"
@@ -635,18 +657,21 @@ class TestMaybeDownloadFailOpen:
         os.utime(source, (old, old))
         monkeypatch.setattr(m, "_download_file", _boom)
 
-        logger = mock.MagicMock()
+        logger = logging.getLogger("seadexarr-test-maybe-download")
         resolver = make_bare_instance(MappingResolver, logger=logger, _progress=None, cache_time=1)
-        resolver._maybe_download(str(source), "https://example/anime_ids.json", "anime_ids.json")
+        with caplog.at_level(logging.WARNING, logger=logger.name):
+            resolver._maybe_download(str(source), "https://example/anime_ids.json", "anime_ids.json")
 
-        assert logger.warning.called
+        assert any(record.levelno == logging.WARNING for record in caplog.records)  # warned, not aborted
         assert source.exists()  # the cached copy is left intact
 
-    def test_first_ever_download_failure_still_propagates(self, tmp_path, monkeypatch) -> None:
+    def test_first_ever_download_failure_still_propagates(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # With no file on disk there is nothing to fall open to, so a first-ever
         # download failure stays fatal (the run cannot proceed without the source).
         monkeypatch.setattr(m, "_download_file", _boom)
-        resolver = make_bare_instance(MappingResolver, logger=mock.MagicMock(), _progress=None, cache_time=1)
+        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, cache_time=1)
 
         with pytest.raises(OSError):
             resolver._maybe_download(str(tmp_path / "missing.json"), "https://example/x.json", "x")

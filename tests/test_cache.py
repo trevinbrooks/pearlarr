@@ -1,3 +1,4 @@
+# pyright: strict
 """Behavioural tests for the SQLite-backed ``CacheStore``.
 
 Pins behaviour, not internals: the per-entry records + torrent-hash child rows,
@@ -10,41 +11,47 @@ import contextlib
 import json
 import sqlite3
 from datetime import datetime
-from typing import Any
-from unittest import mock
+from pathlib import Path
+
+import pytest
 
 import seadexarr
-from seadexarr.modules.cache import CacheField, CacheStore, _is_corruption
+from seadexarr.modules.cache import CacheField, CacheStore
 from seadexarr.modules.config import Arr
+from seadexarr.modules.sqlite_util import is_corruption
+
+from .builders import make_entry_record
 
 # Stand-in for a config-file checksum. ``CacheStore`` only stamps and compares the
 # value it is handed; it never computes one, so any string works here.
 CHECKSUM = "0123456789abcdef0123456789abcdef"
 
 
-def _entry(dt: datetime) -> Any:
-    """A stand-in SeaDex entry exposing only ``updated_at`` (typed Any so it
-    satisfies the ``EntryRecord`` parameter without a real record)."""
+def _raise_os_replace(*_args: object, **_kwargs: object) -> None:
+    """A drop-in for ``os.replace`` that fails the atomic promote rename."""
 
-    class _Entry:
-        updated_at = dt
-
-    return _Entry()
+    raise OSError("boom")
 
 
-def _open(tmp_path) -> CacheStore:
+def _raise_locked(*_args: object, **_kwargs: object) -> sqlite3.Connection:
+    """A drop-in for ``_connect`` that simulates a transient open-time lock."""
+
+    raise sqlite3.OperationalError("database is locked")
+
+
+def _open(tmp_path: Path) -> CacheStore:
     return CacheStore.load(str(tmp_path / "cache.db"), config_checksum=CHECKSUM)
 
 
 class TestSchemaAndDescriptor:
-    def test_missing_file_opens_in_memory(self, tmp_path) -> None:
+    def test_missing_file_opens_in_memory(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         # Nothing on disk yet, and reads work against the empty in-memory schema.
         assert not (tmp_path / "cache.db").exists()
         assert store.get_cached_name(Arr.SONARR, 7) is None
         store.close()
 
-    def test_descriptor_persists_version_and_checksum(self, tmp_path) -> None:
+    def test_descriptor_persists_version_and_checksum(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.save(preview=False)
         store.close()
@@ -64,7 +71,7 @@ class TestSchemaAndDescriptor:
 
 
 class TestEntries:
-    def test_update_and_read_back_fields(self, tmp_path) -> None:
+    def test_update_and_read_back_fields(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"name": "Title", "url": "u"})
         assert store.get_cached_name(Arr.SONARR, 7) == "Title"
@@ -72,7 +79,7 @@ class TestEntries:
         assert store.get_cached_field(Arr.SONARR, 999, CacheField.NAME) is None
         store.close()
 
-    def test_update_cache_is_a_partial_merge(self, tmp_path) -> None:
+    def test_update_cache_is_a_partial_merge(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"name": "Title", "url": "u"})
         # A later update with only one field must not wipe the others.
@@ -82,23 +89,32 @@ class TestEntries:
         assert store.get_cached_field(Arr.SONARR, 7, CacheField.COVERAGE) == "S01"
         store.close()
 
-    def test_update_cache_formats_datetime_timestamp(self, tmp_path) -> None:
+    def test_update_cache_formats_datetime_timestamp(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 6, 5, 4, 3, 2)})
         assert store.get_cached_field(Arr.SONARR, 7, CacheField.UPDATED_AT) == "2021-06-05 04:03:02"
         store.close()
 
-    def test_check_al_id_in_cache_matches_timestamp(self, tmp_path) -> None:
+    def test_check_al_id_in_cache_matches_timestamp(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 6, 5, 4, 3, 2)})
-        assert store.check_al_id_in_cache(Arr.SONARR, 7, _entry(datetime(2021, 6, 5, 4, 3, 2))) is True
+        assert (
+            store.check_al_id_in_cache(Arr.SONARR, 7, make_entry_record(updated_at=datetime(2021, 6, 5, 4, 3, 2)))
+            is True
+        )
         # Same id, different timestamp -> stale.
-        assert store.check_al_id_in_cache(Arr.SONARR, 7, _entry(datetime(2022, 1, 1, 0, 0, 0))) is False
+        assert (
+            store.check_al_id_in_cache(Arr.SONARR, 7, make_entry_record(updated_at=datetime(2022, 1, 1, 0, 0, 0)))
+            is False
+        )
         # Unknown id -> no record -> no match.
-        assert store.check_al_id_in_cache(Arr.SONARR, 8, _entry(datetime(2021, 6, 5, 4, 3, 2))) is False
+        assert (
+            store.check_al_id_in_cache(Arr.SONARR, 8, make_entry_record(updated_at=datetime(2021, 6, 5, 4, 3, 2)))
+            is False
+        )
         store.close()
 
-    def test_arrs_are_isolated(self, tmp_path) -> None:
+    def test_arrs_are_isolated(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"name": "S"})
         store.update_cache(Arr.RADARR, 7, {"name": "R"})
@@ -106,7 +122,7 @@ class TestEntries:
         assert store.get_cached_name(Arr.RADARR, 7) == "R"
         store.close()
 
-    def test_get_entry_reads_all_scalar_columns_at_once(self, tmp_path) -> None:
+    def test_get_entry_reads_all_scalar_columns_at_once(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(
             Arr.SONARR,
@@ -127,7 +143,7 @@ class TestEntries:
 
 
 class TestTorrentHashes:
-    def test_roundtrip_preserves_none_marker(self, tmp_path) -> None:
+    def test_roundtrip_preserves_none_marker(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["aaa", "bbb", None]})
         # The None marker (a hashless release) is preserved - the planner dedups on
@@ -137,20 +153,20 @@ class TestTorrentHashes:
         assert store.torrent_hashes(Arr.SONARR, 999) == []
         store.close()
 
-    def test_duplicate_none_markers_collapse_to_one(self, tmp_path) -> None:
+    def test_duplicate_none_markers_collapse_to_one(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"torrent_hashes": [None, "aaa", None]})
         assert store.torrent_hashes(Arr.SONARR, 7) == [None, "aaa"]
         store.close()
 
-    def test_rewrite_replaces_the_set(self, tmp_path) -> None:
+    def test_rewrite_replaces_the_set(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["aaa", "bbb"]})
         store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["ccc"]})
         assert store.torrent_hashes(Arr.SONARR, 7) == ["ccc"]
         store.close()
 
-    def test_none_marker_on_a_preexisting_db(self, tmp_path) -> None:
+    def test_none_marker_on_a_preexisting_db(self, tmp_path: Path) -> None:
         # Upgrade path: a cache.db from the first release has `infohash TEXT NOT NULL`,
         # and CREATE TABLE IF NOT EXISTS will NOT alter it - so the None marker must
         # round-trip via the sentinel WITHOUT an IntegrityError, not lean on a schema
@@ -175,14 +191,14 @@ class TestTorrentHashes:
 
 
 class TestPreviewGate:
-    def test_preview_save_on_missing_file_writes_nothing(self, tmp_path) -> None:
+    def test_preview_save_on_missing_file_writes_nothing(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"name": "Title"})
         store.save(preview=True)
         store.close()
         assert not (tmp_path / "cache.db").exists()
 
-    def test_real_save_on_missing_file_creates_and_persists(self, tmp_path) -> None:
+    def test_real_save_on_missing_file_creates_and_persists(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"name": "Title"})
         store.save(preview=False)
@@ -193,7 +209,7 @@ class TestPreviewGate:
         assert reopened.get_cached_name(Arr.SONARR, 7) == "Title"
         reopened.close()
 
-    def test_preview_on_existing_db_does_not_mutate_committed_state(self, tmp_path) -> None:
+    def test_preview_on_existing_db_does_not_mutate_committed_state(self, tmp_path: Path) -> None:
         # Establish a real, committed db.
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"name": "Original"})
@@ -214,7 +230,7 @@ class TestPreviewGate:
 
 
 class TestAnilistMeta:
-    def test_roundtrip_get_and_iter(self, tmp_path) -> None:
+    def test_roundtrip_get_and_iter(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         rec = {"fetched_at": "2026-06-20 12:00:00", "data": {"Media": {"id": 1}}}
         store.put_anilist_meta(1, rec)
@@ -223,7 +239,7 @@ class TestAnilistMeta:
         assert dict(store.iter_anilist_meta()) == {1: rec}
         store.close()
 
-    def test_put_overwrites(self, tmp_path) -> None:
+    def test_put_overwrites(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.put_anilist_meta(1, {"fetched_at": "2026-06-20 12:00:00", "data": {"a": 1}})
         store.put_anilist_meta(1, {"fetched_at": "2026-06-26 12:00:00", "data": {"a": 2}})
@@ -234,7 +250,7 @@ class TestAnilistMeta:
 
 
 class TestSonarrParse:
-    def test_roundtrip_get_and_iter(self, tmp_path) -> None:
+    def test_roundtrip_get_and_iter(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         rec = {"fetched_at": "2026-06-20 12:00:00", "episodes": [{"season": 1, "episode": 2}]}
         store.put_sonarr_parse("file.mkv", rec)
@@ -245,7 +261,7 @@ class TestSonarrParse:
 
 
 class TestPendingImports:
-    def test_roundtrip_drop_and_arr_isolation(self, tmp_path) -> None:
+    def test_roundtrip_drop_and_arr_isolation(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         rec = {"infohash": "h1", "series_id": 5, "episode_ids": [1, 2]}
         store.put_pending(Arr.SONARR, "h1", rec)
@@ -259,7 +275,7 @@ class TestPendingImports:
         store.drop_pending(Arr.SONARR, "nope")
         store.close()
 
-    def test_get_pending_for_series_filters_in_sql(self, tmp_path) -> None:
+    def test_get_pending_for_series_filters_in_sql(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         a = {"infohash": "a", "series_id": 5}
         b = {"infohash": "b", "series_id": 5}
@@ -281,7 +297,7 @@ class TestPendingImports:
 
 class TestLegacyMigration:
     @staticmethod
-    def _legacy() -> dict[str, Any]:
+    def _legacy() -> dict[str, object]:
         return {
             "description": {"seadexarr_version": "0.0.0", "config_checksum": "old"},
             "anilist_entries": {
@@ -307,7 +323,7 @@ class TestLegacyMigration:
             },
         }
 
-    def test_migration_seeds_all_blocks_and_retires_legacy(self, tmp_path) -> None:
+    def test_migration_seeds_all_blocks_and_retires_legacy(self, tmp_path: Path) -> None:
         legacy = tmp_path / "cache.json"
         legacy.write_text(json.dumps(self._legacy()))
         db = str(tmp_path / "cache.db")
@@ -327,7 +343,7 @@ class TestLegacyMigration:
         assert reopened.get_cached_field(Arr.SONARR, 7, CacheField.COVERAGE) == "S01"
         # legacy ["aaa", None, "bbb"] -> None marker preserved (de-duped, order-free)
         assert set(reopened.torrent_hashes(Arr.SONARR, 7)) == {"aaa", "bbb", None}
-        assert reopened.check_al_id_in_cache(Arr.SONARR, 7, _entry(datetime(2021, 6, 5, 4, 3, 2)))
+        assert reopened.check_al_id_in_cache(Arr.SONARR, 7, make_entry_record(updated_at=datetime(2021, 6, 5, 4, 3, 2)))
         meta = reopened.get_anilist_meta(7)
         assert meta is not None and meta["data"] == {"Media": {"id": 7}}
         parse = reopened.get_sonarr_parse("file.mkv")
@@ -336,7 +352,7 @@ class TestLegacyMigration:
         assert reopened.get_pending(Arr.SONARR) == {"h1": {"infohash": "h1", "series_id": 5}}
         reopened.close()
 
-    def test_preview_migration_persists_nothing(self, tmp_path) -> None:
+    def test_preview_migration_persists_nothing(self, tmp_path: Path) -> None:
         legacy = tmp_path / "cache.json"
         legacy.write_text(json.dumps(self._legacy()))
         db = str(tmp_path / "cache.db")
@@ -349,7 +365,7 @@ class TestLegacyMigration:
         assert not (tmp_path / "cache.db").exists()
         assert legacy.exists()
 
-    def test_failed_promote_does_not_orphan_migration(self, tmp_path) -> None:
+    def test_failed_promote_does_not_orphan_migration(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # If the promote rename fails (disk full / killed mid-copy), it must leave NO
         # partial cache.db and must NOT retire the legacy file - else the next load
         # sees an (empty) db, skips migrate_from, and silently abandons the legacy
@@ -359,10 +375,9 @@ class TestLegacyMigration:
         db = str(tmp_path / "cache.db")
 
         store = CacheStore.load(db, config_checksum=CHECKSUM, migrate_from=str(legacy))
-        with (
-            mock.patch("seadexarr.modules.cache.os.replace", side_effect=OSError("boom")),
-            contextlib.suppress(OSError),
-        ):
+        # Scope the patch to this save only: the later ``again.save`` must promote for real.
+        with monkeypatch.context() as mp, contextlib.suppress(OSError):
+            mp.setattr("seadexarr.modules.cache.os.replace", _raise_os_replace)
             store.save(preview=False)
         store.close()
 
@@ -385,7 +400,7 @@ class TestRunLifecycle:
     tests mock cache_store, so this is the only check that the real load -> writes ->
     save(commit) -> close(rollback) -> reopen sequence behaves)."""
 
-    def test_run_call_order_persists_and_reloads(self, tmp_path) -> None:
+    def test_run_call_order_persists_and_reloads(self, tmp_path: Path) -> None:
         db = str(tmp_path / "cache.db")
 
         # Run 1 (real): process one entry the way the loop does, then commit + close.
@@ -408,7 +423,7 @@ class TestRunLifecycle:
 
         # Run 2: reopen -> cache hit, remembered hashes, carried-over pending.
         again = CacheStore.load(db, config_checksum=CHECKSUM)
-        assert again.check_al_id_in_cache(Arr.SONARR, 7, _entry(datetime(2026, 1, 2, 3, 4, 5)))
+        assert again.check_al_id_in_cache(Arr.SONARR, 7, make_entry_record(updated_at=datetime(2026, 1, 2, 3, 4, 5)))
         assert again.torrent_hashes(Arr.SONARR, 7) == ["aaa", "bbb"]
         assert again.get_pending(Arr.SONARR) == {"aaa": {"infohash": "aaa", "series_id": 5}}
         # A completed import is dropped, and that drop persists across a save.
@@ -422,7 +437,7 @@ class TestRunLifecycle:
 
 
 class TestMaintenance:
-    def test_evict_anilist_meta_drops_only_stale(self, tmp_path) -> None:
+    def test_evict_anilist_meta_drops_only_stale(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.put_anilist_meta(1, {"fetched_at": "2020-01-01 00:00:00", "data": {"x": 1}})
         store.put_anilist_meta(2, {"fetched_at": "2026-06-26 12:00:00", "data": {"x": 2}})
@@ -431,7 +446,7 @@ class TestMaintenance:
         assert store.get_anilist_meta(2) is not None
         store.close()
 
-    def test_evict_sonarr_parse_drops_only_stale(self, tmp_path) -> None:
+    def test_evict_sonarr_parse_drops_only_stale(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         eps = [{"season": 1, "episode": 1}]
         store.put_sonarr_parse("old.mkv", {"fetched_at": "2020-01-01 00:00:00", "episodes": eps})
@@ -441,7 +456,7 @@ class TestMaintenance:
         assert store.get_sonarr_parse("new.mkv") is not None
         store.close()
 
-    def test_evict_sweeps_stampless_records(self, tmp_path) -> None:
+    def test_evict_sweeps_stampless_records(self, tmp_path: Path) -> None:
         # A record with no fetched_at -> NULL generated column. It is unreadable
         # (record_is_fresh rejects it) and must not become un-evictable dead weight.
         store = _open(tmp_path)
@@ -455,7 +470,7 @@ class TestMaintenance:
         assert store.get_sonarr_parse("nostamp.mkv") is None
         store.close()
 
-    def test_stats_and_integrity(self, tmp_path) -> None:
+    def test_stats_and_integrity(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"name": "T", "torrent_hashes": ["a", "b"]})
         store.put_anilist_meta(1, {"fetched_at": "2026-06-26 12:00:00", "data": {}})
@@ -476,12 +491,12 @@ class TestCorruptStore:
     def test_is_corruption_distinguishes_corrupt_from_transient(self) -> None:
         # Quarantine wipes the db, so it must fire ONLY on real corruption - never on
         # a transient lock/IO error (which would destroy a healthy cache on a fluke).
-        assert _is_corruption(sqlite3.DatabaseError("file is not a database")) is True
-        assert _is_corruption(sqlite3.DatabaseError("database disk image is malformed")) is True
-        assert _is_corruption(sqlite3.OperationalError("database is locked")) is False
-        assert _is_corruption(sqlite3.OperationalError("disk I/O error")) is False
+        assert is_corruption(sqlite3.DatabaseError("file is not a database")) is True
+        assert is_corruption(sqlite3.DatabaseError("database disk image is malformed")) is True
+        assert is_corruption(sqlite3.OperationalError("database is locked")) is False
+        assert is_corruption(sqlite3.OperationalError("disk I/O error")) is False
 
-    def test_locked_healthy_db_is_not_quarantined(self, tmp_path) -> None:
+    def test_locked_healthy_db_is_not_quarantined(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # A healthy db whose load() hits a non-corruption DatabaseError must NOT be
         # quarantined: the error propagates (fail closed) and the file is untouched.
         store = _open(tmp_path)
@@ -491,10 +506,8 @@ class TestCorruptStore:
         db = tmp_path / "cache.db"
 
         # Simulate a transient lock at open time (e.g. the WAL switch hitting BUSY).
-        with mock.patch(
-            "seadexarr.modules.cache._connect",
-            side_effect=sqlite3.OperationalError("database is locked"),
-        ):
+        with monkeypatch.context() as mp:
+            mp.setattr("seadexarr.modules.cache._connect", _raise_locked)
             raised = False
             try:
                 CacheStore.load(str(db), config_checksum=CHECKSUM)
@@ -505,7 +518,7 @@ class TestCorruptStore:
         assert db.exists()  # healthy db left in place
         assert not list(tmp_path.glob("cache.db.corrupt-*"))  # never quarantined
 
-    def test_corrupt_db_is_quarantined_and_recovered(self, tmp_path) -> None:
+    def test_corrupt_db_is_quarantined_and_recovered(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"
         db.write_text("this is not a sqlite database")  # torn-write stand-in
 

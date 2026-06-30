@@ -1,3 +1,7 @@
+# pyright: strict
+# pyright: reportPrivateUsage=false
+# The tests assert on the strat's private collaborators (_parse / _reconciler),
+# which strict re-flags; the repo disables reportPrivateUsage for tests.
 """Unit tests for ``ImportReconciler.build_pending_seeds`` (via the strat).
 
 The seed-construction heart of the wait/import feature: it turns the filtered
@@ -7,16 +11,35 @@ cached ``/parse`` results and the ``(season, episode) -> id`` index. Built bare
 (no live Sonarr) with a seeded in-memory parse cache.
 """
 
-from unittest import mock
-
 from seadexarr.modules.manual_import import normalize_basename
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import SonarrEpisode
 
 from .builders import FakeCacheStore, make_config, make_logger, make_sonarr_sync, rg_group, url_item
 
+# One persisted ``/parse`` cache shape: ``filename -> {"episodes": [{season, episode}]}``.
+# The seed builder reads ``record["episodes"]`` straight off this (no freshness stamp),
+# so the test records carry only that key.
+type ParseCache = dict[str, dict[str, list[dict[str, int]]]]
 
-def _strat(parse_cache: dict) -> SonarrSync:
+
+class _FakeSonarrParse:
+    """Stands in for the ``SonarrClient`` the parse cache calls.
+
+    ``SonarrParseCache.parse_episodes_from_seadex`` only touches ``sonarr.parse``;
+    this scripts that one result so the parse pass populates the shared cache itself
+    (replacing a ``MagicMock`` whose ``parse.return_value`` was set inline).
+    """
+
+    def __init__(self, result: list[dict[str, int]] | None) -> None:
+        self._result = result
+
+    def parse(self, filename: str) -> list[dict[str, int]] | None:
+        del filename
+        return self._result
+
+
+def _strat(parse_cache: ParseCache) -> SonarrSync:
     return make_sonarr_sync(
         cache_store=FakeCacheStore(sonarr_parse=parse_cache),
     )
@@ -145,8 +168,7 @@ class TestParseWriteVisibleToSeeds:
     run is visible to the seed read - the staged-write invariant the split risks."""
 
     def test_parse_write_feeds_seed_build(self) -> None:
-        sonarr = mock.MagicMock()
-        sonarr.parse.return_value = [{"season": 1, "episode": 1}]
+        sonarr = _FakeSonarrParse([{"season": 1, "episode": 1}])
         # No pre-seed: the parse pass must populate the shared cache itself.
         strat = make_sonarr_sync(
             sonarr=sonarr,
