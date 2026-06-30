@@ -13,6 +13,7 @@ the test that drives them.
 """
 
 import logging
+from collections.abc import Callable
 from typing import override
 
 from seadexarr.modules.manual_import import ImportProbe, ImportProgress, PendingImport
@@ -23,6 +24,7 @@ from seadexarr.modules.seadex_types import (
     Language,
     ManualImportCandidate,
     ManualImportFile,
+    ParsedFileInfo,
     QualityDefinition,
     QueueRecord,
     SonarrEpisode,
@@ -137,6 +139,7 @@ class FakeSonarrClient:
         quality_defs: list[QualityDefinition] | None = None,
         languages: list[Language] | None = None,
         parse: list[dict[str, int]] | None = None,
+        parse_episode_info_fn: Callable[[str], ParsedFileInfo | None] | None = None,
         execute_command_id: int | None = None,
         command_status: CommandResource | None = None,
         refresh_count: int | None = 7,
@@ -148,31 +151,42 @@ class FakeSonarrClient:
         self.quality_defs_return: list[QualityDefinition] = quality_defs or []
         self.languages_return: list[Language] = languages or []
         self.parse_return: list[dict[str, int]] | None = parse
+        self.parse_episode_info_fn: Callable[[str], ParsedFileInfo | None] = parse_episode_info_fn or (lambda _f: None)
         self.execute_command_id = execute_command_id
         self.command_status_return = (
             command_status if command_status is not None else CommandResource(status="completed")
         )
         self.refresh_count = refresh_count
-        # Recorded import-command calls (the typed replacement for MagicMock's
-        # assert_called / call_args): one tuple per call.
+        # Recorded calls (the typed replacement for MagicMock's assert_called /
+        # call_args / call_count): the import commands keep their full args; the
+        # plain reads keep a count / arg-list so a test can assert (not-)called.
         self.candidate_calls: list[tuple[PendingImport, bool]] = []
         self.execute_calls: list[tuple[list[ManualImportFile], str]] = []
+        self.queue_calls: int = 0
+        self.episodes_calls: list[int] = []
+        self.refresh_calls: int = 0
 
     def queue(self) -> list[QueueRecord]:
+        self.queue_calls += 1
         return self.queue_return
 
     def list_commands(self) -> list[CommandResource]:
         return self.commands_return
 
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
-        del series_id, quiet
+        del quiet
+        self.episodes_calls.append(series_id)
         return self.episodes_return
 
     def parse(self, filename: str) -> list[dict[str, int]] | None:
         del filename
         return self.parse_return
 
+    def parse_episode_info(self, filename: str) -> ParsedFileInfo | None:
+        return self.parse_episode_info_fn(filename)
+
     def refresh_monitored_downloads(self) -> int | None:
+        self.refresh_calls += 1
         return self.refresh_count
 
     def command_status(self, command_id: int) -> CommandResource:
