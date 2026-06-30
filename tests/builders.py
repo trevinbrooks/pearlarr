@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import Any, cast
 
 import requests
-from seadex import EntryRecord, Tag, TorrentRecord, Tracker
+from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
 from seadexarr.modules.anilist_gateway import AniListGateway
 from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT, CachedEntry, CacheField, CacheRecord, CacheStoreProtocol
@@ -415,6 +415,45 @@ def make_entry_record(
         torrents=torrents,
         updated_at=stamp,
         url=url,
+        size=size,
+    )
+
+
+def make_torrent_record(
+    *,
+    release_group: str = "SubsPlease",
+    tracker: Tracker = Tracker.NYAA,
+    url: str = "https://nyaa.si/1",
+    infohash: str = "a" * 40,
+    file_names: tuple[str, ...] = (),
+    file_size: int = 1000,
+    is_dual_audio: bool = False,
+    is_best: bool = True,
+    size: int = 1000,
+) -> TorrentRecord:
+    """A real ``seadex.TorrentRecord`` (frozen msgspec) with sane release defaults.
+
+    ``file_names`` are wrapped into ``seadex.File`` entries (each ``file_size`` bytes)
+    so a caller seeds the on-disk file list the Sonarr matching parses, without
+    importing the library leaf types itself.
+    """
+
+    stamp = datetime(2026, 1, 1)
+    return TorrentRecord(
+        collection_id="c",
+        collection_name="cn",
+        created_at=stamp,
+        is_dual_audio=is_dual_audio,
+        files=tuple(File(name=name, size=file_size) for name in file_names),
+        id="t1",
+        infohash=infohash,
+        is_best=is_best,
+        release_group=release_group,
+        tags=frozenset[Tag](),
+        tracker=tracker,
+        updated_at=stamp,
+        url=url,
+        grouped_url=None,
         size=size,
     )
 
