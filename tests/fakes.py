@@ -18,6 +18,15 @@ from typing import override
 from seadexarr.modules.manual_import import ImportProbe, ImportProgress, PendingImport
 from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.protocols import ArrSync, EpisodeProgress
+from seadexarr.modules.seadex_types import (
+    CommandResource,
+    Language,
+    ManualImportCandidate,
+    ManualImportFile,
+    QualityDefinition,
+    QueueRecord,
+    SonarrEpisode,
+)
 
 
 class FakeArrItem:
@@ -105,6 +114,94 @@ class FakeStrategy(ArrSync[FakeArrItem]):
     @override
     def import_progress(self, pending: PendingImport) -> ImportProgress:
         raise NotImplementedError  # override in a test that drives the import hook
+
+
+class FakeSonarrClient:
+    """A typed, scriptable stand-in for ``SonarrClient``'s read/command surface.
+
+    Each read returns a per-instance field a test presets or reassigns mid-test
+    (e.g. ``fake.episodes_return = [...]``); the two import commands RECORD their
+    typed call args, so a test asserts on recorded state (``execute_calls`` /
+    ``candidate_calls``) instead of a ``MagicMock`` ``assert_called`` / ``call_args``.
+    Absorbed as ``Any`` by ``make_sonarr_sync(sonarr=...)``, so it need not subclass
+    the real client - it only has to answer the methods the strategy/executor call.
+    """
+
+    def __init__(
+        self,
+        *,
+        queue: list[QueueRecord] | None = None,
+        episodes: list[SonarrEpisode] | None = None,
+        commands: list[CommandResource] | None = None,
+        candidates: list[ManualImportCandidate] | None = None,
+        quality_defs: list[QualityDefinition] | None = None,
+        languages: list[Language] | None = None,
+        parse: list[dict[str, int]] | None = None,
+        execute_command_id: int | None = None,
+        command_status: CommandResource | None = None,
+        refresh_count: int | None = 7,
+    ) -> None:
+        self.queue_return: list[QueueRecord] = queue or []
+        self.episodes_return: list[SonarrEpisode] | None = [] if episodes is None else episodes
+        self.commands_return: list[CommandResource] = commands or []
+        self.candidates_return: list[ManualImportCandidate] | None = candidates
+        self.quality_defs_return: list[QualityDefinition] = quality_defs or []
+        self.languages_return: list[Language] = languages or []
+        self.parse_return: list[dict[str, int]] | None = parse
+        self.execute_command_id = execute_command_id
+        self.command_status_return = (
+            command_status if command_status is not None else CommandResource(status="completed")
+        )
+        self.refresh_count = refresh_count
+        # Recorded import-command calls (the typed replacement for MagicMock's
+        # assert_called / call_args): one tuple per call.
+        self.candidate_calls: list[tuple[PendingImport, bool]] = []
+        self.execute_calls: list[tuple[list[ManualImportFile], str]] = []
+
+    def queue(self) -> list[QueueRecord]:
+        return self.queue_return
+
+    def list_commands(self) -> list[CommandResource]:
+        return self.commands_return
+
+    def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
+        del series_id, quiet
+        return self.episodes_return
+
+    def parse(self, filename: str) -> list[dict[str, int]] | None:
+        del filename
+        return self.parse_return
+
+    def refresh_monitored_downloads(self) -> int | None:
+        return self.refresh_count
+
+    def command_status(self, command_id: int) -> CommandResource:
+        del command_id
+        return self.command_status_return
+
+    def quality_definitions(self) -> list[QualityDefinition]:
+        return self.quality_defs_return
+
+    def languages(self) -> list[Language]:
+        return self.languages_return
+
+    def manual_import_candidates(
+        self,
+        *,
+        pending: PendingImport,
+        filter_existing_files: bool = False,
+    ) -> list[ManualImportCandidate] | None:
+        self.candidate_calls.append((pending, filter_existing_files))
+        return self.candidates_return
+
+    def manual_import_execute(
+        self,
+        *,
+        files: list[ManualImportFile],
+        import_mode: str = "auto",
+    ) -> int | None:
+        self.execute_calls.append((files, import_mode))
+        return self.execute_command_id
 
 
 class CaptureHandler(logging.Handler):
