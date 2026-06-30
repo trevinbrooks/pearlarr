@@ -1,3 +1,4 @@
+# pyright: strict
 """Unit tests for ``MappingStore``: the freshness gate, atomic populate, schema
 rebuild on version change, corruption fail-open, and cross-open durability.
 
@@ -8,6 +9,7 @@ empty tables, and that an unchanged source persists across process restarts.
 
 import sqlite3
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -75,7 +77,7 @@ class TestAtomicReplace:
 
 
 class TestSchemaVersion:
-    def test_version_mismatch_rebuilds_tables(self, tmp_path) -> None:
+    def test_version_mismatch_rebuilds_tables(self, tmp_path: Path) -> None:
         path = str(tmp_path / "mappings.db")
         store = MappingStore.open(path)
         store.replace_anime_ids("d", [ROW])
@@ -95,7 +97,7 @@ class TestSchemaVersion:
 
 
 class TestCorruptionFailOpen:
-    def test_garbage_file_is_quarantined_and_store_still_works(self, tmp_path) -> None:
+    def test_garbage_file_is_quarantined_and_store_still_works(self, tmp_path: Path) -> None:
         path = tmp_path / "mappings.db"
         path.write_bytes(b"this is definitely not a sqlite database" * 16)
 
@@ -110,7 +112,7 @@ class TestCorruptionFailOpen:
 
 
 class TestDurability:
-    def test_missing_file_created_and_persists_across_opens(self, tmp_path) -> None:
+    def test_missing_file_created_and_persists_across_opens(self, tmp_path: Path) -> None:
         path = str(tmp_path / "mappings.db")
 
         store = MappingStore.open(path)

@@ -1,3 +1,4 @@
+# pyright: strict
 """Characterization tests for the Pydantic ``AppConfig`` model tree.
 
 Pins the validated-settings behaviour: per-group defaults, blank-YAML coalescing,
@@ -6,6 +7,7 @@ requirement, and the file lifecycle (template copy + checksum).
 """
 
 import hashlib
+from pathlib import Path
 
 import pytest
 import yaml
@@ -25,7 +27,7 @@ from seadexarr.modules.manual_import import ImportWaitMode
 
 
 class TestFileLifecycle:
-    def test_missing_config_copies_template_and_raises(self, tmp_path) -> None:
+    def test_missing_config_copies_template_and_raises(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "config.yml"
         with pytest.raises(FileNotFoundError):
             AppConfig.load(str(cfg_path))
@@ -33,14 +35,14 @@ class TestFileLifecycle:
         assert cfg_path.exists()
         assert "sonarr" in yaml.safe_load(cfg_path.read_text())
 
-    def test_load_preserves_user_values(self, tmp_path) -> None:
+    def test_load_preserves_user_values(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "config.yml"
         cfg_path.write_text("sonarr:\n  url: http://x\nseadex:\n  public_only: false\n")
         cfg = AppConfig.load(str(cfg_path))
         assert cfg.sonarr.url == "http://x"
         assert cfg.seadex.public_only is False
 
-    def test_template_loads_as_all_defaults(self, tmp_path) -> None:
+    def test_template_loads_as_all_defaults(self, tmp_path: Path) -> None:
         # The shipped template is all-blank, so it must validate to the defaults.
         cfg_path = tmp_path / "config.yml"
         with pytest.raises(FileNotFoundError):
@@ -50,13 +52,13 @@ class TestFileLifecycle:
         assert cfg.imports.wait_mode is ImportWaitMode.OFF
         assert cfg.advanced.log_level == "INFO"
 
-    def test_checksum_matches_file_bytes(self, tmp_path) -> None:
+    def test_checksum_matches_file_bytes(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "config.yml"
         cfg_path.write_bytes(b"seadex:\n  public_only: true\n")
         cfg = AppConfig.load(str(cfg_path))
         assert cfg.checksum() == hashlib.md5(b"seadex:\n  public_only: true\n").hexdigest()
 
-    def test_load_parses_yaml_quirk_values_end_to_end(self, tmp_path) -> None:
+    def test_load_parses_yaml_quirk_values_end_to_end(self, tmp_path: Path) -> None:
         # Guards the real file -> yaml.safe_load -> AppConfig.load path (not just
         # model_validate) for the three parse-quirk coalescings: an unquoted `off`
         # (which YAML 1.1 parses as the bool False), a scalar tracker, and an explicit

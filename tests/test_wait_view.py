@@ -1,3 +1,6 @@
+# pyright: strict
+# pyright: reportPrivateUsage=false
+# ^ test imports/exercises wait_view internals (_DurableWaitView, _FrameAnchor, _anchor).
 """Tests for the wait-pass presentation (``wait_view``).
 
 The view is a pure function of an immutable :class:`WaitSnapshot`: the engine
@@ -17,10 +20,10 @@ from typing import override
 from rich.console import Console
 from rich.spinner import Spinner
 
+from seadexarr.modules.console_caps import Capabilities
 from seadexarr.modules.log import RichConsoleHandler
 from seadexarr.modules.manual_import import Outcome, OutcomeCategory
 from seadexarr.modules.wait_view import (
-    Capabilities,
     LiveWaitView,
     LogWaitView,
     Phase,

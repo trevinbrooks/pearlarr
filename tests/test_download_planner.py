@@ -1,3 +1,4 @@
+# pyright: strict
 """Characterization tests for the download-decision engine.
 
 This is the core domain logic extracted into ``DownloadPlanner`` in Phase 4:
@@ -12,7 +13,8 @@ import logging
 
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.seadex_types import EpisodeRecord
-from tests.builders import make_planner, rg_group, sonarr_ep, url_item
+
+from .builders import make_planner, rg_group, sonarr_ep, url_item
 
 
 class TestGetAnyToDownload:

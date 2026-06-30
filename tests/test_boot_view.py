@@ -1,3 +1,6 @@
+# pyright: strict
+# pyright: reportPrivateUsage=false
+# ^ test imports/exercises boot_view internals (_DurableBootView, _frame_text).
 """Tests for the startup cockpit (``boot_view``).
 
 The view wraps the pre-scan IO as timed steps: the composition root runs each

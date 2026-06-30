@@ -1,37 +1,37 @@
+# pyright: strict
 """Tests for SeaDexGateway bulk prefetch + by-id serving."""
 
 import logging
-from types import SimpleNamespace
-from typing import Any
 
 import httpx
-from seadex import EntryNotFoundError
+from seadex import EntryNotFoundError, EntryRecord
 
 from seadexarr.modules.seadex_gateway import SEADEX_BATCH_SIZE, SeaDexGateway
-from tests.builders import make_bare_instance
+
+from .builders import make_bare_instance, make_entry_record
 
 
-def _rec(al_id: int) -> Any:
-    return SimpleNamespace(anilist_id=al_id, updated_at=None)
+def _rec(al_id: int) -> EntryRecord:
+    return make_entry_record(anilist_id=al_id)
 
 
 class FakeSeaDex:
     """Stands in for ``SeaDexEntry``: ``from_filter`` (batch) + ``from_id`` (single)."""
 
-    def __init__(self, entries: dict[int, Any], *, fail_filter: bool = False) -> None:
+    def __init__(self, entries: dict[int, EntryRecord], *, fail_filter: bool = False) -> None:
         self.entries = entries
         self.fail_filter = fail_filter
         self.filter_calls: list[str] = []
         self.from_id_calls: list[int] = []
 
-    def from_filter(self, filter_str: str) -> list[Any]:
+    def from_filter(self, filter_str: str) -> list[EntryRecord]:
         self.filter_calls.append(filter_str)
         if self.fail_filter:
             raise httpx.ConnectError("down")
         ids = [int(part.split("=")[1]) for part in filter_str.split("||")]
         return [self.entries[i] for i in ids if i in self.entries]
 
-    def from_id(self, al_id: int) -> Any:
+    def from_id(self, al_id: int) -> EntryRecord:
         self.from_id_calls.append(al_id)
         if al_id in self.entries:
             return self.entries[al_id]
