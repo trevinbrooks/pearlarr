@@ -1,4 +1,5 @@
-"""Characterization tests for RunReporter + RunContext (Phase 4b).
+# pyright: strict
+"""Characterization tests for RunReporter + RunContext.
 
 The run loop and the end-of-run summary had no coverage before this phase, so
 these pin the run-state contracts the orchestrator depends on: the stats-tally
@@ -6,12 +7,21 @@ counters each ``log_*`` method bumps, the active-title attribution set by
 ``log_al_title``, and that the summary renders without error on both the real
 and dry-run paths. Presentation goes through a NullHandler logger, so the tests
 assert on the :class:`RunContext` mutations rather than exact log strings.
+
+The collaborators are real, not mocks: the reporter is built with the shared
+in-memory :class:`FakeCacheStore` (typed by ``CacheStoreProtocol``) and a real
+:class:`AniListGateway` whose own cache store is faked - the "construct the
+composite, fake its leaves" seam - so the whole file type-checks at strict.
 """
 
+import logging
 import time
-from typing import Any
+from typing import override
 
-from seadexarr.modules.cache import CachedEntry
+import pytest
+
+from seadexarr.modules.anilist_gateway import AniListGateway
+from seadexarr.modules.cache import CacheRecord, CacheStoreProtocol
 from seadexarr.modules.config import Arr
 from seadexarr.modules.log import LogFormatter
 from seadexarr.modules.manual_import import ImportWaitMode, PendingState
@@ -23,53 +33,42 @@ from seadexarr.modules.reporter import (
     RunStats,
 )
 from seadexarr.modules.torrents import AddOutcome, ReleaseOutcome
-from tests.builders import make_logger
+
+from .builders import FakeCacheStore, make_entry_record, make_logger
 
 
-class _FakeCacheStore:
-    """Minimal stand-in for CacheStore: the one row read the reporter makes."""
-
-    def __init__(self, name: str | None = None, fields: dict | None = None) -> None:
-        self._name = name
-        self._fields = fields or {}
-
-    def get_entry(self, arr: str, al_id: int) -> CachedEntry | None:
-        del arr, al_id
-        return CachedEntry(
-            updated_at=self._fields.get("updated_at"),
-            name=self._name,
-            url=self._fields.get("url"),
-            coverage=self._fields.get("coverage"),
-        )
-
-
-class _FakeAniList:
-    """Owns just the al_cache attribute the reporter reads/reassigns."""
+class _CaptureHandler(logging.Handler):
+    """Collects every emitted record so summary/action rows can be asserted."""
 
     def __init__(self) -> None:
-        self.al_cache: dict = {}
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    @override
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
 
 
-class _FakeEntry:
-    """SeaDex entry stand-in (the two fields log_al_title reads)."""
-
-    def __init__(self, url: str = "https://releases.moe/1", is_incomplete: bool = False) -> None:
-        self.url = url
-        self.is_incomplete = is_incomplete
-
-
-def _make_reporter(cache_store: Any = None) -> RunReporter:
+def _make_reporter(cache_store: CacheStoreProtocol | None = None) -> RunReporter:
     logger = make_logger()
-    # The fakes are duck-typed; pass them as Any so they satisfy the reporter's
-    # CacheStore / AniListGateway parameters without a per-call cast.
-    cache: Any = cache_store or _FakeCacheStore()
-    anilist: Any = _FakeAniList()
+    store: CacheStoreProtocol = cache_store if cache_store is not None else FakeCacheStore()
+    # A real gateway with a faked cache store: the reporter only reads/reassigns
+    # its ``al_cache`` dict, so the real wiring is exercised without a network.
+    anilist = AniListGateway(cache_store=FakeCacheStore(), logger=logger)
     return RunReporter(
         logger=logger,
         log_fmt=LogFormatter(logger),
-        cache_store=cache,
+        cache_store=store,
         anilist=anilist,
     )
+
+
+def _seeded_store(*, name: str, coverage: str, url: str) -> FakeCacheStore:
+    """A FakeCacheStore with one entry row (arr=Sonarr, al_id=1) preseeded."""
+
+    store = FakeCacheStore()
+    store.update_cache(Arr.SONARR, 1, CacheRecord(name=name, coverage=coverage, url=url))
+    return store
 
 
 def test_run_stats_shape() -> None:
@@ -98,18 +97,16 @@ class TestStatsCounters:
 
     def test_cached_uses_stored_name(self) -> None:
         # A stored name short-circuits the AniList lookup (no network)
-        reporter = _make_reporter(
-            _FakeCacheStore(name="Cached", fields={"coverage": "S01", "url": "u"}),
-        )
+        reporter = _make_reporter(_seeded_store(name="Cached", coverage="S01", url="u"))
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_cached_entry(ctx, Arr.SONARR, 1)
         assert ctx.stats.cached == 1
 
-    def test_no_sd_entry_increments_and_threads_al_cache(self, monkeypatch) -> None:
+    def test_no_sd_entry_increments_and_threads_al_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
         reporter = _make_reporter()
         monkeypatch.setattr(
             "seadexarr.modules.reporter.get_anilist_title",
-            lambda al_id, al_cache: ("Resolved", {**al_cache, al_id: "Resolved"}),
+            _fake_get_title,
         )
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_no_sd_entry(ctx, 42)
@@ -118,10 +115,16 @@ class TestStatsCounters:
         assert reporter.anilist.al_cache == {42: "Resolved"}
 
 
+def _fake_get_title(al_id: int, al_cache: dict[int, str]) -> tuple[str, dict[int, str]]:
+    """Stand-in for ``get_anilist_title``: resolves a fixed title, threads cache."""
+
+    return "Resolved", {**al_cache, al_id: "Resolved"}
+
+
 class TestActiveTitle:
     def test_log_al_title_sets_current(self) -> None:
         ctx = RunContext(arr=Arr.SONARR)
-        entry: Any = _FakeEntry(url="https://releases.moe/9")
+        entry = make_entry_record(url="https://releases.moe/9")
         _make_reporter().log_al_title(ctx, "Steins;Gate", entry, coverage="S01 E01-E24")
         assert ctx.current_title == "Steins;Gate"
         assert ctx.current_url == "https://releases.moe/9"
@@ -165,18 +168,15 @@ class TestRunSummary:
         )
 
 
-def _summary_messages(reporter: RunReporter, ctx: RunContext, **kwargs: Any) -> list[str]:
+def _summary_messages(
+    reporter: RunReporter,
+    ctx: RunContext,
+    *,
+    import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
+) -> list[str]:
     """Capture every log message log_run_summary emits, for row assertions."""
 
-    import logging
-
-    records: list[logging.LogRecord] = []
-
-    class _Capture(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            records.append(record)
-
-    handler = _Capture()
+    handler = _CaptureHandler()
     reporter.logger.addHandler(handler)
     reporter.logger.setLevel(logging.DEBUG)
     try:
@@ -185,11 +185,11 @@ def _summary_messages(reporter: RunReporter, ctx: RunContext, **kwargs: Any) -> 
             Arr.SONARR,
             is_preview=False,
             has_client=True,
-            **kwargs,
+            import_wait_mode=import_wait_mode,
         )
     finally:
         reporter.logger.removeHandler(handler)
-    return [r.getMessage() for r in records]
+    return [r.getMessage() for r in handler.records]
 
 
 class TestPendingSnapshot:
@@ -300,7 +300,9 @@ class TestSummaryPendingCounters:
 def _action_messages(
     reporter: RunReporter,
     results: list[ReleaseOutcome],
-    **kwargs: Any,
+    *,
+    dry_run: bool = False,
+    monitor_active: bool = False,
 ) -> tuple[bool, list[str]]:
     """Capture the status + per-release rows log_seadex_action emits.
 
@@ -308,22 +310,14 @@ def _action_messages(
     the assertions key only on the status line and the per-release outcome rows.
     """
 
-    import logging
-
-    records: list[logging.LogRecord] = []
-
-    class _Capture(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            records.append(record)
-
-    handler = _Capture()
+    handler = _CaptureHandler()
     reporter.logger.addHandler(handler)
     reporter.logger.setLevel(logging.DEBUG)
     try:
-        logged = reporter.log_seadex_action({}, results, **kwargs)
+        logged = reporter.log_seadex_action({}, results, dry_run=dry_run, monitor_active=monitor_active)
     finally:
         reporter.logger.removeHandler(handler)
-    return logged, [r.getMessage() for r in records]
+    return logged, [r.getMessage() for r in handler.records]
 
 
 class TestLogSeadexAction:

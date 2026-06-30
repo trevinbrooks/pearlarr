@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Any, cast
 from unittest import mock
 
-from seadex import EntryRecord, Tag, Tracker
+from seadex import EntryRecord, Tag, TorrentRecord, Tracker
 
 from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT, CachedEntry, CacheField, CacheRecord
 from seadexarr.modules.config import AppConfig, Arr
@@ -372,6 +372,41 @@ def make_config(**overrides: Any) -> AppConfig:
         group, field = _resolve_setting(key)
         nested.setdefault(group, {})[field] = value
     return AppConfig.model_validate(nested)
+
+
+def make_entry_record(
+    *,
+    anilist_id: int = 1,
+    url: str = "https://releases.moe/1",
+    is_incomplete: bool = False,
+    updated_at: datetime | None = None,
+    torrents: tuple[TorrentRecord, ...] = (),
+    size: int = 0,
+) -> EntryRecord:
+    """A real ``seadex.EntryRecord`` with the 13 required fields defaulted.
+
+    The library type is a frozen ``msgspec.Struct``, so it can't be duck-typed
+    under strict; this builds the real value with sane defaults and exposes the
+    handful of fields tests vary (``url``/``is_incomplete``/``updated_at``/
+    ``torrents``). Replaces the old per-file ``_FakeEntry`` stand-ins.
+    """
+
+    stamp = updated_at if updated_at is not None else datetime(2026, 1, 1)
+    return EntryRecord(
+        anilist_id=anilist_id,
+        collection_id="col",
+        collection_name="col-name",
+        comparisons=(),
+        created_at=stamp,
+        id="entry1",
+        is_incomplete=is_incomplete,
+        notes="",
+        theoretical_best=None,
+        torrents=torrents,
+        updated_at=stamp,
+        url=url,
+        size=size,
+    )
 
 
 def make_arr(**overrides: Any) -> SeaDexArr:
