@@ -25,7 +25,7 @@ from .seadex_types import (
     SonarrItem,
     TvdbMappings,
 )
-from .sonarr_client import SonarrClient
+from .sonarr_client import AbstractSonarrClient
 
 # Bounded concurrency for the episode/parse network fan-out. Only used when
 # advanced.sleep_time == 0; must stay <= the session's pool_maxsize (RunDeps.build).
@@ -130,13 +130,13 @@ class SonarrEpisodes:
     machinery (held as ``self._services`` for the prefetch needs-scan gate).
     """
 
-    def __init__(self, deps: RunDeps, sonarr: SonarrClient, services: SeaDexArr) -> None:
+    def __init__(self, deps: RunDeps, sonarr: AbstractSonarrClient, services: SeaDexArr) -> None:
         """Bind the shared collaborators the episode logic reads.
 
         Args:
             deps (RunDeps): The shared collaborators (config/mappings/AniList
                 gateway/log formatter are unpacked off it).
-            sonarr (SonarrClient): The strategy's Sonarr client (built once,
+            sonarr (AbstractSonarrClient): The strategy's Sonarr client (built once,
                 reused so a multi-season series fetches its episodes once).
             services (SeaDexArr): The run machinery; ``prefetch`` calls into it to
                 resolve AniList ids and the needs-scan gate.

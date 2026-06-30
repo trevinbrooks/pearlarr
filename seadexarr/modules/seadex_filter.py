@@ -3,7 +3,7 @@ import logging
 
 from seadex import EntryRecord
 
-from .cache import CacheStore
+from .cache import AbstractCacheStore
 from .config import PRIVATE_TRACKERS, AppConfig
 from .log import LogFormatter, indent_string
 from .planner import DownloadPlanner
@@ -32,7 +32,7 @@ class SeadexReleaseFilter:
         *,
         config: AppConfig,
         planner: DownloadPlanner,
-        cache_store: CacheStore,
+        cache_store: AbstractCacheStore,
         logger: logging.Logger,
         log_fmt: LogFormatter,
         ctx: RunContext,

@@ -6,7 +6,8 @@ and the two raw endpoints the syncer needs
 """
 
 import logging
-from typing import Any, cast
+from abc import ABC, abstractmethod
+from typing import Any, cast, override
 from urllib.parse import urlencode
 
 import requests
@@ -40,7 +41,66 @@ MANUAL_IMPORT_TIMEOUT_S = 120
 SONARR_REQUEST_TIMEOUT_S = (5, 30)
 
 
-class SonarrClient:
+class AbstractSonarrClient(ABC):
+    """The Sonarr read/command surface the four Sonarr collaborators consume.
+
+    A nominal seam (``cosmicpython``'s ``AbstractRepository`` pattern) over the
+    twelve public methods the episode / parse / mapper / import collaborators call
+    on their injected ``sonarr``. Both the real :class:`SonarrClient` and the test
+    ``FakeSonarrClient`` subclass it, so an incomplete fake is a static
+    ``reportAbstractUsage`` error *and* an un-instantiable ``TypeError`` - the
+    collaborators take this type, never the concrete client, so a fake is checked
+    against the real surface at the injection seam.
+    """
+
+    @abstractmethod
+    def all_series(self) -> list[SonarrItem]: ...
+
+    @abstractmethod
+    def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None: ...
+
+    @abstractmethod
+    def parse(self, filename: str) -> list[dict[str, int]] | None: ...
+
+    @abstractmethod
+    def parse_episode_info(self, filename: str) -> ParsedFileInfo | None: ...
+
+    @abstractmethod
+    def manual_import_candidates(
+        self,
+        *,
+        pending: PendingImport,
+        filter_existing_files: bool = False,
+    ) -> list[ManualImportCandidate] | None: ...
+
+    @abstractmethod
+    def manual_import_execute(
+        self,
+        *,
+        files: list[ManualImportFile],
+        import_mode: str = "auto",
+    ) -> int | None: ...
+
+    @abstractmethod
+    def refresh_monitored_downloads(self) -> int | None: ...
+
+    @abstractmethod
+    def queue(self) -> list[QueueRecord]: ...
+
+    @abstractmethod
+    def quality_definitions(self) -> list[QualityDefinition]: ...
+
+    @abstractmethod
+    def languages(self) -> list[Language]: ...
+
+    @abstractmethod
+    def command_status(self, command_id: int) -> CommandResource: ...
+
+    @abstractmethod
+    def list_commands(self) -> list[CommandResource]: ...
+
+
+class SonarrClient(AbstractSonarrClient):
     """Thin wrapper over the Sonarr API (``arrapi`` + two raw endpoints)."""
 
     def __init__(
@@ -68,6 +128,7 @@ class SonarrClient:
         self._logger = logger
         self._api = SonarrAPI(url=url, apikey=api_key)
 
+    @override
     def all_series(self) -> list[SonarrItem]:
         """Every series in Sonarr (unfiltered)."""
 
@@ -76,6 +137,7 @@ class SonarrClient:
         # client boundary into the project's typed shape.
         return cast("list[SonarrItem]", self._api.all_series())
 
+    @override
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
         """All episodes for a series, season/episode-sorted (``/api/v3/episode``).
 
@@ -124,6 +186,7 @@ class SonarrClient:
         )
         return [SonarrEpisode.from_api(ep) for ep in raw_eps]
 
+    @override
     def parse(self, filename: str) -> list[dict[str, int]] | None:
         """Ask Sonarr to parse a single filename into season/episode numbers.
 
@@ -192,6 +255,7 @@ class SonarrClient:
 
         return parsed
 
+    @override
     def parse_episode_info(self, filename: str) -> ParsedFileInfo | None:
         """Parse a filename into SERIES-AGNOSTIC season / episode / absolute numbers.
 
@@ -234,6 +298,7 @@ class SonarrClient:
         parse_body = cast("dict[str, Any]", parse_req.json())
         return ParsedFileInfo.from_parse_resource(parse_body)
 
+    @override
     def manual_import_candidates(
         self,
         *,
@@ -309,6 +374,7 @@ class SonarrClient:
         raw_candidates = cast("list[dict[str, Any]]", candidates_req.json())
         return [ManualImportCandidate.from_api(c) for c in raw_candidates]
 
+    @override
     def manual_import_execute(
         self,
         *,
@@ -342,6 +408,7 @@ class SonarrClient:
         }
         return self._post_command(body, label="ManualImport")
 
+    @override
     def refresh_monitored_downloads(self) -> int | None:
         """Queue Sonarr's ``RefreshMonitoredDownloads`` command.
 
@@ -386,6 +453,7 @@ class SonarrClient:
         command = CommandResource.from_api(cast("dict[str, Any]", command_req.json()))
         return command.id or None
 
+    @override
     def queue(self) -> list[QueueRecord]:
         """All Sonarr queue records (``/api/v3/queue``).
 
@@ -433,6 +501,7 @@ class SonarrClient:
         paged = cast("dict[str, list[dict[str, Any]]]", queue_req.json())
         return [QueueRecord.from_api(record) for record in paged.get("records", [])]
 
+    @override
     def quality_definitions(self) -> list[QualityDefinition]:
         """All Sonarr quality definitions (``/api/v3/qualitydefinition``).
 
@@ -462,6 +531,7 @@ class SonarrClient:
         # re-emits verbatim, so cast at the parse boundary.
         return cast("list[QualityDefinition]", defs_req.json())
 
+    @override
     def languages(self) -> list[Language]:
         """All Sonarr languages (``/api/v3/language``).
 
@@ -490,6 +560,7 @@ class SonarrClient:
         # cast at the parse boundary.
         return cast("list[Language]", langs_req.json())
 
+    @override
     def command_status(self, command_id: int) -> CommandResource:
         """Current state of a Sonarr command (``/api/v3/command/{id}``).
 
@@ -524,6 +595,7 @@ class SonarrClient:
         # to the consumed fields.
         return CommandResource.from_api(cast("dict[str, Any]", status_req.json()))
 
+    @override
     def list_commands(self) -> list[CommandResource]:
         """All Sonarr commands (``/api/v3/command``).
 

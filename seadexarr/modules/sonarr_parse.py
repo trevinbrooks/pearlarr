@@ -17,7 +17,7 @@ from .cache import UPDATED_AT_STR_FORMAT, record_is_fresh
 from .log import indent_string
 from .seadex_arr import RunDeps
 from .seadex_types import EpisodeRecord, SeadexDict
-from .sonarr_client import SonarrClient
+from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import fetch_workers
 
 TORRENT_FILENAMES_TO_SKIP = [
@@ -150,13 +150,13 @@ class SonarrParseCache:
     writes from ``parse_episodes_from_seadex`` are visible to a later same-run read.
     """
 
-    def __init__(self, deps: RunDeps, sonarr: SonarrClient) -> None:
+    def __init__(self, deps: RunDeps, sonarr: AbstractSonarrClient) -> None:
         """Bind the shared collaborators the parse cache reads.
 
         Args:
             deps (RunDeps): The shared collaborators (config/cache/logger unpacked
                 off it).
-            sonarr (SonarrClient): The strategy's Sonarr client (its ``/parse``).
+            sonarr (AbstractSonarrClient): The strategy's Sonarr client (its ``/parse``).
         """
 
         self.sonarr = sonarr

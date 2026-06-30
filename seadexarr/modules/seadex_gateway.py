@@ -13,9 +13,10 @@ cache never crosses runs (entries are stable within a run, may change between).
 """
 
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from itertools import batched
-from typing import Protocol
+from typing import Protocol, override
 
 import httpx
 from seadex import EntryNotFoundError, EntryRecord, SeaDexEntry
@@ -37,7 +38,24 @@ class PrefetchProgress(Protocol):
     def progress(self, fraction: float, detail: str | None = None) -> None: ...
 
 
-class SeaDexGateway:
+class SeaDexSource(ABC):
+    """The SeaDex lookup surface the run engine consumes.
+
+    A nominal seam over the two methods the engine reads off ``deps.seadex``
+    (:meth:`prefetch` to warm the per-run cache, :meth:`entry` to serve a lookup).
+    The real :class:`SeaDexGateway` subclasses it, so a test can inject a typed,
+    network-free stand-in via ``RunDeps.seadex`` that's checked against this
+    surface instead of laundered through a bare ``object.__new__`` instance.
+    """
+
+    @abstractmethod
+    def prefetch(self, al_ids: Iterable[int], *, progress: PrefetchProgress | None = None) -> int: ...
+
+    @abstractmethod
+    def entry(self, al_id: int) -> EntryRecord | None: ...
+
+
+class SeaDexGateway(SeaDexSource):
     """Thin wrapper over the SeaDex client: bulk prefetch + by-id lookups."""
 
     def __init__(self, *, logger: logging.Logger) -> None:
@@ -56,6 +74,7 @@ class SeaDexGateway:
         self._entry_cache: dict[int, EntryRecord] = {}
         self._prefetched: set[int] = set()
 
+    @override
     def prefetch(self, al_ids: Iterable[int], *, progress: PrefetchProgress | None = None) -> int:
         """Bulk-fetch SeaDex entries for many ids in batched OR-filter queries.
 
@@ -105,6 +124,7 @@ class SeaDexGateway:
         filter_str = " || ".join(f"alID={al_id}" for al_id in al_ids)
         return {record.anilist_id: record for record in self.seadex.from_filter(filter_str)}
 
+    @override
     def entry(self, al_id: int) -> EntryRecord | None:
         """Get the SeaDex entry for an AniList id, or None.
 

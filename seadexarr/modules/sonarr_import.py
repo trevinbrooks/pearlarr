@@ -60,7 +60,7 @@ from .seadex_types import (
     SeadexDict,
     SonarrEpisode,
 )
-from .sonarr_client import SonarrClient
+from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import SonarrEpisodes
 from .sonarr_mapper import FileEpisodeMapper
 from .sonarr_parse import is_video_candidate
@@ -85,13 +85,13 @@ class ImportExecutor:
     the queue/command reads that decision consults.
     """
 
-    def __init__(self, deps: RunDeps, sonarr: SonarrClient, mapper: FileEpisodeMapper) -> None:
+    def __init__(self, deps: RunDeps, sonarr: AbstractSonarrClient, mapper: FileEpisodeMapper) -> None:
         """Bind the Sonarr client, config/logger, and the file->episode mapper.
 
         Args:
             deps (RunDeps): The shared collaborators; the config + logger are read
                 off it.
-            sonarr (SonarrClient): The strategy's Sonarr client.
+            sonarr (AbstractSonarrClient): The strategy's Sonarr client.
             mapper (FileEpisodeMapper): The strategy's import-time mapper (its
                 ``candidate_files`` / ``assign`` build the authoritative map).
         """

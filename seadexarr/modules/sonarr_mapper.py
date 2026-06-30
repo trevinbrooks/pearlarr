@@ -18,7 +18,7 @@ from .manual_import import (
     parse_se_from_filename,
 )
 from .seadex_types import ManualImportCandidate, ParsedFileInfo
-from .sonarr_client import SonarrClient
+from .sonarr_client import AbstractSonarrClient
 from .sonarr_parse import is_video_candidate
 
 # Rejection-reason substrings, matched case-insensitively against each
@@ -62,11 +62,11 @@ class FileEpisodeMapper:
     basenames for the executor to warn about (producer/consumer split).
     """
 
-    def __init__(self, sonarr: SonarrClient) -> None:
+    def __init__(self, sonarr: AbstractSonarrClient) -> None:
         """Bind the Sonarr client the on-disk parse reads.
 
         Args:
-            sonarr (SonarrClient): The strategy's Sonarr client (its ``/parse``).
+            sonarr (AbstractSonarrClient): The strategy's Sonarr client (its ``/parse``).
         """
 
         self.sonarr = sonarr

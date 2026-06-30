@@ -28,7 +28,9 @@ from seadexarr.modules.seadex_types import (
     QualityDefinition,
     QueueRecord,
     SonarrEpisode,
+    SonarrItem,
 )
+from seadexarr.modules.sonarr_client import AbstractSonarrClient
 
 
 class FakeArrItem:
@@ -117,20 +119,22 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         raise NotImplementedError  # override in a test that drives the import hook
 
 
-class FakeSonarrClient:
-    """A typed, scriptable stand-in for ``SonarrClient``'s read/command surface.
+class FakeSonarrClient(AbstractSonarrClient):
+    """A typed, scriptable stand-in for the :class:`AbstractSonarrClient` surface.
 
     Each read returns a per-instance field a test presets or reassigns mid-test
     (e.g. ``fake.episodes_return = [...]``); the two import commands RECORD their
     typed call args, so a test asserts on recorded state (``execute_calls`` /
-    ``candidate_calls``). Absorbed as ``Any`` by ``make_sonarr_sync(sonarr=...)``, so
-    it need not subclass the real client - it only has to answer the methods the
-    strategy/executor call.
+    ``candidate_calls``). Subclasses the ``AbstractSonarrClient`` ABC, so it's
+    nominally checked against the real client's full twelve-method surface - a
+    missing method is a static ``reportAbstractUsage`` error and an
+    un-instantiable ``TypeError``, not a silently-absorbed ``Any``.
     """
 
     def __init__(
         self,
         *,
+        all_series: list[SonarrItem] | None = None,
         queue: list[QueueRecord] | None = None,
         episodes: list[SonarrEpisode] | None = None,
         commands: list[CommandResource] | None = None,
@@ -143,6 +147,7 @@ class FakeSonarrClient:
         command_status: CommandResource | None = None,
         refresh_count: int | None = 7,
     ) -> None:
+        self.all_series_return: list[SonarrItem] = all_series or []
         self.queue_return: list[QueueRecord] = queue or []
         self.episodes_return: list[SonarrEpisode] | None = [] if episodes is None else episodes
         self.commands_return: list[CommandResource] = commands or []
@@ -160,43 +165,59 @@ class FakeSonarrClient:
         # keep a count / arg-list so a test can assert (not-)called.
         self.candidate_calls: list[tuple[PendingImport, bool]] = []
         self.execute_calls: list[tuple[list[ManualImportFile], str]] = []
+        self.all_series_calls: int = 0
         self.queue_calls: int = 0
         self.episodes_calls: list[int] = []
         self.refresh_calls: int = 0
 
+    @override
+    def all_series(self) -> list[SonarrItem]:
+        self.all_series_calls += 1
+        return self.all_series_return
+
+    @override
     def queue(self) -> list[QueueRecord]:
         self.queue_calls += 1
         return self.queue_return
 
+    @override
     def list_commands(self) -> list[CommandResource]:
         return self.commands_return
 
+    @override
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
         del quiet
         self.episodes_calls.append(series_id)
         return self.episodes_return
 
+    @override
     def parse(self, filename: str) -> list[dict[str, int]] | None:
         del filename
         return self.parse_return
 
+    @override
     def parse_episode_info(self, filename: str) -> ParsedFileInfo | None:
         return self.parse_episode_info_fn(filename)
 
+    @override
     def refresh_monitored_downloads(self) -> int | None:
         self.refresh_calls += 1
         return self.refresh_count
 
+    @override
     def command_status(self, command_id: int) -> CommandResource:
         del command_id
         return self.command_status_return
 
+    @override
     def quality_definitions(self) -> list[QualityDefinition]:
         return self.quality_defs_return
 
+    @override
     def languages(self) -> list[Language]:
         return self.languages_return
 
+    @override
     def manual_import_candidates(
         self,
         *,
@@ -206,6 +227,7 @@ class FakeSonarrClient:
         self.candidate_calls.append((pending, filter_existing_files))
         return self.candidates_return
 
+    @override
     def manual_import_execute(
         self,
         *,

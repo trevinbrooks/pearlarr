@@ -23,7 +23,7 @@ from typing import Any
 
 import qbittorrentapi
 
-from .cache import UPDATED_AT_STR_FORMAT, CacheStore
+from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore
 from .config import AppConfig
 from .manual_import import (
     ImportProbe,
@@ -66,7 +66,7 @@ class ImportWaitManager:
         self,
         *,
         config: AppConfig,
-        cache_store: CacheStore,
+        cache_store: AbstractCacheStore,
         reporter: RunReporter,
         logger: logging.Logger,
         qbit: qbittorrentapi.Client | None,

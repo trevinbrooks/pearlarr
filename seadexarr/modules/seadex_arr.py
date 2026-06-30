@@ -13,7 +13,7 @@ from urllib3.util.retry import Retry
 
 from .anilist_gateway import AniListGateway
 from .boot_view import BootView, NullBootView
-from .cache import UPDATED_AT_STR_FORMAT, CacheRecord, CacheStore
+from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, CacheRecord, CacheStore
 from .config import AppConfig, Arr, ArrSettings
 from .grab_pipeline import GrabPipeline, GrabRequest
 from .import_wait import ImportWaitManager
@@ -33,7 +33,7 @@ from .planner import DownloadPlanner
 from .protocols import ArrSync, ImportCompleter
 from .reporter import RunContext, RunReporter, is_preview
 from .seadex_filter import SeadexReleaseFilter
-from .seadex_gateway import SeaDexGateway
+from .seadex_gateway import SeaDexGateway, SeaDexSource
 from .seadex_types import (
     ArrItem,
     ArrReleaseDict,
@@ -76,9 +76,9 @@ class RunDeps:
     qbit: qbittorrentapi.Client | None
     mappings: MappingResolver
     logger: logging.Logger
-    seadex: SeaDexGateway
+    seadex: SeaDexSource
     cache_file: str
-    cache_store: CacheStore
+    cache_store: AbstractCacheStore
     anilist: AniListGateway
     torrents: TorrentService
     notifier: Notifier

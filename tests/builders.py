@@ -15,7 +15,7 @@ test actually read.
 """
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import datetime
 from typing import Any, cast, override
 
@@ -35,7 +35,7 @@ from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.reporter import RunContext, RunReporter
 from seadexarr.modules.seadex_arr import RunDeps, SeaDexArr
 from seadexarr.modules.seadex_filter import SeadexReleaseFilter
-from seadexarr.modules.seadex_gateway import SeaDexGateway
+from seadexarr.modules.seadex_gateway import PrefetchProgress, SeaDexSource
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
     EpisodeRecord,
@@ -363,6 +363,32 @@ class FakeCacheStore(AbstractCacheStore):
         return "ok"
 
 
+class FakeSeaDexSource(SeaDexSource):
+    """In-memory ``SeaDexSource`` stand-in: serves preset entries, no network.
+
+    Retires ``make_run_deps``'s ``make_bare_instance(SeaDexGateway)`` landmine - a
+    zero-attribute bare instance laundered to ``Any``, every access an
+    ``AttributeError`` waiting to happen. Backed by a plain ``{al_id: EntryRecord}``
+    map: ``entry`` serves from it; ``prefetch`` is a no-op that records the ids and
+    reports their count (mirroring the real "how many needed fetching" return).
+    """
+
+    def __init__(self, entries: dict[int, EntryRecord] | None = None) -> None:
+        self._entries: dict[int, EntryRecord] = dict(entries or {})
+        self.prefetch_calls: list[list[int]] = []
+
+    @override
+    def prefetch(self, al_ids: Iterable[int], *, progress: PrefetchProgress | None = None) -> int:
+        del progress
+        ids = list(al_ids)
+        self.prefetch_calls.append(ids)
+        return len(ids)
+
+    @override
+    def entry(self, al_id: int) -> EntryRecord | None:
+        return self._entries.get(al_id)
+
+
 def make_logger(name: str = "seadexarr-test") -> logging.Logger:
     """A quiet logger for the characterization tests.
 
@@ -536,52 +562,60 @@ def make_arr(**overrides: Any) -> SeaDexArr:
     return make_bare_instance(SeaDexArr, **defaults)
 
 
-def make_run_deps(**overrides: Any) -> RunDeps:
-    """A real ``RunDeps`` (fakes/mocks) to drive the REAL ``SeaDexArr`` / ``SonarrSync``
+def make_run_deps(
+    *,
+    config: AppConfig | None = None,
+    cache_store: AbstractCacheStore | None = None,
+    seadex: SeaDexSource | None = None,
+    logger: logging.Logger | None = None,
+) -> RunDeps:
+    """A real ``RunDeps`` (typed fakes) to drive the REAL ``SeaDexArr`` / ``SonarrSync``
     ``__init__`` + ``begin_run`` rebind - the construction seam ``make_bare_instance``
     bypasses.
 
-    The config carries a Sonarr url/api_key so ``SonarrSync``'s ``require_connection``
-    passes; ``qbit`` is ``None`` (preview, no auth); ``cache_store`` is the in-memory
-    ``FakeCacheStore`` so the staged-write sharing can be asserted by identity. Pass
-    ``config=`` / ``cache_store=`` (or any field) to override.
+    Every field is passed to ``RunDeps`` by explicit keyword (no ``**dict[str, Any]``
+    launder), so each is type-checked against the dataclass field at this seam - a
+    wrong-typed fake (``cache_store=object()``, a non-``SeaDexSource`` seadex) is a
+    pyright error here, not a silent ``Any``. The config carries a Sonarr
+    url/api_key so ``SonarrSync``'s ``require_connection`` passes; ``qbit`` is
+    ``None`` (preview, no auth); ``cache_store`` defaults to the in-memory
+    ``FakeCacheStore`` so the staged-write sharing can be asserted by identity;
+    ``seadex`` to a network-free ``FakeSeaDexSource``.
     """
 
-    config = overrides.pop("config", None) or make_config(url="http://sonarr", api_key="key")
-    cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
-    logger = make_logger()
+    config = config or make_config(url="http://sonarr", api_key="key")
+    cache_store = cache_store or FakeCacheStore()
+    logger = logger or make_logger()
     log_fmt = LogFormatter(logger)
     session = requests.Session()
-    defaults: dict[str, Any] = {
-        "config": config,
-        "arr_config": config.for_arr(Arr.SONARR),
-        "config_file": "",
-        "session": session,
-        "qbit": None,
+    return RunDeps(
+        config=config,
+        arr_config=config.for_arr(Arr.SONARR),
+        config_file="",
+        session=session,
+        qbit=None,
         # A real resolver over empty in-memory mappings (no network) - it carries a
         # real (empty) ``anibridge`` the strategy reads at construction.
-        "mappings": MappingResolver(
+        mappings=MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
             anime_mappings_cfg={},
             anidb_mappings_cfg=False,
             anibridge_mappings_cfg=False,
         ),
-        "logger": logger,
-        # Bare: the SeaDex gateway's real __init__ builds an httpx-backed client; the
-        # wiring tests never call it, so skip construction rather than open a client.
-        "seadex": make_bare_instance(SeaDexGateway),
-        "cache_file": "",
-        "cache_store": cache_store,
-        "anilist": AniListGateway(cache_store=cache_store, logger=logger),
-        "torrents": _real_torrents(logger, session),
-        "notifier": Notifier(discord_url=None, webhook_url=None),
-        "planner": make_planner(),
-        "log_fmt": log_fmt,
-        "reporter": _real_reporter(logger, log_fmt, cache_store),
-    }
-    defaults.update(overrides)
-    return RunDeps(**defaults)
+        logger=logger,
+        # A typed, network-free SeaDex stand-in (the wiring tests never look one up);
+        # retires the old make_bare_instance(SeaDexGateway) Any-launder.
+        seadex=seadex or FakeSeaDexSource(),
+        cache_file="",
+        cache_store=cache_store,
+        anilist=AniListGateway(cache_store=cache_store, logger=logger),
+        torrents=_real_torrents(logger, session),
+        notifier=Notifier(discord_url=None, webhook_url=None),
+        planner=make_planner(),
+        log_fmt=log_fmt,
+        reporter=_real_reporter(logger, log_fmt, cache_store),
+    )
 
 
 def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:

@@ -19,7 +19,7 @@ import qbittorrentapi
 
 from . import coverage as _coverage
 from .anilist_gateway import AniListGateway
-from .cache import CacheRecord, CacheStore
+from .cache import AbstractCacheStore, CacheRecord
 from .config import AppConfig
 from .log import LogFormatter
 from .manual_import import ImportWaitMode, PendingImport
@@ -64,7 +64,7 @@ class GrabPipeline:
         *,
         config: AppConfig,
         planner: DownloadPlanner,
-        cache_store: CacheStore,
+        cache_store: AbstractCacheStore,
         torrents: TorrentService,
         anilist: AniListGateway,
         notifier: Notifier,
