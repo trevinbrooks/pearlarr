@@ -16,7 +16,6 @@ composite, fake its leaves" seam - so the whole file type-checks at strict.
 
 import logging
 import time
-from typing import override
 
 import pytest
 
@@ -35,18 +34,7 @@ from seadexarr.modules.reporter import (
 from seadexarr.modules.torrents import AddOutcome, ReleaseOutcome
 
 from .builders import FakeCacheStore, make_entry_record, make_logger
-
-
-class _CaptureHandler(logging.Handler):
-    """Collects every emitted record so summary/action rows can be asserted."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.records: list[logging.LogRecord] = []
-
-    @override
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
+from .fakes import CaptureHandler
 
 
 def _make_reporter(cache_store: AbstractCacheStore | None = None) -> RunReporter:
@@ -176,7 +164,7 @@ def _summary_messages(
 ) -> list[str]:
     """Capture every log message log_run_summary emits, for row assertions."""
 
-    handler = _CaptureHandler()
+    handler = CaptureHandler()
     reporter.logger.addHandler(handler)
     reporter.logger.setLevel(logging.DEBUG)
     try:
@@ -310,7 +298,7 @@ def _action_messages(
     the assertions key only on the status line and the per-release outcome rows.
     """
 
-    handler = _CaptureHandler()
+    handler = CaptureHandler()
     reporter.logger.addHandler(handler)
     reporter.logger.setLevel(logging.DEBUG)
     try:
