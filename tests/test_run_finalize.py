@@ -7,106 +7,23 @@ post-loop ``_finalize_run`` site - the same site the normal end-of-run path
 reaches. These pin both halves of that hoist so a future change can't silently
 double-finalize or skip the blocking/import pass on the cap-reached break.
 
-The strategy is a real typed :class:`FakeStrategy` (an ``ArrSync`` recording its
-``process_al_id`` calls), the engine's collaborators are small typed fakes, and
-``_finalize_run`` is replaced by a typed recorder - so the contracts are pinned
-by asserting recorded state, not ``MagicMock`` call interactions, and the file
-type-checks at strict.
+The strategy is the shared typed :class:`FakeStrategy` (an ``ArrSync`` recording
+its ``process_al_id`` calls), the engine's collaborators are small typed fakes,
+and ``_finalize_run`` is replaced by a typed recorder - so the contracts are
+pinned by asserting recorded state, not ``MagicMock`` call interactions.
 """
 
 import logging
-from typing import override
 
 from seadexarr.modules.anilist_gateway import PrefetchProgress
 from seadexarr.modules.config import Arr
-from seadexarr.modules.manual_import import ImportProbe, ImportProgress, PendingImport
 from seadexarr.modules.mappings import MappingEntry
-from seadexarr.modules.protocols import ArrSync, EpisodeProgress, ImportCompleter
+from seadexarr.modules.protocols import ImportCompleter
 from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.seadex_arr import SeaDexArr
 
-from .builders import make_bare_instance, make_config, make_logger
-
-
-class _Item:
-    """A minimal Arr item satisfying the ``ArrItem`` protocol surface."""
-
-    def __init__(self, *, item_id: int = 1, title: str = "Show", monitored: bool = True) -> None:
-        self.id = item_id
-        self.title = title
-        self.imdbId: str | None = None
-        self.monitored = monitored
-
-
-class FakeStrategy(ArrSync[_Item]):
-    """A typed, recording ``ArrSync`` for engine-orchestration tests.
-
-    Records each ``process_al_id`` call (the al_id), and lets a test script the
-    items, the resolved AniList ids, and whether ``process_al_id`` returns the
-    cap-reached sentinel or raises - replacing the ``MagicMock`` strategy whose
-    ``assert_called`` pinned the contract. The import hooks are unused here.
-    """
-
-    def __init__(
-        self,
-        *,
-        items: list[_Item],
-        anilist_ids: dict[int, MappingEntry],
-        process_returns: bool = False,
-        process_raises_on: int | None = None,
-    ) -> None:
-        self._items = items
-        self._anilist_ids = anilist_ids
-        self._process_returns = process_returns
-        self._process_raises_on = process_raises_on
-        self.process_calls: list[int] = []
-
-    @override
-    def get_items(self) -> list[_Item]:
-        return self._items
-
-    @override
-    def filter_to_single(self, items: list[_Item], item_id: int) -> list[_Item]:
-        return [i for i in items if i.id == item_id]
-
-    @override
-    def item_anilist_ids(self, item: _Item, log_ignored: bool = True) -> dict[int, MappingEntry]:
-        return self._anilist_ids
-
-    @property
-    @override
-    def warms_episodes(self) -> bool:
-        return False
-
-    @override
-    def prefetch_episodes(self, items: list[_Item], *, progress: EpisodeProgress | None = None) -> int:
-        return 0
-
-    @override
-    def process_al_id(self, item: _Item, item_title: str, al_id: int, mapping: MappingEntry) -> bool:
-        self.process_calls.append(al_id)
-        if self._process_raises_on is not None and al_id == self._process_raises_on:
-            raise ValueError(f"boom on al_id {al_id}")
-        return self._process_returns
-
-    @override
-    def pending_import_series_id(self, item: _Item) -> int | None:
-        return None
-
-    @override
-    def import_completed(
-        self,
-        pending: PendingImport,
-        content_path: str,
-        *,
-        force: bool = False,
-        at_deadline: bool = False,
-    ) -> ImportProbe:
-        raise NotImplementedError  # not driven by the finalize tests
-
-    @override
-    def import_progress(self, pending: PendingImport) -> ImportProgress:
-        raise NotImplementedError  # not driven by the finalize tests
+from .builders import make_bare_instance, make_config
+from .fakes import CaptureHandler, FakeArrItem, FakeStrategy
 
 
 class _FakeGateway:
@@ -159,19 +76,7 @@ class _FinalizeRecorder:
         self.calls += 1
 
 
-class _CaptureHandler(logging.Handler):
-    """Collects emitted records so a logged error can be asserted by level."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.records: list[logging.LogRecord] = []
-
-    @override
-    def emit(self, record: logging.LogRecord) -> None:
-        self.records.append(record)
-
-
-def _engine(strategy: FakeStrategy, finalize: _FinalizeRecorder, logger: logging.Logger) -> SeaDexArr:
+def _engine(finalize: _FinalizeRecorder, logger: logging.Logger) -> SeaDexArr:
     """A bare ``SeaDexArr`` wired with typed fakes for the run-loop collaborators.
 
     The strategy reaches ``run_sync`` typed (it's an ``ArrSync``); the rest are
@@ -199,16 +104,16 @@ def _engine(strategy: FakeStrategy, finalize: _FinalizeRecorder, logger: logging
 class TestCapReachedFinalizesOnce:
     """A mid-run cap stops the scan and finalizes exactly once, at the single site."""
 
-    def test_cap_reached_breaks_loop_and_finalizes_once(self) -> None:
+    def test_cap_reached_breaks_loop_and_finalizes_once(self, logger: logging.Logger) -> None:
         # Cap reached on the first id: process_al_id returns True (stop the run).
         strategy = FakeStrategy(
-            items=[_Item(item_id=1, title="A"), _Item(item_id=2, title="B")],
+            items=[FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")],
             anilist_ids={1: MappingEntry(anilist_id=1)},
             process_returns=True,
         )
         finalize = _FinalizeRecorder()
 
-        result = _engine(strategy, finalize, make_logger()).run_sync(
+        result = _engine(finalize, logger).run_sync(
             strategy,
             arr=Arr.SONARR,
             item_id=None,
@@ -225,18 +130,17 @@ class TestCapReachedFinalizesOnce:
 class TestPerIdErrorContainment:
     """One AniList id's failure is contained to that id, not the whole item."""
 
-    def test_one_al_id_error_does_not_skip_siblings(self) -> None:
+    def test_one_al_id_error_does_not_skip_siblings(self, logger: logging.Logger) -> None:
         strategy = FakeStrategy(
-            items=[_Item(item_id=1, title="A")],
+            items=[FakeArrItem(item_id=1, title="A")],
             anilist_ids={1: MappingEntry(anilist_id=1), 2: MappingEntry(anilist_id=2)},
             process_raises_on=1,
         )
         finalize = _FinalizeRecorder()
-        logger = make_logger("test-run-finalize-containment")
-        capture = _CaptureHandler()
+        capture = CaptureHandler()
         logger.addHandler(capture)
         try:
-            _engine(strategy, finalize, logger).run_sync(
+            _engine(finalize, logger).run_sync(
                 strategy,
                 arr=Arr.SONARR,
                 item_id=None,

@@ -540,6 +540,7 @@ def _anidb_oracle(root: ElementTree.Element, anidb_id: int, tvdb_season: int) ->
     return result
 
 
+@pytest.mark.realdata
 @pytest.mark.skipif(not _HAVE_REAL, reason="real mapping source files not present")
 class TestRealDataParity:
     def test_anibridge_sql_matches_graph_over_all_ids(self) -> None:

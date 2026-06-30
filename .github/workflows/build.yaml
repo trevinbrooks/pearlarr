@@ -44,8 +44,9 @@ jobs:
         run: uvx pyright@1.1.410 seadexarr tests
       - name: Pyrefly (type check)
         run: uv run pyrefly check seadexarr --preset strict
-      - name: Pytest
-        run: uv run pytest tests/
+      # Branch coverage with the fail_under floor from [tool.coverage.report].
+      - name: Pytest (with coverage gate)
+        run: uv run pytest tests/ --cov=seadexarr --cov-report=term-missing
 
   build_sdist_and_wheel:
     name: Build source distribution
