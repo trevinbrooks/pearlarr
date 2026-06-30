@@ -429,10 +429,12 @@ class TestSnapshotPendingForSeries:
         strategy = _RecordingStrategy(
             completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
         )
+        reporter = _RecordingReporter()
         qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
         mgr = make_orchestration_manager(
             qbit=qbit,
             strategy=strategy,
+            reporter=reporter,
             store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
         )
 
@@ -441,6 +443,11 @@ class TestSnapshotPendingForSeries:
         assert mgr._pending_store() == {}
         assert mgr._ctx.stats.imported == 1
         assert mgr._ctx.pending_states["h"] is PendingState.IMPORTED
+        # The record is reported inline with its reconciled state + title (the gap a
+        # bare `snapshot_calls != []` check left open: wrong state/title slid through).
+        assert len(reporter.snapshot_calls) == 1
+        assert reporter.snapshot_calls[0].state is PendingState.IMPORTED
+        assert reporter.snapshot_calls[0].title == "Show"
         # Forced (CDH-off safe) but NOT at the deadline (no loud warning).
         assert strategy.import_calls[-1].force is True
         assert strategy.import_calls[-1].at_deadline is False
@@ -448,10 +455,12 @@ class TestSnapshotPendingForSeries:
     def test_carried_over_downloading_is_queued_and_kept(self) -> None:
         # Still downloading -> queued, record kept, no import attempt.
         strategy = _RecordingStrategy()
+        reporter = _RecordingReporter()
         qbit = FakeQbit([[FakeTorrent(progress=0.5)]])
         mgr = make_orchestration_manager(
             qbit=qbit,
             strategy=strategy,
+            reporter=reporter,
             store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
         )
 
@@ -461,6 +470,10 @@ class TestSnapshotPendingForSeries:
         assert set(mgr._pending_store()) == {"h"}
         assert mgr._ctx.pending_states["h"] is PendingState.QUEUED
         assert mgr._ctx.stats.imported == 0
+        # The carried-over record is still reported inline, with the QUEUED state.
+        assert len(reporter.snapshot_calls) == 1
+        assert reporter.snapshot_calls[0].state is PendingState.QUEUED
+        assert reporter.snapshot_calls[0].title == "Show"
 
     def test_this_run_grab_is_skipped_no_double_report(self) -> None:
         # REGRESSION (double-report): a torrent grabbed THIS run lives in
@@ -636,6 +649,11 @@ class TestRunMonitor:
         assert mgr._pending_store() == {}
         assert view.final("fast").outcome is Outcome.IMPORTED
         assert view.final("slow").outcome is Outcome.IMPORTED
+        # Each torrent's OWN content_path reached import_completed - a run_monitor bug
+        # forwarding the wrong torrent's path would still import, so pin the pairing.
+        by_hash = {c.pending.infohash: c.content_path for c in strategy.import_calls}
+        assert by_hash["fast"] == "/fast"
+        assert by_hash["slow"] == "/slow"
         # slow showed a downloading heartbeat (fraction 0.5) before it completed.
         assert any(
             t.key == "slow" and t.phase is Phase.DOWNLOADING and t.fraction == 0.5
@@ -769,8 +787,9 @@ class TestRunMonitor:
 
         assert view.final("h").outcome is Outcome.STILL_IMPORTING
         assert set(mgr._pending_store()) == {"h"}  # left, not dropped
-        # The final in-bound poll forces AND flags the deadline.
+        # The final in-bound poll forces AND flags the deadline, for THIS torrent's path.
         last = strategy.import_calls[-1]
+        assert last.content_path == "/d"
         assert last.force is True
         assert last.at_deadline is True
 

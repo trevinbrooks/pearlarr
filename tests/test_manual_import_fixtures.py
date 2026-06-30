@@ -18,6 +18,7 @@ end-to-end test drives the real Yamada fixtures through ``import_completed``.
 import json
 from pathlib import Path
 
+from seadexarr.modules.config import AppConfig
 from seadexarr.modules.log import LogFormatter
 from seadexarr.modules.manual_import import (
     CandidateFile,
@@ -578,12 +579,12 @@ def _yamada_parse_side_effect(raw_base: str) -> ParsedFileInfo | None:
     return None
 
 
-def _yamada_strat() -> tuple[SonarrSync, FakeSonarrClient, list[str]]:
+def _yamada_strat(config: AppConfig | None = None) -> tuple[SonarrSync, FakeSonarrClient, list[str]]:
     """The real Yamada fixtures wired into a bare SonarrSync + its scripted fake.
 
     Returns the strategy, its scripted ``FakeSonarrClient`` (replaying the captured
     episode list / manual-import candidates / per-file parse), and the on-disk
-    basenames.
+    basenames. ``config`` overrides the default (e.g. to flip ``imports.mode``).
     """
 
     episodes_raw: list[dict[str, object]] = load_fixture("episodes_213_yamada.json")
@@ -608,7 +609,7 @@ def _yamada_strat() -> tuple[SonarrSync, FakeSonarrClient, list[str]]:
         sonarr=sonarr,
         logger=make_logger(),
         log_fmt=LogFormatter(make_logger()),
-        _config=make_config(),
+        _config=config or make_config(),
         cache_store=FakeCacheStore(),
     )
     return strat, sonarr, seadex_files
@@ -640,11 +641,37 @@ class TestYamadaEndToEnd:
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
+        # The configured import mode is threaded onto the execute command (default
+        # "auto"; "move" deletes the source files, so a wrong mode must not be silent).
+        assert sonarr.execute_calls[0][1] == "auto"
 
         files = sonarr.execute_calls[0][0]
         assigned = {f["episodeIds"][0]: f for f in files}
         assert set(assigned) == {8030, 8031}
         assert all(f["seriesId"] == 213 for f in files)
+
+    def test_import_mode_propagates_from_config(self) -> None:
+        # imports.mode flows through to manual_import_execute - a regression that
+        # hardcoded/ignored it (e.g. "move" -> source-file deletion) would be invisible
+        # without this. Flip the config and assert the configured mode reaches Sonarr.
+        strat, sonarr, seadex_files = _yamada_strat(make_config(import_mode="move"))
+
+        pending = pending_import(
+            infohash="1111111111111111111111111111111111111111",
+            series_id=213,
+            title="Yamada-kun and the Seven Witches",
+            release_group="Headpatter",
+            file_episode_map={},
+            episode_ids=[],
+            ordered_episode_ids=[8030, 8031, 8032],
+            seadex_files=seadex_files,
+            seadex_sizes=[0] * len(seadex_files),
+        )
+
+        strat.import_completed(pending, "/downloads/yamada")
+
+        assert len(sonarr.execute_calls) == 1
+        assert sonarr.execute_calls[0][1] == "move"
 
     def test_import_completed_probe_carries_seed_complete_counts(self) -> None:
         # A complete seed map -> the probe carries the determinate "files inserted"
@@ -739,6 +766,7 @@ class TestYamadaEndToEnd:
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
+        assert sonarr.execute_calls[0][1] == "auto"
 
         files = sonarr.execute_calls[0][0]
         assigned = {f["episodeIds"][0]: f for f in files}
