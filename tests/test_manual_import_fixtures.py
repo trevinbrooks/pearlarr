@@ -1,3 +1,4 @@
+# pyright: strict
 """Real-API-fixture tests for the resolved-mapping manual import.
 
 These pin the behaviour the *old* code got wrong, using JSON captured verbatim
@@ -15,11 +16,9 @@ end-to-end test drives the real Yamada fixtures through ``import_completed``.
 """
 
 import json
-import types
 from pathlib import Path
-from typing import Any
-from unittest import mock
 
+from seadexarr.modules.log import LogFormatter
 from seadexarr.modules.manual_import import (
     CandidateFile,
     EpisodeAssignment,
@@ -36,6 +35,7 @@ from seadexarr.modules.manual_import import (
     quality_axes_from_model,
     resolve_quality,
 )
+from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
     CommandResource,
     ManualImportCandidate,
@@ -53,14 +53,21 @@ from .builders import (
     make_sonarr_sync,
     pending_import,
 )
+from .fakes import FakeSonarrClient
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "sonarr"
 
 
-def load_fixture(name: str) -> Any:
-    """Parse one captured Sonarr response from ``tests/fixtures/sonarr``."""
+def load_fixture[T](name: str, _shape: type[T] | None = None) -> T:
+    """Parse one captured Sonarr response, typed by the call site's annotation.
 
-    return json.loads((_FIXTURES / name).read_text())
+    ``_shape`` is unused at runtime; it gives ``T`` a second occurrence so pyright
+    does not flag the otherwise return-only TypeVar (reportInvalidTypeVarUse). The
+    raw JSON shape (``Any``) is narrowed by the consuming ``from_api`` decoders.
+    """
+
+    data: T = json.loads((_FIXTURES / name).read_text())
+    return data
 
 
 def _pinfo(
@@ -130,7 +137,7 @@ class TestQualityResolution:
         # quality_axes_from_model reads (source, resolution) off a candidate
         # captured verbatim from a live Sonarr - proving the read works on real
         # output, not just hand-written dicts.
-        raw = load_fixture("manualimport_yamada.json")
+        raw: list[dict[str, object]] = load_fixture("manualimport_yamada.json")
         candidates = [ManualImportCandidate.from_api(c) for c in raw]
         dvd = next(
             c for c in candidates if c.quality is not None and (c.quality.get("quality") or {}).get("name") == "DVD"
@@ -149,7 +156,7 @@ class TestParsedFileInfoFromRealBodies:
     series-matched ``episodes`` array is empty."""
 
     def test_yamada_special_has_season_episode_despite_no_series_match(self) -> None:
-        body = load_fixture("parse_yamada_s00e01.json")
+        body: dict[str, object] = load_fixture("parse_yamada_s00e01.json")
         # The OLD code read this (series-matched) array and got nothing:
         assert body["episodes"] == []
 
@@ -159,7 +166,8 @@ class TestParsedFileInfoFromRealBodies:
         assert info.absolute_episode_numbers == ()
 
     def test_absolute_numbered_file_reports_absolute_not_season_episode(self) -> None:
-        info = ParsedFileInfo.from_parse_resource(load_fixture("parse_toloveru_abs14.json"))
+        body: dict[str, object] = load_fixture("parse_toloveru_abs14.json")
+        info = ParsedFileInfo.from_parse_resource(body)
         assert info.episode_numbers == ()
         assert info.absolute_episode_numbers == (14,)
 
@@ -355,8 +363,7 @@ class TestAssignScopeGate:
             ordered_episode_ids=[101],
             seadex_files=[seed_name],
         )
-        sonarr = mock.MagicMock()
-        sonarr.parse_episode_info.return_value = _pinfo(season=2, episodes=(1,))
+        sonarr = FakeSonarrClient(parse_episode_info_fn=lambda _f: _pinfo(season=2, episodes=(1,)))
         mapper = make_sonarr_mapper(sonarr=sonarr)
 
         candidates = {
@@ -430,13 +437,17 @@ class TestClassifyRealQueue:
 
     @staticmethod
     def _views_by_download() -> dict[str, list[QueueRecordView]]:
+        body: dict[str, list[dict[str, object]]] = load_fixture("queue.json")
         views: dict[str, list[QueueRecordView]] = {}
-        for rec in load_fixture("queue.json")["records"]:
+        for rec in body["records"]:
+            state = rec.get("trackedDownloadState", "")
+            status = rec.get("trackedDownloadStatus", "")
+            download_id = rec["downloadId"]
             view = QueueRecordView(
-                state=rec.get("trackedDownloadState", ""),
-                status=rec.get("trackedDownloadStatus", ""),
+                state=state if isinstance(state, str) else "",
+                status=status if isinstance(status, str) else "",
             )
-            views.setdefault(rec["downloadId"], []).append(view)
+            views.setdefault(download_id if isinstance(download_id, str) else "", []).append(view)
         return views
 
     def test_import_blocked_steps_in(self) -> None:
@@ -485,7 +496,8 @@ class TestCommandResourceFixture:
 
     @staticmethod
     def _commands() -> list[CommandResource]:
-        return [CommandResource.from_api(c) for c in load_fixture("command_list.json")]
+        raw: list[dict[str, object]] = load_fixture("command_list.json")
+        return [CommandResource.from_api(c) for c in raw]
 
     def test_started_manual_import_parses_message_and_files(self) -> None:
         started = next(c for c in self._commands() if c.name == "ManualImport" and c.status == "started")
@@ -519,7 +531,8 @@ class TestManualImportInFlightFixture:
 
     @staticmethod
     def _commands() -> list[CommandResource]:
-        return [CommandResource.from_api(c) for c in load_fixture("command_list.json")]
+        raw: list[dict[str, object]] = load_fixture("command_list.json")
+        return [CommandResource.from_api(c) for c in raw]
 
     def test_matching_download_id_is_in_flight(self) -> None:
         # The SAO download has a started + queued ManualImport sharing its
@@ -557,43 +570,45 @@ def _yamada_parse_side_effect(raw_base: str) -> ParsedFileInfo | None:
     """Replay the captured /parse bodies for the two Yamada specials by basename."""
 
     if "S00E01" in raw_base:
-        return ParsedFileInfo.from_parse_resource(load_fixture("parse_yamada_s00e01.json"))
+        body: dict[str, object] = load_fixture("parse_yamada_s00e01.json")
+        return ParsedFileInfo.from_parse_resource(body)
     if "S00E02" in raw_base:
-        return ParsedFileInfo.from_parse_resource(load_fixture("parse_yamada_s00e02.json"))
+        body = load_fixture("parse_yamada_s00e02.json")
+        return ParsedFileInfo.from_parse_resource(body)
     return None
 
 
-def _yamada_strat() -> tuple[Any, mock.MagicMock, list[str]]:
-    """The real Yamada fixtures wired into a bare SonarrSync + its scripted mock.
+def _yamada_strat() -> tuple[SonarrSync, FakeSonarrClient, list[str]]:
+    """The real Yamada fixtures wired into a bare SonarrSync + its scripted fake.
 
-    Returns the strategy, its ``sonarr`` MagicMock (replaying the captured episode
-    list / manual-import candidates / per-file parse), and the on-disk basenames.
+    Returns the strategy, its scripted ``FakeSonarrClient`` (replaying the captured
+    episode list / manual-import candidates / per-file parse), and the on-disk
+    basenames.
     """
 
-    episodes = [SonarrEpisode.from_api(e) for e in load_fixture("episodes_213_yamada.json")]
-    candidates = [ManualImportCandidate.from_api(c) for c in load_fixture("manualimport_yamada.json")]
+    episodes_raw: list[dict[str, object]] = load_fixture("episodes_213_yamada.json")
+    episodes = [SonarrEpisode.from_api(e) for e in episodes_raw]
+    candidates_raw: list[dict[str, object]] = load_fixture("manualimport_yamada.json")
+    candidates = [ManualImportCandidate.from_api(c) for c in candidates_raw]
     seadex_files = [c.path.rsplit("/", 1)[-1] for c in candidates if c.path]
 
-    sonarr = mock.MagicMock()
-    sonarr.queue.return_value = []  # not tracked -> STEP_IN
-    sonarr.episodes.return_value = episodes
-    sonarr.manual_import_candidates.return_value = candidates
-    sonarr.parse_episode_info.side_effect = _yamada_parse_side_effect
-    sonarr.refresh_monitored_downloads.return_value = 7
-    sonarr.command_status.return_value = types.SimpleNamespace(status="completed")
-    sonarr.quality_definitions.return_value = []
-    sonarr.languages.return_value = []
-    sonarr.manual_import_execute.return_value = 99
+    sonarr = FakeSonarrClient(
+        queue=[],  # not tracked -> STEP_IN
+        episodes=episodes,
+        candidates=candidates,
+        parse_episode_info_fn=_yamada_parse_side_effect,
+        refresh_count=7,
+        command_status=CommandResource(status="completed"),
+        quality_defs=[],
+        languages=[],
+        execute_command_id=99,
+    )
 
     strat = make_sonarr_sync(
         sonarr=sonarr,
         logger=make_logger(),
-        log_fmt=mock.MagicMock(),
+        log_fmt=LogFormatter(make_logger()),
         _config=make_config(),
-        _last_refresh_monotonic=None,
-        _ep_list_cache={},
-        _parse_info_cache={},
-        _warned_unplaceable=set(),
         cache_store=FakeCacheStore(),
     )
     return strat, sonarr, seadex_files
@@ -624,9 +639,9 @@ class TestYamadaEndToEnd:
         # The command was issued (copy is async -> RETRY + command_issued).
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
-        sonarr.manual_import_execute.assert_called_once()
+        assert len(sonarr.execute_calls) == 1
 
-        files = sonarr.manual_import_execute.call_args.kwargs["files"]
+        files = sonarr.execute_calls[0][0]
         assigned = {f["episodeIds"][0]: f for f in files}
         assert set(assigned) == {8030, 8031}
         assert all(f["seriesId"] == 213 for f in files)
@@ -634,8 +649,7 @@ class TestYamadaEndToEnd:
     def test_import_completed_probe_carries_seed_complete_counts(self) -> None:
         # A complete seed map -> the probe carries the determinate "files inserted"
         # counts (none landed yet here -> 0 / N), pinned to the seed set.
-        strat, sonarr, seadex_files = _yamada_strat()
-        del sonarr
+        strat, _sonarr, seadex_files = _yamada_strat()
         ep_map = {name: [8030 + i] for i, name in enumerate(seadex_files)}
         pending = pending_import(
             infohash="2222222222222222222222222222222222222222",
@@ -674,10 +688,10 @@ class TestYamadaEndToEnd:
         assert progress.determinate is True
         assert progress.total == len(seadex_files)
         assert progress.done == 0  # no episode holds a recommended file yet
-        sonarr.episodes.assert_called()  # the one read it does make
-        sonarr.manual_import_execute.assert_not_called()
-        sonarr.refresh_monitored_downloads.assert_not_called()
-        sonarr.queue.assert_not_called()
+        assert sonarr.episodes_calls  # the one read it does make
+        assert sonarr.execute_calls == []
+        assert sonarr.refresh_calls == 0
+        assert sonarr.queue_calls == 0
 
     def test_import_progress_indeterminate_when_seed_map_incomplete(self) -> None:
         # No (or partial) seed map -> indeterminate zero, and it never even fetches:
@@ -697,8 +711,8 @@ class TestYamadaEndToEnd:
         progress = strat.import_progress(pending)
 
         assert progress == ImportProgress(0, 0, determinate=False)
-        sonarr.episodes.assert_not_called()
-        sonarr.manual_import_execute.assert_not_called()
+        assert sonarr.episodes_calls == []
+        assert sonarr.execute_calls == []
 
     def test_specials_import_with_empty_resolved_set(self) -> None:
         # THE headline regression: the ACTUAL on-disk stuck record is pre-fix - EMPTY
@@ -724,9 +738,9 @@ class TestYamadaEndToEnd:
 
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
-        sonarr.manual_import_execute.assert_called_once()
+        assert len(sonarr.execute_calls) == 1
 
-        files = sonarr.manual_import_execute.call_args.kwargs["files"]
+        files = sonarr.execute_calls[0][0]
         assigned = {f["episodeIds"][0]: f for f in files}
         assert set(assigned) == {8030, 8031}
         assert all(f["seriesId"] == 213 for f in files)
