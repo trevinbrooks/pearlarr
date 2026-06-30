@@ -38,6 +38,9 @@ def _apply_ops(store: AbstractCacheStore) -> None:
             torrent_hashes=[None, "hb", "ha"],
         ),
     )
+    # Partial re-update of the SAME entry (omits name/url/updated_at): pins the scalar
+    # merge (absent columns untouched, not clobbered) + the hash-set replace (not append).
+    store.update_cache(Arr.SONARR, 7, CacheRecord(coverage="S2", torrent_hashes=[None, "hc", "ha"]))
     # A cross-arr row + a duplicate/None hash list, to exercise the dedup + None marker.
     store.update_cache(Arr.RADARR, 99, CacheRecord(name="Movie", torrent_hashes=["z", "z", None]))
 
