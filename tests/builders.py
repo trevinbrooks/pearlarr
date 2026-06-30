@@ -792,63 +792,6 @@ def sonarr_ep(
     )
 
 
-class FakeTracker:
-    """Mimics a seadex ``Tracker``: has ``casefold()`` and ``is_public()``."""
-
-    def __init__(self, name: str, public: bool) -> None:
-        self.name = name
-        self._public = public
-
-    def casefold(self) -> str:
-        return self.name.casefold()
-
-    def lower(self) -> str:
-        return self.name.lower()
-
-    def is_public(self) -> bool:
-        return self._public
-
-
-class FakeFile:
-    """Mimics a seadex torrent file (``name`` / ``size``)."""
-
-    def __init__(self, name: str, size: int) -> None:
-        self.name = name
-        self.size = size
-
-
-class FakeTorrent:
-    """Mimics a seadex torrent record (the fields ``get_seadex_dict`` reads)."""
-
-    def __init__(
-        self,
-        *,
-        release_group: str,
-        url: str,
-        tracker: FakeTracker,
-        files: list[FakeFile] | None = None,
-        tags: list[str] | None = None,
-        is_best: bool = False,
-        is_dual_audio: bool = False,
-        infohash: str | None = "hash",
-    ) -> None:
-        self.release_group = release_group
-        self.url = url
-        self.tracker = tracker
-        self.files = files or []
-        self.tags = tags or []
-        self.is_best = is_best
-        self.is_dual_audio = is_dual_audio
-        self.infohash = infohash
-
-
-class FakeEntry:
-    """Mimics a seadex ``EntryRecord`` for ``get_seadex_dict`` (reads ``.torrents``)."""
-
-    def __init__(self, torrents: list[FakeTorrent]) -> None:
-        self.torrents = torrents
-
-
 def pending_import(**overrides: Any) -> PendingImport:
     """A ``PendingImport`` carrying sane manual-import defaults.
 
