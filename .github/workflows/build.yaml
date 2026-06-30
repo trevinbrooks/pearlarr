@@ -34,16 +34,16 @@ jobs:
         run: uv run ruff check seadexarr/ tests/
       - name: Ruff (format)
         run: uv run ruff format --check seadexarr/ tests/
-      - name: Basedpyright (src, strict + reportAny)
-        run: uv run basedpyright seadexarr
+      - name: Basedpyright (src + tests, strict)
+        run: uv run basedpyright seadexarr tests
       # The type gate is vanilla pyright (pinned for reproducible CI). It reads
-      # [tool.pyright] in pyproject.toml (typeCheckingMode = strict, with a per-rule
-      # tests/ override emulating standard) and resolves imports against the .venv
-      # that `uv sync` just created, plus the local stubs/ for arrapi/discordwebhook.
+      # [tool.pyright] in pyproject.toml (typeCheckingMode = strict for BOTH the
+      # package and tests/) and resolves imports against the .venv that `uv sync`
+      # just created, plus the local stubs/ for arrapi/discordwebhook.
       - name: Pyright (type check, strict)
         run: uvx pyright@1.1.410 seadexarr tests
       - name: Pyrefly (type check)
-        run: uv run pyrefly check seadexarr --preset strict
+        run: uv run pyrefly check seadexarr tests --preset strict
       # Branch coverage with the fail_under floor from [tool.coverage.report].
       - name: Pytest (with coverage gate)
         run: uv run pytest tests/ --cov=seadexarr --cov-report=term-missing

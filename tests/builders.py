@@ -1,3 +1,8 @@
+# pyright: strict
+# pyright: reportPrivateUsage=false
+# The factories assemble objects under construction by their private collaborator
+# fields (strat._episodes/_parse/...), which strict re-flags; the repo disables
+# reportPrivateUsage for tests.
 """Builders and a bare-instance factory for the characterization tests.
 
 These tests pin the *current* behaviour of ``seadex_arr.py``. The planner tests
@@ -13,19 +18,24 @@ import logging
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Any, cast
-from unittest import mock
 
+import requests
 from seadex import EntryRecord, Tag, TorrentRecord, Tracker
 
-from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT, CachedEntry, CacheField, CacheRecord
+from seadexarr.modules.anilist_gateway import AniListGateway
+from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT, CachedEntry, CacheField, CacheRecord, CacheStoreProtocol
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.grab_pipeline import GrabPipeline
 from seadexarr.modules.import_wait import ImportWaitManager
+from seadexarr.modules.log import LogFormatter
 from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport
+from seadexarr.modules.mappings import MappingResolver
+from seadexarr.modules.notify import Notifier
 from seadexarr.modules.planner import DownloadPlanner
-from seadexarr.modules.reporter import RunContext
+from seadexarr.modules.reporter import RunContext, RunReporter
 from seadexarr.modules.seadex_arr import RunDeps, SeaDexArr
 from seadexarr.modules.seadex_filter import SeadexReleaseFilter
+from seadexarr.modules.seadex_gateway import SeaDexGateway
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
     EpisodeRecord,
@@ -40,7 +50,7 @@ from seadexarr.modules.sonarr_episodes import SonarrEpisodes
 from seadexarr.modules.sonarr_import import ImportExecutor, ImportReconciler
 from seadexarr.modules.sonarr_mapper import FileEpisodeMapper
 from seadexarr.modules.sonarr_parse import SonarrParseCache
-from seadexarr.modules.torrents import AddOutcome
+from seadexarr.modules.torrents import AddOutcome, TorrentService
 
 # Map each flat (group-local) setting name to its config group, derived straight from
 # AppConfig's own field tree so it can't drift into a stale subset: adding a 9th
@@ -409,6 +419,28 @@ def make_entry_record(
     )
 
 
+def _real_reporter(logger: logging.Logger, log_fmt: LogFormatter, cache_store: CacheStoreProtocol) -> RunReporter:
+    """A real ``RunReporter`` over the given cache store (composite-with-faked-leaf).
+
+    The reporter is a presentation collaborator with a large surface; rather than
+    fake it, the factories build the real one with a faked cache store + a real
+    (cache-backed) AniList gateway - so a driven path logs through the real code.
+    """
+
+    return RunReporter(
+        logger=logger,
+        log_fmt=log_fmt,
+        cache_store=cache_store,
+        anilist=AniListGateway(cache_store=cache_store, logger=logger),
+    )
+
+
+def _real_torrents(logger: logging.Logger, session: requests.Session) -> TorrentService:
+    """A real, client-less ``TorrentService`` (``qbit=None`` -> preview no-op add)."""
+
+    return TorrentService(qbit=None, session=session, category="", tags=[], logger=logger)
+
+
 def make_arr(**overrides: Any) -> SeaDexArr:
     """Build a bare ``SeaDexArr`` with only the attributes the methods read.
 
@@ -429,7 +461,7 @@ def make_arr(**overrides: Any) -> SeaDexArr:
     config = _split_config(overrides)
     defaults: dict[str, Any] = {
         "logger": logger,
-        "log_fmt": mock.MagicMock(),
+        "log_fmt": LogFormatter(logger),
         "_config": config,
         # The engine reads per-arr flags (e.g. ignore_unmonitored) off _arr_config,
         # the Sonarr view of the same shared config.
@@ -455,23 +487,37 @@ def make_run_deps(**overrides: Any) -> RunDeps:
     """
 
     config = overrides.pop("config", None) or make_config(url="http://sonarr", api_key="key")
+    cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
+    logger = make_logger()
+    log_fmt = LogFormatter(logger)
+    session = requests.Session()
     defaults: dict[str, Any] = {
         "config": config,
         "arr_config": config.for_arr(Arr.SONARR),
         "config_file": "",
-        "session": mock.MagicMock(),
+        "session": session,
         "qbit": None,
-        "mappings": mock.MagicMock(),
-        "logger": make_logger(),
-        "seadex": mock.MagicMock(),
+        # A real resolver over empty in-memory mappings (no network) - it carries a
+        # real (empty) ``anibridge`` the strategy reads at construction.
+        "mappings": MappingResolver(
+            cache_time=1,
+            ignore_anilist_ids=set(),
+            anime_mappings_cfg={},
+            anidb_mappings_cfg=False,
+            anibridge_mappings_cfg=False,
+        ),
+        "logger": logger,
+        # Bare: the SeaDex gateway's real __init__ builds an httpx-backed client; the
+        # wiring tests never call it, so skip construction rather than open a client.
+        "seadex": make_bare_instance(SeaDexGateway),
         "cache_file": "",
-        "cache_store": FakeCacheStore(),
-        "anilist": mock.MagicMock(),
-        "torrents": mock.MagicMock(),
-        "notifier": mock.MagicMock(),
+        "cache_store": cache_store,
+        "anilist": AniListGateway(cache_store=cache_store, logger=logger),
+        "torrents": _real_torrents(logger, session),
+        "notifier": Notifier(discord_url=None, webhook_url=None),
         "planner": make_planner(),
-        "log_fmt": mock.MagicMock(),
-        "reporter": mock.MagicMock(),
+        "log_fmt": log_fmt,
+        "reporter": _real_reporter(logger, log_fmt, cache_store),
     }
     defaults.update(overrides)
     return RunDeps(**defaults)
@@ -493,7 +539,7 @@ def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
         "planner": make_planner(),
         "cache_store": FakeCacheStore(),
         "logger": logger,
-        "log_fmt": mock.MagicMock(),
+        "log_fmt": LogFormatter(logger),
         "ctx": RunContext(arr=Arr.SONARR),
     }
     defaults.update(overrides)
@@ -552,17 +598,20 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
     """
 
     config = _split_config(overrides)
-    notifier = mock.MagicMock()
-    notifier.enabled = False
+    logger = make_logger()
+    log_fmt = LogFormatter(logger)
+    cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
+    session = requests.Session()
     defaults: dict[str, Any] = {
         "_config": config,
         "_planner": make_planner(),
-        "cache_store": FakeCacheStore(),
-        "_torrents": mock.MagicMock(),
-        "_anilist": mock.MagicMock(),
-        "_notifier": notifier,
-        "_reporter": mock.MagicMock(),
-        "log_fmt": mock.MagicMock(),
+        "cache_store": cache_store,
+        "_torrents": _real_torrents(logger, session),
+        "_anilist": AniListGateway(cache_store=cache_store, logger=logger),
+        # No discord/webhook url -> a disabled, best-effort no-op notifier.
+        "_notifier": Notifier(discord_url=None, webhook_url=None),
+        "_reporter": _real_reporter(logger, log_fmt, cache_store),
+        "log_fmt": log_fmt,
         "qbit": CLIENT_SENTINEL,
         "_ctx": RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
     }
@@ -581,14 +630,18 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     """
 
     config = _split_config(overrides)
+    logger = make_logger()
+    cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
     defaults: dict[str, Any] = {
         "_config": config,
-        "cache_store": FakeCacheStore(),
-        "_reporter": mock.MagicMock(),
-        "logger": make_logger(),
+        "cache_store": cache_store,
+        "_reporter": _real_reporter(logger, LogFormatter(logger), cache_store),
+        "logger": logger,
         "qbit": None,
         "_ctx": RunContext(arr=Arr.SONARR),
-        "_active_strategy": mock.MagicMock(),
+        # The production placeholder before a run binds one; tests that drive the
+        # import hook pass their own strategy.
+        "_active_strategy": None,
     }
     defaults.update(overrides)
     return make_bare_instance(ImportWaitManager, **defaults)
