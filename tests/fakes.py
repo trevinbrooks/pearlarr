@@ -3,7 +3,7 @@
 
 The home for fakes used across more than one test module, written to type-check
 at strict (no ``MagicMock``, no ``Any``). The guiding pattern: where a collaborator
-is injected behind a typed seam (``ArrSync``, ``CacheStoreProtocol``), a small
+is injected behind a typed seam (``ArrSync``, ``AbstractCacheStore``), a small
 concrete fake implements it and records what a test needs to assert - so contracts
 are pinned by recorded state, not ``MagicMock`` call interactions.
 

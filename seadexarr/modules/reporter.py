@@ -8,7 +8,7 @@ from seadex import EntryRecord
 
 from .anilist import get_anilist_title
 from .anilist_gateway import AniListGateway
-from .cache import CacheStoreProtocol
+from .cache import AbstractCacheStore
 from .config import Arr
 from .log import (
     EntryState,
@@ -162,7 +162,7 @@ class RunReporter:
         *,
         logger: logging.Logger,
         log_fmt: LogFormatter,
-        cache_store: CacheStoreProtocol,
+        cache_store: AbstractCacheStore,
         anilist: AniListGateway,
     ) -> None:
         self.logger = logger

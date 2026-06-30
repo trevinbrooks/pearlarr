@@ -17,13 +17,13 @@ test actually read.
 import logging
 from collections.abc import Iterator
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, cast, override
 
 import requests
 from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
 from seadexarr.modules.anilist_gateway import AniListGateway
-from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT, CachedEntry, CacheField, CacheRecord, CacheStoreProtocol
+from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, CachedEntry, CacheField, CacheRecord
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.grab_pipeline import GrabPipeline
 from seadexarr.modules.import_wait import ImportWaitManager
@@ -162,7 +162,7 @@ def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
     return len(stale)
 
 
-class FakeCacheStore:
+class FakeCacheStore(AbstractCacheStore):
     """In-memory stand-in mirroring the SQLite ``CacheStore`` public facade.
 
     Backs every facade block - the per-entry ``entries`` scalars plus their
@@ -200,13 +200,16 @@ class FakeCacheStore:
         self._anilist_meta: dict[int, dict[str, Any]] = {}
 
     # -- lifecycle --
+    @override
     def save(self, *, preview: bool) -> None:
         del preview
 
+    @override
     def close(self) -> None:
         pass
 
     # -- per-entry records (entries + torrent_hashes) --
+    @override
     def update_cache(
         self,
         arr: Arr,
@@ -234,6 +237,7 @@ class FakeCacheStore:
             self._entry_hashes[key] = list(dict.fromkeys(hashes))
         return True
 
+    @override
     def check_al_id_in_cache(
         self,
         arr: Arr,
@@ -246,6 +250,7 @@ class FakeCacheStore:
         entry = self._entries.get((str(arr), al_id))
         return entry is not None and entry.get("updated_at") == sd_time_str
 
+    @override
     def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None:
         """The four scalar columns of the entry as a ``CachedEntry``, or None."""
 
@@ -259,9 +264,11 @@ class FakeCacheStore:
             coverage=entry.get("coverage"),
         )
 
+    @override
     def get_cached_name(self, arr: Arr, al_id: int) -> str | None:
         return cast("str | None", self.get_cached_field(arr, al_id, CacheField.NAME))
 
+    @override
     def get_cached_field(
         self,
         arr: Arr,
@@ -273,6 +280,7 @@ class FakeCacheStore:
         entry = self._entries.get((str(arr), al_id))
         return None if entry is None else entry.get(field.value)
 
+    @override
     def torrent_hashes(self, arr: Arr, al_id: int) -> list[str | None]:
         """The entry's hashes, ordered None-first then ascending (mirrors ORDER BY)."""
 
@@ -282,35 +290,45 @@ class FakeCacheStore:
         return ordered
 
     # -- AniList meta (TTL-swept) --
+    @override
     def iter_anilist_meta(self) -> Iterator[tuple[int, dict[str, Any]]]:
         yield from list(self._anilist_meta.items())
 
+    @override
     def get_anilist_meta(self, al_id: int) -> dict[str, Any] | None:
         return self._anilist_meta.get(al_id)
 
+    @override
     def put_anilist_meta(self, al_id: int, record: dict[str, Any]) -> None:
         self._anilist_meta[al_id] = record
 
+    @override
     def evict_anilist_meta(self, cutoff: datetime) -> int:
         return _evict_stale(self._anilist_meta, cutoff)
 
     # -- Sonarr parse cache (TTL-swept) --
+    @override
     def iter_sonarr_parse(self) -> Iterator[tuple[str, dict[str, Any]]]:
         yield from list(self._sonarr_parse.items())
 
+    @override
     def get_sonarr_parse(self, filename: str) -> dict[str, Any] | None:
         return self._sonarr_parse.get(filename)
 
+    @override
     def put_sonarr_parse(self, filename: str, record: dict[str, Any]) -> None:
         self._sonarr_parse[filename] = record
 
+    @override
     def evict_sonarr_parse(self, cutoff: datetime) -> int:
         return _evict_stale(self._sonarr_parse, cutoff)
 
     # -- pending imports --
+    @override
     def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]:
         return dict(self._pending.get(str(arr), {}))
 
+    @override
     def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
         """Fresh snapshot filtered to one series (mirrors the SQL ``->> 'series_id'``)."""
 
@@ -320,13 +338,16 @@ class FakeCacheStore:
             if record.get("series_id") == series_id
         }
 
+    @override
     def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
         self._pending.setdefault(str(arr), {})[infohash] = record
 
+    @override
     def drop_pending(self, arr: Arr, infohash: str) -> None:
         self._pending.get(str(arr), {}).pop(infohash, None)
 
     # -- maintenance: stats, integrity --
+    @override
     def stats(self) -> dict[str, int]:
         return {
             "entries": len(self._entries),
@@ -337,6 +358,7 @@ class FakeCacheStore:
             "size_bytes": 0,
         }
 
+    @override
     def integrity_check(self) -> str:
         return "ok"
 
@@ -458,7 +480,7 @@ def make_torrent_record(
     )
 
 
-def _real_reporter(logger: logging.Logger, log_fmt: LogFormatter, cache_store: CacheStoreProtocol) -> RunReporter:
+def _real_reporter(logger: logging.Logger, log_fmt: LogFormatter, cache_store: AbstractCacheStore) -> RunReporter:
     """A real ``RunReporter`` over the given cache store (composite-with-faked-leaf).
 
     The reporter is a presentation collaborator with a large surface; rather than

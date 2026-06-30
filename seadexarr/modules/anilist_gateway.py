@@ -23,7 +23,7 @@ from .anilist import (
     get_anilist_title,
     get_query_batch,
 )
-from .cache import UPDATED_AT_STR_FORMAT, CacheStoreProtocol, record_is_fresh
+from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, record_is_fresh
 from .log import indent_string
 
 # How long a persisted AniList response stays usable before it's re-fetched.
@@ -48,13 +48,13 @@ class AniListGateway:
     def __init__(
         self,
         *,
-        cache_store: CacheStoreProtocol,
+        cache_store: AbstractCacheStore,
         logger: logging.Logger,
     ) -> None:
         """Wire the gateway to the cache store and logger.
 
         Args:
-            cache_store (CacheStoreProtocol): Owns the on-disk ``anilist_meta``
+            cache_store (AbstractCacheStore): Owns the on-disk ``anilist_meta``
                 block and the preview-gated save.
             logger (logging.Logger): For the prefetch / load progress lines.
         """

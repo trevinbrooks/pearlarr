@@ -9,7 +9,7 @@ and dry-run paths. Presentation goes through a NullHandler logger, so the tests
 assert on the :class:`RunContext` mutations rather than exact log strings.
 
 The collaborators are real, not mocks: the reporter is built with the shared
-in-memory :class:`FakeCacheStore` (typed by ``CacheStoreProtocol``) and a real
+in-memory :class:`FakeCacheStore` (typed by ``AbstractCacheStore``) and a real
 :class:`AniListGateway` whose own cache store is faked - the "construct the
 composite, fake its leaves" seam - so the whole file type-checks at strict.
 """
@@ -21,7 +21,7 @@ from typing import override
 import pytest
 
 from seadexarr.modules.anilist_gateway import AniListGateway
-from seadexarr.modules.cache import CacheRecord, CacheStoreProtocol
+from seadexarr.modules.cache import AbstractCacheStore, CacheRecord
 from seadexarr.modules.config import Arr
 from seadexarr.modules.log import LogFormatter
 from seadexarr.modules.manual_import import ImportWaitMode, PendingState
@@ -49,9 +49,9 @@ class _CaptureHandler(logging.Handler):
         self.records.append(record)
 
 
-def _make_reporter(cache_store: CacheStoreProtocol | None = None) -> RunReporter:
+def _make_reporter(cache_store: AbstractCacheStore | None = None) -> RunReporter:
     logger = make_logger()
-    store: CacheStoreProtocol = cache_store if cache_store is not None else FakeCacheStore()
+    store: AbstractCacheStore = cache_store if cache_store is not None else FakeCacheStore()
     # A real gateway with a faked cache store: the reporter only reads/reassigns
     # its ``al_cache`` dict, so the real wiring is exercised without a network.
     anilist = AniListGateway(cache_store=FakeCacheStore(), logger=logger)

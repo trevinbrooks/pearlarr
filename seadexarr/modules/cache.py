@@ -42,11 +42,12 @@ import json
 import logging
 import os
 import sqlite3
+from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Any, Protocol, TypedDict, cast
+from typing import Any, TypedDict, cast, override
 
 from seadex import EntryRecord
 
@@ -290,41 +291,63 @@ def _connect(path: str, *, ensure_wal: bool = True) -> sqlite3.Connection:
     return _sqlite_connect(path, ensure_wal=ensure_wal, foreign_keys=ensure_wal)
 
 
-class CacheStoreProtocol(Protocol):
-    """The instance facade run collaborators depend on, as a structural seam.
+class AbstractCacheStore(ABC):
+    """Nominal ABC base defining the instance facade run collaborators depend on.
 
-    Typing the injected ``cache_store`` to this (rather than the concrete
-    ``CacheStore``) lets a test pass an in-memory fake, with the checker enforcing
-    that BOTH the real store and the fake carry the whole facade - so neither can
-    silently drift. The two ``load`` / ``open_readonly`` constructors are not part
-    of the instance surface and stay off the Protocol.
+    Both the real ``CacheStore`` and the test ``FakeCacheStore`` subclass this, so
+    the checker enforces the whole facade on each via inheritance (and ``@override``)
+    - neither can silently drift, and a fake missing a method won't instantiate. The
+    two ``load`` / ``open_readonly`` constructors are not part of the instance surface
+    and stay off the base.
     """
 
+    @abstractmethod
     def save(self, *, preview: bool) -> None: ...
+    @abstractmethod
     def close(self) -> None: ...
+    @abstractmethod
     def check_al_id_in_cache(self, arr: Arr, al_id: int, seadex_entry: EntryRecord) -> bool: ...
+    @abstractmethod
     def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None: ...
+    @abstractmethod
     def get_cached_name(self, arr: Arr, al_id: int) -> str | None: ...
+    @abstractmethod
     def get_cached_field(self, arr: Arr, al_id: int, field: CacheField) -> object | None: ...
+    @abstractmethod
     def torrent_hashes(self, arr: Arr, al_id: int) -> list[str | None]: ...
+    @abstractmethod
     def update_cache(self, arr: Arr, al_id: int, cache_details: CacheRecord | None = None) -> bool: ...
+    @abstractmethod
     def iter_anilist_meta(self) -> Iterator[tuple[int, dict[str, Any]]]: ...
+    @abstractmethod
     def get_anilist_meta(self, al_id: int) -> dict[str, Any] | None: ...
+    @abstractmethod
     def put_anilist_meta(self, al_id: int, record: dict[str, Any]) -> None: ...
+    @abstractmethod
     def evict_anilist_meta(self, cutoff: datetime) -> int: ...
+    @abstractmethod
     def iter_sonarr_parse(self) -> Iterator[tuple[str, dict[str, Any]]]: ...
+    @abstractmethod
     def get_sonarr_parse(self, filename: str) -> dict[str, Any] | None: ...
+    @abstractmethod
     def put_sonarr_parse(self, filename: str, record: dict[str, Any]) -> None: ...
+    @abstractmethod
     def evict_sonarr_parse(self, cutoff: datetime) -> int: ...
+    @abstractmethod
     def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]: ...
+    @abstractmethod
     def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]: ...
+    @abstractmethod
     def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None: ...
+    @abstractmethod
     def drop_pending(self, arr: Arr, infohash: str) -> None: ...
+    @abstractmethod
     def stats(self) -> dict[str, int]: ...
+    @abstractmethod
     def integrity_check(self) -> str: ...
 
 
-class CacheStore:
+class CacheStore(AbstractCacheStore):
     """Owns the cache database: schema, freshness checks, and persistence."""
 
     def __init__(self, conn: sqlite3.Connection, path: str, *, on_memory: bool) -> None:
@@ -502,6 +525,7 @@ class CacheStore:
         if logger is not None:
             logger.info(f"Migrating legacy cache {json_path} -> {self._path}")
 
+    @override
     def save(self, *, preview: bool) -> None:
         """Persist staged writes - unless this is a preview run.
 
@@ -564,6 +588,7 @@ class CacheStore:
                 os.replace(self._migrated_from, self._migrated_from + ".migrated")
             self._migrated_from = None
 
+    @override
     def close(self) -> None:
         """Roll back any uncommitted writes and close the connection.
 
@@ -589,6 +614,7 @@ class CacheStore:
 
     # -- per-entry records (entries + torrent_hashes) ------------------------
 
+    @override
     def check_al_id_in_cache(
         self,
         arr: Arr,
@@ -610,6 +636,7 @@ class CacheStore:
         ).fetchone()
         return bool(row) and row[0] == sd_time_str
 
+    @override
     def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None:
         """The four scalar columns of an entry's row in one query, or None.
 
@@ -625,11 +652,13 @@ class CacheStore:
         ).fetchone()
         return None if row is None else CachedEntry(row[0], row[1], row[2], row[3])
 
+    @override
     def get_cached_name(self, arr: Arr, al_id: int) -> str | None:
         """The cached AniList title for an entry, if any (no AniList lookup)."""
 
         return cast("str | None", self.get_cached_field(arr, al_id, CacheField.NAME))
 
+    @override
     def get_cached_field(
         self,
         arr: Arr,
@@ -658,6 +687,7 @@ class CacheStore:
         ).fetchone()
         return row[0] if row else None
 
+    @override
     def torrent_hashes(self, arr: Arr, al_id: int) -> list[str | None]:
         """Torrent hashes already remembered for an entry (empty if none).
 
@@ -677,6 +707,7 @@ class CacheStore:
         # Map the _NO_HASH sentinel back to the None marker it stands in for.
         return cast("list[str | None]", [None if r[0] == _NO_HASH else r[0] for r in rows])
 
+    @override
     def update_cache(
         self,
         arr: Arr,
@@ -748,6 +779,7 @@ class CacheStore:
 
     # -- AniList meta (JSONB + TTL) ------------------------------------------
 
+    @override
     def iter_anilist_meta(self) -> Iterator[tuple[int, dict[str, Any]]]:
         """Yield ``(al_id, record)`` for every stored AniList-meta record.
 
@@ -760,6 +792,7 @@ class CacheStore:
         ):
             yield al_id, json.loads(rec_json)
 
+    @override
     def get_anilist_meta(self, al_id: int) -> dict[str, Any] | None:
         """The stored ``{"fetched_at", "data"}`` record for an id, or None."""
 
@@ -769,6 +802,7 @@ class CacheStore:
         ).fetchone()
         return json.loads(row[0]) if row else None
 
+    @override
     def put_anilist_meta(self, al_id: int, record: dict[str, Any]) -> None:
         """Upsert an AniList-meta record (staged; persisted at a save point)."""
 
@@ -780,6 +814,7 @@ class CacheStore:
 
     # -- Sonarr parse cache (JSONB + TTL) ------------------------------------
 
+    @override
     def iter_sonarr_parse(self) -> Iterator[tuple[str, dict[str, Any]]]:
         """Yield ``(filename, record)`` for every stored Sonarr parse record."""
 
@@ -788,6 +823,7 @@ class CacheStore:
         ):
             yield filename, json.loads(rec_json)
 
+    @override
     def get_sonarr_parse(self, filename: str) -> dict[str, Any] | None:
         """The stored ``{"fetched_at", "episodes"}`` record for a filename, or None."""
 
@@ -797,6 +833,7 @@ class CacheStore:
         ).fetchone()
         return json.loads(row[0]) if row else None
 
+    @override
     def put_sonarr_parse(self, filename: str, record: dict[str, Any]) -> None:
         """Upsert a Sonarr parse record (staged; persisted at a save point)."""
 
@@ -808,6 +845,7 @@ class CacheStore:
 
     # -- pending imports -----------------------------------------------------
 
+    @override
     def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]:
         """All pending-import records for an arr, keyed by infohash (snapshot).
 
@@ -823,6 +861,7 @@ class CacheStore:
             out[infohash] = json.loads(rec_json)
         return out
 
+    @override
     def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
         """Pending-import records for one Sonarr ``series_id``, keyed by infohash.
 
@@ -843,6 +882,7 @@ class CacheStore:
             out[infohash] = json.loads(rec_json)
         return out
 
+    @override
     def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
         """Upsert a pending-import record (staged; persisted at a save point)."""
 
@@ -852,6 +892,7 @@ class CacheStore:
             (_arr_key(arr), infohash, json.dumps(record)),
         )
 
+    @override
     def drop_pending(self, arr: Arr, infohash: str) -> None:
         """Delete a pending-import record (staged; persisted at a save point)."""
 
@@ -862,6 +903,7 @@ class CacheStore:
 
     # -- maintenance: eviction, stats, integrity -----------------------------
 
+    @override
     def evict_anilist_meta(self, cutoff: datetime) -> int:
         """Delete AniList-meta records older than ``cutoff`` (or stamp-less); count.
 
@@ -879,6 +921,7 @@ class CacheStore:
         )
         return cursor.rowcount
 
+    @override
     def evict_sonarr_parse(self, cutoff: datetime) -> int:
         """Delete Sonarr parse records older than ``cutoff`` (or stamp-less); count.
 
@@ -892,6 +935,7 @@ class CacheStore:
         )
         return cursor.rowcount
 
+    @override
     def stats(self) -> dict[str, int]:
         """Row counts per table plus the on-disk size in bytes (0 while in memory).
 
@@ -911,6 +955,7 @@ class CacheStore:
         out["size_bytes"] = size
         return out
 
+    @override
     def integrity_check(self) -> str:
         """Run ``PRAGMA quick_check`` and return its result (``"ok"`` when healthy)."""
 

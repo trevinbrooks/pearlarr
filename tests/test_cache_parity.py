@@ -12,7 +12,7 @@ equal, then the eviction counts and a post-drop/post-save re-read.
 from datetime import datetime
 from pathlib import Path
 
-from seadexarr.modules.cache import CacheField, CacheRecord, CacheStore, CacheStoreProtocol
+from seadexarr.modules.cache import AbstractCacheStore, CacheField, CacheRecord, CacheStore
 from seadexarr.modules.config import Arr
 
 from .builders import FakeCacheStore, make_entry_record
@@ -24,7 +24,7 @@ _CUTOFF = datetime(2025, 1, 1)
 _ENTRY_STAMP = datetime(2026, 1, 1)
 
 
-def _apply_ops(store: CacheStoreProtocol) -> None:
+def _apply_ops(store: AbstractCacheStore) -> None:
     """One identical mutating sequence: entries + hashes, the two TTL caches, pending."""
 
     store.update_cache(
@@ -52,7 +52,7 @@ def _apply_ops(store: CacheStoreProtocol) -> None:
     store.put_pending(Arr.SONARR, "hashB", {"series_id": 8, "title": "B"})
 
 
-def _observe(store: CacheStoreProtocol) -> dict[str, object]:
+def _observe(store: AbstractCacheStore) -> dict[str, object]:
     """Every observable read the fake-trusting tests rely on, as one comparable snapshot."""
 
     match_entry = make_entry_record(anilist_id=7, updated_at=_ENTRY_STAMP)
