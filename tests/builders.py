@@ -16,6 +16,7 @@ test actually read.
 
 import logging
 from collections.abc import Iterable, Iterator
+from copy import deepcopy
 from datetime import datetime
 from typing import Any, cast, override
 
@@ -177,8 +178,9 @@ class FakeCacheStore(AbstractCacheStore):
     ``check_al_id_in_cache`` compares the strftime'd ``updated_at`` strings; and the
     ``evict_*`` sweeps drop stamp-less / aged-out records like the real SQL DELETE.
 
-    ``get_pending`` returns a fresh (outer) copy, matching the real snapshot
-    semantics; ``save`` / ``close`` are no-ops; ``stats`` / ``integrity_check``
+    ``get_pending`` / ``get_pending_for_series`` return a fresh deep-copied
+    snapshot, so mutating a returned record does not touch the store (matching the
+    real ``json.loads`` copy); ``save`` / ``close`` are no-ops; ``stats`` / ``integrity_check``
     report a plausible health snapshot. Arr keys use ``str(arr)`` to mirror
     production's ``_arr_key``.
     """
@@ -328,16 +330,16 @@ class FakeCacheStore(AbstractCacheStore):
     # -- pending imports --
     @override
     def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]:
-        return dict(self._pending.get(str(arr), {}))
+        return {ih: deepcopy(rec) for ih, rec in self._pending.get(str(arr), {}).items()}
 
     @override
     def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
-        """Fresh snapshot filtered to one series (mirrors the SQL ``->> 'series_id'``)."""
+        """Fresh deep-copied snapshot filtered to one series (mirrors the SQL ``->> 'series_id'``)."""
 
         return {
-            infohash: record
-            for infohash, record in self._pending.get(str(arr), {}).items()
-            if record.get("series_id") == series_id
+            ih: deepcopy(rec)
+            for ih, rec in self._pending.get(str(arr), {}).items()
+            if rec.get("series_id") == series_id
         }
 
     @override

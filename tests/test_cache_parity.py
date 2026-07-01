@@ -81,6 +81,35 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
     }
 
 
+def _assert_pending_snapshot_isolated(store: AbstractCacheStore) -> None:
+    """A record from get_pending / get_pending_for_series is a fresh copy:
+    mutating it must not reach the store (real json.loads; the fake must match)."""
+
+    store.put_pending(Arr.SONARR, "hiso", {"series_id": 7, "title": "orig"})
+
+    snap = store.get_pending(Arr.SONARR)
+    snap["hiso"]["title"] = "mutated"
+    snap["hiso"]["injected"] = True
+    reread = store.get_pending(Arr.SONARR)["hiso"]
+    assert reread["title"] == "orig"
+    assert "injected" not in reread
+
+    per_series = store.get_pending_for_series(Arr.SONARR, 7)
+    per_series["hiso"]["title"] = "mutated"
+    assert store.get_pending_for_series(Arr.SONARR, 7)["hiso"]["title"] == "orig"
+
+
+def test_pending_snapshot_mutation_does_not_leak(tmp_path: Path) -> None:
+    fake = FakeCacheStore()
+    real = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="x")
+    try:
+        _assert_pending_snapshot_isolated(fake)
+        _assert_pending_snapshot_isolated(real)
+    finally:
+        real.close()
+        fake.close()
+
+
 def test_fake_cache_store_observably_matches_real(tmp_path: Path) -> None:
     fake = FakeCacheStore()
     real = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="x")
