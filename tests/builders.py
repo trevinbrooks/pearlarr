@@ -178,11 +178,12 @@ class FakeCacheStore(AbstractCacheStore):
     ``check_al_id_in_cache`` compares the strftime'd ``updated_at`` strings; and the
     ``evict_*`` sweeps drop stamp-less / aged-out records like the real SQL DELETE.
 
-    ``get_pending`` / ``get_pending_for_series`` return a fresh deep-copied
-    snapshot, so mutating a returned record does not touch the store (matching the
-    real ``json.loads`` copy); ``save`` / ``close`` are no-ops; ``stats`` / ``integrity_check``
-    report a plausible health snapshot. Arr keys use ``str(arr)`` to mirror
-    production's ``_arr_key``.
+    Every JSONB record block (``pending`` / ``anilist_meta`` / ``sonarr_parse``)
+    deep-copies on BOTH ends - stored on ``put_*`` and returned on ``get_*`` /
+    ``iter_*`` - so a caller mutating a record before or after the call cannot reach
+    the store, mirroring the real store's ``json.dumps`` / ``json.loads`` round-trip.
+    ``save`` / ``close`` are no-ops; ``stats`` / ``integrity_check`` report a plausible
+    health snapshot. Arr keys use ``str(arr)`` to mirror production's ``_arr_key``.
     """
 
     def __init__(
@@ -296,15 +297,15 @@ class FakeCacheStore(AbstractCacheStore):
     # -- AniList meta (TTL-swept) --
     @override
     def iter_anilist_meta(self) -> Iterator[tuple[int, dict[str, Any]]]:
-        yield from list(self._anilist_meta.items())
+        yield from ((al_id, deepcopy(rec)) for al_id, rec in list(self._anilist_meta.items()))
 
     @override
     def get_anilist_meta(self, al_id: int) -> dict[str, Any] | None:
-        return self._anilist_meta.get(al_id)
+        return deepcopy(self._anilist_meta.get(al_id))
 
     @override
     def put_anilist_meta(self, al_id: int, record: dict[str, Any]) -> None:
-        self._anilist_meta[al_id] = record
+        self._anilist_meta[al_id] = deepcopy(record)
 
     @override
     def evict_anilist_meta(self, cutoff: datetime) -> int:
@@ -313,15 +314,15 @@ class FakeCacheStore(AbstractCacheStore):
     # -- Sonarr parse cache (TTL-swept) --
     @override
     def iter_sonarr_parse(self) -> Iterator[tuple[str, dict[str, Any]]]:
-        yield from list(self._sonarr_parse.items())
+        yield from ((filename, deepcopy(rec)) for filename, rec in list(self._sonarr_parse.items()))
 
     @override
     def get_sonarr_parse(self, filename: str) -> dict[str, Any] | None:
-        return self._sonarr_parse.get(filename)
+        return deepcopy(self._sonarr_parse.get(filename))
 
     @override
     def put_sonarr_parse(self, filename: str, record: dict[str, Any]) -> None:
-        self._sonarr_parse[filename] = record
+        self._sonarr_parse[filename] = deepcopy(record)
 
     @override
     def evict_sonarr_parse(self, cutoff: datetime) -> int:
@@ -344,7 +345,7 @@ class FakeCacheStore(AbstractCacheStore):
 
     @override
     def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
-        self._pending.setdefault(str(arr), {})[infohash] = record
+        self._pending.setdefault(str(arr), {})[infohash] = deepcopy(record)
 
     @override
     def drop_pending(self, arr: Arr, infohash: str) -> None:

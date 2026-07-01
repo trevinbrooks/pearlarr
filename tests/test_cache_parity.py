@@ -9,8 +9,12 @@ drives one identical op sequence through both and asserts every observable read 
 equal, then the eviction counts and a post-drop/post-save re-read.
 """
 
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from seadexarr.modules.cache import AbstractCacheStore, CacheField, CacheRecord, CacheStore
 from seadexarr.modules.config import Arr
@@ -22,6 +26,19 @@ _OLD = "2020-01-01 00:00:00"
 _NEW = "2030-01-01 00:00:00"
 _CUTOFF = datetime(2025, 1, 1)
 _ENTRY_STAMP = datetime(2026, 1, 1)
+
+
+@contextmanager
+def _both_stores(tmp_path: Path) -> Generator[tuple[FakeCacheStore, CacheStore]]:
+    """The fake and a real SQLite store side by side, both closed on exit."""
+
+    fake = FakeCacheStore()
+    real = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="x")
+    try:
+        yield fake, real
+    finally:
+        real.close()
+        fake.close()
 
 
 def _apply_ops(store: AbstractCacheStore) -> None:
@@ -81,39 +98,109 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
     }
 
 
-def _assert_pending_snapshot_isolated(store: AbstractCacheStore) -> None:
-    """A record from get_pending / get_pending_for_series is a fresh copy:
-    mutating it must not reach the store (real json.loads; the fake must match)."""
+@dataclass(frozen=True)
+class _JsonbBlock:
+    """One whole-dict JSONB block's put/get/iter surface, for the isolation check.
 
-    store.put_pending(Arr.SONARR, "hiso", {"series_id": 7, "title": "orig"})
+    ``get`` returns the single record under this block's fixed key (or None);
+    ``iter_records`` returns every record reachable through the block's collection
+    reads (for ``pending`` that is both ``get_pending`` and ``get_pending_for_series``).
+    """
 
-    snap = store.get_pending(Arr.SONARR)
-    snap["hiso"]["title"] = "mutated"
-    snap["hiso"]["injected"] = True
-    reread = store.get_pending(Arr.SONARR)["hiso"]
-    assert reread["title"] == "orig"
-    assert "injected" not in reread
-
-    per_series = store.get_pending_for_series(Arr.SONARR, 7)
-    per_series["hiso"]["title"] = "mutated"
-    assert store.get_pending_for_series(Arr.SONARR, 7)["hiso"]["title"] == "orig"
+    name: str
+    put: Callable[[AbstractCacheStore, dict[str, Any]], None]
+    get: Callable[[AbstractCacheStore], dict[str, Any] | None]
+    iter_records: Callable[[AbstractCacheStore], list[dict[str, Any]]]
 
 
-def test_pending_snapshot_mutation_does_not_leak(tmp_path: Path) -> None:
-    fake = FakeCacheStore()
-    real = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="x")
-    try:
-        _assert_pending_snapshot_isolated(fake)
-        _assert_pending_snapshot_isolated(real)
-    finally:
-        real.close()
-        fake.close()
+_ISO_IH = "hiso"
+_ISO_AL = 4242
+_ISO_FILE = "iso.mkv"
+_ISO_SID = 7
+
+# The three blocks the real store round-trips through JSON on both ends. Each carries
+# series_id so the pending block's get_pending_for_series filter matches the record.
+_JSONB_BLOCKS: tuple[_JsonbBlock, ...] = (
+    _JsonbBlock(
+        "pending",
+        put=lambda s, r: s.put_pending(Arr.SONARR, _ISO_IH, r),
+        get=lambda s: s.get_pending(Arr.SONARR).get(_ISO_IH),
+        iter_records=lambda s: [
+            *s.get_pending(Arr.SONARR).values(),
+            *s.get_pending_for_series(Arr.SONARR, _ISO_SID).values(),
+        ],
+    ),
+    _JsonbBlock(
+        "anilist_meta",
+        put=lambda s, r: s.put_anilist_meta(_ISO_AL, r),
+        get=lambda s: s.get_anilist_meta(_ISO_AL),
+        iter_records=lambda s: [rec for _al, rec in s.iter_anilist_meta()],
+    ),
+    _JsonbBlock(
+        "sonarr_parse",
+        put=lambda s, r: s.put_sonarr_parse(_ISO_FILE, r),
+        get=lambda s: s.get_sonarr_parse(_ISO_FILE),
+        iter_records=lambda s: [rec for _fn, rec in s.iter_sonarr_parse()],
+    ),
+)
+
+
+def _scribble(rec: dict[str, Any], marker: str) -> None:
+    """Mutate a record in place - top-level, nested, and a fresh key - so any leak
+    into the store (a shallow copy OR a shared reference) surfaces on the next read."""
+
+    rec["title"] = marker
+    rec["nested"]["k"] = marker
+    rec["injected"] = True
+
+
+def _assert_pristine(rec: dict[str, Any] | None, block: str) -> dict[str, Any]:
+    """The record is present and none of :func:`_scribble`'s mutations reached it."""
+
+    assert rec is not None, block
+    assert rec["title"] == "orig", block
+    assert rec["nested"]["k"] == "v", block
+    assert "injected" not in rec, block
+    return rec
+
+
+def _assert_block_snapshot_isolated(store: AbstractCacheStore, block: _JsonbBlock) -> None:
+    """A JSONB record is caller-mutation-isolated on BOTH ends, like the real store's
+    json.dumps (put) / json.loads (get, iter) round-trip: mutating the dict handed to
+    ``put`` afterwards, or any dict returned by ``get`` / ``iter``, must not reach the
+    store."""
+
+    record: dict[str, Any] = {"series_id": _ISO_SID, "title": "orig", "nested": {"k": "v"}}
+    block.put(store, record)
+
+    # write side: mutate the caller's own dict after the put.
+    _scribble(record, "leaked-via-put")
+    after_put = _assert_pristine(block.get(store), block.name)
+
+    # read side (get): mutate the returned copy.
+    _scribble(after_put, "leaked-via-get")
+    _assert_pristine(block.get(store), block.name)
+
+    # read side (iter): mutate each iterated record.
+    for rec in block.iter_records(store):
+        _scribble(rec, "leaked-via-iter")
+    for rec in block.iter_records(store):
+        _assert_pristine(rec, block.name)
+
+
+def test_jsonb_record_snapshot_mutation_does_not_leak(tmp_path: Path) -> None:
+    """Every JSONB block isolates caller mutation on both ends. The real store (the
+    json round-trip) is driven through the same assertion, so it proves the contract
+    rather than an invented one - and pins the fake to it."""
+
+    with _both_stores(tmp_path) as (fake, real):
+        for block in _JSONB_BLOCKS:
+            _assert_block_snapshot_isolated(fake, block)
+            _assert_block_snapshot_isolated(real, block)
 
 
 def test_fake_cache_store_observably_matches_real(tmp_path: Path) -> None:
-    fake = FakeCacheStore()
-    real = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="x")
-    try:
+    with _both_stores(tmp_path) as (fake, real):
         _apply_ops(fake)
         _apply_ops(real)
         assert _observe(fake) == _observe(real)
@@ -131,6 +218,3 @@ def test_fake_cache_store_observably_matches_real(tmp_path: Path) -> None:
         real.save(preview=False)
 
         assert _observe(fake) == _observe(real)
-    finally:
-        real.close()
-        fake.close()
