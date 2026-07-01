@@ -136,6 +136,12 @@ markers = [
     "slow: a slower test (network-shaped or large fixtures)",
     "integration: wires several real components together (real SQLite/YAML)",
 ]
+# Warnings are errors: a silent resource leak (unclosed sqlite/log handle) or a
+# dependency deprecation must fail the suite, not scroll past. The autouse
+# close_leaked_handles fixture (tests/conftest.py) closes the known GC-timed
+# leaks first. Add a targeted `ignore::Category:module` here only for a
+# third-party warning we cannot fix - never to silence our own.
+filterwarnings = ["error"]
 
 # Branch coverage with a ratcheting floor pinned just under the current total
 # (~78.8%); raise it as the untested I/O adapters / composition root get covered.

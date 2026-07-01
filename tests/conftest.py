@@ -12,7 +12,45 @@ from pathlib import Path
 
 import pytest
 
+from seadexarr.modules.mapping_store import MappingStore
 from seadexarr.modules.paths import DATA_DIR_ENV
+
+
+@pytest.fixture(autouse=True)
+def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Close the sqlite stores + file log handlers a test leaves open.
+
+    Two GC-timed ``ResourceWarning`` sources that ``filterwarnings=["error"]``
+    would otherwise turn into failures at a nondeterministic later moment (whoever
+    is running when the GC finalizes the object):
+
+    * ``MappingStore``: ``make_run_deps`` / ``make_sonarr_sync`` build a real
+      ``MappingResolver`` whose ``:memory:`` store the tests can't close in the
+      builder (they query ``deps.mappings`` after construction). Wrapping the
+      ``open`` factory registers every store regardless of construction path;
+      ``close()`` is idempotent, so stores that already close themselves are fine.
+    * The ``RotatingFileHandler`` ``setup_logger`` attaches to the ``"SeaDexArr"``
+      logger (only the e2e smoke drives the real logging path); left open, its
+      file handle leaks.
+    """
+
+    opened: list[MappingStore] = []
+    real_open = MappingStore.open
+
+    def tracking_open(path: str, *, logger: logging.Logger | None = None) -> MappingStore:
+        store = real_open(path, logger=logger)
+        opened.append(store)
+        return store
+
+    monkeypatch.setattr(MappingStore, "open", tracking_open)
+    yield
+    for store in opened:
+        store.close()
+    app_logger = logging.getLogger("SeaDexArr")
+    for handler in list(app_logger.handlers):
+        if isinstance(handler, logging.FileHandler):
+            handler.close()
+            app_logger.removeHandler(handler)
 
 
 @pytest.fixture(autouse=True)
