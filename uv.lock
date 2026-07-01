@@ -1059,6 +1059,7 @@ dependencies = [
     { name = "rich" },
     { name = "seadex" },
     { name = "typer" },
+    { name = "urllib3" },
 ]
 
 [package.optional-dependencies]
@@ -1111,6 +1112,7 @@ requires-dist = [
     { name = "sphinx-automodapi", marker = "extra == 'docs'", specifier = "==0.22.0" },
     { name = "sphinx-rtd-theme", marker = "extra == 'docs'", specifier = "==3.0.2" },
     { name = "typer", specifier = "==0.21.1" },
+    { name = "urllib3", specifier = ">=2.7.0" },
 ]
 provides-extras = ["docs"]
 

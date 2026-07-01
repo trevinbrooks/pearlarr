@@ -59,6 +59,7 @@ dependencies = [
     "rich == 13.9.4",
     "seadex == 0.7.2",
     "typer == 0.21.1",
+    "urllib3>=2.7.0",
 ]
 
 [project.optional-dependencies]
