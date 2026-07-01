@@ -15,6 +15,13 @@ from .torrent import (
     get_rutracker_torrent,
 )
 
+# The trackers we have a parser for. Kept in lockstep with ``add``'s dispatch dict
+# (a test pins the two together). The grab pipeline pre-filters on this so an
+# unparseable tracker is skipped there rather than reaching ``add``'s raise.
+PARSEABLE_TRACKERS: frozenset[Tracker] = frozenset(
+    {Tracker.NYAA, Tracker.ANIMETOSHO, Tracker.RUTRACKER},
+)
+
 
 class AddOutcome(Enum):
     """The result of handing a release to the torrent client.

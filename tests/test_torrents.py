@@ -27,7 +27,7 @@ import seadexarr.modules.torrents as torrents
 from seadexarr.modules.config import Arr
 from seadexarr.modules.mappings import MappingResolver
 from seadexarr.modules.seadex_arr import QbitConnectionError, RunDeps
-from seadexarr.modules.torrents import AddOutcome, TorrentService
+from seadexarr.modules.torrents import PARSEABLE_TRACKERS, AddOutcome, TorrentService
 
 from .builders import make_bare_instance, make_config
 
@@ -189,6 +189,44 @@ def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         service.add(url="https://animetosho.org/view/1", tracker=Tracker.ANIMETOSHO, torrent_hash=None, preview=False)
 
     assert qbit.add_calls == []
+
+
+def _patch_all_parsers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub all three tracker parsers to a fixed (url, title), so the parseable
+    branch of ``add`` reaches the qbit path without a real scrape."""
+
+    def _nyaa(url: str) -> tuple[str | None, str]:
+        del url
+        return (_PARSED_URL, _SOURCE_TITLE)
+
+    def _animetosho(url: str, session: requests.Session) -> tuple[str | None, str]:
+        del url, session
+        return (_PARSED_URL, _SOURCE_TITLE)
+
+    def _rutracker(url: str, torrent_hash: str | None, session: requests.Session) -> tuple[str | None, str]:
+        del url, torrent_hash, session
+        return (_PARSED_URL, _SOURCE_TITLE)
+
+    monkeypatch.setattr(torrents, "get_nyaa_torrent", _nyaa)
+    monkeypatch.setattr(torrents, "get_animetosho_torrent", _animetosho)
+    monkeypatch.setattr(torrents, "get_rutracker_torrent", _rutracker)
+
+
+@pytest.mark.parametrize("tracker", list(Tracker))
+def test_add_raises_iff_tracker_unparseable(tracker: Tracker, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``add`` parses exactly the ``PARSEABLE_TRACKERS`` and raises for every other
+    member - pinning the constant against ``add``'s dispatch dict so drift in either
+    direction (a parser added without the constant, or vice-versa) is caught."""
+
+    _patch_all_parsers(monkeypatch)
+    service = _service(_FakeQbit())
+
+    if tracker in PARSEABLE_TRACKERS:
+        outcome, _ = service.add(url="https://example/1", tracker=tracker, torrent_hash=None, preview=True)
+        assert outcome is AddOutcome.ADDED
+    else:
+        with pytest.raises(ValueError, match="Unable to parse torrent links"):
+            service.add(url="https://example/1", tracker=tracker, torrent_hash=None, preview=True)
 
 
 # --- QbitConnectionError mapping (RunDeps.build login path) ------------------

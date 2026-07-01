@@ -796,10 +796,12 @@ class SeaDexArr:
                 since the mapping dicts are built from external data
         """
 
-        # Reset the per-title public_only skip flag (and the skipped group names)
-        # before we make any download decisions for this title
+        # Reset the per-title skip flags (and the skipped group names) before we
+        # make any download decisions for this title
         self._ctx.public_only_skipped = False
         self._ctx.public_only_groups = []
+        self._ctx.unsupported_tracker_skipped = False
+        self._ctx.unsupported_tracker_groups = []
         self._ctx.stats.checked += 1
 
         if al_id is None:

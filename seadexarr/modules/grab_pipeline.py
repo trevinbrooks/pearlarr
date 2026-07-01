@@ -27,7 +27,7 @@ from .notify import Notifier
 from .planner import DownloadPlanner
 from .reporter import GrabRecord, NeedsActionRecord, RunContext, RunReporter, is_preview
 from .seadex_types import SeadexDict, SeadexUrlItem
-from .torrents import AddOutcome, ReleaseOutcome, TorrentService
+from .torrents import PARSEABLE_TRACKERS, AddOutcome, ReleaseOutcome, TorrentService
 
 
 @dataclass(frozen=True)
@@ -194,6 +194,21 @@ class GrabPipeline:
             )
             return None
 
+        # Skip trackers we have no parser for. Handing one to the service would
+        # raise, unwinding this id's whole url loop (dropping any later grabbable
+        # release too); skip+warn here so the loop continues, and flag the title so
+        # it's not cached as done (re-checked once a parser / config change lands).
+        if tracker not in PARSEABLE_TRACKERS:
+            self.log_fmt.detail(
+                "skipped",
+                f"{url} (tracker {tracker} not yet supported)",
+                value_style="yellow",
+                level=logging.WARNING,
+            )
+            self._ctx.unsupported_tracker_skipped = True
+            self._ctx.unsupported_tracker_groups.append(srg)
+            return None
+
         # The service parses the release URL by tracker and adds it to
         # qBittorrent, returning the add status and a display name (the
         # client's name, or the release title scraped from the source
@@ -271,6 +286,18 @@ class GrabPipeline:
             )
             self._ctx.pending_imports.append(pending)
 
+    def _needs_action(self, groups: list[str], reason: str) -> NeedsActionRecord:
+        """A needs-action record for the current title: title/coverage/url come from
+        the per-title context, the caller supplies the skipped groups and reason."""
+
+        return NeedsActionRecord(
+            title=self._ctx.current_title,
+            coverage=self._ctx.current_coverage,
+            group=", ".join(dict.fromkeys(groups)),
+            url=self._ctx.current_url,
+            reason=reason,
+        )
+
     def grab_and_cache(self, req: GrabRequest) -> bool:
         """Shared per-id tail: add torrents, notify, then cache the outcome
 
@@ -305,33 +332,27 @@ class GrabPipeline:
         # Work out whether THIS title actually grabbed anything
         added_this_title = self._ctx.torrents_added - torrents_before
 
-        # Update and save out the cache whenever something was grabbed for this
-        # title, or when nothing was skipped at all. Leave the title uncached ONLY
-        # when public_only skipped a release AND nothing else was grabbed for it -
-        # so it's re-checked (and the skip re-logged as a reminder) on every run,
-        # and retried once a public release appears or public_only is relaxed
-        if added_this_title > 0 or not self._ctx.public_only_skipped:
+        # Cache the title as done only when something was grabbed, or nothing was
+        # skipped. A private-only OR unsupported-tracker skip that left nothing
+        # grabbed keeps it uncached, so it's re-checked once a public release /
+        # parser / config change lands.
+        if added_this_title > 0 or not (self._ctx.public_only_skipped or self._ctx.unsupported_tracker_skipped):
             req.cache_details.update({"torrent_hashes": req.torrent_hashes})
             self.cache_store.update_cache(
                 self._ctx.arr,
                 req.al_id,
                 req.cache_details,
             )
-        elif added_this_title == 0:
-            # Record the private-only skip for the summary's "needs action" list,
-            # attributed to this title - but only when nothing was actually added
-            # for it. The coverage is whatever log_al_title recorded as current
-            # (a season/episode string for Sonarr, None for a Radarr movie).
+        # Nothing added, but a release was skipped for a reason outside the user's
+        # control: surface ONE needs-action reason for the title (private-only wins)
+        # so it isn't cached as done and shows in the summary.
+        elif self._ctx.public_only_skipped:
             self._ctx.stats.needs_action.append(
-                NeedsActionRecord(
-                    title=self._ctx.current_title,
-                    coverage=self._ctx.current_coverage,
-                    group=", ".join(
-                        dict.fromkeys(self._ctx.public_only_groups),
-                    ),
-                    url=self._ctx.current_url,
-                    reason="private-only release; public_only on",
-                ),
+                self._needs_action(self._ctx.public_only_groups, "private-only release; public_only on"),
+            )
+        elif self._ctx.unsupported_tracker_skipped:
+            self._ctx.stats.needs_action.append(
+                self._needs_action(self._ctx.unsupported_tracker_groups, "unsupported tracker; no parser yet"),
             )
 
         # Add in a wait, if required
