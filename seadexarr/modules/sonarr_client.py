@@ -406,7 +406,7 @@ class SonarrClient(AbstractSonarrClient):
             "importMode": import_mode,
             "files": files,
         }
-        return self._post_command(body, label="ManualImport")
+        return self._post_command(body)
 
     @override
     def refresh_monitored_downloads(self) -> int | None:
@@ -421,9 +421,9 @@ class SonarrClient(AbstractSonarrClient):
         """
 
         body: CommandBody = {"name": "RefreshMonitoredDownloads"}
-        return self._post_command(body, label="RefreshMonitoredDownloads")
+        return self._post_command(body)
 
-    def _post_command(self, body: CommandBody, *, label: str) -> int | None:
+    def _post_command(self, body: CommandBody) -> int | None:
         """POST a command to ``/api/v3/command`` and return its queued id.
 
         Shared by :meth:`manual_import_execute` and
@@ -442,7 +442,7 @@ class SonarrClient(AbstractSonarrClient):
         if command_req.status_code not in (200, 201):
             self._logger.warning(
                 indent_string(
-                    f"Could not queue {label} command (status code {command_req.status_code})",
+                    f"Could not queue {body["name"]} command (status code {command_req.status_code})",
                 ),
             )
             return None
