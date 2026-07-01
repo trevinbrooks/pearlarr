@@ -15,6 +15,8 @@ import pytest
 from seadexarr.modules.mapping_store import MappingStore
 from seadexarr.modules.paths import DATA_DIR_ENV
 
+from .builders import make_logger
+
 
 @pytest.fixture(autouse=True)
 def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
@@ -80,17 +82,17 @@ def isolate_data_dir(
 def logger() -> Iterator[logging.Logger]:
     """An isolated quiet logger (NullHandler, no propagation, WARNING).
 
-    Brackets the test logger with a reset on BOTH setup and teardown, so a level
-    bump or an attached handler in one test can't leak into the next under
-    randomized ordering - the disciplined replacement for the bare process-global
-    ``builders.make_logger`` (tests run sequentially, so the bracketing is total).
+    Config (logger name, no-propagation, level) comes from the single shared
+    ``builders.make_logger`` factory, so the fixture and the construction-time
+    builders that also call it can't drift. On top of that the fixture brackets a
+    handler reset on BOTH setup and teardown, so a level bump or an attached
+    handler in one test can't leak into the next under randomized ordering (tests
+    run sequentially, so the bracketing is total).
     """
 
-    log = logging.getLogger("seadexarr-test")
+    log = make_logger()
     log.handlers.clear()
     log.addHandler(logging.NullHandler())
-    log.propagate = False
-    log.setLevel(logging.WARNING)
     yield log
     log.handlers.clear()
     log.setLevel(logging.WARNING)
