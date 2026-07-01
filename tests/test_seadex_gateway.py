@@ -73,6 +73,16 @@ class TestSeaDexPrefetch:
         assert gateway.entry(2) is fake.entries[2]
         assert fake.from_id_calls == []  # never fell back to per-id
 
+    def test_batch_emits_or_ed_alid_filter(self) -> None:
+        # Drift guard: pins the exact OR-filter syntax prefetch emits - the format
+        # the real SeaDex server expects and FakeSeaDex.from_filter parses. The
+        # round-trip can't catch a key-name co-drift (the fake's parser ignores the
+        # clause key), so assert the string itself.
+        fake = FakeSeaDex({1: _rec(1), 2: _rec(2), 3: _rec(3)})
+        gateway = _gateway(fake)
+        gateway.prefetch([1, 2, 3])
+        assert fake.filter_calls == ["alID=1 || alID=2 || alID=3"]
+
     def test_prefetched_absent_id_returns_none_without_fallback(self) -> None:
         fake = FakeSeaDex({1: _rec(1)})
         gateway = _gateway(fake)
