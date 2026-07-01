@@ -21,6 +21,10 @@ from seadexarr.modules.cli import seadexarr_cli
 from seadexarr.modules.log import setup_logger
 from seadexarr.modules.paths import APP_NAME, ensure_data_dir, resolve_paths
 
+# These tests own the SEADEX_ARR_DATA_DIR env directly (precedence / default cases),
+# so they opt out of the autouse tmp data-dir isolation (see tests/conftest.py).
+pytestmark = pytest.mark.real_data_dir
+
 runner = CliRunner()
 
 

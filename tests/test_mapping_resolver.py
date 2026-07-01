@@ -17,7 +17,7 @@ import os
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TypedDict
+from typing import NamedTuple, TypedDict
 from xml.etree import ElementTree
 
 import pytest
@@ -669,11 +669,40 @@ class TestConstructionFailureClosesStore:
 # The sources are cached in the data directory (next to mappings.db).
 # --------------------------------------------------------------------------- #
 
-_REAL_DIR = resolve_paths().data_dir
-_REAL_ANIME_IDS = os.path.join(_REAL_DIR, m.ANIME_IDS_FILE)
-_REAL_ANIDB = os.path.join(_REAL_DIR, m.ANIDB_MAPPINGS_FILE)
-_REAL_ANIBRIDGE = os.path.join(_REAL_DIR, m.ANIBRIDGE_MAPPINGS_FILE)
-_HAVE_REAL = all(os.path.exists(f) for f in (_REAL_ANIME_IDS, _REAL_ANIDB, _REAL_ANIBRIDGE))
+
+class _RealSources(NamedTuple):
+    """The three real (gitignored) mapping source-file paths under the data dir."""
+
+    anime_ids: str
+    anidb: str
+    anibridge: str
+
+
+def _real_source_paths() -> _RealSources:
+    """Resolve the real source paths lazily (at test time, not import).
+
+    ``TestRealDataParity`` carries ``@pytest.mark.real_data_dir`` so the autouse tmp
+    data-dir override is off for it and ``resolve_paths()`` sees the developer's
+    real ``SEADEX_ARR_DATA_DIR``; evaluating this at import would instead capture
+    whatever dir was active before the fixtures ran.
+    """
+
+    base = resolve_paths().data_dir
+    return _RealSources(
+        anime_ids=os.path.join(base, m.ANIME_IDS_FILE),
+        anidb=os.path.join(base, m.ANIDB_MAPPINGS_FILE),
+        anibridge=os.path.join(base, m.ANIBRIDGE_MAPPINGS_FILE),
+    )
+
+
+@pytest.fixture
+def real_sources() -> _RealSources:
+    """The real mapping sources, or skip the test when any is absent (CI / clean)."""
+
+    paths = _real_source_paths()
+    if not all(os.path.exists(p) for p in paths):
+        pytest.skip("real mapping source files not present")
+    return paths
 
 
 def _anidb_oracle(root: ElementTree.Element, anidb_id: int, tvdb_season: int) -> dict[int, dict[int, int]]:
@@ -701,10 +730,10 @@ def _anidb_oracle(root: ElementTree.Element, anidb_id: int, tvdb_season: int) ->
 
 
 @pytest.mark.realdata
-@pytest.mark.skipif(not _HAVE_REAL, reason="real mapping source files not present")
+@pytest.mark.real_data_dir
 class TestRealDataParity:
-    def test_anibridge_sql_matches_graph_over_all_ids(self) -> None:
-        with open(_REAL_ANIBRIDGE) as f:
+    def test_anibridge_sql_matches_graph_over_all_ids(self, real_sources: _RealSources) -> None:
+        with open(real_sources.anibridge) as f:
             graph: AniBridgeGraph = json.load(f)
         graph_ab = AniBridge(graph)
         store = MappingStore.open(":memory:")
@@ -726,8 +755,8 @@ class TestRealDataParity:
         finally:
             store.close()
 
-    def test_anime_ids_sql_matches_oracle_sample(self) -> None:
-        amap = m._parse_anime_mappings(_REAL_ANIME_IDS)
+    def test_anime_ids_sql_matches_oracle_sample(self, real_sources: _RealSources) -> None:
+        amap = m._parse_anime_mappings(real_sources.anime_ids)
         resolver = MappingResolver(
             cache_time=99999,
             ignore_anilist_ids=set(),
@@ -749,8 +778,8 @@ class TestRealDataParity:
         finally:
             resolver.close()
 
-    def test_anidb_sql_matches_oracle_sample(self) -> None:
-        root = m._parse_anidb_mappings(_REAL_ANIDB)
+    def test_anidb_sql_matches_oracle_sample(self, real_sources: _RealSources) -> None:
+        root = m._parse_anidb_mappings(real_sources.anidb)
         resolver = MappingResolver(
             cache_time=99999,
             ignore_anilist_ids=set(),

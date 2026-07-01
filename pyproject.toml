@@ -132,6 +132,7 @@ testpaths = ["tests"]
 addopts = ["--strict-markers", "--strict-config", "--import-mode=importlib"]
 markers = [
     "realdata: exercises gitignored real mapping/data files; skipped unless present",
+    "real_data_dir: opts out of the autouse tmp data-dir isolation; reads/manages the real SEADEX_ARR_DATA_DIR",
     "slow: a slower test (network-shaped or large fixtures)",
     "integration: wires several real components together (real SQLite/YAML)",
 ]
