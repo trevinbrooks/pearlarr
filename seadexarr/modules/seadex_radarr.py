@@ -5,7 +5,7 @@ from .config import Arr
 from .grab_pipeline import GrabRequest
 from .log import indent_string
 from .manual_import import ImportProbe, ImportProgress, ImportReadiness, PendingImport
-from .mappings import MappingEntry, TmdbType
+from .mappings import MappingEntry
 from .protocols import ArrSync, EpisodeProgress
 from .radarr_client import collect_anime_movies, make_radarr_client
 from .seadex_arr import RunDeps, SeaDexArr
@@ -84,7 +84,6 @@ class RadarrSync(ArrSync[RadarrItem]):
         return self._services.get_anilist_ids(
             tmdb_id=item.tmdbId,
             imdb_id=item.imdbId,
-            tmdb_type=TmdbType.MOVIE,
             log_ignored=log_ignored,
         )
 

@@ -56,7 +56,6 @@ class AniBridgeRecord:
     """
 
     anidb_id: int | None = None
-    mal_ids: list[int] = field(default_factory=list[int])
     tvdb_shows: dict[int, TvdbMappings] = field(default_factory=dict[int, TvdbMappings])
     tmdb_movie_ids: list[int] = field(default_factory=list[int])
     imdb_ids: list[str] = field(default_factory=list[str])
@@ -181,7 +180,6 @@ class AniBridge:
 
         # Reverse indexes: external id -> set of AniList ids
         self.tvdb_index: dict[int, set[int]] = defaultdict(set)
-        self.tmdb_show_index: dict[int, set[int]] = defaultdict(set)
         self.tmdb_movie_index: dict[int, set[int]] = defaultdict(set)
         self.imdb_index: dict[str, set[int]] = defaultdict(set)
 
@@ -214,7 +212,6 @@ class AniBridge:
         # The graph-backed fields stay empty; the store answers everything.
         self.by_anilist = {}
         self.tvdb_index = defaultdict(set)
-        self.tmdb_show_index = defaultdict(set)
         self.tmdb_movie_index = defaultdict(set)
         self.imdb_index = defaultdict(set)
         # anibridge_distinct returns the union set[int | str]; each axis is known
@@ -237,8 +234,8 @@ class AniBridge:
     ]:
         """Flatten this (graph-backed) view into store row tuples.
 
-        Persists the *computed* consumer-entry picks (``_first`` / ``next(iter)``) so
-        the SQL backing reproduces :meth:`_consumer_entry` with zero re-derivation.
+        Persists the *computed* consumer-entry picks (``_first``) so the SQL
+        backing reproduces :meth:`_consumer_entry` with zero re-derivation.
 
         Returns:
             tuple: ``(entries, xrefs, ranges)`` row lists for
@@ -254,8 +251,6 @@ class AniBridge:
                     anidb_id=record.anidb_id,
                     imdb_id=_first(record.imdb_ids),
                     tmdb_movie_id=_first(record.tmdb_movie_ids),
-                    mal_id=_first(record.mal_ids),
-                    first_tvdb_id=next(iter(record.tvdb_shows), None),
                 ),
             )
             for tvdb_id, seasons in record.tvdb_shows.items():
@@ -272,7 +267,6 @@ class AniBridge:
         xrefs: list[AniBridgeXrefRow] = []
         for axis, index in (
             ("tvdb", self.tvdb_index),
-            ("tmdb_show", self.tmdb_show_index),
             ("tmdb_movie", self.tmdb_movie_index),
             ("imdb", self.imdb_index),
         ):
@@ -355,11 +349,6 @@ class AniBridge:
                 if anidb_id is not None:
                     record.anidb_id = anidb_id
 
-        elif provider == "mal":
-            mal_id = self._as_int(pid)
-            if mal_id is not None:
-                record.mal_ids.append(mal_id)
-
         elif provider == "tvdb_show":
             ext_id = self._as_int(pid)
             if ext_id is None:
@@ -377,13 +366,6 @@ class AniBridge:
             ranges = seasons.setdefault(season, [])
             for tgt in (ep_map or {}).values():
                 ranges.extend(_parse_ranges(tgt))
-
-        elif provider == "tmdb_show":
-            # A tmdb_show resolves AniList ids by id (reverse index); its per-season
-            # ranges are never consumed downstream, so only the xref is recorded.
-            ext_id = self._as_int(pid)
-            if ext_id is not None:
-                self.tmdb_show_index[ext_id].add(anilist_id)
 
         elif provider == "tmdb_movie":
             movie_id = self._as_int(pid)
@@ -437,11 +419,9 @@ class AniBridge:
         record = self.by_anilist[anilist_id]
 
         entry: dict[str, Any] = {
-            "tvdb_id": tvdb_id if tvdb_id is not None else next(iter(record.tvdb_shows), None),
             "anidb_id": record.anidb_id,
             "imdb_id": _first(record.imdb_ids),
             "tmdb_movie_id": _first(record.tmdb_movie_ids),
-            "mal_id": _first(record.mal_ids),
             "source": "anibridge",
         }
 
@@ -481,10 +461,9 @@ class AniBridge:
         for a tvdb-scoped lookup a second xref->range JOIN fetches all their range
         rows at once (grouped here by AniList id), so resolving k ids costs 2 queries
         rather than the former 1 + 2k point queries. Reproduces :meth:`_consumer_entry`
-        exactly: the stored ``first_tvdb_id`` picks back an unscoped id, and
-        ``tvdb_mappings`` is attached whenever ``tvdb_id`` is supplied - the only such
-        caller (:meth:`lookup_by_tvdb`) iterates the tvdb xref, so every resolved id
-        is guaranteed to carry that tvdb (matching the in-memory
+        exactly: ``tvdb_mappings`` is attached whenever ``tvdb_id`` is supplied - the
+        only such caller (:meth:`lookup_by_tvdb`) iterates the tvdb xref, so every
+        resolved id is guaranteed to carry that tvdb (matching the in-memory
         ``tvdb_id in record.tvdb_shows`` guard).
         """
 
@@ -499,11 +478,9 @@ class AniBridge:
         result: AniBridgeLookup = {}
         for row in store.anibridge_entries_for(axis, ext_id):
             entry: dict[str, Any] = {
-                "tvdb_id": tvdb_id if tvdb_id is not None else row.first_tvdb_id,
                 "anidb_id": row.anidb_id,
                 "imdb_id": row.imdb_id,
                 "tmdb_movie_id": row.tmdb_movie_id,
-                "mal_id": row.mal_id,
                 "source": "anibridge",
             }
             if tvdb_id is not None:
@@ -526,27 +503,15 @@ class AniBridge:
             for anilist_id in self.tvdb_index.get(tvdb_id, ())
         }
 
-    def lookup_by_tmdb(self, tmdb_id: int, tmdb_type: str = "movie") -> AniBridgeLookup:
-        """Return "{anilist_id: entry}" for AniList ids mapped to a tmdb id.
-
-        Callers pass ``mappings.TmdbType`` (a ``StrEnum``); its str value drives
-        the branch below. The parameter stays a bare ``str`` to keep this module
-        free of the ``mappings`` import (``mappings`` imports this one).
+    def lookup_by_tmdb(self, tmdb_id: int) -> AniBridgeLookup:
+        """Return "{anilist_id: entry}" for AniList ids mapped to a TMDB movie id.
 
         Args:
-            tmdb_id (int): TMDB id
-            tmdb_type (str): "movie" or "show"
+            tmdb_id (int): TMDB movie id
         """
 
         if self._store is not None:
-            if tmdb_type == "show":
-                return self._sql_lookup("tmdb_show", tmdb_id)
             return self._sql_lookup("tmdb_movie", tmdb_id)
-
-        if tmdb_type == "show":
-            return {
-                anilist_id: self._consumer_entry(anilist_id) for anilist_id in self.tmdb_show_index.get(tmdb_id, ())
-            }
 
         return {anilist_id: self._consumer_entry(anilist_id) for anilist_id in self.tmdb_movie_index.get(tmdb_id, ())}
 

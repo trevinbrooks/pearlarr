@@ -21,9 +21,9 @@ from seadexarr.modules.mapping_store import (
     MappingStore,
 )
 
-# (anilist_id, tvdb_id, tvdb_season, tvdb_epoffset, tmdb_movie_id, tmdb_show_id, imdb_id, anidb_id)
-ROW = AnimeIdRow(100, 200, 2, 3, None, None, "tt100", 50)
-ROW2 = AnimeIdRow(101, 201, -1, 0, None, None, None, None)
+# (anilist_id, tvdb_id, tvdb_season, tvdb_epoffset, tmdb_movie_id, imdb_id, anidb_id)
+ROW = AnimeIdRow(100, 200, 2, 3, None, "tt100", 50)
+ROW2 = AnimeIdRow(101, 201, -1, 0, None, None, None)
 
 
 class TestFreshnessGate:

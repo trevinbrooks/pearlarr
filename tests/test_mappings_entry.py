@@ -58,7 +58,7 @@ class TestKometaPath:
         assert isinstance(entry, MappingEntry)
         assert entry.mode is MappingMode.ANIME_IDS
         assert entry.tvdb_mappings is None
-        assert (entry.anilist_id, entry.tvdb_id, entry.tvdb_season, entry.tvdb_epoffset) == (100, 200, 2, 3)
+        assert (entry.anilist_id, entry.tvdb_season, entry.tvdb_epoffset) == (100, 2, 3)
         assert entry.imdb_id == "tt100"
         assert entry.anidb_id == 50
 
@@ -100,7 +100,6 @@ class TestAniBridgePath:
         assert entry.mode is MappingMode.ANIBRIDGE
         assert entry.tvdb_mappings == {2: [(1, 21)]}
         assert entry.anilist_id == 269
-        assert entry.tvdb_id == 74796
         assert entry.anidb_id == 1234
         # AniBridge entries carry no flat season/offset -> the dataclass defaults.
         assert entry.tvdb_season == -1
@@ -127,6 +126,6 @@ def test_entry_is_frozen() -> None:
     entry = MappingEntry(anilist_id=1)
     # Attribute name kept in a var so ruff's B010 (constant setattr) doesn't fire
     # and the type checker doesn't flag a static frozen-field assignment.
-    field = "tvdb_id"
+    field = "tvdb_season"
     with pytest.raises(dataclasses.FrozenInstanceError):
         setattr(entry, field, 5)

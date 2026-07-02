@@ -37,7 +37,7 @@ def test_empty_anibridge_season_map_resolves_to_no_episodes() -> None:
     sonarr = _FakeSonarr([sonarr_ep(1, 1)])
     episodes = make_sonarr_episodes(sonarr=sonarr)
 
-    mapping = MappingEntry(anilist_id=123, tvdb_id=456, tvdb_mappings={})
+    mapping = MappingEntry(anilist_id=123, tvdb_mappings={})
     result = episodes.get_ep_list(sonarr_series_id=10, al_id=123, mapping=mapping)
 
     assert result == []

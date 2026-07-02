@@ -45,7 +45,7 @@ from .sqlite_util import connect, is_corruption, quarantine_corrupt
 
 # Bump when the table layout below changes; a stored ``user_version`` that differs
 # triggers a DROP+rebuild (the data is a pure cache, re-derived from the sources).
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Source names used as ``meta`` keys and to select which tables a ``replace_*``
 # clears. Kept as constants so the resolver and the store agree on the spelling.
@@ -60,7 +60,7 @@ INLINE_DIGEST = "<inline>"
 
 # anime_ids query columns the resolver may filter / DISTINCT on. An allowlist
 # because a column name cannot be a bound parameter; only these reach an f-string.
-_ANIME_ID_COLUMNS = ("tvdb_id", "tmdb_movie_id", "tmdb_show_id", "imdb_id")
+_ANIME_ID_COLUMNS = ("tvdb_id", "tmdb_movie_id", "imdb_id")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -78,22 +78,18 @@ CREATE TABLE IF NOT EXISTS anime_ids (
     tvdb_season   INTEGER NOT NULL DEFAULT -1,
     tvdb_epoffset INTEGER NOT NULL DEFAULT 0,
     tmdb_movie_id INTEGER,
-    tmdb_show_id  INTEGER,
     imdb_id       TEXT,
     anidb_id      INTEGER
 );
 CREATE INDEX IF NOT EXISTS ix_anime_ids_tvdb       ON anime_ids (tvdb_id);
 CREATE INDEX IF NOT EXISTS ix_anime_ids_tmdb_movie ON anime_ids (tmdb_movie_id);
-CREATE INDEX IF NOT EXISTS ix_anime_ids_tmdb_show  ON anime_ids (tmdb_show_id);
 CREATE INDEX IF NOT EXISTS ix_anime_ids_imdb       ON anime_ids (imdb_id);
 
 CREATE TABLE IF NOT EXISTS anibridge_entry (
     anilist_id    INTEGER PRIMARY KEY,
     anidb_id      INTEGER,
     imdb_id       TEXT,
-    tmdb_movie_id INTEGER,
-    mal_id        INTEGER,
-    first_tvdb_id INTEGER
+    tmdb_movie_id INTEGER
 );
 
 -- ext_id mixes int (tvdb/tmdb) and str (imdb). The column is declared BLOB so it
@@ -185,7 +181,6 @@ class AnimeIdRow(NamedTuple):
     tvdb_season: int
     tvdb_epoffset: int
     tmdb_movie_id: int | None
-    tmdb_show_id: int | None
     imdb_id: str | None
     anidb_id: int | None
 
@@ -203,8 +198,6 @@ class AniBridgeEntryRow(NamedTuple):
     anidb_id: int | None
     imdb_id: str | None
     tmdb_movie_id: int | None
-    mal_id: int | None
-    first_tvdb_id: int | None
 
 
 class AniBridgeXrefRow(NamedTuple):
@@ -321,7 +314,7 @@ class MappingStore:
         def write(conn: sqlite3.Connection) -> None:
             conn.executemany(
                 "INSERT INTO anime_ids (anilist_id, tvdb_id, tvdb_season, tvdb_epoffset, "
-                "tmdb_movie_id, tmdb_show_id, imdb_id, anidb_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "tmdb_movie_id, imdb_id, anidb_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
 
@@ -346,8 +339,7 @@ class MappingStore:
 
         def write(conn: sqlite3.Connection) -> None:
             conn.executemany(
-                "INSERT INTO anibridge_entry (anilist_id, anidb_id, imdb_id, tmdb_movie_id, "
-                "mal_id, first_tvdb_id) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO anibridge_entry (anilist_id, anidb_id, imdb_id, tmdb_movie_id) VALUES (?, ?, ?, ?)",
                 entries,
             )
             conn.executemany(
@@ -403,7 +395,7 @@ class MappingStore:
             raise ValueError(f"Unknown anime_ids column: {column!r}")
         rows = self._conn.execute(
             "SELECT anilist_id, tvdb_id, tvdb_season, tvdb_epoffset, tmdb_movie_id, "
-            f"tmdb_show_id, imdb_id, anidb_id FROM anime_ids "
+            f"imdb_id, anidb_id FROM anime_ids "
             f"WHERE {column} = ? AND anilist_id IS NOT NULL ORDER BY rowid",
             (value,),
         ).fetchall()
@@ -435,7 +427,7 @@ class MappingStore:
         """
 
         rows = self._conn.execute(
-            "SELECT x.anilist_id, e.anidb_id, e.imdb_id, e.tmdb_movie_id, e.mal_id, e.first_tvdb_id "
+            "SELECT x.anilist_id, e.anidb_id, e.imdb_id, e.tmdb_movie_id "
             "FROM anibridge_xref x JOIN anibridge_entry e ON e.anilist_id = x.anilist_id "
             "WHERE x.axis = ? AND x.ext_id = ?",
             (axis, ext_id),

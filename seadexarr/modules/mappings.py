@@ -23,7 +23,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum, StrEnum
+from enum import Enum
 from typing import Any, Protocol, cast
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
@@ -53,13 +53,6 @@ object, so it stays a loose ``dict[str, Any]`` like
 
 type AnimeIdsMap = dict[str, AnimeIdsRecord]
 """The parsed Kometa Anime-IDs JSON: ``{name -> record}`` (~16k entries)."""
-
-
-class TmdbType(StrEnum):
-    """Which TMDB id space an external lookup is scoped to."""
-
-    MOVIE = "movie"
-    SHOW = "show"
 
 
 class MappingMode(Enum):
@@ -103,7 +96,6 @@ class MappingEntry:
     """
 
     anilist_id: int
-    tvdb_id: int | None = None
     tvdb_season: int = -1
     tvdb_epoffset: int = 0
     tvdb_mappings: TvdbMappings | None = None
@@ -148,7 +140,6 @@ def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> Ma
     source = MappingSource.ANIBRIDGE if raw.get("source") == "anibridge" else MappingSource.ANIME_IDS
     return MappingEntry(
         anilist_id=anilist_id,
-        tvdb_id=raw.get("tvdb_id"),
         tvdb_season=-1 if season is None else season,
         tvdb_epoffset=0 if epoffset is None else epoffset,
         tvdb_mappings=raw.get("tvdb_mappings"),
@@ -164,12 +155,10 @@ def _entry_from_anime_row(row: AnimeIdRow) -> MappingEntry:
 
     The SQL twin of :func:`_entry_from_raw` for Kometa records: a row never
     carries ``tvdb_mappings`` (only AniBridge does), so ``mode`` is ANIME_IDS.
-    ``row.tmdb_show_id`` has no MappingEntry field, so it is simply not read.
     """
 
     return MappingEntry(
         anilist_id=row.anilist_id,
-        tvdb_id=row.tvdb_id,
         tvdb_season=row.tvdb_season,
         tvdb_epoffset=row.tvdb_epoffset,
         tvdb_mappings=None,
@@ -330,7 +319,6 @@ def _anime_ids_rows(anime_mappings: AnimeIdsMap) -> list[AnimeIdRow]:
                 tvdb_season=-1 if season is None else season,
                 tvdb_epoffset=0 if epoffset is None else epoffset,
                 tmdb_movie_id=record.get("tmdb_movie_id"),
-                tmdb_show_id=record.get("tmdb_show_id"),
                 imdb_id=record.get("imdb_id"),
                 anidb_id=record.get("anidb_id"),
             ),
@@ -458,7 +446,7 @@ class MappingResolver:
         # Memoize get_anilist_ids per identifying key, so the prefetch pass and the
         # main loop don't recompute (and re-query) it twice per item.
         self._anilist_ids_cache: dict[
-            tuple[int | None, int | None, str | None, TmdbType],
+            tuple[int | None, int | None, str | None],
             tuple[dict[int, MappingEntry], list[int]],
         ] = {}
 
@@ -693,15 +681,13 @@ class MappingResolver:
         tvdb_id: int | None = None,
         tmdb_id: int | None = None,
         imdb_id: str | None = None,
-        tmdb_type: TmdbType = TmdbType.MOVIE,
     ) -> tuple[dict[int, MappingEntry], list[int]]:
         """Resolve external ids to a sorted {AniList id -> mapping} dict.
 
         Args:
             tvdb_id (int | None): TVDB ID
-            tmdb_id (int | None): TMDB ID
+            tmdb_id (int | None): TMDB (movie) ID
             imdb_id (str | None): IMDb ID
-            tmdb_type (TmdbType): Which TMDB id space the tmdb_id is in.
 
         Returns:
             tuple: (anilist_mappings, ids_to_drop), where anilist_mappings is a
@@ -714,7 +700,7 @@ class MappingResolver:
 
         # The mapping computation is deterministic for a given set of identifying
         # args, so memoize it and only redo the per-call logging.
-        key = (tvdb_id, tmdb_id, imdb_id, tmdb_type)
+        key = (tvdb_id, tmdb_id, imdb_id)
         if key in self._anilist_ids_cache:
             anilist_mappings, ids_to_drop = self._anilist_ids_cache[key]
         else:
@@ -727,7 +713,6 @@ class MappingResolver:
                     tvdb_id=tvdb_id,
                     tmdb_id=tmdb_id,
                     imdb_id=imdb_id,
-                    tmdb_type=tmdb_type,
                     anilist_mappings=anilist_mappings,
                 )
 
@@ -738,7 +723,6 @@ class MappingResolver:
                     tvdb_id=tvdb_id,
                     tmdb_id=tmdb_id,
                     imdb_id=imdb_id,
-                    tmdb_type=tmdb_type,
                     anilist_mappings=anilist_mappings,
                 )
 
@@ -761,16 +745,14 @@ class MappingResolver:
         tvdb_id: int | None = None,
         tmdb_id: int | None = None,
         imdb_id: str | None = None,
-        tmdb_type: TmdbType = TmdbType.MOVIE,
         anilist_mappings: dict[int, MappingEntry] | None = None,
     ) -> dict[int, MappingEntry]:
         """Get mappings from the Anime ID mappings (served from SQL).
 
         Args:
             tvdb_id (int | None): TVDB ID
-            tmdb_id (int | None): TMDB ID
+            tmdb_id (int | None): TMDB (movie) ID
             imdb_id (str | None): IMDb ID
-            tmdb_type (TmdbType): Which TMDB id space the tmdb_id is in.
             anilist_mappings (dict): Dictionary of AniList mappings.
                 Defaults to None, which will create a new dictionary.
         """
@@ -800,7 +782,7 @@ class MappingResolver:
         if tvdb_id is not None:
             merge("tvdb_id", tvdb_id)
         if tmdb_id is not None:
-            merge(f"tmdb_{tmdb_type}_id", tmdb_id)
+            merge("tmdb_movie_id", tmdb_id)
         if imdb_id is not None:
             merge("imdb_id", imdb_id)
 
@@ -811,16 +793,14 @@ class MappingResolver:
         tvdb_id: int | None = None,
         tmdb_id: int | None = None,
         imdb_id: str | None = None,
-        tmdb_type: TmdbType = TmdbType.MOVIE,
         anilist_mappings: dict[int, MappingEntry] | None = None,
     ) -> dict[int, MappingEntry]:
         """Get mappings from the AniBridge mappings (served from SQL).
 
         Args:
             tvdb_id (int | None): TVDB ID
-            tmdb_id (int | None): TMDB ID
+            tmdb_id (int | None): TMDB (movie) ID
             imdb_id (str | None): IMDb ID
-            tmdb_type (TmdbType): Which TMDB id space the tmdb_id is in.
             anilist_mappings (dict): Dictionary of AniList mappings.
                 Defaults to None, which will create a new dictionary.
         """
@@ -844,7 +824,7 @@ class MappingResolver:
         if tvdb_id is not None:
             merge(anibridge.lookup_by_tvdb(tvdb_id))
         if tmdb_id is not None:
-            merge(anibridge.lookup_by_tmdb(tmdb_id, tmdb_type))
+            merge(anibridge.lookup_by_tmdb(tmdb_id))
         if imdb_id is not None:
             merge(anibridge.lookup_by_imdb(imdb_id))
 

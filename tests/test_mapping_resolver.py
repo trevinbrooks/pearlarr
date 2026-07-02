@@ -35,7 +35,6 @@ from seadexarr.modules.mappings import (
     MappingMode,
     MappingResolver,
     MappingSource,
-    TmdbType,
     _entry_from_raw,
 )
 from seadexarr.modules.paths import resolve_paths
@@ -54,8 +53,8 @@ GRAPH: AniBridgeGraph = {
         "tvdb_show:74796:s3": {"42-50": "1-9,11-12"},  # multi-segment range
         "anidb:1234": {},
         "imdb_show:tt0269": {},
-        "mal:111": {},
-        "tmdb_show:5000:s1": {"1-12": "1-12"},
+        "mal:111": {},  # ignored provider: present in real data, must not break parsing
+        "tmdb_show:5000:s1": {"1-12": "1-12"},  # ignored provider
     },
     "anilist:270": {
         "tvdb_show:74796:s1": {},  # same tvdb id, present-but-empty season
@@ -88,10 +87,8 @@ class TestAniBridgeParity:
         try:
             for tvdb in (74796, 600, 111, 222, 424242):
                 assert sql_ab.lookup_by_tvdb(tvdb) == graph_ab.lookup_by_tvdb(tvdb)
-            for tmdb in (5000, 4242):
-                assert sql_ab.lookup_by_tmdb(tmdb, "show") == graph_ab.lookup_by_tmdb(tmdb, "show")
             for tmdb in (888, 4242):
-                assert sql_ab.lookup_by_tmdb(tmdb, "movie") == graph_ab.lookup_by_tmdb(tmdb, "movie")
+                assert sql_ab.lookup_by_tmdb(tmdb) == graph_ab.lookup_by_tmdb(tmdb)
             for imdb in ("tt0269", "tt300", "ttZZZ"):
                 assert sql_ab.lookup_by_imdb(imdb) == graph_ab.lookup_by_imdb(imdb)
 
@@ -180,6 +177,7 @@ def _anibridge_graph(draw: DrawFn) -> AniBridgeGraph:
             ep_map: dict[str, str] = {} if draw(st.booleans()) else {"1-99": draw(_tgt_range())}
             targets[f"tvdb_show:{draw(_SMALL_ID)}:s{season}"] = ep_map
         if draw(st.booleans()):
+            # Ignored provider (like mal below): real graphs carry it; parity must hold.
             targets[f"tmdb_show:{draw(_SMALL_ID)}:s1"] = {}
         if draw(st.booleans()):
             targets[f"tmdb_movie:{draw(_SMALL_ID)}"] = {}
@@ -222,10 +220,8 @@ class TestAniBridgeParityProperty:
 
             for tvdb in graph_ab.all_tvdb_ids:
                 assert sql_ab.lookup_by_tvdb(tvdb) == graph_ab.lookup_by_tvdb(tvdb)
-            for tmdb_show in set(graph_ab.tmdb_show_index):
-                assert sql_ab.lookup_by_tmdb(tmdb_show, "show") == graph_ab.lookup_by_tmdb(tmdb_show, "show")
             for tmdb_movie in graph_ab.all_tmdb_movie_ids:
-                assert sql_ab.lookup_by_tmdb(tmdb_movie, "movie") == graph_ab.lookup_by_tmdb(tmdb_movie, "movie")
+                assert sql_ab.lookup_by_tmdb(tmdb_movie) == graph_ab.lookup_by_tmdb(tmdb_movie)
             for imdb in graph_ab.all_imdb_ids:
                 assert sql_ab.lookup_by_imdb(imdb) == graph_ab.lookup_by_imdb(imdb)
         finally:
@@ -285,7 +281,6 @@ class LookupKwargs(TypedDict, total=False):
     tvdb_id: int
     tmdb_id: int
     imdb_id: str
-    tmdb_type: TmdbType
 
 
 def _anime_oracle(amap: AnimeIdsMap, **kw: object) -> dict[int, MappingEntry]:
@@ -294,7 +289,6 @@ def _anime_oracle(amap: AnimeIdsMap, **kw: object) -> dict[int, MappingEntry]:
     index: dict[str, dict[object, list[AnimeIdsRecord]]] = {
         "tvdb_id": {},
         "tmdb_movie_id": {},
-        "tmdb_show_id": {},
         "imdb_id": {},
     }
     for rec in amap.values():
@@ -313,11 +307,10 @@ def _anime_oracle(amap: AnimeIdsMap, **kw: object) -> dict[int, MappingEntry]:
             if aid not in result:
                 result[aid] = _entry_from_raw(aid, rec)
 
-    tmdb_type = kw.get("tmdb_type", TmdbType.MOVIE)
     if kw.get("tvdb_id") is not None:
         merge("tvdb_id", kw["tvdb_id"])
     if kw.get("tmdb_id") is not None:
-        merge(f"tmdb_{tmdb_type}_id", kw["tmdb_id"])
+        merge("tmdb_movie_id", kw["tmdb_id"])
     if kw.get("imdb_id") is not None:
         merge("imdb_id", kw["imdb_id"])
     return result
@@ -329,7 +322,7 @@ class TestAnimeIdsParity:
         [
             {"tvdb_id": 200},
             {"imdb_id": "tt100"},
-            {"tmdb_id": 7000, "tmdb_type": TmdbType.MOVIE},
+            {"tmdb_id": 7000},
             {"tvdb_id": 200, "imdb_id": "tt100"},
             {"tvdb_id": 424242},  # no match -> empty
         ],
@@ -471,7 +464,7 @@ class TestVu1DegradedAniBridge:
             anibridge_mappings_cfg={"anilist:401": {"tmdb_movie:888": {}, "imdb_movie:tt401": {}}},
         )
         try:
-            mappings, _dropped = resolver.get_anilist_ids(tmdb_id=888, imdb_id="tt401", tmdb_type=TmdbType.MOVIE)
+            mappings, _dropped = resolver.get_anilist_ids(tmdb_id=888, imdb_id="tt401")
             assert mappings[401].source is MappingSource.ANIBRIDGE  # AniBridge stays primary
         finally:
             resolver.close()
@@ -746,10 +739,8 @@ class TestRealDataParity:
             assert len(sql_ab) == len(graph_ab)
             for tvdb in graph_ab.all_tvdb_ids:
                 assert sql_ab.lookup_by_tvdb(tvdb) == graph_ab.lookup_by_tvdb(tvdb)
-            for tmdb in set(graph_ab.tmdb_show_index):
-                assert sql_ab.lookup_by_tmdb(tmdb, "show") == graph_ab.lookup_by_tmdb(tmdb, "show")
             for tmdb in graph_ab.all_tmdb_movie_ids:
-                assert sql_ab.lookup_by_tmdb(tmdb, "movie") == graph_ab.lookup_by_tmdb(tmdb, "movie")
+                assert sql_ab.lookup_by_tmdb(tmdb) == graph_ab.lookup_by_tmdb(tmdb)
             for imdb in graph_ab.all_imdb_ids:
                 assert sql_ab.lookup_by_imdb(imdb) == graph_ab.lookup_by_imdb(imdb)
         finally:
