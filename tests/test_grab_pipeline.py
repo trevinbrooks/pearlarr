@@ -252,7 +252,7 @@ class TestUnsupportedTrackerSkip:
 
         pipeline = _pipeline(torrents=FakeTorrents({}), public_only=True, sleep_time=0)
         # Pre-seed the AniList cache so _grab's thumbnail lookup stays offline.
-        pipeline._anilist.al_cache[42] = {}
+        pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.current_title = "Show S1"
 
         req = GrabRequest(
@@ -283,7 +283,7 @@ class TestUnsupportedTrackerSkip:
         seadex_dict: SeadexDict = {"NAN0": rg_group({private.url: private, anidex.url: anidex})}
 
         pipeline = _pipeline(torrents=FakeTorrents({}), public_only=True, sleep_time=0)
-        pipeline._anilist.al_cache[7] = {}
+        pipeline._anilist.al_cache.update({7: {}})
         pipeline._ctx.current_title = "Show S1"
 
         req = GrabRequest(

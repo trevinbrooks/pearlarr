@@ -442,7 +442,7 @@ class SonarrClient(AbstractSonarrClient):
         if command_req.status_code not in (200, 201):
             self._logger.warning(
                 indent_string(
-                    f"Could not queue {body["name"]} command (status code {command_req.status_code})",
+                    f"Could not queue {body['name']} command (status code {command_req.status_code})",
                 ),
             )
             return None
