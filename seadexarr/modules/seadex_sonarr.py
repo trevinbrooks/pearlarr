@@ -310,12 +310,10 @@ class SonarrSync(ArrSync[SonarrItem]):
                 mapping_imdb_id = mapping.imdb_id
 
                 for m in self.all_radarr_movies:
-                    # Check by TMDB IDs
-                    if mapping_tmdb_id is not None and m.tmdbId == mapping_tmdb_id and m not in radarr_movies:
-                        radarr_movies.append(m)
-
-                    # Check by IMDb IDs
-                    if mapping_imdb_id is not None and m.imdbId == mapping_imdb_id and m not in radarr_movies:
+                    # Match by TMDB or IMDb id; one append per movie either way.
+                    tmdb_match = mapping_tmdb_id is not None and m.tmdbId == mapping_tmdb_id
+                    imdb_match = mapping_imdb_id is not None and m.imdbId == mapping_imdb_id
+                    if tmdb_match or imdb_match:
                         radarr_movies.append(m)
 
             if len(radarr_movies) > 0:
