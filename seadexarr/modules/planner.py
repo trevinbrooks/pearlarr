@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from itertools import compress
 
 from .log import indent_string
+from .manual_import import normalize_group
 from .seadex_types import (
     ArrReleaseDict,
     EpisodeRecord,
@@ -78,9 +79,10 @@ class PlanResult:
 def normalize_rg(name: str | None) -> str | None:
     """Normalize a release group name for comparison
 
-    Lower-cases and strips surrounding whitespace and dashes so that the same
-    group named slightly differently by Sonarr and SeaDex (e.g. "Era-Raws" vs.
-    "era-raws ") compare equal. Returns None for a missing/blank name.
+    Delegates to :func:`~.manual_import.normalize_group` (strip whitespace and
+    wrapping dashes, casefold) so the grab-time filter and the import-time
+    never-overwrite check share ONE normalization; this wrapper only adds the
+    None-tolerance. Returns None for a missing/blank name.
 
     Args:
         name (str | None): Release group name
@@ -88,7 +90,7 @@ def normalize_rg(name: str | None) -> str | None:
 
     if not name:
         return None
-    return name.strip().strip("-").casefold()
+    return normalize_group(name)
 
 
 def get_episode_keys(

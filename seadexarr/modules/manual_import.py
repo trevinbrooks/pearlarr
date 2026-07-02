@@ -58,15 +58,16 @@ def normalize_basename(name: str) -> str:
 
 
 def normalize_group(group: str) -> str:
-    """Casefold a release group for recommended-set membership.
+    """Normalize a release group for comparison: strip whitespace/wrapping dashes, casefold.
 
-    Mirrors the casefold the planner uses to compare release groups, so the
-    never-overwrite check and the grab-time group filter agree on what counts as
-    "the same group". Blank/None is handled by the caller (only real groups are
+    The single source of truth for group comparison - ``planner.normalize_rg``
+    delegates here - so the never-overwrite check and the grab-time group filter
+    agree on what counts as "the same group" (a dash-wrapped "-Aergia-" equals
+    "Aergia" in both). Blank/None is handled by the caller (only real groups are
     ever passed here).
     """
 
-    return group.strip().casefold()
+    return group.strip().strip("-").casefold()
 
 
 class ImportWaitMode(StrEnum):
