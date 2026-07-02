@@ -11,6 +11,10 @@ from arrapi import RadarrAPI
 from .anibridge import AniBridge
 from .seadex_types import ArrItem, MovieFile, RadarrItem
 
+# (connect, read) timeout for the raw moviefile GET, so a hung Radarr surfaces as
+# a transient miss instead of blocking the run (mirrors SONARR_REQUEST_TIMEOUT_S).
+RADARR_REQUEST_TIMEOUT_S = (5, 30)
+
 
 def make_radarr_client(
     *,
@@ -82,15 +86,30 @@ class RadarrClient:
         Each ``MovieFileResource`` is parsed into a :class:`~.seadex_types.MovieFile`
         view at this client boundary.
 
+        Returns an empty list (with a warning) on a non-200 or a transient request
+        error, so the caller treats "couldn't read the files" as "no existing
+        files" instead of unwinding the run.
+
         Args:
             movie_id (int): ID for the movie in Radarr.
         """
 
         mov_req_url = f"{self._url}/api/v3/moviefile?movieId={movie_id}&apikey={self._api_key}"
+        try:
+            mov_req = self._session.get(mov_req_url, timeout=RADARR_REQUEST_TIMEOUT_S)
+        except requests.RequestException:
+            mov_req = None
+
+        if mov_req is None or mov_req.status_code != 200:
+            self._logger.warning(
+                "Could not fetch movie files from Radarr; it may be unreachable",
+            )
+            return []
+
         # response.json() is untyped; the moviefile endpoint returns a JSON
         # array of objects, so cast at the parse boundary, then parse each raw
         # record into the typed MovieFile view.
-        raw = cast("list[dict[str, Any]]", self._session.get(mov_req_url).json())
+        raw = cast("list[dict[str, Any]]", mov_req.json())
         return [MovieFile.from_api(record) for record in raw]
 
 

@@ -36,8 +36,8 @@ from .seadex_types import (
 # (uncached remote files) still completes.
 MANUAL_IMPORT_TIMEOUT_S = 120
 
-# (connect, read) timeout for the episode/parse GETs, so a hung Sonarr surfaces
-# as a transient miss rather than blocking the (now concurrent) sweep.
+# (connect, read) timeout for every Sonarr request except the manual-import scan,
+# so a hung Sonarr surfaces as a transient miss rather than blocking the run.
 SONARR_REQUEST_TIMEOUT_S = (5, 30)
 
 
@@ -434,13 +434,15 @@ class SonarrClient(AbstractSonarrClient):
 
         d_enc = urlencode({"apikey": self._api_key})
         command_req_url = f"{self._url}/api/v3/command?{d_enc}"
-        command_req = self._session.post(command_req_url, json=body)
+        try:
+            command_req = self._session.post(command_req_url, json=body, timeout=SONARR_REQUEST_TIMEOUT_S)
+        except requests.RequestException:
+            command_req = None
 
-        if command_req.status_code not in (200, 201):
+        if command_req is None or command_req.status_code not in (200, 201):
+            detail = "request failed" if command_req is None else f"status code {command_req.status_code}"
             self._logger.warning(
-                indent_string(
-                    f"Could not queue {body['name']} command (status code {command_req.status_code})",
-                ),
+                indent_string(f"Could not queue {body['name']} command ({detail})"),
             )
             return None
 
@@ -481,13 +483,15 @@ class SonarrClient(AbstractSonarrClient):
             },
         )
         queue_req_url = f"{self._url}/api/v3/queue?{params}"
-        queue_req = self._session.get(queue_req_url)
+        try:
+            queue_req = self._session.get(queue_req_url, timeout=SONARR_REQUEST_TIMEOUT_S)
+        except requests.RequestException:
+            queue_req = None
 
-        if queue_req.status_code != 200:
+        if queue_req is None or queue_req.status_code != 200:
+            detail = "request failed" if queue_req is None else f"status code {queue_req.status_code}"
             self._logger.warning(
-                indent_string(
-                    f"Could not fetch the Sonarr queue (status code {queue_req.status_code})",
-                ),
+                indent_string(f"Could not fetch the Sonarr queue ({detail})"),
             )
             return []
 
@@ -515,9 +519,12 @@ class SonarrClient(AbstractSonarrClient):
         """
 
         defs_req_url = f"{self._url}/api/v3/qualitydefinition?apikey={self._api_key}"
-        defs_req = self._session.get(defs_req_url)
+        try:
+            defs_req = self._session.get(defs_req_url, timeout=SONARR_REQUEST_TIMEOUT_S)
+        except requests.RequestException:
+            defs_req = None
 
-        if defs_req.status_code != 200:
+        if defs_req is None or defs_req.status_code != 200:
             self._logger.warning(
                 "Could not fetch quality definitions from Sonarr; it may be unreachable",
             )
@@ -544,9 +551,12 @@ class SonarrClient(AbstractSonarrClient):
         """
 
         langs_req_url = f"{self._url}/api/v3/language?apikey={self._api_key}"
-        langs_req = self._session.get(langs_req_url)
+        try:
+            langs_req = self._session.get(langs_req_url, timeout=SONARR_REQUEST_TIMEOUT_S)
+        except requests.RequestException:
+            langs_req = None
 
-        if langs_req.status_code != 200:
+        if langs_req is None or langs_req.status_code != 200:
             self._logger.warning(
                 "Could not fetch languages from Sonarr; it may be unreachable",
             )
@@ -577,13 +587,15 @@ class SonarrClient(AbstractSonarrClient):
         """
 
         status_req_url = f"{self._url}/api/v3/command/{command_id}?apikey={self._api_key}"
-        status_req = self._session.get(status_req_url)
+        try:
+            status_req = self._session.get(status_req_url, timeout=SONARR_REQUEST_TIMEOUT_S)
+        except requests.RequestException:
+            status_req = None
 
-        if status_req.status_code != 200:
+        if status_req is None or status_req.status_code != 200:
+            detail = "request failed" if status_req is None else f"status code {status_req.status_code}"
             self._logger.warning(
-                indent_string(
-                    f"Could not fetch status for command {command_id} (status code {status_req.status_code})",
-                ),
+                indent_string(f"Could not fetch status for command {command_id} ({detail})"),
             )
             return CommandResource()
 
@@ -614,13 +626,15 @@ class SonarrClient(AbstractSonarrClient):
         """
 
         commands_req_url = f"{self._url}/api/v3/command?apikey={self._api_key}"
-        commands_req = self._session.get(commands_req_url)
+        try:
+            commands_req = self._session.get(commands_req_url, timeout=SONARR_REQUEST_TIMEOUT_S)
+        except requests.RequestException:
+            commands_req = None
 
-        if commands_req.status_code != 200:
+        if commands_req is None or commands_req.status_code != 200:
+            detail = "request failed" if commands_req is None else f"status code {commands_req.status_code}"
             self._logger.warning(
-                indent_string(
-                    f"Could not fetch the Sonarr command list (status code {commands_req.status_code})",
-                ),
+                indent_string(f"Could not fetch the Sonarr command list ({detail})"),
             )
             return []
 

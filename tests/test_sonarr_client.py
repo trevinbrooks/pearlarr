@@ -102,6 +102,17 @@ def test_queue_non_200_returns_empty() -> None:
         assert client.queue() == []
 
 
+def test_queue_request_error_returns_empty() -> None:
+    """A transient request error (a timeout raises RequestException) also falls
+    back to [] instead of unwinding the poll loop.
+    """
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/queue", body=requests.exceptions.ConnectionError("boom"))
+        assert client.queue() == []
+
+
 # --- episodes() -------------------------------------------------------------
 
 
@@ -383,6 +394,17 @@ def test_manual_import_execute_non_2xx_returns_none() -> None:
         assert client.manual_import_execute(files=[file]) is None
 
 
+def test_post_command_request_error_returns_none() -> None:
+    """A transient error on the command POST (now timeout-bounded) returns None
+    rather than raising through the import path.
+    """
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.POST, f"{_BASE}/command", body=requests.exceptions.ConnectionError("boom"))
+        assert client.refresh_monitored_downloads() is None
+
+
 def test_refresh_monitored_downloads_posts_command_name() -> None:
     """``RefreshMonitoredDownloads`` POSTs only ``{name}`` and returns its id."""
 
@@ -425,6 +447,17 @@ def test_command_status_non_200_returns_default() -> None:
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
         client = _make_client(rsps)
         rsps.add(responses.GET, f"{_BASE}/command/9", status=503)
+        assert client.command_status(9) == CommandResource()
+
+
+def test_command_status_request_error_returns_default() -> None:
+    """A transient request error also yields the default ``CommandResource`` (the
+    caller treats the import as unverified and leaves it pending).
+    """
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/command/9", body=requests.exceptions.ConnectionError("boom"))
         assert client.command_status(9) == CommandResource()
 
 
