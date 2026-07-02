@@ -471,18 +471,8 @@ class DownloadPlanner:
         sizes are disjoint.
         """
 
-        if seadex_rg not in arr_release_groups and not overlapping_results:
-            self.logger.debug(
-                indent_string(
-                    f"SeaDex release group {seadex_rg} not in {arr.capitalize()} releases: "
-                    f"{', '.join([str(x) for x in arr_release_groups])} - will download {url}",
-                ),
-            )
-
-            url_item.download = True
-
-        # If the group matches, fall through to a size comparison
         if seadex_rg in arr_release_groups:
+            # The group matches: fall through to a size comparison.
             seadex_file_sizes = url_item.size
             arr_file_sizes = as_size_list(arr_release_dict[seadex_rg])
 
@@ -504,6 +494,24 @@ class DownloadPlanner:
                         f"{', '.join([str(x) for x in arr_release_groups])}, and file sizes match",
                     ),
                 )
+        elif not overlapping_results:
+            self.logger.debug(
+                indent_string(
+                    f"SeaDex release group {seadex_rg} not in {arr.capitalize()} releases: "
+                    f"{', '.join([str(x) for x in arr_release_groups])} - will download {url}",
+                ),
+            )
+
+            url_item.download = True
+        else:
+            # Group absent, but the Arr already holds another SeaDex-preferred
+            # group's release covering these files - nothing to flag.
+            self.logger.debug(
+                indent_string(
+                    f"SeaDex release group {seadex_rg} not in {arr.capitalize()} releases, but another "
+                    f"SeaDex group already overlaps them - not flagging {url}",
+                ),
+            )
 
     def _match_url_episodes(
         self,
