@@ -13,6 +13,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from itertools import compress
 
+from .config import Arr
 from .log import indent_string
 from .manual_import import normalize_group
 from .seadex_types import (
@@ -230,7 +231,7 @@ class DownloadPlanner:
         self,
         *,
         seadex_dict: SeadexDict,
-        arr: str,
+        arr: Arr,
         arr_release_dict: ArrReleaseDict,
         cached_hashes: list[str | None],
         ep_list: list[SonarrEpisode] | None = None,
@@ -342,7 +343,7 @@ class DownloadPlanner:
     def filter_by_release_group(
         self,
         seadex_dict: SeadexDict,
-        arr: str,
+        arr: Arr,
         arr_release_dict: ArrReleaseDict,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
@@ -458,7 +459,7 @@ class DownloadPlanner:
         seadex_rg: str,
         url: str,
         url_item: SeadexUrlItem,
-        arr: str,
+        arr: Arr,
         arr_release_dict: ArrReleaseDict,
         arr_release_groups: Iterable[str | None],
         overlapping_results: bool,
@@ -519,7 +520,7 @@ class DownloadPlanner:
         seadex_rg: str,
         url: str,
         url_item: SeadexUrlItem,
-        arr: str,
+        arr: Arr,
         seadex_episodes: list[EpisodeRecord],
         sonarr_by_key: dict[tuple[int, int], SonarrEpisode],
         all_seadex_rgs_per_episode: dict[str, set[str | None]],

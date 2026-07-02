@@ -10,6 +10,7 @@ import logging
 
 import requests
 
+from .config import Arr
 from .discord import discord_push
 from .log import LogFormatter
 from .manual_import import OutcomeCategory
@@ -51,7 +52,7 @@ class Notifier:
 
         return self.discord_url is not None
 
-    def push_wait_summary(self, *, arr: str, result: WaitResult) -> bool:
+    def push_wait_summary(self, *, arr: Arr, result: WaitResult) -> bool:
         """Post the wait-pass outcome to Discord and/or the generic webhook.
 
         A no-op (returns False) when nothing waited or no url is configured; the
@@ -59,7 +60,7 @@ class Notifier:
         can never abort the end-of-run cache save.
 
         Args:
-            arr (str): Which Arr the wait pass ran for (for the title).
+            arr (Arr): Which Arr the wait pass ran for (for the title).
             result (WaitResult): The terminal outcomes + elapsed time.
         """
 
@@ -103,7 +104,7 @@ class Notifier:
             fields.append(EmbedField(name=name, value=value))
         return [f.to_dict() for f in fields]
 
-    def _post_webhook(self, arr: str, result: WaitResult) -> bool:
+    def _post_webhook(self, arr: Arr, result: WaitResult) -> bool:
         """POST the report JSON to the generic webhook; warn-and-swallow request errors."""
 
         if self.webhook_url is None:
@@ -126,7 +127,7 @@ class Notifier:
     def build_fields(
         self,
         *,
-        arr: str,
+        arr: Arr,
         release_group: list[str | None] | None,
         seadex_dict: SeadexDict,
     ) -> list[dict[str, str]]:
@@ -139,7 +140,7 @@ class Notifier:
         at the return boundary.
 
         Args:
-            arr (str): Type of arr instance
+            arr (Arr): Type of arr instance
             release_group (list[str | None] | None): Arr release group(s)
             seadex_dict (dict): Dictionary of SeaDex releases
         """

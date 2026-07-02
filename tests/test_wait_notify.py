@@ -10,6 +10,7 @@ import pytest
 import requests
 
 from seadexarr.modules import notify
+from seadexarr.modules.config import Arr
 from seadexarr.modules.manual_import import Outcome
 from seadexarr.modules.notify import Notifier
 from seadexarr.modules.wait_view import WaitOutcomeRow, WaitResult
@@ -32,13 +33,13 @@ def _result() -> WaitResult:
 def test_push_wait_summary_no_url_is_noop() -> None:
     notifier = Notifier(discord_url=None, webhook_url=None, logger=make_logger())
 
-    assert notifier.push_wait_summary(arr="sonarr", result=_result()) is False
+    assert notifier.push_wait_summary(arr=Arr.SONARR, result=_result()) is False
 
 
 def test_push_wait_summary_empty_result_is_noop() -> None:
     notifier = Notifier(discord_url="https://discord", webhook_url="https://hook", logger=make_logger())
 
-    assert notifier.push_wait_summary(arr="sonarr", result=WaitResult((), 0.0)) is False
+    assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((), 0.0)) is False
 
 
 def test_push_wait_summary_posts_to_webhook(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -51,7 +52,7 @@ def test_push_wait_summary_posts_to_webhook(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(requests, "post", fake_post)
     notifier = Notifier(discord_url=None, webhook_url="https://hook.example", logger=make_logger())
 
-    assert notifier.push_wait_summary(arr="sonarr", result=_result()) is True
+    assert notifier.push_wait_summary(arr=Arr.SONARR, result=_result()) is True
     url, payload, _timeout = posts[0]
     assert url == "https://hook.example"
     assert payload["imported"] == 2
@@ -77,7 +78,7 @@ def test_push_wait_summary_builds_discord_fields(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(notify, "discord_push", fake_discord_push)
     notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
 
-    assert notifier.push_wait_summary(arr="radarr", result=_result()) is True
+    assert notifier.push_wait_summary(arr=Arr.RADARR, result=_result()) is True
     arr_title, fields = pushes[0]
     names = [field["name"] for field in fields]
     assert names == ["Imported", "Left for a later run", "Failed"]

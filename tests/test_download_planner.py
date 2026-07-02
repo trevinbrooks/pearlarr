@@ -11,6 +11,7 @@ private-only skip outcome surfaced on the :class:`PlanResult` /
 
 import logging
 
+from seadexarr.modules.config import Arr
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.seadex_types import EpisodeRecord
 
@@ -112,7 +113,7 @@ class TestFilterByReleaseGroup:
         seadex = {"NewRG": rg_group({"u1": url_item(episodes=[], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr="sonarr",
+            arr=Arr.SONARR,
             arr_release_dict={"OldRG": [100]},
             ep_list=None,
         )
@@ -124,7 +125,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr="sonarr",
+            arr=Arr.SONARR,
             arr_release_dict={"RG": [100]},
             ep_list=None,
         )
@@ -136,7 +137,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[200], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr="sonarr",
+            arr=Arr.SONARR,
             arr_release_dict={"RG": [100]},
             ep_list=None,
         )
@@ -154,7 +155,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr="sonarr",
+            arr=Arr.SONARR,
             arr_release_dict={"Era-Raws": [100]},
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Era-Raws")],
         )
@@ -172,7 +173,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr="sonarr",
+            arr=Arr.SONARR,
             arr_release_dict={"SubsPlease": [100]},
             ep_list=[sonarr_ep(1, 1, size=100, release_group="SubsPlease")],
         )
@@ -190,7 +191,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr="sonarr",
+            arr=Arr.SONARR,
             arr_release_dict={"Era-Raws": [100]},
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Era-Raws")],
         )
@@ -208,7 +209,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr="sonarr",
+            arr=Arr.SONARR,
             arr_release_dict={},
             ep_list=None,
         )
@@ -223,7 +224,7 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr="radarr",
+            arr=Arr.RADARR,
             arr_release_dict={"RG": []},
             ep_list=None,
         )
@@ -243,7 +244,7 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr="sonarr",
+            arr=Arr.SONARR,
             arr_release_dict={"SubsPlease": [100]},
             ep_list=[sonarr_ep(1, 1, size=100, release_group="SubsPlease")],
         )
