@@ -1,6 +1,7 @@
 import logging
 import time
 from dataclasses import dataclass, field
+from enum import Enum, auto
 
 import qbittorrentapi
 from rich.text import Text
@@ -35,7 +36,7 @@ exactly ``str | Text``.
 """
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class GrabRecord:
     """One grab, recorded for the end-of-run summary's "added" detail block.
 
@@ -49,11 +50,23 @@ class GrabRecord:
     group: str
 
 
-@dataclass
-class NeedsActionRecord:
-    """One private-only skip, recorded for the summary's "needs action" block.
+class NeedsActionKind(Enum):
+    """Why a title landed in the "needs action" block - the machine-readable gate.
 
-    Replaces the ``{"title", "coverage", "group", "url", "reason"}`` item dict.
+    The summary's guidance tips key off this, never off the display ``reason``
+    text (which can be reworded freely).
+    """
+
+    PRIVATE_ONLY = auto()
+    UNSUPPORTED_TRACKER = auto()
+
+
+@dataclass(frozen=True, slots=True)
+class NeedsActionRecord:
+    """One skip needing the user, recorded for the summary's "needs action" block.
+
+    ``reason`` is the human display text; ``kind`` is the closed classification
+    the reporter's guidance gates on.
     """
 
     title: str | None
@@ -61,6 +74,7 @@ class NeedsActionRecord:
     group: str
     url: str | None
     reason: str
+    kind: NeedsActionKind
 
 
 @dataclass
@@ -381,7 +395,7 @@ class RunReporter:
         # A single guidance line if anything was skipped purely for being
         # private-only, rather than repeating it per-entry during the run. Kept
         # at indent 1, so it reads as part of the summary block, not detached.
-        public_only_skipped = any("public_only" in item.reason for item in needs)
+        public_only_skipped = any(item.kind is NeedsActionKind.PRIVATE_ONLY for item in needs)
         if public_only_skipped:
             self.logger.info(
                 indent_string(

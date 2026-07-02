@@ -25,7 +25,14 @@ from .log import LogFormatter
 from .manual_import import ImportWaitMode, PendingImport
 from .notify import Notifier
 from .planner import DownloadPlanner
-from .reporter import GrabRecord, NeedsActionRecord, RunContext, RunReporter, is_preview
+from .reporter import (
+    GrabRecord,
+    NeedsActionKind,
+    NeedsActionRecord,
+    RunContext,
+    RunReporter,
+    is_preview,
+)
 from .seadex_types import SeadexDict, SeadexUrlItem
 from .torrents import PARSEABLE_TRACKERS, AddOutcome, ReleaseOutcome, TorrentService
 
@@ -286,9 +293,10 @@ class GrabPipeline:
             )
             self._ctx.pending_imports.append(pending)
 
-    def _needs_action(self, groups: list[str], reason: str) -> NeedsActionRecord:
+    def _needs_action(self, groups: list[str], reason: str, kind: NeedsActionKind) -> NeedsActionRecord:
         """A needs-action record for the current title: title/coverage/url come from
-        the per-title context, the caller supplies the skipped groups and reason."""
+        the per-title context, the caller supplies the skipped groups, the display
+        reason, and the machine-readable kind the summary's guidance gates on."""
 
         return NeedsActionRecord(
             title=self._ctx.current_title,
@@ -296,6 +304,7 @@ class GrabPipeline:
             group=", ".join(dict.fromkeys(groups)),
             url=self._ctx.current_url,
             reason=reason,
+            kind=kind,
         )
 
     def grab_and_cache(self, req: GrabRequest) -> bool:
@@ -348,11 +357,19 @@ class GrabPipeline:
         # so it isn't cached as done and shows in the summary.
         elif self._ctx.public_only_skipped:
             self._ctx.stats.needs_action.append(
-                self._needs_action(self._ctx.public_only_groups, "private-only release; public_only on"),
+                self._needs_action(
+                    self._ctx.public_only_groups,
+                    "private-only release; public_only on",
+                    NeedsActionKind.PRIVATE_ONLY,
+                ),
             )
         elif self._ctx.unsupported_tracker_skipped:
             self._ctx.stats.needs_action.append(
-                self._needs_action(self._ctx.unsupported_tracker_groups, "unsupported tracker; no parser yet"),
+                self._needs_action(
+                    self._ctx.unsupported_tracker_groups,
+                    "unsupported tracker; no parser yet",
+                    NeedsActionKind.UNSUPPORTED_TRACKER,
+                ),
             )
 
         # Add in a wait, if required

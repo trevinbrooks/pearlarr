@@ -26,6 +26,7 @@ from seadexarr.modules.log import LogFormatter
 from seadexarr.modules.manual_import import ImportWaitMode, PendingState
 from seadexarr.modules.reporter import (
     GrabRecord,
+    NeedsActionKind,
     NeedsActionRecord,
     RunContext,
     RunReporter,
@@ -135,6 +136,7 @@ class TestRunSummary:
                 group="Priv",
                 url="u2",
                 reason="private-only release; public_only on",
+                kind=NeedsActionKind.PRIVATE_ONLY,
             ),
         ]
         return ctx
@@ -283,6 +285,33 @@ class TestSummaryPendingCounters:
 
         assert any("added" in m for m in messages)
         assert not any("queued" in m for m in messages)
+
+
+class TestPublicOnlyTip:
+    """The public-only guidance tip gates on the record's KIND, never on the
+    display ``reason`` text (rewording the string must not kill the tip)."""
+
+    def _needs_ctx(self, kind: NeedsActionKind) -> RunContext:
+        ctx = RunContext(arr=Arr.SONARR)
+        ctx.stats.needs_action = [
+            NeedsActionRecord(
+                title="B",
+                coverage="S02",
+                group="Priv",
+                url="u2",
+                reason="a reworded reason with no magic words",
+                kind=kind,
+            ),
+        ]
+        return ctx
+
+    def test_private_only_kind_renders_tip_despite_reworded_reason(self) -> None:
+        messages = _summary_messages(_make_reporter(), self._needs_ctx(NeedsActionKind.PRIVATE_ONLY))
+        assert any("public_only: false" in m for m in messages)
+
+    def test_unsupported_tracker_kind_renders_no_tip(self) -> None:
+        messages = _summary_messages(_make_reporter(), self._needs_ctx(NeedsActionKind.UNSUPPORTED_TRACKER))
+        assert not any("public_only: false" in m for m in messages)
 
 
 def _action_messages(

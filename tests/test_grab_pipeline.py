@@ -18,7 +18,7 @@ from seadex import Tracker
 from seadexarr.modules.config import Arr
 from seadexarr.modules.grab_pipeline import GrabPipeline, GrabRequest
 from seadexarr.modules.manual_import import ImportWaitMode, PendingImport
-from seadexarr.modules.reporter import RunContext
+from seadexarr.modules.reporter import NeedsActionKind, RunContext
 from seadexarr.modules.seadex_types import SeadexDict, SeadexUrlItem
 from seadexarr.modules.torrents import ReleaseOutcome
 
@@ -272,6 +272,7 @@ class TestUnsupportedTrackerSkip:
         assert pipeline._ctx.torrents_added == 0
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
         assert [r.reason for r in pipeline._ctx.stats.needs_action] == ["unsupported tracker; no parser yet"]
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.UNSUPPORTED_TRACKER]
 
     def test_private_and_unsupported_surfaces_only_private(self) -> None:
         # Both a private-only skip AND an unsupported-tracker skip on one title,
@@ -304,4 +305,5 @@ class TestUnsupportedTrackerSkip:
         assert pipeline._ctx.unsupported_tracker_skipped is True
         # ...but only the private-only reason is surfaced, and the title stays uncached.
         assert [r.reason for r in pipeline._ctx.stats.needs_action] == ["private-only release; public_only on"]
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
         assert pipeline.cache_store.get_entry(Arr.SONARR, 7) is None
