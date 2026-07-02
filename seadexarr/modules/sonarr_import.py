@@ -18,7 +18,7 @@ import os
 import time
 from dataclasses import replace
 from datetime import datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from .cache import UPDATED_AT_STR_FORMAT
 from .config import Arr
@@ -419,6 +419,18 @@ class ImportExecutor:
         return entry
 
 
+class _SeedStatuses(NamedTuple):
+    """The seed-gated import state both reconcile consumers read.
+
+    A fresh episode index, the series' recommended (overwrite-guard) groups, and
+    the per-target file statuses pinned to the seed set.
+    """
+
+    episodes_by_id: dict[int, SonarrEpisode]
+    recommended: set[str]
+    statuses: dict[int, EpisodeFileStatus]
+
+
 class ImportReconciler:
     """Decides a completed download's state and builds the grab-time seeds.
 
@@ -589,12 +601,6 @@ class ImportReconciler:
         # Rescan (throttled) so the queue we read reflects the finished torrent.
         self._executor.refresh_downloads()
 
-        # Episode files are the source of truth for "already imported"; fetch the
-        # series episodes once and reuse them for the manual import below.
-        episodes = self._episodes.episodes_for_series(pending.series_id)
-        episodes_by_id = {ep.id: ep for ep in episodes if ep.id}
-        recommended = self._recommended_groups(pending.series_id, pending.release_group)
-
         # "Files inserted" bar counts, pinned to the seed set so the denominator
         # never rescales mid-import. Determinate only when the seed map covers every
         # intended file; an incomplete map reports 0/0 so the importing row stays
@@ -602,8 +608,8 @@ class ImportReconciler:
         # the manual import's repaired done-check below can finish it.
         seeded_targets = self._pending_target_ids(pending)
         seed_complete = bool(seeded_targets) and self._seed_map_is_complete(pending)
-        seed_statuses = episode_file_statuses(seeded_targets, episodes_by_id, recommended) if seed_complete else {}
-        done = self._recommended_count(seed_statuses)
+        seed = self._seed_statuses(pending, seeded_targets if seed_complete else [])
+        done = self._recommended_count(seed.statuses)
         total = len(seeded_targets) if seed_complete else 0
 
         def probe(readiness: ImportReadiness, *, files_present: bool, command_issued: bool) -> ImportProbe:
@@ -619,7 +625,7 @@ class ImportReconciler:
         # done-check is trustworthy without scanning the folder. An incomplete map
         # falls through to the manual import, which repairs it from the on-disk
         # files and re-checks against the complete set.
-        if seed_complete and all_targets_done(seed_statuses):
+        if seed_complete and all_targets_done(seed.statuses):
             self.logger.debug(
                 indent_string(f"{label}: already imported (recommended files present)"),
             )
@@ -656,8 +662,8 @@ class ImportReconciler:
         result = self._executor.run_manual_import(
             pending,
             content_path,
-            episodes_by_id=episodes_by_id,
-            recommended_groups=recommended,
+            episodes_by_id=seed.episodes_by_id,
+            recommended_groups=seed.recommended,
             at_deadline=at_deadline,
         )
         return replace(result, imported_count=done, target_count=total)
@@ -675,11 +681,25 @@ class ImportReconciler:
         seeded_targets = self._pending_target_ids(pending)
         if not seeded_targets or not self._seed_map_is_complete(pending):
             return ImportProgress(0, 0, determinate=False)
+        seed = self._seed_statuses(pending, seeded_targets)
+        return ImportProgress(self._recommended_count(seed.statuses), len(seeded_targets), determinate=True)
+
+    def _seed_statuses(self, pending: PendingImport, targets: list[int]) -> _SeedStatuses:
+        """Fetch the series' episodes FRESH and classify ``targets`` against them.
+
+        Episode files are the source of truth for "already imported". Callers gate
+        the bar on seed completeness by passing ``[]`` (empty statuses); the episode
+        index + recommended groups are still fetched for the manual import.
+        """
+
         episodes = self._episodes.episodes_for_series(pending.series_id)
         episodes_by_id = {ep.id: ep for ep in episodes if ep.id}
         recommended = self._recommended_groups(pending.series_id, pending.release_group)
-        statuses = episode_file_statuses(seeded_targets, episodes_by_id, recommended)
-        return ImportProgress(self._recommended_count(statuses), len(seeded_targets), determinate=True)
+        return _SeedStatuses(
+            episodes_by_id,
+            recommended,
+            episode_file_statuses(targets, episodes_by_id, recommended),
+        )
 
     @staticmethod
     def _recommended_count(statuses: dict[int, EpisodeFileStatus]) -> int:
