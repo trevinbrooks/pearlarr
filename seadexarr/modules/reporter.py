@@ -14,6 +14,7 @@ from .config import Arr
 from .log import (
     EntryState,
     LogFormatter,
+    arr_item_noun,
     count_noun,
     entry_string,
     group_highlight,
@@ -470,15 +471,10 @@ class RunReporter:
             n_items: Total number of shows/movies
         """
 
-        item_label = {
-            Arr.RADARR: count_noun(n_items, "movie"),
-            Arr.SONARR: count_noun(n_items, "series", "series"),
-        }[arr]
-
         # A blank before the rule separates the boot block from the run banner;
         # the gap UNDER this title is supplied by the first log_arr_item_start.
         self.log_fmt.blank()
-        banner = f"Starting SeaDexArr ({arr.capitalize()}) for {item_label}"
+        banner = f"Starting SeaDexArr ({arr.capitalize()}) for {arr_item_noun(arr, n_items)}"
         self.logger.info(
             banner,
             extra={

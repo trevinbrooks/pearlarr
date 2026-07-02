@@ -11,6 +11,8 @@ from rich.rule import Rule
 from rich.text import Text
 from rich.traceback import Traceback
 
+from .config import Arr
+
 
 class KvRecord(TypedDict):
     """Schema for the ``kv`` record carried on a LogRecord via ``extra=``.
@@ -607,6 +609,19 @@ def count_noun(n: int, singular: str, plural: str | None = None) -> str:
     """
 
     return f"{n} {pluralize(n, singular, plural)}"
+
+
+def arr_item_noun(arr: Arr, n: int) -> str:
+    """Format a count with the arr's library noun: "3 movies" / "3 series"
+
+    Args:
+        arr: Which arr the items belong to (picks movie vs series)
+        n: The count
+    """
+
+    if arr is Arr.RADARR:
+        return count_noun(n, "movie")
+    return count_noun(n, "series", "series")
 
 
 class LogFormatter:

@@ -13,7 +13,7 @@ import typer
 from pydantic import ValidationError
 
 from .boot_view import BootView, make_boot_view
-from .config import AppConfig, Arr
+from .config import AppConfig, Arr, template_path
 from .log import setup_logger
 from .manual_import import ImportWaitMode
 from .paths import AppPaths, ensure_data_dir, resolve_paths
@@ -408,8 +408,7 @@ def config_init() -> bool:
     paths = resolve_paths()
     ensure_data_dir(paths)
 
-    config_template_path = os.path.join(os.path.dirname(__file__), "config_sample.yml")
-    shutil.copyfile(config_template_path, paths.config)
+    shutil.copyfile(template_path(), paths.config)
 
     return True
 

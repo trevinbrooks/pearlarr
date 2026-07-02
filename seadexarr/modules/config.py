@@ -72,7 +72,7 @@ class Arr(StrEnum):
     RADARR = "radarr"
 
 
-def _template_path() -> str:
+def template_path() -> str:
     """Absolute path to the bundled config template shipped beside this module."""
 
     return os.path.join(os.path.dirname(__file__), CONFIG_TEMPLATE_FILE)
@@ -337,9 +337,8 @@ class AppConfig(_ConfigBase):
             path (str): Path to the config file.
         """
 
-        template_path = _template_path()
         if not os.path.exists(path):
-            shutil.copy(template_path, path)
+            shutil.copy(template_path(), path)
             raise FileNotFoundError(f"{path} not found. Copying template")
 
         with open(path, "rb") as f:

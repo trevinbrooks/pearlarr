@@ -147,6 +147,13 @@ def as_size_list(size: int | list[int | None] | None) -> list[int]:
     return [s for s in size if s is not None]
 
 
+# --- shared plumbing ----------------------------------------------------------
+
+# (connect, read) timeout for every plain Arr REST request, so a hung Sonarr /
+# Radarr surfaces as a transient miss instead of blocking the run.
+ARR_REQUEST_TIMEOUT_S = (5, 30)
+
+
 # --- shared progress sink ----------------------------------------------------
 
 

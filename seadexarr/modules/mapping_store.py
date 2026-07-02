@@ -35,13 +35,12 @@ concurrent repopulation across processes is already prevented; the connection is
 not shared across threads.
 """
 
-import contextlib
 import logging
 import sqlite3
 from collections.abc import Callable, Iterable
 from typing import NamedTuple, cast
 
-from .sqlite_util import connect, open_or_quarantine
+from .sqlite_util import connect, open_or_quarantine, rollback_and_close
 
 # Bump when the table layout below changes; a stored ``user_version`` that differs
 # triggers a DROP+rebuild (the data is a pure cache, re-derived from the sources).
@@ -273,10 +272,7 @@ class MappingStore:
     def close(self) -> None:
         """Roll back anything uncommitted and close the connection (idempotent)."""
 
-        with contextlib.suppress(sqlite3.Error):
-            self._conn.rollback()
-        with contextlib.suppress(sqlite3.Error):
-            self._conn.close()
+        rollback_and_close(self._conn)
 
     # -- freshness -----------------------------------------------------------
 

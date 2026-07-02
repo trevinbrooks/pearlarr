@@ -52,7 +52,7 @@ from seadex import EntryRecord
 
 from .config import Arr
 from .sqlite_util import connect as _sqlite_connect
-from .sqlite_util import open_or_quarantine
+from .sqlite_util import open_or_quarantine, rollback_and_close
 from .. import __version__
 
 # Timestamp format for cache record fields (entry ``updated_at`` and the AniList
@@ -583,9 +583,7 @@ class CacheStore(AbstractCacheStore):
         titles are re-checked next run). Idempotent enough for a ``finally`` block.
         """
 
-        with contextlib.suppress(sqlite3.Error):
-            self._conn.rollback()
-        self._conn.close()
+        rollback_and_close(self._conn)
 
     # -- descriptor (kv) -----------------------------------------------------
 

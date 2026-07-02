@@ -16,6 +16,7 @@ from arrapi import SonarrAPI
 from .log import indent_string
 from .manual_import import PendingImport
 from .seadex_types import (
+    ARR_REQUEST_TIMEOUT_S,
     CommandBody,
     CommandResource,
     Language,
@@ -35,10 +36,6 @@ from .seadex_types import (
 # instead of blocking the whole run. Generous so a legitimately slow first scan
 # (uncached remote files) still completes.
 MANUAL_IMPORT_TIMEOUT_S = 120
-
-# (connect, read) timeout for every Sonarr request except the manual-import scan,
-# so a hung Sonarr surfaces as a transient miss rather than blocking the run.
-SONARR_REQUEST_TIMEOUT_S = (5, 30)
 
 
 class AbstractSonarrClient(ABC):
@@ -159,7 +156,7 @@ class SonarrClient(AbstractSonarrClient):
             f"apikey={self._api_key}"
         )
         try:
-            eps_req = self._session.get(eps_req_url, timeout=SONARR_REQUEST_TIMEOUT_S)
+            eps_req = self._session.get(eps_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             eps_req = None
 
@@ -214,7 +211,7 @@ class SonarrClient(AbstractSonarrClient):
         # Parse through Sonarr
         parse_req_url = f"{self._url}/api/v3/parse?{d_enc}"
         try:
-            parse_req = self._session.get(parse_req_url, timeout=SONARR_REQUEST_TIMEOUT_S)
+            parse_req = self._session.get(parse_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             self._logger.warning(
                 indent_string(
@@ -435,7 +432,7 @@ class SonarrClient(AbstractSonarrClient):
         d_enc = urlencode({"apikey": self._api_key})
         command_req_url = f"{self._url}/api/v3/command?{d_enc}"
         try:
-            command_req = self._session.post(command_req_url, json=body, timeout=SONARR_REQUEST_TIMEOUT_S)
+            command_req = self._session.post(command_req_url, json=body, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             command_req = None
 
@@ -484,7 +481,7 @@ class SonarrClient(AbstractSonarrClient):
         )
         queue_req_url = f"{self._url}/api/v3/queue?{params}"
         try:
-            queue_req = self._session.get(queue_req_url, timeout=SONARR_REQUEST_TIMEOUT_S)
+            queue_req = self._session.get(queue_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             queue_req = None
 
@@ -520,7 +517,7 @@ class SonarrClient(AbstractSonarrClient):
 
         defs_req_url = f"{self._url}/api/v3/qualitydefinition?apikey={self._api_key}"
         try:
-            defs_req = self._session.get(defs_req_url, timeout=SONARR_REQUEST_TIMEOUT_S)
+            defs_req = self._session.get(defs_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             defs_req = None
 
@@ -552,7 +549,7 @@ class SonarrClient(AbstractSonarrClient):
 
         langs_req_url = f"{self._url}/api/v3/language?apikey={self._api_key}"
         try:
-            langs_req = self._session.get(langs_req_url, timeout=SONARR_REQUEST_TIMEOUT_S)
+            langs_req = self._session.get(langs_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             langs_req = None
 
@@ -588,7 +585,7 @@ class SonarrClient(AbstractSonarrClient):
 
         status_req_url = f"{self._url}/api/v3/command/{command_id}?apikey={self._api_key}"
         try:
-            status_req = self._session.get(status_req_url, timeout=SONARR_REQUEST_TIMEOUT_S)
+            status_req = self._session.get(status_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             status_req = None
 
@@ -627,7 +624,7 @@ class SonarrClient(AbstractSonarrClient):
 
         commands_req_url = f"{self._url}/api/v3/command?apikey={self._api_key}"
         try:
-            commands_req = self._session.get(commands_req_url, timeout=SONARR_REQUEST_TIMEOUT_S)
+            commands_req = self._session.get(commands_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             commands_req = None
 

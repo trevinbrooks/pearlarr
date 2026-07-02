@@ -123,6 +123,19 @@ def open_or_quarantine(
     return conn, False
 
 
+def rollback_and_close(conn: sqlite3.Connection) -> None:
+    """Roll back anything uncommitted and close ``conn``, swallowing sqlite errors.
+
+    The shared ``close()`` tail for both stores, so their error behaviour on a
+    torn-down connection can't diverge. Idempotent enough for a ``finally`` block.
+    """
+
+    with contextlib.suppress(sqlite3.Error):
+        conn.rollback()
+    with contextlib.suppress(sqlite3.Error):
+        conn.close()
+
+
 def is_corruption(exc: sqlite3.DatabaseError) -> bool:
     """True if a DatabaseError signals an actually corrupt / not-a-database file.
 

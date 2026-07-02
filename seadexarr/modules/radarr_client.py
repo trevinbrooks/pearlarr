@@ -10,11 +10,7 @@ import requests
 from arrapi import RadarrAPI
 
 from .anibridge import AniBridge
-from .seadex_types import ArrItem, MovieFile, RadarrItem
-
-# (connect, read) timeout for the raw moviefile GET, so a hung Radarr surfaces as
-# a transient miss instead of blocking the run (mirrors SONARR_REQUEST_TIMEOUT_S).
-RADARR_REQUEST_TIMEOUT_S = (5, 30)
+from .seadex_types import ARR_REQUEST_TIMEOUT_S, ArrItem, MovieFile, RadarrItem
 
 
 def make_radarr_client(
@@ -97,7 +93,7 @@ class RadarrClient:
 
         mov_req_url = f"{self._url}/api/v3/moviefile?movieId={movie_id}&apikey={self._api_key}"
         try:
-            mov_req = self._session.get(mov_req_url, timeout=RADARR_REQUEST_TIMEOUT_S)
+            mov_req = self._session.get(mov_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             mov_req = None
 
