@@ -307,3 +307,68 @@ class TestUnsupportedTrackerSkip:
         assert [r.reason for r in pipeline._ctx.stats.needs_action] == ["private-only release; public_only on"]
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
         assert pipeline.cache_store.get_entry(Arr.SONARR, 7) is None
+
+    def test_mixed_grab_caches_without_the_unsupported_hash(self) -> None:
+        # One grabbed (Nyaa) + one unsupported (AniDex): the title IS cached (the
+        # grab completed it), but the AniDex hash is excluded from the cached set so
+        # the release is re-considered on the entry's next update once a parser
+        # lands. No needs-action row (something was grabbed).
+        anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="hA")
+        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hN", download=True)
+        nyaa.tracker = Tracker.NYAA
+        seadex_dict: SeadexDict = {"NAN0": rg_group({anidex.url: anidex, nyaa.url: nyaa})}
+
+        torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-NAN0")})
+        pipeline = _pipeline(torrents=torrents, public_only=True, sleep_time=0)
+        pipeline._anilist.al_cache.update({42: {}})
+        pipeline._ctx.current_title = "Show S1"
+
+        req = GrabRequest(
+            al_id=42,
+            item_title="Show",
+            anilist_title="Show",
+            sd_url="https://seadex.example/42",
+            seadex_dict=seadex_dict,
+            torrent_hashes=["hN", "hA"],
+            cache_details={"updated_at": "2026-01-01 00:00:00"},
+            release_group=None,
+        )
+
+        stop = pipeline.grab_and_cache(req)
+
+        assert stop is False
+        assert pipeline._ctx.torrents_added == 1
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is not None
+        assert pipeline.cache_store.torrent_hashes(Arr.SONARR, 42) == ["hN"]
+        assert pipeline._ctx.stats.needs_action == []
+
+    def test_mixed_grab_keeps_the_private_hash_cached(self) -> None:
+        # The private-only sibling deliberately does NOT get the exclusion:
+        # public_only is a user-configured exclusion, so the private release stays
+        # quietly suppressed by its cached hash.
+        private = url_item(url="https://ab.example/1", infohash="hP", is_public=False, download=True)
+        private.tracker = Tracker.ANIMEBYTES
+        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hN", download=True)
+        nyaa.tracker = Tracker.NYAA
+        seadex_dict: SeadexDict = {"NAN0": rg_group({private.url: private, nyaa.url: nyaa})}
+
+        torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-NAN0")})
+        pipeline = _pipeline(torrents=torrents, public_only=True, sleep_time=0)
+        pipeline._anilist.al_cache.update({7: {}})
+        pipeline._ctx.current_title = "Show S1"
+
+        req = GrabRequest(
+            al_id=7,
+            item_title="Show",
+            anilist_title="Show",
+            sd_url="https://seadex.example/7",
+            seadex_dict=seadex_dict,
+            torrent_hashes=["hN", "hP"],
+            cache_details={"updated_at": "2026-01-01 00:00:00"},
+            release_group=None,
+        )
+
+        pipeline.grab_and_cache(req)
+
+        assert pipeline._ctx.public_only_skipped is True
+        assert set(pipeline.cache_store.torrent_hashes(Arr.SONARR, 7)) == {"hN", "hP"}

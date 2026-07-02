@@ -793,6 +793,7 @@ class SeaDexArr:
         self._ctx.public_only_groups = []
         self._ctx.unsupported_tracker_skipped = False
         self._ctx.unsupported_tracker_groups = []
+        self._ctx.unsupported_tracker_hashes = []
         self._ctx.stats.checked += 1
 
         # Get the SeaDex entry if it exists

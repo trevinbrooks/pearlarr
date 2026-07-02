@@ -133,9 +133,12 @@ class RunContext:
     public_only_groups: list[str] = field(default_factory=list[str])
     # Set per-title when a recommended release is on a tracker we have no parser for
     # (so we can't grab it, but the user didn't deselect it): keeps the title from
-    # being cached as done, and the group names ride along for the summary.
+    # being cached as done, and the group names ride along for the summary. The
+    # skipped hashes are excluded from the cached hash set on a mixed (something
+    # else grabbed) title, so the release is re-considered once a parser lands.
     unsupported_tracker_skipped: bool = False
     unsupported_tracker_groups: list[str] = field(default_factory=list[str])
+    unsupported_tracker_hashes: list[str] = field(default_factory=list[str])
     # Run clock (monotonic, so an NTP/DST step can't yield negative elapsed) and
     # the logger-counter snapshot taken at the start, diffed for the summary.
     started_monotonic: float | None = None

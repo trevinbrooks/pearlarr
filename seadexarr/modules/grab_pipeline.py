@@ -214,6 +214,8 @@ class GrabPipeline:
             )
             self._ctx.unsupported_tracker_skipped = True
             self._ctx.unsupported_tracker_groups.append(srg)
+            if url_item.hash is not None:
+                self._ctx.unsupported_tracker_hashes.append(url_item.hash)
             return None
 
         # The service parses the release URL by tracker and adds it to
@@ -346,7 +348,14 @@ class GrabPipeline:
         # grabbed keeps it uncached, so it's re-checked once a public release /
         # parser / config change lands.
         if added_this_title > 0 or not (self._ctx.public_only_skipped or self._ctx.unsupported_tracker_skipped):
-            req.cache_details.update({"torrent_hashes": req.torrent_hashes})
+            # A mixed title (grabbed + unsupported-tracker skip) is cached, but the
+            # skipped hashes are excluded so the release is re-considered on the
+            # entry's next update once a parser lands. Private-only hashes are
+            # deliberately NOT excluded: public_only is a user-configured exclusion,
+            # so its quiet suppression is the intended behavior.
+            skipped = set(self._ctx.unsupported_tracker_hashes)
+            cacheable = [h for h in req.torrent_hashes if h is None or h not in skipped]
+            req.cache_details.update({"torrent_hashes": cacheable})
             self.cache_store.update_cache(
                 self._ctx.arr,
                 req.al_id,
