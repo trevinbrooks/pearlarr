@@ -180,6 +180,11 @@ class RunDeps:
                         "qBittorrent connection failed - check the qbittorrent host and credentials in your config",
                     ) from e
             qbit = client
+        else:
+            # No credentials -> perpetual preview. Say so on the boot ledger (a ⚠
+            # step) instead of silently grabbing nothing all run.
+            with boot.step("Connecting to qBittorrent") as step:
+                step.warn("not configured - preview mode")
 
         # Load the cache (or create its schema) and reconcile the descriptor against
         # the current package version + config checksum. Each arr builds its own

@@ -65,6 +65,9 @@ class BootStep:
         self.detail: str | None = None
         self.fraction: float | None = None
         self.category = OutcomeCategory.SUCCESS
+        # One-time heads-up flag (LogBootView): rides the step itself because an
+        # id()-keyed set can collide once a dead step's address is reused.
+        self.announced = False
 
     def progress(self, fraction: float, detail: str | None = None) -> None:
         """Report 0-1 progress (and optional detail) - refreshes the live bar."""
@@ -338,26 +341,15 @@ class LogBootView(_DurableBootView):
     per-MB flood.
     """
 
-    def __init__(
-        self,
-        logger: logging.Logger,
-        caps: Capabilities,
-        *,
-        time_source: Callable[[], float],
-    ) -> None:
-        super().__init__(logger, caps, time_source=time_source)
-        self._announced: set[int] = set()
-
     @override
     def _begin(self, step: BootStep) -> None:
         return
 
     @override
     def _on_change(self, step: BootStep) -> None:
-        marker = id(step)
-        if marker in self._announced:
+        if step.announced:
             return
-        self._announced.add(marker)
+        step.announced = True
         self._logger.info(indent_string(f"{step.label}…"))
 
     @override

@@ -17,6 +17,7 @@ injected so durations are deterministic.
 import io
 import logging
 import re
+from pathlib import Path
 from typing import override
 
 from rich.console import Console
@@ -29,8 +30,13 @@ from seadexarr.modules.boot_view import (
     _DurableBootView,
     make_boot_view,
 )
+from seadexarr.modules.config import Arr
 from seadexarr.modules.console_caps import Capabilities
 from seadexarr.modules.log import RichConsoleHandler
+from seadexarr.modules.mappings import MappingResolver
+from seadexarr.modules.seadex_arr import RunDeps
+
+from .builders import make_bare_instance, make_config
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 
@@ -199,6 +205,54 @@ def test_log_view_is_calm_one_line_per_step() -> None:
     assert out.count("Refreshing mappings…") == 1  # one heads-up, not four
     assert "✔ Refreshing mappings · anime-ids · anidb" in out
     assert "ready in" in out
+
+
+def test_log_view_heads_up_flag_rides_the_step_not_an_id_set() -> None:
+    # An id(step)-keyed dedup set can collide once a dead step's address is reused
+    # (CPython freelists), swallowing a later step's one-time heads-up; the flag
+    # must live on the step itself.
+    logger, console = _logger_with_console(force_terminal=False)
+    caps = Capabilities(live=False, color=False, unicode=False, width=100, height=40)
+    view = LogBootView(logger, caps, time_source=_FakeClock())
+
+    first = BootStep(lambda _s: None, "First step")
+    view._on_change(first)
+    view._on_change(first)
+    assert first.announced is True  # the throttle state is the step's own flag
+
+    second = BootStep(lambda _s: None, "Second step")  # a fresh step, a fresh flag
+    view._on_change(second)
+
+    out = _plain(console)
+    assert out.count("First step…") == 1
+    assert out.count("Second step…") == 1
+
+
+# --- production wiring: the unconfigured-qBittorrent boot warning ---------------
+
+
+def test_rundeps_build_warns_deferred_when_qbit_unconfigured(tmp_path: Path) -> None:
+    # Missing qBittorrent credentials put the whole run in perpetual preview; the
+    # boot ledger must say so via a DEFERRED (⚠) step instead of silently skipping
+    # the qBittorrent step.
+    clock = _FakeClock()
+    logger, console = _logger_with_console(force_terminal=True)
+    view = make_boot_view(logger, time_source=clock)
+
+    deps = RunDeps.build(
+        Arr.SONARR,
+        cache=str(tmp_path / "cache.db"),
+        logger=logger,
+        mappings=make_bare_instance(MappingResolver),
+        app_config=make_config(),  # no qbittorrent credentials
+        boot=view,
+    )
+    view.close()
+    deps.cache_store.close()  # don't leak the sqlite handle past the test
+
+    assert deps.qbit is None
+    out = _plain(console)
+    assert "⚠ Connecting to qBittorrent · not configured - preview mode" in out
 
 
 # --- pure render helper --------------------------------------------------------
