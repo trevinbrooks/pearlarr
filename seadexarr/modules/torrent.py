@@ -1,11 +1,16 @@
 from urllib.parse import urlencode, urljoin
 
+import httpx
 import pynyaa
 import requests
 from bs4 import BeautifulSoup
 
 ANIMETOSHO_FEED_URL = "https://animetosho.org/feed/json"
 RUTRACKER_MAGNET_ANNOUNCE = "http://bt2.t-ru.org/ann?magnet"
+
+# (connect, read) timeout for the tracker page/feed scrapes, so a hung tracker
+# surfaces as a transient miss instead of blocking the run.
+TRACKER_REQUEST_TIMEOUT_S = (5, 30)
 
 
 class TorrentParseError(Exception):
@@ -16,7 +21,14 @@ class TorrentParseError(Exception):
 # these helpers gets keep-alive connection pooling. The main code path threads
 # in SeaDexArr.session instead.
 _DEFAULT_SESSION = requests.Session()
-_NYAA_SESSION = pynyaa.Nyaa()
+# pynyaa rides httpx: give its client the same bounds (and keep pynyaa's own
+# User-Agent, which its default client would otherwise set).
+_NYAA_SESSION = pynyaa.Nyaa(
+    client=httpx.Client(
+        headers={"User-Agent": f"pynyaa/{pynyaa.__version__} (https://pypi.org/project/pynyaa/)"},
+        timeout=httpx.Timeout(TRACKER_REQUEST_TIMEOUT_S[1], connect=TRACKER_REQUEST_TIMEOUT_S[0]),
+    ),
+)
 
 
 def get_nyaa_torrent(url: str) -> tuple[str, str]:
@@ -55,7 +67,7 @@ def get_animetosho_torrent(
     session = session or _DEFAULT_SESSION
 
     # Start by getting the webpage, so we can get a title
-    r = session.get(url)
+    r = session.get(url, timeout=TRACKER_REQUEST_TIMEOUT_S)
     soup = BeautifulSoup(r.content, "html.parser")
     titles = soup.find_all("h2", attrs={"id": "title"})
 
@@ -70,7 +82,7 @@ def get_animetosho_torrent(
     # Query the feed API for the matching release (encode the title so reserved
     # characters in it don't malform the query string)
     query_url = urljoin(ANIMETOSHO_FEED_URL, "?" + urlencode({"t": "search", "q": title}))
-    r = session.get(query_url)
+    r = session.get(query_url, timeout=TRACKER_REQUEST_TIMEOUT_S)
     j = r.json()
 
     # Find the feed entry whose link matches the page URL
@@ -106,7 +118,7 @@ def get_rutracker_torrent(
     # Pull the torrent title from souping the URL. Use the stdlib html.parser
     # (as the AnimeTosho scraper does) - lxml is not a dependency, and the page
     # only needs a single class lookup, so the built-in parser is plenty.
-    r = session.get(url)
+    r = session.get(url, timeout=TRACKER_REQUEST_TIMEOUT_S)
     soup = BeautifulSoup(r.content, "html.parser")
     main_title = soup.find("h1", attrs={"class": "maintitle"})
     if main_title is None:

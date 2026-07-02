@@ -25,6 +25,10 @@ RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 MAX_RETRIES = 3
 MAX_BACKOFF = 60
 
+# (connect, read) timeout for the GraphQL POST, so a hung AniList surfaces as a
+# retryable RequestException instead of blocking the run.
+ANILIST_REQUEST_TIMEOUT_S = (5, 30)
+
 # AniList also soft-throttles by returning HTTP 200 with a GraphQL error payload
 # (``{"data": null, "errors": [{"message": "Too Many Requests", "status": 429}]}")
 # instead of a 429 status. These substrings flag a throttle/rate-limit error so it
@@ -186,6 +190,7 @@ def _post_with_retry(query: str, variables: dict[str, Any]) -> dict[str, Any]:
             resp = requests.post(
                 API_URL,
                 json={"query": query, "variables": variables},
+                timeout=ANILIST_REQUEST_TIMEOUT_S,
             )
         except requests.RequestException:
             # Network blip: back off and retry, then give up with an empty result
