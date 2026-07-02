@@ -37,15 +37,20 @@ from rich.padding import Padding
 from rich.spinner import Spinner
 from rich.text import Text
 
-from .console_caps import Capabilities, console_of, detect_capabilities
+from .console_caps import (
+    Capabilities,
+    block_bar,
+    console_of,
+    detect_capabilities,
+    make_live,
+    spinner_name,
+)
 from .log import INDENT, LogFormatter, indent_string
 from .manual_import import OutcomeCategory
 
 # Width of the live download bar (mapping refresh); only the live cockpit draws
 # it, so it doesn't need to scale with the terminal like the wait cockpit's does.
 _BAR_WIDTH = 16
-# rich's own refresh cadence for the animated spinner (frames/sec).
-_REFRESH_PER_SECOND = 12.5
 
 
 @final
@@ -273,19 +278,12 @@ class LiveBootView(_DurableBootView):
         self._console = console
         self._live: Live | None = None
         self._spinner: Spinner | None = None
-        self._spinner_name = "dots" if caps.unicode else "line"
+        self._spinner_name = spinner_name(caps)
 
     @override
     def _begin(self, step: BootStep) -> None:
         if self._live is None:
-            self._live = Live(
-                console=self._console,
-                auto_refresh=True,
-                refresh_per_second=_REFRESH_PER_SECOND,
-                transient=True,
-                redirect_stdout=False,
-                redirect_stderr=False,
-            )
+            self._live = make_live(self._console)
             self._live.start()
         # A fresh Spinner per step restarts the animation at frame 0 (intended);
         # within a step we mutate .text so the dots keep their phase. Pad the
@@ -312,7 +310,7 @@ class LiveBootView(_DurableBootView):
         line = Text(step.label, style="bold")
         if step.fraction is not None:
             line.append("  ")
-            line.append(self._bar(step.fraction))
+            line.append(block_bar(step.fraction, _BAR_WIDTH, self._caps))
             line.append(f" {round(step.fraction * 100)}%", style="cyan")
             if step.detail:
                 line.append("  ")
@@ -323,12 +321,6 @@ class LiveBootView(_DurableBootView):
         else:
             line.append("…", style="bold")
         return line
-
-    def _bar(self, fraction: float) -> Text:
-        filled = round(max(0.0, min(1.0, fraction)) * _BAR_WIDTH)
-        if self._caps.unicode:
-            return Text("█" * filled + "░" * (_BAR_WIDTH - filled), style="cyan")
-        return Text("#" * filled + "-" * (_BAR_WIDTH - filled), style="cyan")
 
 
 @final

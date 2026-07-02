@@ -13,6 +13,8 @@ import logging
 from dataclasses import dataclass
 
 from rich.console import Console
+from rich.live import Live
+from rich.text import Text
 
 from .log import RichConsoleHandler
 
@@ -20,6 +22,10 @@ from .log import RichConsoleHandler
 # views fall back to the log digest (the same path a non-TTY / dumb terminal
 # takes).
 MIN_LIVE_WIDTH = 40
+
+# rich's own refresh cadence (frames/sec) for both live cockpits: the spinner
+# animates and any timers tick at this rate on rich's background thread.
+LIVE_REFRESH_PER_SECOND = 12.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +75,34 @@ def detect_capabilities(console: Console | None) -> Capabilities:
         unicode=_supports_unicode(console),
         width=width,
         height=height,
+    )
+
+
+def block_bar(fraction: float, width: int, caps: Capabilities) -> Text:
+    """A fixed-width cyan progress bar (unicode blocks, or ASCII fallback)."""
+
+    filled = round(max(0.0, min(1.0, fraction)) * width)
+    if caps.unicode:
+        return Text("█" * filled + "░" * (width - filled), style="cyan")
+    return Text("#" * filled + "-" * (width - filled), style="cyan")
+
+
+def spinner_name(caps: Capabilities) -> str:
+    """The spinner glyph set the console can draw."""
+
+    return "dots" if caps.unicode else "line"
+
+
+def make_live(console: Console) -> Live:
+    """The transient, auto-refreshing ``rich.Live`` both cockpits drive."""
+
+    return Live(
+        console=console,
+        auto_refresh=True,
+        refresh_per_second=LIVE_REFRESH_PER_SECOND,
+        transient=True,
+        redirect_stdout=False,
+        redirect_stderr=False,
     )
 
 

@@ -33,7 +33,14 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
-from .console_caps import Capabilities, console_of, detect_capabilities
+from .console_caps import (
+    Capabilities,
+    block_bar,
+    console_of,
+    detect_capabilities,
+    make_live,
+    spinner_name,
+)
 from .log import (
     STATE_WIDTH,
     LogFormatter,
@@ -50,9 +57,6 @@ MIN_LIVE_ROWS = 4
 # Rows reserved for the banner, header, overflow line and a little breathing room
 # when clamping the body to the terminal height.
 _RESERVED_ROWS = 8
-# rich's own refresh cadence: the spinner animates and the per-row + header timers
-# tick at this rate BETWEEN the engine's polls, off rich's background thread.
-_REFRESH_PER_SECOND = 12.5
 
 
 class Phase(Enum):
@@ -572,15 +576,8 @@ class LiveWaitView(_DurableWaitView):
         # torn one (single attribute assignment under the GIL).
         self._anchor = _FrameAnchor(snapshot, self._time_source())
         if self._live is None:
-            self._spinner = Spinner("dots" if self._caps.unicode else "line", style="yellow")
-            self._live = Live(
-                console=self._console,
-                auto_refresh=True,
-                refresh_per_second=_REFRESH_PER_SECOND,
-                transient=True,
-                redirect_stdout=False,
-                redirect_stderr=False,
-            )
+            self._spinner = Spinner(spinner_name(self._caps), style="yellow")
+            self._live = make_live(self._console)
             self._live.start()
             # One persistent self-recomputing renderable; the engine only swaps the
             # anchor from here on, rich's thread re-renders this between polls.
@@ -635,7 +632,7 @@ class LiveWaitView(_DurableWaitView):
         line = Text(indent_string(""))
         line.append(model.left_text, style="bold")
         line.append("  ")
-        line.append(self._block_bar(model.overall_fraction, 12))
+        line.append(block_bar(model.overall_fraction, 12, self._caps))
         if model.right_text:
             line.append("  ")
             line.append(model.right_text, style="cyan")
@@ -698,16 +695,10 @@ class LiveWaitView(_DurableWaitView):
 
     def _bar_or_status(self, row: RowModel, bar_width: int) -> Text:
         if row.show_bar:
-            return self._block_bar(row.fraction, bar_width)
+            return block_bar(row.fraction, bar_width, self._caps)
         word = "importing" if row.phase is Phase.IMPORTING else "queued"
         style = "yellow" if row.phase is Phase.IMPORTING else "grey50"
         return Text(word.ljust(bar_width)[:bar_width], style=style)
-
-    def _block_bar(self, fraction: float, width: int) -> Text:
-        filled = round(max(0.0, min(1.0, fraction)) * width)
-        if self._caps.unicode:
-            return Text("█" * filled + "░" * (width - filled), style="cyan")
-        return Text("#" * filled + "-" * (width - filled), style="cyan")
 
     def _truncate(self, text: Text) -> Text:
         text.truncate(self._caps.width, overflow="ellipsis")
