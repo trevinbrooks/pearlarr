@@ -321,11 +321,12 @@ def setup_logger(
 
     # Resolve the configured level once through the name->constant table instead
     # of a hand-rolled string ladder. Only the four names the logger has always
-    # honored are accepted; anything else (including ERROR or a typo) warns and
-    # falls back to INFO, exactly as before.
+    # honored are accepted; anything else (including ERROR or a typo) falls back
+    # to INFO - the complaint is emitted below, AFTER the handlers are attached,
+    # so it reaches the console/file rather than logging.lastResort.
     level = _LOG_LEVELS.get(log_level.upper())
+    invalid_log_level = log_level if level is None else None
     if level is None:
-        logger.critical(f"Invalid log level '{log_level}', defaulting to 'INFO'")
         level = logging.INFO
     logger.setLevel(level)
 
@@ -368,6 +369,10 @@ def setup_logger(
     logger.handlers.clear()
     logger.addHandler(handler)
     logger.addHandler(console_handler)
+
+    # Only now can the invalid-level complaint reach the console + file log.
+    if invalid_log_level is not None:
+        logger.critical(f"Invalid log level '{invalid_log_level}', defaulting to 'INFO'")
 
     # Tally records by level so a run can report its warning/error counts.
     # Replace any counter from a previous call so counts don't carry over.

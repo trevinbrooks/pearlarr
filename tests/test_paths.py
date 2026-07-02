@@ -97,3 +97,16 @@ class TestLogRouting:
 
         assert os.path.isfile(os.path.join(log_dir, "SeaDexArr.log"))
         assert not os.path.exists(tmp_path / "logs")
+
+    def test_invalid_log_level_complaint_reaches_the_file_log(self, tmp_path: Path) -> None:
+        # The complaint used to fire before the handlers were attached, so it only
+        # reached logging.lastResort (stderr) - never the file log it warns about.
+        log_dir = str(tmp_path / "logs")
+
+        logger = setup_logger(log_level="BOGUS", log_dir=log_dir)
+
+        assert logger.level == logging.INFO  # fell back exactly as before
+        for handler in logger.handlers:
+            handler.flush()
+        content = Path(log_dir, "SeaDexArr.log").read_text(encoding="utf-8")
+        assert "Invalid log level 'BOGUS'" in content
