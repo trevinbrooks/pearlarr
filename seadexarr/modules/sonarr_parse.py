@@ -99,10 +99,9 @@ SONARR_PARSE_NEG_CACHE_TTL_DAYS = 7
 def is_video_candidate(basename: str) -> bool:
     """Whether a filename is an importable video (not a sub/font/NCED/sample).
 
-    Mirrors the skip rules in :meth:`SonarrParseCache.parse_episodes_from_seadex`
-    so the seed, the import-time repair, and the parse all agree on which files
-    are even candidates for an episode. Module-level (owned by none) since several
-    collaborators share it.
+    The single source of the skip rules, so the seed, the import-time repair,
+    and the parse all agree on which files are even candidates for an episode.
+    Module-level (owned by none) since several collaborators share it.
     """
 
     if any(skip in basename for skip in TORRENT_FILENAMES_TO_SKIP):
@@ -272,8 +271,8 @@ class SonarrParseCache:
         This gets an overall episode list per-release group, and also episode lists per-torrent,
         if there are multiple
 
-        Parsed filenames are cached (in memory and persisted to cache.json), so a
-        given filename is only ever sent to Sonarr once - both within a run, where
+        Parsed filenames are cached through the cache store, so a given
+        filename is only ever sent to Sonarr once - both within a run, where
         the same file can appear across overlapping release groups, and across
         runs. The mapping is deterministic for a SeaDex release name, so this is
         safe; only successful parses are cached, so a file becomes parseable as

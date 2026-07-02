@@ -1,8 +1,8 @@
 """The ``seadex_dict`` domain vocabulary: the shapes the planner and notifier read.
 
 The central ``seadex_dict`` is a four-level mapping built once per AniList entry
-in :meth:`seadexarr.modules.seadex_arr.SeaDexArr.get_seadex_dict` (around
-seadex_arr.py:368-376) and threaded through the decision engine
+by :meth:`seadexarr.modules.seadex_filter.SeadexReleaseFilter.build` (reached via
+the ``SeaDexArr.get_seadex_dict`` delegator) and threaded through the decision engine
 (:mod:`seadexarr.modules.planner`) and the Discord notifier
 (:mod:`seadexarr.modules.notify`). The two keyed levels stay plain ``dict``\\ s
 (release groups keyed by name, urls keyed by url string), but the *value

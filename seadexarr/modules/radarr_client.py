@@ -176,7 +176,7 @@ def collect_anime_movies(
 
     Gathers the candidate TMDB/IMDb id sets from the two mapping sources, then
     keeps each Radarr movie that matches one of them. Shared by
-    ``SeaDexRadarr.get_all_radarr_movies`` and Sonarr's ``ignore_movies_in_radarr``
+    ``RadarrSync.get_all_radarr_movies`` and Sonarr's ``ignore_movies_in_radarr``
     path.
 
     Args:

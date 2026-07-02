@@ -5,7 +5,7 @@ grab tail both strategies funnel into - add the recommended release(s) to
 qBittorrent, persist the durable :class:`PendingImport` records the end-of-run
 monitor waits on, notify, and write the cache outcome. It returns a pure bool
 (cap-reached) and never calls back into the engine; the engine keeps a thin
-``grab_and_cache`` delegator so the strategy<->RunServices contract is unchanged.
+``grab_and_cache`` delegator so the strategy<->engine contract is unchanged.
 
 Binds the run :class:`RunContext` via :meth:`begin_run` (the same object the
 engine holds), so the grab bookkeeping the run summary reads stays in sync.

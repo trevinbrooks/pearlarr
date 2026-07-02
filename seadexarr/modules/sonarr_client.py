@@ -432,7 +432,6 @@ class SonarrClient(AbstractSonarrClient):
 
         Args:
             body (CommandBody): The outgoing command body (must carry ``name``).
-            label (str): Command name for the warning message.
         """
 
         d_enc = urlencode({"apikey": self._api_key})
@@ -564,8 +563,8 @@ class SonarrClient(AbstractSonarrClient):
     def command_status(self, command_id: int) -> CommandResource:
         """Current state of a Sonarr command (``/api/v3/command/{id}``).
 
-        Used to optionally verify a ``ManualImport`` completed before the caller
-        removes the pending record.
+        Used by :meth:`~.sonarr_import.ImportExecutor.refresh_downloads` to poll a
+        queued ``RefreshMonitoredDownloads`` command until it finishes.
 
         Returns a default :class:`~.seadex_types.CommandResource` (with a warning)
         on a non-200, so the caller can treat the import as unverified and leave it

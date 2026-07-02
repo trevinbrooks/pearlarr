@@ -799,10 +799,10 @@ class RunReporter:
         (added / downloading).
 
         Args:
-            seadex_dict (dict): SeaDex entries (used for the recommended groups)
+            seadex_dict (SeadexDict): SeaDex entries (used for the recommended groups)
             results (list): add_torrent's per-release outcomes (empty on a dry
                 run, where there are no client-reported names)
-            dry_run (bool): No torrent client, so nothing was really grabbed,, but
+            dry_run (bool): No torrent client, so nothing was really grabbed, but
                 we'd have added everything. Defaults to False
             monitor_active (bool): The run will wait on / import pending torrents
                 this session (import_wait_mode != OFF, non-preview), so the

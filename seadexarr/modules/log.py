@@ -186,9 +186,8 @@ class RichConsoleHandler(logging.Handler):
                     self.console.print(Rule(style="grey37", characters="─"))
                 return
 
-            # A styled key/value detail line. All current callers log these at
-            # INFO, but if one is WARNING+ prepend the level badge so severity
-            # is not silently lost (defensive).
+            # A styled key/value detail line (deliberately no level badge even
+            # for WARNING+ - see below; LogCounter still tallies severity).
             kv: KvRecord | None = getattr(record, "kv", None)
             if kv is not None:
                 # No level badge here, even for WARNING+ kv lines: a col-0 badge
@@ -615,9 +614,9 @@ class LogFormatter:
 
     Holds only the logger and the rule width - no run state - so the
     presentation primitives (an aligned "key : value" line, a blank separator,
-    an elapsed-time string) live apart from the SeaDexArr orchestration that
-    decides *what* to report. The semantic ``log_*`` methods on SeaDexArr keep
-    the run state (stats, current title/url) and delegate their rendering here.
+    an elapsed-time string) live apart from the reporting layer that decides
+    *what* to report. The semantic ``log_*`` methods on ``RunReporter`` keep the
+    run state (via ``RunContext``) and delegate their rendering here.
 
     Args:
         logger (logging.Logger): Logger every line is emitted through

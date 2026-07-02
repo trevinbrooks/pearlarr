@@ -17,7 +17,7 @@ class RadarrSync(ArrSync[RadarrItem]):
 
     Implements the :class:`~.protocols.ArrSync` hooks the run machinery drives.
     The composition root injects the shared :class:`~.seadex_arr.RunDeps` (used to
-    stand up the client) and the :class:`~.protocols.RunServices` run machinery
+    stand up the client) and the :class:`~.seadex_arr.SeaDexArr` run machinery
     (held as ``self._services``); the per-id hooks call the shared pipeline
     through it.
     """
@@ -28,7 +28,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         Args:
             deps (RunDeps): The shared collaborators; the config/session/mappings
                 this strategy needs are read off it.
-            services (RunServices): The run machinery the per-id hooks call into.
+            services (SeaDexArr): The run machinery the per-id hooks call into.
         """
 
         self._services = services

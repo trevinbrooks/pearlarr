@@ -2,7 +2,7 @@
 
 This module holds the *pure* domain vocabulary and decision helpers that drive
 seadexarr's Sonarr manual-import feature: the configurable wait mode, the durable
-:class:`PendingImport` record that is persisted in ``cache.json``, and the small
+:class:`PendingImport` record persisted through the cache store, and the small
 deterministic functions that map files to authoritative Sonarr episode ids,
 parse a quality name out of a filename, and layer the quality/language/episode-id
 decisions.
@@ -313,8 +313,8 @@ class TorrentProbe:
     """One qBittorrent completion poll, with live download telemetry.
 
     Widens the old ``(outcome, content_path, progress)`` tuple so the wait view
-    can show real speed / ETA / bytes. :meth:`SeaDexArr._poll_torrent` is the one
-    place that builds this and the one place that SANITIZES qBittorrent's junk
+    can show real speed / ETA / bytes. :meth:`~.import_wait.ImportWaitManager.poll_torrent`
+    is the one place that builds this and the one place that SANITIZES qBittorrent's junk
     (via :func:`sanitize_torrent_telemetry`), so nothing downstream ever sees a
     sentinel: ``eta_s`` drops the 8_640_000 "∞" value to None, ``speed_bps`` drops
     a 0/idle speed to None (the view renders that as "stalled"), bytes are
@@ -599,7 +599,7 @@ class PendingImport:
     drive the manual import. It carries every field we have *authoritative* data
     for - the
     Sonarr ``series_id``, our own ``(basename -> episode ids)`` mapping, the
-    SeaDex release group, dual-audio flag and season - so the import never has
+    SeaDex release group, dual-audio flag and coverage - so the import never has
     to trust Sonarr's blind title parse.
 
     Args:
@@ -662,7 +662,7 @@ class PendingImport:
 
     @classmethod
     def from_json(cls, raw: dict[str, Any]) -> "PendingImport":
-        """Rebuild a record from its persisted ``cache.json`` dict.
+        """Rebuild a record from its persisted cache-store dict.
 
         Missing keys fall back to safe empties so a partially written or older
         record still rehydrates rather than raising.

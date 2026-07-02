@@ -698,9 +698,9 @@ class MappingResolver:
         """Resolve external ids to a sorted {AniList id -> mapping} dict.
 
         Args:
-            tvdb_id (int): TVDB ID
-            tmdb_id (int): TMDB ID
-            imdb_id (int): IMDb ID
+            tvdb_id (int | None): TVDB ID
+            tmdb_id (int | None): TMDB ID
+            imdb_id (str | None): IMDb ID
             tmdb_type (TmdbType): Which TMDB id space the tmdb_id is in.
 
         Returns:
@@ -767,9 +767,9 @@ class MappingResolver:
         """Get mappings from the Anime ID mappings (served from SQL).
 
         Args:
-            tvdb_id (int): TVDB ID
-            tmdb_id (int): TMDB ID
-            imdb_id (int): IMDb ID
+            tvdb_id (int | None): TVDB ID
+            tmdb_id (int | None): TMDB ID
+            imdb_id (str | None): IMDb ID
             tmdb_type (TmdbType): Which TMDB id space the tmdb_id is in.
             anilist_mappings (dict): Dictionary of AniList mappings.
                 Defaults to None, which will create a new dictionary.
@@ -817,9 +817,9 @@ class MappingResolver:
         """Get mappings from the AniBridge mappings (served from SQL).
 
         Args:
-            tvdb_id (int): TVDB ID
-            tmdb_id (int): TMDB ID
-            imdb_id (int): IMDb ID
+            tvdb_id (int | None): TVDB ID
+            tmdb_id (int | None): TMDB ID
+            imdb_id (str | None): IMDb ID
             tmdb_type (TmdbType): Which TMDB id space the tmdb_id is in.
             anilist_mappings (dict): Dictionary of AniList mappings.
                 Defaults to None, which will create a new dictionary.

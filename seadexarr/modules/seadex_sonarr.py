@@ -70,7 +70,7 @@ class SonarrSync(ArrSync[SonarrItem]):
     Implements the :class:`~.protocols.ArrSync` hooks the run machinery drives.
     The composition root injects the shared :class:`~.seadex_arr.RunDeps` (used to
     stand up the client and the episode domain logic) and the
-    :class:`~.protocols.RunServices` run machinery (held as ``self._services``);
+    :class:`~.seadex_arr.SeaDexArr` run machinery (held as ``self._services``);
     the per-id hooks call the shared pipeline through it.
     """
 
@@ -88,7 +88,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 this strategy reads directly are unpacked off it, and it's handed
                 to the Sonarr collaborators for the cache/AniList gateway/log
                 formatter they read.
-            services (RunServices): The run machinery the per-id hooks call into.
+            services (SeaDexArr): The run machinery the per-id hooks call into.
             sonarr_client (AbstractSonarrClient | None): A pre-built client to use
                 instead of constructing the real network-validating
                 :class:`SonarrClient`. Defaults to None (build the real one); tests
@@ -152,9 +152,9 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         # Only when ignore_movies_in_radarr is on do we need Radarr's movie list
         # (for the specials cross-check in process_al_id). Build a lightweight
-        # RadarrClient and reuse the already-built shared mappings - no nested
-        # SeaDexRadarr (which would re-run the whole engine __init__: mapping
-        # parse, cache load, and a qBittorrent login, all unused here).
+        # RadarrClient and reuse the already-built shared mappings - no full
+        # RadarrSync + engine stack (which would re-run mapping parse, cache
+        # load, and a qBittorrent login, all unused here).
         self.all_radarr_movies: list[RadarrItem] | None = None
         # None-tolerant cross-check read: the Radarr keys are optional here (this is a
         # Sonarr run), so read them directly rather than require_connection.

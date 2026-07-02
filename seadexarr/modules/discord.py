@@ -20,7 +20,7 @@ def discord_push(
         seadex_url (str): URL to SeaDex page
         fields (list): List of dicts containing links
             for the fields
-        thumb_url (str): URL for thumbnail
+        thumb_url (str | None): URL for thumbnail, if any
     """
 
     discord = Discord(url=url)

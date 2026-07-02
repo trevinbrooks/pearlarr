@@ -217,8 +217,8 @@ class CachedEntry:
     coverage: str | None
 
 
-# The four scalar columns of ``entries`` that ``update_cache`` may merge. Kept in
-# a set so the partial-update path only touches columns actually supplied (the old
+# The four scalar columns of ``entries`` that ``update_cache`` may merge. A closed
+# tuple so the partial-update path only touches columns actually supplied (the old
 # dict ``.update`` left absent fields untouched - this preserves that).
 _ENTRY_SCALAR_COLUMNS = ("name", "url", "coverage", "updated_at")
 
