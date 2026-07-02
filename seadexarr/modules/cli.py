@@ -20,8 +20,11 @@ from .paths import AppPaths, ensure_data_dir, resolve_paths
 from .runlock import single_instance_lock
 
 if TYPE_CHECKING:
-    # Imported only for annotations - the runtime import lives in _build_shared, so
-    # the resolver's deps aren't pulled at CLI module load (see the note above).
+    from collections.abc import Generator
+
+    # Imported only for annotations - the runtime imports live in the functions
+    # that use them, so their deps aren't pulled at CLI module load (see below).
+    from .cache import CacheStore
     from .mappings import MappingResolver
 
 # The heavy clients (qBittorrent / arrapi / the SeaDex+httpx chain via cache) are
@@ -46,6 +49,43 @@ def _remove_db_sidecars(db_path: str) -> None:
     for suffix in ("-wal", "-shm"):
         with contextlib.suppress(OSError):
             os.remove(db_path + suffix)
+
+
+def _refused_by_active_run(acquired: bool, data_dir: str) -> bool:
+    """True (after echoing why) when another run holds the single-instance lock.
+
+    Modifying cache.db while a run is live would clobber the in-flight database,
+    so the cache commands take the same lock the runner uses and refuse instead.
+    """
+
+    if acquired:
+        return False
+    typer.echo(
+        f"Another SeaDexArr run is active in {data_dir}; refusing to modify the cache.",
+    )
+    return True
+
+
+@contextlib.contextmanager
+def _open_cache_readonly() -> Generator[CacheStore]:
+    """Open cache.db read-only for a diagnostic command, closing it afterwards.
+
+    Read-only (no descriptor re-stamp, no WAL switch, no fail-open quarantine) so
+    the diagnostic reflects the file as-is; a corrupt/not-a-database file raises
+    ``sqlite3.DatabaseError`` from the first read, for the command to report.
+    """
+
+    from .cache import CacheStore
+
+    paths = resolve_paths()
+    if not os.path.exists(paths.cache):
+        raise FileNotFoundError(f"File {paths.cache} not found")
+
+    store = CacheStore.open_readonly(paths.cache)
+    try:
+        yield store
+    finally:
+        store.close()
 
 
 def _build_shared(
@@ -417,14 +457,8 @@ def cache_restore() -> bool:
     if not os.path.exists(paths.cache_backup):
         raise FileNotFoundError(f"File {paths.cache_backup} not found")
 
-    # Replacing cache.db (and clearing its WAL/SHM) while a run is live would clobber
-    # the in-flight database; take the same single-instance lock the runner uses and
-    # refuse rather than corrupt an active run.
     with single_instance_lock(paths.data_dir) as acquired:
-        if not acquired:
-            typer.echo(
-                f"Another SeaDexArr run is active in {paths.data_dir}; refusing to modify the cache.",
-            )
+        if _refused_by_active_run(acquired, paths.data_dir):
             return False
 
         _remove_db_sidecars(paths.cache)
@@ -444,13 +478,8 @@ def cache_remove() -> bool:
     if not os.path.exists(paths.cache):
         raise FileNotFoundError(f"File {paths.cache} not found")
 
-    # Unlinking cache.db (and its WAL/SHM) out from under a live run would drop its
-    # database mid-write; take the single-instance lock and refuse if a run holds it.
     with single_instance_lock(paths.data_dir) as acquired:
-        if not acquired:
-            typer.echo(
-                f"Another SeaDexArr run is active in {paths.data_dir}; refusing to modify the cache.",
-            )
+        if _refused_by_active_run(acquired, paths.data_dir):
             return False
 
         os.remove(paths.cache)
@@ -463,23 +492,12 @@ def cache_remove() -> bool:
 def cache_stats() -> bool:
     """Print cache health: per-block row counts and on-disk size."""
 
-    from .cache import CacheStore
-
-    paths = resolve_paths()
-    if not os.path.exists(paths.cache):
-        raise FileNotFoundError(f"File {paths.cache} not found")
-
-    # Open read-only (no descriptor re-stamp, no WAL switch, no fail-open quarantine)
-    # so this diagnostic reflects the file as-is; a corrupt/not-a-database file raises
-    # from the first read, reported cleanly here instead of crashing the command.
-    store = CacheStore.open_readonly(paths.cache)
-    try:
-        s = store.stats()
-    except sqlite3.DatabaseError as e:
-        typer.echo(f"cache stats: unreadable database ({e})")
-        return False
-    finally:
-        store.close()
+    with _open_cache_readonly() as store:
+        try:
+            s = store.stats()
+        except sqlite3.DatabaseError as e:
+            typer.echo(f"cache stats: unreadable database ({e})")
+            return False
 
     size_mib = s.size_bytes / (1024 * 1024)
     typer.echo(
@@ -494,23 +512,14 @@ def cache_stats() -> bool:
 def cache_check() -> bool:
     """Run a SQLite integrity check on the cache database and print the result."""
 
-    from .cache import CacheStore
-
-    paths = resolve_paths()
-    if not os.path.exists(paths.cache):
-        raise FileNotFoundError(f"File {paths.cache} not found")
-
-    # Read-only (reflect the file as-is). A corrupt/not-a-database file raises from
-    # the first read; reporting that bad integrity IS this command's job, so it's a
-    # clean result line, not a traceback.
-    store = CacheStore.open_readonly(paths.cache)
-    try:
-        result = store.integrity_check()
-    except sqlite3.DatabaseError as e:
-        typer.echo(f"integrity: {e}")
-        return False
-    finally:
-        store.close()
+    with _open_cache_readonly() as store:
+        try:
+            result = store.integrity_check()
+        except sqlite3.DatabaseError as e:
+            # Reporting bad integrity IS this command's job: a result line, not
+            # a traceback.
+            typer.echo(f"integrity: {e}")
+            return False
 
     typer.echo(f"integrity: {result}")
     return True
