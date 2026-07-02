@@ -122,7 +122,7 @@ def test_add_new_torrent_with_hash_prefers_qbit_name(monkeypatch: pytest.MonkeyP
     qbit = _FakeQbit(register_on_add=(_HASH, "Qbit Reported Name"))
     service = _service(qbit, category="anime", tags=["seadex"])
 
-    outcome, name = service.add(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, torrent_hash=_HASH, preview=False)
+    outcome, name = service.add(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH, preview=False)
 
     assert outcome is AddOutcome.ADDED
     assert name == "Qbit Reported Name"
@@ -140,7 +140,7 @@ def test_add_already_present_dedups_by_hash(monkeypatch: pytest.MonkeyPatch) -> 
     qbit = _FakeQbit(present={_HASH: "Existing Name"})
     service = _service(qbit)
 
-    outcome, name = service.add(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, torrent_hash=_HASH, preview=False)
+    outcome, name = service.add(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH, preview=False)
 
     assert outcome is AddOutcome.ALREADY_ADDED
     assert name == "Existing Name"
@@ -156,7 +156,7 @@ def test_add_hashless_falls_back_to_source_title(monkeypatch: pytest.MonkeyPatch
     qbit = _FakeQbit()
     service = _service(qbit)
 
-    outcome, name = service.add(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, torrent_hash=None, preview=False)
+    outcome, name = service.add(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None, preview=False)
 
     assert outcome is AddOutcome.ADDED
     assert name == _SOURCE_TITLE
@@ -172,7 +172,7 @@ def test_add_qbit_rejects_add_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     service = _service(qbit)
 
     with pytest.raises(TorrentAddError, match="Failed to add torrent"):
-        service.add(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, torrent_hash=None, preview=False)
+        service.add(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None, preview=False)
 
 
 def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -187,7 +187,7 @@ def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     service = _service(qbit)
 
     with pytest.raises(TorrentParseError, match="Have not managed to parse the torrent URL"):
-        service.add(url="https://animetosho.org/view/1", tracker=Tracker.ANIMETOSHO, torrent_hash=None, preview=False)
+        service.add(url="https://animetosho.org/view/1", tracker=Tracker.ANIMETOSHO, infohash=None, preview=False)
 
     assert qbit.add_calls == []
 
@@ -204,8 +204,8 @@ def _patch_all_parsers(monkeypatch: pytest.MonkeyPatch) -> None:
         del url, session
         return (_PARSED_URL, _SOURCE_TITLE)
 
-    def _rutracker(url: str, torrent_hash: str | None, session: requests.Session) -> tuple[str | None, str]:
-        del url, torrent_hash, session
+    def _rutracker(url: str, infohash: str | None, session: requests.Session) -> tuple[str | None, str]:
+        del url, infohash, session
         return (_PARSED_URL, _SOURCE_TITLE)
 
     monkeypatch.setattr(torrents, "get_nyaa_torrent", _nyaa)
@@ -223,11 +223,11 @@ def test_add_raises_iff_tracker_unparseable(tracker: Tracker, monkeypatch: pytes
     service = _service(_FakeQbit())
 
     if tracker in PARSEABLE_TRACKERS:
-        outcome, _ = service.add(url="https://example/1", tracker=tracker, torrent_hash=None, preview=True)
+        outcome, _ = service.add(url="https://example/1", tracker=tracker, infohash=None, preview=True)
         assert outcome is AddOutcome.ADDED
     else:
         with pytest.raises(ValueError, match="Unable to parse torrent links"):
-            service.add(url="https://example/1", tracker=tracker, torrent_hash=None, preview=True)
+            service.add(url="https://example/1", tracker=tracker, infohash=None, preview=True)
 
 
 # --- QbitConnectionError mapping (RunDeps.build login path) ------------------

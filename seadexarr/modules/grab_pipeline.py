@@ -214,8 +214,8 @@ class GrabPipeline:
             )
             self._ctx.unsupported_tracker_skipped = True
             self._ctx.unsupported_tracker_groups.append(srg)
-            if url_item.hash is not None:
-                self._ctx.unsupported_tracker_hashes.append(url_item.hash)
+            if url_item.infohash is not None:
+                self._ctx.unsupported_tracker_hashes.append(url_item.infohash)
             return None
 
         # The service parses the release URL by tracker and adds it to
@@ -225,7 +225,7 @@ class GrabPipeline:
         success, torrent_name = self._torrents.add(
             url=url,
             tracker=tracker,
-            torrent_hash=url_item.hash,
+            infohash=url_item.infohash,
             preview=self._is_preview(),
         )
 
@@ -275,7 +275,7 @@ class GrabPipeline:
 
         Args:
             url_item (SeadexUrlItem): The release just handed to the client; its
-                ``hash`` keys the seed and the durable store.
+                ``infohash`` keys the seed and the durable store.
             pending_seeds (dict[str, PendingImport] | None): The Sonarr strategy's
                 ``infohash -> PendingImport`` seeds for this id (None for Radarr).
         """
@@ -283,14 +283,14 @@ class GrabPipeline:
         if (
             self._ctx.import_wait_mode is not ImportWaitMode.OFF
             and not self._is_preview()
-            and url_item.hash
+            and url_item.infohash
             and pending_seeds
-            and url_item.hash in pending_seeds
+            and url_item.infohash in pending_seeds
         ):
-            pending = pending_seeds[url_item.hash]
+            pending = pending_seeds[url_item.infohash]
             self.cache_store.put_pending(
                 self._ctx.arr,
-                url_item.hash,
+                url_item.infohash,
                 pending.to_json(),
             )
             self._ctx.pending_imports.append(pending)

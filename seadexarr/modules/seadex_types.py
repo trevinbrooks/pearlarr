@@ -66,7 +66,7 @@ class SeadexUrlItem:
     tracker: Tracker = Tracker.OTHER
     is_public: bool = True
     is_dual_audio: bool = False
-    hash: str | None = None
+    infohash: str | None = None
     download: bool = False
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
 

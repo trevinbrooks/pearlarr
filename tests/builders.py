@@ -649,12 +649,12 @@ class FakeTorrents:
         *,
         url: str,
         tracker: Tracker,
-        torrent_hash: str | None,
+        infohash: str | None,
         preview: bool,
     ) -> tuple[AddOutcome, str | None]:
         del url, tracker, preview
-        self.calls.append(torrent_hash)
-        return self._by_hash[torrent_hash]
+        self.calls.append(infohash)
+        return self._by_hash[infohash]
 
 
 def one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/view/1") -> SeadexDict:
@@ -767,7 +767,7 @@ def url_item(
         files=files or [],
         size=size or [],
         is_public=is_public,
-        hash=infohash,
+        infohash=infohash,
         download=download,
         episodes=episodes or [],
     )

@@ -93,7 +93,7 @@ class TorrentService:
         *,
         url: str,
         tracker: Tracker,
-        torrent_hash: str | None,
+        infohash: str | None,
         preview: bool,
     ) -> tuple[AddOutcome, str | None]:
         """Parse a release URL by tracker and add it to qBittorrent.
@@ -101,7 +101,7 @@ class TorrentService:
         Args:
             url (str): SeaDex release-page URL.
             tracker (Tracker): SeaDex tracker (selects the parser).
-            torrent_hash (str | None): Info hash, used to dedup / read the name
+            infohash (str | None): Info hash, used to dedup / read the name
                 back (None for a private torrent with no hash).
             preview (bool): When True, simulate the add without touching the
                 client.
@@ -129,7 +129,7 @@ class TorrentService:
             ),
             Tracker.RUTRACKER: lambda: get_rutracker_torrent(
                 url=url,
-                torrent_hash=torrent_hash,
+                infohash=infohash,
                 session=self.session,
             ),
         }
@@ -144,7 +144,7 @@ class TorrentService:
         status, torrent_name = self._add_to_qbit(
             url=url,
             torrent_url=parsed_url,
-            torrent_hash=torrent_hash,
+            infohash=infohash,
             preview=preview,
         )
 
@@ -160,7 +160,7 @@ class TorrentService:
         *,
         url: str,
         torrent_url: str,
-        torrent_hash: str | None,
+        infohash: str | None,
         preview: bool,
     ) -> tuple[AddOutcome, str | None]:
         """Add a torrent to qBittorrent (dedup by hash, read the name back).
@@ -168,7 +168,7 @@ class TorrentService:
         Args:
             url (str): SeaDex URL (for the "already added" debug line).
             torrent_url (str): Torrent / magnet link to hand the client.
-            torrent_hash (str | None): Info hash, or None for a hashless torrent.
+            infohash (str | None): Info hash, or None for a hashless torrent.
             preview (bool): When True, report the add without touching the client.
 
         Returns:
@@ -180,11 +180,11 @@ class TorrentService:
         # A private torrent has no info hash, so we can't look it up by hash to
         # dedup or to read its name back; just add it and let qBittorrent dedup
         # internally. With a hash, skip the adding if it's already present
-        if torrent_hash is not None and self.qbit is not None:
-            torr_info = self.qbit.torrents_info(torrent_hashes=torrent_hash)
+        if infohash is not None and self.qbit is not None:
+            torr_info = self.qbit.torrents_info(torrent_hashes=infohash)
             torr_hashes = [i.hash for i in torr_info]
 
-            if torrent_hash in torr_hashes:
+            if infohash in torr_hashes:
                 self.logger.debug(
                     indent_string(f"Torrent {url} already in qBittorrent"),
                 )
@@ -216,8 +216,8 @@ class TorrentService:
         # torrent has no info hash to look up, so leave the name unset and let
         # the caller fall back to the URL
         torrent_name = None
-        if torrent_hash is not None:
-            added_info = self.qbit.torrents_info(torrent_hashes=torrent_hash)
+        if infohash is not None:
+            added_info = self.qbit.torrents_info(torrent_hashes=infohash)
             torrent_name = added_info[0].name if added_info else None
 
         return AddOutcome.ADDED, torrent_name

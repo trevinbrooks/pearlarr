@@ -513,7 +513,7 @@ class ImportReconciler:
 
         for srg, srg_item in seadex_dict.items():
             for url_item in srg_item.urls.values():
-                if not (url_item.download and url_item.hash):
+                if not (url_item.download and url_item.infohash):
                     continue
 
                 # The video files this torrent should import (subs / fonts / NCED
@@ -547,8 +547,8 @@ class ImportReconciler:
                 if len(video_files) == 1 and file_episode_map:
                     episode_ids = next(iter(file_episode_map.values()))
 
-                pending_seeds[url_item.hash] = PendingImport(
-                    infohash=url_item.hash,
+                pending_seeds[url_item.infohash] = PendingImport(
+                    infohash=url_item.infohash,
                     series_id=sonarr_series_id,
                     file_episode_map=file_episode_map,
                     episode_ids=episode_ids,

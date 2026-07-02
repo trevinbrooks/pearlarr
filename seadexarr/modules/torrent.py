@@ -97,14 +97,14 @@ def get_animetosho_torrent(
 
 def get_rutracker_torrent(
     url: str,
-    torrent_hash: str | None,
+    infohash: str | None,
     session: requests.Session | None = None,
 ) -> tuple[str, str]:
     """Get the RuTracker magnet link and torrent title from a URL
 
     Args:
         url (str): URL of the RuTracker topic
-        torrent_hash (str | None): Torrent hash
+        infohash (str | None): Torrent info hash
         session (requests.Session, optional): Session to reuse for the page
             fetch. Defaults to a shared one.
 
@@ -126,7 +126,7 @@ def get_rutracker_torrent(
     torrent_title = main_title.text
 
     params = {
-        "xt": f"urn:btih:{torrent_hash}",
+        "xt": f"urn:btih:{infohash}",
         "tr": RUTRACKER_MAGNET_ANNOUNCE,
         "dn": torrent_title,
     }

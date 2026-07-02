@@ -180,7 +180,7 @@ def test_get_rutracker_torrent_builds_magnet() -> None:
     """
 
     url = "https://rutracker.org/forum/viewtopic.php?t=1234567"
-    torrent_hash = "abcdef0123456789abcdef0123456789abcdef01"
+    infohash = "abcdef0123456789abcdef0123456789abcdef01"
 
     with responses.RequestsMock() as rsps:
         rsps.add(
@@ -189,10 +189,10 @@ def test_get_rutracker_torrent_builds_magnet() -> None:
             body=_torrent_fixture("rutracker_page.html"),
             content_type="text/html",
         )
-        magnet, title = get_rutracker_torrent(url, torrent_hash, session=requests.Session())
+        magnet, title = get_rutracker_torrent(url, infohash, session=requests.Session())
 
     assert title == _RUTRACKER_TITLE
-    assert magnet.startswith(f"magnet:?xt=urn%3Abtih%3A{torrent_hash}")
+    assert magnet.startswith(f"magnet:?xt=urn%3Abtih%3A{infohash}")
     assert "tr=http" in magnet
     assert "dn=" in magnet
 

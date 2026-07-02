@@ -298,23 +298,23 @@ class DownloadPlanner:
 
             seadex_urls = seadex_rg_item.urls
             for url_item in seadex_urls.values():
-                url_hash = url_item.hash
+                infohash = url_item.infohash
 
                 # Dedup by infohash. KNOWN LIMITATION of this opt-in mode: a hashless
-                # (private) release has url_hash=None and the cache keeps a single None
+                # (private) release has infohash=None and the cache keeps a single None
                 # marker, so a 2nd DISTINCT hashless release for an entry collapses to it
                 # and is skipped (the first run still grabs all hashless releases present).
-                torrent_hashes.append(url_hash)
-                if url_hash not in cached_hashes:
+                torrent_hashes.append(infohash)
+                if infohash not in cached_hashes:
                     self.logger.debug(
                         indent_string(
-                            f"Torrent hash {url_hash} not found in cache. Will add to downloads",
+                            f"Torrent hash {infohash} not found in cache. Will add to downloads",
                         ),
                     )
 
                     url_item.download = True
 
-                elif url_hash is None:
+                elif infohash is None:
                     self.logger.debug(
                         indent_string(
                             "Hashless release already represented by the cache's None marker; skipping (see above)",
@@ -324,7 +324,7 @@ class DownloadPlanner:
                 else:
                     self.logger.debug(
                         indent_string(
-                            f"Torrent hash {url_hash} in cache. Will skip download",
+                            f"Torrent hash {infohash} in cache. Will skip download",
                         ),
                     )
 
@@ -439,10 +439,10 @@ class DownloadPlanner:
         # always matches the exact set of torrents we'll add. Private torrents
         # have no infohash, so skip those
         torrent_hashes: list[str | None] = [
-            url_item.hash
+            url_item.infohash
             for rg_item in seadex_dict.values()
             for url_item in rg_item.urls.values()
-            if url_item.download and url_item.hash is not None
+            if url_item.download and url_item.infohash is not None
         ]
 
         return PlanResult(

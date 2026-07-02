@@ -107,7 +107,7 @@ class SeadexReleaseFilter:
                 tracker=t.tracker,
                 is_public=t.tracker.is_public() and t.tracker.casefold() not in PRIVATE_TRACKERS,
                 is_dual_audio=t.is_dual_audio,
-                hash=t.infohash,
+                infohash=t.infohash,
                 download=False,
             )
 
