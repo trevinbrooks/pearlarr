@@ -51,6 +51,7 @@ from typing import Any, NamedTuple, TypedDict, cast, override
 from seadex import EntryRecord
 
 from .config import Arr
+from .seadex_types import coerce_int
 from .sqlite_util import connect as _sqlite_connect
 from .sqlite_util import open_or_quarantine, rollback_and_close
 from .. import __version__
@@ -253,19 +254,6 @@ def _coerce_arr(value: object) -> Arr | None:
         return Arr(value)
     except ValueError:
         return None
-
-
-def _coerce_int(value: object) -> int | None:
-    """Parse a legacy stringified id to an ``int``, or None for a bad value."""
-
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return None
-    return None
 
 
 def _as_dict(value: object) -> dict[str, Any] | None:
@@ -473,7 +461,7 @@ class CacheStore(AbstractCacheStore):
             if arr is None or recs is None:
                 continue
             for al_id_str, rec_raw in recs.items():
-                al_id = _coerce_int(al_id_str)
+                al_id = coerce_int(al_id_str)
                 rec = _as_dict(rec_raw)
                 if al_id is None or rec is None:
                     continue
@@ -485,7 +473,7 @@ class CacheStore(AbstractCacheStore):
 
         meta = _as_dict(data.get("anilist_meta"))
         for al_id_str, rec_raw in (meta or {}).items():
-            al_id = _coerce_int(al_id_str)
+            al_id = coerce_int(al_id_str)
             rec = _as_dict(rec_raw)
             if al_id is not None and rec is not None:
                 self.put_anilist_meta(al_id, rec)

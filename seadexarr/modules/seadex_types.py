@@ -20,6 +20,7 @@ The defaults also encode one load-bearing distinction:
 ``get_same_files_groups`` keys off exactly that difference.
 """
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -152,6 +153,25 @@ def as_size_list(size: int | list[int | None] | None) -> list[int]:
 # (connect, read) timeout for every plain Arr REST request, so a hung Sonarr /
 # Radarr surfaces as a transient miss instead of blocking the run.
 ARR_REQUEST_TIMEOUT_S = (5, 30)
+
+
+def coerce_int(value: object) -> int | None:
+    """Best-effort int, or None for a non-numeric / NaN value.
+
+    Ints pass through, floats convert unless NaN, strings via ``int()``;
+    anything else (including None) is None.
+    """
+
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return None if math.isnan(value) else int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
 
 
 # --- shared progress sink ----------------------------------------------------

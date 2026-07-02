@@ -27,7 +27,7 @@ from .mapping_store import (
     AniBridgeXrefRow,
     MappingStore,
 )
-from .seadex_types import TvdbMappings
+from .seadex_types import TvdbMappings, coerce_int
 
 type AniBridgeGraph = dict[str, dict[str, dict[str, str]]]
 """Raw anibridge-mappings JSON: descriptor -> {target_descriptor -> {src: tgt}}."""
@@ -345,12 +345,12 @@ class AniBridge:
 
         if provider == "anidb":
             if record.anidb_id is None:
-                anidb_id = self._as_int(pid)
+                anidb_id = coerce_int(pid)
                 if anidb_id is not None:
                     record.anidb_id = anidb_id
 
         elif provider == "tvdb_show":
-            ext_id = self._as_int(pid)
+            ext_id = coerce_int(pid)
             if ext_id is None:
                 return
             seasons = record.tvdb_shows.setdefault(ext_id, {})
@@ -360,7 +360,8 @@ class AniBridge:
             if season is None:
                 # Keep the id discoverable even if the season scope is malformed;
                 # an empty season map simply selects no episodes for it.
-                self._debug("anibridge: unparseable show scope %r for anilist:%s", target, anilist_id)
+                if self.logger is not None:
+                    self.logger.debug(f"anibridge: unparseable show scope {target!r} for anilist:{anilist_id}")
                 return
 
             ranges = seasons.setdefault(season, [])
@@ -368,7 +369,7 @@ class AniBridge:
                 ranges.extend(_parse_ranges(tgt))
 
         elif provider == "tmdb_movie":
-            movie_id = self._as_int(pid)
+            movie_id = coerce_int(pid)
             if movie_id is not None:
                 record.tmdb_movie_ids.append(movie_id)
                 self.tmdb_movie_index[movie_id].add(anilist_id)
@@ -377,24 +378,6 @@ class AniBridge:
             if pid:
                 record.imdb_ids.append(pid)
                 self.imdb_index[pid].add(anilist_id)
-
-    def _as_int(self, value: str | None) -> int | None:
-        """Coerce a descriptor id to int, returning None on failure.
-
-        Args:
-            value (str | None): Raw id from a descriptor
-        """
-
-        if value is None:
-            return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    def _debug(self, msg: str, *args: Any) -> None:
-        if self.logger is not None:
-            self.logger.debug(msg, *args)
 
     def _consumer_entry(
         self,

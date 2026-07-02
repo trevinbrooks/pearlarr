@@ -32,6 +32,7 @@ from .seadex_types import (
     QualitySource,
     Revision,
     SonarrEpisode,
+    coerce_int,
     season_episode_key,
 )
 
@@ -370,15 +371,15 @@ def sanitize_torrent_telemetry(
     frac = _as_float(progress)
     frac = 0.0 if frac is None else max(0.0, min(1.0, frac))
 
-    raw_speed = _as_int(dlspeed)
+    raw_speed = coerce_int(dlspeed)
     speed_bps = raw_speed if raw_speed is not None and raw_speed > 0 else None
 
-    raw_eta = _as_int(eta)
+    raw_eta = coerce_int(eta)
     eta_s = raw_eta if raw_eta is not None and 0 < raw_eta < _QBIT_ETA_INFINITE else None
 
-    raw_total = _as_int(size)
+    raw_total = coerce_int(size)
     bytes_total = raw_total if raw_total is not None and raw_total > 0 else None
-    raw_done = _as_int(completed)
+    raw_done = coerce_int(completed)
     bytes_done = max(0, raw_done) if raw_done is not None and raw_done > 0 else None
     if bytes_done is not None and bytes_total is not None:
         bytes_done = min(bytes_done, bytes_total)
@@ -396,21 +397,6 @@ def _as_float(value: object) -> float | None:
         except ValueError:
             return None
         return None if math.isnan(parsed) else parsed
-    return None
-
-
-def _as_int(value: object) -> int | None:
-    """Best-effort int, or None for a non-numeric value."""
-
-    if isinstance(value, int):
-        return int(value)
-    if isinstance(value, float):
-        return None if math.isnan(value) else int(value)
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return None
     return None
 
 
