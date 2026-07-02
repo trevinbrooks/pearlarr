@@ -146,9 +146,10 @@ class SeaDexGateway(SeaDexSource):
     def _entry_single(self, al_id: int) -> EntryRecord | None:
         """Single by-id lookup with the orchestrator's graceful degradation.
 
-        A missing entry (``EntryNotFoundError``) and a SeaDex outage
-        (``httpx.ConnectError``) both return None so the caller can skip the id; the
-        outage is surfaced as a warning.
+        A missing entry (``EntryNotFoundError``) and a SeaDex outage (any
+        ``httpx.HTTPError`` - connection failure, timeout, HTTP error status; the
+        same breadth :meth:`prefetch` catches) both return None so the caller can
+        skip the id; the outage is surfaced as a warning.
         """
 
         sd_entry = None
@@ -156,7 +157,7 @@ class SeaDexGateway(SeaDexSource):
             sd_entry = self.seadex.from_id(al_id)
         except EntryNotFoundError:
             pass
-        except httpx.ConnectError:
+        except httpx.HTTPError:
             self.logger.warning("Could not connect to SeaDex. Website may be down")
 
         return sd_entry

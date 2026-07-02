@@ -9,6 +9,7 @@ from seadex import EntryNotFoundError, EntryRecord
 from seadexarr.modules.seadex_gateway import SEADEX_BATCH_SIZE, SeaDexGateway
 
 from .builders import make_bare_instance, make_entry_record
+from .fakes import CaptureHandler
 
 
 def _rec(al_id: int) -> EntryRecord:
@@ -18,9 +19,16 @@ def _rec(al_id: int) -> EntryRecord:
 class FakeSeaDex:
     """Stands in for ``SeaDexEntry``: ``from_filter`` (batch) + ``from_id`` (single)."""
 
-    def __init__(self, entries: dict[int, EntryRecord], *, fail_filter: bool = False) -> None:
+    def __init__(
+        self,
+        entries: dict[int, EntryRecord],
+        *,
+        fail_filter: bool = False,
+        fail_from_id: bool = False,
+    ) -> None:
         self.entries = entries
         self.fail_filter = fail_filter
+        self.fail_from_id = fail_from_id
         self.filter_calls: list[str] = []
         self.from_id_calls: list[int] = []
 
@@ -33,6 +41,8 @@ class FakeSeaDex:
 
     def from_id(self, al_id: int) -> EntryRecord:
         self.from_id_calls.append(al_id)
+        if self.fail_from_id:
+            raise httpx.ReadTimeout("slow")
         if al_id in self.entries:
             return self.entries[al_id]
         raise EntryNotFoundError("nope")
@@ -118,6 +128,19 @@ class TestSeaDexPrefetch:
         gateway.prefetch([1])  # the batch raises -> chunk left unprefetched
         assert gateway.entry(1) is fake.entries[1]  # fell back to from_id
         assert fake.from_id_calls == [1]
+
+    def test_single_lookup_timeout_degrades_to_none_and_warns(self) -> None:
+        # The module contract: a SeaDex outage degrades to None. A ReadTimeout on
+        # the per-id fallback (httpx.HTTPError, not just ConnectError) must not
+        # unwind the run.
+        fake = FakeSeaDex({1: _rec(1)}, fail_from_id=True)
+        gateway = _gateway(fake)
+        handler = CaptureHandler()
+        gateway.logger.handlers = [handler]
+        gateway.logger.setLevel(logging.WARNING)
+
+        assert gateway.entry(1) is None
+        assert any(r.levelno == logging.WARNING for r in handler.records)
 
     def test_batches_respect_batch_size(self) -> None:
         ids = list(range(1, SEADEX_BATCH_SIZE * 2 + 6))  # two full batches + a partial
