@@ -596,7 +596,6 @@ def make_run_deps(
     return RunDeps(
         config=config,
         arr_config=config.for_arr(Arr.SONARR),
-        config_file="",
         session=session,
         qbit=None,
         # A real resolver over empty in-memory mappings (no network) - it carries a
@@ -612,7 +611,6 @@ def make_run_deps(
         # A typed, network-free SeaDex stand-in (the wiring tests never look one up);
         # retires the old make_bare_instance(SeaDexGateway) Any-launder.
         seadex=seadex or FakeSeaDexSource(),
-        cache_file="",
         cache_store=cache_store,
         anilist=AniListGateway(cache_store=cache_store, logger=logger),
         torrents=_real_torrents(logger, session),

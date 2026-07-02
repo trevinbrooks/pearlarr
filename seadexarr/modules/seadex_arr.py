@@ -71,13 +71,11 @@ class RunDeps:
 
     config: AppConfig
     arr_config: ArrSettings
-    config_file: str
     session: requests.Session
     qbit: qbittorrentapi.Client | None
     mappings: MappingResolver
     logger: logging.Logger
     seadex: SeaDexSource
-    cache_file: str
     cache_store: AbstractCacheStore
     anilist: AniListGateway
     torrents: TorrentService
@@ -216,14 +214,12 @@ class RunDeps:
         return cls(
             config=app_config,
             arr_config=arr_config,
-            config_file=config,
             session=session,
             qbit=qbit,
             mappings=mappings,
             logger=logger,
             # SeaDex API gateway (entry lookups, with connection-error handling)
             seadex=SeaDexGateway(logger=logger),
-            cache_file=cache,
             cache_store=cache_store,
             anilist=anilist,
             torrents=torrents,
@@ -252,14 +248,14 @@ class RunDeps:
 
 @final
 class SeaDexArr:
-    """The Arr-agnostic run machinery (the strategy's :class:`~.protocols.RunServices`).
+    """The Arr-agnostic run machinery driving an injected strategy.
 
     Receives its shared collaborators as a :class:`RunDeps` bundle (built and
     injected by the composition root in ``cli.py``) and owns the run loop, the
     per-run :class:`RunContext`, and the shared per-id pipeline. It drives an
     injected :class:`~.protocols.ArrSync` strategy (passed to :meth:`run_sync`)
     for the Arr-specific pieces; the strategy holds *this* object as its
-    ``RunServices`` and calls the pipeline through it. The engine never holds the
+    ``services`` and calls the pipeline through it. The engine never holds the
     strategy and never constructs its own dependencies.
     """
 
@@ -276,13 +272,11 @@ class SeaDexArr:
         # through the shared resolver (self._mappings), which owns them.
         self._config = deps.config
         self._arr_config = deps.arr_config
-        self.config_file = deps.config_file
         self.session = deps.session
         self.qbit = deps.qbit
         self._mappings = deps.mappings
         self.logger = deps.logger
         self._seadex = deps.seadex
-        self.cache_file = deps.cache_file
         self.cache_store = deps.cache_store
         self._anilist = deps.anilist
         self._torrents = deps.torrents
@@ -390,9 +384,9 @@ class SeaDexArr:
         presentation concern doesn't leak into the resolver.
 
         Args:
-            tvdb_id (int): TVDB ID
-            tmdb_id (int): TMDB ID
-            imdb_id (int): IMDb ID
+            tvdb_id (int | None): TVDB ID
+            tmdb_id (int | None): TMDB ID
+            imdb_id (str | None): IMDb ID
             tmdb_type (TmdbType): Which TMDB id space the tmdb_id is in.
             log_ignored (bool): Log a ledger row for each ignored AniList ID.
                 Defaults to True; pass False from the prefetch pass so ignored
@@ -580,7 +574,7 @@ class SeaDexArr:
     # optional single-id filter, AniList prefetch, the per-item loop, and the
     # end-of-run save + summary). The Arr-specific pieces are the injected
     # strategy's hooks (get_items, filter_to_single, item_anilist_ids,
-    # process_al_id); the strategy holds this object as its RunServices and calls
+    # process_al_id); the strategy holds this object as its services and calls
     # the shared per-id head/tail (al_id_prologue / cached_entry_skip /
     # grab_and_cache) through it.
 
@@ -606,7 +600,7 @@ class SeaDexArr:
         Args:
             strategy (ArrSync[ItemT]): The Arr-specific strategy to drive (injected
                 by the composition root, which picks Sonarr/Radarr at runtime). It
-                already holds this object as its RunServices, so its hooks are
+                already holds this object as its services, so its hooks are
                 called without passing self.
             arr (Arr): Which Arr is being run
             item_id (int | None): If set, only run for the single item with this
@@ -865,7 +859,7 @@ class SeaDexArr:
         """Shared per-id tail: add torrents, notify, cache the outcome (delegates).
 
         Both strategies build a :class:`GrabRequest` and call this through their
-        RunServices; the produce mechanics live on
+        services; the produce mechanics live on
         :class:`~.grab_pipeline.GrabPipeline`. Returns True only when
         max_torrents_to_add was reached (the caller stops the whole run).
         """
@@ -945,12 +939,12 @@ class SeaDexArr:
         except Exception:
             self.logger.debug("wait completion notification failed", exc_info=True)
 
-    # --- Presentation seam (RunServices) ------------------------------------
+    # --- Presentation seam (strategy-facing) ---------------------------------
     #
     # The engine logs through ``self._reporter`` directly (threading ``self._ctx``
     # and the preview/client facts so the reporter stays free of orchestrator
     # state). The only log_* methods kept here are the ones the Sonarr/Radarr
-    # strategies invoke through their RunServices view; each delegates the same way.
+    # strategies invoke through their services view; each delegates the same way.
 
     def log_entry_status(
         self,
