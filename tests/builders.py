@@ -598,7 +598,7 @@ def make_run_deps(
         cache_store=cache_store,
         anilist=AniListGateway(cache_store=cache_store, logger=logger),
         torrents=_real_torrents(logger, session),
-        notifier=Notifier(discord_url=None, webhook_url=None),
+        notifier=Notifier(discord_url=None, webhook_url=None, logger=logger),
         planner=make_planner(),
         log_fmt=log_fmt,
         reporter=_real_reporter(logger, log_fmt, cache_store),
@@ -691,7 +691,7 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         "_torrents": _real_torrents(logger, session),
         "_anilist": AniListGateway(cache_store=cache_store, logger=logger),
         # No discord/webhook url -> a disabled, best-effort no-op notifier.
-        "_notifier": Notifier(discord_url=None, webhook_url=None),
+        "_notifier": Notifier(discord_url=None, webhook_url=None, logger=logger),
         "_reporter": _real_reporter(logger, log_fmt, cache_store),
         "log_fmt": log_fmt,
         "qbit": CLIENT_SENTINEL,

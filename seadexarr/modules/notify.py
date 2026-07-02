@@ -6,6 +6,8 @@ summary push to Discord and/or a generic outbound webhook. It's gated on a
 configured url; with none, every push is a no-op.
 """
 
+import logging
+
 import requests
 
 from .discord import discord_push
@@ -23,17 +25,25 @@ _MAX_FIELD_TITLES = 25
 class Notifier:
     """Builds Discord embed fields and posts grab + wait-complete notifications."""
 
-    def __init__(self, *, discord_url: str | None, webhook_url: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        discord_url: str | None,
+        webhook_url: str | None = None,
+        logger: logging.Logger,
+    ) -> None:
         """Configure the notifier.
 
         Args:
             discord_url (str | None): Discord webhook url, or None to disable.
             webhook_url (str | None): A generic outbound webhook POSTed the
                 wait-complete report JSON (ntfy/gotify/Home-Assistant), or None.
+            logger (logging.Logger): For the failed-push warnings.
         """
 
         self.discord_url = discord_url
         self.webhook_url = webhook_url
+        self.logger = logger
 
     @property
     def enabled(self) -> bool:
@@ -94,7 +104,7 @@ class Notifier:
         return [f.to_dict() for f in fields]
 
     def _post_webhook(self, arr: str, result: WaitResult) -> bool:
-        """POST the report JSON to the generic webhook; swallow request errors."""
+        """POST the report JSON to the generic webhook; warn-and-swallow request errors."""
 
         if self.webhook_url is None:
             return False
@@ -108,7 +118,8 @@ class Notifier:
         }
         try:
             requests.post(self.webhook_url, json=payload, timeout=10)
-        except requests.RequestException:
+        except requests.RequestException as exc:
+            self.logger.warning(f"Wait-report webhook POST failed: {exc}")
             return False
         return True
 
@@ -190,8 +201,9 @@ class Notifier:
     ) -> bool:
         """Post a grab notification to the configured Discord webhook.
 
-        A no-op (returns False) when no webhook is configured; the caller also
-        gates on having actually grabbed something and not being a preview.
+        A no-op (returns False) when no webhook is configured. A request failure
+        is contained here (warn, return False): a notification failure must never
+        abort a grab or skip the cache-update tail.
 
         Args:
             arr_title (str): Title as in the Arr instance
@@ -204,11 +216,15 @@ class Notifier:
         if self.discord_url is None:
             return False
 
-        return discord_push(
-            url=self.discord_url,
-            arr_title=arr_title,
-            al_title=al_title,
-            seadex_url=seadex_url,
-            fields=fields,
-            thumb_url=thumb_url,
-        )
+        try:
+            return discord_push(
+                url=self.discord_url,
+                arr_title=arr_title,
+                al_title=al_title,
+                seadex_url=seadex_url,
+                fields=fields,
+                thumb_url=thumb_url,
+            )
+        except requests.RequestException as exc:
+            self.logger.warning(f"Discord push failed: {exc}")
+            return False

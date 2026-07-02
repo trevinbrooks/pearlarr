@@ -14,6 +14,8 @@ from seadexarr.modules.manual_import import Outcome
 from seadexarr.modules.notify import Notifier
 from seadexarr.modules.wait_view import WaitOutcomeRow, WaitResult
 
+from .builders import make_logger
+
 
 def _result() -> WaitResult:
     return WaitResult(
@@ -28,13 +30,13 @@ def _result() -> WaitResult:
 
 
 def test_push_wait_summary_no_url_is_noop() -> None:
-    notifier = Notifier(discord_url=None, webhook_url=None)
+    notifier = Notifier(discord_url=None, webhook_url=None, logger=make_logger())
 
     assert notifier.push_wait_summary(arr="sonarr", result=_result()) is False
 
 
 def test_push_wait_summary_empty_result_is_noop() -> None:
-    notifier = Notifier(discord_url="https://discord", webhook_url="https://hook")
+    notifier = Notifier(discord_url="https://discord", webhook_url="https://hook", logger=make_logger())
 
     assert notifier.push_wait_summary(arr="sonarr", result=WaitResult((), 0.0)) is False
 
@@ -47,7 +49,7 @@ def test_push_wait_summary_posts_to_webhook(monkeypatch: pytest.MonkeyPatch) -> 
         return object()
 
     monkeypatch.setattr(requests, "post", fake_post)
-    notifier = Notifier(discord_url=None, webhook_url="https://hook.example")
+    notifier = Notifier(discord_url=None, webhook_url="https://hook.example", logger=make_logger())
 
     assert notifier.push_wait_summary(arr="sonarr", result=_result()) is True
     url, payload, _timeout = posts[0]
@@ -73,7 +75,7 @@ def test_push_wait_summary_builds_discord_fields(monkeypatch: pytest.MonkeyPatch
         return True
 
     monkeypatch.setattr(notify, "discord_push", fake_discord_push)
-    notifier = Notifier(discord_url="https://discord.example")
+    notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
 
     assert notifier.push_wait_summary(arr="radarr", result=_result()) is True
     arr_title, fields = pushes[0]
