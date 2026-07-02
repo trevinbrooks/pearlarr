@@ -192,26 +192,24 @@ class RunReporter:
     def log_run_summary(
         self,
         ctx: RunContext,
-        arr: Arr,
         *,
         is_preview: bool,
         has_client: bool,
-        import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
     ) -> bool:
         """Log the end-of-run scoreboard for an Arr run
 
+        The arr and the resolved wait mode are read off ``ctx``; the carried-over
+        ``queued`` / ``importing`` / ``imported`` rows render only when the mode
+        is not OFF (so they never clutter a run with the feature off).
+
         Args:
-            ctx (RunContext): The run's state (stats, totals, clock).
-            arr (Arr): Type of arr instance
+            ctx (RunContext): The run's state (arr, wait mode, stats, totals, clock).
             is_preview (bool): The run grabbed nothing (dry run or no client).
             has_client (bool): A qBittorrent client is configured (distinguishes
                 the dry-run note wording).
-            import_wait_mode (ImportWaitMode): The run's resolved wait mode; the
-                carried-over ``queued`` / ``importing`` / ``imported`` rows render
-                only when this is not OFF (so they never clutter a run with the
-                feature off). Defaults to OFF.
         """
 
+        arr = ctx.arr
         stats = ctx.stats
 
         # Warning/error counts come from the logger-level counter, diffed
@@ -356,7 +354,7 @@ class RunReporter:
         # `added` block above). Each row renders only when the feature is on AND the
         # value is non-zero, so a feature-off run is unchanged and there's never an
         # `added`+`queued` double line for a single torrent.
-        if import_wait_mode is not ImportWaitMode.OFF:
+        if ctx.import_wait_mode is not ImportWaitMode.OFF:
             if stats.queued:
                 summary_kv("queued", str(stats.queued), value_style="grey50")
             if stats.importing:
@@ -655,10 +653,7 @@ class RunReporter:
         # Resolve a human title so the line is meaningful. There's no SeaDex
         # entry and the id isn't cached (we only cache processed ids), so this
         # is a live AniList lookup; the id rides its own "anilist" detail line.
-        anilist_title, self.anilist.al_cache = get_anilist_title(
-            al_id,
-            al_cache=self.anilist.al_cache,
-        )
+        anilist_title = get_anilist_title(al_id, al_cache=self.anilist.al_cache)
         self.log_entry_status(
             EntryState.NO_ENTRY,
             anilist_title or f"AniList #{al_id}",
@@ -745,10 +740,7 @@ class RunReporter:
         anilist_title = entry.name if entry is not None else None
         if anilist_title is None:
             # Older cache without a stored name - fall back to a lookup
-            anilist_title, self.anilist.al_cache = get_anilist_title(
-                al_id,
-                al_cache=self.anilist.al_cache,
-            )
+            anilist_title = get_anilist_title(al_id, al_cache=self.anilist.al_cache)
         if anilist_title is None:
             anilist_title = "(unknown title)"
 

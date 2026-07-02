@@ -182,11 +182,7 @@ class AniListGateway:
             al_id (int): AniList ID
         """
 
-        anilist_title, self.al_cache = get_anilist_title(
-            al_id,
-            al_cache=self.al_cache,
-        )
-        return anilist_title
+        return get_anilist_title(al_id, al_cache=self.al_cache)
 
     def thumb(self, al_id: int) -> str | None:
         """Resolve the AniList cover thumbnail URL for an id, or None.
@@ -195,8 +191,4 @@ class AniListGateway:
             al_id (int): AniList ID
         """
 
-        anilist_thumb, self.al_cache = get_anilist_thumb(
-            al_id,
-            al_cache=self.al_cache,
-        )
-        return anilist_thumb
+        return get_anilist_thumb(al_id, al_cache=self.al_cache)

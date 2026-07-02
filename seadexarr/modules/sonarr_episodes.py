@@ -357,10 +357,7 @@ class SonarrEpisodes:
 
         # For OVAs and movies, the offsets can often be wrong, so if we have specific mappings
         # then take that into account here
-        al_format, self._anilist.al_cache = get_anilist_format(
-            al_id,
-            al_cache=self._anilist.al_cache,
-        )
+        al_format = get_anilist_format(al_id, al_cache=self._anilist.al_cache)
 
         # Potentially pull out a bunch of mappings from AniDB. These should
         # be for anything not marked as TV, and specials as marked by
@@ -424,10 +421,7 @@ class SonarrEpisodes:
 
         # Slice the list to get the correct episodes, so any potential offsets
         ep_offset = mapping.tvdb_epoffset
-        n_eps, self._anilist.al_cache = get_anilist_n_eps(
-            al_id,
-            al_cache=self._anilist.al_cache,
-        )
+        n_eps = get_anilist_n_eps(al_id, al_cache=self._anilist.al_cache)
 
         # If we don't get a number of episodes, use them all
         if n_eps is None:

@@ -41,7 +41,7 @@ from .fakes import CaptureHandler
 def _make_reporter(cache_store: AbstractCacheStore | None = None) -> RunReporter:
     logger = make_logger()
     store: AbstractCacheStore = cache_store if cache_store is not None else FakeCacheStore()
-    # A real gateway with a faked cache store: the reporter only reads/reassigns
+    # A real gateway with a faked cache store: the reporter only reads/updates
     # its ``al_cache`` dict, so the real wiring is exercised without a network.
     anilist = AniListGateway(cache_store=FakeCacheStore(), logger=logger)
     return RunReporter(
@@ -91,7 +91,7 @@ class TestStatsCounters:
         reporter.log_cached_entry(ctx, Arr.SONARR, 1)
         assert ctx.stats.cached == 1
 
-    def test_no_sd_entry_increments_and_threads_al_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_no_sd_entry_increments_and_caches_title(self, monkeypatch: pytest.MonkeyPatch) -> None:
         reporter = _make_reporter()
         monkeypatch.setattr(
             "seadexarr.modules.reporter.get_anilist_title",
@@ -100,14 +100,15 @@ class TestStatsCounters:
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_no_sd_entry(ctx, 42)
         assert ctx.stats.no_seadex_entry == 1
-        # The al_cache reassignment side-effect is preserved through the gateway
+        # The lookup caches into the gateway's al_cache in place
         assert reporter.anilist.al_cache == {42: "Resolved"}
 
 
-def _fake_get_title(al_id: int, al_cache: dict[int, str]) -> tuple[str, dict[int, str]]:
-    """Stand-in for ``get_anilist_title``: resolves a fixed title, threads cache."""
+def _fake_get_title(al_id: int, al_cache: dict[int, str]) -> str:
+    """Stand-in for ``get_anilist_title``: resolves a fixed title, caching in place."""
 
-    return "Resolved", {**al_cache, al_id: "Resolved"}
+    al_cache[al_id] = "Resolved"
+    return "Resolved"
 
 
 class TestActiveTitle:
@@ -144,7 +145,6 @@ class TestRunSummary:
     def test_real_run_renders(self) -> None:
         assert _make_reporter().log_run_summary(
             self._ctx_with_data(),
-            Arr.SONARR,
             is_preview=False,
             has_client=True,
         )
@@ -152,7 +152,6 @@ class TestRunSummary:
     def test_dry_run_renders(self) -> None:
         assert _make_reporter().log_run_summary(
             self._ctx_with_data(),
-            Arr.SONARR,
             is_preview=True,
             has_client=False,
         )
@@ -166,16 +165,15 @@ def _summary_messages(
 ) -> list[str]:
     """Capture every log message log_run_summary emits, for row assertions."""
 
+    ctx.import_wait_mode = import_wait_mode
     handler = CaptureHandler()
     reporter.logger.addHandler(handler)
     reporter.logger.setLevel(logging.DEBUG)
     try:
         reporter.log_run_summary(
             ctx,
-            Arr.SONARR,
             is_preview=False,
             has_client=True,
-            import_wait_mode=import_wait_mode,
         )
     finally:
         reporter.logger.removeHandler(handler)

@@ -959,11 +959,9 @@ class _FinalizeReporter:
     def log_run_summary(
         self,
         ctx: RunContext,
-        arr: Arr,
         *,
         is_preview: bool,
         has_client: bool,
-        import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
     ) -> bool:
         self._calls.append("summary")
         return True

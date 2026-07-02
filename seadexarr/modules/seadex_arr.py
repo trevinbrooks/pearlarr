@@ -897,10 +897,8 @@ class SeaDexArr:
 
         self._reporter.log_run_summary(
             self._ctx,
-            self._ctx.arr,
             is_preview=preview,
             has_client=self.qbit is not None,
-            import_wait_mode=self._ctx.import_wait_mode,
         )
 
         # The monitor is the only post-summary step that mutates the store

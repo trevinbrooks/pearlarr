@@ -266,11 +266,12 @@ def get_query_batch(al_ids: list[int]) -> AniListCache:
 def _get_media(
     al_id: int,
     al_cache: AniListCache | None,
-) -> tuple[AniListMediaNode, AniListCache]:
+) -> AniListMediaNode:
     """Fetch and parse the AniList Media node for an ID, caching successful lookups
 
     Centralizes the cache lookup and the once-only parse the public helpers
-    share: the raw ``{"data": {"Media": {...}}}`` body is the cached value, but
+    share: the raw ``{"data": {"Media": {...}}}`` body is the cached value
+    (a successful lookup is stored into the caller's ``al_cache`` in place), but
     callers receive a typed :class:`AniListMediaNode`. AniList returns
     {"data": {"Media": null}} (or "{"data": null}") for an unknown ID or a
     rate-limit, so a miss yields an all-``None`` node rather than raising. A miss
@@ -283,7 +284,7 @@ def _get_media(
         al_cache (AniListCache | None): Cache of prior AniList bodies, keyed by ID
 
     Returns:
-        tuple: (media_node, al_cache); media_node is an all-``None`` node on a miss.
+        AniListMediaNode: The parsed node; all-``None`` on a miss.
     """
 
     if al_cache is None:
@@ -292,7 +293,7 @@ def _get_media(
     # Cache hit: parse the stored body's Media node.
     j = al_cache.get(al_id)
     if j is not None:
-        return _media_from(j), al_cache
+        return _media_from(j)
 
     # Miss: query AniList. Extract the raw Media dict once to gate the cache
     # store, then parse it into the typed node for the return.
@@ -305,73 +306,67 @@ def _get_media(
     if raw_media:
         al_cache[al_id] = j
 
-    return AniListMediaNode.from_api(raw_media), al_cache
+    return AniListMediaNode.from_api(raw_media)
 
 
 def get_anilist_n_eps(
     al_id: int,
     al_cache: AniListCache | None = None,
-) -> tuple[int | None, AniListCache]:
+) -> int | None:
     """Query AniList to get the number of episodes for anime.
 
     Args:
         al_id (int): Anilist ID
-        al_cache (AniListCache): Cached Anilist bodies. Defaults to None,
-            which will create a dictionary
+        al_cache (AniListCache): Cached Anilist bodies, updated in place.
+            Defaults to None (no caching across calls)
     """
 
-    media, al_cache = _get_media(al_id, al_cache)
-
-    return media.episodes, al_cache
+    return _get_media(al_id, al_cache).episodes
 
 
 def get_anilist_title(
     al_id: int,
     al_cache: AniListCache | None = None,
-) -> tuple[str | None, AniListCache]:
+) -> str | None:
     """Query AniList to get a title for anime.
 
     Args:
         al_id (int): Anilist ID
-        al_cache (AniListCache): Cached Anilist bodies. Defaults to None,
-            which will create a dictionary
+        al_cache (AniListCache): Cached Anilist bodies, updated in place.
+            Defaults to None (no caching across calls)
     """
 
-    media, al_cache = _get_media(al_id, al_cache)
+    media = _get_media(al_id, al_cache)
 
     # Prefer the English title, but fall back to romaji
-    return (media.title_english or media.title_romaji), al_cache
+    return media.title_english or media.title_romaji
 
 
 def get_anilist_thumb(
     al_id: int,
     al_cache: AniListCache | None = None,
-) -> tuple[str | None, AniListCache]:
+) -> str | None:
     """Query AniList to get thumbnail URL for anime.
 
     Args:
         al_id (int): Anilist ID
-        al_cache (AniListCache): Cached Anilist bodies. Defaults to None,
-            which will create a dictionary
+        al_cache (AniListCache): Cached Anilist bodies, updated in place.
+            Defaults to None (no caching across calls)
     """
 
-    media, al_cache = _get_media(al_id, al_cache)
-
-    return media.cover_image, al_cache
+    return _get_media(al_id, al_cache).cover_image
 
 
 def get_anilist_format(
     al_id: int,
     al_cache: AniListCache | None = None,
-) -> tuple[str | None, AniListCache]:
+) -> str | None:
     """Query AniList to get format for anime.
 
     Args:
         al_id (int): Anilist ID
-        al_cache (AniListCache): Cached Anilist bodies. Defaults to None,
-            which will create a dictionary
+        al_cache (AniListCache): Cached Anilist bodies, updated in place.
+            Defaults to None (no caching across calls)
     """
 
-    media, al_cache = _get_media(al_id, al_cache)
-
-    return media.format, al_cache
+    return _get_media(al_id, al_cache).format
