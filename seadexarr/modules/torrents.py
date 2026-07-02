@@ -10,10 +10,16 @@ from seadex import Tracker
 
 from .log import indent_string
 from .torrent import (
+    TorrentParseError,
     get_animetosho_torrent,
     get_nyaa_torrent,
     get_rutracker_torrent,
 )
+
+
+class TorrentAddError(Exception):
+    """qBittorrent rejected the add (a non-``"Ok."`` ``torrents_add`` result)."""
+
 
 # The trackers we have a parser for. Kept in lockstep with ``add``'s dispatch dict
 # (a test pins the two together). The grab pipeline pre-filters on this so an
@@ -133,7 +139,7 @@ class TorrentService:
         parsed_url, source_name = parser()
 
         if parsed_url is None:
-            raise Exception("Have not managed to parse the torrent URL")
+            raise TorrentParseError("Have not managed to parse the torrent URL")
 
         status, torrent_name = self._add_to_qbit(
             url=url,
@@ -204,7 +210,7 @@ class TorrentService:
             tags=self.tags,
         )
         if result != "Ok.":
-            raise Exception("Failed to add torrent")
+            raise TorrentAddError("Failed to add torrent")
 
         # Look the torrent back up by hash so we can report its name. A private
         # torrent has no info hash to look up, so leave the name unset and let

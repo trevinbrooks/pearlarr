@@ -18,6 +18,7 @@ import responses
 import seadexarr.modules.torrent as torrent
 from seadexarr.modules.torrent import (
     ANIMETOSHO_FEED_URL,
+    TorrentParseError,
     get_animetosho_torrent,
     get_nyaa_torrent,
     get_rutracker_torrent,
@@ -150,7 +151,7 @@ def test_get_animetosho_torrent_missing_title_raises() -> None:
             body="<html><body><p>no title here</p></body></html>",
             content_type="text/html",
         )
-        with pytest.raises(Exception, match="Could not find torrent name"):
+        with pytest.raises(TorrentParseError, match="Could not find torrent name"):
             get_animetosho_torrent(page_url, session=requests.Session())
 
 
@@ -166,7 +167,7 @@ def test_get_animetosho_torrent_two_titles_raises() -> None:
             body='<html><body><h2 id="title">First</h2><h2 id="title">Second</h2></body></html>',
             content_type="text/html",
         )
-        with pytest.raises(Exception, match="More than one torrent title"):
+        with pytest.raises(TorrentParseError, match="More than one torrent title"):
             get_animetosho_torrent(page_url, session=requests.Session())
 
 
@@ -208,5 +209,5 @@ def test_get_rutracker_torrent_missing_title_raises() -> None:
             body="<html><body><div>no maintitle</div></body></html>",
             content_type="text/html",
         )
-        with pytest.raises(Exception, match="Could not find torrent title"):
+        with pytest.raises(TorrentParseError, match="Could not find torrent title"):
             get_rutracker_torrent(url, "deadbeef", session=requests.Session())

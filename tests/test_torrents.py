@@ -27,7 +27,8 @@ import seadexarr.modules.torrents as torrents
 from seadexarr.modules.config import Arr
 from seadexarr.modules.mappings import MappingResolver
 from seadexarr.modules.seadex_arr import QbitConnectionError, RunDeps
-from seadexarr.modules.torrents import PARSEABLE_TRACKERS, AddOutcome, TorrentService
+from seadexarr.modules.torrent import TorrentParseError
+from seadexarr.modules.torrents import PARSEABLE_TRACKERS, AddOutcome, TorrentAddError, TorrentService
 
 from .builders import make_bare_instance, make_config
 
@@ -170,7 +171,7 @@ def test_add_qbit_rejects_add_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     qbit = _FakeQbit(add_result="Fails.")
     service = _service(qbit)
 
-    with pytest.raises(Exception, match="Failed to add torrent"):
+    with pytest.raises(TorrentAddError, match="Failed to add torrent"):
         service.add(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, torrent_hash=None, preview=False)
 
 
@@ -185,7 +186,7 @@ def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     qbit = _FakeQbit()
     service = _service(qbit)
 
-    with pytest.raises(Exception, match="Have not managed to parse the torrent URL"):
+    with pytest.raises(TorrentParseError, match="Have not managed to parse the torrent URL"):
         service.add(url="https://animetosho.org/view/1", tracker=Tracker.ANIMETOSHO, torrent_hash=None, preview=False)
 
     assert qbit.add_calls == []

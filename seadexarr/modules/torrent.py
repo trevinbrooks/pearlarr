@@ -7,6 +7,11 @@ from bs4 import BeautifulSoup
 ANIMETOSHO_FEED_URL = "https://animetosho.org/feed/json"
 RUTRACKER_MAGNET_ANNOUNCE = "http://bt2.t-ru.org/ann?magnet"
 
+
+class TorrentParseError(Exception):
+    """A tracker page/feed didn't yield the release's torrent link or title."""
+
+
 # Reused when a caller doesn't pass its own session, so even standalone use of
 # these helpers gets keep-alive connection pooling. The main code path threads
 # in SeaDexArr.session instead.
@@ -55,10 +60,10 @@ def get_animetosho_torrent(
     titles = soup.find_all("h2", attrs={"id": "title"})
 
     if len(titles) == 0:
-        raise Exception("Could not find torrent name in AnimeTosho webpage")
+        raise TorrentParseError("Could not find torrent name in AnimeTosho webpage")
 
     if len(titles) > 1:
-        raise Exception("More than one torrent title in AnimeTosho webpage")
+        raise TorrentParseError("More than one torrent title in AnimeTosho webpage")
 
     title = titles[0].text
 
@@ -105,7 +110,7 @@ def get_rutracker_torrent(
     soup = BeautifulSoup(r.content, "html.parser")
     main_title = soup.find("h1", attrs={"class": "maintitle"})
     if main_title is None:
-        raise Exception("Could not find torrent title in RuTracker webpage")
+        raise TorrentParseError("Could not find torrent title in RuTracker webpage")
     torrent_title = main_title.text
 
     params = {
