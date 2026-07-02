@@ -6,6 +6,7 @@ tracker filtering, the want_best / prefer_dual_audio narrowing, the is_public
 computation, and the public_only per-group private-url drop.
 """
 
+import logging
 from datetime import datetime
 
 import pytest
@@ -14,6 +15,7 @@ from seadex import EntryRecord, Tag, TorrentRecord, Tracker
 from seadexarr.modules import seadex_filter
 
 from .builders import make_entry_record, make_release_filter, rg_group
+from .fakes import CaptureHandler
 
 
 def _torrent(
@@ -152,5 +154,18 @@ class TestInteractivePick:
             return "x"
 
         monkeypatch.setattr("builtins.input", fake_input)
-        result = filt.interactive_pick(seadex_dict, sd_entry)
+        handler = CaptureHandler()
+        filt.logger.addHandler(handler)
+        filt.logger.setLevel(logging.INFO)
+        try:
+            result = filt.interactive_pick(seadex_dict, sd_entry)
+        finally:
+            filt.logger.removeHandler(handler)
         assert result == {}
+        # Only genuine problems warn (LogCounter tallies WARNINGs into the run's
+        # issues summary): the invalid token, then the resulting empty pick. The
+        # informational prompt rows all ride at INFO.
+        warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+        assert len(warnings) == 2
+        assert "invalid selection" in warnings[0]
+        assert "No valid selection" in warnings[1]

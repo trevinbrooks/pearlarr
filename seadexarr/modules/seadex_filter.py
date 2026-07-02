@@ -138,23 +138,25 @@ class SeadexReleaseFilter:
             sd_entry: SeaDex entry
         """
 
-        self.logger.warning("Multiple releases found - pick which to grab")
+        # Informational prompt rows log at INFO: a WARNING here would tally into
+        # the end-of-run issues summary once per interactive pick.
+        self.logger.info("Multiple releases found - pick which to grab")
         self.logger.info(
             indent_string("SeaDex notes:"),
         )
 
         notes = sd_entry.notes.split("\n")
         for n in notes:
-            self.logger.warning(
+            self.logger.info(
                 indent_string(n),
             )
-        self.logger.warning(
+        self.logger.info(
             indent_string(""),
         )
 
         all_srgs = list(seadex_dict.keys())
         for s_i, s in enumerate(all_srgs):
-            self.logger.warning(
+            self.logger.info(
                 indent_string(f"[{s_i}]: {s}"),
             )
 
@@ -182,6 +184,13 @@ class SeadexReleaseFilter:
                     )
                     continue
                 seadex_dict_filtered[srg] = copy.deepcopy(seadex_dict[srg])
+
+            # Every token was invalid (blank input means "all" and never gets
+            # here), so the title proceeds with zero releases - say so.
+            if not seadex_dict_filtered:
+                self.logger.warning(
+                    indent_string("No valid selection; skipping this title"),
+                )
 
             seadex_dict = seadex_dict_filtered
 
