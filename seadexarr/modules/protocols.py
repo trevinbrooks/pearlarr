@@ -3,17 +3,7 @@ from typing import Protocol
 
 from .manual_import import ImportProbe, ImportProgress, PendingImport
 from .mappings import MappingEntry
-from .seadex_types import ArrItem
-
-
-class EpisodeProgress(Protocol):
-    """Sink for episode-warm progress - drives the boot cockpit's live bar.
-
-    Structural, so the boot view's step handle satisfies it without this module
-    importing the UI layer (mirrors the gateways' ``PrefetchProgress``).
-    """
-
-    def progress(self, fraction: float, detail: str | None = None) -> None: ...
+from .seadex_types import ArrItem, ProgressSink
 
 
 class ImportCompleter(Protocol):
@@ -84,7 +74,7 @@ class ArrSync[ItemT: ArrItem](ABC):
         """
 
     @abstractmethod
-    def prefetch_episodes(self, items: list[ItemT], *, progress: EpisodeProgress | None = None) -> int:
+    def prefetch_episodes(self, items: list[ItemT], *, progress: ProgressSink | None = None) -> int:
         """Warm per-item network caches concurrently before the scan loop.
 
         Called once in the pre-scan prefetch step, beside the AniList/SeaDex bulk
@@ -94,7 +84,7 @@ class ArrSync[ItemT: ArrItem](ABC):
         Args:
             items (list[ItemT]): The run's item list (already narrowed for a
                 single-item run).
-            progress (EpisodeProgress | None): Boot cockpit step fed per-item
+            progress (ProgressSink | None): Boot cockpit step fed per-item
                 fraction + "done/total" detail; None outside the cockpit.
 
         Returns:

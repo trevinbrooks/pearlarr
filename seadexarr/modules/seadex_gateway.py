@@ -16,26 +16,18 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from itertools import batched
-from typing import Protocol, override
+from typing import override
 
 import httpx
 from seadex import EntryNotFoundError, EntryRecord, SeaDexEntry
+
+from .seadex_types import ProgressSink
 
 # Ids per batched ``from_filter`` query. Mirrors ANILIST_BATCH_SIZE; ~50
 # ``alID=NNNNNN`` clauses stay well under the GET URL length limit (the spike
 # confirmed the OR-filter form and that perPage=500 means a 50-id batch never
 # paginates).
 SEADEX_BATCH_SIZE = 50
-
-
-class PrefetchProgress(Protocol):
-    """Sink for batch-prefetch progress - drives the boot cockpit's live bar.
-
-    Structural, so the boot view's step handle satisfies it without this gateway
-    importing the UI layer (mirrors ``mappings.DownloadProgress``).
-    """
-
-    def progress(self, fraction: float, detail: str | None = None) -> None: ...
 
 
 class SeaDexSource(ABC):
@@ -49,7 +41,7 @@ class SeaDexSource(ABC):
     """
 
     @abstractmethod
-    def prefetch(self, al_ids: Iterable[int], *, progress: PrefetchProgress | None = None) -> int: ...
+    def prefetch(self, al_ids: Iterable[int], *, progress: ProgressSink | None = None) -> int: ...
 
     @abstractmethod
     def entry(self, al_id: int) -> EntryRecord | None: ...
@@ -75,7 +67,7 @@ class SeaDexGateway(SeaDexSource):
         self._prefetched: set[int] = set()
 
     @override
-    def prefetch(self, al_ids: Iterable[int], *, progress: PrefetchProgress | None = None) -> int:
+    def prefetch(self, al_ids: Iterable[int], *, progress: ProgressSink | None = None) -> int:
         """Bulk-fetch SeaDex entries for many ids in batched OR-filter queries.
 
         Populates the per-run entry cache so the per-item loop's :meth:`entry`
@@ -87,7 +79,7 @@ class SeaDexGateway(SeaDexSource):
 
         Args:
             al_ids (Iterable[int]): Candidate AniList IDs for this run.
-            progress (PrefetchProgress | None): Boot cockpit step fed per-batch
+            progress (ProgressSink | None): Boot cockpit step fed per-batch
                 fraction + "done/total" detail; None outside the cockpit.
 
         Returns:

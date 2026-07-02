@@ -14,7 +14,6 @@ longer stamps ``current_title``; the caller does that.
 import logging
 from collections.abc import Iterable
 from datetime import datetime, timedelta
-from typing import Protocol
 
 from .anilist import (
     ANILIST_BATCH_SIZE,
@@ -25,21 +24,12 @@ from .anilist import (
 )
 from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, record_is_fresh
 from .log import indent_string
+from .seadex_types import ProgressSink
 
 # How long a persisted AniList response stays usable before it's re-fetched.
 # title/format/coverImage are effectively static; episodes for a currently airing
 # show drift, so this caps how stale that count can get (~one episode/week).
 ANILIST_CACHE_TTL_DAYS = 7
-
-
-class PrefetchProgress(Protocol):
-    """Sink for batch-prefetch progress - drives the boot cockpit's live bar.
-
-    Structural, so the boot view's step handle satisfies it without this gateway
-    importing the UI layer (mirrors ``mappings.DownloadProgress``).
-    """
-
-    def progress(self, fraction: float, detail: str | None = None) -> None: ...
 
 
 class AniListGateway:
@@ -138,7 +128,7 @@ class AniListGateway:
         al_ids: Iterable[int],
         *,
         preview: bool,
-        progress: PrefetchProgress | None = None,
+        progress: ProgressSink | None = None,
     ) -> int:
         """Warm the AniList cache for a set of ids in batched requests
 
@@ -151,7 +141,7 @@ class AniListGateway:
         Args:
             al_ids (iterable[int]): Candidate AniList IDs for this run
             preview (bool): Forwarded to the post-fetch save's preview gate.
-            progress (PrefetchProgress | None): Boot cockpit step fed per-batch
+            progress (ProgressSink | None): Boot cockpit step fed per-batch
                 fraction + "done/total" detail; None outside the cockpit.
 
         Returns:

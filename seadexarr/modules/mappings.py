@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Protocol, cast
+from typing import Any, cast
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
@@ -34,11 +34,12 @@ from .mapping_store import (
     SOURCE_ANIBRIDGE,
     SOURCE_ANIDB,
     SOURCE_ANIME_IDS,
+    AnidbMappingRow,
     AnimeIdRow,
     MappingStore,
 )
 from .paths import resolve_paths
-from .seadex_types import TvdbMappings
+from .seadex_types import ProgressSink, TvdbMappings
 
 type AnimeIdsRecord = dict[str, Any]
 """One Kometa Anime-IDs record (``{field: value}``).
@@ -225,17 +226,6 @@ def _file_digest(path: str) -> str:
     return h.hexdigest()
 
 
-class DownloadProgress(Protocol):
-    """A sink for streaming download progress - drives the boot cockpit's bar.
-
-    Structural, so the boot view's step handle satisfies it without this data
-    module importing the UI layer. ``fraction`` is 0-1 download completion;
-    ``detail`` is a short human note (the file + MB).
-    """
-
-    def progress(self, fraction: float, detail: str | None = None) -> None: ...
-
-
 def _download_file(
     url: str,
     dest: str,
@@ -243,7 +233,7 @@ def _download_file(
     timeout: int,
     logger: logging.Logger | None,
     label: str,
-    progress: DownloadProgress | None = None,
+    progress: ProgressSink | None = None,
 ) -> None:
     """Stream ``url`` to ``dest`` with a socket timeout and throttled progress.
 
@@ -332,7 +322,7 @@ def _parse_anidb_mappings(path: str) -> ElementTree.Element:
     return ElementTree.parse(path).getroot()
 
 
-def _anidb_rows(root: ElementTree.Element) -> tuple[list[tuple[Any, ...]], list[tuple[int]]]:
+def _anidb_rows(root: ElementTree.Element) -> tuple[list[AnidbMappingRow], list[int]]:
     """Flatten the AniDB XML into ``anidb_mapping`` rows + the ambiguous-id set.
 
     Reproduces the former ``anidb_anime_by_id`` + ``_parse_anidb_mapping_dict``
@@ -374,16 +364,16 @@ def _anidb_rows(root: ElementTree.Element) -> tuple[list[tuple[Any, ...]], list[
                     continue
         season_maps[aid] = season_map
 
-    rows: list[tuple[Any, ...]] = []
+    rows: list[AnidbMappingRow] = []
     for aid, season_map in season_maps.items():
         if counts[aid] > 1:
             # Ambiguous: never read (lookup raises first), so store no rows.
             continue
         for season, mapping in season_map.items():
             for tvdb_ep, anidb_ep in mapping.items():
-                rows.append((aid, season, tvdb_ep, anidb_ep))
+                rows.append(AnidbMappingRow(aid, season, tvdb_ep, anidb_ep))
 
-    ambiguous = [(aid,) for aid, count in counts.items() if count > 1]
+    ambiguous = [aid for aid, count in counts.items() if count > 1]
     return rows, ambiguous
 
 
@@ -407,7 +397,7 @@ class MappingResolver:
         anibridge_mappings_cfg: AniBridgeGraph | bool | None,
         mappings_db: str = ":memory:",
         logger: logging.Logger | None = None,
-        progress: DownloadProgress | None = None,
+        progress: ProgressSink | None = None,
     ) -> None:
         """Open the store and load (parse-if-changed) the mapping sources.
 
@@ -425,7 +415,7 @@ class MappingResolver:
                 in-memory db (tests / pre-parsed configs).
             logger (logging.Logger | None): For download/parse visibility (DEBUG;
                 the boot cockpit owns the INFO-level startup narrative).
-            progress (DownloadProgress | None): The boot cockpit's step handle, fed
+            progress (ProgressSink | None): The boot cockpit's step handle, fed
                 streaming download progress for the live bar. Defaults to None (no
                 cockpit: progress falls back to throttled DEBUG lines).
         """

@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Callable
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
@@ -133,14 +134,14 @@ class AnimeIdSets(Protocol):
     imports this one). Supplies the DISTINCT Anime-IDs id set for a given column.
     """
 
-    def anime_id_set(self, column: str) -> set[Any]: ...
+    def anime_id_set(self, column: str) -> AbstractSet[int | str]: ...
 
 
 def collect_anime_items[ItemT: ArrItem](
     list_fn: Callable[[], list[ItemT]],
     fields: tuple[IdField, ...],
-    anime_id_sets: tuple[set[Any], ...],
-    anibridge_id_sets: tuple[set[Any], ...],
+    anime_id_sets: tuple[AbstractSet[int | str], ...],
+    anibridge_id_sets: tuple[AbstractSet[int | str], ...],
 ) -> list[ItemT]:
     """Arr library items that have an AniList mapping, sorted by title.
 
@@ -156,14 +157,15 @@ def collect_anime_items[ItemT: ArrItem](
     Args:
         list_fn (Callable[[], list[ItemT]]): Returns the unfiltered Arr item list.
         fields (tuple[IdField, ...]): Id spaces to filter by, in order.
-        anime_id_sets (tuple[set[Any], ...]): Anime-IDs candidate sets, one per
-            ``fields`` entry in the same order.
-        anibridge_id_sets (tuple[set[Any], ...]): AniBridge candidate sets, one
-            per ``fields`` entry in the same order (pass ``set()`` when disabled).
+        anime_id_sets (tuple[AbstractSet[int | str], ...]): Anime-IDs candidate
+            sets, one per ``fields`` entry in the same order.
+        anibridge_id_sets (tuple[AbstractSet[int | str], ...]): AniBridge candidate
+            sets, one per ``fields`` entry in the same order (pass ``set()`` when
+            disabled).
     """
 
     # One candidate set per id space: the two sources' sets unioned.
-    matched_sets: list[set[Any]] = [
+    matched_sets: list[AbstractSet[int | str]] = [
         anime | bridge for anime, bridge in zip(anime_id_sets, anibridge_id_sets, strict=True)
     ]
 

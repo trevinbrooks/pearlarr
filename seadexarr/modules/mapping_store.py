@@ -41,7 +41,7 @@ import sqlite3
 from collections.abc import Callable, Iterable
 from typing import NamedTuple, cast
 
-from .sqlite_util import connect, is_corruption, quarantine_corrupt
+from .sqlite_util import connect, open_or_quarantine
 
 # Bump when the table layout below changes; a stored ``user_version`` that differs
 # triggers a DROP+rebuild (the data is a pure cache, re-derived from the sources).
@@ -218,6 +218,24 @@ class AniBridgeRangeRow(NamedTuple):
     end_ep: int | None
 
 
+class AniBridgeRangeHit(NamedTuple):
+    """One :meth:`MappingStore.anibridge_ranges_for` result row (tvdb-scoped)."""
+
+    anilist_id: int
+    season: int
+    start_ep: int | None
+    end_ep: int | None
+
+
+class AnidbMappingRow(NamedTuple):
+    """One ``anidb_mapping`` row: a tvdb episode -> anidb episode pair."""
+
+    anidb_id: int
+    tvdb_season: int
+    tvdb_ep: int
+    anidb_ep: int
+
+
 class MappingStore:
     """Owns ``mappings.db``: schema, per-source freshness, atomic populate, queries."""
 
@@ -242,24 +260,14 @@ class MappingStore:
             logger (logging.Logger | None): For the one-line quarantine notice.
         """
 
-        conn: sqlite3.Connection | None = None
-        try:
-            conn = connect(path)
-            _ensure_schema(conn)
-        except sqlite3.DatabaseError as exc:
-            if conn is not None:
-                with contextlib.suppress(sqlite3.Error):
-                    conn.close()
-            if not is_corruption(exc):
-                raise
-            quarantine_corrupt(
-                path,
-                logger=logger,
-                what="Mappings database",
-                recovery="started a fresh one (sources will be re-parsed this run).",
-            )
-            conn = connect(":memory:")
-            _ensure_schema(conn)
+        conn, _ = open_or_quarantine(
+            path,
+            connect_fn=connect,
+            ensure=_ensure_schema,
+            logger=logger,
+            what="Mappings database",
+            recovery="started a fresh one (sources will be re-parsed this run).",
+        )
         return cls(conn, path)
 
     def close(self) -> None:
@@ -357,15 +365,15 @@ class MappingStore:
     def replace_anidb(
         self,
         digest: str,
-        mappings: Iterable[tuple[object, ...]],
-        ambiguous: Iterable[tuple[int]],
+        mappings: Iterable[AnidbMappingRow],
+        ambiguous: Iterable[int],
     ) -> None:
         """Atomically replace the anidb tables.
 
         Args:
             digest (str): sha256 of the source file (or :data:`INLINE_DIGEST`).
-            mappings: ``(anidb_id, tvdb_season, tvdb_ep, anidb_ep)`` tuples.
-            ambiguous: ``(anidb_id,)`` tuples for ids appearing in >1 ``<anime>``.
+            mappings: :class:`AnidbMappingRow` tuples (column order).
+            ambiguous: anidb ids appearing in more than one ``<anime>`` element.
         """
 
         def write(conn: sqlite3.Connection) -> None:
@@ -375,7 +383,7 @@ class MappingStore:
             )
             conn.executemany(
                 "INSERT INTO anidb_ambiguous (anidb_id) VALUES (?) ON CONFLICT (anidb_id) DO NOTHING",
-                ambiguous,
+                ((anidb_id,) for anidb_id in ambiguous),
             )
 
         self._replace(SOURCE_ANIDB, digest, write)
@@ -439,9 +447,9 @@ class MappingStore:
         axis: str,
         ext_id: object,
         tvdb_id: int,
-    ) -> list[tuple[int, int, int | None, int | None]]:
-        """``(anilist_id, season, start_ep, end_ep)`` rows for an (axis, ext_id) set,
-        scoped to ``tvdb_id``, in ``(anilist_id, populate)`` order.
+    ) -> list[AniBridgeRangeHit]:
+        """:class:`AniBridgeRangeHit` rows for an (axis, ext_id) set, scoped to
+        ``tvdb_id``, in ``(anilist_id, populate)`` order.
 
         The batched twin of the former per-id range lookup: one xref->range JOIN
         fetches the ranges for every AniList id a tvdb lookup resolves, so the caller
@@ -450,13 +458,14 @@ class MappingStore:
         A NULL ``start_ep`` row is the present-but-empty-season marker.
         """
 
-        return self._conn.execute(
+        rows = self._conn.execute(
             "SELECT x.anilist_id, r.season, r.start_ep, r.end_ep "
             "FROM anibridge_xref x JOIN anibridge_tvdb_range r ON r.anilist_id = x.anilist_id "
             "WHERE x.axis = ? AND x.ext_id = ? AND r.tvdb_id = ? "
             "ORDER BY x.anilist_id, r.rowid",
             (axis, ext_id, tvdb_id),
         ).fetchall()
+        return [AniBridgeRangeHit(*row) for row in rows]
 
     def anibridge_distinct(self, axis: str) -> set[int | str]:
         """The set of all ext ids on ``axis`` (for the library-filter id sets)."""

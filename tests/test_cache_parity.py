@@ -90,7 +90,7 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
         "sonarr_parse_stale": store.get_sonarr_parse("stale.mkv"),
         "pending_sonarr": store.get_pending(Arr.SONARR),
         "pending_series7": store.get_pending_for_series(Arr.SONARR, 7),
-        "stats_no_size": {k: v for k, v in stats.items() if k != "size_bytes"},
+        "stats_no_size": stats._replace(size_bytes=0),
         "integrity": store.integrity_check(),
     }
 

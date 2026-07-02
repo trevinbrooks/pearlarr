@@ -14,13 +14,14 @@ from .manual_import import (
 )
 from .mappings import MappingEntry, MappingSource
 from .planner import get_episode_keys
-from .protocols import ArrSync, EpisodeProgress
+from .protocols import ArrSync
 from .radarr_client import (
     collect_anime_movies,
     make_radarr_client,
 )
 from .seadex_arr import RunDeps, SeaDexArr
 from .seadex_types import (
+    ProgressSink,
     RadarrItem,
     SeadexDict,
     SonarrItem,
@@ -220,7 +221,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         return True
 
     @override
-    def prefetch_episodes(self, items: list[SonarrItem], *, progress: EpisodeProgress | None = None) -> int:
+    def prefetch_episodes(self, items: list[SonarrItem], *, progress: ProgressSink | None = None) -> int:
         """Warm the per-series episode lists before the scan loop.
 
         Delegates to the episode collaborator's concurrent prefetch; returns how

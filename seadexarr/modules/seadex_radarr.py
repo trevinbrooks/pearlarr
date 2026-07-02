@@ -6,10 +6,10 @@ from .grab_pipeline import GrabRequest
 from .log import indent_string
 from .manual_import import ImportProbe, ImportProgress, ImportReadiness, PendingImport
 from .mappings import MappingEntry
-from .protocols import ArrSync, EpisodeProgress
+from .protocols import ArrSync
 from .radarr_client import collect_anime_movies, make_radarr_client
 from .seadex_arr import RunDeps, SeaDexArr
-from .seadex_types import ArrReleaseDict, RadarrItem
+from .seadex_types import ArrReleaseDict, ProgressSink, RadarrItem
 
 
 class RadarrSync(ArrSync[RadarrItem]):
@@ -93,7 +93,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         return False
 
     @override
-    def prefetch_episodes(self, items: list[RadarrItem], *, progress: EpisodeProgress | None = None) -> int:
+    def prefetch_episodes(self, items: list[RadarrItem], *, progress: ProgressSink | None = None) -> int:
         """No-op: movies have no episode lists to warm. Returns 0 (warmed none)."""
 
         del items, progress

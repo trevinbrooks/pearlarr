@@ -25,7 +25,6 @@ from seadexarr.modules.manual_import import (
     resolve_language_objects,
 )
 from seadexarr.modules.mappings import MappingEntry, MappingSource
-from seadexarr.modules.protocols import EpisodeProgress
 from seadexarr.modules.seadex_radarr import RadarrSync
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
@@ -33,6 +32,7 @@ from seadexarr.modules.seadex_types import (
     Language,
     ManualImportCandidate,
     MovieFile,
+    ProgressSink,
     QualityDefinition,
     QueueRecord,
     RadarrItem,
@@ -250,9 +250,9 @@ class TestSonarrPrefetchDelegates:
 
     def test_sonarr_prefetch_routes_to_episodes(self) -> None:
         strat = make_sonarr_sync()
-        prefetch_calls: list[tuple[list[SonarrItem], EpisodeProgress | None]] = []
+        prefetch_calls: list[tuple[list[SonarrItem], ProgressSink | None]] = []
 
-        def _prefetch(items: list[SonarrItem], *, progress: EpisodeProgress | None = None) -> int:
+        def _prefetch(items: list[SonarrItem], *, progress: ProgressSink | None = None) -> int:
             prefetch_calls.append((items, progress))
             return 3
 

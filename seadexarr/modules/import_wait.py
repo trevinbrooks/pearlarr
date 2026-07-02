@@ -136,26 +136,19 @@ class ImportWaitManager:
             return TorrentProbe(WaitOutcome.MISSING, None, 0.0)
 
         t = info[0]
-        progress, speed_bps, eta_s, bytes_done, bytes_total = sanitize_torrent_telemetry(
+        telemetry = sanitize_torrent_telemetry(
             getattr(t, "progress", None),
             getattr(t, "dlspeed", None),
             getattr(t, "eta", None),
             getattr(t, "completed", None),
             getattr(t, "size", None),
         )
+        # TorrentTelemetry's fields match TorrentProbe's telemetry tail one-for-one.
         if t.state_enum.is_errored:
-            return TorrentProbe(WaitOutcome.ERRORED, None, progress, speed_bps, eta_s, bytes_done, bytes_total)
-        if t.state_enum.is_complete or progress >= 1.0:
-            return TorrentProbe(
-                WaitOutcome.COMPLETE,
-                t.content_path,
-                progress,
-                speed_bps,
-                eta_s,
-                bytes_done,
-                bytes_total,
-            )
-        return TorrentProbe(None, None, progress, speed_bps, eta_s, bytes_done, bytes_total)
+            return TorrentProbe(WaitOutcome.ERRORED, None, *telemetry)
+        if t.state_enum.is_complete or telemetry.progress >= 1.0:
+            return TorrentProbe(WaitOutcome.COMPLETE, t.content_path, *telemetry)
+        return TorrentProbe(None, None, *telemetry)
 
     def try_import_completed(
         self,

@@ -18,13 +18,14 @@ from typing import override
 
 from seadexarr.modules.manual_import import ImportProbe, ImportProgress, PendingImport
 from seadexarr.modules.mappings import MappingEntry
-from seadexarr.modules.protocols import ArrSync, EpisodeProgress
+from seadexarr.modules.protocols import ArrSync
 from seadexarr.modules.seadex_types import (
     CommandResource,
     Language,
     ManualImportCandidate,
     ManualImportFile,
     ParsedFileInfo,
+    ProgressSink,
     QualityDefinition,
     QueueRecord,
     SonarrEpisode,
@@ -89,7 +90,7 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         return False
 
     @override
-    def prefetch_episodes(self, items: list[FakeArrItem], *, progress: EpisodeProgress | None = None) -> int:
+    def prefetch_episodes(self, items: list[FakeArrItem], *, progress: ProgressSink | None = None) -> int:
         return 0
 
     @override

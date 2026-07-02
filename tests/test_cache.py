@@ -478,12 +478,12 @@ class TestMaintenance:
         store.save(preview=False)  # promote to file so size_bytes > 0
 
         s = store.stats()
-        assert s["entries"] == 1
-        assert s["torrent_hashes"] == 2
-        assert s["anilist_meta"] == 1
-        assert s["sonarr_parse"] == 0
-        assert s["pending_imports"] == 0
-        assert s["size_bytes"] > 0
+        assert s.entries == 1
+        assert s.torrent_hashes == 2
+        assert s.anilist_meta == 1
+        assert s.sonarr_parse == 0
+        assert s.pending_imports == 0
+        assert s.size_bytes > 0
         assert store.integrity_check() == "ok"
         store.close()
 

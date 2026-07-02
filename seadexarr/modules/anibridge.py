@@ -472,8 +472,8 @@ class AniBridge:
 
         ranges_by_anilist: dict[int, list[tuple[int, int | None, int | None]]] = {}
         if tvdb_id is not None:
-            for anilist_id, season, start, end in store.anibridge_ranges_for(axis, ext_id, tvdb_id):
-                ranges_by_anilist.setdefault(anilist_id, []).append((season, start, end))
+            for hit in store.anibridge_ranges_for(axis, ext_id, tvdb_id):
+                ranges_by_anilist.setdefault(hit.anilist_id, []).append((hit.season, hit.start_ep, hit.end_ep))
 
         result: AniBridgeLookup = {}
         for row in store.anibridge_entries_for(axis, ext_id):

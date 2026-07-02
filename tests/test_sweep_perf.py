@@ -218,7 +218,7 @@ def _ids(*al_ids: int) -> dict[int, MappingEntry]:
 
 
 class _Recorder:
-    """An ``EpisodeProgress`` sink that records every ``progress`` call."""
+    """A ``ProgressSink`` that records every ``progress`` call."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[float, str | None]] = []

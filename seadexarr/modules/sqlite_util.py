@@ -20,6 +20,7 @@ import contextlib
 import logging
 import os
 import sqlite3
+from collections.abc import Callable
 from datetime import datetime
 
 # Wait this long for a write lock before raising, instead of failing instantly on
@@ -71,6 +72,55 @@ def connect(path: str, *, ensure_wal: bool = True, foreign_keys: bool = False) -
         conn.close()
         raise
     return conn
+
+
+def open_or_quarantine(
+    path: str,
+    *,
+    connect_fn: Callable[[str], sqlite3.Connection],
+    ensure: Callable[[sqlite3.Connection], object],
+    logger: logging.Logger | None,
+    what: str,
+    recovery: str,
+) -> tuple[sqlite3.Connection, bool]:
+    """Open ``path`` and ensure its schema, quarantining a corrupt file.
+
+    The shared recovery policy for both stores. A transient/operational
+    ``DatabaseError`` (locked, disk I/O) is NOT corruption: fail closed and
+    re-raise rather than destructively quarantining a healthy db on a fluke. A
+    real not-a-database / torn file is moved aside via :func:`quarantine_corrupt`
+    and a fresh ``:memory:`` db is returned instead, so a corrupt store fails
+    open rather than crash-looping every run.
+
+    Args:
+        path (str): Database path to open (or ``":memory:"``).
+        connect_fn (Callable): The store's own connection factory (keeps its
+            pragma choices and the tests' patch point).
+        ensure (Callable): Ensures the schema on a fresh connection.
+        logger (logging.Logger | None): For the one-line quarantine notice.
+        what (str): Human noun for the quarantine log line.
+        recovery (str): Trailing recovery clause for the quarantine log line.
+
+    Returns:
+        tuple: ``(conn, fell_back)`` - ``fell_back`` is True when the file was
+        quarantined and ``conn`` is the in-memory fallback.
+    """
+
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = connect_fn(path)
+        ensure(conn)
+    except sqlite3.DatabaseError as exc:
+        if conn is not None:
+            with contextlib.suppress(sqlite3.Error):
+                conn.close()
+        if not is_corruption(exc):
+            raise
+        quarantine_corrupt(path, logger=logger, what=what, recovery=recovery)
+        conn = connect_fn(":memory:")
+        ensure(conn)
+        return conn, True
+    return conn, False
 
 
 def is_corruption(exc: sqlite3.DatabaseError) -> bool:

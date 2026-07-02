@@ -147,6 +147,20 @@ def as_size_list(size: int | list[int | None] | None) -> list[int]:
     return [s for s in size if s is not None]
 
 
+# --- shared progress sink ----------------------------------------------------
+
+
+class ProgressSink(Protocol):
+    """Sink for step progress - drives the boot cockpit's live bar.
+
+    Structural, so the boot view's step handle satisfies it without the data /
+    gateway modules importing the UI layer. ``fraction`` is 0-1 completion;
+    ``detail`` is a short human note.
+    """
+
+    def progress(self, fraction: float, detail: str | None = None) -> None: ...
+
+
 # --- Arr items (Sonarr series / Radarr movies) ------------------------------
 
 

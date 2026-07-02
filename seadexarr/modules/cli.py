@@ -481,11 +481,11 @@ def cache_stats() -> bool:
     finally:
         store.close()
 
-    size_mib = s["size_bytes"] / (1024 * 1024)
+    size_mib = s.size_bytes / (1024 * 1024)
     typer.echo(
-        f"entries={s['entries']}  torrent_hashes={s['torrent_hashes']}  "
-        f"anilist_meta={s['anilist_meta']}  sonarr_parse={s['sonarr_parse']}  "
-        f"pending_imports={s['pending_imports']}  size={size_mib:.2f} MiB",
+        f"entries={s.entries}  torrent_hashes={s.torrent_hashes}  "
+        f"anilist_meta={s.anilist_meta}  sonarr_parse={s.sonarr_parse}  "
+        f"pending_imports={s.pending_imports}  size={size_mib:.2f} MiB",
     )
     return True
 

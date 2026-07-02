@@ -30,6 +30,7 @@ from seadexarr.modules.cache import (
     AbstractCacheStore,
     CachedEntry,
     CacheRecord,
+    CacheStats,
 )
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.grab_pipeline import GrabPipeline
@@ -42,11 +43,12 @@ from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.reporter import RunContext, RunReporter
 from seadexarr.modules.seadex_arr import RunDeps, SeaDexArr
 from seadexarr.modules.seadex_filter import SeadexReleaseFilter
-from seadexarr.modules.seadex_gateway import PrefetchProgress, SeaDexSource
+from seadexarr.modules.seadex_gateway import SeaDexSource
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
     EpisodeRecord,
     ManualImportCandidate,
+    ProgressSink,
     QualityModel,
     SeadexDict,
     SeadexReleaseGroupItem,
@@ -335,15 +337,15 @@ class FakeCacheStore(AbstractCacheStore):
 
     # -- maintenance: stats, integrity --
     @override
-    def stats(self) -> dict[str, int]:
-        return {
-            "entries": len(self._entries),
-            "torrent_hashes": sum(len(h) for h in self._entry_hashes.values()),
-            "anilist_meta": len(self._anilist_meta),
-            "sonarr_parse": len(self._sonarr_parse),
-            "pending_imports": sum(len(recs) for recs in self._pending.values()),
-            "size_bytes": 0,
-        }
+    def stats(self) -> CacheStats:
+        return CacheStats(
+            entries=len(self._entries),
+            torrent_hashes=sum(len(h) for h in self._entry_hashes.values()),
+            anilist_meta=len(self._anilist_meta),
+            sonarr_parse=len(self._sonarr_parse),
+            pending_imports=sum(len(recs) for recs in self._pending.values()),
+            size_bytes=0,
+        )
 
     @override
     def integrity_check(self) -> str:
@@ -365,7 +367,7 @@ class FakeSeaDexSource(SeaDexSource):
         self.prefetch_calls: list[list[int]] = []
 
     @override
-    def prefetch(self, al_ids: Iterable[int], *, progress: PrefetchProgress | None = None) -> int:
+    def prefetch(self, al_ids: Iterable[int], *, progress: ProgressSink | None = None) -> int:
         del progress
         ids = list(al_ids)
         self.prefetch_calls.append(ids)

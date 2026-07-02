@@ -16,11 +16,11 @@ from . import coverage as _coverage
 from .anilist import get_anilist_format, get_anilist_n_eps
 from .config import AppConfig
 from .mappings import MappingEntry, MappingMode, MappingSource
-from .protocols import EpisodeProgress
 from .radarr_client import IdField, collect_anime_items
 from .seadex_arr import RunDeps, SeaDexArr
 from .seadex_types import (
     ArrReleaseDict,
+    ProgressSink,
     SonarrEpisode,
     SonarrItem,
     TvdbMappings,
@@ -198,7 +198,7 @@ class SonarrEpisodes:
             tuple(self.anibridge.id_set(f.mapping_key) if self.anibridge else set() for f in fields),
         )
 
-    def prefetch(self, items: list[SonarrItem], *, progress: EpisodeProgress | None = None) -> int:
+    def prefetch(self, items: list[SonarrItem], *, progress: ProgressSink | None = None) -> int:
         """Warm the per-series episode lists CONCURRENTLY before the scan loop.
 
         One sequential ``/api/v3/episode`` round-trip per processed series is the
@@ -220,7 +220,7 @@ class SonarrEpisodes:
         Args:
             items (list[SonarrItem]): The run's series list (already narrowed for
                 a single-series run).
-            progress (EpisodeProgress | None): Boot cockpit step fed per-series
+            progress (ProgressSink | None): Boot cockpit step fed per-series
                 fraction + "done/total" detail as each fetch completes; None
                 outside the cockpit.
 

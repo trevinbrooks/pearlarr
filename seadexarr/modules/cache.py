@@ -46,14 +46,13 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, TypedDict, cast, override
+from typing import Any, NamedTuple, TypedDict, cast, override
 
 from seadex import EntryRecord
 
 from .config import Arr
 from .sqlite_util import connect as _sqlite_connect
-from .sqlite_util import is_corruption as _is_corruption
-from .sqlite_util import quarantine_corrupt
+from .sqlite_util import open_or_quarantine
 from .. import __version__
 
 # Timestamp format for cache record fields (entry ``updated_at`` and the AniList
@@ -209,6 +208,33 @@ _ENTRY_SCALAR_COLUMNS = ("name", "url", "coverage", "updated_at")
 _NO_HASH = ""
 
 
+class _JsonBlock(NamedTuple):
+    """One JSONB (``record`` BLOB) block: its table and key column(s).
+
+    A closed allowlist - these names are interpolated into the ``_json_*``
+    helpers' SQL, so they must only ever come from the constants below.
+    """
+
+    table: str
+    key_cols: tuple[str, ...]
+
+
+_ANILIST_META = _JsonBlock("anilist_meta", ("al_id",))
+_SONARR_PARSE = _JsonBlock("sonarr_parse", ("filename",))
+_PENDING_IMPORTS = _JsonBlock("pending_imports", ("arr", "infohash"))
+
+
+class CacheStats(NamedTuple):
+    """Row counts per cache table plus the on-disk size in bytes."""
+
+    entries: int
+    torrent_hashes: int
+    anilist_meta: int
+    sonarr_parse: int
+    pending_imports: int
+    size_bytes: int
+
+
 def _arr_key(arr: Arr) -> str:
     """The text stored for an ``Arr`` (``"sonarr"`` / ``"radarr"``).
 
@@ -317,7 +343,7 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def drop_pending(self, arr: Arr, infohash: str) -> None: ...
     @abstractmethod
-    def stats(self) -> dict[str, int]: ...
+    def stats(self) -> CacheStats: ...
     @abstractmethod
     def integrity_check(self) -> str: ...
 
@@ -370,33 +396,19 @@ class CacheStore(AbstractCacheStore):
         """
 
         exists = os.path.exists(path)
-        conn: sqlite3.Connection | None = None
-        try:
-            conn = _connect(path if exists else ":memory:")
-            # Ensure the schema before any staged write (executescript implicitly
-            # COMMITs first, a no-op here since nothing is staged yet).
-            conn.executescript(_SCHEMA)
-        except sqlite3.DatabaseError as exc:
-            if conn is not None:
-                with contextlib.suppress(sqlite3.Error):
-                    conn.close()
-            if not _is_corruption(exc):
-                # A transient/operational error (locked, disk I/O) is NOT corruption.
-                # Fail closed - re-raise rather than destructively quarantining a
-                # healthy cache (and its pending_imports) on a fluke. The run's outer
-                # handler logs it and the cache is retried next cycle.
-                raise
-            # A real not-a-database / torn file: quarantine it and start fresh in
-            # memory (promoted on the first real save), so a corrupt cache fails open
-            # instead of crash-looping every run.
-            quarantine_corrupt(
-                path,
-                logger=logger,
-                what="Cache database",
-                recovery="started a fresh cache (entries will be re-checked this run).",
-            )
-            conn = _connect(":memory:")
-            conn.executescript(_SCHEMA)
+        # Fail-closed on transient errors, fail-open (quarantine + :memory:) on real
+        # corruption; the in-memory fallback is promoted on the first real save.
+        # Schema is ensured before any staged write (executescript implicitly
+        # COMMITs first, a no-op here since nothing is staged yet).
+        conn, fell_back = open_or_quarantine(
+            path if exists else ":memory:",
+            connect_fn=_connect,
+            ensure=lambda c: c.executescript(_SCHEMA),
+            logger=logger,
+            what="Cache database",
+            recovery="started a fresh cache (entries will be re-checked this run).",
+        )
+        if fell_back:
             exists = False
         store = cls(conn, path, on_memory=not exists)
         if not exists and migrate_from and os.path.exists(migrate_from):
@@ -711,6 +723,47 @@ class CacheStore(AbstractCacheStore):
                 [(arr_key, al_id, _NO_HASH if h is None else h) for h in hashes],
             )
 
+    # -- JSONB record blocks (shared plumbing) --------------------------------
+    # Table/column names come only from the closed _JsonBlock constants, so the
+    # f-string SQL isn't an injection surface (same pattern as stats()).
+
+    def _json_get(self, block: _JsonBlock, key: tuple[int | str, ...]) -> dict[str, Any] | None:
+        """The stored record under ``key`` in a JSONB block, or None."""
+
+        where = " AND ".join(f"{c} = ?" for c in block.key_cols)
+        row = self._conn.execute(
+            f"SELECT json(record) FROM {block.table} WHERE {where}",  # noqa: S608
+            key,
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def _json_put(self, block: _JsonBlock, key: tuple[int | str, ...], record: dict[str, Any]) -> None:
+        """Upsert a record into a JSONB block (staged; persisted at a save point)."""
+
+        cols = ", ".join(block.key_cols)
+        placeholders = ", ".join("?" for _ in block.key_cols)
+        self._conn.execute(
+            f"INSERT INTO {block.table} ({cols}, record) VALUES ({placeholders}, jsonb(?)) "  # noqa: S608
+            f"ON CONFLICT ({cols}) DO UPDATE SET record = excluded.record",
+            (*key, json.dumps(record)),
+        )
+
+    def _evict_stale_json(self, block: _JsonBlock, cutoff: datetime) -> int:
+        """Delete records older than ``cutoff`` (or stamp-less); count deleted.
+
+        Hits the block's indexed generated ``fetched_at`` column, so it's an index
+        range-delete, not a scan. Staged like any write - committed at the next
+        save point, discarded in a preview. A NULL ``fetched_at`` (a legacy /
+        hand-edited record with no stamp) is unreadable AND would otherwise be
+        un-evictable forever, so it's swept too.
+        """
+
+        cursor = self._conn.execute(
+            f"DELETE FROM {block.table} WHERE fetched_at < ? OR fetched_at IS NULL",  # noqa: S608
+            (cutoff.strftime(UPDATED_AT_STR_FORMAT),),
+        )
+        return cursor.rowcount
+
     # -- AniList meta (JSONB + TTL) ------------------------------------------
 
     @override
@@ -730,21 +783,13 @@ class CacheStore(AbstractCacheStore):
     def get_anilist_meta(self, al_id: int) -> dict[str, Any] | None:
         """The stored ``{"fetched_at", "data"}`` record for an id, or None."""
 
-        row = self._conn.execute(
-            "SELECT json(record) FROM anilist_meta WHERE al_id = ?",
-            (al_id,),
-        ).fetchone()
-        return json.loads(row[0]) if row else None
+        return self._json_get(_ANILIST_META, (al_id,))
 
     @override
     def put_anilist_meta(self, al_id: int, record: dict[str, Any]) -> None:
         """Upsert an AniList-meta record (staged; persisted at a save point)."""
 
-        self._conn.execute(
-            "INSERT INTO anilist_meta (al_id, record) VALUES (?, jsonb(?)) "
-            "ON CONFLICT (al_id) DO UPDATE SET record = excluded.record",
-            (al_id, json.dumps(record)),
-        )
+        self._json_put(_ANILIST_META, (al_id,), record)
 
     # -- Sonarr parse cache (JSONB + TTL) ------------------------------------
 
@@ -752,21 +797,13 @@ class CacheStore(AbstractCacheStore):
     def get_sonarr_parse(self, filename: str) -> dict[str, Any] | None:
         """The stored ``{"fetched_at", "episodes"}`` record for a filename, or None."""
 
-        row = self._conn.execute(
-            "SELECT json(record) FROM sonarr_parse WHERE filename = ?",
-            (filename,),
-        ).fetchone()
-        return json.loads(row[0]) if row else None
+        return self._json_get(_SONARR_PARSE, (filename,))
 
     @override
     def put_sonarr_parse(self, filename: str, record: dict[str, Any]) -> None:
         """Upsert a Sonarr parse record (staged; persisted at a save point)."""
 
-        self._conn.execute(
-            "INSERT INTO sonarr_parse (filename, record) VALUES (?, jsonb(?)) "
-            "ON CONFLICT (filename) DO UPDATE SET record = excluded.record",
-            (filename, json.dumps(record)),
-        )
+        self._json_put(_SONARR_PARSE, (filename,), record)
 
     # -- pending imports -----------------------------------------------------
 
@@ -811,11 +848,7 @@ class CacheStore(AbstractCacheStore):
     def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
         """Upsert a pending-import record (staged; persisted at a save point)."""
 
-        self._conn.execute(
-            "INSERT INTO pending_imports (arr, infohash, record) VALUES (?, ?, jsonb(?)) "
-            "ON CONFLICT (arr, infohash) DO UPDATE SET record = excluded.record",
-            (_arr_key(arr), infohash, json.dumps(record)),
-        )
+        self._json_put(_PENDING_IMPORTS, (_arr_key(arr), infohash), record)
 
     @override
     def drop_pending(self, arr: Arr, infohash: str) -> None:
@@ -832,53 +865,49 @@ class CacheStore(AbstractCacheStore):
     def evict_anilist_meta(self, cutoff: datetime) -> int:
         """Delete AniList-meta records older than ``cutoff`` (or stamp-less); count.
 
-        Hits the indexed generated ``fetched_at`` column, so it's an index
-        range-delete, not a scan. Staged like any write - committed at the next save
-        point, discarded in a preview - so it only frees rows the gateway already
-        refuses to read (older than the same TTL). A NULL ``fetched_at`` (a legacy /
-        hand-edited record with no stamp) is unreadable AND would otherwise be
-        un-evictable forever, so it's swept here too.
+        See :meth:`_evict_stale_json`: an indexed range-delete, staged like any
+        write, that only frees rows the gateway already refuses to read (older
+        than the same TTL).
         """
 
-        cursor = self._conn.execute(
-            "DELETE FROM anilist_meta WHERE fetched_at < ? OR fetched_at IS NULL",
-            (cutoff.strftime(UPDATED_AT_STR_FORMAT),),
-        )
-        return cursor.rowcount
+        return self._evict_stale_json(_ANILIST_META, cutoff)
 
     @override
     def evict_sonarr_parse(self, cutoff: datetime) -> int:
         """Delete Sonarr parse records older than ``cutoff`` (or stamp-less); count.
 
-        A NULL ``fetched_at`` (stamp-less legacy record) is unreadable and otherwise
-        un-evictable, so it's swept here too - mirroring :meth:`evict_anilist_meta`.
+        Mirrors :meth:`evict_anilist_meta` (see :meth:`_evict_stale_json`).
         """
 
-        cursor = self._conn.execute(
-            "DELETE FROM sonarr_parse WHERE fetched_at < ? OR fetched_at IS NULL",
-            (cutoff.strftime(UPDATED_AT_STR_FORMAT),),
-        )
-        return cursor.rowcount
+        return self._evict_stale_json(_SONARR_PARSE, cutoff)
+
+    def _count(self, table: str) -> int:
+        """Row count of one table; the name comes from stats()'s closed literals."""
+
+        row = self._conn.execute(f"SELECT count(*) FROM {table}").fetchone()  # noqa: S608
+        return int(row[0]) if row else 0
 
     @override
-    def stats(self) -> dict[str, int]:
+    def stats(self) -> CacheStats:
         """Row counts per table plus the on-disk size in bytes (0 while in memory).
 
         A cheap health snapshot for the ``cache stats`` command / a run-end log:
         how big is each block, and how big is the db (incl. its WAL).
         """
 
-        out: dict[str, int] = {}
-        for table in ("entries", "torrent_hashes", "anilist_meta", "sonarr_parse", "pending_imports"):
-            row = self._conn.execute(f"SELECT count(*) FROM {table}").fetchone()  # noqa: S608
-            out[table] = int(row[0]) if row else 0
         size = 0
         if not self._on_memory:
             for suffix in ("", "-wal"):
                 with contextlib.suppress(OSError):
                     size += os.path.getsize(self._path + suffix)
-        out["size_bytes"] = size
-        return out
+        return CacheStats(
+            entries=self._count("entries"),
+            torrent_hashes=self._count("torrent_hashes"),
+            anilist_meta=self._count("anilist_meta"),
+            sonarr_parse=self._count("sonarr_parse"),
+            pending_imports=self._count("pending_imports"),
+            size_bytes=size,
+        )
 
     @override
     def integrity_check(self) -> str:

@@ -340,13 +340,23 @@ class TorrentProbe:
     bytes_total: int | None = None
 
 
+class TorrentTelemetry(NamedTuple):
+    """One info row's sanitized telemetry, field-for-field what ``TorrentProbe`` carries."""
+
+    progress: float
+    speed_bps: int | None
+    eta_s: int | None
+    bytes_done: int | None
+    bytes_total: int | None
+
+
 def sanitize_torrent_telemetry(
     progress: object,
     dlspeed: object,
     eta: object,
     completed: object,
     size: object,
-) -> tuple[float, int | None, int | None, int | None, int | None]:
+) -> TorrentTelemetry:
     """Fold one qBittorrent info row's raw telemetry into sanitized fields.
 
     Pure (no I/O), so the sentinel handling is unit-testable without a client.
@@ -355,9 +365,6 @@ def sanitize_torrent_telemetry(
     coerced to non-negative ints (None when unknown) and ``completed`` is clamped
     to ``size``. Inputs are typed ``object`` because the values come off an
     untyped qBittorrent attribute read (``getattr``), which can hand back None.
-
-    Returns:
-        tuple: ``(progress, speed_bps, eta_s, bytes_done, bytes_total)``.
     """
 
     frac = _as_float(progress)
@@ -375,7 +382,7 @@ def sanitize_torrent_telemetry(
     bytes_done = max(0, raw_done) if raw_done is not None and raw_done > 0 else None
     if bytes_done is not None and bytes_total is not None:
         bytes_done = min(bytes_done, bytes_total)
-    return frac, speed_bps, eta_s, bytes_done, bytes_total
+    return TorrentTelemetry(frac, speed_bps, eta_s, bytes_done, bytes_total)
 
 
 def _as_float(value: object) -> float | None:

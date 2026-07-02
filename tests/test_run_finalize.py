@@ -15,12 +15,12 @@ pinned by asserting recorded state.
 
 import logging
 
-from seadexarr.modules.anilist_gateway import PrefetchProgress
 from seadexarr.modules.config import Arr
 from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.protocols import ImportCompleter
 from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.seadex_arr import SeaDexArr
+from seadexarr.modules.seadex_types import ProgressSink
 
 from .builders import make_bare_instance, make_config
 from .fakes import CaptureHandler, FakeArrItem, FakeStrategy
@@ -37,7 +37,7 @@ class _FakeGateway:
         ids: object,
         *,
         preview: bool = False,
-        progress: PrefetchProgress | None = None,
+        progress: ProgressSink | None = None,
     ) -> int:
         del ids, preview, progress
         return 0
