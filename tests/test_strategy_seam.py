@@ -24,7 +24,7 @@ from seadexarr.modules.manual_import import (
     PendingImport,
     resolve_language_objects,
 )
-from seadexarr.modules.mappings import MappingEntry, MappingSource, TmdbType
+from seadexarr.modules.mappings import MappingEntry, MappingSource
 from seadexarr.modules.protocols import EpisodeProgress
 from seadexarr.modules.seadex_radarr import RadarrSync
 from seadexarr.modules.seadex_sonarr import SonarrSync
@@ -84,7 +84,6 @@ class GetAniListIdsCall(NamedTuple):
     tvdb_id: int | None = None
     tmdb_id: int | None = None
     imdb_id: str | None = None
-    tmdb_type: TmdbType = TmdbType.MOVIE
     log_ignored: bool = True
 
 
@@ -120,11 +119,10 @@ class _FakeRunServices:
         tvdb_id: int | None = None,
         tmdb_id: int | None = None,
         imdb_id: str | None = None,
-        tmdb_type: TmdbType = TmdbType.MOVIE,
         log_ignored: bool = True,
     ) -> dict[int, MappingEntry]:
         self.get_anilist_ids_calls.append(
-            GetAniListIdsCall(tvdb_id, tmdb_id, imdb_id, tmdb_type, log_ignored),
+            GetAniListIdsCall(tvdb_id, tmdb_id, imdb_id, log_ignored),
         )
         return self._anilist_ids
 

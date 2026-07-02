@@ -482,7 +482,7 @@ class SeaDexArr:
         self,
         al_id: int,
         cache_details: CacheRecord | None = None,
-    ) -> bool:
+    ) -> None:
         """Merge ``cache_details`` into an entry's cache record (in-memory only).
 
         The run's save points flush it; see ``CacheStore.update_cache``.
@@ -493,7 +493,7 @@ class SeaDexArr:
                 to None
         """
 
-        return self.cache_store.update_cache(self._ctx.arr, al_id, cache_details)
+        self.cache_store.update_cache(self._ctx.arr, al_id, cache_details)
 
     def no_releases_skip(
         self,

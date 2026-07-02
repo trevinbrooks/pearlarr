@@ -64,7 +64,9 @@ class TestCacheRoundTrip:
         # The restored db still holds the original entry.
         store = CacheStore.open_readonly(str(tmp_path / "cache.db"))
         try:
-            assert store.get_cached_name(Arr.SONARR, 7) == "X"
+            entry = store.get_entry(Arr.SONARR, 7)
+            assert entry is not None
+            assert entry.name == "X"
         finally:
             store.close()
 

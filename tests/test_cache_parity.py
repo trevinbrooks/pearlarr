@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from seadexarr.modules.cache import AbstractCacheStore, CacheField, CacheRecord, CacheStore
+from seadexarr.modules.cache import AbstractCacheStore, CacheRecord, CacheStore
 from seadexarr.modules.config import Arr
 
 from .builders import FakeCacheStore, make_entry_record
@@ -80,9 +80,6 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
     return {
         "entry_s7": store.get_entry(Arr.SONARR, 7),
         "entry_missing": store.get_entry(Arr.SONARR, 4242),
-        "name_s7": store.get_cached_name(Arr.SONARR, 7),
-        "url_s7": store.get_cached_field(Arr.SONARR, 7, CacheField.URL),
-        "coverage_s7": store.get_cached_field(Arr.SONARR, 7, CacheField.COVERAGE),
         "hashes_s7": store.torrent_hashes(Arr.SONARR, 7),
         "hashes_r99": store.torrent_hashes(Arr.RADARR, 99),
         "check_match": store.check_al_id_in_cache(Arr.SONARR, 7, match_entry),
@@ -90,7 +87,7 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
         "anilist_7": store.get_anilist_meta(7),
         "anilist_all": dict(store.iter_anilist_meta()),
         "sonarr_parse_fresh": store.get_sonarr_parse("fresh.mkv"),
-        "sonarr_parse_all": dict(store.iter_sonarr_parse()),
+        "sonarr_parse_stale": store.get_sonarr_parse("stale.mkv"),
         "pending_sonarr": store.get_pending(Arr.SONARR),
         "pending_series7": store.get_pending_for_series(Arr.SONARR, 7),
         "stats_no_size": {k: v for k, v in stats.items() if k != "size_bytes"},
@@ -118,6 +115,14 @@ _ISO_AL = 4242
 _ISO_FILE = "iso.mkv"
 _ISO_SID = 7
 
+
+def _sonarr_parse_records(store: AbstractCacheStore) -> list[dict[str, Any]]:
+    """The sonarr_parse block's collection read (per-filename; it has no iterator)."""
+
+    rec = store.get_sonarr_parse(_ISO_FILE)
+    return [] if rec is None else [rec]
+
+
 # The three blocks the real store round-trips through JSON on both ends. Each carries
 # series_id so the pending block's get_pending_for_series filter matches the record.
 _JSONB_BLOCKS: tuple[_JsonbBlock, ...] = (
@@ -140,7 +145,7 @@ _JSONB_BLOCKS: tuple[_JsonbBlock, ...] = (
         "sonarr_parse",
         put=lambda s, r: s.put_sonarr_parse(_ISO_FILE, r),
         get=lambda s: s.get_sonarr_parse(_ISO_FILE),
-        iter_records=lambda s: [rec for _fn, rec in s.iter_sonarr_parse()],
+        iter_records=_sonarr_parse_records,
     ),
 )
 

@@ -73,9 +73,9 @@ class ImportWaitMode(StrEnum):
     """When (if ever) the manual-import wait/import runs, resolved cli > config.
 
     A ``StrEnum`` so each member IS its config/CLI string (``ImportWaitMode.OFF``
-    is and serializes as ``"off"``), matching the :class:`CacheField` style. The
-    mode only controls *when* the import runs; all non-off modes share the same
-    durable :class:`PendingImport` substrate.
+    is and serializes as ``"off"``). The mode only controls *when* the import
+    runs; all non-off modes share the same durable :class:`PendingImport`
+    substrate.
     """
 
     OFF = "off"

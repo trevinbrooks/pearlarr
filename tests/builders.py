@@ -18,13 +18,19 @@ import logging
 from collections.abc import Iterable, Iterator
 from copy import deepcopy
 from datetime import datetime
-from typing import Any, cast, override
+from typing import Any, override
 
 import requests
 from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
 from seadexarr.modules.anilist_gateway import AniListGateway
-from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, CachedEntry, CacheField, CacheRecord
+from seadexarr.modules.cache import (
+    _ENTRY_SCALAR_COLUMNS,
+    UPDATED_AT_STR_FORMAT,
+    AbstractCacheStore,
+    CachedEntry,
+    CacheRecord,
+)
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.grab_pipeline import GrabPipeline
 from seadexarr.modules.import_wait import ImportWaitManager
@@ -139,12 +145,9 @@ def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
     return obj
 
 
-# The scalar entry columns ``update_cache`` merges, derived from the public
-# ``CacheField`` vocabulary (every field but the hash set) so the fake can't drift
-# from the real ``CacheStore``'s ``_ENTRY_SCALAR_COLUMNS``.
-_FAKE_SCALAR_FIELDS: tuple[str, ...] = tuple(
-    field.value for field in CacheField if field is not CacheField.TORRENT_HASHES
-)
+# The scalar entry columns ``update_cache`` merges: the real store's own tuple, so
+# the fake can't drift from ``CacheStore``.
+_FAKE_SCALAR_FIELDS: tuple[str, ...] = _ENTRY_SCALAR_COLUMNS
 
 
 def _evict_stale[K](store: dict[K, dict[str, Any]], cutoff: datetime) -> int:
@@ -220,7 +223,7 @@ class FakeCacheStore(AbstractCacheStore):
         arr: Arr,
         al_id: int,
         cache_details: CacheRecord | None = None,
-    ) -> bool:
+    ) -> None:
         """Partial-merge the supplied scalars; replace the hash set if given."""
 
         details: dict[str, Any] = dict(cache_details) if cache_details else {}
@@ -240,7 +243,6 @@ class FakeCacheStore(AbstractCacheStore):
             # planner dedups on (the real PK leaves NULLs distinct; update_cache
             # collapses the input to one None just like this).
             self._entry_hashes[key] = list(dict.fromkeys(hashes))
-        return True
 
     @override
     def check_al_id_in_cache(
@@ -270,22 +272,6 @@ class FakeCacheStore(AbstractCacheStore):
         )
 
     @override
-    def get_cached_name(self, arr: Arr, al_id: int) -> str | None:
-        return cast("str | None", self.get_cached_field(arr, al_id, CacheField.NAME))
-
-    @override
-    def get_cached_field(
-        self,
-        arr: Arr,
-        al_id: int,
-        field: CacheField,
-    ) -> object | None:
-        if field == CacheField.TORRENT_HASHES:
-            return self.torrent_hashes(arr, al_id)
-        entry = self._entries.get((str(arr), al_id))
-        return None if entry is None else entry.get(field.value)
-
-    @override
     def torrent_hashes(self, arr: Arr, al_id: int) -> list[str | None]:
         """The entry's hashes, ordered None-first then ascending (mirrors ORDER BY)."""
 
@@ -312,10 +298,6 @@ class FakeCacheStore(AbstractCacheStore):
         return _evict_stale(self._anilist_meta, cutoff)
 
     # -- Sonarr parse cache (TTL-swept) --
-    @override
-    def iter_sonarr_parse(self) -> Iterator[tuple[str, dict[str, Any]]]:
-        yield from ((filename, deepcopy(rec)) for filename, rec in list(self._sonarr_parse.items()))
-
     @override
     def get_sonarr_parse(self, filename: str) -> dict[str, Any] | None:
         return deepcopy(self._sonarr_parse.get(filename))

@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 import seadexarr
-from seadexarr.modules.cache import CacheField, CacheStore
+from seadexarr.modules.cache import CacheStore
 from seadexarr.modules.config import Arr
 from seadexarr.modules.sqlite_util import is_corruption
 
@@ -25,6 +25,13 @@ from .builders import make_entry_record
 # Stand-in for a config-file checksum. ``CacheStore`` only stamps and compares the
 # value it is handed; it never computes one, so any string works here.
 CHECKSUM = "0123456789abcdef0123456789abcdef"
+
+
+def _entry_name(store: CacheStore, al_id: int, arr: Arr = Arr.SONARR) -> str | None:
+    """The entry's stored name via ``get_entry`` (None when the row is absent)."""
+
+    entry = store.get_entry(arr, al_id)
+    return None if entry is None else entry.name
 
 
 def _raise_os_replace(*_args: object, **_kwargs: object) -> None:
@@ -48,7 +55,7 @@ class TestSchemaAndDescriptor:
         store = _open(tmp_path)
         # Nothing on disk yet, and reads work against the empty in-memory schema.
         assert not (tmp_path / "cache.db").exists()
-        assert store.get_cached_name(Arr.SONARR, 7) is None
+        assert store.get_entry(Arr.SONARR, 7) is None
         store.close()
 
     def test_descriptor_persists_version_and_checksum(self, tmp_path: Path) -> None:
@@ -71,28 +78,22 @@ class TestSchemaAndDescriptor:
 
 
 class TestEntries:
-    def test_update_and_read_back_fields(self, tmp_path: Path) -> None:
-        store = _open(tmp_path)
-        store.update_cache(Arr.SONARR, 7, {"name": "Title", "url": "u"})
-        assert store.get_cached_name(Arr.SONARR, 7) == "Title"
-        assert store.get_cached_field(Arr.SONARR, 7, CacheField.URL) == "u"
-        assert store.get_cached_field(Arr.SONARR, 999, CacheField.NAME) is None
-        store.close()
-
     def test_update_cache_is_a_partial_merge(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"name": "Title", "url": "u"})
         # A later update with only one field must not wipe the others.
         store.update_cache(Arr.SONARR, 7, {"coverage": "S01"})
-        assert store.get_cached_name(Arr.SONARR, 7) == "Title"
-        assert store.get_cached_field(Arr.SONARR, 7, CacheField.URL) == "u"
-        assert store.get_cached_field(Arr.SONARR, 7, CacheField.COVERAGE) == "S01"
+        entry = store.get_entry(Arr.SONARR, 7)
+        assert entry is not None
+        assert (entry.name, entry.url, entry.coverage) == ("Title", "u", "S01")
         store.close()
 
     def test_update_cache_formats_datetime_timestamp(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 6, 5, 4, 3, 2)})
-        assert store.get_cached_field(Arr.SONARR, 7, CacheField.UPDATED_AT) == "2021-06-05 04:03:02"
+        entry = store.get_entry(Arr.SONARR, 7)
+        assert entry is not None
+        assert entry.updated_at == "2021-06-05 04:03:02"
         store.close()
 
     def test_check_al_id_in_cache_matches_timestamp(self, tmp_path: Path) -> None:
@@ -118,8 +119,8 @@ class TestEntries:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"name": "S"})
         store.update_cache(Arr.RADARR, 7, {"name": "R"})
-        assert store.get_cached_name(Arr.SONARR, 7) == "S"
-        assert store.get_cached_name(Arr.RADARR, 7) == "R"
+        assert _entry_name(store, 7, Arr.SONARR) == "S"
+        assert _entry_name(store, 7, Arr.RADARR) == "R"
         store.close()
 
     def test_get_entry_reads_all_scalar_columns_at_once(self, tmp_path: Path) -> None:
@@ -206,7 +207,7 @@ class TestPreviewGate:
 
         assert (tmp_path / "cache.db").exists()
         reopened = _open(tmp_path)
-        assert reopened.get_cached_name(Arr.SONARR, 7) == "Title"
+        assert _entry_name(reopened, 7) == "Title"
         reopened.close()
 
     def test_preview_on_existing_db_does_not_mutate_committed_state(self, tmp_path: Path) -> None:
@@ -224,8 +225,8 @@ class TestPreviewGate:
         preview.close()
 
         reopened = _open(tmp_path)
-        assert reopened.get_cached_name(Arr.SONARR, 7) == "Original"  # not "Changed"
-        assert reopened.get_cached_name(Arr.SONARR, 8) is None  # never added
+        assert _entry_name(reopened, 7) == "Original"  # not "Changed"
+        assert reopened.get_entry(Arr.SONARR, 8) is None  # never added
         reopened.close()
 
 
@@ -250,13 +251,12 @@ class TestAnilistMeta:
 
 
 class TestSonarrParse:
-    def test_roundtrip_get_and_iter(self, tmp_path: Path) -> None:
+    def test_roundtrip_get(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         rec = {"fetched_at": "2026-06-20 12:00:00", "episodes": [{"season": 1, "episode": 2}]}
         store.put_sonarr_parse("file.mkv", rec)
         assert store.get_sonarr_parse("file.mkv") == rec
         assert store.get_sonarr_parse("missing.mkv") is None
-        assert dict(store.iter_sonarr_parse()) == {"file.mkv": rec}
         store.close()
 
 
@@ -330,7 +330,7 @@ class TestLegacyMigration:
 
         store = CacheStore.load(db, config_checksum=CHECKSUM, migrate_from=str(legacy))
         # Seeded rows are visible before promotion (staged in the in-memory db).
-        assert store.get_cached_name(Arr.SONARR, 7) == "T"
+        assert _entry_name(store, 7) == "T"
         store.save(preview=False)  # promote -> create cache.db + retire legacy
         store.close()
 
@@ -339,8 +339,9 @@ class TestLegacyMigration:
         assert (tmp_path / "cache.json.migrated").exists()
 
         reopened = CacheStore.load(db, config_checksum=CHECKSUM)
-        assert reopened.get_cached_field(Arr.SONARR, 7, CacheField.URL) == "u"
-        assert reopened.get_cached_field(Arr.SONARR, 7, CacheField.COVERAGE) == "S01"
+        entry = reopened.get_entry(Arr.SONARR, 7)
+        assert entry is not None
+        assert (entry.url, entry.coverage) == ("u", "S01")
         # legacy ["aaa", None, "bbb"] -> None marker preserved (de-duped, order-free)
         assert set(reopened.torrent_hashes(Arr.SONARR, 7)) == {"aaa", "bbb", None}
         assert reopened.check_al_id_in_cache(Arr.SONARR, 7, make_entry_record(updated_at=datetime(2021, 6, 5, 4, 3, 2)))
@@ -387,7 +388,7 @@ class TestLegacyMigration:
 
         # A subsequent real run re-migrates everything (the data was never lost).
         again = CacheStore.load(db, config_checksum=CHECKSUM, migrate_from=str(legacy))
-        assert again.get_cached_name(Arr.SONARR, 7) == "T"
+        assert _entry_name(again, 7) == "T"
         assert again.get_pending(Arr.SONARR) == {"h1": {"infohash": "h1", "series_id": 5}}
         again.save(preview=False)
         again.close()
@@ -524,7 +525,7 @@ class TestCorruptStore:
 
         # Must NOT raise - fail open to a fresh store.
         store = CacheStore.load(str(db), config_checksum=CHECKSUM)
-        assert store.get_cached_name(Arr.SONARR, 7) is None
+        assert store.get_entry(Arr.SONARR, 7) is None
         store.update_cache(Arr.SONARR, 7, {"name": "Recovered"})
         store.save(preview=False)
         store.close()
@@ -532,5 +533,5 @@ class TestCorruptStore:
         # The corrupt file was moved aside; a fresh, working db took its place.
         assert len(list(tmp_path.glob("cache.db.corrupt-*"))) == 1
         reopened = CacheStore.load(str(db), config_checksum=CHECKSUM)
-        assert reopened.get_cached_name(Arr.SONARR, 7) == "Recovered"
+        assert _entry_name(reopened, 7) == "Recovered"
         reopened.close()

@@ -46,7 +46,6 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from enum import StrEnum
 from typing import Any, TypedDict, cast, override
 
 from seadex import EntryRecord
@@ -130,10 +129,9 @@ def record_is_fresh(
     *,
     payload_key: str,
     ttl_days: int,
-    stamp_key: str = "fetched_at",
     cutoff: datetime | None = None,
 ) -> bool:
-    """True if a persisted record has a payload and its stamp is within TTL.
+    """True if a persisted record has a payload and its ``fetched_at`` is within TTL.
 
     Shared freshness check for the raw, stringly-keyed cache records (the AniList
     ``anilist_meta`` records and the Sonarr parse-cache records), so the load
@@ -147,8 +145,6 @@ def record_is_fresh(
             payload (e.g. ``"data"`` for AniList, ``"episodes"`` for Sonarr).
         ttl_days (int): TTL window in days, used to derive ``cutoff`` when one
             isn't supplied.
-        stamp_key (str): Record key holding the strftime'd fetch timestamp.
-            Defaults to ``"fetched_at"``.
         cutoff (datetime | None): Precomputed freshness cutoff. Pass this once per
             loop so ``datetime.now()`` isn't recomputed per record; when None it's
             derived from ``ttl_days`` against the current time.
@@ -159,27 +155,12 @@ def record_is_fresh(
     if not record.get(payload_key):
         return False
     try:
-        stamp = datetime.strptime(record.get(stamp_key, ""), UPDATED_AT_STR_FORMAT)
+        stamp = datetime.strptime(record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT)
     except (TypeError, ValueError):
         return False
     if cutoff is None:
         cutoff = datetime.now() - timedelta(days=ttl_days)
     return stamp >= cutoff
-
-
-class CacheField(StrEnum):
-    """The stored fields of a per-entry cache record.
-
-    A ``StrEnum`` so each member IS its column / key string: ``CacheField.URL``
-    reads (and serialized as) ``"url"``. Kept as the public read vocabulary even
-    though the backing store is now SQLite columns.
-    """
-
-    NAME = "name"
-    URL = "url"
-    COVERAGE = "coverage"
-    UPDATED_AT = "updated_at"
-    TORRENT_HASHES = "torrent_hashes"
 
 
 class CacheRecord(TypedDict, total=False):
@@ -310,13 +291,9 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None: ...
     @abstractmethod
-    def get_cached_name(self, arr: Arr, al_id: int) -> str | None: ...
-    @abstractmethod
-    def get_cached_field(self, arr: Arr, al_id: int, field: CacheField) -> object | None: ...
-    @abstractmethod
     def torrent_hashes(self, arr: Arr, al_id: int) -> list[str | None]: ...
     @abstractmethod
-    def update_cache(self, arr: Arr, al_id: int, cache_details: CacheRecord | None = None) -> bool: ...
+    def update_cache(self, arr: Arr, al_id: int, cache_details: CacheRecord | None = None) -> None: ...
     @abstractmethod
     def iter_anilist_meta(self) -> Iterator[tuple[int, dict[str, Any]]]: ...
     @abstractmethod
@@ -325,8 +302,6 @@ class AbstractCacheStore(ABC):
     def put_anilist_meta(self, al_id: int, record: dict[str, Any]) -> None: ...
     @abstractmethod
     def evict_anilist_meta(self, cutoff: datetime) -> int: ...
-    @abstractmethod
-    def iter_sonarr_parse(self) -> Iterator[tuple[str, dict[str, Any]]]: ...
     @abstractmethod
     def get_sonarr_parse(self, filename: str) -> dict[str, Any] | None: ...
     @abstractmethod
@@ -608,10 +583,6 @@ class CacheStore(AbstractCacheStore):
             (key, value),
         )
 
-    def _get_kv(self, key: str) -> str | None:
-        row = self._conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
-        return row[0] if row else None
-
     # -- per-entry records (entries + torrent_hashes) ------------------------
 
     @override
@@ -653,41 +624,6 @@ class CacheStore(AbstractCacheStore):
         return None if row is None else CachedEntry(row[0], row[1], row[2], row[3])
 
     @override
-    def get_cached_name(self, arr: Arr, al_id: int) -> str | None:
-        """The cached AniList title for an entry, if any (no AniList lookup)."""
-
-        return cast("str | None", self.get_cached_field(arr, al_id, CacheField.NAME))
-
-    @override
-    def get_cached_field(
-        self,
-        arr: Arr,
-        al_id: int,
-        field: CacheField,
-    ) -> object | None:
-        """Read a single stored field from an entry's record, if present.
-
-        Args:
-            arr (Arr): Arr instance the entry is cached under.
-            al_id (int): AniList ID.
-            field (CacheField): Field to read (NAME / URL / COVERAGE / UPDATED_AT /
-                TORRENT_HASHES).
-
-        Returns:
-            The stored value, or None if absent. TORRENT_HASHES returns the list.
-        """
-
-        if field == CacheField.TORRENT_HASHES:
-            return self.torrent_hashes(arr, al_id)
-        row = self._conn.execute(
-            # field.value is one of the fixed scalar column names (closed enum), so
-            # the f-string interpolation is not an injection surface.
-            f"SELECT {field.value} FROM entries WHERE arr = ? AND al_id = ?",  # noqa: S608
-            (_arr_key(arr), al_id),
-        ).fetchone()
-        return row[0] if row else None
-
-    @override
     def torrent_hashes(self, arr: Arr, al_id: int) -> list[str | None]:
         """Torrent hashes already remembered for an entry (empty if none).
 
@@ -713,7 +649,7 @@ class CacheStore(AbstractCacheStore):
         arr: Arr,
         al_id: int,
         cache_details: CacheRecord | None = None,
-    ) -> bool:
+    ) -> None:
         """Merge fields into an entry's record (staged; persisted at a save point).
 
         Mirrors the old dict ``.update``: only the supplied scalar fields are
@@ -775,8 +711,6 @@ class CacheStore(AbstractCacheStore):
                 [(arr_key, al_id, _NO_HASH if h is None else h) for h in hashes],
             )
 
-        return True
-
     # -- AniList meta (JSONB + TTL) ------------------------------------------
 
     @override
@@ -813,15 +747,6 @@ class CacheStore(AbstractCacheStore):
         )
 
     # -- Sonarr parse cache (JSONB + TTL) ------------------------------------
-
-    @override
-    def iter_sonarr_parse(self) -> Iterator[tuple[str, dict[str, Any]]]:
-        """Yield ``(filename, record)`` for every stored Sonarr parse record."""
-
-        for filename, rec_json in self._conn.execute(
-            "SELECT filename, json(record) FROM sonarr_parse",
-        ):
-            yield filename, json.loads(rec_json)
 
     @override
     def get_sonarr_parse(self, filename: str) -> dict[str, Any] | None:
