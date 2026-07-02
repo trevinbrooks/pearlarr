@@ -55,32 +55,33 @@ class Notifier:
 
         if result.waited == 0:
             return False
-        posted = False
-        if self.discord_url is not None:
-            elapsed = LogFormatter.format_elapsed(result.elapsed_s)
-            discord_push(
-                url=self.discord_url,
-                arr_title=f"SeaDexArr - {arr.capitalize()} wait complete",
-                al_title=(f"{result.imported} imported - {result.left} left - {result.failed} failed  ({elapsed})"),
-                seadex_url="",
-                fields=self._wait_fields(result),
-                thumb_url=None,
-            )
-            posted = True
+        elapsed = LogFormatter.format_elapsed(result.elapsed_s)
+        posted = self.push(
+            arr_title=f"SeaDexArr - {arr.capitalize()} wait complete",
+            al_title=(f"{result.imported} imported - {result.left} left - {result.failed} failed  ({elapsed})"),
+            seadex_url="",
+            fields=self._wait_fields(result),
+            thumb_url=None,
+        )
         if self.webhook_url is not None:
             posted = self._post_webhook(arr, result) or posted
         return posted
 
     @staticmethod
     def _wait_fields(result: WaitResult) -> list[dict[str, str]]:
-        """One embed field per outcome class (imported / left / failed), if any."""
+        """One embed field per outcome class (imported / left / failed), if any.
+
+        Fields are typed :class:`EmbedField`s, serialized to the plain
+        ``{"name", "value"}`` dicts at the return boundary (as in
+        :meth:`build_fields`).
+        """
 
         sections = (
             (OutcomeCategory.SUCCESS, "Imported"),
             (OutcomeCategory.DEFERRED, "Left for a later run"),
             (OutcomeCategory.FAILED, "Failed"),
         )
-        fields: list[dict[str, str]] = []
+        fields: list[EmbedField] = []
         for category, name in sections:
             labels = [r.label for r in result.rows if r.outcome.category is category]
             if not labels:
@@ -89,8 +90,8 @@ class Notifier:
             value = "\n".join(shown)
             if len(labels) > _MAX_FIELD_TITLES:
                 value += f"\n… +{len(labels) - _MAX_FIELD_TITLES} more"
-            fields.append({"name": name, "value": value})
-        return fields
+            fields.append(EmbedField(name=name, value=value))
+        return [f.to_dict() for f in fields]
 
     def _post_webhook(self, arr: str, result: WaitResult) -> bool:
         """POST the report JSON to the generic webhook; swallow request errors."""
