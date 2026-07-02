@@ -384,10 +384,6 @@ def setup_logger(
 # Number of spaces each level of the flat layout is indented by
 INDENT = "  "
 
-# Default key-column width for "key: value" detail lines, with comfortable room
-# for the longest key in use ("already have"), so the colons line up.
-KEY_WIDTH = 16
-
 # Entry "ledger" columns for one-line entry statuses (unchanged / checking /
 # skipped / no entry / in radarr / ...). Each line is "<state> <label>" with the
 # state padded to a fixed width, so the label (usually a title) starts at the
@@ -494,7 +490,7 @@ def indent_string(
 def kv_string(
     key: str,
     value: str | Text,
-    key_width: int = KEY_WIDTH,
+    key_width: int,
     indent: int = 1,
     sep: str = " :",
 ) -> str:
@@ -503,8 +499,7 @@ def kv_string(
     Args:
         key: Left-hand label
         value: Right-hand value
-        key_width: Column width the key is padded to, so the colons line up.
-            Defaults to KEY_WIDTH (16)
+        key_width: Column width the key is padded to, so the colons line up
         indent: Number of indent levels to prefix. Defaults to 1
         sep: Separator after the padded key. Defaults to " :"; pass "" for the
             colon-less gutter "label value" entry-detail format
@@ -634,7 +629,8 @@ class LogFormatter:
         value_style: str | None = None,
         level: int = logging.INFO,
         indent: int = 1,
-        key_width: int = KEY_WIDTH,
+        *,
+        key_width: int,
         sep: str = " :",
         tail: str | None = None,
         tail_style: str = "yellow",
@@ -651,7 +647,7 @@ class LogFormatter:
             value_style: Optional rich style for the value (e.g. "green")
             level: Logging level. Defaults to logging.INFO
             indent: Number of indent levels. Defaults to 1
-            key_width: Column width the key is padded to. Defaults to KEY_WIDTH (16)
+            key_width: Column width the key is padded to
             sep: Separator after the padded key. Defaults to ":"; pass "" for
                 the colon-less gutter format (see detail)
             tail: Optional emphasized suffix (console only), e.g., an "incomplete"

@@ -362,10 +362,10 @@ def test_live_model_importing_is_indeterminate_without_a_total() -> None:
 def test_wait_result_counts_by_category() -> None:
     result = WaitResult(
         (
-            WaitOutcomeRow("h1", "A", Outcome.IMPORTED),
-            WaitOutcomeRow("h2", "B", Outcome.IMPORTED),
-            WaitOutcomeRow("h3", "C", Outcome.DOWNLOAD_TIMED_OUT),
-            WaitOutcomeRow("h4", "D", Outcome.DOWNLOAD_ERRORED),
+            WaitOutcomeRow("A", Outcome.IMPORTED),
+            WaitOutcomeRow("B", Outcome.IMPORTED),
+            WaitOutcomeRow("C", Outcome.DOWNLOAD_TIMED_OUT),
+            WaitOutcomeRow("D", Outcome.DOWNLOAD_ERRORED),
         ),
         elapsed_s=600,
     )

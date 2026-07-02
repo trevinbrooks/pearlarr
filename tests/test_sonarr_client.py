@@ -63,7 +63,6 @@ def _make_pending(*, infohash: str, title: str) -> PendingImport:
         release_group="",
         is_dual_audio=False,
         seadex_files=[],
-        seadex_sizes=[],
         title=title,
         added_at="",
     )

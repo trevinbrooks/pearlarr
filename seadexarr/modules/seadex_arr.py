@@ -535,7 +535,7 @@ class SeaDexArr:
         arr: Arr,
         dry_run: bool,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
-    ) -> bool:
+    ) -> None:
         """Start a fresh run context and the run clock, and rebind collaborators
 
         Replaces the run-scoped state wholesale with a new RunContext and
@@ -563,8 +563,6 @@ class SeaDexArr:
         )
         self.begin_run(self._ctx)
 
-        return True
-
     # --- Run orchestration (shared machinery) -------------------------------
     #
     # run_sync is the shared scaffolding both Arrs use (reset stats, fetch items,
@@ -584,7 +582,7 @@ class SeaDexArr:
         dry_run: bool,
         import_wait_mode: ImportWaitMode | None = None,
         boot: BootView | None = None,
-    ) -> bool:
+    ) -> None:
         """Shared run scaffolding for both Arr syncers
 
         Generic in ``ItemT`` (the strategy's item protocol), so the body sees a
@@ -774,17 +772,14 @@ class SeaDexArr:
         # memory, so this finalize is what actually saves (and sorts by id).
         self._finalize_run()
 
-        return True
-
-    def al_id_prologue(self, al_id: int | None) -> EntryRecord | None:
+    def al_id_prologue(self, al_id: int) -> EntryRecord | None:
         """Shared per-AniList-id head: reset skip flags, tally, fetch SeaDex entry
 
-        Returns the SeaDex entry to process, or None when the id should be
-        skipped (no id, or no SeaDex entry) - the caller moves to the next id.
+        Returns the SeaDex entry to process, or None when the id has no SeaDex
+        entry - the caller moves to the next id.
 
         Args:
-            al_id (int | None): AniList id being processed; defensively None-checked
-                since the mapping dicts are built from external data
+            al_id (int): AniList id being processed
         """
 
         # Reset the per-title skip flags (and the skipped group names) before we
@@ -794,10 +789,6 @@ class SeaDexArr:
         self._ctx.unsupported_tracker_skipped = False
         self._ctx.unsupported_tracker_groups = []
         self._ctx.stats.checked += 1
-
-        if al_id is None:
-            self._reporter.log_no_anilist_id()
-            return None
 
         # Get the SeaDex entry if it exists
         sd_entry = self._seadex.entry(al_id)

@@ -158,7 +158,7 @@ class ImportExecutor:
                 return
             time.sleep(_REFRESH_COMMAND_POLL_S)
 
-    def queue_record_views(self, infohash: str) -> tuple[str, list[QueueRecordView]]:
+    def queue_record_views(self, infohash: str) -> list[QueueRecordView]:
         """Reduce this download's queue records to what :func:`classify_queue` needs.
 
         Matches records to the torrent by ``downloadId`` (case-insensitively;
@@ -173,21 +173,19 @@ class ImportExecutor:
 
         target = infohash.casefold()
         views: list[QueueRecordView] = []
-        download_id = ""
         for record in self.sonarr.queue():
             dl_id = record.download_id
             if dl_id is None or dl_id.casefold() != target:
                 continue
             if not record.state:
                 continue
-            download_id = dl_id
             views.append(
                 QueueRecordView(
                     state=record.state,
                     status=record.status or "",
                 ),
             )
-        return download_id if download_id else infohash, views
+        return views
 
     def list_commands(self) -> list[CommandResource]:
         """The current Sonarr command list, for the in-flight ManualImport guard.
@@ -238,10 +236,7 @@ class ImportExecutor:
                 gap and only logged at debug.
         """
 
-        candidates = self.sonarr.manual_import_candidates(
-            pending=pending,
-            filter_existing_files=False,
-        )
+        candidates = self.sonarr.manual_import_candidates(pending=pending)
         if candidates is None:
             # Transient (timeout / non-200); the client already warned. Ask again.
             return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
@@ -510,18 +505,12 @@ class ImportReconciler:
                     continue
 
                 # The video files this torrent should import (subs / fonts / NCED
-                # dropped), paired with their sizes for the order-based last resort.
+                # dropped).
                 video_files: list[str] = []
-                video_sizes: list[int] = []
-                for seadex_file, size in zip(
-                    url_item.files,
-                    url_item.size,
-                    strict=False,
-                ):
+                for seadex_file in url_item.files:
                     base = os.path.basename(seadex_file)
                     if is_video_candidate(base):
                         video_files.append(base)
-                        video_sizes.append(size)
 
                 # No importable video files at all -> nothing to track.
                 if not video_files:
@@ -554,7 +543,6 @@ class ImportReconciler:
                     release_group=srg,
                     is_dual_audio=url_item.is_dual_audio,
                     seadex_files=video_files,
-                    seadex_sizes=video_sizes,
                     title=anilist_title,
                     added_at=added_at,
                     coverage=coverage,
@@ -637,7 +625,7 @@ class ImportReconciler:
             )
             return probe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
 
-        _download_id, queue_records = self._executor.queue_record_views(pending.infohash)
+        queue_records = self._executor.queue_record_views(pending.infohash)
         verdict = classify_queue(queue_records)
         if verdict is QueueVerdict.WAIT:
             self.logger.debug(indent_string(f"{label}: Sonarr is importing; waiting"))

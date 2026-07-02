@@ -163,7 +163,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.refresh_count = refresh_count
         # Recorded calls: the import commands keep their full args; the plain reads
         # keep a count / arg-list so a test can assert (not-)called.
-        self.candidate_calls: list[tuple[PendingImport, bool]] = []
+        self.candidate_calls: list[PendingImport] = []
         self.execute_calls: list[tuple[list[ManualImportFile], str]] = []
         self.all_series_calls: int = 0
         self.queue_calls: int = 0
@@ -222,9 +222,8 @@ class FakeSonarrClient(AbstractSonarrClient):
         self,
         *,
         pending: PendingImport,
-        filter_existing_files: bool = False,
     ) -> list[ManualImportCandidate] | None:
-        self.candidate_calls.append((pending, filter_existing_files))
+        self.candidate_calls.append(pending)
         return self.candidates_return
 
     @override

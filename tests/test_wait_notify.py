@@ -18,10 +18,10 @@ from seadexarr.modules.wait_view import WaitOutcomeRow, WaitResult
 def _result() -> WaitResult:
     return WaitResult(
         (
-            WaitOutcomeRow("h1", "Frieren", Outcome.IMPORTED),
-            WaitOutcomeRow("h2", "Apothecary Diaries", Outcome.IMPORTED),
-            WaitOutcomeRow("h3", "Spy x Family", Outcome.DOWNLOAD_TIMED_OUT),
-            WaitOutcomeRow("h4", "Bleach TYBW", Outcome.DOWNLOAD_ERRORED),
+            WaitOutcomeRow("Frieren", Outcome.IMPORTED),
+            WaitOutcomeRow("Apothecary Diaries", Outcome.IMPORTED),
+            WaitOutcomeRow("Spy x Family", Outcome.DOWNLOAD_TIMED_OUT),
+            WaitOutcomeRow("Bleach TYBW", Outcome.DOWNLOAD_ERRORED),
         ),
         elapsed_s=4264,
     )

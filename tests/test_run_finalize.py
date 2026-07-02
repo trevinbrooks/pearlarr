@@ -113,14 +113,13 @@ class TestCapReachedFinalizesOnce:
         )
         finalize = _FinalizeRecorder()
 
-        result = _engine(finalize, logger).run_sync(
+        _engine(finalize, logger).run_sync(
             strategy,
             arr=Arr.SONARR,
             item_id=None,
             dry_run=True,
         )
 
-        assert result is True
         # The cap stopped the scan after the first id: the second item is never reached.
         assert strategy.process_calls == [1]
         # ...and the single post-loop finalize ran exactly once.

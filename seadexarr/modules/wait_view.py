@@ -151,7 +151,6 @@ class WaitSnapshot:
 class WaitOutcomeRow:
     """One torrent's terminal result, captured by the monitor for the run report."""
 
-    key: str
     label: str
     outcome: Outcome
 

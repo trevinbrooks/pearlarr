@@ -564,9 +564,6 @@ class RunReporter:
             item_title,
         )
 
-    # Both Ares reach the same "unmonitored" outcome, so this is just an alias
-    log_anilist_item_unmonitored = log_arr_item_unmonitored
-
     def log_arr_item_start(
         self,
         arr: Arr,
@@ -626,20 +623,6 @@ class RunReporter:
             EntryState.IGNORED,
             f"AniList #{al_id}",
         )
-
-    def log_no_anilist_id(self) -> bool:
-        """Produce a log message for the case where no AniList ID is found"""
-
-        self.logger.debug(
-            indent_string("-> No AL ID found. Continuing"),
-        )
-        self.logger.debug(
-            rule_string(
-                total_length=self.log_fmt.line_length,
-            ),
-        )
-
-        return True
 
     def log_no_sd_entry(
         self,

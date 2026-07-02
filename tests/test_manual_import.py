@@ -493,7 +493,6 @@ class TestPendingImportRoundTrip:
             release_group="Era-Raws",
             is_dual_audio=True,
             seadex_files=["ep1.mkv", "ep2.mkv"],
-            seadex_sizes=[1000, 2000],
             title="Some Show",
             added_at="2026-06-24 12:00:00",
             coverage="S02 E01-E12",
@@ -505,11 +504,11 @@ class TestPendingImportRoundTrip:
         rebuilt = PendingImport.from_json({"infohash": "h", "series_id": 1})
         assert rebuilt.infohash == "h"
         assert rebuilt.file_episode_map == {}
-        assert rebuilt.seadex_sizes == []
         assert rebuilt.title is None
 
-    def test_old_record_without_seadex_sizes_rehydrates(self) -> None:
-        # Back-compat: a record persisted before seadex_sizes existed still loads.
+    def test_old_record_with_unknown_keys_rehydrates(self) -> None:
+        # Back-compat: a record persisted with since-removed keys still loads
+        # (from_json reads only the known keys and ignores the rest).
         raw = {
             "infohash": "h",
             "series_id": 1,
@@ -518,10 +517,11 @@ class TestPendingImportRoundTrip:
             "release_group": "RG",
             "is_dual_audio": False,
             "seadex_files": ["a.mkv"],
+            "seadex_sizes": [1000],
             "title": "T",
             "added_at": "2026-06-24 00:00:00",
         }
-        assert PendingImport.from_json(raw).seadex_sizes == []
+        assert PendingImport.from_json(raw).infohash == "h"
 
     def test_old_record_without_coverage_url_defaults_to_none(self) -> None:
         # Migration-safe: a record persisted before coverage/url existed loads with
@@ -542,7 +542,6 @@ class TestPendingImportRoundTrip:
             release_group="RG",
             is_dual_audio=False,
             seadex_files=[],
-            seadex_sizes=[],
             title=None,
             added_at="2026-06-24 00:00:00",
         )
@@ -589,10 +588,6 @@ class TestClassifyPending:
     def test_still_downloading_is_queued(self) -> None:
         assert classify_pending(None, False) is PendingState.QUEUED
 
-    def test_timed_out_is_queued(self) -> None:
-        # A non-COMPLETE terminal that isn't missing/errored still reads queued.
-        assert classify_pending(WaitOutcome.TIMED_OUT, False) is PendingState.QUEUED
-
     def test_complete_and_files_present_is_imported(self) -> None:
         assert classify_pending(WaitOutcome.COMPLETE, True) is PendingState.IMPORTED
 
@@ -603,7 +598,7 @@ class TestClassifyPending:
 
 
 def test_wait_outcome_members_exist() -> None:
-    assert {o.name for o in WaitOutcome} == {"COMPLETE", "ERRORED", "TIMED_OUT", "MISSING"}
+    assert {o.name for o in WaitOutcome} == {"COMPLETE", "ERRORED", "MISSING"}
 
 
 def test_import_readiness_members_exist() -> None:

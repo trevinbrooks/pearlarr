@@ -110,7 +110,7 @@ class _FakeRunServices:
         self._anilist_title = anilist_title
         self._cached_skip = cached_skip
         self.get_anilist_ids_calls: list[GetAniListIdsCall] = []
-        self.al_id_prologue_calls: list[int | None] = []
+        self.al_id_prologue_calls: list[int] = []
         self.log_entry_status_calls: list[tuple[EntryState, str]] = []
         self.log_al_title_calls: list[str] = []
 
@@ -126,7 +126,7 @@ class _FakeRunServices:
         )
         return self._anilist_ids
 
-    def al_id_prologue(self, al_id: int | None) -> EntryRecord | None:
+    def al_id_prologue(self, al_id: int) -> EntryRecord | None:
         self.al_id_prologue_calls.append(al_id)
         return self._prologue_entry
 
@@ -715,7 +715,7 @@ class TestImportCompletedPayload:
         # command_issued (not yet files_present) right after issuing.
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
-        assert sonarr.candidate_calls == [(pending, False)]
+        assert sonarr.candidate_calls == [pending]
         files = sonarr.execute_calls[0][0]
         assert len(files) == 1
         entry = files[0]

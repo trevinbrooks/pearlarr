@@ -87,14 +87,13 @@ class ImportWaitMode(StrEnum):
 class WaitOutcome(Enum):
     """The result of waiting on a torrent's completion in qBittorrent.
 
-    ``COMPLETE`` -> import now; ``ERRORED``/``TIMED_OUT`` -> leave the record
-    pending for a later retry (TTL eventually drops it); ``MISSING`` -> the
-    torrent is gone from qBittorrent, so the record should be dropped.
+    ``COMPLETE`` -> import now; ``ERRORED`` -> leave the record pending for a
+    later retry (TTL eventually drops it); ``MISSING`` -> the torrent is gone
+    from qBittorrent, so the record should be dropped.
     """
 
     COMPLETE = auto()
     ERRORED = auto()
-    TIMED_OUT = auto()
     MISSING = auto()
 
 
@@ -159,16 +158,16 @@ def classify_pending(
             present in Sonarr (the only signal that promotes to ``IMPORTED``).
 
     Returns:
-        PendingState: ``MISSING`` / ``ERRORED`` for those terminal outcomes; while
-        not COMPLETE -> ``QUEUED``; COMPLETE with files present -> ``IMPORTED``;
-        COMPLETE without files present -> ``IMPORTING``.
+        PendingState: ``MISSING`` / ``ERRORED`` for those terminal outcomes;
+        ``None`` (still downloading) -> ``QUEUED``; COMPLETE with files present ->
+        ``IMPORTED``; COMPLETE without files present -> ``IMPORTING``.
     """
 
     if wait_outcome is WaitOutcome.MISSING:
         return PendingState.MISSING
     if wait_outcome is WaitOutcome.ERRORED:
         return PendingState.ERRORED
-    if wait_outcome is not WaitOutcome.COMPLETE:
+    if wait_outcome is None:
         return PendingState.QUEUED
     if files_present:
         return PendingState.IMPORTED
@@ -624,8 +623,6 @@ class PendingImport:
         is_dual_audio (bool): Whether the SeaDex release is dual-audio; selects
             the dual vs. single language list.
         seadex_files (list[str]): SeaDex filenames, for our regex quality parse.
-        seadex_sizes (list[int]): File sizes parallel to ``seadex_files``, for the
-            order-based last-resort mapping of a fully-unparseable sequential pack.
         title (str | None): Display title (logging only).
         added_at (str): When the record was written, in
             :data:`UPDATED_AT_STR_FORMAT`, used for the TTL drop.
@@ -643,7 +640,6 @@ class PendingImport:
     release_group: str
     is_dual_audio: bool
     seadex_files: list[str]
-    seadex_sizes: list[int]
     title: str | None
     added_at: str
     coverage: str | None = None
@@ -676,7 +672,6 @@ class PendingImport:
             release_group=raw.get("release_group", ""),
             is_dual_audio=raw.get("is_dual_audio", False),
             seadex_files=raw.get("seadex_files", []),
-            seadex_sizes=raw.get("seadex_sizes", []),
             title=raw.get("title"),
             added_at=raw.get("added_at", ""),
             coverage=raw.get("coverage"),

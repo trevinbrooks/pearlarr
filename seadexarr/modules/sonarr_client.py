@@ -70,7 +70,6 @@ class AbstractSonarrClient(ABC):
         self,
         *,
         pending: PendingImport,
-        filter_existing_files: bool = False,
     ) -> list[ManualImportCandidate] | None: ...
 
     @abstractmethod
@@ -303,7 +302,6 @@ class SonarrClient(AbstractSonarrClient):
         self,
         *,
         pending: PendingImport,
-        filter_existing_files: bool = False,
     ) -> list[ManualImportCandidate] | None:
         """List Sonarr's manual-import candidates for a completed download folder.
 
@@ -329,8 +327,6 @@ class SonarrClient(AbstractSonarrClient):
 
         Args:
             pending (PendingImport): The pending import record to scan for
-            filter_existing_files (bool): If True, Sonarr drops files it already
-                has imported. Sent lowercase ``true``/``false``.
 
         Returns:
             list[ManualImportCandidate] | None: The parsed candidates; ``None`` on
@@ -339,7 +335,9 @@ class SonarrClient(AbstractSonarrClient):
 
         params: dict[str, str] = {
             "downloadId": pending.infohash.upper(),
-            "filterExistingFiles": "true" if filter_existing_files else "false",
+            # Never filter existing files: our import may replace an episode's
+            # non-recommended file, whose candidate a filtered scan would drop.
+            "filterExistingFiles": "false",
             "apikey": self._api_key,
         }
         params_enc = urlencode(params)

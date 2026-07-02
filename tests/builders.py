@@ -827,7 +827,6 @@ def pending_import(**overrides: Any) -> PendingImport:
         "release_group": "SubGroup",
         "is_dual_audio": False,
         "seadex_files": ["Show - 01 [1080p].mkv"],
-        "seadex_sizes": [1000],
         "title": "Show",
         "added_at": "2026-06-24 00:00:00",
     }

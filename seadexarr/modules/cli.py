@@ -232,7 +232,7 @@ def _run_arrs(
 
 # Default command, schedule run
 @seadexarr_cli.callback(invoke_without_command=True)
-def main(ctx: typer.Context, data_dir: str | None = None) -> bool:
+def main(ctx: typer.Context, data_dir: str | None = None) -> None:
     """Run SeaDexArr in scheduled mode
 
     Will run both Radarr and Sonarr modules
@@ -252,8 +252,6 @@ def main(ctx: typer.Context, data_dir: str | None = None) -> bool:
 
     if ctx.invoked_subcommand is None:
         run_scheduled()
-
-    return True
 
 
 @seadexarr_cli.command("paths")

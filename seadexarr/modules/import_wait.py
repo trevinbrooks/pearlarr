@@ -571,7 +571,7 @@ class MonitorPass:
             phase=Phase.TERMINAL,
             outcome=outcome,
         )
-        self.results.append(WaitOutcomeRow(key=h, label=label, outcome=outcome))
+        self.results.append(WaitOutcomeRow(label=label, outcome=outcome))
         if outcome.dropped:
             self._mgr.drop_pending(h)
         self.active.discard(h)
@@ -615,7 +615,7 @@ class MonitorPass:
         if poll.outcome is WaitOutcome.ERRORED:
             self._terminal(Outcome.DOWNLOAD_ERRORED, h, label)
             return
-        if poll.outcome is not WaitOutcome.COMPLETE or not poll.content_path:
+        if not poll.content_path:
             self._terminal(Outcome.DOWNLOAD_TIMED_OUT, h, label)
             return
 

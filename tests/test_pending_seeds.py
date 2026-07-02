@@ -64,7 +64,6 @@ class TestBuildPendingSeeds:
         assert seed.title == "Show"
         assert seed.file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
         assert seed.seadex_files == ["Show - 01.mkv"]
-        assert seed.seadex_sizes == [1000]
         # A single-file torrent gets the flat fallback (its one file's ids).
         assert seed.episode_ids == [101]
 

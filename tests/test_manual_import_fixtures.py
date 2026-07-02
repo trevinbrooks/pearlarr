@@ -628,7 +628,6 @@ class TestYamadaEndToEnd:
             episode_ids=[],
             ordered_episode_ids=[8030, 8031, 8032],
             seadex_files=seadex_files,
-            seadex_sizes=[0] * len(seadex_files),
         )
 
         probe = strat.import_completed(pending, "/downloads/yamada")
@@ -661,7 +660,6 @@ class TestYamadaEndToEnd:
             episode_ids=[],
             ordered_episode_ids=[8030, 8031, 8032],
             seadex_files=seadex_files,
-            seadex_sizes=[0] * len(seadex_files),
         )
 
         strat.import_completed(pending, "/downloads/yamada")
@@ -682,7 +680,6 @@ class TestYamadaEndToEnd:
             episode_ids=[],
             ordered_episode_ids=[v[0] for v in ep_map.values()],
             seadex_files=seadex_files,
-            seadex_sizes=[0] * len(seadex_files),
         )
 
         probe = strat.import_completed(pending, "/downloads/yamada")
@@ -703,7 +700,6 @@ class TestYamadaEndToEnd:
             episode_ids=[],
             ordered_episode_ids=[v[0] for v in ep_map.values()],
             seadex_files=seadex_files,
-            seadex_sizes=[0] * len(seadex_files),
         )
 
         progress = strat.import_progress(pending)
@@ -728,7 +724,6 @@ class TestYamadaEndToEnd:
             episode_ids=[],
             ordered_episode_ids=[8030, 8031, 8032],
             seadex_files=seadex_files,
-            seadex_sizes=[0] * len(seadex_files),
         )
 
         progress = strat.import_progress(pending)
@@ -754,7 +749,6 @@ class TestYamadaEndToEnd:
             episode_ids=[],
             ordered_episode_ids=[],  # the pre-fix stuck record
             seadex_files=seadex_files,
-            seadex_sizes=[0] * len(seadex_files),
         )
 
         probe = strat.import_completed(pending, "/downloads/yamada")

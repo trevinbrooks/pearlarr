@@ -29,7 +29,7 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator
 from importlib.metadata import PackageNotFoundError, version
-from typing import Protocol, final, override
+from typing import final, override
 
 from rich.console import Console
 from rich.live import Live
@@ -46,16 +46,6 @@ from .manual_import import OutcomeCategory
 _BAR_WIDTH = 16
 # rich's own refresh cadence for the animated spinner (frames/sec).
 _REFRESH_PER_SECOND = 12.5
-
-
-class ProgressSink(Protocol):
-    """Where a slow step reports incremental progress (e.g. a mapping download).
-
-    A :class:`BootStep` IS one, so a collaborator (the mapping resolver) can drive
-    the live bar without importing the view - it just takes a ``ProgressSink``.
-    """
-
-    def progress(self, fraction: float, detail: str | None = None) -> None: ...
 
 
 @final
