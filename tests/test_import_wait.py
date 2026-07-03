@@ -19,6 +19,7 @@ reporter, qBittorrent - is a small typed fake recording what a test asserts, so
 the contracts are pinned by recorded state.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Protocol, override
 
@@ -65,7 +66,7 @@ from .builders import (
     one_release_dict,
     pending_import,
 )
-from .fakes import FakeStrategy
+from .fakes import CaptureHandler, FakeStrategy
 
 
 class FakeStateEnum:
@@ -309,7 +310,8 @@ class _RecordingStrategy(FakeStrategy):
     last), or a ``completed_error`` raised (the swallowed-import path).
     ``import_progress`` likewise records (``progress_calls``) and dispenses an
     :class:`ImportProgress`, defaulting to an indeterminate zero - the Tier-2
-    fast-poll no-op the heavy-poll tests rely on.
+    fast-poll no-op the heavy-poll tests rely on; ``progress_error`` is raised
+    ONCE on the first call (the fast-lane containment path), then cleared.
     """
 
     def __init__(
@@ -320,6 +322,7 @@ class _RecordingStrategy(FakeStrategy):
         completed_error: Exception | None = None,
         progress: ImportProgress | None = None,
         progress_sequence: list[ImportProgress] | None = None,
+        progress_error: Exception | None = None,
     ) -> None:
         super().__init__(items=[], anilist_ids={})
         self._completed = completed
@@ -328,6 +331,7 @@ class _RecordingStrategy(FakeStrategy):
         self._completed_index = 0
         self._progress = progress
         self._progress_sequence = progress_sequence
+        self._progress_error = progress_error
         self._progress_index = 0
         self.import_calls: list[_ImportCall] = []
         self.progress_calls: list[PendingImport] = []
@@ -355,6 +359,10 @@ class _RecordingStrategy(FakeStrategy):
     @override
     def import_progress(self, pending: PendingImport) -> ImportProgress:
         self.progress_calls.append(pending)
+        if self._progress_error is not None:
+            error = self._progress_error
+            self._progress_error = None  # one-shot: the next fast poll succeeds
+            raise error
         if self._progress_sequence is not None:
             idx = min(self._progress_index, len(self._progress_sequence) - 1)
             self._progress_index += 1
@@ -905,6 +913,96 @@ class TestRunMonitor:
         assert strategy.import_calls == []
         assert view.final("h").outcome is Outcome.DOWNLOAD_ERRORED
         assert set(mgr._pending_store()) == {"h"}
+
+    def test_download_timeout_is_terminal_and_leaves_record(self) -> None:
+        # The torrent never finishes: past imports.wait_timeout the row terminates
+        # DOWNLOAD_TIMED_OUT (deferred), the record stays for a later run, and the
+        # post-import category hook is never touched (SUCCESS-only). The fast lane
+        # is disabled so only heavy polls consume the script (the FakeQbit convention).
+        strategy = _RecordingStrategy()
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = CategoryQbit([[FakeTorrent(progress=0.5)]])
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending],
+            pending=[pending],
+            post_import_category="seadexarr-done",
+            import_wait_timeout=60,
+            import_ready_timeout=600,
+            import_poll_interval=30,
+            progress_poll_interval=0,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=30)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        assert strategy.import_calls == []
+        assert view.final("h").outcome is Outcome.DOWNLOAD_TIMED_OUT
+        assert set(mgr._pending_store()) == {"h"}  # left pending, not dropped
+        assert qbit.set_category_calls == []  # only a verified import moves category
+
+    def test_complete_without_content_path_times_out(self) -> None:
+        # qBittorrent reports COMPLETE but hands back no content_path to import
+        # from: terminal DOWNLOAD_TIMED_OUT, never an import attempt, record kept.
+        strategy = _RecordingStrategy()
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        mgr = make_orchestration_manager(
+            qbit=FakeQbit([[FakeTorrent(is_complete=True)]]),
+            strategy=strategy,
+            store_records=[pending],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=30)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        assert strategy.import_calls == []
+        assert view.final("h").outcome is Outcome.DOWNLOAD_TIMED_OUT
+        assert set(mgr._pending_store()) == {"h"}
+
+    def test_tier2_progress_poll_error_is_contained(self) -> None:
+        # A raising import_progress during the fast lane is debug-logged and
+        # skipped - the row survives to the next heavy poll, which lands the import.
+        strategy = _RecordingStrategy(
+            completed_sequence=[
+                import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),
+                import_probe(ImportReadiness.RETRY, files_present=True, command_issued=True),
+            ],
+            progress_error=RuntimeError("progress boom"),
+        )
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
+            progress_poll_interval=5,
+        )
+        handler = CaptureHandler()
+        mgr.logger.addHandler(handler)
+        mgr.logger.setLevel(logging.DEBUG)
+        view = RecordingWaitView()
+        clock = FakeClock(step=5)
+        try:
+            mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)  # must not raise
+        finally:
+            mgr.logger.removeHandler(handler)
+            mgr.logger.setLevel(logging.WARNING)
+
+        assert view.final("h").outcome is Outcome.IMPORTED
+        assert len(strategy.import_calls) == 2  # the heavy poll still ran and landed it
+        assert len(strategy.progress_calls) >= 2  # the fast lane kept polling after the raise
+        assert any(r.levelno == logging.DEBUG and "progress poll" in r.getMessage() for r in handler.records)
 
     def test_wait_scope_all_includes_store_only_carried_over(self) -> None:
         # REGRESSION (complaint 4 - "exited right away"): a carried-over record
@@ -1520,6 +1618,40 @@ class TestPostImportCategory:
         assert qbit.set_category_calls == []
         assert qbit.created_categories == []
         assert mgr._pending_store() == {}
+
+    def test_configured_category_without_client_is_a_silent_noop(self) -> None:
+        # Category configured but no qBittorrent client (preview): nothing to
+        # call and nothing logged - not even the best-effort warning.
+        mgr = make_orchestration_manager(
+            qbit=None,
+            strategy=_RecordingStrategy(),
+            post_import_category="seadexarr-done",
+        )
+        handler = CaptureHandler()
+        mgr.logger.addHandler(handler)
+        try:
+            mgr.apply_post_import_category("h")  # must not raise
+        finally:
+            mgr.logger.removeHandler(handler)
+
+        assert handler.records == []
+
+    def test_reconcile_missing_is_not_recategorized(self) -> None:
+        # The reconcile twin of the monitor-path MISSING test: the record is
+        # dropped, but only a verified IMPORT moves category.
+        qbit = CategoryQbit([[]])
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=_RecordingStrategy(),
+            store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
+            post_import_category="seadexarr-done",
+        )
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert mgr._pending_store() == {}  # MISSING still drops the record
+        assert qbit.set_category_calls == []
+        assert qbit.created_categories == []
 
 
 def make_add_engine(

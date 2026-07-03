@@ -3,11 +3,15 @@
 
 ``Notifier.push_wait_summary`` posts the wait-pass outcome (colored by its
 worst outcome class) to Discord and/or a generic webhook; ``push_grab`` posts
-the per-title grab embed. Both are best-effort (the engine swallows their
-errors), so these pin the happy paths and the no-url no-op.
+the per-title grab embed. Both are best-effort, so these pin the happy paths,
+the no-url no-op, and the containment invariant: a notification failure warns
+and returns False, it must never abort a grab or the end-of-run cache save.
 """
 
+import logging
 import time
+from collections.abc import Generator
+from contextlib import contextmanager
 
 import pytest
 import requests
@@ -27,6 +31,33 @@ from seadexarr.modules.notify import Notifier
 from seadexarr.modules.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import make_logger
+from .fakes import CaptureHandler
+
+
+@pytest.fixture
+def pushes(monkeypatch: pytest.MonkeyPatch) -> list[DiscordEmbed]:
+    """Route ``notify.discord_push`` into a recording list (no network)."""
+
+    recorded: list[DiscordEmbed] = []
+
+    def fake_discord_push(*, url: str, embed: DiscordEmbed) -> None:
+        del url
+        recorded.append(embed)
+
+    monkeypatch.setattr(notify, "discord_push", fake_discord_push)
+    return recorded
+
+
+@contextmanager
+def _capture(logger: logging.Logger) -> Generator[CaptureHandler]:
+    """Collect the notifier's WARNING records off the shared test logger."""
+
+    handler = CaptureHandler()
+    logger.addHandler(handler)
+    try:
+        yield handler
+    finally:
+        logger.removeHandler(handler)
 
 
 def _result() -> WaitResult:
@@ -70,14 +101,25 @@ def test_push_wait_summary_posts_to_webhook(monkeypatch: pytest.MonkeyPatch) -> 
     assert payload["failed"] == 1
 
 
-def test_push_wait_summary_builds_discord_embed(monkeypatch: pytest.MonkeyPatch) -> None:
-    pushes: list[DiscordEmbed] = []
+def test_push_wait_summary_webhook_failure_warns_and_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The generic-webhook twin of the Discord containment: a request failure is
+    # warned about and swallowed, never propagated to the finalize tail.
+    def raising_post(url: str, *, json: dict[str, object], timeout: int) -> object:
+        del url, json, timeout
+        raise requests.ConnectionError("webhook down")
 
-    def fake_discord_push(*, url: str, embed: DiscordEmbed) -> None:
-        del url
-        pushes.append(embed)
+    monkeypatch.setattr(requests, "post", raising_post)
+    logger = make_logger()
+    notifier = Notifier(discord_url=None, webhook_url="https://hook.example", logger=logger)
 
-    monkeypatch.setattr(notify, "discord_push", fake_discord_push)
+    with _capture(logger) as handler:
+        posted = notifier.push_wait_summary(arr=Arr.SONARR, result=_result())  # must not raise
+
+    assert posted is False
+    assert any(r.levelno == logging.WARNING and "webhook POST failed" in r.getMessage() for r in handler.records)
+
+
+def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> None:
     notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
 
     assert notifier.push_wait_summary(arr=Arr.RADARR, result=_result()) is True
@@ -92,14 +134,7 @@ def test_push_wait_summary_builds_discord_embed(monkeypatch: pytest.MonkeyPatch)
     assert embed.color == COLOR_FAILED
 
 
-def test_push_wait_summary_all_imported_is_green(monkeypatch: pytest.MonkeyPatch) -> None:
-    pushes: list[DiscordEmbed] = []
-
-    def fake_discord_push(*, url: str, embed: DiscordEmbed) -> None:
-        del url
-        pushes.append(embed)
-
-    monkeypatch.setattr(notify, "discord_push", fake_discord_push)
+def test_push_wait_summary_all_imported_is_green(pushes: list[DiscordEmbed]) -> None:
     notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
     result = WaitResult((WaitOutcomeRow("Frieren", Outcome.IMPORTED),), elapsed_s=60)
 
@@ -107,14 +142,7 @@ def test_push_wait_summary_all_imported_is_green(monkeypatch: pytest.MonkeyPatch
     assert pushes[0].color == COLOR_SUCCESS
 
 
-def test_push_wait_summary_deferred_only_is_orange(monkeypatch: pytest.MonkeyPatch) -> None:
-    pushes: list[DiscordEmbed] = []
-
-    def fake_discord_push(*, url: str, embed: DiscordEmbed) -> None:
-        del url
-        pushes.append(embed)
-
-    monkeypatch.setattr(notify, "discord_push", fake_discord_push)
+def test_push_wait_summary_deferred_only_is_orange(pushes: list[DiscordEmbed]) -> None:
     notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
     result = WaitResult((WaitOutcomeRow("Frieren", Outcome.STILL_IMPORTING),), elapsed_s=60)
 
@@ -122,10 +150,14 @@ def test_push_wait_summary_deferred_only_is_orange(monkeypatch: pytest.MonkeyPat
     assert pushes[0].color == COLOR_DEFERRED
 
 
-def test_pushes_are_paced_only_within_a_burst(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pushes_are_paced_only_within_a_burst(
+    monkeypatch: pytest.MonkeyPatch,
+    pushes: list[DiscordEmbed],
+) -> None:
     # Pacing lives in the Notifier (discord_push is a pure POST), so a single or
     # final push never pays a trailing sleep; only a burst's later pushes wait
     # out the remainder of the 1s spacing.
+    del pushes  # the pushes fixture supplies the no-network discord_push
     sleeps: list[float] = []
     now = {"t": 100.0}
 
@@ -136,12 +168,8 @@ def test_pushes_are_paced_only_within_a_burst(monkeypatch: pytest.MonkeyPatch) -
         sleeps.append(seconds)
         now["t"] += seconds
 
-    def fake_discord_push(*, url: str, embed: DiscordEmbed) -> None:
-        del url, embed
-
     monkeypatch.setattr(time, "monotonic", fake_monotonic)
     monkeypatch.setattr(time, "sleep", fake_sleep)
-    monkeypatch.setattr(notify, "discord_push", fake_discord_push)
     notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
     result = WaitResult((WaitOutcomeRow("Frieren", Outcome.IMPORTED),), elapsed_s=60)
 
@@ -157,14 +185,7 @@ def test_pushes_are_paced_only_within_a_burst(monkeypatch: pytest.MonkeyPatch) -
     assert sleeps == [0.75]
 
 
-def test_push_grab_builds_linked_embed(monkeypatch: pytest.MonkeyPatch) -> None:
-    pushes: list[DiscordEmbed] = []
-
-    def fake_discord_push(*, url: str, embed: DiscordEmbed) -> None:
-        del url
-        pushes.append(embed)
-
-    monkeypatch.setattr(notify, "discord_push", fake_discord_push)
+def test_push_grab_builds_linked_embed(pushes: list[DiscordEmbed]) -> None:
     notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
 
     posted = notifier.push_grab(
@@ -183,3 +204,27 @@ def test_push_grab_builds_linked_embed(monkeypatch: pytest.MonkeyPatch) -> None:
     assert embed.color == COLOR_GRAB
     assert embed.fields == (EmbedField(name="n", value="v"),)
     assert embed.thumb_url == "https://img.anili.st/cover.png"
+
+
+def test_push_grab_discord_failure_warns_and_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The invariant the engine relies on: a Discord failure is contained in
+    # _push (warn, False) - it must never abort the grab that triggered it.
+    def raising_discord_push(*, url: str, embed: DiscordEmbed) -> None:
+        del url, embed
+        raise requests.ConnectionError("discord down")
+
+    monkeypatch.setattr(notify, "discord_push", raising_discord_push)
+    logger = make_logger()
+    notifier = Notifier(discord_url="https://discord.example", logger=logger)
+
+    with _capture(logger) as handler:
+        posted = notifier.push_grab(  # must not raise
+            arr_title="Show",
+            al_title="Show",
+            seadex_url="https://releases.moe/1",
+            fields=[],
+            thumb_url=None,
+        )
+
+    assert posted is False
+    assert any(r.levelno == logging.WARNING and "Discord push failed" in r.getMessage() for r in handler.records)

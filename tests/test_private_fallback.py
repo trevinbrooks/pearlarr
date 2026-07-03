@@ -264,6 +264,84 @@ class TestOwnedFallbackSoftSkip:
         assert cache.check_al_id_in_cache(Arr.SONARR, 11, entry) is True
 
 
+class TestFilterDownloadsNoticeSeam:
+    """filter_downloads renders each SkipNotice at its level and stamps the ctx."""
+
+    PRIVA_URL = "https://animebytes.tv/torrents.php?id=10"
+    PRIVB_URL = "https://animebytes.tv/torrents.php?id=20"
+    FALLA_URL = "https://nyaa.si/view/9"
+    FALLA_HASH = "e" * 40
+
+    def test_renders_both_levels_and_carries_skip_state(self) -> None:
+        # One entry, two same-files sets: {PrivA, FallA} promotes the fallback
+        # (an INFO notice); {PrivB} is private-only with no fallback (a WARNING
+        # notice, plus the skip flag + group carried onto the RunContext).
+        ctx = RunContext(arr=Arr.SONARR)
+        filt = make_release_filter(
+            private_releases="fallback",
+            want_best=True,
+            prefer_dual_audio=False,
+            planner=make_planner(public_only=True),
+            ctx=ctx,
+        )
+        priv_a = make_torrent_record(
+            release_group="PrivA",
+            tracker=Tracker.ANIMEBYTES,
+            url=self.PRIVA_URL,
+            infohash=None,
+            file_names=("A - S01E01.mkv",),
+            file_size=999,
+            is_best=True,
+        )
+        priv_b = make_torrent_record(
+            release_group="PrivB",
+            tracker=Tracker.ANIMEBYTES,
+            url=self.PRIVB_URL,
+            infohash=None,
+            file_names=("B - S02E01.mkv",),
+            file_size=777,
+            is_best=True,
+        )
+        fall_a = make_torrent_record(
+            release_group="FallA",
+            tracker=Tracker.NYAA,
+            url=self.FALLA_URL,
+            infohash=self.FALLA_HASH,
+            file_names=("A.S01E01.web.mkv",),
+            file_size=555,
+            is_best=False,
+        )
+        sd = filt.build(make_entry_record(anilist_id=44, torrents=(priv_a, priv_b, fall_a)))
+        assert set(sd) == {"PrivA", "PrivB", "FallA"}
+        _fill_episodes(
+            sd,
+            {
+                self.PRIVA_URL: [EpisodeRecord(season=1, episode=1, size=999)],
+                self.PRIVB_URL: [EpisodeRecord(season=2, episode=1, size=777)],
+                self.FALLA_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+            },
+        )
+        # S01E01 is held at a stale size (upgrade pending); S02E01 is missing.
+        ep_list = [sonarr_ep(1, 1, size=100, release_group="PrivA"), sonarr_ep(2, 1)]
+
+        with _capture(filt.logger) as handler:
+            hashes, out = filt.filter_downloads(44, sd, {"PrivA": [100]}, ep_list)
+
+        assert out["FallA"].urls[self.FALLA_URL].download is True
+        assert out["PrivA"].urls[self.PRIVA_URL].download is False
+        assert out["PrivB"].urls[self.PRIVB_URL].download is False
+        assert hashes == [self.FALLA_HASH]
+        # Each SkipNotice reaches the logger at ITS level: the promoted set at
+        # INFO, the truly-blocked set at WARNING.
+        info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
+        warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+        assert any("PrivA private-only; falling back to FallA" in m for m in info), info
+        assert any("PrivB private-only (private releases not allowed)" in m for m in warnings), warnings
+        # The skip flag + group names land on the run context for the grab tail.
+        assert ctx.public_only_skipped is True
+        assert ctx.public_only_groups == ["PrivB"]
+
+
 class TestSurvivingPrivateCoverage:
     """A private url kept for uncovered files is warned about, never silently lost."""
 

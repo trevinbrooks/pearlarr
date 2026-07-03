@@ -327,6 +327,21 @@ def test_log_view_digest_is_calm_and_durable() -> None:
     assert "wait complete" in out
 
 
+def test_summary_reports_the_failed_segment() -> None:
+    # A FAILED-category outcome (errored download) lands in the closing summary's
+    # failed segment - the piece the happy-path summary tests never produce.
+    logger, console = _logger_with_console(force_terminal=False)
+    view = make_wait_view(logger, poll_s=30)
+
+    view.update(WaitSnapshot((_terminal("h1", "Show A", Outcome.DOWNLOAD_ERRORED),), elapsed_s=60))
+    view.close()
+
+    out = _plain(console)
+    assert "wait complete" in out
+    assert "0 imported" in out
+    assert "1 failed" in out
+
+
 # --- pure model helpers --------------------------------------------------------
 
 
