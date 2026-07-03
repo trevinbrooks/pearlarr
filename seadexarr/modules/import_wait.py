@@ -33,6 +33,7 @@ from .manual_import import (
     PendingImport,
     PendingState,
     TorrentProbe,
+    TorrentTelemetry,
     WaitOutcome,
     classify_pending,
     sanitize_torrent_telemetry,
@@ -40,6 +41,7 @@ from .manual_import import (
 from .protocols import ImportCompleter
 from .reporter import RunContext, RunReporter
 from .wait_view import (
+    SPARK_SAMPLES,
     Phase,
     TorrentView,
     WaitOutcomeRow,
@@ -48,6 +50,23 @@ from .wait_view import (
     WaitView,
     make_wait_view,
 )
+
+
+def _info_row_telemetry(row: object) -> TorrentTelemetry:
+    """Sanitized telemetry off one qBittorrent info row.
+
+    The one place the getattr-read field list lives, shared by the heavy
+    :meth:`ImportWaitManager.poll_torrent` and the batched
+    :meth:`ImportWaitManager.poll_telemetry`.
+    """
+
+    return sanitize_torrent_telemetry(
+        getattr(row, "progress", None),
+        getattr(row, "dlspeed", None),
+        getattr(row, "eta", None),
+        getattr(row, "completed", None),
+        getattr(row, "size", None),
+    )
 
 
 class ImportWaitManager:
@@ -124,31 +143,53 @@ class ImportWaitManager:
         """
 
         if self.qbit is None:
-            return TorrentProbe(None, None, 0.0)
+            return TorrentProbe(None, None, 0.0, observed=False)
         try:
             info = self.qbit.torrents_info(torrent_hashes=infohash)
         except (qbittorrentapi.APIError, qbittorrentapi.APIConnectionError):
             # Transient: a dropped connection or a re-auth in flight. Treat as
-            # still-waiting so the caller keeps polling until the deadline.
-            return TorrentProbe(None, None, 0.0)
+            # still-waiting so the caller keeps polling until the deadline; the
+            # un-observed flag keeps the row's last real telemetry on screen.
+            return TorrentProbe(None, None, 0.0, observed=False)
 
         if not info:
             return TorrentProbe(WaitOutcome.MISSING, None, 0.0)
 
         t = info[0]
-        telemetry = sanitize_torrent_telemetry(
-            getattr(t, "progress", None),
-            getattr(t, "dlspeed", None),
-            getattr(t, "eta", None),
-            getattr(t, "completed", None),
-            getattr(t, "size", None),
-        )
+        telemetry = _info_row_telemetry(t)
         # TorrentTelemetry's fields match TorrentProbe's telemetry tail one-for-one.
         if t.state_enum.is_errored:
             return TorrentProbe(WaitOutcome.ERRORED, None, *telemetry)
         if t.state_enum.is_complete or telemetry.progress >= 1.0:
             return TorrentProbe(WaitOutcome.COMPLETE, t.content_path, *telemetry)
         return TorrentProbe(None, None, *telemetry)
+
+    def poll_telemetry(self, infohashes: list[str]) -> dict[str, TorrentTelemetry]:
+        """One batched, read-only qBittorrent info read for the fast cockpit refresh.
+
+        The cheap sibling of :meth:`poll_torrent`: ONE ``torrents_info`` call
+        covers every in-flight download (vs one call per torrent on the heavy
+        cycle), and only sanitized telemetry comes back - no outcomes, no content
+        paths - so the fast lane can never race the heavy poll's terminal
+        decisions. A transient qBittorrent error or a missing row simply yields no
+        entry (the row keeps its last telemetry until the next heavy poll).
+        Response hashes are matched case-insensitively (qBittorrent lowercases).
+        """
+
+        if self.qbit is None or not infohashes:
+            return {}
+        try:
+            infos = self.qbit.torrents_info(torrent_hashes=infohashes)
+        except (qbittorrentapi.APIError, qbittorrentapi.APIConnectionError):
+            return {}
+        keys = {infohash.casefold(): infohash for infohash in infohashes}
+        telemetry: dict[str, TorrentTelemetry] = {}
+        for t in infos:
+            key = keys.get(str(getattr(t, "hash", "")).casefold())
+            if key is None:
+                continue
+            telemetry[key] = _info_row_telemetry(t)
+        return telemetry
 
     def try_import_completed(
         self,
@@ -279,7 +320,7 @@ class ImportWaitManager:
             self._reporter.log_pending_snapshot(
                 self._ctx,
                 state,
-                pending.title or infohash,
+                pending.display_label,
                 pending.coverage,
                 pending.url,
             )
@@ -412,15 +453,18 @@ class ImportWaitManager:
         view: WaitView,
         nap: Callable[[float], None],
     ) -> None:
-        """Sleep one heavy-poll interval, refreshing the "files inserted" bar between.
+        """Sleep one heavy-poll interval, refreshing the live rows between slices.
 
-        Splits the inter-poll ``nap`` into ``imports.progress_poll_interval`` slices:
-        between the heavy cycles it re-reads only the cheap episode-file count (never
-        the throttled refresh / queue / qBittorrent) to advance each importing row's
-        bar and promote a row the instant its files all land. Falls back to one plain
-        ``nap(poll_s)`` when the fast poll is disabled (<= 0) or no faster than the
-        heavy poll. A ``KeyboardInterrupt`` during a slice propagates to the caller's
-        break, as a plain ``nap`` would.
+        Splits the inter-poll ``nap`` into ``imports.progress_poll_interval`` slices;
+        between the heavy cycles it runs only the cheap fast-lane reads: the
+        episode-file count behind each importing row's "files inserted" bar
+        (promoting a row the instant its files all land) and ONE batched
+        qBittorrent info read keeping the downloading rows' bar/speed/ETA live
+        (telemetry only - never the throttled rescan, the queue, an import
+        command, or a phase transition). Falls back to one plain ``nap(poll_s)``
+        when the fast poll is disabled (<= 0) or no faster than the heavy poll. A
+        ``KeyboardInterrupt`` during a slice propagates to the caller's break, as
+        a plain ``nap`` would.
         """
 
         poll_s = self._config.imports.poll_interval
@@ -436,7 +480,12 @@ class ImportWaitManager:
             nap(min(progress_s, remaining))
             if not mp.active:
                 return
-            if mp.refresh_progress():
+            # Run both fast-lane reads: the import bar first (it can promote/
+            # retire rows), then the download telemetry - skipped entirely for a
+            # view that renders no per-row telemetry (the non-TTY digest).
+            progressed = mp.refresh_progress()
+            telemetry_moved = view.wants_telemetry and mp.refresh_telemetry()
+            if progressed or telemetry_moved:
                 view.update(mp.snapshot())
 
     def _monitor_working_set(self) -> list[PendingImport]:
@@ -534,7 +583,7 @@ class MonitorPass:
         self.views: dict[str, TorrentView] = {
             r.infohash: TorrentView(
                 key=r.infohash,
-                label=r.title or r.infohash,
+                label=r.display_label,
                 phase=Phase.QUEUED,
             )
             for r in records
@@ -551,12 +600,13 @@ class MonitorPass:
 
         return WaitSnapshot(tuple(self.views.values()), elapsed_s=self.elapsed())
 
-    def _terminal(self, outcome: Outcome, h: str, label: str) -> None:
+    def _terminal(self, outcome: Outcome, h: str, label: str, *, files: int | None = None) -> None:
         """Record a terminal outcome: snapshot row + result + (maybe) drop + retire.
 
         Drops the durable record when (and only when) ``outcome.dropped`` - True for
         exactly IMPORTED and MISSING, so the displayed word and the store mutation
-        can't diverge.
+        can't diverge. The terminal row carries the pass-elapsed clock and (for an
+        import) the verified files count, so the graduation ledger can state them.
         """
 
         self.views[h] = TorrentView(
@@ -564,6 +614,9 @@ class MonitorPass:
             label=label,
             phase=Phase.TERMINAL,
             outcome=outcome,
+            import_done=files,
+            import_total=files,
+            phase_elapsed_s=self.now() - self.dl_start[h],
         )
         self.results.append(WaitOutcomeRow(label=label, outcome=outcome))
         if outcome.dropped:
@@ -582,26 +635,40 @@ class MonitorPass:
         """
 
         h = record.infohash
-        label = record.title or record.infohash
+        label = record.display_label
 
         poll = self._mgr.poll_torrent(h)
 
         if poll.outcome is None:
             if self.now() - self.dl_start[h] >= self.dl_timeout:
                 self._terminal(Outcome.DOWNLOAD_TIMED_OUT, h, label)
-            else:
-                self.views[h] = TorrentView(
-                    key=h,
-                    label=label,
-                    phase=Phase.DOWNLOADING,
-                    fraction=poll.progress,
-                    speed_bps=poll.speed_bps,
-                    eta_s=poll.eta_s,
-                    bytes_done=poll.bytes_done,
-                    bytes_total=poll.bytes_total,
-                    phase_elapsed_s=self.now() - self.dl_start[h],
-                    phase_timeout_s=self.dl_timeout,
-                )
+                return
+            prior = self.views.get(h)
+            if not poll.observed:
+                # Transient qBittorrent error: the zeroed probe is a placeholder,
+                # not a reading - keep the row's last real state (no 0% bar flash,
+                # no fake stall sample, an importing row stays importing) and let
+                # its clock tick.
+                if prior is not None and prior.phase is Phase.DOWNLOADING:
+                    self.views[h] = replace(prior, phase_elapsed_s=self.now() - self.dl_start[h])
+                return
+            # Speed history advances once per heavy poll (stalled/None -> 0),
+            # bounded to the sparkline window; the fast telemetry refresh
+            # deliberately never samples it, so the window stays minutes wide.
+            history = prior.speed_history if prior is not None and prior.phase is Phase.DOWNLOADING else ()
+            self.views[h] = TorrentView(
+                key=h,
+                label=label,
+                phase=Phase.DOWNLOADING,
+                fraction=poll.progress,
+                speed_bps=poll.speed_bps,
+                eta_s=poll.eta_s,
+                bytes_done=poll.bytes_done,
+                bytes_total=poll.bytes_total,
+                phase_elapsed_s=self.now() - self.dl_start[h],
+                phase_timeout_s=self.dl_timeout,
+                speed_history=(*history, poll.speed_bps or 0)[-SPARK_SAMPLES:],
+            )
             return
         if poll.outcome is WaitOutcome.MISSING:
             self._terminal(Outcome.MISSING, h, label)
@@ -623,7 +690,7 @@ class MonitorPass:
             at_deadline=at_deadline,
         )
         if probe.files_present:
-            self._terminal(Outcome.IMPORTED, h, label)
+            self._terminal(Outcome.IMPORTED, h, label, files=probe.target_count or None)
         elif at_deadline:
             self._terminal(
                 Outcome.STILL_IMPORTING if probe.command_issued else Outcome.NOT_READY,
@@ -681,9 +748,9 @@ class MonitorPass:
             # row to the heavy poll's repaired done-check.
             if not progress.determinate or progress.total <= 0:
                 continue
-            label = record.title or record.infohash
+            label = record.display_label
             if progress.done >= progress.total:
-                self._terminal(Outcome.IMPORTED, h, label)
+                self._terminal(Outcome.IMPORTED, h, label, files=progress.total)
                 changed = True
             elif (progress.done, progress.total) != (view.import_done, view.import_total):
                 self.views[h] = replace(
@@ -694,4 +761,43 @@ class MonitorPass:
                     phase_elapsed_s=self.now() - self.import_start.get(h, self.now()),
                 )
                 changed = True
+        return changed
+
+    def refresh_telemetry(self) -> bool:
+        """Cheap fast-lane pass: refresh each downloading row's live telemetry.
+
+        One batched qBittorrent info read across the still-active DOWNLOADING rows
+        keeps their bar/speed/ETA moving between heavy polls. Telemetry only: no
+        outcomes, no phase transitions (a completion just shows a full bar until
+        the heavy poll steps in) and no speed-history sample (that advances once
+        per heavy poll, so the sparkline window stays minutes wide). Returns
+        whether anything changed, so the caller re-pushes a snapshot only when
+        there is something new to draw.
+        """
+
+        downloading = [h for h, view in self.views.items() if h in self.active and view.phase is Phase.DOWNLOADING]
+        changed = False
+        for h, telemetry in self._mgr.poll_telemetry(downloading).items():
+            view = self.views.get(h)
+            if view is None or view.phase is not Phase.DOWNLOADING:
+                continue
+            current = TorrentTelemetry(
+                view.fraction,
+                view.speed_bps,
+                view.eta_s,
+                view.bytes_done,
+                view.bytes_total,
+            )
+            if telemetry == current:
+                continue
+            self.views[h] = replace(
+                view,
+                fraction=telemetry.progress,
+                speed_bps=telemetry.speed_bps,
+                eta_s=telemetry.eta_s,
+                bytes_done=telemetry.bytes_done,
+                bytes_total=telemetry.bytes_total,
+                phase_elapsed_s=self.now() - self.dl_start[h],
+            )
+            changed = True
         return changed

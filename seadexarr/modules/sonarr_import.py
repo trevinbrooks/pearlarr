@@ -248,7 +248,7 @@ class ImportExecutor:
 
         if not authoritative_map:
             self.logger.debug(
-                indent_string(f"{content_path}: no mappable files for {pending.title} yet"),
+                indent_string(f"{content_path}: no mappable files for {pending.display_label} yet"),
             )
             return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
@@ -286,7 +286,7 @@ class ImportExecutor:
             # loudly only then, debug otherwise. Either way the record is retried,
             # never dropped silently.
             message = indent_string(
-                f"{content_path}: {len(missing)} intended file(s) not visible to Sonarr for {pending.title}; will retry",
+                f"{content_path}: {len(missing)} intended file(s) not visible to Sonarr for {pending.display_label}; will retry",
             )
             if at_deadline:
                 self.logger.warning(message)
@@ -335,7 +335,7 @@ class ImportExecutor:
         if pending.infohash in self._warned_unplaceable:
             return
         self._warned_unplaceable.add(pending.infohash)
-        label = pending.title or pending.infohash
+        label = pending.display_label
         coverage = f" ({pending.coverage})" if pending.coverage else ""
         self.logger.warning(
             indent_string(
@@ -585,7 +585,7 @@ class ImportReconciler:
                 is terminal, so warn loudly (off the deadline it's debug).
         """
 
-        label = pending.title or pending.infohash
+        label = pending.display_label
 
         # Rescan (throttled) so the queue we read reflects the finished torrent.
         self._executor.refresh_downloads()

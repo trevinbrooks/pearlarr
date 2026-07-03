@@ -522,6 +522,18 @@ class TestPendingImportRoundTrip:
         assert rebuilt.file_episode_map == {}
         assert rebuilt.title is None
 
+    def test_display_label_is_title_dot_group_with_fallbacks(self) -> None:
+        # The group disambiguates a series that grabbed several torrents; a
+        # groupless record shows the bare title, a titleless one its infohash.
+        rebuilt = PendingImport.from_json({"infohash": "h", "series_id": 1})
+        assert rebuilt.display_label == "h"
+        titled = PendingImport.from_json({"infohash": "h", "series_id": 1, "title": "Show"})
+        assert titled.display_label == "Show"
+        grouped = PendingImport.from_json(
+            {"infohash": "h", "series_id": 1, "title": "Show", "release_group": "Era-Raws"},
+        )
+        assert grouped.display_label == "Show · Era-Raws"
+
     def test_old_record_with_unknown_keys_rehydrates(self) -> None:
         # Back-compat: a record persisted with since-removed keys still loads
         # (from_json reads only the known keys and ignores the rest).

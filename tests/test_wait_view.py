@@ -19,6 +19,7 @@ from typing import override
 
 from rich.console import Console
 from rich.spinner import Spinner
+from rich.text import Text
 
 from seadexarr.modules.console_caps import Capabilities
 from seadexarr.modules.log import RichConsoleHandler
@@ -33,9 +34,11 @@ from seadexarr.modules.wait_view import (
     WaitSnapshot,
     _DurableWaitView,
     _FrameAnchor,
+    graduation_tail,
     graduations,
     live_model,
     make_wait_view,
+    sparkline,
 )
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
@@ -61,7 +64,12 @@ def _plain(console: Console) -> str:
     return _ANSI.sub("", stream.getvalue())
 
 
-def _downloading(key: str, label: str, frac: float) -> TorrentView:
+def _downloading(
+    key: str,
+    label: str,
+    frac: float,
+    history: tuple[int, ...] = (),
+) -> TorrentView:
     return TorrentView(
         key=key,
         label=label,
@@ -71,11 +79,27 @@ def _downloading(key: str, label: str, frac: float) -> TorrentView:
         eta_s=130,
         bytes_done=int(frac * 2_900_000_000),
         bytes_total=2_900_000_000,
+        speed_history=history,
     )
 
 
-def _terminal(key: str, label: str, outcome: Outcome) -> TorrentView:
-    return TorrentView(key=key, label=label, phase=Phase.TERMINAL, outcome=outcome)
+def _terminal(
+    key: str,
+    label: str,
+    outcome: Outcome,
+    *,
+    files: int | None = None,
+    elapsed: float = 0.0,
+) -> TorrentView:
+    return TorrentView(
+        key=key,
+        label=label,
+        phase=Phase.TERMINAL,
+        outcome=outcome,
+        import_done=files,
+        import_total=files,
+        phase_elapsed_s=elapsed,
+    )
 
 
 def _importing(key: str, label: str, *, done: int, total: int, elapsed: float) -> TorrentView:
@@ -127,6 +151,13 @@ def test_factory_falls_back_to_log_view_when_too_narrow() -> None:
     assert isinstance(make_wait_view(logger, poll_s=30), LogWaitView)
 
 
+def test_only_the_live_view_wants_telemetry() -> None:
+    # The digest renders no per-row telemetry, so the engine's fast-lane
+    # qBittorrent read is skipped for it (pure waste on Docker/cron).
+    assert LiveWaitView.wants_telemetry is True
+    assert LogWaitView.wants_telemetry is False
+
+
 # --- live cockpit --------------------------------------------------------------
 
 
@@ -138,7 +169,7 @@ def test_live_view_graduates_and_summarizes() -> None:
     view.update(
         WaitSnapshot(
             (
-                _terminal("h1", "Bocchi the Rock!", Outcome.IMPORTED),
+                _terminal("h1", "Bocchi the Rock!", Outcome.IMPORTED, files=12, elapsed=192),
                 _terminal("h2", "Spy x Family", Outcome.DOWNLOAD_TIMED_OUT),
             ),
             elapsed_s=900,
@@ -149,7 +180,9 @@ def test_live_view_graduates_and_summarizes() -> None:
     out = _plain(console)
     assert "Bocchi the Rock!" in out
     assert "imported" in out  # graduation ledger word
+    assert "(12 files · 3m 12s)" in out  # the imported ledger coda
     assert "timed out" in out
+    assert "(retries next run)" in out  # a deferred outcome never reads as lost
     assert "wait complete" in out  # closing summary
     assert "1 imported" in out and "1 left" in out
 
@@ -221,6 +254,21 @@ def test_live_view_uses_a_spinner_for_importing_rows() -> None:
         assert isinstance(cells[0], Spinner)
     finally:
         view.close()
+
+
+def test_narrow_console_degrades_status_into_the_count_column() -> None:
+    # Below the bar-width floor the bar/status column is dropped; a barless row's
+    # status word moves into the count column so it still says what it's doing.
+    logger, _ = _logger_with_console(force_terminal=True)
+    caps = Capabilities(live=True, color=False, unicode=True, width=60, height=40)
+    view = LiveWaitView(Console(file=io.StringIO()), caps, logger)
+    snap = WaitSnapshot((TorrentView("h", "Show", Phase.IMPORTING, command_issued=True),))
+    row = live_model(snap, caps).rows[0]
+
+    cells = view._row_cells(row, 0, show_speed=False, show_size=False)
+
+    words = [cell.plain for cell in cells if isinstance(cell, Text)]
+    assert "copying" in words
 
 
 def test_spinner_frame_advances_in_a_table_cell() -> None:
@@ -329,20 +377,23 @@ def test_live_model_header_reports_aggregate() -> None:
 
 
 def test_live_model_importing_determinate_bar() -> None:
-    # A known files-inserted count -> a determinate bar with a "done/total" label.
+    # A known files-inserted count -> a determinate bar with a "done/total" count
+    # and the elapsed clock in the shared time column.
     caps = Capabilities(live=True, color=True, unicode=True, width=100, height=40)
     snap = WaitSnapshot((_importing("h", "Show", done=8, total=12, elapsed=64),), elapsed_s=64)
 
     row = live_model(snap, caps).rows[0]
 
     assert row.show_bar is True
-    assert row.pct == "8/12"
+    assert row.count == "8/12"
     assert 0.0 < row.fraction < 1.0
-    assert row.eta == "1m 04s"  # elapsed timer rides the eta slot
+    assert row.time == "1m 04s"
 
 
 def test_live_model_importing_is_indeterminate_without_a_total() -> None:
-    # No seed-complete count -> the old indeterminate row (no bar, "copy in flight").
+    # No seed-complete count -> no bar; the status word carries the phase
+    # ("copying" once the import command's async copy is in flight), and the
+    # elapsed clock sits in the same time column as every other row.
     caps = Capabilities(live=True, color=True, unicode=True, width=100, height=40)
     snap = WaitSnapshot(
         (TorrentView("h", "Show", Phase.IMPORTING, command_issued=True, phase_elapsed_s=10),),
@@ -352,8 +403,114 @@ def test_live_model_importing_is_indeterminate_without_a_total() -> None:
     row = live_model(snap, caps).rows[0]
 
     assert row.show_bar is False
-    assert row.pct == ""
-    assert "copy in flight" in row.note
+    assert row.count == ""
+    assert row.status == "copying"
+    assert row.time == "10s"
+
+
+def test_live_model_importing_before_command_reads_importing() -> None:
+    caps = Capabilities(live=True, color=True, unicode=True, width=100, height=40)
+    snap = WaitSnapshot(
+        (TorrentView("h", "Show", Phase.IMPORTING, phase_elapsed_s=4),),
+        elapsed_s=4,
+    )
+
+    row = live_model(snap, caps).rows[0]
+
+    assert row.status == "importing"
+
+
+def test_live_model_download_row_layout() -> None:
+    # One meaning per column: count is the %, time is the ETA, size is the TOTAL
+    # only (the done side is already the bar + %, so "done/total" was redundant).
+    caps = Capabilities(live=True, color=True, unicode=True, width=100, height=40)
+    snap = WaitSnapshot((_downloading("h", "Show", 0.5),), elapsed_s=10)
+
+    row = live_model(snap, caps).rows[0]
+
+    assert row.show_bar is True
+    assert row.count == "50%"
+    assert row.time == "~2m"  # 130s ETA
+    assert row.size == "2.7 GB"
+    assert "/" not in row.size
+
+    queued = live_model(WaitSnapshot((TorrentView("q", "Other"),)), caps).rows[0]
+    assert queued.status == "queued"
+
+
+def test_sparkline_scales_to_the_window_peak() -> None:
+    assert sparkline((0, 100)) == "▁█"
+    assert sparkline((100, 100, 100)) == "███"
+    # A wedged download decays to the floor - visible, never blank.
+    assert sparkline((0, 0, 0)) == "▁▁▁"
+
+
+def test_download_row_speed_carries_the_sparkline() -> None:
+    caps = Capabilities(live=True, color=True, unicode=True, width=100, height=40)
+    snap = WaitSnapshot((_downloading("h", "Show", 0.5, history=(0, 3_200_000)),))
+
+    row = live_model(snap, caps).rows[0]
+
+    assert row.speed == "▁█ 3.1 MB/s"
+
+
+def test_sparkline_is_dropped_when_narrow_or_ascii() -> None:
+    snap = WaitSnapshot((_downloading("h", "Show", 0.5, history=(0, 3_200_000)),))
+
+    narrow = Capabilities(live=True, color=True, unicode=True, width=72, height=40)
+    ascii_caps = Capabilities(live=True, color=True, unicode=False, width=100, height=40)
+
+    assert live_model(snap, narrow).rows[0].speed == "3.1 MB/s"
+    assert live_model(snap, ascii_caps).rows[0].speed == "3.1 MB/s"
+
+
+def test_sparkline_needs_two_samples() -> None:
+    # A single sample says nothing about the trend; the cell stays plain.
+    caps = Capabilities(live=True, color=True, unicode=True, width=100, height=40)
+    snap = WaitSnapshot((_downloading("h", "Show", 0.5, history=(3_200_000,)),))
+
+    assert live_model(snap, caps).rows[0].speed == "3.1 MB/s"
+
+
+# --- graduation ledger coda ------------------------------------------------------
+
+
+def test_graduation_tail_states_files_and_elapsed_for_an_import() -> None:
+    row = _terminal("h", "A", Outcome.IMPORTED, files=12, elapsed=192)
+
+    assert graduation_tail(row, Outcome.IMPORTED) == "12 files · 3m 12s"
+
+
+def test_graduation_tail_is_empty_when_an_import_has_no_detail() -> None:
+    # No files count (incomplete seed) and a sub-second wait -> nothing to say.
+    row = _terminal("h", "A", Outcome.IMPORTED)
+
+    assert graduation_tail(row, Outcome.IMPORTED) == ""
+
+
+def test_graduation_tail_elapsed_alone_when_files_unknown() -> None:
+    # An incomplete seed map hides the files count but the wait clock still shows.
+    row = _terminal("h", "A", Outcome.IMPORTED, elapsed=192)
+
+    assert graduation_tail(row, Outcome.IMPORTED) == "3m 12s"
+
+
+def test_graduation_tail_says_left_pending_outcomes_retry() -> None:
+    for outcome in (
+        Outcome.DOWNLOAD_TIMED_OUT,
+        Outcome.DOWNLOAD_ERRORED,
+        Outcome.STILL_IMPORTING,
+        Outcome.NOT_READY,
+        Outcome.NOTHING_TO_IMPORT,
+    ):
+        row = _terminal("h", "A", outcome)
+        assert graduation_tail(row, outcome) == "retries next run"
+
+
+def test_graduation_tail_says_a_missing_record_is_gone() -> None:
+    row = _terminal("h", "A", Outcome.MISSING)
+
+    assert graduation_tail(row, Outcome.MISSING) == "no longer tracked"
 
 
 # --- WaitResult ----------------------------------------------------------------

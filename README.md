@@ -306,9 +306,9 @@ above; Sonarr only).
 - `imports.wait_timeout`: Seconds to wait per torrent for qBittorrent to finish. Defaults to 3600
 - `imports.ready_timeout`: Seconds to then wait for Sonarr to rescan and import. Defaults to 600
 - `imports.poll_interval`: Seconds between polls of qBittorrent and the Sonarr queue. Defaults to 30
-- `imports.progress_poll_interval`: Seconds between cheap progress re-reads for the wait screen's
-  files-imported bar. 0 disables it, and values at or above `imports.poll_interval` behave the same.
-  Defaults to 5
+- `imports.progress_poll_interval`: Seconds between cheap re-reads for the wait screen's
+  files-imported bar and live download telemetry. 0 disables it, and values at or above
+  `imports.poll_interval` behave the same. Defaults to 5
 - `imports.mode`: Sonarr import mode: `auto`, `move`, or `copy`. Defaults to auto
 - `imports.default_quality`: Fallback quality name (e.g. Bluray-2160p) for manual imports, useful on
   a 4K instance. Defaults to blank

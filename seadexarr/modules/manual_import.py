@@ -316,6 +316,10 @@ class TorrentProbe:
         eta_s (int | None): qBittorrent's ETA in seconds, None when unknown/∞.
         bytes_done (int | None): Bytes downloaded so far, None when unknown.
         bytes_total (int | None): Total size in bytes, None when unknown.
+        observed (bool): False when qBittorrent could not actually be read (no
+            client / a transient error), so the zeroed telemetry is a placeholder
+            - the monitor keeps the row's last real bar/speed instead of painting
+            a fake 0% + stall sample.
     """
 
     outcome: "WaitOutcome | None"
@@ -325,6 +329,7 @@ class TorrentProbe:
     eta_s: int | None = None
     bytes_done: int | None = None
     bytes_total: int | None = None
+    observed: bool = True
 
 
 class TorrentTelemetry(NamedTuple):
@@ -443,6 +448,19 @@ class PendingImport:
     coverage: str | None = None
     url: str | None = None
     ordered_episode_ids: list[int] = field(default_factory=list[int])
+
+    @property
+    def display_label(self) -> str:
+        """The cockpit/ledger/report row label: ``title · group``.
+
+        The release group disambiguates a series that grabbed several torrents
+        (their titles are identical); the infohash is the last-resort fallback.
+        """
+
+        base = self.title or self.infohash
+        if self.release_group:
+            return f"{base} · {self.release_group}"
+        return base
 
     def to_json(self) -> dict[str, Any]:
         """Serialize to the plain dict persisted under ``pending_imports``.

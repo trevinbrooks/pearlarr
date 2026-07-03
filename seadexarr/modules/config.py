@@ -209,10 +209,11 @@ class ImportsSettings(_ConfigBase):
     wait_timeout: int = 3600
     ready_timeout: int = 600
     poll_interval: int = 30
-    # Cheap episode-file re-read cadence for the wait cockpit's "files inserted"
-    # bar (seconds). Only re-reads /api/v3/episode for in-flight imports - NEVER
-    # the heavy RefreshMonitoredDownloads/queue/qBittorrent. 0 disables it: the bar
-    # then advances once per ``poll_interval`` (spinner/timer still animate). A value
+    # Fast-lane cockpit refresh cadence (seconds), between heavy polls: re-reads
+    # /api/v3/episode for in-flight imports ("files inserted" bar) and does one
+    # batched qBittorrent info read for in-flight downloads (bar/speed/ETA) -
+    # NEVER the heavy RefreshMonitoredDownloads/queue. 0 disables it: rows then
+    # advance once per ``poll_interval`` (spinner/timer still animate). A value
     # >= ``poll_interval`` is the same as disabled.
     progress_poll_interval: int = 5
     # Sonarr importMode, forwarded verbatim (sonarr_client.manual_import_execute).

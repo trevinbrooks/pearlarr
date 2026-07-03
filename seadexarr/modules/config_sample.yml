@@ -50,7 +50,7 @@ imports:
   wait_timeout: 3600               # Seconds to wait per torrent for qBittorrent to finish
   ready_timeout: 600               # Seconds to then wait for Sonarr to rescan + import
   poll_interval: 30                # Seconds between polls (qBittorrent + Sonarr queue)
-  progress_poll_interval: 5        # Seconds between cheap progress re-reads for the wait bar (0 disables)
+  progress_poll_interval: 5        # Seconds between cheap wait-screen refreshes (bars/speed; 0 disables)
   mode: auto                       # Sonarr importMode: auto/move/copy
   default_quality:                 # Fallback quality (e.g. Bluray-2160p) on a 4K instance
   languages_dual:                  # Languages for dual-audio releases (default: [Japanese, English])

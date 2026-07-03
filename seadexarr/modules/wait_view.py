@@ -25,10 +25,11 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import Enum, auto
-from typing import final, override
+from typing import ClassVar, final, override
 
 from rich.console import Console, ConsoleOptions, Group, RenderResult
 from rich.live import Live
+from rich.padding import Padding
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
@@ -42,8 +43,10 @@ from .console_caps import (
     spinner_name,
 )
 from .log import (
+    INDENT,
     STATE_WIDTH,
     LogFormatter,
+    count_noun,
     indent_string,
     rule_string,
 )
@@ -57,6 +60,11 @@ MIN_LIVE_ROWS = 4
 # Rows reserved for the banner, header, overflow line and a little breathing room
 # when clamping the body to the terminal height.
 _RESERVED_ROWS = 8
+# Speed samples a downloading row keeps for its sparkline (one per heavy poll,
+# so the default 30s cadence holds the last ~4 minutes).
+SPARK_SAMPLES = 8
+# The sparkline needs unicode blocks and enough width not to crowd the label.
+MIN_SPARK_WIDTH = 80
 
 
 class Phase(Enum):
@@ -97,9 +105,15 @@ class TorrentView:
     phase_timeout_s: float = 0.0
     command_issued: bool = False
     # "Files inserted" bar for an IMPORTING row: both set -> a determinate
-    # done/total bar; both None -> indeterminate (just the "importing" note).
+    # done/total bar; both None -> indeterminate (just the "importing" word).
+    # On a TERMINAL imported row they carry the final files count for the ledger,
+    # and phase_elapsed_s freezes as the ledger's wait clock (LiveWaitView's
+    # between-poll ticking skips TERMINAL rows, so it can't drift).
     import_done: int | None = None
     import_total: int | None = None
+    # Speed samples (bytes/s, stalled -> 0), one per heavy poll, newest last -
+    # the sparkline showing slow-but-moving vs wedged. Bounded to SPARK_SAMPLES.
+    speed_history: tuple[int, ...] = ()
     outcome: Outcome | None = None
 
 
@@ -213,26 +227,52 @@ def graduations(seen: frozenset[str], snapshot: WaitSnapshot) -> list[TorrentVie
     ]
 
 
+def graduation_tail(torrent: TorrentView, outcome: Outcome) -> str:
+    """The ledger line's parenthesized coda - pure, "" when there is nothing to say.
+
+    Baked into the logged message (not a console-only ``tail`` extra), so the
+    file log carries it too. An import states its scale and how long the wait
+    took; a left-pending outcome says it will be retried; a dropped failure says
+    the record is gone - so no outcome word reads as a dead end.
+    """
+
+    if outcome is Outcome.IMPORTED:
+        parts: list[str] = []
+        if torrent.import_total:
+            parts.append(count_noun(torrent.import_total, "file"))
+        if torrent.phase_elapsed_s >= 1.0:
+            parts.append(LogFormatter.format_elapsed(torrent.phase_elapsed_s))
+        return " · ".join(parts)
+    if not outcome.dropped:
+        return "retries next run"
+    # MISSING: the torrent vanished from qBittorrent, so the record went with it.
+    return "no longer tracked"
+
+
 @dataclass(frozen=True, slots=True)
 class RowModel:
     """One rendered in-flight row, as plain strings - the pure-render unit.
 
     ``live_model`` formats every value here (no rich), so the row layout is
-    unit-testable; the view turns these into styled cells. Download rows fill
-    ``pct``/``speed``/``eta``/``size``; an importing row fills ``note``; a queued
-    row leaves them blank.
+    unit-testable; the view turns these into styled cells. Every column keeps ONE
+    meaning across all row kinds: ``count`` is progress ("61%" / "8/12" files),
+    ``speed`` is the download rate (sparkline + rate, or "stalled"), ``time`` is
+    the ETA for a download or the elapsed clock for an import, ``size`` is the
+    total download size. A row without a bar shows its ``status`` word instead.
     """
 
     label: str
     phase: Phase
     fraction: float
-    pct: str = ""
+    # The status word drawn in the bar column when there is no bar: "queued",
+    # "importing", or "copying" (an accepted import command's copy in flight).
+    status: str = ""
+    count: str = ""
     speed: str = ""
-    eta: str = ""
+    time: str = ""
     size: str = ""
-    note: str = ""
     # Draw a determinate block bar for ``fraction`` (downloads always; an importing
-    # row only when its files-inserted count is known). Else a status word.
+    # row only when its files-inserted count is known). Else the status word.
     show_bar: bool = False
 
 
@@ -295,7 +335,8 @@ def live_model(snapshot: WaitSnapshot, caps: Capabilities) -> LiveModel:
     visible = in_flight[:budget]
     hidden = in_flight[budget:]
 
-    rows = tuple(_row_model(t) for t in visible)
+    spark = caps.unicode and caps.width >= MIN_SPARK_WIDTH
+    rows = tuple(_row_model(t, spark=spark) for t in visible)
     overflow = _overflow_text(hidden)
 
     counts = snapshot.counts()
@@ -331,42 +372,46 @@ def _row_sort_key(torrent: TorrentView) -> tuple[int, float]:
     return rank, eta
 
 
-def _row_model(torrent: TorrentView) -> RowModel:
+def _row_model(torrent: TorrentView, *, spark: bool) -> RowModel:
     """Format one in-flight torrent's cells for the cockpit."""
 
     if torrent.phase is Phase.DOWNLOADING:
-        size = ""
-        if torrent.bytes_total is not None:
-            done = torrent.bytes_done if torrent.bytes_done is not None else 0
-            size = f"{_human_bytes(done)}/{_human_bytes(torrent.bytes_total)}"
+        rate = "stalled" if torrent.speed_bps is None else f"{_human_bytes(torrent.speed_bps)}/s"
+        if spark and len(torrent.speed_history) >= 2:
+            rate = f"{sparkline(torrent.speed_history)} {rate}"
         return RowModel(
             label=torrent.label,
             phase=torrent.phase,
             fraction=max(0.0, min(1.0, torrent.fraction)),
-            pct=f"{round(torrent.fraction * 100)}%",
-            speed="stalled" if torrent.speed_bps is None else f"{_human_bytes(torrent.speed_bps)}/s",
-            eta="" if torrent.eta_s is None else _compact_eta(torrent.eta_s),
-            size=size,
+            count=f"{round(torrent.fraction * 100)}%",
+            speed=rate,
+            time="" if torrent.eta_s is None else _compact_eta(torrent.eta_s),
+            size="" if torrent.bytes_total is None else _human_bytes(torrent.bytes_total),
             show_bar=True,
         )
     if torrent.phase is Phase.IMPORTING:
         elapsed = LogFormatter.format_elapsed(torrent.phase_elapsed_s)
         if torrent.import_total:
-            # Determinate "files inserted" bar: count in the pct slot, the elapsed
-            # timer in the eta slot (the speed slot stays blank - import has none).
+            # Determinate "files inserted" bar (the speed column stays blank -
+            # an import has no download rate).
             return RowModel(
                 label=torrent.label,
                 phase=torrent.phase,
                 fraction=max(0.0, min(1.0, torrent.fraction)),
-                pct=f"{torrent.import_done}/{torrent.import_total}",
-                eta=elapsed,
+                count=f"{torrent.import_done}/{torrent.import_total}",
+                time=elapsed,
                 show_bar=True,
             )
-        note = elapsed
-        if torrent.command_issued:
-            note += " (copy in flight)"
-        return RowModel(label=torrent.label, phase=torrent.phase, fraction=1.0, note=note)
-    return RowModel(label=torrent.label, phase=Phase.QUEUED, fraction=0.0)
+        # Indeterminate: no bar, so the status word carries the phase - "copying"
+        # once an import command's async copy is in flight, "importing" before.
+        return RowModel(
+            label=torrent.label,
+            phase=torrent.phase,
+            fraction=1.0,
+            status="copying" if torrent.command_issued else "importing",
+            time=elapsed,
+        )
+    return RowModel(label=torrent.label, phase=Phase.QUEUED, fraction=0.0, status="queued")
 
 
 def _overflow_text(hidden: list[TorrentView]) -> str:
@@ -410,6 +455,26 @@ def _aggregate_eta(snapshot: WaitSnapshot, agg_speed: int) -> int | None:
     return int(remaining / agg_speed)
 
 
+_SPARK_CHARS = "▁▂▃▄▅▆▇█"
+
+
+def sparkline(samples: tuple[int, ...]) -> str:
+    """The speed-history glyph run, scaled to the window's own peak.
+
+    A wedged download reads as a decay to the floor ("▆▄▁▁"); a slow-but-moving
+    one keeps a steady band. All-zero history stays on the floor glyph (never
+    blank), so a stall is visible rather than invisible.
+    """
+
+    if not samples:
+        return ""
+    peak = max(samples)
+    top = len(_SPARK_CHARS) - 1
+    if peak <= 0:
+        return _SPARK_CHARS[0] * len(samples)
+    return "".join(_SPARK_CHARS[round(sample / peak * top)] for sample in samples)
+
+
 def _human_bytes(num: float) -> str:
     """A compact human byte size, e.g. ``"3.2 MB"`` / ``"1.8 GB"``."""
 
@@ -440,6 +505,11 @@ class WaitView(ABC):
     renders it. Both methods MUST be total (never raise) so a presentation bug
     can't abort the wait loop or the end-of-run cache save.
     """
+
+    # Whether the view renders per-row download telemetry between heavy polls.
+    # The engine skips the fast-lane qBittorrent read when it can't be seen
+    # (the non-TTY digest shows only phase counts, so the read would be waste).
+    wants_telemetry: ClassVar[bool] = True
 
     @abstractmethod
     def update(self, snapshot: WaitSnapshot) -> None:
@@ -499,9 +569,12 @@ class _DurableWaitView(WaitView):
             self._seen.add(torrent.key)
             self._tally[outcome.category] += 1
             glyph = outcome.glyph(use_unicode=self._caps.unicode)
-            line = indent_string(f"{glyph} {outcome.word.ljust(STATE_WIDTH)} {torrent.label}")
+            line = f"{glyph} {outcome.word.ljust(STATE_WIDTH)} {torrent.label}"
+            tail = graduation_tail(torrent, outcome)
+            if tail:
+                line += f"  ({tail})"
             extra = {"line_style": outcome.style} if self._caps.color else {}
-            self._logger.info(line, extra=extra)
+            self._logger.info(indent_string(line), extra=extra)
 
     def _log_summary(self) -> None:
         imported = self._tally[OutcomeCategory.SUCCESS]
@@ -620,10 +693,12 @@ class LiveWaitView(_DurableWaitView):
         return replace(snapshot, torrents=torrents, elapsed_s=snapshot.elapsed_s + offset)
 
     def _frame(self, model: LiveModel) -> Group:
-        parts: list[Text | Table] = [self._header(model)]
+        parts: list[Text | Table | Padding] = [self._header(model)]
         body = self._body(model)
         if body is not None:
-            parts.append(body)
+            # The rows share the header/overflow/ledger indent (the grid itself
+            # starts at column 0, so pad it) - one left edge for the whole pass.
+            parts.append(Padding(body, (0, 0, 0, len(INDENT))))
         if model.overflow:
             parts.append(self._truncate(Text(indent_string(model.overflow), style="grey50")))
         return Group(*parts)
@@ -650,12 +725,12 @@ class LiveWaitView(_DurableWaitView):
         table.add_column(justify="left", no_wrap=True, ratio=1, overflow="ellipsis")  # label
         if bar_width:
             table.add_column(justify="left", no_wrap=True)  # bar / status word
-        table.add_column(justify="right", no_wrap=True)  # pct / note
+        table.add_column(justify="right", no_wrap=True)  # count (or degraded status)
         if show_speed:
-            table.add_column(justify="right", no_wrap=True)  # speed
-            table.add_column(justify="right", no_wrap=True)  # eta
+            table.add_column(justify="right", no_wrap=True)  # speed (+ sparkline)
+            table.add_column(justify="right", no_wrap=True)  # time (ETA / import elapsed)
         if show_size:
-            table.add_column(justify="right", no_wrap=True)  # size
+            table.add_column(justify="right", no_wrap=True)  # total size
 
         for row in model.rows:
             table.add_row(*self._row_cells(row, bar_width, show_speed=show_speed, show_size=show_size))
@@ -677,11 +752,15 @@ class LiveWaitView(_DurableWaitView):
         cells: list[Text | Spinner] = [marker, Text(row.label)]
         if bar_width:
             cells.append(self._bar_or_status(row, bar_width))
-        # pct column doubles as the importing note when there's no % to show.
-        cells.append(Text(row.pct or row.note, style="" if row.pct else "yellow"))
+            cells.append(Text(row.count))
+        else:
+            # No bar column on a narrow console: the status word degrades into
+            # the count column so a barless row still says what it's doing.
+            word = row.count or row.status
+            cells.append(Text(word, style="" if row.count else self._status_style(row.phase)))
         if show_speed:
             cells.append(Text(row.speed, style="grey50"))
-            cells.append(Text(row.eta, style="grey50"))
+            cells.append(Text(row.time, style="grey50"))
         if show_size:
             cells.append(Text(row.size, style="grey50"))
         return cells
@@ -696,9 +775,11 @@ class LiveWaitView(_DurableWaitView):
     def _bar_or_status(self, row: RowModel, bar_width: int) -> Text:
         if row.show_bar:
             return block_bar(row.fraction, bar_width, self._caps)
-        word = "importing" if row.phase is Phase.IMPORTING else "queued"
-        style = "yellow" if row.phase is Phase.IMPORTING else "grey50"
-        return Text(word.ljust(bar_width)[:bar_width], style=style)
+        return Text(row.status.ljust(bar_width)[:bar_width], style=self._status_style(row.phase))
+
+    @staticmethod
+    def _status_style(phase: Phase) -> str:
+        return "yellow" if phase is Phase.IMPORTING else "grey50"
 
     def _truncate(self, text: Text) -> Text:
         text.truncate(self._caps.width, overflow="ellipsis")
@@ -738,6 +819,9 @@ class LogWaitView(_DurableWaitView):
     the shared durable graduation lines + closing summary. A large carried-over
     backlog therefore produces a handful of lines, not a per-torrent flood.
     """
+
+    # The digest renders no per-row telemetry, so the fast lane needn't fetch it.
+    wants_telemetry: ClassVar[bool] = False
 
     def __init__(
         self,

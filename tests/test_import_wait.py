@@ -26,7 +26,7 @@ import qbittorrentapi
 
 from seadexarr.modules.config import Arr
 from seadexarr.modules.grab_pipeline import GrabPipeline
-from seadexarr.modules.import_wait import ImportWaitManager
+from seadexarr.modules.import_wait import ImportWaitManager, MonitorPass
 from seadexarr.modules.manual_import import (
     ImportProbe,
     ImportProgress,
@@ -36,12 +36,20 @@ from seadexarr.modules.manual_import import (
     PendingImport,
     PendingState,
     TorrentProbe,
+    TorrentTelemetry,
     WaitOutcome,
 )
 from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.seadex_arr import SeaDexArr
 from seadexarr.modules.torrents import AddOutcome
-from seadexarr.modules.wait_view import Phase, TorrentView, WaitResult, WaitSnapshot, WaitView
+from seadexarr.modules.wait_view import (
+    SPARK_SAMPLES,
+    Phase,
+    TorrentView,
+    WaitResult,
+    WaitSnapshot,
+    WaitView,
+)
 
 from .builders import (
     CLIENT_SENTINEL,
@@ -73,7 +81,9 @@ class FakeTorrent:
 
     The telemetry fields (``dlspeed`` / ``eta`` / ``completed`` / ``size``) default
     to None so the common monitor tests don't have to set them; ``poll_torrent``
-    reads them via ``getattr`` and sanitizes None to None.
+    reads them via ``getattr`` and sanitizes None to None. ``hash`` is only read
+    by the batched ``poll_telemetry`` (which keys its result off it); the blank
+    default makes it a no-match, so the fast lane no-ops in the older tests.
     """
 
     def __init__(
@@ -87,6 +97,7 @@ class FakeTorrent:
         eta: int | None = None,
         completed: int | None = None,
         size: int | None = None,
+        torrent_hash: str = "",
     ) -> None:
         self.state_enum = FakeStateEnum(is_complete=is_complete, is_errored=is_errored)
         self.progress = progress
@@ -95,6 +106,7 @@ class FakeTorrent:
         self.eta = eta
         self.completed = completed
         self.size = size
+        self.hash = torrent_hash
 
 
 class FakeQbit:
@@ -103,14 +115,18 @@ class FakeQbit:
     Each call to ``torrents_info`` pops the next scripted result; once the script
     is exhausted the last result repeats (so a steady "downloading" state can be
     polled indefinitely). A scripted value may be an exception instance, which is
-    raised to exercise the transient-error path.
+    raised to exercise the transient-error path. Both readers land here: the
+    heavy poll passes one infohash ``str``, the batched telemetry poll a
+    ``list`` - a test that scripts a sequence AND has downloading rows should
+    disable the fast lane (``progress_poll_interval=0``) so only heavy polls
+    consume the script.
     """
 
     def __init__(self, results: list[list[FakeTorrent] | Exception]) -> None:
         self._results = results
         self.calls = 0
 
-    def torrents_info(self, *, torrent_hashes: str) -> list[FakeTorrent]:
+    def torrents_info(self, *, torrent_hashes: str | list[str]) -> list[FakeTorrent]:
         self.calls += 1
         result = self._results[min(self.calls - 1, len(self._results) - 1)]
         if isinstance(result, Exception):
@@ -164,15 +180,17 @@ class TestPollTorrent:
         assert mgr.poll_torrent("h") == TorrentProbe(None, None, 0.5)
 
     def test_none_on_transient_api_error(self) -> None:
-        # A dropped connection / re-auth in flight is "still waiting", not terminal.
+        # A dropped connection / re-auth in flight is "still waiting", not terminal;
+        # the un-observed flag tells the monitor the zeroed telemetry is a
+        # placeholder (keep the last real bar), not a reading.
         mgr = make_wait_manager(FakeQbit([qbittorrentapi.APIConnectionError("boom")]))
 
-        assert mgr.poll_torrent("h") == TorrentProbe(None, None, 0.0)
+        assert mgr.poll_torrent("h") == TorrentProbe(None, None, 0.0, observed=False)
 
     def test_none_when_no_client(self) -> None:
         mgr = make_bare_instance(ImportWaitManager, qbit=None)
 
-        assert mgr.poll_torrent("h") == TorrentProbe(None, None, 0.0)
+        assert mgr.poll_torrent("h") == TorrentProbe(None, None, 0.0, observed=False)
 
     def test_carries_live_download_telemetry(self) -> None:
         torrent = FakeTorrent(
@@ -201,6 +219,53 @@ class TestPollTorrent:
         mgr = make_wait_manager(FakeQbit([[torrent]]))
 
         assert mgr.poll_torrent("h") == TorrentProbe(None, None, 0.5)
+
+
+class TestPollTelemetry:
+    """poll_telemetry: ONE batched, read-only info call for the fast cockpit refresh."""
+
+    def test_batches_and_matches_hashes_case_insensitively(self) -> None:
+        # qBittorrent lowercases response hashes; the result must key back to OUR
+        # infohash spelling so the monitor's views dict matches.
+        row = FakeTorrent(torrent_hash="ABC123", progress=0.5, dlspeed=200, completed=100, size=1000)
+        qbit = FakeQbit([[row]])
+        mgr = make_wait_manager(qbit)
+
+        telemetry = mgr.poll_telemetry(["abc123"])
+
+        assert qbit.calls == 1  # one call covers the whole set
+        assert telemetry == {"abc123": TorrentTelemetry(0.5, 200, None, 100, 1000)}
+
+    def test_one_call_covers_many_hashes(self) -> None:
+        rows = [
+            FakeTorrent(torrent_hash="A1", progress=0.2, dlspeed=10),
+            FakeTorrent(torrent_hash="B2", progress=0.8, dlspeed=20),
+        ]
+        qbit = FakeQbit([rows])
+        mgr = make_wait_manager(qbit)
+
+        telemetry = mgr.poll_telemetry(["a1", "b2"])
+
+        assert qbit.calls == 1  # genuinely batched, not per-hash
+        assert set(telemetry) == {"a1", "b2"}
+
+    def test_empty_set_makes_no_call(self) -> None:
+        qbit = FakeQbit([[]])
+        mgr = make_wait_manager(qbit)
+
+        assert mgr.poll_telemetry([]) == {}
+        assert qbit.calls == 0
+
+    def test_transient_error_yields_nothing(self) -> None:
+        # The rows just keep their last telemetry until the next heavy poll.
+        mgr = make_wait_manager(FakeQbit([qbittorrentapi.APIConnectionError("boom")]))
+
+        assert mgr.poll_telemetry(["h"]) == {}
+
+    def test_unasked_rows_are_ignored(self) -> None:
+        mgr = make_wait_manager(FakeQbit([[FakeTorrent(torrent_hash="other", progress=0.4)]]))
+
+        assert mgr.poll_telemetry(["h"]) == {}
 
 
 class FakeClock:
@@ -329,10 +394,12 @@ class _RecordingReporter:
 
 
 class _PollableQbit(Protocol):
-    """The single qBittorrent read ``poll_torrent`` makes - the seam the scriptable
-    ``FakeQbit`` and the per-test multi-torrent fakes satisfy structurally."""
+    """The single qBittorrent read ``poll_torrent``/``poll_telemetry`` make - the
+    seam the scriptable ``FakeQbit`` and the per-test multi-torrent fakes satisfy
+    structurally (one hash ``str`` from the heavy poll, a batch ``list`` from the
+    fast telemetry poll)."""
 
-    def torrents_info(self, *, torrent_hashes: str) -> list[FakeTorrent]: ...
+    def torrents_info(self, *, torrent_hashes: str | list[str]) -> list[FakeTorrent]: ...
 
 
 def make_orchestration_manager(
@@ -448,7 +515,9 @@ class TestSnapshotPendingForSeries:
         # bare `snapshot_calls != []` check left open: wrong state/title slid through).
         assert len(reporter.snapshot_calls) == 1
         assert reporter.snapshot_calls[0].state is PendingState.IMPORTED
-        assert reporter.snapshot_calls[0].title == "Show"
+        # The inline row is labeled title · group (the group disambiguates a
+        # series that grabbed several torrents).
+        assert reporter.snapshot_calls[0].title == "Show · SubGroup"
         # Forced (CDH-off safe) but NOT at the deadline (no loud warning).
         assert strategy.import_calls[-1].force is True
         assert strategy.import_calls[-1].at_deadline is False
@@ -474,7 +543,7 @@ class TestSnapshotPendingForSeries:
         # The carried-over record is still reported inline, with the QUEUED state.
         assert len(reporter.snapshot_calls) == 1
         assert reporter.snapshot_calls[0].state is PendingState.QUEUED
-        assert reporter.snapshot_calls[0].title == "Show"
+        assert reporter.snapshot_calls[0].title == "Show · SubGroup"
 
     def test_this_run_grab_is_skipped_no_double_report(self) -> None:
         # REGRESSION (double-report): a torrent grabbed THIS run lives in
@@ -620,7 +689,11 @@ class TestRunMonitor:
             def __init__(self) -> None:
                 self.calls: dict[str, int] = {}
 
-            def torrents_info(self, *, torrent_hashes: str) -> list[FakeTorrent]:
+            def torrents_info(self, *, torrent_hashes: str | list[str]) -> list[FakeTorrent]:
+                if isinstance(torrent_hashes, list):
+                    # The fast telemetry batch: nothing to report (and it must
+                    # not advance the per-hash heavy-poll script).
+                    return []
                 n = self.calls.get(torrent_hashes, 0)
                 self.calls[torrent_hashes] = n + 1
                 if torrent_hashes == "fast":
@@ -914,6 +987,214 @@ class TestRunMonitor:
 
         assert view.final("h").outcome is Outcome.NOTHING_TO_IMPORT
         assert set(mgr._pending_store()) == {"h"}
+
+    def test_imported_terminal_row_carries_files_count(self) -> None:
+        # The graduation ledger states "(N files · elapsed)": a terminal imported
+        # row carries the verified files count (the probe's seed target_count).
+        strategy = _RecordingStrategy(
+            completed=import_probe(
+                ImportReadiness.RETRY,
+                files_present=True,
+                imported_count=3,
+                target_count=3,
+            ),
+        )
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=30)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        final = view.final("h")
+        assert final.outcome is Outcome.IMPORTED
+        assert final.import_total == 3
+
+
+def _monitor_pass(
+    qbit: _PollableQbit,
+    record: PendingImport,
+) -> MonitorPass:
+    """A fresh :class:`MonitorPass` over one record, wired to a scripted qBittorrent."""
+
+    mgr = make_orchestration_manager(qbit=qbit, strategy=_RecordingStrategy())
+    clock = FakeClock(step=5)
+    return MonitorPass(mgr, [record], now=clock.now, dl_timeout=3600, import_timeout=600)
+
+
+class TestMonitorFastTelemetry:
+    """refresh_telemetry: the fast-lane download refresh - telemetry only, no verdicts."""
+
+    def test_progress_wait_drives_the_telemetry_refresh(self) -> None:
+        # The wiring test: between heavy polls, _progress_wait's fast lane pushes
+        # a snapshot with fresh download telemetry (the row moves to 60% at
+        # 999 B/s well before the next heavy cycle).
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.RETRY, files_present=True),
+        )
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit(
+            [
+                [FakeTorrent(progress=0.3, dlspeed=100)],  # heavy poll 1
+                [FakeTorrent(torrent_hash="h", progress=0.6, dlspeed=999)],  # fast batch
+                [FakeTorrent(is_complete=True, content_path="/d", progress=1.0)],
+            ],
+        )
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
+            progress_poll_interval=5,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=5)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        assert any(
+            t.key == "h" and t.phase is Phase.DOWNLOADING and t.fraction == 0.6 and t.speed_bps == 999
+            for snap in view.snapshots
+            for t in snap.torrents
+        )
+        assert view.final("h").outcome is Outcome.IMPORTED
+
+    def test_views_that_render_no_telemetry_skip_the_read(self) -> None:
+        # A view with wants_telemetry=False (the non-TTY digest) must not cost a
+        # qBittorrent read every fast slice: only the two heavy polls hit the client.
+        class NoTelemetryView(RecordingWaitView):
+            wants_telemetry = False
+
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.RETRY, files_present=True),
+        )
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit(
+            [
+                [FakeTorrent(progress=0.3, dlspeed=100)],
+                [FakeTorrent(is_complete=True, content_path="/d", progress=1.0)],
+            ],
+        )
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending],
+            pending=[pending],
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
+            progress_poll_interval=5,
+        )
+        clock = FakeClock(step=5)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=NoTelemetryView())
+
+        assert qbit.calls == 2
+
+    def test_updates_downloading_row_without_a_phase_transition(self) -> None:
+        record = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit(
+            [
+                [FakeTorrent(progress=0.3, dlspeed=100)],  # heavy poll
+                [FakeTorrent(torrent_hash="h", progress=1.0, dlspeed=250)],  # fast batch
+            ],
+        )
+        mp = _monitor_pass(qbit, record)
+        mp.advance(record)
+        assert mp.views["h"].phase is Phase.DOWNLOADING
+
+        changed = mp.refresh_telemetry()
+
+        assert changed is True
+        view = mp.views["h"]
+        # Telemetry moved (even to 100%) but the phase did NOT change - terminal
+        # decisions belong to the heavy poll alone.
+        assert view.phase is Phase.DOWNLOADING
+        assert view.fraction == 1.0
+        assert view.speed_bps == 250
+        # The sparkline window is heavy-poll-sampled; the fast refresh adds nothing.
+        assert view.speed_history == (100,)
+        assert "h" in mp.active
+
+    def test_unchanged_telemetry_reports_no_change(self) -> None:
+        record = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit(
+            [
+                [FakeTorrent(progress=0.3, dlspeed=100)],
+                [FakeTorrent(torrent_hash="h", progress=0.3, dlspeed=100)],
+            ],
+        )
+        mp = _monitor_pass(qbit, record)
+        mp.advance(record)
+
+        assert mp.refresh_telemetry() is False
+
+
+class TestMonitorTransientPoll:
+    """A transient qBittorrent blip keeps the row's last real state on screen."""
+
+    def test_unobserved_poll_keeps_bar_and_history(self) -> None:
+        record = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit(
+            [
+                [FakeTorrent(progress=0.3, dlspeed=100)],
+                qbittorrentapi.APIConnectionError("blip"),
+                [FakeTorrent(progress=0.4, dlspeed=200)],
+            ],
+        )
+        mp = _monitor_pass(qbit, record)
+
+        mp.advance(record)
+        mp.advance(record)  # the blip cycle
+        assert mp.views["h"].fraction == 0.3  # last real reading kept, no 0% flash
+        mp.advance(record)
+
+        view = mp.views["h"]
+        assert view.fraction == 0.4
+        # Only the two real readings are in the sparkline window - the blip never
+        # injected a fake stall sample.
+        assert view.speed_history == (100, 200)
+
+
+class TestMonitorSpeedHistory:
+    """The downloading rows' sparkline window: one sample per heavy poll, bounded."""
+
+    def test_accumulates_per_heavy_poll_with_stalls_as_zero(self) -> None:
+        record = pending_import(infohash="h", added_at=_FRESH)
+        qbit = FakeQbit(
+            [
+                [FakeTorrent(progress=0.1, dlspeed=100)],
+                [FakeTorrent(progress=0.2)],  # stalled (no speed) -> a 0 sample
+                [FakeTorrent(progress=0.3, dlspeed=300)],
+            ],
+        )
+        mp = _monitor_pass(qbit, record)
+
+        for _ in range(3):
+            mp.advance(record)
+
+        assert mp.views["h"].speed_history == (100, 0, 300)
+
+    def test_window_is_bounded_to_spark_samples(self) -> None:
+        record = pending_import(infohash="h", added_at=_FRESH)
+        mp = _monitor_pass(FakeQbit([[FakeTorrent(progress=0.1, dlspeed=100)]]), record)
+
+        for _ in range(SPARK_SAMPLES + 3):
+            mp.advance(record)
+
+        assert mp.views["h"].speed_history == (100,) * SPARK_SAMPLES
 
 
 class TestImportWaitModeProperty:
