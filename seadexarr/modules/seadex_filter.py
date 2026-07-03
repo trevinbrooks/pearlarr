@@ -1,10 +1,13 @@
 import copy
 import logging
+import sys
 
+from rich.console import Console
 from seadex import EntryRecord
 
 from .cache import AbstractCacheStore
 from .config import PRIVATE_TRACKERS, AppConfig
+from .console_caps import console_of
 from .log import LogFormatter, indent_string
 from .planner import DownloadPlanner
 from .reporter import RunContext
@@ -138,27 +141,25 @@ class SeadexReleaseFilter:
             sd_entry: SeaDex entry
         """
 
-        # Informational prompt rows log at INFO: a WARNING here would tally into
-        # the end-of-run issues summary once per interactive pick.
-        self.logger.info("Multiple releases found - pick which to grab")
-        self.logger.info(
-            indent_string("SeaDex notes:"),
-        )
+        # The prompt rows are interactive UI for the input() below, not log
+        # events: they render straight to the terminal so they stay visible at
+        # any configured log level and never tally into the issues summary.
+        console = console_of(self.logger) or Console(file=sys.stdout)
+
+        def say(row: str) -> None:
+            console.print(row, highlight=False, soft_wrap=True)
+
+        say("Multiple releases found - pick which to grab")
+        say(indent_string("SeaDex notes:"))
 
         notes = sd_entry.notes.split("\n")
         for n in notes:
-            self.logger.info(
-                indent_string(n),
-            )
-        self.logger.info(
-            indent_string(""),
-        )
+            say(indent_string(n))
+        say("")
 
         all_srgs = list(seadex_dict.keys())
         for s_i, s in enumerate(all_srgs):
-            self.logger.info(
-                indent_string(f"[{s_i}]: {s}"),
-            )
+            say(indent_string(f"[{s_i}]: {s}"))
 
         srgs_to_grab = input(
             "Which release group(s)? Enter one number, a comma-separated list, or leave blank for all: ",

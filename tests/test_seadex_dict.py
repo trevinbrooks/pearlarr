@@ -142,7 +142,9 @@ class TestGetSeadexDict:
 
 
 class TestInteractivePick:
-    def test_tolerates_non_numeric_input(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_tolerates_non_numeric_input(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         # A non-numeric pick (a typo) must not crash the entry with an uncaught
         # ValueError; the bad token is skipped with a warning, so nothing is selected.
         filt = make_release_filter()
@@ -156,15 +158,17 @@ class TestInteractivePick:
         monkeypatch.setattr("builtins.input", fake_input)
         handler = CaptureHandler()
         filt.logger.addHandler(handler)
-        filt.logger.setLevel(logging.INFO)
+        filt.logger.setLevel(logging.WARNING)
         try:
             result = filt.interactive_pick(seadex_dict, sd_entry)
         finally:
             filt.logger.removeHandler(handler)
         assert result == {}
+        # The prompt rows are printed, not logged, so they stay visible even at
+        # log_level WARNING (a demoted INFO row would vanish and leave input() blind).
+        assert "[0]: GroupA" in capsys.readouterr().out
         # Only genuine problems warn (LogCounter tallies WARNINGs into the run's
-        # issues summary): the invalid token, then the resulting empty pick. The
-        # informational prompt rows all ride at INFO.
+        # issues summary): the invalid token, then the resulting empty pick.
         warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
         assert len(warnings) == 2
         assert "invalid selection" in warnings[0]
