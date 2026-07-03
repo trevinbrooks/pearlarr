@@ -10,6 +10,7 @@
 - Add ``qbittorrent.tags``, which allows you to tag torrents as added to qBittorrent
 - Add ``seadex.ignore_tags``, which allows you to filter out SeaDex releases by tag
 - Use AniBridge mappings to mop up missed Sonarr/Radarr titles
+- **Breaking:** Python 3.13+ is now required (3.12 dropped); CI and the Docker image run 3.13/3.14. Runtime dependencies bumped to latest (notably typer 0.26, rich 15, qbittorrent-api 2026.6, requests 2.34)
 - Failed CLI commands now exit non-zero (previously always 0), and a missing cache/backup file is reported as a one-line message instead of a traceback
 - ``cache backup`` writes the snapshot via a temp file, so a failed backup can never replace or delete a previous good ``cache.backup.db``
 - ``config init`` refuses to overwrite an existing ``config.yml`` unless ``--force`` is passed

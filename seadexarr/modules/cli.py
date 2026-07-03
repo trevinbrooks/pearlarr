@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Annotated
 
 import typer
 from pydantic import ValidationError
-from typer.models import OptionInfo
 
 from .boot_view import BootView, make_boot_view
 from .config import AppConfig, Arr, template_path
@@ -28,17 +27,6 @@ if TYPE_CHECKING:
     # that use them, so their deps aren't pulled at CLI module load (see below).
     from .cache import CacheStore
     from .mappings import MappingResolver
-
-
-def _option(text: str) -> OptionInfo:
-    """``typer.Option(help=...)`` with a fully-known signature (typer's own is
-    partially unknown under strict: click 8.4 made ParamType generic).
-
-    ``default=...`` marks "no default here" - Annotated params take the signature
-    default, exactly as ``typer.Option`` passes it.
-    """
-
-    return OptionInfo(default=..., help=text)
 
 
 # The heavy clients (qBittorrent / arrapi / the SeaDex+httpx chain via cache) are
@@ -321,8 +309,8 @@ def main(
     ctx: typer.Context,
     data_dir: Annotated[
         str | None,
-        _option(
-            "Override the data directory holding config, caches and logs "
+        typer.Option(
+            help="Override the data directory holding config, caches and logs "
             "(default: SEADEX_ARR_DATA_DIR or the OS per-user data directory).",
         ),
     ] = None,
@@ -422,23 +410,23 @@ def run_scheduled() -> None:
 # (with its Args block) is for API readers and never reaches --help.
 @seadexarr_run.command("single", help="Do a single SeaDexArr run for the selected arr modules.")
 def run_single(
-    radarr: Annotated[bool, _option("Run the Radarr module.")] = False,
-    sonarr: Annotated[bool, _option("Run the Sonarr module.")] = False,
+    radarr: Annotated[bool, typer.Option(help="Run the Radarr module.")] = False,
+    sonarr: Annotated[bool, typer.Option(help="Run the Sonarr module.")] = False,
     movie_id: Annotated[
         int | None,
-        _option("Only process the movie with this TMDB ID (implies --radarr)."),
+        typer.Option(help="Only process the movie with this TMDB ID (implies --radarr)."),
     ] = None,
     series_id: Annotated[
         int | None,
-        _option("Only process the series with this TVDB ID (implies --sonarr)."),
+        typer.Option(help="Only process the series with this TVDB ID (implies --sonarr)."),
     ] = None,
     dry_run: Annotated[
         bool,
-        _option("Simulate the run: no grabs, no cache writes, no notifications."),
+        typer.Option(help="Simulate the run: no grabs, no cache writes, no notifications."),
     ] = False,
     import_wait_mode: Annotated[
         ImportWaitMode | None,
-        _option("Override the configured imports.wait_mode for this run."),
+        typer.Option(help="Override the configured imports.wait_mode for this run."),
     ] = None,
 ) -> bool:
     """Do a single SeaDexArr run for the selected arr modules.
@@ -491,7 +479,7 @@ def run_single(
 # Config commands
 @seadexarr_config.command("init")
 def config_init(
-    force: Annotated[bool, _option("Overwrite an existing config.yml with the starter template.")] = False,
+    force: Annotated[bool, typer.Option(help="Overwrite an existing config.yml with the starter template.")] = False,
 ) -> bool:
     """Write a starter config.yml to the data directory.
 

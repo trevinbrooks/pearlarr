@@ -93,7 +93,7 @@ class SeaDexGateway(SeaDexSource):
             return 0
 
         done = 0
-        for chunk in batched(missing, SEADEX_BATCH_SIZE):
+        for chunk in batched(missing, SEADEX_BATCH_SIZE, strict=False):
             chunk = list(chunk)
             try:
                 fetched = self._fetch_batch(chunk)

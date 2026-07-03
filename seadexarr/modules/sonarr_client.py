@@ -7,11 +7,17 @@ and the two raw endpoints the syncer needs
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Mapping, Sequence
 from typing import Any, cast, override
 from urllib.parse import urlencode
 
 import requests
 from arrapi import SonarrAPI
+
+# Structural twin of requests' recursive ``JsonType`` (a private alias, so not
+# importable). ``CommandBody`` is JSON-safe but a nested TypedDict can't be
+# *proven* against the recursive alias, so _post_command casts through this.
+type _Json = None | bool | int | float | str | Sequence["_Json"] | Mapping[str, "_Json"]
 
 from .log import indent_string
 from .manual_import import PendingImport
@@ -432,7 +438,7 @@ class SonarrClient(AbstractSonarrClient):
         d_enc = urlencode({"apikey": self._api_key})
         command_req_url = f"{self._url}/api/v3/command?{d_enc}"
         try:
-            command_req = self._session.post(command_req_url, json=body, timeout=ARR_REQUEST_TIMEOUT_S)
+            command_req = self._session.post(command_req_url, json=cast("_Json", body), timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             command_req = None
 

@@ -172,7 +172,7 @@ class _DurableBootView(BootView):
         return self._step(label)
 
     @contextlib.contextmanager
-    def _step(self, label: str) -> Generator[BootStep, None, None]:
+    def _step(self, label: str) -> Generator[BootStep]:
         step = BootStep(self._notify, label)
         start = self._time()
         if self._section_started is None:
@@ -367,7 +367,7 @@ class NullBootView(BootView):
         return self._noop()
 
     @contextlib.contextmanager
-    def _noop(self) -> Generator[BootStep, None, None]:
+    def _noop(self) -> Generator[BootStep]:
         yield BootStep(lambda _step: None, "")
 
     @override

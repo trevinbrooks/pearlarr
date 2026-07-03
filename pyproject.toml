@@ -7,7 +7,7 @@ name = "seadexarr"
 version = "0.9.0"
 description = "SeaDex Starr Sync"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 
@@ -37,7 +37,6 @@ classifiers = [
 
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3 :: Only",
@@ -45,17 +44,17 @@ classifiers = [
 
 dependencies = [
     "arrapi == 1.4.14",
-    "beautifulsoup4 == 4.14.3",
+    "beautifulsoup4 == 4.15.0",
     "httpx == 0.28.1",
     "platformdirs == 4.10.0",
     "pydantic == 2.13.4",
     "pynyaa == 3.0.0",
     "PyYAML == 6.0.3",
-    "qbittorrent-api == 2025.11.1",
-    "requests == 2.32.5",
-    "rich == 13.9.4",
+    "qbittorrent-api == 2026.6.1",
+    "requests == 2.34.2",
+    "rich == 15.0.0",
     "seadex == 0.7.2",
-    "typer == 0.21.1",
+    "typer == 0.26.8",
     "urllib3>=2.7.0",
 ]
 

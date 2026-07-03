@@ -34,7 +34,7 @@ def single_instance_lock(
     data_dir: str,
     *,
     logger: logging.Logger | None = None,
-) -> Generator[bool, None, None]:
+) -> Generator[bool]:
     """Hold an advisory lock on ``data_dir`` for the duration of the ``with`` block.
 
     Yields ``True`` if this process acquired the lock (no other run is active in
