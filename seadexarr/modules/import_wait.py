@@ -375,8 +375,6 @@ class ImportWaitManager:
                 time_source=clock,
             )
 
-        poll_s = self._config.imports.poll_interval
-
         # Fresh-per-call behavioral object: it owns the per-cycle accumulators (so
         # there's nothing to reset between calls) and the advance logic; the loop
         # here keeps only the view lifecycle, the cycle pacing, and the Ctrl-C break.
@@ -389,16 +387,16 @@ class ImportWaitManager:
         )
 
         try:
-            view.update(mp.snapshot(0.0))
+            view.update(mp.snapshot())
             while mp.active:
                 try:
-                    for record in records:
+                    for record in mp.records:
                         if record.infohash not in mp.active:
                             continue
                         mp.advance(record)
-                    view.update(mp.snapshot(clock() - mp.start))
+                    view.update(mp.snapshot())
                     if mp.active:
-                        self._progress_wait(mp, records, view, clock, nap, poll_s)
+                        self._progress_wait(mp, view, nap)
                 except KeyboardInterrupt:
                     self.logger.info(f"Wait interrupted; {len(mp.active)} left pending")
                     break
@@ -406,42 +404,40 @@ class ImportWaitManager:
             if own_view:
                 view.close()
 
-        return WaitResult(tuple(mp.results), elapsed_s=clock() - mp.start)
+        return WaitResult(tuple(mp.results), elapsed_s=mp.elapsed())
 
     def _progress_wait(
         self,
         mp: "MonitorPass",
-        records: list[PendingImport],
         view: WaitView,
-        clock: Callable[[], float],
         nap: Callable[[float], None],
-        poll_s: int,
     ) -> None:
         """Sleep one heavy-poll interval, refreshing the "files inserted" bar between.
 
-        Splits the inter-poll ``nap`` into ``progress_poll_interval`` slices: between
-        the heavy cycles it re-reads only the cheap episode-file count (never the
-        throttled refresh / queue / qBittorrent) to advance each importing row's bar
-        and promote a row the instant its files all land. Falls back to one plain
+        Splits the inter-poll ``nap`` into ``imports.progress_poll_interval`` slices:
+        between the heavy cycles it re-reads only the cheap episode-file count (never
+        the throttled refresh / queue / qBittorrent) to advance each importing row's
+        bar and promote a row the instant its files all land. Falls back to one plain
         ``nap(poll_s)`` when the fast poll is disabled (<= 0) or no faster than the
         heavy poll. A ``KeyboardInterrupt`` during a slice propagates to the caller's
         break, as a plain ``nap`` would.
         """
 
+        poll_s = self._config.imports.poll_interval
         progress_s = self._config.imports.progress_poll_interval
         if progress_s <= 0 or progress_s >= poll_s:
             nap(poll_s)
             return
-        deadline = clock() + poll_s
+        deadline = mp.now() + poll_s
         while mp.active:
-            remaining = deadline - clock()
+            remaining = deadline - mp.now()
             if remaining <= 0:
                 return
             nap(min(progress_s, remaining))
             if not mp.active:
                 return
-            if mp.refresh_progress(records):
-                view.update(mp.snapshot(clock() - mp.start))
+            if mp.refresh_progress():
+                view.update(mp.snapshot())
 
     def _monitor_working_set(self) -> list[PendingImport]:
         """Dedup ``_ctx.pending_imports`` + rehydrated store records by infohash.
@@ -525,12 +521,12 @@ class MonitorPass:
         import_timeout: int,
     ) -> None:
         self._mgr = manager
+        self.records = records
         self.now = now
         self.dl_timeout = dl_timeout
         self.import_timeout = import_timeout
         # Sampled once here (was ``start = clock()`` atop run_monitor); the download
-        # clock for every record starts now, and the manager reads ``start`` back for
-        # the snapshot / WaitResult elapsed.
+        # clock for every record starts now and ``elapsed`` measures from it.
         self.start = now()
         self.dl_start: dict[str, float] = {r.infohash: self.start for r in records}
         self.import_start: dict[str, float] = {}
@@ -545,10 +541,15 @@ class MonitorPass:
         }
         self.results: list[WaitOutcomeRow] = []
 
-    def snapshot(self, elapsed_s: float) -> WaitSnapshot:
+    def elapsed(self) -> float:
+        """Seconds since the pass started (off the injected clock)."""
+
+        return self.now() - self.start
+
+    def snapshot(self) -> WaitSnapshot:
         """The current frame: every torrent's :class:`TorrentView`, plus elapsed."""
 
-        return WaitSnapshot(tuple(self.views.values()), elapsed_s=elapsed_s)
+        return WaitSnapshot(tuple(self.views.values()), elapsed_s=self.elapsed())
 
     def _terminal(self, outcome: Outcome, h: str, label: str) -> None:
         """Record a terminal outcome: snapshot row + result + (maybe) drop + retire.
@@ -650,7 +651,7 @@ class MonitorPass:
                 command_issued=probe.command_issued,
             )
 
-    def refresh_progress(self, records: list[PendingImport]) -> bool:
+    def refresh_progress(self) -> bool:
         """Cheap Tier-2 pass: refresh each importing row's "files inserted" bar.
 
         For every still-active row currently in the IMPORTING phase, asks the
@@ -664,7 +665,7 @@ class MonitorPass:
         """
 
         changed = False
-        for record in records:
+        for record in self.records:
             h = record.infohash
             if h not in self.active:
                 continue
