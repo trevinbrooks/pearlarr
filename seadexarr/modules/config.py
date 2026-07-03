@@ -4,7 +4,7 @@
 defaults, coercion (including the present-but-blank-YAML-key footgun) and validation:
 an unknown/typo'd key or a bad value raises a clear ``ValidationError`` instead of
 being silently dropped or coalesced. The rest of the package reads
-``config.seadex.public_only`` rather than ``config.get("public_only", True)``.
+``config.seadex.want_best`` rather than ``config.get("want_best", True)``.
 
 Each settings group is its own submodel (``sonarr``/``radarr``/``qbittorrent``/
 ``seadex``/``imports``/``notifications``/``advanced``/``mappings``). The connection
@@ -70,6 +70,21 @@ class Arr(StrEnum):
 
     SONARR = "sonarr"
     RADARR = "radarr"
+
+
+class PrivateReleaseAction(StrEnum):
+    """The ``seadex.private_releases`` policy for private-tracker releases.
+
+    ALLOW grabs them like any other. WARN (default) never grabs them, and when
+    the preferred release is private-only it warns and skips without caching,
+    so the title is re-checked every run until a public release appears.
+    FALLBACK never grabs them either, but grabs the entry's best public
+    alternative instead, warning only when none exists at all.
+    """
+
+    ALLOW = "allow"
+    WARN = "warn"
+    FALLBACK = "fallback"
 
 
 def template_path() -> str:
@@ -156,17 +171,27 @@ class QbittorrentSettings(_ConfigBase):
 class SeadexSettings(_ConfigBase):
     """SeaDex release-selection filters."""
 
-    public_only: bool = True
+    private_releases: PrivateReleaseAction = PrivateReleaseAction.WARN
     prefer_dual_audio: bool = True
     want_best: bool = True
     ignore_tags: list[str] = Field(default_factory=list)
     # Default to all trackers (public + private) when none configured. Private are
-    # included even when public_only: they're filtered later, after the overlap check
-    # against what's already downloaded.
+    # included even when private releases won't be grabbed: they're filtered later,
+    # after the overlap check against what's already downloaded.
     trackers: set[str] = Field(default_factory=lambda: PUBLIC_TRACKERS | PRIVATE_TRACKERS)
     ignore_anilist_ids: set[int] = Field(default_factory=set[int])
     ignore_seadex_update_times: bool = False
     use_torrent_hash_to_filter: bool = False
+
+    @property
+    def public_only(self) -> bool:
+        """Whether private releases must never be grabbed (WARN or FALLBACK).
+
+        Derived from ``private_releases`` - the old standalone bool folded into
+        that policy enum - so the code keeps its natural predicate.
+        """
+
+        return self.private_releases is not PrivateReleaseAction.ALLOW
 
     @field_validator("trackers", mode="before")
     @classmethod

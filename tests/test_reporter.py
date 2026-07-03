@@ -136,7 +136,7 @@ class TestRunSummary:
                 coverage="S02",
                 group="Priv",
                 url="u2",
-                reason="private-only release; public_only on",
+                reason="private-only release; private releases not allowed",
                 kind=NeedsActionKind.PRIVATE_ONLY,
             ),
         ]
@@ -305,11 +305,19 @@ class TestPublicOnlyTip:
 
     def test_private_only_kind_renders_tip_despite_reworded_reason(self) -> None:
         messages = _summary_messages(_make_reporter(), self._needs_ctx(NeedsActionKind.PRIVATE_ONLY))
-        assert any("public_only: false" in m for m in messages)
+        assert any("private_releases: allow" in m for m in messages)
+        assert any("private_releases: fallback" in m for m in messages)
+
+    def test_no_fallback_kind_tip_omits_the_fallback_suggestion(self) -> None:
+        # Fallback mode found nothing public: suggesting private_releases: fallback
+        # (already on) would be nonsense, so that kind gets the shorter tip.
+        messages = _summary_messages(_make_reporter(), self._needs_ctx(NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK))
+        assert any("private_releases: allow" in m for m in messages)
+        assert not any("private_releases: fallback" in m for m in messages)
 
     def test_unsupported_tracker_kind_renders_no_tip(self) -> None:
         messages = _summary_messages(_make_reporter(), self._needs_ctx(NeedsActionKind.UNSUPPORTED_TRACKER))
-        assert not any("public_only: false" in m for m in messages)
+        assert not any("private_releases" in m for m in messages)
 
 
 def _action_messages(

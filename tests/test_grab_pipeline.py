@@ -224,14 +224,14 @@ class TestUnsupportedTrackerSkip:
     def test_skipped_but_loop_continues(self) -> None:
         # AniDex first, Nyaa second, under one group. The old raise unwound the whole
         # url loop - dropping the grabbable Nyaa release too; now AniDex is skipped and
-        # the loop continues. Default config: public_only on, all trackers selected.
+        # the loop continues. Default config: private_releases warn, all trackers selected.
         anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="hA")
         nyaa = url_item(url="https://nyaa.si/view/2", infohash="hN", download=True)
         nyaa.tracker = Tracker.NYAA
         seadex_dict: SeadexDict = {"NAN0": rg_group({anidex.url: anidex, nyaa.url: nyaa})}
 
         torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-NAN0")})
-        pipeline = _pipeline(torrents=torrents, public_only=True)
+        pipeline = _pipeline(torrents=torrents, private_releases="warn")
         seeds = {"hN": pending_import(infohash="hN", series_id=7)}
 
         n_added, results = pipeline.add_torrent(seadex_dict, pending_seeds=seeds)
@@ -250,7 +250,7 @@ class TestUnsupportedTrackerSkip:
         anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="hA")
         seadex_dict: SeadexDict = {"NAN0": rg_group({anidex.url: anidex})}
 
-        pipeline = _pipeline(torrents=FakeTorrents({}), public_only=True, sleep_time=0)
+        pipeline = _pipeline(torrents=FakeTorrents({}), private_releases="warn", sleep_time=0)
         # Pre-seed the AniList cache so _grab's thumbnail lookup stays offline.
         pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.current_title = "Show S1"
@@ -283,7 +283,7 @@ class TestUnsupportedTrackerSkip:
         anidex = _anidex_release(url="https://anidex.info/torrent/1", infohash="hA")
         seadex_dict: SeadexDict = {"NAN0": rg_group({private.url: private, anidex.url: anidex})}
 
-        pipeline = _pipeline(torrents=FakeTorrents({}), public_only=True, sleep_time=0)
+        pipeline = _pipeline(torrents=FakeTorrents({}), private_releases="warn", sleep_time=0)
         pipeline._anilist.al_cache.update({7: {}})
         pipeline._ctx.current_title = "Show S1"
 
@@ -304,9 +304,107 @@ class TestUnsupportedTrackerSkip:
         assert pipeline._ctx.public_only_skipped is True
         assert pipeline._ctx.unsupported_tracker_skipped is True
         # ...but only the private-only reason is surfaced, and the title stays uncached.
-        assert [r.reason for r in pipeline._ctx.stats.needs_action] == ["private-only release; public_only on"]
+        assert [r.reason for r in pipeline._ctx.stats.needs_action] == [
+            "private-only release; private releases not allowed"
+        ]
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
         assert pipeline.cache_store.get_entry(Arr.SONARR, 7) is None
+
+    def test_private_only_in_fallback_mode_surfaces_no_alternative(self) -> None:
+        # private_releases: fallback and still nothing grabbable means the entry
+        # had no public alternative: the needs-action row says that (its own kind,
+        # so the summary tip doesn't suggest the fallback that's already on).
+        private = url_item(url="https://ab.example/1", infohash="hP", is_public=False, download=True)
+        private.tracker = Tracker.ANIMEBYTES
+        seadex_dict: SeadexDict = {"Priv": rg_group({private.url: private})}
+
+        pipeline = _pipeline(torrents=FakeTorrents({}), private_releases="fallback", sleep_time=0)
+        pipeline._anilist.al_cache.update({7: {}})
+        pipeline._ctx.current_title = "Show S1"
+
+        req = GrabRequest(
+            al_id=7,
+            item_title="Show",
+            anilist_title="Show",
+            sd_url="https://seadex.example/7",
+            seadex_dict=seadex_dict,
+            torrent_hashes=["hP"],
+            cache_details={},
+            release_group=None,
+        )
+
+        pipeline.grab_and_cache(req)
+
+        assert pipeline._ctx.public_only_skipped is True
+        assert [r.reason for r in pipeline._ctx.stats.needs_action] == [
+            "private-only release; no public alternative found"
+        ]
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 7) is None
+
+    def test_interactive_private_pick_keeps_the_plain_private_only_kind(self) -> None:
+        # Interactive + fallback: a hold here is the user's own private pick, not
+        # a failed fallback search, so the record must not claim "no alternative".
+        private = url_item(url="https://ab.example/1", infohash="hP", is_public=False, download=True)
+        private.tracker = Tracker.ANIMEBYTES
+        seadex_dict: SeadexDict = {"Priv": rg_group({private.url: private})}
+
+        pipeline = _pipeline(torrents=FakeTorrents({}), private_releases="fallback", interactive=True, sleep_time=0)
+        pipeline._anilist.al_cache.update({7: {}})
+        pipeline._ctx.current_title = "Show S1"
+
+        req = GrabRequest(
+            al_id=7,
+            item_title="Show",
+            anilist_title="Show",
+            sd_url="https://seadex.example/7",
+            seadex_dict=seadex_dict,
+            torrent_hashes=["hP"],
+            cache_details={},
+            release_group=None,
+        )
+
+        pipeline.grab_and_cache(req)
+
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
+
+    def test_fallback_grab_caches_title_as_done(self) -> None:
+        # The fallback happy path: the planner already unflagged the private pick
+        # (public fallback kept), the fallback adds fine -> the title caches as
+        # done with no needs-action row, unlike warn mode's uncached hold.
+        private = url_item(url="https://ab.example/1", infohash="hP", is_public=False, download=False)
+        private.tracker = Tracker.ANIMEBYTES
+        fall = url_item(url="https://nyaa.si/view/9", infohash="hF", download=True, is_fallback=True)
+        fall.tracker = Tracker.NYAA
+        seadex_dict: SeadexDict = {
+            "Priv": rg_group({private.url: private}),
+            "Fall": rg_group({fall.url: fall}),
+        }
+
+        torrents = FakeTorrents({"hF": (AddOutcome.ADDED, "Show-Fall")})
+        pipeline = _pipeline(torrents=torrents, private_releases="fallback", sleep_time=0)
+        pipeline._anilist.al_cache.update({42: {}})
+        pipeline._ctx.current_title = "Show S1"
+
+        req = GrabRequest(
+            al_id=42,
+            item_title="Show",
+            anilist_title="Show",
+            sd_url="https://seadex.example/42",
+            seadex_dict=seadex_dict,
+            torrent_hashes=["hF"],
+            cache_details={"updated_at": "2026-01-01 00:00:00"},
+            release_group=None,
+        )
+
+        stop = pipeline.grab_and_cache(req)
+
+        assert stop is False
+        assert pipeline._ctx.torrents_added == 1
+        assert pipeline._ctx.public_only_skipped is False
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is not None
+        assert pipeline.cache_store.torrent_hashes(Arr.SONARR, 42) == ["hF"]
+        assert pipeline._ctx.stats.needs_action == []
 
     def test_mixed_grab_caches_without_the_unsupported_hash(self) -> None:
         # One grabbed (Nyaa) + one unsupported (AniDex): the title IS cached (the
@@ -319,7 +417,7 @@ class TestUnsupportedTrackerSkip:
         seadex_dict: SeadexDict = {"NAN0": rg_group({anidex.url: anidex, nyaa.url: nyaa})}
 
         torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-NAN0")})
-        pipeline = _pipeline(torrents=torrents, public_only=True, sleep_time=0)
+        pipeline = _pipeline(torrents=torrents, private_releases="warn", sleep_time=0)
         pipeline._anilist.al_cache.update({42: {}})
         pipeline._ctx.current_title = "Show S1"
 
@@ -353,7 +451,7 @@ class TestUnsupportedTrackerSkip:
         seadex_dict: SeadexDict = {"NAN0": rg_group({private.url: private, nyaa.url: nyaa})}
 
         torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-NAN0")})
-        pipeline = _pipeline(torrents=torrents, public_only=True, sleep_time=0)
+        pipeline = _pipeline(torrents=torrents, private_releases="warn", sleep_time=0)
         pipeline._anilist.al_cache.update({7: {}})
         pipeline._ctx.current_title = "Show S1"
 

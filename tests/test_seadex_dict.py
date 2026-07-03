@@ -114,7 +114,7 @@ class TestGetSeadexDict:
         # second conjunct (a real private tracker is_public()==False already, which would
         # short-circuit before the membership check ever ran).
         monkeypatch.setattr(seadex_filter, "PRIVATE_TRACKERS", {"nyaa"})
-        filt = make_release_filter(public_only=False, want_best=False, prefer_dual_audio=False)
+        filt = make_release_filter(private_releases="allow", want_best=False, prefer_dual_audio=False)
         entry = _entry(
             _torrent(release_group="A", url="u1", tracker=Tracker.NYAA),
         )
@@ -122,7 +122,7 @@ class TestGetSeadexDict:
         assert result["A"].urls["u1"].is_public is False
 
     def test_public_only_drops_private_url_when_public_exists(self) -> None:
-        filt = make_release_filter(public_only=True, want_best=False, prefer_dual_audio=False)
+        filt = make_release_filter(private_releases="warn", want_best=False, prefer_dual_audio=False)
         entry = _entry(
             _torrent(release_group="A", url="pub", tracker=Tracker.NYAA),
             _torrent(release_group="A", url="priv", tracker=Tracker.ANIMEBYTES),
@@ -133,12 +133,95 @@ class TestGetSeadexDict:
     def test_public_only_keeps_private_only_group(self) -> None:
         # A group with no public option is kept here; it's only dropped later in
         # reduce_overlapping_downloads if the Arr already has a match.
-        filt = make_release_filter(public_only=True, want_best=False, prefer_dual_audio=False)
+        filt = make_release_filter(private_releases="warn", want_best=False, prefer_dual_audio=False)
         entry = _entry(
             _torrent(release_group="A", url="priv", tracker=Tracker.ANIMEBYTES),
         )
         result = filt.build(entry)
         assert set(result["A"].urls) == {"priv"}
+
+
+class TestPrivateFallback:
+    """``private_releases: fallback`` - the public-alternative pool added by ``build``."""
+
+    def test_private_only_preferred_adds_public_fallback(self) -> None:
+        filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
+        entry = _entry(
+            _torrent(release_group="Best", url="priv", tracker=Tracker.ANIMEBYTES, is_best=True),
+            _torrent(release_group="Alt", url="pub", tracker=Tracker.NYAA),
+        )
+        result = filt.build(entry)
+        # The private preferred pick stays (for the already-have check); the best
+        # public alternative rides along, marked as the fallback.
+        assert set(result) == {"Best", "Alt"}
+        assert result["Best"].urls["priv"].is_fallback is False
+        assert result["Alt"].urls["pub"].is_fallback is True
+
+    def test_no_fallback_added_when_preferred_has_public(self) -> None:
+        filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
+        entry = _entry(
+            _torrent(release_group="Best", url="pub", tracker=Tracker.NYAA, is_best=True),
+            _torrent(release_group="Alt", url="pub2", tracker=Tracker.NYAA),
+        )
+        assert set(filt.build(entry)) == {"Best"}
+
+    def test_mixed_preferred_adds_fallback_for_private_only_group(self) -> None:
+        # A private-only preferred group triggers the pool even when another
+        # preferred group is public (the gate is per-group, not per-entry); the
+        # public preferred pick is NOT marked as a fallback.
+        filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
+        entry = _entry(
+            _torrent(release_group="PrivBest", url="priv", tracker=Tracker.ANIMEBYTES, is_best=True),
+            _torrent(release_group="PubBest", url="pub", tracker=Tracker.NYAA, is_best=True),
+            _torrent(release_group="Alt", url="pub2", tracker=Tracker.NYAA),
+        )
+        result = filt.build(entry)
+        assert set(result) == {"PrivBest", "PubBest", "Alt"}
+        assert result["PubBest"].urls["pub"].is_fallback is False
+        assert result["Alt"].urls["pub2"].is_fallback is True
+
+    def test_same_group_public_copy_survives_as_fallback(self) -> None:
+        # One group with a private preferred url and a public non-best url: the
+        # pool re-adds the group's public copy, then the per-group drop removes
+        # the private url, leaving a public group marked as the fallback.
+        filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
+        entry = _entry(
+            _torrent(release_group="A", url="priv", tracker=Tracker.ANIMEBYTES, is_best=True),
+            _torrent(release_group="A", url="pub", tracker=Tracker.NYAA),
+        )
+        result = filt.build(entry)
+        assert set(result) == {"A"}
+        assert set(result["A"].urls) == {"pub"}
+        assert result["A"].urls["pub"].is_fallback is True
+
+    def test_no_fallback_added_when_nothing_public(self) -> None:
+        filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
+        entry = _entry(
+            _torrent(release_group="Best", url="priv", tracker=Tracker.ANIMEBYTES, is_best=True),
+        )
+        result = filt.build(entry)
+        assert set(result) == {"Best"}
+        assert result["Best"].urls["priv"].is_fallback is False
+
+    def test_warn_mode_does_not_add_fallback(self) -> None:
+        # The default: a private-only preferred pick stays alone, so the planner
+        # warns and holds the title exactly as before.
+        filt = make_release_filter(private_releases="warn", want_best=True, prefer_dual_audio=False)
+        entry = _entry(
+            _torrent(release_group="Best", url="priv", tracker=Tracker.ANIMEBYTES, is_best=True),
+            _torrent(release_group="Alt", url="pub", tracker=Tracker.NYAA),
+        )
+        assert set(filt.build(entry)) == {"Best"}
+
+    def test_fallback_pool_applies_the_preference_cascade(self) -> None:
+        # The public pool is narrowed by the same want_best/audio preferences.
+        filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=True)
+        entry = _entry(
+            _torrent(release_group="Best", url="priv", tracker=Tracker.ANIMEBYTES, is_best=True, is_dual_audio=True),
+            _torrent(release_group="AltDual", url="pub1", tracker=Tracker.NYAA, is_dual_audio=True),
+            _torrent(release_group="AltSingle", url="pub2", tracker=Tracker.NYAA),
+        )
+        assert set(filt.build(entry)) == {"Best", "AltDual"}
 
 
 class TestInteractivePick:

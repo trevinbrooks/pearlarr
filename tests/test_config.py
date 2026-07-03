@@ -20,6 +20,7 @@ from seadexarr.modules.config import (
     Arr,
     ImportsSettings,
     NotificationsSettings,
+    PrivateReleaseAction,
     QbittorrentSettings,
     SeadexSettings,
 )
@@ -37,9 +38,10 @@ class TestFileLifecycle:
 
     def test_load_preserves_user_values(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "config.yml"
-        cfg_path.write_text("sonarr:\n  url: http://x\nseadex:\n  public_only: false\n")
+        cfg_path.write_text("sonarr:\n  url: http://x\nseadex:\n  private_releases: allow\n")
         cfg = AppConfig.load(str(cfg_path))
         assert cfg.sonarr.url == "http://x"
+        assert cfg.seadex.private_releases is PrivateReleaseAction.ALLOW
         assert cfg.seadex.public_only is False
 
     def test_template_loads_as_all_defaults(self, tmp_path: Path) -> None:
@@ -48,15 +50,15 @@ class TestFileLifecycle:
         with pytest.raises(FileNotFoundError):
             AppConfig.load(str(cfg_path))  # copies the template
         cfg = AppConfig.load(str(cfg_path))
-        assert cfg.seadex.public_only is True
+        assert cfg.seadex.private_releases is PrivateReleaseAction.WARN
         assert cfg.imports.wait_mode is ImportWaitMode.OFF
         assert cfg.advanced.log_level == "INFO"
 
     def test_checksum_matches_file_bytes(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "config.yml"
-        cfg_path.write_bytes(b"seadex:\n  public_only: true\n")
+        cfg_path.write_bytes(b"seadex:\n  private_releases: warn\n")
         cfg = AppConfig.load(str(cfg_path))
-        assert cfg.checksum() == hashlib.md5(b"seadex:\n  public_only: true\n").hexdigest()
+        assert cfg.checksum() == hashlib.md5(b"seadex:\n  private_releases: warn\n").hexdigest()
 
     def test_load_parses_yaml_quirk_values_end_to_end(self, tmp_path: Path) -> None:
         # Guards the real file -> yaml.safe_load -> AppConfig.load path (not just
@@ -76,6 +78,8 @@ class TestFileLifecycle:
 class TestDefaults:
     def test_group_defaults_when_absent(self) -> None:
         cfg = AppConfig()
+        assert cfg.seadex.private_releases is PrivateReleaseAction.WARN
+        # The derived predicate: WARN and FALLBACK both mean "never grab private".
         assert cfg.seadex.public_only is True
         assert cfg.seadex.prefer_dual_audio is True
         assert cfg.seadex.want_best is True
@@ -114,7 +118,7 @@ class TestDefaults:
     def test_nested_explicit_values_override(self) -> None:
         cfg = AppConfig.model_validate(
             {
-                "seadex": {"public_only": False, "want_best": False},
+                "seadex": {"private_releases": "allow", "want_best": False},
                 "advanced": {"sleep_time": 9},
                 "notifications": {"discord_url": "u"},
             },
@@ -161,7 +165,7 @@ class TestBlankCoalescing:
     def test_blank_top_level_group_uses_defaults(self) -> None:
         # A group header with nothing under it (`seadex:`) parses to None.
         cfg = AppConfig.model_validate({"seadex": None})
-        assert cfg.seadex.public_only is True
+        assert cfg.seadex.private_releases is PrivateReleaseAction.WARN
 
 
 class TestStrictValidation:
@@ -188,6 +192,24 @@ class TestStrictValidation:
     def test_bad_scalar_type_is_rejected(self) -> None:
         with pytest.raises(ValidationError):
             AppConfig.model_validate({"advanced": {"sleep_time": "abc"}})
+
+    def test_private_releases_coerces_valid_strings(self) -> None:
+        for raw, member in [
+            ("allow", PrivateReleaseAction.ALLOW),
+            ("warn", PrivateReleaseAction.WARN),
+            ("fallback", PrivateReleaseAction.FALLBACK),
+        ]:
+            assert SeadexSettings.model_validate({"private_releases": raw}).private_releases is member
+
+    def test_private_releases_invalid_raises(self) -> None:
+        with pytest.raises(ValidationError):
+            SeadexSettings.model_validate({"private_releases": "maybe"})
+
+    def test_removed_public_only_key_is_rejected(self) -> None:
+        # public_only was folded into private_releases (allow/warn/fallback); an
+        # old config still setting it must fail loudly, not be silently ignored.
+        with pytest.raises(ValidationError):
+            SeadexSettings.model_validate({"public_only": True})
 
     def test_wait_mode_coerces_valid_strings(self) -> None:
         assert ImportsSettings.model_validate({"wait_mode": "hybrid"}).wait_mode is ImportWaitMode.HYBRID

@@ -56,9 +56,12 @@ class TestReduceOverlappingDownloads:
             "Priv": rg_group({"u1": url_item(download=True, is_public=False)}),
             "Pub": rg_group({"u2": url_item(download=True, is_public=True)}),
         }
-        planner.reduce_overlapping_downloads(seadex)
+        skips = planner.reduce_overlapping_downloads(seadex)
         assert seadex["Pub"].urls["u2"].download is True
         assert seadex["Priv"].urls["u1"].download is False
+        # A preferred public keeper over a preferred private pick is unremarkable
+        # (only a fallback keeper gets an INFO notice).
+        assert skips.notices == []
 
     def test_public_only_private_only_skips_and_flags(self) -> None:
         planner = make_planner(public_only=True)
@@ -69,7 +72,65 @@ class TestReduceOverlappingDownloads:
         assert skips.groups == ["Priv"]
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
-        assert skips.notices[0].reason == "private-only (public_only on)"
+        assert skips.notices[0].reason == "private-only (private releases not allowed)"
+        assert skips.notices[0].level == logging.WARNING
+
+    def test_private_only_set_with_unrelated_fallback_still_warns(self) -> None:
+        # The fallback covers DIFFERENT files (own same-files set): it doesn't
+        # excuse dropping this set, so the private set still warns and holds
+        # the title while the fallback proceeds.
+        planner = make_planner(public_only=True)
+        seadex = {
+            "Priv": rg_group(
+                {"u1": url_item(download=True, is_public=False)},
+                all_episodes=[EpisodeRecord(season=1, episode=1, size=0)],
+            ),
+            "Fall": rg_group(
+                {"u2": url_item(download=True, is_public=True, is_fallback=True)},
+                all_episodes=[EpisodeRecord(season=1, episode=2, size=0)],
+            ),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["Priv"].urls["u1"].download is False
+        assert seadex["Fall"].urls["u2"].download is True
+        assert skips.skipped is True
+        assert skips.groups == ["Priv"]
+        assert len(skips.notices) == 1
+        assert skips.notices[0].level == logging.WARNING
+
+    def test_private_only_set_with_owned_fallback_soft_skips(self) -> None:
+        # Same files, and the public fallback is unflagged (the Arr already has
+        # its release): drop the private pick at INFO with no skipped flag, so
+        # the title can still cache as done.
+        planner = make_planner(public_only=True)
+        seadex = {
+            "Priv": rg_group({"u1": url_item(download=True, is_public=False)}),
+            "Fall": rg_group({"u2": url_item(download=False, is_public=True, is_fallback=True)}),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["Priv"].urls["u1"].download is False
+        assert skips.skipped is False
+        assert skips.groups == []
+        assert len(skips.notices) == 1
+        assert skips.notices[0].groups == ["Priv"]
+        assert skips.notices[0].level == logging.INFO
+
+    def test_fallback_keeper_over_private_notices(self) -> None:
+        # Same files: the public fallback is kept over the private preferred pick,
+        # with an INFO notice naming the keeper (and no skipped flag).
+        planner = make_planner(public_only=True)
+        seadex = {
+            "Priv": rg_group({"u1": url_item(download=True, is_public=False)}),
+            "Fall": rg_group({"u2": url_item(download=True, is_public=True, is_fallback=True)}),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["Fall"].urls["u2"].download is True
+        assert seadex["Priv"].urls["u1"].download is False
+        assert skips.skipped is False
+        assert len(skips.notices) == 1
+        assert skips.notices[0].groups == ["Priv"]
+        assert skips.notices[0].level == logging.INFO
+        assert "Fall" in skips.notices[0].reason
 
     def test_different_files_both_kept(self) -> None:
         planner = make_planner(public_only=False)

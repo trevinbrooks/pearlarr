@@ -21,7 +21,7 @@ import qbittorrentapi
 from . import coverage as _coverage
 from .anilist_gateway import AniListGateway
 from .cache import AbstractCacheStore, CacheRecord
-from .config import AppConfig
+from .config import AppConfig, PrivateReleaseAction
 from .log import LogFormatter
 from .manual_import import ImportWaitMode, PendingImport
 from .notify import Notifier
@@ -185,7 +185,7 @@ class GrabPipeline:
         if self._config.seadex.public_only and not url_item.is_public:
             self.log_fmt.detail(
                 "skipped",
-                f"{tracker} private-only (public_only on)",
+                f"{tracker} private-only (private releases not allowed)",
                 value_style="yellow",
                 level=logging.WARNING,
             )
@@ -364,14 +364,27 @@ class GrabPipeline:
             )
         # Nothing added, but a release was skipped for a reason outside the user's
         # control: surface ONE needs-action reason for the title (private-only wins)
-        # so it isn't cached as done and shows in the summary.
+        # so it isn't cached as done and shows in the summary. In fallback mode a
+        # private-only hold means no public alternative covered the missing files,
+        # so the record (and its summary tip) says that instead - except on an
+        # interactive run, where the hold is the user's own private pick, not a
+        # failed fallback search.
         elif self._ctx.public_only_skipped:
-            self._ctx.stats.needs_action.append(
-                self._needs_action(
-                    self._ctx.public_only_groups,
-                    "private-only release; public_only on",
+            if (
+                self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK
+                and not self._config.advanced.interactive
+            ):
+                reason, kind = (
+                    "private-only release; no public alternative found",
+                    NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK,
+                )
+            else:
+                reason, kind = (
+                    "private-only release; private releases not allowed",
                     NeedsActionKind.PRIVATE_ONLY,
-                ),
+                )
+            self._ctx.stats.needs_action.append(
+                self._needs_action(self._ctx.public_only_groups, reason, kind),
             )
         elif self._ctx.unsupported_tracker_skipped:
             self._ctx.stats.needs_action.append(

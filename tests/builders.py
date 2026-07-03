@@ -126,8 +126,8 @@ def _split_config(overrides: dict[str, Any]) -> AppConfig:
     """Pop the config-routed keys out of ``overrides`` (IN PLACE) and build the config.
 
     Mutates ``overrides``: the builders' later ``defaults.update(overrides)`` relies on
-    the config keys having been removed - else e.g. ``public_only`` would be set as a
-    bare engine attribute the code never reads instead of routing to ``self._config``.
+    the config keys having been removed - else e.g. ``private_releases`` would be set as
+    a bare engine attribute the code never reads instead of routing to ``self._config``.
     """
 
     config_overrides = {key: overrides.pop(key) for key in list(overrides) if key in _CONFIG_SETTING_NAMES}
@@ -401,15 +401,16 @@ def make_config(**overrides: Any) -> AppConfig:
 
     The config flags are read through ``self._config`` (the single source of truth),
     so a bare instance needs a real ``AppConfig``. These defaults mirror the historical
-    ``make_arr`` flags - notably ``public_only=False`` (``AppConfig``'s own default is
-    True) - and leave ``trackers`` unset so it defaults to PUBLIC | PRIVATE. Each flat
-    override is routed to its config group (``_FIELD_GROUP``) and the nested mapping is
-    validated through the models, so the before-validators run exactly as on a real load.
+    ``make_arr`` flags - notably ``private_releases="allow"`` (``AppConfig``'s own
+    default is ``warn``) - and leave ``trackers`` unset so it defaults to PUBLIC |
+    PRIVATE. Each flat override is routed to its config group (``_FIELD_GROUP``) and the
+    nested mapping is validated through the models, so the before-validators run exactly
+    as on a real load.
     """
 
     nested: dict[str, dict[str, Any]] = {
         "seadex": {
-            "public_only": False,
+            "private_releases": "allow",
             "want_best": True,
             "prefer_dual_audio": True,
             "ignore_tags": [],
@@ -525,8 +526,8 @@ def make_services(**overrides: Any) -> RunServices:
     Bypasses ``__init__`` via ``object.__new__`` and assigns sane defaults for
     the collaborators the per-id decision methods consult; the config flags live
     on an in-memory ``AppConfig`` (``self._config``). Pass keyword overrides to
-    vary a single config flag (e.g. ``make_services(public_only=True)``) or
-    another attribute.
+    vary a single config flag (e.g. ``make_services(private_releases="warn")``)
+    or another attribute.
     """
 
     logger = make_logger()
@@ -607,8 +608,8 @@ def make_run_deps(
 def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
     """Build a ``SeadexReleaseFilter`` with only what its methods read.
 
-    Config-backed flags (e.g. ``want_best``, ``public_only``) route through an
-    in-memory ``AppConfig``; the rest pass straight to the constructor. Mirrors
+    Config-backed flags (e.g. ``want_best``, ``private_releases``) route through
+    an in-memory ``AppConfig``; the rest pass straight to the constructor. Mirrors
     ``make_services``'s override routing so the ``build`` characterization tests
     read the same as the old ``get_seadex_dict`` ones.
     """
@@ -758,6 +759,7 @@ def url_item(
     is_public: bool = True,
     infohash: str | None = "hash1",
     download: bool = False,
+    is_fallback: bool = False,
     episodes: list[EpisodeRecord] | None = None,
 ) -> SeadexUrlItem:
     """One SeaDex URL record, matching ``get_seadex_dict``'s ``url_item`` shape."""
@@ -770,6 +772,7 @@ def url_item(
         is_public=is_public,
         infohash=infohash,
         download=download,
+        is_fallback=is_fallback,
         episodes=episodes or [],
     )
 

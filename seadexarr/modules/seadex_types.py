@@ -68,6 +68,9 @@ class SeadexUrlItem:
     is_dual_audio: bool = False
     infohash: str | None = None
     download: bool = False
+    # True for a public alternative added because the preferred release is
+    # private-only (seadex.private_releases: fallback); the planner reads it.
+    is_fallback: bool = False
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
 
 

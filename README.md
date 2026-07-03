@@ -202,12 +202,16 @@ SeaDexArr performs a number of cuts to get to a single best release for you.
 First, it will filter out all torrents that have any tags as defined in ``seadex.ignore_tags``.
 Then, it will filter out all torrents coming from trackers that haven't been specified (if you haven't been more 
 granular, this will be all public trackers and potentially all private trackers; see ``seadex.trackers``). 
-Then, if you only want public torrents (``seadex.public_only``), it will filter out anything from a private tracker. 
+Then, unless you allow private torrents (``seadex.private_releases: allow``), it will filter out anything from a 
+private tracker. 
 Next, if you only want to grab releases marked by SeaDex as "best" (``seadex.want_best``), it will down-select any 
 torrents marked as "best", as long as there's at least one. 
 Finally, if you want dual audio (``seadex.prefer_dual_audio``), it will down-select any dual-audio torrents, as long 
 as there's at least one. If this is instead set to ``false``, it will do the opposite, filtering out any dual-audio 
 torrents (so long as there's at least one not tagged as dual-audio). 
+If the release this lands on is only available on private trackers you won't grab from, SeaDexArr by default 
+(``seadex.private_releases: warn``) warns and re-checks the title every run until a public release appears; set 
+``seadex.private_releases: fallback`` to instead grab the entry's best public alternative. 
 By doing this, SeaDexArr should generally find a single best
 torrent, though if you're in interactive mode (``advanced.interactive``) and there are multiple options that match
 your criteria, it will give you an option to select one (or multiple).
@@ -267,7 +271,11 @@ The `radarr` group takes the same keys (minus `ignore_movies_in_radarr`): `radar
 
 ### SeaDex filters
 
-- `seadex.public_only`: Will only return results from public trackers. Defaults to true
+- `seadex.private_releases`: What to do with releases on private trackers. `allow` grabs them like any other.
+  `warn` (the default) never grabs them, and when the preferred release is only available privately it warns and
+  leaves the title uncached, so it's re-checked every run until a public release appears. `fallback` never grabs
+  them either, but instead grabs the entry's best public alternative (the same best/dual-audio preferences
+  applied to the public torrents only), warning only when it can't find a public alternative for those files
 - `seadex.prefer_dual_audio`: Prefer results tagged as dual audio, if any exist. If false, will instead prefer
   Ja-only releases. Defaults to true
 - `seadex.want_best`: Prefer results tagged as best, if any exist. Defaults to true
@@ -276,8 +284,8 @@ The `radarr` group takes the same keys (minus `ignore_movies_in_radarr`): `radar
   - Misplaced Special
   - Deband Required
 - `seadex.trackers`: Can manually select a list of trackers. Defaults to blank, which will use all the 
-  public trackers and private trackers if `seadex.public_only` is false. All trackers with torrents on SeaDex, and
-  whether they are supported are below.
+  public trackers and private trackers if `seadex.private_releases` is `allow`. All trackers with torrents on
+  SeaDex, and whether they are supported are below.
   - Public trackers
     - Nyaa (supported)
     - AnimeTosho (supported)

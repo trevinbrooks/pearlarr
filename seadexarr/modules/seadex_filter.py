@@ -3,10 +3,10 @@ import logging
 import sys
 
 from rich.console import Console
-from seadex import EntryRecord
+from seadex import EntryRecord, TorrentRecord
 
 from .cache import AbstractCacheStore
-from .config import PRIVATE_TRACKERS, AppConfig
+from .config import PRIVATE_TRACKERS, AppConfig, PrivateReleaseAction
 from .console_caps import console_of
 from .log import LogFormatter, indent_string
 from .planner import DownloadPlanner
@@ -18,6 +18,16 @@ from .seadex_types import (
     SeadexUrlItem,
     SonarrEpisode,
 )
+
+
+def _is_public_torrent(torrent: TorrentRecord) -> bool:
+    """Whether a torrent is on a public tracker (the run's is_public computation).
+
+    ``PRIVATE_TRACKERS`` is read at call time, so the characterization tests can
+    pin it on this module.
+    """
+
+    return torrent.tracker.is_public() and torrent.tracker.casefold() not in PRIVATE_TRACKERS
 
 
 class SeadexReleaseFilter:
@@ -75,28 +85,29 @@ class SeadexReleaseFilter:
         # Filter down by allowed trackers
         final_torrent_list = [t for t in final_torrent_list if t.tracker.casefold() in self._config.seadex.trackers]
 
-        # Find the 'best'-tagged releases up front: we narrow to them first (when
-        # want_best is set and any exist), then apply the audio-preference filter
-        # on that narrowed set below.
-        best_torrents = [t for t in final_torrent_list if t.is_best]
-        any_best = len(best_torrents) > 0
+        # The preferred picks: the want_best -> audio-preference cascade
+        candidates = self._narrow_candidates(final_torrent_list)
 
-        # Narrow to 'best' releases when any exist
-        if self._config.seadex.want_best and any_best:
-            candidates = best_torrents
-        else:
-            candidates = final_torrent_list
+        # If any preferred release group is private-only and the user chose
+        # fallback over warn-and-wait, also offer the best PUBLIC alternatives
+        # (same cascade over the public torrents not already picked). The
+        # private picks stay in, both so the planner can see the Arr already
+        # has one, and so it can warn when nothing public covers the same files.
+        fallback_urls: set[str] = set()
+        if self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK:
+            group_has_public: dict[str, bool] = {}
+            for t in candidates:
+                group_has_public[t.release_group] = group_has_public.get(t.release_group, False) or _is_public_torrent(
+                    t,
+                )
 
-        # Prefer dual-audio releases, but only when at least one exists
-        if self._config.seadex.prefer_dual_audio:
-            duals = [t for t in candidates if t.is_dual_audio]
-            if len(duals) > 0:
-                candidates = duals
-        # Otherwise prefer non-dual-audio
-        else:
-            non_duals = [t for t in candidates if not t.is_dual_audio]
-            if len(non_duals) > 0:
-                candidates = non_duals
+            if not all(group_has_public.values()):
+                preferred_urls = {t.url for t in candidates}
+                fallbacks = self._narrow_candidates(
+                    [t for t in final_torrent_list if _is_public_torrent(t) and t.url not in preferred_urls],
+                )
+                fallback_urls = {t.url for t in fallbacks}
+                candidates = candidates + fallbacks
 
         # Pull out release groups, URLs, and various other useful info as a
         # dictionary
@@ -110,10 +121,11 @@ class SeadexReleaseFilter:
                 files=[f.name for f in t.files],
                 size=[f.size for f in t.files],
                 tracker=t.tracker,
-                is_public=t.tracker.is_public() and t.tracker.casefold() not in PRIVATE_TRACKERS,
+                is_public=_is_public_torrent(t),
                 is_dual_audio=t.is_dual_audio,
                 infohash=t.infohash,
                 download=False,
+                is_fallback=t.url in fallback_urls,
             )
 
         # If we only want public releases, then within each release group drop
@@ -130,6 +142,24 @@ class SeadexReleaseFilter:
                     release_group_item.urls = {url: u for url, u in urls.items() if u.is_public}
 
         return seadex_release_groups
+
+    def _narrow_candidates(self, torrents: list[TorrentRecord]) -> list[TorrentRecord]:
+        """Narrow one candidate pool via the want_best -> audio-preference cascade.
+
+        Each cut only applies when it leaves at least one torrent: narrow to
+        'best'-tagged releases (when ``want_best``), then to the preferred audio
+        (dual when ``prefer_dual_audio``, else single).
+        """
+
+        best = [t for t in torrents if t.is_best]
+        if self._config.seadex.want_best and best:
+            torrents = best
+
+        if self._config.seadex.prefer_dual_audio:
+            preferred_audio = [t for t in torrents if t.is_dual_audio]
+        else:
+            preferred_audio = [t for t in torrents if not t.is_dual_audio]
+        return preferred_audio if preferred_audio else torrents
 
     def interactive_pick(
         self,
@@ -161,7 +191,10 @@ class SeadexReleaseFilter:
 
         all_srgs = list(seadex_dict.keys())
         for s_i, s in enumerate(all_srgs):
-            say(indent_string(f"[{s_i}]: {s}"))
+            # Flag the non-preferred public stand-ins (private_releases: fallback)
+            # so the pick is informed; a picked private release is refused later.
+            fallback_tag = " (public fallback)" if any(u.is_fallback for u in seadex_dict[s].urls.values()) else ""
+            say(indent_string(f"[{s_i}]: {s}{fallback_tag}"))
 
         srgs_to_grab = input(
             "Which release group(s)? Enter one number, a comma-separated list, or leave blank for all: ",

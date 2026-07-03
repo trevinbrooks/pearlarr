@@ -30,11 +30,12 @@ from .seadex_types import (
 
 @dataclass
 class SkipNotice:
-    """A release skipped purely for being private, for the caller to log.
+    """A release dropped for being private, for the caller to log.
 
     Rendered by the orchestrator as ``"<groups> <reason>"`` on a ``skipped``
     detail line, replacing the inline ``log_fmt`` call this used to make from
-    deep inside the decision engine.
+    deep inside the decision engine. A warn-and-hold skip logs at WARNING; a
+    drop covered by a public fallback logs at INFO.
     """
 
     groups: list[str]
@@ -47,8 +48,9 @@ class PublicOnlySkips:
     """The private-only skip outcome of ``reduce_overlapping_downloads``.
 
     ``skipped`` is True when at least one set of same-files release groups was
-    dropped because, with ``public_only`` on, none were available publicly;
-    ``groups`` names them (for the run summary) and ``notices`` is what to log.
+    dropped because, with ``public_only`` on, none were available publicly and
+    no public fallback covered the same files; ``groups`` names them (for the
+    run summary) and ``notices`` is what to log.
     """
 
     skipped: bool = False
@@ -657,9 +659,12 @@ class DownloadPlanner:
         Where multiple preferred release groups cover the same files and the
         Arr doesn't already have any of them, we only want to grab one. If
         public_only is set, we prefer a public release group and drop the
-        private ones. If the only options are private, we record a SkipNotice
-        and skip the title (without caching it as done) rather than grabbing a
-        private release.
+        private ones. If the only options are private, we record a warning
+        SkipNotice and skip the title (without caching it as done) rather than
+        grabbing a private release - unless a public fallback covering the same
+        files rides along (``private_releases: fallback``), in which case the
+        private-only groups are dropped with an INFO notice instead and the
+        title may still cache as done.
 
         Mutates the download flags on seadex_dict in place and returns the
         private-only skip outcome (skipped flag, group names, notices to log).
@@ -683,6 +688,9 @@ class DownloadPlanner:
         def is_public_group(rg_item: SeadexReleaseGroupItem) -> bool:
             return any(u.is_public for u in rg_item.urls.values())
 
+        def is_fallback_group(rg_item: SeadexReleaseGroupItem) -> bool:
+            return any(u.is_fallback for u in rg_item.urls.values())
+
         def unflag(rg_item: SeadexReleaseGroupItem) -> None:
             for u in rg_item.urls.values():
                 u.download = False
@@ -699,14 +707,31 @@ class DownloadPlanner:
                 public_flagged = [rg for rg in flagged if is_public_group(seadex_dict[rg])]
 
                 if len(public_flagged) == 0:
-                    # The Arr has none of these release groups, public_only is
-                    # set, but none are available on a public tracker. Don't
+                    # A public fallback in THIS same-files set can stand in; it's
+                    # necessarily unflagged here (a flagged public group would
+                    # have taken the keeper branch), i.e. the Arr already has its
+                    # files. A fallback covering OTHER files doesn't excuse
+                    # dropping this set, so the gate is per-set, never per-entry.
+                    if any(is_fallback_group(seadex_dict[rg]) for rg in same_files):
+                        skips.notices.append(
+                            SkipNotice(
+                                groups=list(flagged),
+                                reason="private-only; a public fallback already covers these files",
+                                level=logging.INFO,
+                            ),
+                        )
+                        for rg in flagged:
+                            unflag(seadex_dict[rg])
+                        continue
+
+                    # The Arr has none of these release groups, private grabs
+                    # are off, and none are available on a public tracker. Don't
                     # grab a private release, just record a skip notice and skip.
                     # Flag the skip so the caller doesn't cache the title as done
                     skips.notices.append(
                         SkipNotice(
                             groups=list(flagged),
-                            reason="private-only (public_only on)",
+                            reason="private-only (private releases not allowed)",
                             level=logging.WARNING,
                         ),
                     )
@@ -718,6 +743,19 @@ class DownloadPlanner:
 
                 # Keep the first public release group, drop everything else
                 keeper = public_flagged[0]
+
+                # Tell the user when the keeper is a non-preferred fallback
+                # standing in for private preferred picks (a plain public-over-
+                # private keeper stays a debug line, as ever).
+                private_dropped = [rg for rg in flagged if not is_public_group(seadex_dict[rg])]
+                if private_dropped and is_fallback_group(seadex_dict[keeper]):
+                    skips.notices.append(
+                        SkipNotice(
+                            groups=private_dropped,
+                            reason=f"private-only; falling back to {keeper}",
+                            level=logging.INFO,
+                        ),
+                    )
             else:
                 # We don't care about public/private, just keep the first one
                 keeper = flagged[0]

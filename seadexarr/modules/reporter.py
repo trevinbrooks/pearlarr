@@ -55,10 +55,13 @@ class NeedsActionKind(Enum):
     """Why a title landed in the "needs action" block - the machine-readable gate.
 
     The summary's guidance tips key off this, never off the display ``reason``
-    text (which can be reworded freely).
+    text (which can be reworded freely). PRIVATE_ONLY is the warn-mode skip;
+    PRIVATE_ONLY_NO_FALLBACK is fallback mode finding no public alternative to
+    fall back to (so its tip must not suggest turning fallback on).
     """
 
     PRIVATE_ONLY = auto()
+    PRIVATE_ONLY_NO_FALLBACK = auto()
     UNSUPPORTED_TRACKER = auto()
 
 
@@ -397,13 +400,20 @@ class RunReporter:
         # A single guidance line if anything was skipped purely for being
         # private-only, rather than repeating it per-entry during the run. Kept
         # at indent 1, so it reads as part of the summary block, not detached.
-        public_only_skipped = any(item.kind is NeedsActionKind.PRIVATE_ONLY for item in needs)
-        if public_only_skipped:
+        # The two kinds can't co-occur (private_releases is run-wide); the
+        # no-fallback tip omits the fallback suggestion, which is already on.
+        if any(item.kind is NeedsActionKind.PRIVATE_ONLY for item in needs):
+            tip = (
+                "Tip: set private_releases: allow to grab private releases, private_releases: "
+                "fallback to grab a public alternative, or wait for a public release."
+            )
+        elif any(item.kind is NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK for item in needs):
+            tip = "Tip: set private_releases: allow to grab private releases, or wait for a public release."
+        else:
+            tip = None
+        if tip is not None:
             self.logger.info(
-                indent_string(
-                    "Tip: set public_only: false to allow private trackers, or wait for a public release.",
-                    level=1,
-                ),
+                indent_string(tip, level=1),
                 extra={"line_style": "grey50"},
             )
 
