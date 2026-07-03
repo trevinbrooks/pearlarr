@@ -223,14 +223,14 @@ class GrabPipeline:
         # qBittorrent, returning the add status and a display name (the
         # client's name, or the release title scraped from the source
         # page as a fallback). A preview run simulates the add.
-        success, torrent_name = self._torrents.add(
+        result = self._torrents.add(
             url=url,
             tracker=tracker,
             infohash=url_item.infohash,
             preview=self._is_preview(),
         )
 
-        if success is AddOutcome.ADDED:
+        if result.outcome is AddOutcome.ADDED:
             # Record the grab for the end-of-run summary. Prefer the
             # release's own parsed file list (precise for multi-cour /
             # per-torrent grabs); fall back to the entry-level coverage we
@@ -242,7 +242,7 @@ class GrabPipeline:
                     title=self._ctx.current_title,
                     coverage=coverage_str,
                     url=self._ctx.current_url,
-                    name=torrent_name,
+                    name=result.name,
                     group=srg,
                 ),
             )
@@ -255,9 +255,9 @@ class GrabPipeline:
         # So the end-of-run monitor must wait on it too. Appending to
         # _ctx.pending_imports marks the infohash a this-run grab, so the per-series
         # snapshot / reconcile / tally skip it (no double-report, no early drop).
-        if success in (AddOutcome.ADDED, AddOutcome.ALREADY_ADDED):
+        if result.outcome in (AddOutcome.ADDED, AddOutcome.ALREADY_ADDED):
             self._register_pending_import(url_item, pending_seeds)
-            return ReleaseOutcome(outcome=success, name=torrent_name, group=srg)
+            return ReleaseOutcome(outcome=result.outcome, name=result.name, group=srg)
 
         return None
 

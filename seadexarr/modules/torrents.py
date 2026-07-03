@@ -1,8 +1,10 @@
 """qBittorrent adapter: parse a SeaDex release URL and add it to the client."""
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
+from typing import NamedTuple
 
 import qbittorrentapi
 import requests
@@ -21,12 +23,34 @@ class TorrentAddError(Exception):
     """qBittorrent rejected the add (a non-``"Ok."`` ``torrents_add`` result)."""
 
 
-# The trackers we have a parser for. Kept in lockstep with ``add``'s dispatch dict
-# (a test pins the two together). The grab pipeline pre-filters on this so an
+# Uniform parser signature: (url, infohash, session) -> (download/magnet link,
+# release title scraped from the source page). Wrappers adapt the per-tracker args.
+type _Parser = Callable[[str, str | None, requests.Session], tuple[str | None, str]]
+
+
+def _parse_nyaa(url: str, infohash: str | None, session: requests.Session) -> tuple[str | None, str]:
+    del infohash, session
+    return get_nyaa_torrent(url=url)
+
+
+def _parse_animetosho(url: str, infohash: str | None, session: requests.Session) -> tuple[str | None, str]:
+    del infohash
+    return get_animetosho_torrent(url=url, session=session)
+
+
+def _parse_rutracker(url: str, infohash: str | None, session: requests.Session) -> tuple[str | None, str]:
+    return get_rutracker_torrent(url=url, infohash=infohash, session=session)
+
+
+# One parser per supported tracker; PARSEABLE_TRACKERS derives from this table so
+# the two can't drift. The grab pipeline pre-filters on the frozenset, so an
 # unparseable tracker is skipped there rather than reaching ``add``'s raise.
-PARSEABLE_TRACKERS: frozenset[Tracker] = frozenset(
-    {Tracker.NYAA, Tracker.ANIMETOSHO, Tracker.RUTRACKER},
-)
+_PARSERS: dict[Tracker, _Parser] = {
+    Tracker.NYAA: _parse_nyaa,
+    Tracker.ANIMETOSHO: _parse_animetosho,
+    Tracker.RUTRACKER: _parse_rutracker,
+}
+PARSEABLE_TRACKERS: frozenset[Tracker] = frozenset(_PARSERS)
 
 
 class AddOutcome(Enum):
@@ -39,6 +63,17 @@ class AddOutcome(Enum):
 
     ADDED = auto()  # was "torrent_added"
     ALREADY_ADDED = auto()  # was "torrent_already_added" / "already have"
+
+
+class AddResult(NamedTuple):
+    """One add's result: the outcome plus the best display name available.
+
+    ``name`` is the qBittorrent-reported name, falling back to the release title
+    scraped from the source page (None only when neither exists).
+    """
+
+    outcome: AddOutcome
+    name: str | None
 
 
 @dataclass(frozen=True)
@@ -95,7 +130,7 @@ class TorrentService:
         tracker: Tracker,
         infohash: str | None,
         preview: bool,
-    ) -> tuple[AddOutcome, str | None]:
+    ) -> AddResult:
         """Parse a release URL by tracker and add it to qBittorrent.
 
         Args:
@@ -107,41 +142,18 @@ class TorrentService:
                 client.
 
         Returns:
-            tuple: (outcome, name) - outcome is ``AddOutcome.ADDED`` or
-                ``AddOutcome.ALREADY_ADDED``; name is the qBittorrent-reported
-                name, falling back to the release title scraped from the source
-                page.
+            AddResult: The outcome plus the best display name available.
         """
 
-        # Each parser returns the download/magnet link plus the release's
-        # human-readable title scraped from the source page, so we always
-        # have a real name to show even when the client can't report one
-        # (e.g. a private torrent with no info hash, or a dry run)
-
-        # Each tracker has its own parser with its own call shape; key the
-        # dispatch on the Tracker enum members directly (no .lower()) and look
-        # the parser up once. Closures capture the per-tracker call args.
-        parsers = {
-            Tracker.NYAA: lambda: get_nyaa_torrent(url=url),
-            Tracker.ANIMETOSHO: lambda: get_animetosho_torrent(
-                url=url,
-                session=self.session,
-            ),
-            Tracker.RUTRACKER: lambda: get_rutracker_torrent(
-                url=url,
-                infohash=infohash,
-                session=self.session,
-            ),
-        }
-        parser = parsers.get(tracker)
+        parser = _PARSERS.get(tracker)
         if parser is None:
             raise ValueError(f"Unable to parse torrent links from {tracker}")
-        parsed_url, source_name = parser()
+        parsed_url, source_name = parser(url, infohash, self.session)
 
         if parsed_url is None:
             raise TorrentParseError("Have not managed to parse the torrent URL")
 
-        status, torrent_name = self._add_to_qbit(
+        outcome, torrent_name = self._add_to_qbit(
             url=url,
             torrent_url=parsed_url,
             infohash=infohash,
@@ -149,11 +161,8 @@ class TorrentService:
         )
 
         # Prefer the name qBittorrent reports; fall back to the release's
-        # title from the source page rather than the raw download link
-        if not torrent_name:
-            torrent_name = source_name
-
-        return status, torrent_name
+        # title from the source page rather than the raw download link.
+        return AddResult(outcome, torrent_name or source_name)
 
     def _add_to_qbit(
         self,
@@ -162,7 +171,7 @@ class TorrentService:
         torrent_url: str,
         infohash: str | None,
         preview: bool,
-    ) -> tuple[AddOutcome, str | None]:
+    ) -> AddResult:
         """Add a torrent to qBittorrent (dedup by hash, read the name back).
 
         Args:
@@ -172,9 +181,8 @@ class TorrentService:
             preview (bool): When True, report the add without touching the client.
 
         Returns:
-            tuple: (outcome, torrent_name) - outcome is ``AddOutcome.ADDED`` or
-                ``AddOutcome.ALREADY_ADDED``; torrent_name is the client-reported
-                name (None when there's no hash to look it up by).
+            AddResult: The outcome plus the client-reported name (None when
+                there's no hash to look it up by).
         """
 
         # A private torrent has no info hash, so we can't look it up by hash to
@@ -188,14 +196,14 @@ class TorrentService:
                 self.logger.debug(
                     indent_string(f"Torrent {url} already in qBittorrent"),
                 )
-                return AddOutcome.ALREADY_ADDED, torr_info[0].name
+                return AddResult(AddOutcome.ALREADY_ADDED, torr_info[0].name)
 
         # Preview (dry run or no client): report it as added without touching the
         # client. With a client present the dedup lookup above still ran, so an
         # already-present torrent is reported accurately. There's no client-side
         # name to read back, so the caller falls back to the URL.
         if preview:
-            return AddOutcome.ADDED, None
+            return AddResult(AddOutcome.ADDED, None)
 
         # Past the preview gate there is always a client: the caller passes
         # preview=True whenever none is configured, so this narrows for type
@@ -220,4 +228,4 @@ class TorrentService:
             added_info = self.qbit.torrents_info(torrent_hashes=infohash)
             torrent_name = added_info[0].name if added_info else None
 
-        return AddOutcome.ADDED, torrent_name
+        return AddResult(AddOutcome.ADDED, torrent_name)

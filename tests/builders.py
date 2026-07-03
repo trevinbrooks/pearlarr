@@ -57,7 +57,7 @@ from seadexarr.modules.sonarr_client import AbstractSonarrClient
 from seadexarr.modules.sonarr_episodes import SonarrEpisodes
 from seadexarr.modules.sonarr_mapper import FileEpisodeMapper
 from seadexarr.modules.sonarr_parse import SonarrParseCache
-from seadexarr.modules.torrents import AddOutcome, TorrentService
+from seadexarr.modules.torrents import AddOutcome, AddResult, TorrentService
 
 from .fakes import FakeSonarrClient
 
@@ -651,10 +651,10 @@ class FakeTorrents:
         tracker: Tracker,
         infohash: str | None,
         preview: bool,
-    ) -> tuple[AddOutcome, str | None]:
+    ) -> AddResult:
         del url, tracker, preview
         self.calls.append(infohash)
-        return self._by_hash[infohash]
+        return AddResult(*self._by_hash[infohash])
 
 
 def one_release_dict(*, srg: str, infohash: str, url: str = "https://nyaa.si/view/1") -> SeadexDict:

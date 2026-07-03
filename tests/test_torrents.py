@@ -216,8 +216,8 @@ def _patch_all_parsers(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.parametrize("tracker", list(Tracker))
 def test_add_raises_iff_tracker_unparseable(tracker: Tracker, monkeypatch: pytest.MonkeyPatch) -> None:
     """``add`` parses exactly the ``PARSEABLE_TRACKERS`` and raises for every other
-    member - pinning the constant against ``add``'s dispatch dict so drift in either
-    direction (a parser added without the constant, or vice-versa) is caught."""
+    member. The constant derives from the parser table, so this pins the raise
+    behavior rather than a lockstep between two hand-maintained collections."""
 
     _patch_all_parsers(monkeypatch)
     service = _service(_FakeQbit())
