@@ -21,12 +21,11 @@ The defaults also encode one load-bearing distinction:
 """
 
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import (
     Any,
-    NamedTuple,
     NotRequired,
     Protocol,
     Self,
@@ -56,9 +55,9 @@ class EpisodeRecord:
 class SeadexUrlItem:
     """One SeaDex url record within a release group.
 
-    ``tracker`` holds a SeaDex ``Tracker`` object (not a str); it defaults to
-    ``None`` because the test builders don't supply one and no in-scope consumer
-    reads it.
+    ``tracker`` holds a SeaDex ``Tracker`` object (not a str); the notifier
+    renders it as the link text of a grab embed. It defaults to ``OTHER``
+    because the test builders don't supply one.
     """
 
     url: str = ""
@@ -88,23 +87,6 @@ class SeadexReleaseGroupItem:
 
 SeadexDict = dict[str, SeadexReleaseGroupItem]
 """The central object: SeaDex release groups keyed by group name."""
-
-
-class EmbedField(NamedTuple):
-    """A Discord embed field, typed inside the notifier.
-
-    Discord's webhook API wants plain ``{"name", "value"}`` dicts at the JSON
-    boundary, so :meth:`to_dict` serializes the field back to that exact shape
-    when :meth:`seadexarr.modules.notify.Notifier.build_fields` returns.
-    """
-
-    name: str
-    value: str
-
-    def to_dict(self) -> dict[str, str]:
-        """The plain dict the Discord webhook payload expects."""
-
-        return {"name": self.name, "value": self.value}
 
 
 SONARR_MISSING_KEY: int = 999
@@ -153,6 +135,11 @@ def as_size_list(size: int | list[int | None] | None) -> list[int]:
 # (connect, read) timeout for every plain Arr REST request, so a hung Sonarr /
 # Radarr surfaces as a transient miss instead of blocking the run.
 ARR_REQUEST_TIMEOUT_S = (5, 30)
+
+# Structural twin of requests' recursive ``JsonType`` (private module - importable,
+# but load-bearing on requests internals, so mirrored locally). Constructed JSON
+# payloads are typed against (or cast through) this at the wire boundary.
+type Json = None | bool | int | float | str | Sequence["Json"] | Mapping[str, "Json"]
 
 
 def coerce_int(value: object) -> int | None:

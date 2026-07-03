@@ -7,18 +7,11 @@ and the two raw endpoints the syncer needs
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
 from typing import Any, cast, override
 from urllib.parse import urlencode
 
 import requests
 from arrapi import SonarrAPI
-
-# Structural twin of requests' recursive ``JsonType`` (private module - importable,
-# but load-bearing on requests internals, so mirrored locally). ``CommandBody`` is
-# JSON-safe but a non-closed TypedDict can never be proven against the recursive
-# alias, so _post_command casts through this at the wire boundary.
-type _Json = None | bool | int | float | str | Sequence["_Json"] | Mapping[str, "_Json"]
 
 from .log import indent_string
 from .manual_import import PendingImport
@@ -26,6 +19,7 @@ from .seadex_types import (
     ARR_REQUEST_TIMEOUT_S,
     CommandBody,
     CommandResource,
+    Json,
     Language,
     ManualImportCandidate,
     ManualImportFile,
@@ -439,7 +433,9 @@ class SonarrClient(AbstractSonarrClient):
         d_enc = urlencode({"apikey": self._api_key})
         command_req_url = f"{self._url}/api/v3/command?{d_enc}"
         try:
-            command_req = self._session.post(command_req_url, json=cast("_Json", body), timeout=ARR_REQUEST_TIMEOUT_S)
+            # CommandBody is JSON-safe but a non-closed TypedDict can never be
+            # proven against the recursive alias, so cast at the wire boundary.
+            command_req = self._session.post(command_req_url, json=cast("Json", body), timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             command_req = None
 

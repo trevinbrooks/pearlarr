@@ -428,7 +428,7 @@ class GrabPipeline:
         # Push a message to Discord if we've added anything (never on a
         # preview - it's an outward notification)
         if self._notifier.enabled and n_torrents_added > 0 and not self._is_preview():
-            self._notifier.push(
+            self._notifier.push_grab(
                 arr_title=req.item_title,
                 al_title=req.anilist_title,
                 seadex_url=req.sd_url,

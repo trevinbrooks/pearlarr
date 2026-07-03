@@ -1,30 +1,49 @@
-"""Discord notifier: build the embed fields and post the grab notification.
+"""Discord notifier: build the typed embeds and post the notifications.
 
-``Notifier`` owns the Discord webhook - building the per-release embed fields
-from a shaped ``seadex_dict`` and pushing the message - plus a wait-complete
-summary push to Discord and/or a generic outbound webhook. It's gated on a
-configured url; with none, every push is a no-op.
+``Notifier`` owns the Discord webhook - building the per-release grab embed
+from a shaped ``seadex_dict`` and the wait-complete summary embed (plus a
+generic outbound webhook POST of the wait report). It's gated on a configured
+url; with none, every push is a no-op.
 """
 
 import logging
+from collections.abc import Sequence
 
 import requests
 
 from .config import Arr
-from .discord import discord_push
+from .discord import (
+    COLOR_DEFERRED,
+    COLOR_FAILED,
+    COLOR_GRAB,
+    COLOR_SUCCESS,
+    DiscordEmbed,
+    EmbedField,
+    discord_push,
+)
 from .log import LogFormatter
 from .manual_import import OutcomeCategory
-from .seadex_types import EmbedField, SeadexDict
+from .seadex_types import SeadexDict
 from .wait_view import WaitResult
 
 # Cap how many titles a single notification field lists before collapsing the
-# remainder into a "… +N more" line, so a big carried-over backlog can't blow
-# past Discord's per-field limit.
+# remainder into a "… +N more" line, keeping a big carried-over backlog readable;
+# the payload boundary's char clamps are the hard limit guarantee.
 _MAX_FIELD_TITLES = 25
 
 
+def _wait_color(result: WaitResult) -> int:
+    """The summary accent: red if anything failed, orange if deferred, else green."""
+
+    if result.failed > 0:
+        return COLOR_FAILED
+    if result.left > 0:
+        return COLOR_DEFERRED
+    return COLOR_SUCCESS
+
+
 class Notifier:
-    """Builds Discord embed fields and posts grab + wait-complete notifications."""
+    """Builds Discord embeds and posts grab + wait-complete notifications."""
 
     def __init__(
         self,
@@ -52,6 +71,36 @@ class Notifier:
 
         return self.discord_url is not None
 
+    def push_grab(
+        self,
+        *,
+        arr_title: str,
+        al_title: str,
+        seadex_url: str,
+        fields: Sequence[EmbedField],
+        thumb_url: str | None,
+    ) -> bool:
+        """Post a grab notification: the AniList title linking to the SeaDex entry.
+
+        Args:
+            arr_title (str): Title as in the Arr instance (the author line)
+            al_title (str): Title as in AniList (the embed title)
+            seadex_url (str): URL to the SeaDex page (the title link)
+            fields (Sequence[EmbedField]): Embed fields from :meth:`build_fields`
+            thumb_url (str | None): AniList cover thumbnail URL
+        """
+
+        return self._push(
+            DiscordEmbed(
+                author_name=arr_title,
+                title=al_title,
+                color=COLOR_GRAB,
+                url=seadex_url or None,
+                fields=tuple(fields),
+                thumb_url=thumb_url,
+            ),
+        )
+
     def push_wait_summary(self, *, arr: Arr, result: WaitResult) -> bool:
         """Post the wait-pass outcome to Discord and/or the generic webhook.
 
@@ -67,24 +116,25 @@ class Notifier:
         if result.waited == 0:
             return False
         elapsed = LogFormatter.format_elapsed(result.elapsed_s)
-        posted = self.push(
-            arr_title=f"SeaDexArr - {arr.capitalize()} wait complete",
-            al_title=(f"{result.imported} imported - {result.left} left - {result.failed} failed  ({elapsed})"),
-            seadex_url="",
-            fields=self._wait_fields(result),
-            thumb_url=None,
+        posted = self._push(
+            DiscordEmbed(
+                author_name="SeaDexArr",
+                title=f"{arr.capitalize()} wait complete",
+                color=_wait_color(result),
+                description=(f"{result.imported} imported · {result.left} left · {result.failed} failed · {elapsed}"),
+                fields=self._wait_fields(result),
+            ),
         )
         if self.webhook_url is not None:
             posted = self._post_webhook(arr, result) or posted
         return posted
 
     @staticmethod
-    def _wait_fields(result: WaitResult) -> list[dict[str, str]]:
-        """One embed field per outcome class (imported / left / failed), if any.
+    def _wait_fields(result: WaitResult) -> tuple[EmbedField, ...]:
+        """One counted field per outcome class (imported / left / failed), if any.
 
-        Fields are typed :class:`EmbedField`s, serialized to the plain
-        ``{"name", "value"}`` dicts at the return boundary (as in
-        :meth:`build_fields`).
+        Deferred and failed rows carry the outcome's human detail (the reason
+        the torrent didn't land); imported rows list just the title.
         """
 
         sections = (
@@ -94,15 +144,18 @@ class Notifier:
         )
         fields: list[EmbedField] = []
         for category, name in sections:
-            labels = [r.label for r in result.rows if r.outcome.category is category]
-            if not labels:
+            rows = [r for r in result.rows if r.outcome.category is category]
+            if not rows:
                 continue
-            shown = labels[:_MAX_FIELD_TITLES]
-            value = "\n".join(shown)
-            if len(labels) > _MAX_FIELD_TITLES:
-                value += f"\n… +{len(labels) - _MAX_FIELD_TITLES} more"
-            fields.append(EmbedField(name=name, value=value))
-        return [f.to_dict() for f in fields]
+            lines = [
+                r.label if category is OutcomeCategory.SUCCESS else f"{r.label} — {r.outcome.detail}"
+                for r in rows[:_MAX_FIELD_TITLES]
+            ]
+            value = "\n".join(lines)
+            if len(rows) > _MAX_FIELD_TITLES:
+                value += f"\n… +{len(rows) - _MAX_FIELD_TITLES} more"
+            fields.append(EmbedField(name=f"{name} ({len(rows)})", value=value))
+        return tuple(fields)
 
     def _post_webhook(self, arr: Arr, result: WaitResult) -> bool:
         """POST the report JSON to the generic webhook; warn-and-swallow request errors."""
@@ -130,14 +183,12 @@ class Notifier:
         arr: Arr,
         release_group: list[str | None] | None,
         seadex_dict: SeadexDict,
-    ) -> list[dict[str, str]]:
+    ) -> list[EmbedField]:
         """Build the Discord embed fields for a grab.
 
         The first field names the Arr's current release group; one field per
-        SeaDex release group then lists its tags and the URLs flagged for
-        download. Fields are assembled as typed :class:`EmbedField`s and
-        serialized to the plain ``{"name", "value"}`` dicts the webhook expects
-        at the return boundary.
+        SeaDex release group then lists its tags and, as ``[Tracker](url)``
+        markdown links, the releases flagged for download.
 
         Args:
             arr (Arr): Type of arr instance
@@ -164,68 +215,34 @@ class Notifier:
             ),
         )
 
-        # SeaDex options with links
+        # One field per SeaDex group with links flagged for download; the link
+        # text is the tracker the release comes from.
         for srg, srg_item in seadex_dict.items():
-            # URLs flagged for download in this group, in one pass
-            urls_to_download = [url for url, u in srg_item.urls.items() if u.download]
+            links = [f"[{u.tracker.value}]({url})" for url, u in srg_item.urls.items() if u.download]
+            if not links:
+                continue
+            value = ""
+            if srg_item.tags:
+                value += "Tags: " + ", ".join(sorted(str(tag) for tag in srg_item.tags)) + "\n"
+            value += "\n".join(links)
+            fields.append(EmbedField(name=f"SeaDex recommendation: {srg}", value=value))
 
-            if urls_to_download:
-                # Include any tags in the string
-                discord_value = ""
-                tags = srg_item.tags
-                if len(tags) > 0:
-                    discord_value += "Tags:\n"
-                    discord_value += "\n".join(tags)
-                    discord_value += "\n\n"
+        return fields
 
-                # And include URLs for files we're downloading
-                discord_value += "Links:\n"
-                discord_value += "\n".join(urls_to_download)
-
-                fields.append(
-                    EmbedField(
-                        name=f"SeaDex recommendation: {srg}",
-                        value=f"{discord_value}",
-                    ),
-                )
-
-        return [f.to_dict() for f in fields]
-
-    def push(
-        self,
-        *,
-        arr_title: str,
-        al_title: str,
-        seadex_url: str,
-        fields: list[dict[str, str]],
-        thumb_url: str | None,
-    ) -> bool:
-        """Post a grab notification to the configured Discord webhook.
+    def _push(self, embed: DiscordEmbed) -> bool:
+        """Post one embed to the configured Discord webhook.
 
         A no-op (returns False) when no webhook is configured. A request failure
         is contained here (warn, return False): a notification failure must never
         abort a grab or skip the cache-update tail.
-
-        Args:
-            arr_title (str): Title as in the Arr instance
-            al_title (str): Title as in AniList
-            seadex_url (str): URL to the SeaDex page
-            fields (list): Embed fields from :meth:`build_fields`
-            thumb_url (str | None): AniList cover thumbnail URL
         """
 
         if self.discord_url is None:
             return False
 
         try:
-            return discord_push(
-                url=self.discord_url,
-                arr_title=arr_title,
-                al_title=al_title,
-                seadex_url=seadex_url,
-                fields=fields,
-                thumb_url=thumb_url,
-            )
+            discord_push(url=self.discord_url, embed=embed)
         except requests.RequestException as exc:
             self.logger.warning(f"Discord push failed: {exc}")
             return False
+        return True

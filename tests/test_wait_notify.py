@@ -1,9 +1,10 @@
 # pyright: strict
-"""Tests for the walk-away graft: the wait-complete notification push.
+"""Tests for the Notifier pushes: the grab embed and the wait-complete summary.
 
-``Notifier.push_wait_summary`` posts the wait-pass outcome to Discord and/or a
-generic webhook. It is best-effort (the engine swallows its errors), so these
-pin the happy paths and the no-url no-op.
+``Notifier.push_wait_summary`` posts the wait-pass outcome (colored by its
+worst outcome class) to Discord and/or a generic webhook; ``push_grab`` posts
+the per-title grab embed. Both are best-effort (the engine swallows their
+errors), so these pin the happy paths and the no-url no-op.
 """
 
 import pytest
@@ -11,6 +12,14 @@ import requests
 
 from seadexarr.modules import notify
 from seadexarr.modules.config import Arr
+from seadexarr.modules.discord import (
+    COLOR_DEFERRED,
+    COLOR_FAILED,
+    COLOR_GRAB,
+    COLOR_SUCCESS,
+    DiscordEmbed,
+    EmbedField,
+)
 from seadexarr.modules.manual_import import Outcome
 from seadexarr.modules.notify import Notifier
 from seadexarr.modules.wait_view import WaitOutcomeRow, WaitResult
@@ -59,28 +68,81 @@ def test_push_wait_summary_posts_to_webhook(monkeypatch: pytest.MonkeyPatch) -> 
     assert payload["failed"] == 1
 
 
-def test_push_wait_summary_builds_discord_fields(monkeypatch: pytest.MonkeyPatch) -> None:
-    pushes: list[tuple[str, list[dict[str, str]]]] = []
+def test_push_wait_summary_builds_discord_embed(monkeypatch: pytest.MonkeyPatch) -> None:
+    pushes: list[DiscordEmbed] = []
 
-    def fake_discord_push(
-        *,
-        url: str,
-        arr_title: str,
-        al_title: str,
-        seadex_url: str,
-        fields: list[dict[str, str]],
-        thumb_url: str | None,
-    ) -> bool:
-        del url, al_title, seadex_url, thumb_url
-        pushes.append((arr_title, fields))
-        return True
+    def fake_discord_push(*, url: str, embed: DiscordEmbed) -> None:
+        del url
+        pushes.append(embed)
 
     monkeypatch.setattr(notify, "discord_push", fake_discord_push)
     notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
 
     assert notifier.push_wait_summary(arr=Arr.RADARR, result=_result()) is True
-    arr_title, fields = pushes[0]
-    names = [field["name"] for field in fields]
-    assert names == ["Imported", "Left for a later run", "Failed"]
-    assert "Frieren" in fields[0]["value"]
-    assert "Radarr wait complete" in arr_title
+    embed = pushes[0]
+    assert embed.title == "Radarr wait complete"
+    assert "2 imported · 1 left · 1 failed" in embed.description
+    names = [field.name for field in embed.fields]
+    assert names == ["Imported (2)", "Left for a later run (1)", "Failed (1)"]
+    assert "Frieren" in embed.fields[0].value
+    # Deferred/failed rows carry the outcome detail; a failure colors the embed red.
+    assert embed.fields[2].value == "Bleach TYBW — download errored; left pending"
+    assert embed.color == COLOR_FAILED
+
+
+def test_push_wait_summary_all_imported_is_green(monkeypatch: pytest.MonkeyPatch) -> None:
+    pushes: list[DiscordEmbed] = []
+
+    def fake_discord_push(*, url: str, embed: DiscordEmbed) -> None:
+        del url
+        pushes.append(embed)
+
+    monkeypatch.setattr(notify, "discord_push", fake_discord_push)
+    notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
+    result = WaitResult((WaitOutcomeRow("Frieren", Outcome.IMPORTED),), elapsed_s=60)
+
+    assert notifier.push_wait_summary(arr=Arr.SONARR, result=result) is True
+    assert pushes[0].color == COLOR_SUCCESS
+
+
+def test_push_wait_summary_deferred_only_is_orange(monkeypatch: pytest.MonkeyPatch) -> None:
+    pushes: list[DiscordEmbed] = []
+
+    def fake_discord_push(*, url: str, embed: DiscordEmbed) -> None:
+        del url
+        pushes.append(embed)
+
+    monkeypatch.setattr(notify, "discord_push", fake_discord_push)
+    notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
+    result = WaitResult((WaitOutcomeRow("Frieren", Outcome.STILL_IMPORTING),), elapsed_s=60)
+
+    assert notifier.push_wait_summary(arr=Arr.SONARR, result=result) is True
+    assert pushes[0].color == COLOR_DEFERRED
+
+
+def test_push_grab_builds_linked_embed(monkeypatch: pytest.MonkeyPatch) -> None:
+    pushes: list[DiscordEmbed] = []
+
+    def fake_discord_push(*, url: str, embed: DiscordEmbed) -> None:
+        del url
+        pushes.append(embed)
+
+    monkeypatch.setattr(notify, "discord_push", fake_discord_push)
+    notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
+
+    posted = notifier.push_grab(
+        arr_title="Sousou no Frieren",
+        al_title="Frieren: Beyond Journey's End",
+        seadex_url="https://releases.moe/154587/",
+        fields=[EmbedField(name="n", value="v")],
+        thumb_url="https://img.anili.st/cover.png",
+    )
+
+    assert posted is True
+    embed = pushes[0]
+    assert embed.author_name == "Sousou no Frieren"
+    assert embed.title == "Frieren: Beyond Journey's End"
+    assert embed.url == "https://releases.moe/154587/"
+    assert embed.color == COLOR_GRAB
+    assert embed.fields == (EmbedField(name="n", value="v"),)
+    assert embed.thumb_url == "https://img.anili.st/cover.png"
