@@ -32,12 +32,18 @@ class _MovieItem:
 
 class SonarrAPI:
     def __init__(
-        self, url: str, apikey: str, session: Session | None = ...,
+        self,
+        url: str,
+        apikey: str,
+        session: Session | None = ...,
     ) -> None: ...
     def all_series(self) -> list[_SeriesItem]: ...
 
 class RadarrAPI:
     def __init__(
-        self, url: str, apikey: str, session: Session | None = ...,
+        self,
+        url: str,
+        apikey: str,
+        session: Session | None = ...,
     ) -> None: ...
     def all_movies(self) -> list[_MovieItem]: ...
