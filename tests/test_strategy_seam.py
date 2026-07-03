@@ -102,13 +102,6 @@ class CheckAlIdInCacheCall(NamedTuple):
     seadex_entry: EntryRecord
 
 
-class UpdateCacheCall(NamedTuple):
-    """One recorded ``update_cache`` call (the merged per-id record)."""
-
-    al_id: int
-    cache_details: CacheRecord | None = None
-
-
 class LogCachedEntryCall(NamedTuple):
     """One recorded ``log_cached_entry`` call (its explicit cross-arr ``arr``)."""
 
@@ -156,14 +149,10 @@ class _FakeRunServices(RunServices):
         self._import_wait_mode = import_wait_mode
         self.get_anilist_ids_calls: list[GetAniListIdsCall] = []
         self.al_id_prologue_calls: list[int] = []
-        self.al_id_needs_scan_calls: list[int] = []
         self.check_al_id_in_cache_calls: list[CheckAlIdInCacheCall] = []
-        self.update_cache_calls: list[UpdateCacheCall] = []
         self.log_entry_status_calls: list[tuple[EntryState, str]] = []
         self.log_al_title_calls: list[str] = []
-        self.log_unmonitored_calls: list[str] = []
         self.log_cached_entry_calls: list[LogCachedEntryCall] = []
-        self.log_no_seadex_releases_calls = 0
         self.cached_skip_coverages: list[Callable[[], str]] = []
         self.get_seadex_dict_calls: list[EntryRecord] = []
         self.interactive_calls: list[SeadexDict] = []
@@ -178,7 +167,7 @@ class _FakeRunServices(RunServices):
 
     @override
     def al_id_needs_scan(self, al_id: int) -> bool:
-        self.al_id_needs_scan_calls.append(al_id)
+        del al_id
         return self._needs_scan
 
     @override
@@ -251,10 +240,6 @@ class _FakeRunServices(RunServices):
         return self._import_wait_mode
 
     @override
-    def update_cache(self, al_id: int, cache_details: CacheRecord | None = None) -> None:
-        self.update_cache_calls.append(UpdateCacheCall(al_id, cache_details))
-
-    @override
     def no_releases_skip(self, al_id: int, cache_details: CacheRecord) -> bool:
         self.no_releases_calls.append((al_id, cache_details))
         return self._no_releases_result
@@ -272,7 +257,7 @@ class _FakeRunServices(RunServices):
 
     @override
     def log_anilist_item_unmonitored(self, item_title: str) -> bool:
-        self.log_unmonitored_calls.append(item_title)
+        del item_title
         return True
 
     @override
@@ -286,10 +271,24 @@ class _FakeRunServices(RunServices):
         self.log_cached_entry_calls.append(LogCachedEntryCall(arr, al_id, state))
         return True
 
-    @override
-    def log_no_seadex_releases(self) -> bool:
-        self.log_no_seadex_releases_calls += 1
-        return True
+
+def test_fake_overrides_the_full_public_surface() -> None:
+    """``@override`` catches renames and signature drift but NOT additions: a new
+    public ``RunServices`` member would be silently inherited here (real body over
+    fake state) and only fail at test runtime. Reflection closes that gap - extend
+    the fake when this fails.
+    """
+
+    # Loop-driven members (the runner calls these, strategies never do), so the
+    # fake doesn't script them.
+    lifecycle = {"begin_run", "ctx", "is_preview"}
+    surface = {
+        name
+        for name, member in vars(RunServices).items()
+        if not name.startswith("_") and (callable(member) or isinstance(member, property))
+    }
+    overridden = {name for name in vars(_FakeRunServices) if not name.startswith("_")}
+    assert surface - lifecycle <= overridden
 
 
 class _FakeEpisodes:
@@ -490,6 +489,27 @@ class TestProcessAlIdThreadsServices:
         assert run.log_al_title_calls == []
         # AniBridge-specific notice surfaced.
         assert any(r.levelno >= logging.WARNING for r in capture.records)
+
+    def test_sonarr_movie_in_radarr_cache_dedups_via_explicit_arr(self) -> None:
+        # The Sonarr->Radarr dedup MUST pass an explicit Arr.RADARR to both the
+        # cache check and the cached-entry log (the cross-arr invariant: ctx.arr
+        # is SONARR here and would look in the wrong cache). Pinned by recording.
+        entry = make_entry_record()
+        run = _FakeRunServices(prologue_entry=entry, al_id_in_cache=True)
+        strat = make_bare_instance(
+            SonarrSync,
+            _services=run,
+            _episodes=_FakeEpisodes(ep_list=[]),
+            _config=make_config(sleep_time=0),
+            ignore_movies_in_radarr=True,
+            logger=_capture_logger("seadexarr-seam-radarr-dedup")[0],
+        )
+
+        result = strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5))
+
+        assert result is False
+        assert run.check_al_id_in_cache_calls == [CheckAlIdInCacheCall(Arr.RADARR, 5, entry)]
+        assert run.log_cached_entry_calls == [LogCachedEntryCall(Arr.RADARR, 5, EntryState.IN_RADARR)]
 
 
 def _ep_with_file(ep_id: int, *, group: str | None) -> SonarrEpisode:

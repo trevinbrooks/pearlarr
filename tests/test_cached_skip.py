@@ -18,7 +18,7 @@ from seadexarr.modules.log import EntryState
 from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.run_services import RunServices
 
-from .builders import FakeCacheStore, make_entry_record, make_services
+from .builders import FakeCacheStore, FakeSeaDexSource, make_entry_record, make_services
 
 
 class _RecordingReporter:
@@ -78,6 +78,17 @@ class TestCachedEntrySkip:
         assert backfilled is not None
         assert (backfilled.url, backfilled.coverage) == ("sd-url", "S01")
 
+    def test_ignore_update_times_reprocesses_even_when_fresh(self) -> None:
+        # The config escape hatch: a fresh, matching timestamp is still re-processed.
+        cache = FakeCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
+        run = make_services(
+            cache_store=cache,
+            _reporter=_RecordingReporter(),
+            ignore_seadex_update_times=True,
+        )
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "u", lambda: "") is False
+
 
 class TestCrossArrLookupHonorsParam:
     """``check_al_id_in_cache`` / ``log_cached_entry`` read the ``arr`` PARAMETER,
@@ -108,3 +119,56 @@ class TestCrossArrLookupHonorsParam:
         run.log_cached_entry(Arr.RADARR, 7, state=EntryState.IN_RADARR)
         # The reporter delegate receives the explicit cross-arr value, not ctx.arr.
         assert reporter.calls == [(run._ctx, Arr.RADARR, 7, EntryState.IN_RADARR)]
+
+
+class _TailReporter:
+    """Records the no-releases and no-entry outcomes the shared tails report."""
+
+    def __init__(self) -> None:
+        self.no_releases_ctxs: list[RunContext] = []
+        self.no_sd_entry_ids: list[int] = []
+
+    def log_no_seadex_releases(self, ctx: RunContext) -> bool:
+        self.no_releases_ctxs.append(ctx)
+        return True
+
+    def log_no_sd_entry(self, ctx: RunContext, al_id: int) -> bool:
+        del ctx
+        self.no_sd_entry_ids.append(al_id)
+        return True
+
+
+class TestNoReleasesSkip:
+    def test_logs_persists_and_reports_not_grabbed(self) -> None:
+        # The real four-step tail (log + cache write + throttle + False). Its body
+        # previously had fake-only coverage: the seam tests script it, nothing
+        # drove the real thing.
+        cache = FakeCacheStore()
+        reporter = _TailReporter()
+        run = make_services(cache_store=cache, _reporter=reporter, sleep_time=0)
+
+        assert run.no_releases_skip(7, {"name": "Title", "url": "u"}) is False
+
+        persisted = cache.get_entry(Arr.SONARR, 7)
+        assert persisted is not None
+        assert (persisted.name, persisted.url) == ("Title", "u")
+        assert len(reporter.no_releases_ctxs) == 1
+
+
+class TestAlIdPrologue:
+    def test_no_seadex_entry_reports_and_returns_none(self) -> None:
+        reporter = _TailReporter()
+        run = make_services(_seadex=FakeSeaDexSource(), _reporter=reporter)
+
+        assert run.al_id_prologue(5) is None
+        assert reporter.no_sd_entry_ids == [5]
+        assert run._ctx.stats.checked == 1
+
+    def test_entry_found_resets_skip_flags_and_tallies(self) -> None:
+        entry = make_entry_record()
+        run = make_services(_seadex=FakeSeaDexSource({5: entry}), _reporter=_TailReporter())
+        run._ctx.public_only_skipped = True  # stale flag from a previous title
+
+        assert run.al_id_prologue(5) is entry
+        assert run._ctx.public_only_skipped is False
+        assert run._ctx.stats.checked == 1

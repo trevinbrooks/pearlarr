@@ -490,7 +490,7 @@ class RunServices:
 
         return self._ctx.import_wait_mode
 
-    def update_cache(
+    def _update_cache(
         self,
         al_id: int,
         cache_details: CacheRecord | None = None,
@@ -527,8 +527,8 @@ class RunServices:
             bool: Always ``False`` (nothing was grabbed).
         """
 
-        self.log_no_seadex_releases()
-        self.update_cache(al_id=al_id, cache_details=cache_details)
+        self._log_no_seadex_releases()
+        self._update_cache(al_id=al_id, cache_details=cache_details)
         time.sleep(self._config.advanced.sleep_time)
         return False
 
@@ -597,7 +597,7 @@ class RunServices:
         # so cached rows can still link to SeaDex (and, for series, show the
         # season/episode coverage). One-time per old entry.
         if not entry.url:
-            self.update_cache(
+            self._update_cache(
                 al_id=al_id,
                 cache_details={"url": sd_url, "coverage": coverage()},
             )
@@ -658,6 +658,6 @@ class RunServices:
         """Log a cached entry (delegates to RunReporter)."""
         return self._reporter.log_cached_entry(self._ctx, arr, al_id, state=state)
 
-    def log_no_seadex_releases(self) -> bool:
+    def _log_no_seadex_releases(self) -> bool:
         """Log a no-suitable-releases outcome (delegates to RunReporter)."""
         return self._reporter.log_no_seadex_releases(self._ctx)

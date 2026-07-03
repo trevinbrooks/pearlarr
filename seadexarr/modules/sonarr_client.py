@@ -14,9 +14,10 @@ from urllib.parse import urlencode
 import requests
 from arrapi import SonarrAPI
 
-# Structural twin of requests' recursive ``JsonType`` (a private alias, so not
-# importable). ``CommandBody`` is JSON-safe but a nested TypedDict can't be
-# *proven* against the recursive alias, so _post_command casts through this.
+# Structural twin of requests' recursive ``JsonType`` (private module - importable,
+# but load-bearing on requests internals, so mirrored locally). ``CommandBody`` is
+# JSON-safe but a non-closed TypedDict can never be proven against the recursive
+# alias, so _post_command casts through this at the wire boundary.
 type _Json = None | bool | int | float | str | Sequence["_Json"] | Mapping[str, "_Json"]
 
 from .log import indent_string

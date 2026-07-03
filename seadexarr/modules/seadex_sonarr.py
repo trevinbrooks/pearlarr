@@ -16,6 +16,7 @@ from .mappings import MappingEntry, MappingSource
 from .planner import get_episode_keys
 from .protocols import ArrSync
 from .radarr_client import (
+    AbstractRadarrClient,
     collect_anime_movies,
     make_radarr_client,
 )
@@ -81,6 +82,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         services: RunServices,
         *,
         sonarr_client: AbstractSonarrClient | None = None,
+        radarr_client: AbstractRadarrClient | None = None,
     ) -> None:
         """Stand up the Sonarr client from the injected shared collaborators.
 
@@ -95,6 +97,11 @@ class SonarrSync(ArrSync[SonarrItem]):
                 :class:`SonarrClient`. Defaults to None (build the real one); tests
                 inject a scripted fake through this typed seam, so the real
                 ``__init__`` + collaborator wiring runs without a network.
+            radarr_client (AbstractRadarrClient | None): Same seam for the
+                movies-in-Radarr cross-check client, whose real construction also
+                hits the network (only consulted when
+                ``sonarr.ignore_movies_in_radarr`` is on). Defaults to None (build
+                the real one when the feature is on and the Radarr keys are set).
         """
 
         self._services = services
@@ -157,23 +164,24 @@ class SonarrSync(ArrSync[SonarrItem]):
         # RadarrSync + engine stack (which would re-run mapping parse, cache
         # load, and a qBittorrent login, all unused here).
         self.all_radarr_movies: list[RadarrItem] | None = None
-        # None-tolerant cross-check read: the Radarr keys are optional here (this is a
-        # Sonarr run), so read them directly rather than require_connection.
-        radarr_url = self._config.radarr.url
-        radarr_api_key = self._config.radarr.api_key
-
-        if self.ignore_movies_in_radarr and radarr_url is not None and radarr_api_key is not None:
-            radarr_client = make_radarr_client(
-                url=radarr_url,
-                api_key=radarr_api_key,
-                session=self.session,
-                logger=self.logger,
-            )
-            self.all_radarr_movies = collect_anime_movies(
-                radarr_client,
-                self._mappings,
-                self.anibridge,
-            )
+        if self.ignore_movies_in_radarr:
+            # None-tolerant cross-check read: the Radarr keys are optional here
+            # (this is a Sonarr run), so read them directly, not require_connection.
+            radarr_url = self._config.radarr.url
+            radarr_api_key = self._config.radarr.api_key
+            if radarr_client is None and radarr_url is not None and radarr_api_key is not None:
+                radarr_client = make_radarr_client(
+                    url=radarr_url,
+                    api_key=radarr_api_key,
+                    session=self.session,
+                    logger=self.logger,
+                )
+            if radarr_client is not None:
+                self.all_radarr_movies = collect_anime_movies(
+                    radarr_client,
+                    self._mappings,
+                    self.anibridge,
+                )
 
     # --- ArrSync hooks ------------------------------------------------------
 
