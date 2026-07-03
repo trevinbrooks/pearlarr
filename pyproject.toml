@@ -45,14 +45,12 @@ classifiers = [
 
 dependencies = [
     "arrapi == 1.4.14",
-    "basedpyright>=1.39.8",
     "beautifulsoup4 == 4.14.3",
     "discordwebhook == 1.0.3",
     "httpx == 0.28.1",
     "platformdirs == 4.10.0",
     "pydantic == 2.13.4",
     "pynyaa == 3.0.0",
-    "pyrefly>=0.60.0",
     "PyYAML == 6.0.3",
     "qbittorrent-api == 2025.11.1",
     "requests == 2.32.5",
@@ -60,12 +58,6 @@ dependencies = [
     "seadex == 0.7.2",
     "typer == 0.21.1",
     "urllib3>=2.7.0",
-]
-
-[project.optional-dependencies]
-docs = [
-    "sphinx-automodapi == 0.22.0",
-    "sphinx-rtd-theme == 3.0.2",
 ]
 
 [project.scripts]
@@ -84,6 +76,8 @@ build = [
     "hatchling>=1.27.0",
 ]
 static-analysis = [
+    "basedpyright>=1.39.8",
+    "pyrefly>=0.60.0",
     "ruff~=0.15.0",
 ]
 test = [
