@@ -11,12 +11,14 @@ no mocks at all; ``_post_with_retry`` is faked at the ``requests`` boundary with
 the ``responses`` library (no ``unittest.mock``).
 """
 
+import re
 import time
 
 import pytest
 import responses
 
 from seadexarr.modules.anilist import (
+    _MEDIA_FIELDS,
     API_URL,
     QUERY,
     RETRYABLE_ERROR_SUBSTRINGS,
@@ -184,6 +186,21 @@ def test_media_from_none_body_is_all_none() -> None:
 
 
 # --- constants sanity -------------------------------------------------------
+
+
+def test_media_fields_fragment_covers_from_api_reads() -> None:
+    """Every field ``AniListMediaNode.from_api`` reads is selected by the fragment.
+
+    The read set below is derived from ``from_api``'s body: the top-level
+    ``id``/``title``/``coverImage``/``episodes``/``format`` keys plus the nested
+    ``title.english``/``title.romaji``/``coverImage.large`` selections. A field
+    dropped from ``_MEDIA_FIELDS`` would silently parse to ``None`` downstream,
+    so the shared fragment (not any full query string) is what's pinned here.
+    """
+
+    read_fields = ("id", "title", "english", "romaji", "coverImage", "large", "episodes", "format")
+    for name in read_fields:
+        assert re.search(rf"\b{name}\b", _MEDIA_FIELDS), f"fragment no longer selects {name!r}"
 
 
 def test_retryable_constants() -> None:
