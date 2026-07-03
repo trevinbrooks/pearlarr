@@ -116,7 +116,7 @@ class ImportExecutor:
         # Monotonic time of the last RefreshMonitoredDownloads we asked Sonarr for,
         # used to throttle the rescan: the blocking pass calls import_completed
         # every poll and may walk several torrents back-to-back, so we re-issue the
-        # (global) refresh at most once per import_poll_interval rather than on
+        # (global) refresh at most once per imports.poll_interval rather than on
         # every call. None means "not refreshed yet this run" (reset in reset).
         self._last_refresh_monotonic: float | None = None
 
@@ -133,7 +133,7 @@ class ImportExecutor:
 
         RefreshMonitoredDownloads is global and the blocking pass polls often (and
         may walk several torrents back-to-back), so it's re-issued at most once per
-        ``import_poll_interval``. Waiting for the command to finish means the queue
+        ``imports.poll_interval``. Waiting for the command to finish means the queue
         read that follows reflects the rescan; the poll bound means a stuck command
         can never block the run, and a failure to queue/confirm just leaves the
         next queue read slightly stale (a later poll corrects it).

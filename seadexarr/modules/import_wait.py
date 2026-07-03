@@ -349,8 +349,8 @@ class ImportWaitManager:
         the view (which graduates any newly-terminal torrent to scrollback).
         ``imported`` is reported ONLY when the episode files are verified present
         (``probe.files_present``), so an in-flight remote-mount copy reads
-        ``importing`` until it lands. Per-torrent timeouts: ``import_wait_timeout``
-        for the download, ``import_ready_timeout`` for the import (from the first
+        ``importing`` until it lands. Per-torrent timeouts: ``imports.wait_timeout``
+        for the download, ``imports.ready_timeout`` for the import (from the first
         COMPLETE). Ctrl-C breaks the loop (the ``finally`` restores the terminal and
         the caller still saves the cache); the terminal outcomes are returned as a
         :class:`WaitResult` for the run report + completion notification. The clock /
@@ -466,7 +466,7 @@ class ImportWaitManager:
         Runs at the start of every non-off, non-preview run - including pure
         ``blocking``, which never reconciles - so a never-completing torrent
         can't pile up in the cache forever. A record past
-        ``import_pending_max_age_days`` (or with an unparseable ``added_at``) is
+        ``imports.pending_max_age_days`` (or with an unparseable ``added_at``) is
         dropped from the durable store.
         """
 

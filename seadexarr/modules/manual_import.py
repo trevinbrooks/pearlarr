@@ -1118,7 +1118,7 @@ def resolve_wait_mode(
 
     Args:
         cli_mode (ImportWaitMode | None): The ``--import-wait-mode`` CLI value.
-        config_mode (ImportWaitMode | None): The configured ``import_wait_mode``.
+        config_mode (ImportWaitMode | None): The configured ``imports.wait_mode``.
 
     Returns:
         ImportWaitMode: ``cli_mode`` if set, else ``config_mode`` if set, else
@@ -1226,7 +1226,7 @@ def quality_axes_from_name(
 ) -> ParsedQuality:
     """The ``(source, resolution)`` axes of a configured default quality NAME.
 
-    Resolves the user's ``import_default_quality`` (a Sonarr quality name like
+    Resolves the user's ``imports.default_quality`` (a Sonarr quality name like
     ``"Bluray-2160p"``) to its structured axes by matching it, case-insensitively,
     against the ``/api/v3/qualitydefinition`` list - so the default contributes a
     real ``(source, resolution)`` the decision fills gaps from. An unset name, or

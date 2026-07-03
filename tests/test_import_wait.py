@@ -218,7 +218,7 @@ class FakeClock:
 
 
 # A timestamp far enough in the past/future that the TTL verdict is fixed no
-# matter when the suite runs (cutoff = now - import_pending_max_age_days).
+# matter when the suite runs (cutoff = now - imports.pending_max_age_days).
 _FRESH = "2999-01-01 00:00:00"
 _EXPIRED = "2000-01-01 00:00:00"
 
@@ -763,7 +763,7 @@ class TestRunMonitor:
         assert view.final("h").outcome is Outcome.IMPORTED
 
     def test_importing_at_deadline_left_without_warning(self) -> None:
-        # The copy never lands within import_ready_timeout: the final attempt
+        # The copy never lands within imports.ready_timeout: the final attempt
         # (at_deadline) leaves it pending with "still importing; left" - no drop.
         strategy = _RecordingStrategy(
             completed=import_probe(ImportReadiness.RETRY, files_present=False, command_issued=True),

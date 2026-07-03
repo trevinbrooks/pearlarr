@@ -610,7 +610,7 @@ class SeaDexArr:
                 the cache, or sending notifications
             import_wait_mode (ImportWaitMode | None): The CLI ``--import-wait-mode``
                 override, resolved cli > config > default. None falls back to the
-                configured ``import_wait_mode``.
+                configured ``imports.wait_mode``.
             boot (BootView | None): The startup cockpit; the library fetch and the
                 metadata prefetch graduate into it as steps, and it is torn down
                 right before the per-item scan begins. Defaults to None (no-op view).
