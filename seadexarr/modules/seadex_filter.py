@@ -1,6 +1,7 @@
 import copy
 import logging
 import sys
+from typing import NamedTuple
 
 from rich.console import Console
 from seadex import EntryRecord, TorrentRecord
@@ -18,6 +19,20 @@ from .seadex_types import (
     SeadexUrlItem,
     SonarrEpisode,
 )
+
+
+class FilterResult(NamedTuple):
+    """The applied download plan, as the strategies consume it.
+
+    The strategy-facing slice of the planner's :class:`~.planner.PlanResult`:
+    the unique hashes to remember in the cache record (None for a hash-less
+    private torrent) plus the same ``seadex_dict`` annotated in place with
+    per-url ``download`` flags. The plan's skip outcome is not carried - it is
+    folded onto the run context here, in ``filter_downloads``.
+    """
+
+    torrent_hashes: list[str | None]
+    seadex_dict: SeadexDict
 
 
 def _is_public_torrent(torrent: TorrentRecord) -> bool:
@@ -252,7 +267,7 @@ class SeadexReleaseFilter:
         seadex_dict: SeadexDict,
         arr_release_dict: ArrReleaseDict,
         ep_list: list[SonarrEpisode] | None = None,
-    ) -> tuple[list[str | None], SeadexDict]:
+    ) -> FilterResult:
         """Flip the switch on whether we're downloading each torrent or not.
 
         Thin orchestrator seam over the :class:`DownloadPlanner`: pass it the
@@ -292,4 +307,4 @@ class SeadexReleaseFilter:
             self._ctx.public_only_skipped = True
             self._ctx.public_only_groups.extend(result.public_only_groups)
 
-        return result.torrent_hashes, result.seadex_dict
+        return FilterResult(result.torrent_hashes, result.seadex_dict)

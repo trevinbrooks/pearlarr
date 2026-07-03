@@ -19,7 +19,6 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime, timedelta
-from typing import Any
 
 import qbittorrentapi
 
@@ -110,22 +109,21 @@ class ImportWaitManager:
         self._ctx = ctx
         self._active_strategy = strategy
 
-    def _pending_store(self) -> dict[str, dict[str, Any]]:
-        """A snapshot of the per-Arr ``{infohash -> record}`` pending store.
+    def _pending_records(self) -> dict[str, PendingImport]:
+        """A rehydrated snapshot of the per-Arr ``{infohash -> PendingImport}`` store.
 
-        Thin read wrapper over :meth:`CacheStore.get_pending`: returns a fresh
-        plain-dict copy each call (mutating it does NOT touch the store - the two
-        mutators go straight through the facade, :meth:`CacheStore.put_pending`
-        in ``_register_pending_import`` and :meth:`CacheStore.drop_pending` in
-        ``drop_pending``). Every other caller only iterates it read-only.
-
-        Each value is the JSON form of a :class:`PendingImport`, rehydrated via
-        :meth:`PendingImport.from_json`. :meth:`CacheStore.get_pending` already
-        types its values precisely (``dict[str, dict[str, Any]]``), so they pass
-        straight through with no widening or per-value narrowing.
+        Thin read wrapper over :meth:`CacheStore.get_pending` (the raw-JSON SQLite
+        boundary): a fresh copy each call, with every value rehydrated ONCE via
+        :meth:`PendingImport.from_json` so the wait passes only ever handle typed
+        records. Read-only - the two mutators go straight through the facade
+        (:meth:`CacheStore.put_pending` in ``_register_pending_import`` and
+        :meth:`CacheStore.drop_pending` in :meth:`drop_pending`).
         """
 
-        return self.cache_store.get_pending(self._ctx.arr)
+        return {
+            infohash: PendingImport.from_json(raw)
+            for infohash, raw in self.cache_store.get_pending(self._ctx.arr).items()
+        }
 
     def poll_torrent(self, infohash: str) -> TorrentProbe:
         """Poll qBittorrent once for a torrent's terminal/in-progress state.
@@ -254,8 +252,8 @@ class ImportWaitManager:
     def _reconcile_one(
         self,
         infohash: str,
-        raw: dict[str, Any],
-    ) -> tuple[PendingImport, PendingState]:
+        pending: PendingImport,
+    ) -> PendingState:
         """Poll one carried-over record once and fold it to a :class:`PendingState`.
 
         Shared by the inline snapshot and the deferred reconcile: one non-blocking
@@ -264,11 +262,9 @@ class ImportWaitManager:
         outcome + the probe's verified-files flag fold through
         :func:`classify_pending` into one state, stashed per infohash for the
         pre-summary tally; a terminal IMPORTED is dropped + counted, a MISSING is
-        dropped. Returns the rehydrated record (for the caller's inline report) and
-        its classified state.
+        dropped. Returns the classified state.
         """
 
-        pending = PendingImport.from_json(raw)
         poll = self.poll_torrent(infohash)
         probe = ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
         if poll.outcome is WaitOutcome.COMPLETE and poll.content_path:
@@ -287,7 +283,7 @@ class ImportWaitManager:
             self._ctx.stats.imported += 1
         elif state is PendingState.MISSING:
             self.drop_pending(infohash)
-        return pending, state
+        return state
 
     def snapshot_pending_for_series(self, series_id: int) -> None:
         """Reconcile + report this series' CARRIED-OVER pending records inline.
@@ -312,13 +308,14 @@ class ImportWaitManager:
         # Fresh per call and SQL-filtered to this series (so a record dropped earlier
         # this run is already absent) - replaces a full get_pending scan + Python
         # series filter once per series. The ``record ->> 'series_id'`` match only
-        # returns JSON objects, so each value is already a typed record.
-        for infohash, record in self.cache_store.get_pending_for_series(self._ctx.arr, series_id).items():
+        # returns JSON objects, rehydrated here (the series-scoped raw boundary).
+        for infohash, raw in self.cache_store.get_pending_for_series(self._ctx.arr, series_id).items():
             # Skip this-run grabs: they're already reported as `added`, so a
             # `queued`/`importing`/`imported` row here would be a double report.
             if infohash in run_grabs:
                 continue
-            pending, state = self._reconcile_one(infohash, record)
+            pending = PendingImport.from_json(raw)
+            state = self._reconcile_one(infohash, pending)
             self._reporter.log_pending_snapshot(state, pending)
 
     def reconcile_remaining(self) -> None:
@@ -338,12 +335,12 @@ class ImportWaitManager:
             return
 
         run_grabs = self._this_run_infohashes()
-        for infohash, raw in list(self._pending_store().items()):
+        for infohash, pending in self._pending_records().items():
             if infohash in self._ctx.pending_states:
                 continue
             if infohash in run_grabs:
                 continue
-            self._reconcile_one(infohash, raw)
+            self._reconcile_one(infohash, pending)
 
     def tally_carried_over_into_stats(self) -> None:
         """Bump queued/importing from each carried-over record's known status.
@@ -358,7 +355,7 @@ class ImportWaitManager:
         """
 
         run_grabs = self._this_run_infohashes()
-        for infohash in self._pending_store():
+        for infohash in self._pending_records():
             if infohash in run_grabs:
                 continue
             state = self._ctx.pending_states.get(infohash, PendingState.QUEUED)
@@ -498,11 +495,11 @@ class ImportWaitManager:
             if pending.infohash and pending.infohash not in seen:
                 seen.add(pending.infohash)
                 records.append(pending)
-        for infohash, raw in self._pending_store().items():
+        for infohash, pending in self._pending_records().items():
             if infohash in seen:
                 continue
             seen.add(infohash)
-            records.append(PendingImport.from_json(raw))
+            records.append(pending)
         return records
 
     def prune_expired_pending(self) -> None:
@@ -519,8 +516,7 @@ class ImportWaitManager:
             days=self._config.imports.pending_max_age_days,
         )
 
-        for infohash, raw in list(self._pending_store().items()):
-            pending = PendingImport.from_json(raw)
+        for infohash, pending in self._pending_records().items():
             try:
                 added_at = datetime.strptime(pending.added_at, UPDATED_AT_STR_FORMAT)
             except (TypeError, ValueError):

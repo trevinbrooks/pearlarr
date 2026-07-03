@@ -27,6 +27,7 @@ from seadexarr.modules.log import EntryState
 from seadexarr.modules.manual_import import ImportProgress, ImportReadiness, ImportWaitMode, PendingImport
 from seadexarr.modules.mappings import MappingEntry, MappingSource
 from seadexarr.modules.run_services import RunServices
+from seadexarr.modules.seadex_filter import FilterResult
 from seadexarr.modules.seadex_radarr import RadarrSync
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
@@ -131,7 +132,7 @@ class _FakeRunServices(RunServices):
         al_id_in_cache: bool = False,
         needs_scan: bool = True,
         seadex_dict: SeadexDict | None = None,
-        filter_downloads_result: tuple[list[str | None], SeadexDict] | None = None,
+        filter_downloads_result: FilterResult | None = None,
         grab_result: bool = False,
         no_releases_result: bool = False,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
@@ -227,12 +228,12 @@ class _FakeRunServices(RunServices):
         seadex_dict: SeadexDict,
         arr_release_dict: ArrReleaseDict,
         ep_list: list[SonarrEpisode] | None = None,
-    ) -> tuple[list[str | None], SeadexDict]:
+    ) -> FilterResult:
         del ep_list
         self.filter_downloads_calls.append((al_id, seadex_dict, arr_release_dict))
         if self._filter_downloads_result is not None:
             return self._filter_downloads_result
-        return ([], seadex_dict)
+        return FilterResult([], seadex_dict)
 
     @property
     @override
@@ -1367,7 +1368,7 @@ class TestRadarrProcessAlIdSeam:
             prologue_entry=entry,
             anilist_title="Movie Title",
             seadex_dict=seadex_dict,
-            filter_downloads_result=(["feedface"], filtered),
+            filter_downloads_result=FilterResult(["feedface"], filtered),
             grab_result=True,
         )
         strat, _ = self._make_strat(run, files=[MovieFile(release_group="OldGroup", size=100)])

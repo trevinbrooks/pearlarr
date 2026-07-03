@@ -1,7 +1,7 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # These access the wait manager's + engine's private members (mgr._reporter,
-# mgr._pending_store, mgr._ctx, engine._wait_manager, ...); strict re-flags that and
+# mgr._pending_records, mgr._ctx, engine._wait_manager, ...); strict re-flags that and
 # the repo disables reportPrivateUsage for tests.
 """Unit tests for the completion wait/poll machinery (:class:`ImportWaitManager`).
 
@@ -459,7 +459,7 @@ class TestPruneExpiredPending:
 
         mgr.prune_expired_pending()
 
-        assert set(mgr._pending_store()) == {"fresh"}
+        assert set(mgr._pending_records()) == {"fresh"}
 
 
 class RecordingWaitView(WaitView):
@@ -513,7 +513,7 @@ class TestSnapshotPendingForSeries:
 
         mgr.snapshot_pending_for_series(7)
 
-        assert mgr._pending_store() == {}
+        assert mgr._pending_records() == {}
         assert mgr._ctx.stats.imported == 1
         assert mgr._ctx.pending_states["h"] is PendingState.IMPORTED
         # The record is reported inline with its reconciled state + title (the gap a
@@ -542,7 +542,7 @@ class TestSnapshotPendingForSeries:
         mgr.snapshot_pending_for_series(7)
 
         assert strategy.import_calls == []
-        assert set(mgr._pending_store()) == {"h"}
+        assert set(mgr._pending_records()) == {"h"}
         assert mgr._ctx.pending_states["h"] is PendingState.QUEUED
         assert mgr._ctx.stats.imported == 0
         # The carried-over record is still reported inline, with the QUEUED state.
@@ -572,7 +572,7 @@ class TestSnapshotPendingForSeries:
         assert reporter.snapshot_calls == []
         assert mgr._ctx.pending_states == {}
         assert mgr._ctx.stats.imported == 0
-        assert set(mgr._pending_store()) == {"h"}
+        assert set(mgr._pending_records()) == {"h"}
 
     def test_other_series_record_is_not_touched(self) -> None:
         # The snapshot is series-scoped: a record for a different series is left
@@ -588,7 +588,7 @@ class TestSnapshotPendingForSeries:
         mgr.snapshot_pending_for_series(7)
 
         assert "other" not in mgr._ctx.pending_states
-        assert set(mgr._pending_store()) == {"other"}
+        assert set(mgr._pending_records()) == {"other"}
 
 
 class TestReconcileRemaining:
@@ -607,7 +607,7 @@ class TestReconcileRemaining:
 
         mgr.reconcile_remaining()
 
-        assert mgr._pending_store() == {}
+        assert mgr._pending_records() == {}
         assert mgr._ctx.stats.imported == 1
         assert strategy.import_calls[-1].force is True
         assert strategy.import_calls[-1].at_deadline is False
@@ -725,7 +725,7 @@ class TestRunMonitor:
         mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         # Both ultimately imported and dropped.
-        assert mgr._pending_store() == {}
+        assert mgr._pending_records() == {}
         assert view.final("fast").outcome is Outcome.IMPORTED
         assert view.final("slow").outcome is Outcome.IMPORTED
         # Each torrent's OWN content_path reached import_completed - a run_monitor bug
@@ -769,7 +769,7 @@ class TestRunMonitor:
         assert len(strategy.import_calls) == 2
         assert view.saw("h", Phase.IMPORTING)  # cycle 1, copy in flight
         assert view.final("h").outcome is Outcome.IMPORTED  # cycle 2, files landed
-        assert mgr._pending_store() == {}
+        assert mgr._pending_records() == {}
 
     def test_tier2_fast_poll_fills_bar_and_promotes_before_next_heavy_poll(self) -> None:
         # Between heavy polls the cheap progress poll fills the "files inserted" bar
@@ -810,7 +810,7 @@ class TestRunMonitor:
             for t in snap.torrents
         )
         assert view.final("h").outcome is Outcome.IMPORTED
-        assert mgr._pending_store() == {}
+        assert mgr._pending_records() == {}
 
     def test_tier2_disabled_skips_the_fast_poll(self) -> None:
         # progress_poll_interval=0 -> no cheap poll at all; the heavy poll alone
@@ -865,7 +865,7 @@ class TestRunMonitor:
         mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert view.final("h").outcome is Outcome.STILL_IMPORTING
-        assert set(mgr._pending_store()) == {"h"}  # left, not dropped
+        assert set(mgr._pending_records()) == {"h"}  # left, not dropped
         # The final in-bound poll forces AND flags the deadline, for THIS torrent's path.
         last = strategy.import_calls[-1]
         assert last.content_path == "/d"
@@ -891,7 +891,7 @@ class TestRunMonitor:
 
         assert strategy.import_calls == []
         assert view.final("h").outcome is Outcome.MISSING
-        assert mgr._pending_store() == {}
+        assert mgr._pending_records() == {}
 
     def test_errored_leaves_record(self) -> None:
         strategy = _RecordingStrategy()
@@ -912,7 +912,7 @@ class TestRunMonitor:
 
         assert strategy.import_calls == []
         assert view.final("h").outcome is Outcome.DOWNLOAD_ERRORED
-        assert set(mgr._pending_store()) == {"h"}
+        assert set(mgr._pending_records()) == {"h"}
 
     def test_download_timeout_is_terminal_and_leaves_record(self) -> None:
         # The torrent never finishes: past imports.wait_timeout the row terminates
@@ -940,7 +940,7 @@ class TestRunMonitor:
 
         assert strategy.import_calls == []
         assert view.final("h").outcome is Outcome.DOWNLOAD_TIMED_OUT
-        assert set(mgr._pending_store()) == {"h"}  # left pending, not dropped
+        assert set(mgr._pending_records()) == {"h"}  # left pending, not dropped
         assert qbit.set_category_calls == []  # only a verified import moves category
 
     def test_complete_without_content_path_times_out(self) -> None:
@@ -964,7 +964,7 @@ class TestRunMonitor:
 
         assert strategy.import_calls == []
         assert view.final("h").outcome is Outcome.DOWNLOAD_TIMED_OUT
-        assert set(mgr._pending_store()) == {"h"}
+        assert set(mgr._pending_records()) == {"h"}
 
     def test_tier2_progress_poll_error_is_contained(self) -> None:
         # A raising import_progress during the fast lane is debug-logged and
@@ -1028,7 +1028,7 @@ class TestRunMonitor:
 
         assert strategy.import_calls  # the store-only record was driven
         assert view.final("carried").outcome is Outcome.IMPORTED
-        assert mgr._pending_store() == {}
+        assert mgr._pending_records() == {}
 
     def test_keyboard_interrupt_breaks_and_leaves_records(self) -> None:
         # Ctrl-C during the poll nap must break the loop (not propagate), so the
@@ -1057,7 +1057,7 @@ class TestRunMonitor:
         )
 
         assert result is not None and result.waited == 0
-        assert set(mgr._pending_store()) == {"h"}  # left pending for next run
+        assert set(mgr._pending_records()) == {"h"}  # left pending for next run
         assert view.saw("h", Phase.DOWNLOADING)
 
     def test_import_exception_is_swallowed_and_record_left(self) -> None:
@@ -1081,7 +1081,7 @@ class TestRunMonitor:
         mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)  # must not raise
 
         assert view.final("h").outcome is Outcome.NOTHING_TO_IMPORT
-        assert set(mgr._pending_store()) == {"h"}
+        assert set(mgr._pending_records()) == {"h"}
 
     def test_imported_terminal_row_carries_files_count(self) -> None:
         # The graduation ledger states "(N files · elapsed)": a terminal imported
@@ -1468,7 +1468,7 @@ class TestDropPending:
 
         mgr.drop_pending("drop")
 
-        assert set(mgr._pending_store()) == {"keep"}
+        assert set(mgr._pending_records()) == {"keep"}
         assert mgr._ctx.pending_imports == [keep]
 
 
@@ -1532,7 +1532,7 @@ class TestPostImportCategory:
 
         assert qbit.set_category_calls == [("seadexarr-done", "h")]
         assert qbit.created_categories == []  # no 409 -> no create
-        assert mgr._pending_store() == {}
+        assert mgr._pending_records() == {}
 
     def test_monitor_moves_imported_torrent(self) -> None:
         strategy = _RecordingStrategy(
@@ -1578,7 +1578,7 @@ class TestPostImportCategory:
         mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert view.final("h").outcome is Outcome.MISSING
-        assert mgr._pending_store() == {}  # still dropped
+        assert mgr._pending_records() == {}  # still dropped
         assert qbit.set_category_calls == []
 
     def test_creates_category_on_409_and_retries(self) -> None:
@@ -1606,7 +1606,7 @@ class TestPostImportCategory:
         mgr.snapshot_pending_for_series(7)  # must not raise
 
         assert qbit.set_category_calls == []
-        assert mgr._pending_store() == {}
+        assert mgr._pending_records() == {}
         assert mgr._ctx.stats.imported == 1
 
     def test_unconfigured_category_makes_no_call(self) -> None:
@@ -1617,7 +1617,7 @@ class TestPostImportCategory:
 
         assert qbit.set_category_calls == []
         assert qbit.created_categories == []
-        assert mgr._pending_store() == {}
+        assert mgr._pending_records() == {}
 
     def test_configured_category_without_client_is_a_silent_noop(self) -> None:
         # Category configured but no qBittorrent client (preview): nothing to
@@ -1649,7 +1649,7 @@ class TestPostImportCategory:
 
         mgr.snapshot_pending_for_series(7)
 
-        assert mgr._pending_store() == {}  # MISSING still drops the record
+        assert mgr._pending_records() == {}  # MISSING still drops the record
         assert qbit.set_category_calls == []
         assert qbit.created_categories == []
 
@@ -1716,5 +1716,5 @@ class TestRegisteredGrabSurvivesSnapshot:
         engine._wait_manager.snapshot_pending_for_series(7)
 
         assert strategy.import_calls == []
-        assert set(engine._wait_manager._pending_store()) == {"h1"}
+        assert set(engine._wait_manager._pending_records()) == {"h1"}
         assert [p.infohash for p in engine._wait_manager._monitor_working_set()] == ["h1"]
