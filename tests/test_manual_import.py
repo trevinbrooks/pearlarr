@@ -2,43 +2,27 @@
 """Characterization tests for the pure manual-import helpers.
 
 Pins the deterministic decision helpers in
-:mod:`seadexarr.modules.manual_import`: the ``(season, episode) -> id`` map, the
-filename normalization, the authoritative file->episode mapping and import
-planning (strict-honor + never-overwrite + never-skip), the queue classifier and
-episode-file status, the filename quality parse, the layered quality/language
-selection, the wait-mode resolution, and the :class:`PendingImport` JSON
-round-trip. All pure, no network or disk; :class:`SonarrEpisode` is built directly
-via :meth:`SonarrEpisode.from_api`.
+:mod:`seadexarr.modules.manual_import` (the wait vocabulary, the normalizers,
+the :class:`PendingImport` JSON round-trip) and
+:mod:`seadexarr.modules.sonarr_import_plan` (the ``(season, episode) -> id``
+map, the authoritative file->episode mapping and import planning (strict-honor
++ never-overwrite + never-skip), the queue classifier and episode-file status,
+the filename quality parse, and the layered quality/language selection). All
+pure, no network or disk; :class:`SonarrEpisode` is built directly via
+:meth:`SonarrEpisode.from_api`.
 """
 
 from seadexarr.modules.manual_import import (
-    CandidateFile,
-    EpisodeFileStatus,
     ImportProbe,
     ImportReadiness,
     ImportWaitMode,
-    ParsedQuality,
     PendingImport,
     PendingState,
-    QueueVerdict,
     WaitOutcome,
-    all_targets_done,
-    build_episode_id_map,
     classify_pending,
-    classify_queue,
-    derive_languages,
-    episode_file_statuses,
-    episode_ids_for_parsed,
-    manual_import_in_flight,
     normalize_basename,
     normalize_group,
-    parse_quality_from_filename,
-    plan_import_files,
-    quality_axes_from_model,
-    quality_axes_from_name,
-    resolve_quality,
     resolve_wait_mode,
-    targets_needing_import,
 )
 from seadexarr.modules.planner import normalize_rg
 from seadexarr.modules.seadex_types import (
@@ -48,6 +32,25 @@ from seadexarr.modules.seadex_types import (
     QualityModel,
     QualitySource,
     SonarrEpisode,
+)
+from seadexarr.modules.sonarr_import_plan import (
+    CandidateFile,
+    EpisodeFileStatus,
+    ParsedQuality,
+    QueueVerdict,
+    all_targets_done,
+    build_episode_id_map,
+    classify_queue,
+    derive_languages,
+    episode_file_statuses,
+    episode_ids_for_parsed,
+    manual_import_in_flight,
+    parse_quality_from_filename,
+    plan_import_files,
+    quality_axes_from_model,
+    quality_axes_from_name,
+    resolve_quality,
+    targets_needing_import,
 )
 
 

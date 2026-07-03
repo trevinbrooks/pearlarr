@@ -19,11 +19,7 @@ import pytest
 from seadex import EntryRecord
 
 from seadexarr.modules.log import EntryState
-from seadexarr.modules.manual_import import (
-    ImportReadiness,
-    PendingImport,
-    resolve_language_objects,
-)
+from seadexarr.modules.manual_import import ImportReadiness, PendingImport
 from seadexarr.modules.mappings import MappingEntry, MappingSource
 from seadexarr.modules.seadex_radarr import RadarrSync
 from seadexarr.modules.seadex_sonarr import SonarrSync
@@ -40,6 +36,7 @@ from seadexarr.modules.seadex_types import (
     SonarrItem,
 )
 from seadexarr.modules.sonarr_episodes import sonarr_series_fingerprint
+from seadexarr.modules.sonarr_import_plan import resolve_language_objects
 
 from .builders import (
     FakeCacheStore,

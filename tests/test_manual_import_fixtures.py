@@ -20,19 +20,9 @@ from pathlib import Path
 
 from seadexarr.modules.config import AppConfig
 from seadexarr.modules.manual_import import (
-    CandidateFile,
-    EpisodeAssignment,
     ImportProgress,
     ImportReadiness,
-    ParsedQuality,
-    QueueVerdict,
-    assign_episode_ids,
-    classify_queue,
-    manual_import_in_flight,
     normalize_basename,
-    parse_se_from_filename,
-    quality_axes_from_model,
-    resolve_quality,
 )
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
@@ -42,6 +32,18 @@ from seadexarr.modules.seadex_types import (
     QualityDefinition,
     QualitySource,
     SonarrEpisode,
+)
+from seadexarr.modules.sonarr_import_plan import (
+    CandidateFile,
+    EpisodeAssignment,
+    ParsedQuality,
+    QueueVerdict,
+    assign_episode_ids,
+    classify_queue,
+    manual_import_in_flight,
+    parse_se_from_filename,
+    quality_axes_from_model,
+    resolve_quality,
 )
 
 from .builders import (

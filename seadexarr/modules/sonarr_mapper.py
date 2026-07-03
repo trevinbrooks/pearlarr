@@ -5,20 +5,15 @@ on-disk manual-import candidates for a completed download into the authoritative
 ``basename -> episode ids`` map, honoring OUR resolved set (never Sonarr's
 series-matched title parse): the grab-time map is taken as-is, every other on-disk
 leaf is parsed series-agnostically and placed into our resolved set via the pure
-:func:`~.manual_import.assign_episode_ids`. Owns the per-run on-disk parse cache.
+:func:`~.sonarr_import_plan.assign_episode_ids`. Owns the per-run on-disk parse cache.
 """
 
 import os
 
-from .manual_import import (
-    CandidateFile,
-    PendingImport,
-    assign_episode_ids,
-    normalize_basename,
-    parse_se_from_filename,
-)
+from .manual_import import PendingImport, normalize_basename
 from .seadex_types import ManualImportCandidate, ParsedFileInfo
 from .sonarr_client import AbstractSonarrClient
+from .sonarr_import_plan import CandidateFile, assign_episode_ids, parse_se_from_filename
 from .sonarr_parse import is_video_candidate
 
 # Rejection-reason substrings, matched case-insensitively against each
