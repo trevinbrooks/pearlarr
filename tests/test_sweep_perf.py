@@ -55,7 +55,7 @@ def _stamp(days_ago: float) -> str:
     return (_NOW - timedelta(days=days_ago)).strftime(UPDATED_AT_STR_FORMAT)
 
 
-def _fresh(record: dict[str, object] | None, *, series_fp: str = "fp") -> bool:
+def _fresh(record: dict[str, object], *, series_fp: str = "fp") -> bool:
     return SonarrParseCache._sonarr_parse_is_fresh(
         record,
         window=ParseWindow(
@@ -104,9 +104,6 @@ class TestSonarrParseIsFresh:
     def test_legacy_empty_without_fp_is_stale(self) -> None:
         # The migrated empty rows: re-parsed once, then re-stamped with a fp.
         assert not _fresh({"fetched_at": _stamp(1), "episodes": []})
-
-    def test_non_dict_is_stale(self) -> None:
-        assert not _fresh(None)
 
 
 class _FakeResponse:

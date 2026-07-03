@@ -165,7 +165,7 @@ class SonarrParseCache:
 
     @staticmethod
     def _sonarr_parse_is_fresh(
-        record: dict[str, Any] | None,
+        record: dict[str, Any],
         *,
         window: ParseWindow,
     ) -> bool:
@@ -178,20 +178,17 @@ class SonarrParseCache:
         records (no fp) read stale.
         """
 
-        if not isinstance(record, dict):
-            return False
-        typed = cast("SonarrParseRecord", record)
-        if typed.get("episodes"):
+        if record.get("episodes"):
             return record_is_fresh(
                 record,
                 payload_key="episodes",
                 ttl_days=SONARR_PARSE_CACHE_TTL_DAYS,
                 cutoff=window.cutoff,
             )
-        if typed.get("series_fp") != window.series_fp:
+        if record.get("series_fp") != window.series_fp:
             return False
         try:
-            return datetime.strptime(typed.get("fetched_at", ""), UPDATED_AT_STR_FORMAT) >= window.neg_cutoff
+            return datetime.strptime(record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT) >= window.neg_cutoff
         except (TypeError, ValueError):
             return False
 
@@ -207,6 +204,30 @@ class SonarrParseCache:
         if not episodes:
             record["series_fp"] = window.series_fp
         self.cache_store.put_sonarr_parse(filename, cast("dict[str, Any]", record))
+
+    def _episodes_for(self, f: str, *, window: ParseWindow) -> list[dict[str, int]]:
+        """One file's season/episode records, read-through the parse cache.
+
+        Empty means skip: a fresh negative record, a transient parse failure
+        (not cached, re-queried on demand), and a fresh parse that found
+        nothing all fold to ``[]``.
+        """
+
+        record = self.cache_store.get_sonarr_parse(f)
+        if record is not None and self._sonarr_parse_is_fresh(record, window=window):
+            # ``episodes`` is untyped JSON; pin the element type back on.
+            episodes: list[dict[str, int]] = record["episodes"]
+            return episodes
+        result = self.sonarr.parse(f)
+        # None = request failed: skip without caching a transient miss.
+        if result is None:
+            return []
+        # Cache the result (negatives are series-fp pinned so they aren't
+        # re-parsed every run) before acting on it.
+        self._write_parse_record(f, result, window=window)
+        if not result:
+            self.logger.debug(indent_string(f"Sonarr could not parse episode for {f}"))
+        return result
 
     def _warm_parse_cache(
         self,
@@ -327,32 +348,11 @@ class SonarrParseCache:
                     if not is_video_candidate(f):
                         continue
 
-                    # Use the cached parse if it's still fresh, otherwise query
-                    # Sonarr and remember the result with a timestamp so it
-                    # expires (re-validates) rather than being trusted forever
-                    record = self.cache_store.get_sonarr_parse(f)
-                    # ``episodes`` is untyped JSON; pin the element type back on.
-                    if record is not None and self._sonarr_parse_is_fresh(record, window=window):
-                        parsed: list[dict[str, int]] = record["episodes"]
-                        if not parsed:
-                            continue
-                    else:
-                        result = self.sonarr.parse(f)
-
-                        # None = request failed: skip without caching a transient miss.
-                        if result is None:
-                            continue
-                        parsed = result
-
-                        # Cache the result (negatives are series-fp pinned so they
-                        # aren't re-parsed every run) before acting on it.
-                        self._write_parse_record(f, parsed, window=window)
-
-                        if not parsed:
-                            self.logger.debug(
-                                indent_string(f"Sonarr could not parse episode for {f}"),
-                            )
-                            continue
+                    # Fresh cache hit, or query Sonarr and cache the result so it
+                    # expires (re-validates) rather than being trusted forever.
+                    parsed = self._episodes_for(f, window=window)
+                    if not parsed:
+                        continue
 
                     size = sizes[sd_file_idx]
                     for ep in parsed:
