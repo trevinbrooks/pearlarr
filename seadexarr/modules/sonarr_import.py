@@ -31,7 +31,6 @@ from .manual_import import (
     ImportProgress,
     ImportReadiness,
     PendingImport,
-    QueueRecordView,
     QueueVerdict,
     all_targets_done,
     build_episode_id_map,
@@ -158,40 +157,34 @@ class ImportExecutor:
                 return
             time.sleep(_REFRESH_COMMAND_POLL_S)
 
-    def queue_record_views(self, infohash: str) -> list[QueueRecordView]:
-        """Reduce this download's queue records to what :func:`classify_queue` needs.
+    def queue_states(self, infohash: str) -> list[str]:
+        """This download's queue-record states, for :func:`classify_queue`.
 
         Matches records to the torrent by ``downloadId`` (case-insensitively;
-        Sonarr stores the infohash uppercased) and keeps the state, status, and
-        whether status messages are present - the three signals that tell a healthy
-        pending item from a stuck/blocked one. Records with no tracked state are
-        dropped; an empty result means Sonarr isn't tracking the download.
+        Sonarr stores the infohash uppercased) and keeps each record's
+        ``trackedDownloadState`` - the one signal the verdict depends on. Records
+        with no tracked state are dropped; an empty result means Sonarr isn't
+        tracking the download.
 
         Args:
             infohash (str): The torrent infohash (the download id).
         """
 
         target = infohash.casefold()
-        views: list[QueueRecordView] = []
+        states: list[str] = []
         for record in self.sonarr.queue():
             dl_id = record.download_id
             if dl_id is None or dl_id.casefold() != target:
                 continue
-            if not record.state:
-                continue
-            views.append(
-                QueueRecordView(
-                    state=record.state,
-                    status=record.status or "",
-                ),
-            )
-        return views
+            if record.state:
+                states.append(record.state)
+        return states
 
     def list_commands(self) -> list[CommandResource]:
         """The current Sonarr command list, for the in-flight ManualImport guard.
 
         A thin pass-through to :meth:`SonarrClient.list_commands` (mirrors
-        :meth:`queue_record_views`' delegation to ``self.sonarr``). Fetched fresh
+        :meth:`queue_states`' delegation to ``self.sonarr``). Fetched fresh
         every poll - never cached - since an in-flight command's status changes as
         Sonarr finishes the import.
         """
@@ -631,8 +624,7 @@ class ImportReconciler:
             )
             return probe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
 
-        queue_records = self._executor.queue_record_views(pending.infohash)
-        verdict = classify_queue(queue_records)
+        verdict = classify_queue(self._executor.queue_states(pending.infohash))
         if verdict is QueueVerdict.WAIT:
             self.logger.debug(indent_string(f"{label}: Sonarr is importing; waiting"))
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)

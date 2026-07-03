@@ -404,9 +404,9 @@ class QueueVerdict(Enum):
     """What Sonarr's queue says to do with a tracked download THIS poll.
 
     Derived purely from the queue records sharing a ``downloadId`` (a season pack
-    has one record per episode), reading ``trackedDownloadState`` (status is read
-    only to bucket non-pending failures). "Already imported" is NOT decided here (a
-    successful import is removed from the queue); the caller reads the episode files.
+    has one record per episode), reading only ``trackedDownloadState``. "Already
+    imported" is NOT decided here (a successful import is removed from the queue);
+    the caller reads the episode files.
 
     ``WAIT`` -> something is genuinely in motion (downloading / importing); let
     Sonarr finish so we never race an in-flight import.
@@ -425,23 +425,6 @@ class QueueVerdict(Enum):
     STEP_IN = auto()
 
 
-@dataclass(frozen=True)
-class QueueRecordView:
-    """The fields of one Sonarr queue record the verdict actually depends on.
-
-    A flat value object so the queue decision is pure and unit-testable: the
-    strategy reduces each raw queue dict to this (case preserved; folded in
-    :func:`classify_queue`) and drops records that don't match the download.
-
-    Args:
-        state (str): ``trackedDownloadState`` (e.g. ``importPending``).
-        status (str): ``trackedDownloadStatus`` (``ok`` / ``warning`` / ``error``).
-    """
-
-    state: str
-    status: str
-
-
 # trackedDownloadState values (camelCase from Sonarr, compared case-folded) that
 # mean Sonarr is genuinely working the download right now - wait rather than race
 # it. ``queued``/``delay``/``paused`` are QueueStatus-ish transients Sonarr may
@@ -454,8 +437,8 @@ _QUEUE_STEP_IN_STATES = frozenset(
 )
 
 
-def classify_queue(records: list[QueueRecordView]) -> QueueVerdict:
-    """Reduce a download's queue records to a single verdict for this poll.
+def classify_queue(states: list[str]) -> QueueVerdict:
+    """Reduce a download's queue-record states to a single verdict for this poll.
 
     Side-effect free so the decision can be unit-tested without any HTTP.
     Priority, highest first:
@@ -472,8 +455,8 @@ def classify_queue(records: list[QueueRecordView]) -> QueueVerdict:
          unknown state) -> ``STEP_IN``.
 
     Args:
-        records (list[QueueRecordView]): Every queue record sharing the download's
-            infohash (matched + reduced by the caller).
+        states (list[str]): Every matching queue record's ``trackedDownloadState``
+            (matched + reduced by the caller; case preserved, folded here).
 
     Returns:
         QueueVerdict: The action this poll, BEFORE the episode-file "already
@@ -483,11 +466,10 @@ def classify_queue(records: list[QueueRecordView]) -> QueueVerdict:
     in_motion = False
     troubled = False
     clean_pending = False
-    for record in records:
-        state = record.state.casefold()
-        # Bucket by state only: status="error" is structurally coupled to the
-        # failedPending step-in state, so reading it separately is redundant - and
-        # would wrongly route an importPending record to STEP_IN (a double-import).
+    for raw_state in states:
+        state = raw_state.casefold()
+        # Bucket by state only: an importPending record must always wait
+        # (routing it to STEP_IN would race Sonarr's import and double-import).
         if state in _QUEUE_IN_MOTION_STATES:
             in_motion = True
         elif state in _QUEUE_STEP_IN_STATES:

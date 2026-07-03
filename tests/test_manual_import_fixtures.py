@@ -25,7 +25,6 @@ from seadexarr.modules.manual_import import (
     ImportProgress,
     ImportReadiness,
     ParsedQuality,
-    QueueRecordView,
     QueueVerdict,
     assign_episode_ids,
     classify_queue,
@@ -435,28 +434,25 @@ class TestClassifyRealQueue:
     """The real queue had a paused download (wait) + two importBlocked (step in)."""
 
     @staticmethod
-    def _views_by_download() -> dict[str, list[QueueRecordView]]:
+    def _states_by_download() -> dict[str, list[str]]:
         body: dict[str, list[dict[str, object]]] = load_fixture("queue.json")
-        views: dict[str, list[QueueRecordView]] = {}
+        states: dict[str, list[str]] = {}
         for rec in body["records"]:
             state = rec.get("trackedDownloadState", "")
-            status = rec.get("trackedDownloadStatus", "")
             download_id = rec["downloadId"]
-            view = QueueRecordView(
-                state=state if isinstance(state, str) else "",
-                status=status if isinstance(status, str) else "",
+            states.setdefault(download_id if isinstance(download_id, str) else "", []).append(
+                state if isinstance(state, str) else "",
             )
-            views.setdefault(download_id if isinstance(download_id, str) else "", []).append(view)
-        return views
+        return states
 
     def test_import_blocked_steps_in(self) -> None:
-        views = self._views_by_download()
-        yamada = views["1111111111111111111111111111111111111111"]
+        states = self._states_by_download()
+        yamada = states["1111111111111111111111111111111111111111"]
         assert classify_queue(yamada) is QueueVerdict.STEP_IN
 
     def test_paused_download_waits(self) -> None:
-        views = self._views_by_download()
-        paused = views["B7640FF13A2ADCA981B821D03CEBD1B569798459"]
+        states = self._states_by_download()
+        paused = states["B7640FF13A2ADCA981B821D03CEBD1B569798459"]
         assert classify_queue(paused) is QueueVerdict.WAIT
 
 

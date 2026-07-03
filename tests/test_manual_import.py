@@ -20,7 +20,6 @@ from seadexarr.modules.manual_import import (
     ParsedQuality,
     PendingImport,
     PendingState,
-    QueueRecordView,
     QueueVerdict,
     WaitOutcome,
     all_targets_done,
@@ -621,47 +620,34 @@ def test_import_readiness_members_exist() -> None:
     assert {o.name for o in ImportReadiness} == {"IMPORTED", "RETRY", "LEAVE"}
 
 
-def _qrecord(state: str, status: str = "ok") -> QueueRecordView:
-    return QueueRecordView(state=state, status=status)
-
-
 class TestClassifyQueue:
-    """classify_queue buckets queue records by trackedDownloadState into one verdict."""
+    """classify_queue buckets trackedDownloadState values into one verdict."""
 
     def test_empty_steps_in(self) -> None:
         assert classify_queue([]) is QueueVerdict.STEP_IN
 
     def test_import_blocked_steps_in(self) -> None:
-        assert classify_queue([_qrecord("importBlocked", "warning")]) is QueueVerdict.STEP_IN
+        assert classify_queue(["importBlocked"]) is QueueVerdict.STEP_IN
 
     def test_failed_steps_in(self) -> None:
-        assert classify_queue([_qrecord("failed", "error")]) is QueueVerdict.STEP_IN
+        assert classify_queue(["failed"]) is QueueVerdict.STEP_IN
 
-    def test_clean_pending_is_pending_clean(self) -> None:
-        assert classify_queue([_qrecord("importPending", "ok")]) is QueueVerdict.PENDING_CLEAN
-
-    def test_pending_with_warning_is_pending_clean(self) -> None:
-        # Any importPending waits (PENDING_CLEAN), even with a warning: stepping in
-        # on a still-pending record races Sonarr's import and double-imports.
-        assert classify_queue([_qrecord("importPending", "warning")]) is QueueVerdict.PENDING_CLEAN
-
-    def test_pending_with_error_status_is_pending_clean(self) -> None:
-        # An importPending record waits regardless of status, including "error":
-        # bucketing is by state, so it never routes to STEP_IN (which would race
-        # Sonarr's import and double-import). Sonarr couples error with failedPending,
-        # so this also hardens the invariant against a future queue-state shape.
-        assert classify_queue([_qrecord("importPending", "error")]) is QueueVerdict.PENDING_CLEAN
+    def test_pending_is_pending_clean(self) -> None:
+        # The importPending-always-waits invariant is structural now: the input
+        # carries ONLY states, so no trackedDownloadStatus (warning/error) can
+        # ever route a pending record to STEP_IN (a double-import).
+        assert classify_queue(["importPending"]) is QueueVerdict.PENDING_CLEAN
 
     def test_downloading_waits(self) -> None:
-        assert classify_queue([_qrecord("downloading")]) is QueueVerdict.WAIT
+        assert classify_queue(["downloading"]) is QueueVerdict.WAIT
 
     def test_in_motion_beats_blocked_to_avoid_racing(self) -> None:
         # Something is actively importing -> wait, don't race it, even if a sibling
         # record is blocked; a later poll re-evaluates once the import settles.
-        assert classify_queue([_qrecord("importing"), _qrecord("importBlocked", "warning")]) is QueueVerdict.WAIT
+        assert classify_queue(["importing", "importBlocked"]) is QueueVerdict.WAIT
 
     def test_case_insensitive(self) -> None:
-        assert classify_queue([_qrecord("IMPORTBLOCKED", "WARNING")]) is QueueVerdict.STEP_IN
+        assert classify_queue(["IMPORTBLOCKED"]) is QueueVerdict.STEP_IN
 
 
 class TestResolveLanguageObjectsDefensive:
