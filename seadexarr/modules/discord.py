@@ -6,7 +6,6 @@ enforced so an oversized notification degrades to a truncated embed instead of
 a 400 from the webhook.
 """
 
-import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import NamedTuple
@@ -107,7 +106,7 @@ class DiscordEmbed:
 
 
 def discord_push(url: str, embed: DiscordEmbed) -> None:
-    """POST one embed to the webhook.
+    """POST one embed to the webhook - a pure POST, pacing lives in the Notifier.
 
     Raises ``requests.RequestException`` (incl. HTTP error statuses) so the
     caller's containment decides; a webhook failure must never abort a grab.
@@ -115,6 +114,3 @@ def discord_push(url: str, embed: DiscordEmbed) -> None:
 
     response = requests.post(url, json={"embeds": [embed.to_payload()]}, timeout=DISCORD_TIMEOUT_S)
     response.raise_for_status()
-
-    # Sleep for a bit to avoid rate limiting
-    time.sleep(1)

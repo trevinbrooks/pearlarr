@@ -7,6 +7,7 @@ url; with none, every push is a no-op.
 """
 
 import logging
+import time
 from collections.abc import Sequence
 
 import requests
@@ -30,6 +31,9 @@ from .wait_view import WaitResult
 # remainder into a "… +N more" line, keeping a big carried-over backlog readable;
 # the payload boundary's char clamps are the hard limit guarantee.
 _MAX_FIELD_TITLES = 25
+
+# Minimum spacing between consecutive Discord pushes (webhook rate limiting).
+_PUSH_SPACING_S = 1.0
 
 
 def _wait_color(result: WaitResult) -> int:
@@ -64,6 +68,8 @@ class Notifier:
         self.discord_url = discord_url
         self.webhook_url = webhook_url
         self.logger = logger
+        # Monotonic instant of the last Discord POST, for burst pacing.
+        self._last_push: float | None = None
 
     @property
     def enabled(self) -> bool:
@@ -121,12 +127,12 @@ class Notifier:
                 author_name="SeaDexArr",
                 title=f"{arr.capitalize()} wait complete",
                 color=_wait_color(result),
-                description=(f"{result.imported} imported · {result.left} left · {result.failed} failed · {elapsed}"),
+                description=f"{result.imported} imported · {result.left} left · {result.failed} failed · {elapsed}",
                 fields=self._wait_fields(result),
             ),
         )
         if self.webhook_url is not None:
-            posted = self._post_webhook(arr, result) or posted
+            posted = self._post_webhook(arr, result, self.webhook_url) or posted
         return posted
 
     @staticmethod
@@ -157,11 +163,9 @@ class Notifier:
             fields.append(EmbedField(name=f"{name} ({len(rows)})", value=value))
         return tuple(fields)
 
-    def _post_webhook(self, arr: Arr, result: WaitResult) -> bool:
+    def _post_webhook(self, arr: Arr, result: WaitResult, url: str) -> bool:
         """POST the report JSON to the generic webhook; warn-and-swallow request errors."""
 
-        if self.webhook_url is None:
-            return False
         payload = {
             "arr": str(arr),
             "imported": result.imported,
@@ -171,7 +175,7 @@ class Notifier:
             "rows": [{"label": r.label, "outcome": r.outcome.name, "word": r.outcome.word} for r in result.rows],
         }
         try:
-            requests.post(self.webhook_url, json=payload, timeout=10)
+            requests.post(url, json=payload, timeout=10)
         except requests.RequestException as exc:
             self.logger.warning(f"Wait-report webhook POST failed: {exc}")
             return False
@@ -198,15 +202,9 @@ class Notifier:
 
         fields: list[EmbedField] = []
 
-        # The first field names the Arr's current release group(s); fall back to
-        # "None" when there isn't one. Each branch allocates a fresh list, so the
-        # caller's release_group is never mutated (no defensive copy needed).
-        if not release_group:
-            names = ["None"]
-        else:
-            # Both Arrs pass the release-dict keys (str | None); drop the blank /
-            # None entries, falling back to "None" if that empties the list.
-            names = [group for group in release_group if group] or ["None"]
+        # First field: the Arr's current release group(s), blanks/None dropped,
+        # falling back to "None" when nothing is left.
+        names = [group for group in (release_group or []) if group] or ["None"]
 
         fields.append(
             EmbedField(
@@ -229,6 +227,21 @@ class Notifier:
 
         return fields
 
+    def _pace(self) -> None:
+        """Keep burst pushes >= 1s apart and stamp this push's instant.
+
+        Sleeps only when a prior push happened under the spacing ago, so a
+        single (or final) push never pays a trailing dead second.
+        """
+
+        now = time.monotonic()
+        if self._last_push is not None:
+            remaining = _PUSH_SPACING_S - (now - self._last_push)
+            if remaining > 0:
+                time.sleep(remaining)
+                now = time.monotonic()
+        self._last_push = now
+
     def _push(self, embed: DiscordEmbed) -> bool:
         """Post one embed to the configured Discord webhook.
 
@@ -240,6 +253,7 @@ class Notifier:
         if self.discord_url is None:
             return False
 
+        self._pace()
         try:
             discord_push(url=self.discord_url, embed=embed)
         except requests.RequestException as exc:
