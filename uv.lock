@@ -313,18 +313,6 @@ wheels = [
 ]
 
 [[package]]
-name = "discordwebhook"
-version = "1.0.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/15/e1/9a4b4ed4aded1c4dc6e708d8d10dd2a72097f8711f027e4cc76364783d83/discordwebhook-1.0.3.tar.gz", hash = "sha256:b2a89cc322e036c36f694f23a02023e79d6916f5b6be127de2733b7b1f93445c", size = 3672, upload-time = "2021-12-15T15:08:57.837Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/00/55/fdf733fc29268d278e6d28daed6e9772d3ba9d01a53f365a568222f6958c/discordwebhook-1.0.3-py3-none-any.whl", hash = "sha256:0dddc400d631c57795cae03939aa37163299d2d7e3361036fa508836326c7ea6", size = 4013, upload-time = "2021-12-15T15:08:55.81Z" },
-]
-
-[[package]]
 name = "distlib"
 version = "0.4.3"
 source = { registry = "https://pypi.org/simple" }
@@ -914,7 +902,6 @@ source = { editable = "." }
 dependencies = [
     { name = "arrapi" },
     { name = "beautifulsoup4" },
-    { name = "discordwebhook" },
     { name = "httpx" },
     { name = "platformdirs" },
     { name = "pydantic" },
@@ -961,7 +948,6 @@ test = [
 requires-dist = [
     { name = "arrapi", specifier = "==1.4.14" },
     { name = "beautifulsoup4", specifier = "==4.14.3" },
-    { name = "discordwebhook", specifier = "==1.0.3" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "platformdirs", specifier = "==4.10.0" },
     { name = "pydantic", specifier = "==2.13.4" },

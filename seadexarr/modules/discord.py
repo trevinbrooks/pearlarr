@@ -1,6 +1,10 @@
 import time
 
-from discordwebhook import Discord
+import requests
+
+# (connect, read) bound so a hung Discord webhook surfaces as a transient miss
+# instead of blocking the run; matches the Arr clients' timeout policy.
+DISCORD_TIMEOUT_S = (5, 30)
 
 
 def discord_push(
@@ -13,6 +17,9 @@ def discord_push(
 ) -> bool:
     """Post a message to Discord
 
+    Raises ``requests.RequestException`` (incl. HTTP error statuses) so the
+    caller's containment decides; a webhook failure must never abort a grab.
+
     Args:
         url (str): URL to post to
         arr_title (str): Title as in Arr instance
@@ -23,9 +30,8 @@ def discord_push(
         thumb_url (str | None): URL for thumbnail, if any
     """
 
-    discord = Discord(url=url)
-    discord.post(
-        embeds=[
+    payload = {
+        "embeds": [
             {
                 "author": {
                     "name": arr_title,
@@ -37,7 +43,9 @@ def discord_push(
                 "thumbnail": {"url": thumb_url},
             },
         ],
-    )
+    }
+    response = requests.post(url, json=payload, timeout=DISCORD_TIMEOUT_S)
+    response.raise_for_status()
 
     # Sleep for a bit to avoid rate limiting
     time.sleep(1)

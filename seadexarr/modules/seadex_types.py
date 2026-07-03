@@ -93,9 +93,9 @@ SeadexDict = dict[str, SeadexReleaseGroupItem]
 class EmbedField(NamedTuple):
     """A Discord embed field, typed inside the notifier.
 
-    The ``discordwebhook`` library wants plain ``{"name", "value"}`` dicts at the
-    JSON boundary, so :meth:`to_dict` serializes the field back to that exact
-    shape when :meth:`seadexarr.modules.notify.Notifier.build_fields` returns.
+    Discord's webhook API wants plain ``{"name", "value"}`` dicts at the JSON
+    boundary, so :meth:`to_dict` serializes the field back to that exact shape
+    when :meth:`seadexarr.modules.notify.Notifier.build_fields` returns.
     """
 
     name: str

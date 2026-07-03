@@ -46,7 +46,6 @@ classifiers = [
 dependencies = [
     "arrapi == 1.4.14",
     "beautifulsoup4 == 4.14.3",
-    "discordwebhook == 1.0.3",
     "httpx == 0.28.1",
     "platformdirs == 4.10.0",
     "pydantic == 2.13.4",
@@ -113,7 +112,7 @@ packages = ["seadexarr"]
 # ``# pyright: strict`` header, and the few that legitimately read a collaborator's
 # private members for a white-box assertion carry a local
 # ``# pyright: reportPrivateUsage=false`` with a justification. stubPath supplies
-# local stubs for the two un-stubbed dependencies (arrapi, discordwebhook).
+# local stubs for the one un-stubbed dependency (arrapi).
 [tool.pyright]
 typeCheckingMode = "strict"
 stubPath = "stubs"
