@@ -1,13 +1,14 @@
 1.0.0 (Unreleased)
 ==================
 
+- **Breaking:** the config schema is now nested groups (``sonarr:``, ``radarr:``, ``qbittorrent:``, ``seadex:``, ``imports:``, ``notifications:``, ``mappings:``, ``advanced:``) with strict validation - unknown or flat top-level keys are rejected. Rewrite an existing ``config.yml`` against the new layout (``seadexarr config init`` writes a commented template); e.g. ``sonarr_url`` is now ``sonarr.url``, ``qbit_info`` is ``qbittorrent.*``, ``torrent_tags`` is ``qbittorrent.tags``
 - Store config, caches and logs together in one OS-standard data directory (via ``platformdirs``); override with ``SEADEX_ARR_DATA_DIR`` or the global ``--data-dir`` flag, and run ``seadexarr paths`` to print the resolved locations. **Breaking:** the default location moved off the install directory (e.g. ``~/.local/share/seadexarr`` on Linux, ``~/Library/Application Support/seadexarr`` on macOS); move an existing ``config.yml``/cache into the new directory, or set ``SEADEX_ARR_DATA_DIR``. Logs now follow the data directory instead of the working directory
 - Add wait-for-completion and Sonarr manual import (``imports.wait_mode``: off/deferred/blocking/hybrid): optionally wait for qBittorrent to finish grabbed torrents, let Sonarr import them, and step in with a manual import when it can't - with optional completion notifications (``notifications.wait_notify``)
 - When "public_only" is set, prefer public URLs per release group; if the only option for a release the Arr is missing is private, log an error and skip the title (leaving it uncached so it's retried) instead of grabbing a private release
 - Where multiple preferred release groups cover the exact same files, only download one (preferring a public release), rather than grabbing them all
-- Add "ignore_anilist_ids", which allows you to skip specific AniList IDs from being processed
-- Add "torrent_tags", which allows you to tag torrents as added to qBittorrent
-- Add "ignore tags" option, which allows you to filter out various tags
+- Add ``seadex.ignore_anilist_ids``, which allows you to skip specific AniList IDs from being processed
+- Add ``qbittorrent.tags``, which allows you to tag torrents as added to qBittorrent
+- Add ``seadex.ignore_tags``, which allows you to filter out SeaDex releases by tag
 - Use AniBridge mappings to mop up missed Sonarr/Radarr titles
 
 0.9.0 (2025-09-13)
