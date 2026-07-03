@@ -7,7 +7,7 @@ from .log import indent_string
 from .manual_import import ImportProbe, ImportProgress, ImportReadiness, PendingImport
 from .mappings import MappingEntry
 from .protocols import ArrSync
-from .radarr_client import collect_anime_movies, make_radarr_client
+from .radarr_client import AbstractRadarrClient, collect_anime_movies, make_radarr_client
 from .seadex_arr import RunDeps, SeaDexArr
 from .seadex_types import ArrReleaseDict, ProgressSink, RadarrItem
 
@@ -22,13 +22,23 @@ class RadarrSync(ArrSync[RadarrItem]):
     through it.
     """
 
-    def __init__(self, deps: RunDeps, services: SeaDexArr) -> None:
+    def __init__(
+        self,
+        deps: RunDeps,
+        services: SeaDexArr,
+        radarr_client: AbstractRadarrClient | None = None,
+    ) -> None:
         """Stand up the Radarr client from the injected shared collaborators.
 
         Args:
             deps (RunDeps): The shared collaborators; the config/session/mappings
                 this strategy needs are read off it.
             services (SeaDexArr): The run machinery the per-id hooks call into.
+            radarr_client (AbstractRadarrClient | None, optional): Injectable
+                replacement for the real :class:`~.radarr_client.RadarrClient`,
+                whose construction hits the network. Defaults to None (build the
+                real one); tests inject a scripted fake through this typed seam,
+                so the real ``__init__`` runs without a network.
         """
 
         self._services = services
@@ -40,15 +50,18 @@ class RadarrSync(ArrSync[RadarrItem]):
         self._mappings = deps.mappings
         self.anibridge = deps.mappings.anibridge
 
-        # Connection keys are required only now, when a Radarr run actually runs.
-        radarr_url, radarr_api_key = self._config.require_connection(Arr.RADARR)
-
-        self.radarr = make_radarr_client(
-            url=radarr_url,
-            api_key=radarr_api_key,
-            session=self.session,
-            logger=self.logger,
-        )
+        # An injected client (tests) is used as-is; otherwise the connection keys
+        # are required only now, when a Radarr run actually runs.
+        if radarr_client is not None:
+            self.radarr: AbstractRadarrClient = radarr_client
+        else:
+            radarr_url, radarr_api_key = self._config.require_connection(Arr.RADARR)
+            self.radarr = make_radarr_client(
+                url=radarr_url,
+                api_key=radarr_api_key,
+                session=self.session,
+                logger=self.logger,
+            )
 
     # --- ArrSync hooks ------------------------------------------------------
 

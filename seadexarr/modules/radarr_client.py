@@ -1,10 +1,11 @@
 """Radarr REST client: the HTTP surface the Radarr syncer talks to."""
 
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, cast, override
 
 import requests
 from arrapi import RadarrAPI
@@ -42,7 +43,28 @@ def make_radarr_client(
     )
 
 
-class RadarrClient:
+class AbstractRadarrClient(ABC):
+    """The Radarr read surface the Radarr syncer consumes.
+
+    The nominal seam mirroring :class:`~.sonarr_client.AbstractSonarrClient`:
+    the strategy and ``collect_anime_movies`` take this type, so tests inject a
+    subclassed fake that is statically checked against the real client's
+    surface (a missing method is a ``reportAbstractUsage`` error, not a
+    silently-absorbed ``Any``). The real client's ``__init__`` hits the network
+    (arrapi fetches system status), which is exactly why construction needs an
+    injectable seam.
+    """
+
+    @abstractmethod
+    def all_movies(self) -> list[RadarrItem]:
+        """Every movie in Radarr (unfiltered)."""
+
+    @abstractmethod
+    def movie_files(self, movie_id: int) -> list[MovieFile]:
+        """Movie-file records for a movie (``/api/v3/moviefile``)."""
+
+
+class RadarrClient(AbstractRadarrClient):
     """Thin wrapper over the Radarr API (``arrapi`` + one raw endpoint)."""
 
     def __init__(
@@ -69,6 +91,7 @@ class RadarrClient:
         self._logger = logger
         self._api = RadarrAPI(url=url, apikey=api_key)
 
+    @override
     def all_movies(self) -> list[RadarrItem]:
         """Every movie in Radarr (unfiltered)."""
 
@@ -77,6 +100,7 @@ class RadarrClient:
         # client boundary into the project's typed shape.
         return cast("list[RadarrItem]", self._api.all_movies())
 
+    @override
     def movie_files(self, movie_id: int) -> list[MovieFile]:
         """Movie-file records for a movie (``/api/v3/moviefile``).
 
@@ -185,7 +209,7 @@ def collect_anime_items[ItemT: ArrItem](
 
 
 def collect_anime_movies(
-    radarr_client: RadarrClient,
+    radarr_client: AbstractRadarrClient,
     mappings: AnimeIdSets,
     anibridge: AniBridge | None,
 ) -> list[RadarrItem]:

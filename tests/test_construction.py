@@ -13,10 +13,11 @@ collaborator wiring and the ``begin_run`` two-phase rebind have an in-suite guar
 
 from seadexarr.modules.config import Arr
 from seadexarr.modules.seadex_arr import SeaDexArr
+from seadexarr.modules.seadex_radarr import RadarrSync
 from seadexarr.modules.seadex_sonarr import SonarrSync
 
 from .builders import make_run_deps
-from .fakes import FakeSonarrClient
+from .fakes import FakeRadarrClient, FakeSonarrClient
 
 
 def test_engine_begin_run_rebinds_all_ctx_collaborators() -> None:
@@ -48,3 +49,18 @@ def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:
 
     assert strat._parse.cache_store is deps.cache_store
     assert strat._reconciler.cache_store is deps.cache_store
+
+
+def test_radarr_sync_init_builds_without_network_via_client_seam() -> None:
+    # The real RadarrClient hits the network on construction (arrapi fetches system
+    # status), so RadarrSync's REAL __init__ was untestable before the radarr_client
+    # seam; the injected fake also skips require_connection, so no keys are needed.
+    deps = make_run_deps()
+    engine = SeaDexArr(deps, Arr.RADARR)
+    fake = FakeRadarrClient()
+
+    strat = RadarrSync(deps, engine, radarr_client=fake)
+
+    assert strat.radarr is fake
+    assert strat._mappings is deps.mappings
+    assert strat.anibridge is deps.mappings.anibridge

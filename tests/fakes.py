@@ -19,15 +19,18 @@ from typing import override
 from seadexarr.modules.manual_import import ImportProbe, ImportProgress, PendingImport
 from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.protocols import ArrSync
+from seadexarr.modules.radarr_client import AbstractRadarrClient
 from seadexarr.modules.seadex_types import (
     CommandResource,
     Language,
     ManualImportCandidate,
     ManualImportFile,
+    MovieFile,
     ParsedFileInfo,
     ProgressSink,
     QualityDefinition,
     QueueRecord,
+    RadarrItem,
     SonarrEpisode,
     SonarrItem,
 )
@@ -236,6 +239,35 @@ class FakeSonarrClient(AbstractSonarrClient):
     ) -> int | None:
         self.execute_calls.append((files, import_mode))
         return self.execute_command_id
+
+
+class FakeRadarrClient(AbstractRadarrClient):
+    """A typed, scriptable stand-in for the :class:`AbstractRadarrClient` surface.
+
+    Mirrors :class:`FakeSonarrClient`: reads return per-instance fields a test
+    presets, and ``movie_files`` RECORDS the ids it was asked for. Subclasses the
+    ABC, so a missing method is a static ``reportAbstractUsage`` error and an
+    un-instantiable ``TypeError``.
+    """
+
+    def __init__(
+        self,
+        *,
+        movies: list[RadarrItem] | None = None,
+        movie_files: list[MovieFile] | None = None,
+    ) -> None:
+        self.movies_return: list[RadarrItem] = movies or []
+        self.movie_files_return: list[MovieFile] = movie_files or []
+        self.movie_files_calls: list[int] = []
+
+    @override
+    def all_movies(self) -> list[RadarrItem]:
+        return self.movies_return
+
+    @override
+    def movie_files(self, movie_id: int) -> list[MovieFile]:
+        self.movie_files_calls.append(movie_id)
+        return self.movie_files_return
 
 
 class CaptureHandler(logging.Handler):
