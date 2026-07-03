@@ -1,0 +1,25 @@
+# Keep the COPY . context to what the pip install actually needs.
+.git
+.github
+.claude
+.idea
+.vscode
+.venv
+.hypothesis
+.pytest_cache
+.ruff_cache
+.coverage
+.DS_Store
+tests/
+stubs/
+schemas/
+seadexarr.egg-info/
+*.egg-info/
+__pycache__/
+*.pyc
+Dockerfile
+.dockerignore
+.gitignore
+.pre-commit-config.yaml
+CODEOWNERS
+example_post.png

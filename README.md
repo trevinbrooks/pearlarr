@@ -17,7 +17,7 @@ and ultimately finding releases in the SeaDex database. The primary mapping sour
 as fallbacks for anything it misses. For Radarr, this works much the same but instead using the TMDB and 
 IMDb IDs.
 
-SeaDexArr will then do some cuts to select a "best" release, which can be pushed to Discord via a bot, and added
+SeaDexArr will then do some cuts to select a "best" release, which can be pushed to Discord via a webhook, and added
 automatically to a torrent client. This should make it significantly more hands-free to keep the best Anime releases 
 out there.
 
@@ -44,7 +44,7 @@ this behaviour by setting ``seadex.ignore_seadex_update_times`` to true in the c
 
 ## Installation
 
-SeaDexArr is available as a Docker container. Into a docker-compose file:
+SeaDexArr is available as a Docker container. Into a Docker Compose file:
 
 ```
 services:
@@ -59,8 +59,8 @@ services:
     restart: unless-stopped
 ```
 
-And then to run on a schedule, simply run `docker-compose up -d seadexarr`. If you want to run one Arr one time, you 
-can instead run like `docker-compose run seadexarr run single --radarr --sonarr`.
+And then to run on a schedule, simply run `docker compose up -d seadexarr`. If you want to run one Arr one time, you 
+can instead run like `docker compose run seadexarr run single --sonarr`.
 
 SeaDexArr can also be installed via pip:
 
@@ -96,7 +96,8 @@ holds the whole data directory.
 ## CLI
 
 SeaDexArr features a command-line interface, with a number of modules. If running in Docker mode, 
-to run these simply add a ``docker run`` before the command below.
+run them through your compose service, e.g. ``docker compose run seadexarr cache stats``
+(everything after the service name is passed to the ``seadexarr`` CLI).
 
 ### ``seadexarr run``
 
@@ -284,8 +285,9 @@ The `radarr` group takes the same keys (minus `ignore_movies_in_radarr`): `radar
   - Misplaced Special
   - Deband Required
 - `seadex.trackers`: Can manually select a list of trackers. Defaults to blank, which will use all the 
-  public trackers and private trackers if `seadex.private_releases` is `allow`. All trackers with torrents on
-  SeaDex, and whether they are supported are below.
+  public and private trackers regardless of `seadex.private_releases` — private filtering happens later in
+  the selection, so the `warn`/`fallback` policies can still see (and report on) private-only releases.
+  All trackers with torrents on SeaDex, and whether they are supported are below.
   - Public trackers
     - Nyaa (supported)
     - AnimeTosho (supported)
