@@ -208,8 +208,6 @@ class SeadexSettings(_ConfigBase):
         """
 
         if isinstance(value, (str, list, set, tuple)) and not value:
-            # Explicit empty trackers (`[]` or "") coalesce to all trackers: empty means
-            # "no restriction", never "match nothing" (which would silently grab nothing).
             return PUBLIC_TRACKERS | PRIVATE_TRACKERS
         if isinstance(value, str):
             value = [value]
@@ -322,7 +320,18 @@ class AdvancedSettings(_ConfigBase):
     cache_time: int = 1
     interactive: bool = False
     max_torrents_to_add: int | None = None
-    log_level: str = "INFO"
+    # Constrained to the levels the logger honors, so a typo is a clean
+    # ValidationError at load instead of a runtime warn-and-default.
+    log_level: Literal["DEBUG", "INFO", "WARNING", "CRITICAL"] = "INFO"
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def _uppercase_log_level(cls, value: Any) -> Any:
+        """Uppercase a configured level so ``info`` and ``INFO`` both validate."""
+
+        if isinstance(value, str):
+            return value.upper()
+        return value
 
 
 class MappingsSettings(_ConfigBase):

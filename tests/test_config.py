@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from seadexarr.modules.config import (
     PRIVATE_TRACKERS,
     PUBLIC_TRACKERS,
+    AdvancedSettings,
     AppConfig,
     Arr,
     ImportsSettings,
@@ -280,6 +281,15 @@ class TestNormalization:
         # and reports), not a raw TypeError that escapes to the generic handler.
         with pytest.raises(ValidationError):
             SeadexSettings.model_validate({"trackers": 5})
+
+    def test_log_level_is_uppercased(self) -> None:
+        assert AdvancedSettings.model_validate({"log_level": "debug"}).log_level == "DEBUG"
+
+    def test_log_level_typo_raises_validation_error(self) -> None:
+        # Constrained at load: a typo is a clean ValidationError, not the logger's
+        # runtime warn-and-default (which stays for non-config setup_logger callers).
+        with pytest.raises(ValidationError):
+            AdvancedSettings.model_validate({"log_level": "VERBOSE"})
 
 
 class TestQbittorrent:

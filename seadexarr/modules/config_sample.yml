@@ -3,7 +3,7 @@
 sonarr:
   url:
   api_key:
-  ignore_unmonitored: false        # If true, skip releases unmonitored in Sonarr
+  ignore_unmonitored: false        # If true, skip unmonitored series (or entries whose episodes are all unmonitored)
   torrent_category:                # qBittorrent category for Sonarr-added torrents
   ignore_movies_in_radarr: false   # If true, don't add movies to Sonarr that already exist in Radarr
 
@@ -11,7 +11,7 @@ sonarr:
 radarr:
   url:
   api_key:
-  ignore_unmonitored: false        # If true, skip releases unmonitored in Radarr
+  ignore_unmonitored: false        # If true, skip unmonitored movies
   torrent_category:                # qBittorrent category for Radarr-added torrents
 
 # qBittorrent connection. All of host/username/password are needed to add torrents;
@@ -78,4 +78,4 @@ advanced:
   cache_time: 1                    # Days to cache the downloaded mapping sources
   interactive: false               # Prompt when multiple torrent options match
   max_torrents_to_add:             # Cap torrents added per run (default: unlimited)
-  log_level: "INFO"                # WARNING / INFO / DEBUG
+  log_level: "INFO"                # DEBUG / INFO / WARNING / CRITICAL (case-insensitive)
