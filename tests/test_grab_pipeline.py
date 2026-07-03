@@ -342,9 +342,10 @@ class TestUnsupportedTrackerSkip:
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
         assert pipeline.cache_store.get_entry(Arr.SONARR, 7) is None
 
-    def test_interactive_private_pick_keeps_the_plain_private_only_kind(self) -> None:
-        # Interactive + fallback: a hold here is the user's own private pick, not
-        # a failed fallback search, so the record must not claim "no alternative".
+    def test_interactive_private_pick_reads_as_a_hand_picked_no_fallback(self) -> None:
+        # Interactive + fallback: a hold here is the user's own private pick, so
+        # the reason says so - but the kind stays NO_FALLBACK so the summary tip
+        # never suggests enabling the fallback that's already on.
         private = url_item(url="https://ab.example/1", infohash="hP", is_public=False, download=True)
         private.tracker = Tracker.ANIMEBYTES
         seadex_dict: SeadexDict = {"Priv": rg_group({private.url: private})}
@@ -366,7 +367,10 @@ class TestUnsupportedTrackerSkip:
 
         pipeline.grab_and_cache(req)
 
-        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
+        assert [r.reason for r in pipeline._ctx.stats.needs_action] == [
+            "hand-picked private release; private releases not allowed"
+        ]
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
 
     def test_fallback_grab_caches_title_as_done(self) -> None:
         # The fallback happy path: the planner already unflagged the private pick

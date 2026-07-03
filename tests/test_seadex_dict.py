@@ -14,7 +14,7 @@ from seadex import EntryRecord, Tag, TorrentRecord, Tracker
 
 from seadexarr.modules import seadex_filter
 
-from .builders import make_entry_record, make_release_filter, rg_group
+from .builders import make_entry_record, make_release_filter, make_torrent_record, rg_group
 from .fakes import CaptureHandler
 
 
@@ -222,6 +222,101 @@ class TestPrivateFallback:
             _torrent(release_group="AltSingle", url="pub2", tracker=Tracker.NYAA),
         )
         assert set(filt.build(entry)) == {"Best", "AltDual"}
+
+    def test_same_group_private_url_with_uncovered_files_survives_the_drop(self) -> None:
+        # Group A: a private dual S1+S2 batch (preferred) + a public S1-only copy
+        # re-added as the fallback. The coverage-aware drop must NOT delete the
+        # batch - its S2 file isn't covered by the group's public urls.
+        filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=True)
+        entry = make_entry_record(
+            torrents=(
+                make_torrent_record(
+                    release_group="A",
+                    tracker=Tracker.ANIMEBYTES,
+                    url="priv",
+                    infohash=None,
+                    file_names=("A - S01E01.mkv", "A - S02E01.mkv"),
+                    is_dual_audio=True,
+                    is_best=True,
+                ),
+                make_torrent_record(
+                    release_group="A",
+                    tracker=Tracker.NYAA,
+                    url="pub",
+                    file_names=("A.S01E01.web.mkv",),
+                    is_best=False,
+                ),
+            ),
+        )
+        result = filt.build(entry)
+        assert set(result) == {"A"}
+        assert set(result["A"].urls) == {"priv", "pub"}
+        assert result["A"].urls["pub"].is_fallback is True
+
+    def test_same_group_cross_seeded_private_copy_still_dropped(self) -> None:
+        # Identical filenames on both trackers (a cross-seed): the private copy is
+        # fully covered by the group's public url, so it's dropped as before.
+        filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
+        entry = make_entry_record(
+            torrents=(
+                make_torrent_record(
+                    release_group="A",
+                    tracker=Tracker.ANIMEBYTES,
+                    url="priv",
+                    infohash=None,
+                    file_names=("A - S01E01.mkv",),
+                    is_best=True,
+                ),
+                make_torrent_record(
+                    release_group="A",
+                    tracker=Tracker.NYAA,
+                    url="pub",
+                    file_names=("A - S01E01.mkv",),
+                    is_best=False,
+                ),
+            ),
+        )
+        result = filt.build(entry)
+        assert set(result["A"].urls) == {"pub"}
+
+    def test_mixed_group_private_files_uncovered_triggers_the_search(self) -> None:
+        # Group A has a public S1 AND a private S2 among the preferred picks: the
+        # gate is per-candidate file coverage (not per-group), so the private S2
+        # still triggers the search and group B's public S2 alternative enters as
+        # the fallback - while the coverage-aware drop keeps A's private S2 url.
+        filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
+        entry = make_entry_record(
+            torrents=(
+                make_torrent_record(
+                    release_group="A",
+                    tracker=Tracker.NYAA,
+                    url="a_pub",
+                    infohash="c" * 40,
+                    file_names=("A - S01E01.mkv",),
+                    is_best=True,
+                ),
+                make_torrent_record(
+                    release_group="A",
+                    tracker=Tracker.ANIMEBYTES,
+                    url="a_priv",
+                    infohash=None,
+                    file_names=("A - S02E01.mkv",),
+                    is_best=True,
+                ),
+                make_torrent_record(
+                    release_group="B",
+                    tracker=Tracker.NYAA,
+                    url="b_pub",
+                    infohash="d" * 40,
+                    file_names=("B.S02E01.mkv",),
+                    is_best=False,
+                ),
+            ),
+        )
+        result = filt.build(entry)
+        assert set(result) == {"A", "B"}
+        assert set(result["A"].urls) == {"a_pub", "a_priv"}
+        assert result["B"].urls["b_pub"].is_fallback is True
 
 
 class TestInteractivePick:

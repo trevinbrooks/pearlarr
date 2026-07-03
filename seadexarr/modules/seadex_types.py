@@ -71,6 +71,9 @@ class SeadexUrlItem:
     # True for a public alternative added because the preferred release is
     # private-only (seadex.private_releases: fallback); the planner reads it.
     is_fallback: bool = False
+    # True when the url was flagged because the Arr holds this release at a
+    # different size (an upgrade), not because it lacks it.
+    size_mismatch: bool = False
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
 
 

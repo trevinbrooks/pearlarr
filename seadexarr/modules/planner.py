@@ -489,6 +489,7 @@ class DownloadPlanner:
                 )
 
                 url_item.download = True
+                url_item.size_mismatch = True
 
             else:
                 self.logger.debug(
@@ -649,6 +650,7 @@ class DownloadPlanner:
                 ),
             )
             url_item.download = True
+            url_item.size_mismatch = True
 
     def reduce_overlapping_downloads(
         self,
@@ -662,9 +664,10 @@ class DownloadPlanner:
         private ones. If the only options are private, we record a warning
         SkipNotice and skip the title (without caching it as done) rather than
         grabbing a private release - unless a public fallback covering the same
-        files rides along (``private_releases: fallback``), in which case the
-        private-only groups are dropped with an INFO notice instead and the
-        title may still cache as done.
+        files rides along (``private_releases: fallback``). Then the private
+        groups are dropped with an INFO notice instead: the fallback is promoted
+        (grabbed) when a private flag was a size-mismatch upgrade, and left
+        alone when the Arr genuinely already owns its files.
 
         Mutates the download flags on seadex_dict in place and returns the
         private-only skip outcome (skipped flag, group names, notices to log).
@@ -709,14 +712,28 @@ class DownloadPlanner:
                 if len(public_flagged) == 0:
                     # A public fallback in THIS same-files set can stand in; it's
                     # necessarily unflagged here (a flagged public group would
-                    # have taken the keeper branch), i.e. the Arr already has its
-                    # files. A fallback covering OTHER files doesn't excuse
-                    # dropping this set, so the gate is per-set, never per-entry.
-                    if any(is_fallback_group(seadex_dict[rg]) for rg in same_files):
+                    # have taken the keeper branch). A fallback covering OTHER
+                    # files doesn't excuse dropping this set, so the gate is
+                    # per-set, never per-entry.
+                    fallback_groups = [rg for rg in same_files if is_fallback_group(seadex_dict[rg])]
+                    if fallback_groups:
+                        if any(u.size_mismatch for rg in flagged for u in seadex_dict[rg].urls.values()):
+                            # The private flag is an upgrade (the Arr holds the
+                            # release at a stale size), so the unflagged fallback
+                            # is NOT owned: promote and grab it instead.
+                            keeper = fallback_groups[0]
+                            for u in seadex_dict[keeper].urls.values():
+                                if u.is_public:
+                                    u.download = True
+                            reason = f"private-only; falling back to {keeper}"
+                        else:
+                            # Unflagged with no size mismatch: the Arr genuinely
+                            # already owns the fallback's files.
+                            reason = "private-only; a public fallback already covers these files"
                         skips.notices.append(
                             SkipNotice(
                                 groups=list(flagged),
-                                reason="private-only; a public fallback already covers these files",
+                                reason=reason,
                                 level=logging.INFO,
                             ),
                         )

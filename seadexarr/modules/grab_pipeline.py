@@ -364,20 +364,18 @@ class GrabPipeline:
             )
         # Nothing added, but a release was skipped for a reason outside the user's
         # control: surface ONE needs-action reason for the title (private-only wins)
-        # so it isn't cached as done and shows in the summary. In fallback mode a
-        # private-only hold means no public alternative covered the missing files,
-        # so the record (and its summary tip) says that instead - except on an
-        # interactive run, where the hold is the user's own private pick, not a
-        # failed fallback search.
+        # so it isn't cached as done and shows in the summary. In fallback mode the
+        # hold is a fallback that couldn't (no public alternative covered the
+        # missing files) or wouldn't (the user's own interactive private pick)
+        # fall back - either way the tip must not suggest the fallback already on.
         elif self._ctx.public_only_skipped:
-            if (
-                self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK
-                and not self._config.advanced.interactive
-            ):
-                reason, kind = (
-                    "private-only release; no public alternative found",
-                    NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK,
+            if self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK:
+                reason = (
+                    "hand-picked private release; private releases not allowed"
+                    if self._config.advanced.interactive
+                    else "private-only release; no public alternative found"
                 )
+                kind = NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK
             else:
                 reason, kind = (
                     "private-only release; private releases not allowed",

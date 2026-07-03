@@ -56,8 +56,9 @@ class NeedsActionKind(Enum):
 
     The summary's guidance tips key off this, never off the display ``reason``
     text (which can be reworded freely). PRIVATE_ONLY is the warn-mode skip;
-    PRIVATE_ONLY_NO_FALLBACK is fallback mode finding no public alternative to
-    fall back to (so its tip must not suggest turning fallback on).
+    PRIVATE_ONLY_NO_FALLBACK is fallback mode that couldn't (no public
+    alternative found) or wouldn't (an interactive private pick) fall back,
+    so its tip must not suggest turning fallback on.
     """
 
     PRIVATE_ONLY = auto()

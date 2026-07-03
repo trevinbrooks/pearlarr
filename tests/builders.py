@@ -464,7 +464,7 @@ def make_torrent_record(
     release_group: str = "SubsPlease",
     tracker: Tracker = Tracker.NYAA,
     url: str = "https://nyaa.si/1",
-    infohash: str = "a" * 40,
+    infohash: str | None = "a" * 40,
     file_names: tuple[str, ...] = (),
     file_size: int = 1000,
     is_dual_audio: bool = False,
@@ -760,6 +760,7 @@ def url_item(
     infohash: str | None = "hash1",
     download: bool = False,
     is_fallback: bool = False,
+    size_mismatch: bool = False,
     episodes: list[EpisodeRecord] | None = None,
 ) -> SeadexUrlItem:
     """One SeaDex URL record, matching ``get_seadex_dict``'s ``url_item`` shape."""
@@ -773,6 +774,7 @@ def url_item(
         infohash=infohash,
         download=download,
         is_fallback=is_fallback,
+        size_mismatch=size_mismatch,
         episodes=episodes or [],
     )
 

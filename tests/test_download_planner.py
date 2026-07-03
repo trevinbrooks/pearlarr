@@ -115,6 +115,25 @@ class TestReduceOverlappingDownloads:
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].level == logging.INFO
 
+    def test_private_only_set_with_fallback_promotes_on_size_mismatch(self) -> None:
+        # The private pick was re-flagged for a SIZE mismatch (an upgrade is
+        # pending): the Arr holds a stale copy, not the fallback's files, so the
+        # fallback is promoted and grabbed instead of the soft-skip firing.
+        planner = make_planner(public_only=True)
+        seadex = {
+            "Priv": rg_group({"u1": url_item(download=True, is_public=False, size_mismatch=True)}),
+            "Fall": rg_group({"u2": url_item(download=False, is_public=True, is_fallback=True)}),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["Fall"].urls["u2"].download is True
+        assert seadex["Priv"].urls["u1"].download is False
+        assert skips.skipped is False
+        assert skips.groups == []
+        assert len(skips.notices) == 1
+        assert skips.notices[0].groups == ["Priv"]
+        assert skips.notices[0].level == logging.INFO
+        assert "falling back to Fall" in skips.notices[0].reason
+
     def test_fallback_keeper_over_private_notices(self) -> None:
         # Same files: the public fallback is kept over the private preferred pick,
         # with an INFO notice naming the keeper (and no skipped flag).
