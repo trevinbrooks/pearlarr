@@ -22,7 +22,7 @@ from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.seadex_arr import SeaDexArr
 from seadexarr.modules.seadex_types import ProgressSink
 
-from .builders import make_bare_instance, make_config
+from .builders import make_bare_instance, make_config, make_services
 from .fakes import CaptureHandler, FakeArrItem, FakeStrategy
 
 
@@ -81,10 +81,17 @@ def _engine(finalize: _FinalizeRecorder, logger: logging.Logger) -> SeaDexArr:
 
     The strategy reaches ``run_sync`` typed (it's an ``ArrSync``); the rest are
     injected as bare attributes (the methods only read them), and ``_finalize_run``
-    is shadowed by the recorder so the single finalize site is observable.
+    is shadowed by the recorder so the single finalize site is observable. The
+    ``_services`` hub is a bare real ``RunServices`` (the loop reads its ``arr``,
+    ``begin_run`` and ``is_preview``) whose per-id collaborators are ctx-bind fakes.
     """
 
     config = make_config()
+    services = make_services(
+        qbit=None,
+        _filter=_FakeBound(),
+        _grab_pipeline=_FakeBound(),
+    )
     return make_bare_instance(
         SeaDexArr,
         qbit=None,
@@ -94,8 +101,7 @@ def _engine(finalize: _FinalizeRecorder, logger: logging.Logger) -> SeaDexArr:
         _anilist=_FakeGateway(),
         _seadex=_FakeGateway(),
         _reporter=_FakeReporter(),
-        _filter=_FakeBound(),
-        _grab_pipeline=_FakeBound(),
+        _services=services,
         _wait_manager=_FakeBound(),
         _finalize_run=finalize,
     )
@@ -115,7 +121,6 @@ class TestCapReachedFinalizesOnce:
 
         _engine(finalize, logger).run_sync(
             strategy,
-            arr=Arr.SONARR,
             item_id=None,
             dry_run=True,
         )
@@ -141,7 +146,6 @@ class TestPerIdErrorContainment:
         try:
             _engine(finalize, logger).run_sync(
                 strategy,
-                arr=Arr.SONARR,
                 item_id=None,
                 dry_run=True,
             )

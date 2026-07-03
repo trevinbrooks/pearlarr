@@ -31,7 +31,7 @@ from .manual_import import (
     normalize_basename,
     normalize_group,
 )
-from .seadex_arr import RunDeps
+from .run_services import RunDeps
 from .seadex_types import (
     CommandResource,
     Language,

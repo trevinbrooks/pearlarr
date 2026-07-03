@@ -26,7 +26,7 @@ from seadex import Tracker
 import seadexarr.modules.torrents as torrents
 from seadexarr.modules.config import Arr
 from seadexarr.modules.mappings import MappingResolver
-from seadexarr.modules.seadex_arr import QbitConnectionError, RunDeps
+from seadexarr.modules.run_services import QbitConnectionError, RunDeps
 from seadexarr.modules.torrent import TorrentParseError
 from seadexarr.modules.torrents import PARSEABLE_TRACKERS, AddOutcome, TorrentAddError, TorrentService
 

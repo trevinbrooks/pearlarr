@@ -34,7 +34,7 @@ from seadexarr.modules.config import Arr
 from seadexarr.modules.console_caps import Capabilities
 from seadexarr.modules.log import RichConsoleHandler
 from seadexarr.modules.mappings import MappingResolver
-from seadexarr.modules.seadex_arr import RunDeps
+from seadexarr.modules.run_services import RunDeps
 
 from .builders import make_bare_instance, make_config
 

@@ -8,7 +8,7 @@ from .manual_import import ImportProbe, ImportProgress, ImportReadiness, Pending
 from .mappings import MappingEntry
 from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, collect_anime_movies, make_radarr_client
-from .seadex_arr import RunDeps, SeaDexArr
+from .run_services import RunDeps, RunServices
 from .seadex_types import ArrReleaseDict, ProgressSink, RadarrItem
 
 
@@ -16,8 +16,8 @@ class RadarrSync(ArrSync[RadarrItem]):
     """Radarr sync strategy: owns the Radarr REST client + movie domain logic.
 
     Implements the :class:`~.protocols.ArrSync` hooks the run machinery drives.
-    The composition root injects the shared :class:`~.seadex_arr.RunDeps` (used to
-    stand up the client) and the :class:`~.seadex_arr.SeaDexArr` run machinery
+    The composition root injects the shared :class:`~.run_services.RunDeps` (used
+    to stand up the client) and the :class:`~.run_services.RunServices` hub
     (held as ``self._services``); the per-id hooks call the shared pipeline
     through it.
     """
@@ -25,7 +25,7 @@ class RadarrSync(ArrSync[RadarrItem]):
     def __init__(
         self,
         deps: RunDeps,
-        services: SeaDexArr,
+        services: RunServices,
         radarr_client: AbstractRadarrClient | None = None,
     ) -> None:
         """Stand up the Radarr client from the injected shared collaborators.
@@ -33,7 +33,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         Args:
             deps (RunDeps): The shared collaborators; the config/session/mappings
                 this strategy needs are read off it.
-            services (SeaDexArr): The run machinery the per-id hooks call into.
+            services (RunServices): The services hub the per-id hooks call into.
             radarr_client (AbstractRadarrClient | None, optional): Injectable
                 replacement for the real :class:`~.radarr_client.RadarrClient`,
                 whose construction hits the network. Defaults to None (build the

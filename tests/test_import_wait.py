@@ -25,6 +25,7 @@ from typing import Protocol, override
 import qbittorrentapi
 
 from seadexarr.modules.config import Arr
+from seadexarr.modules.grab_pipeline import GrabPipeline
 from seadexarr.modules.import_wait import ImportWaitManager
 from seadexarr.modules.manual_import import (
     ImportProbe,
@@ -52,6 +53,7 @@ from .builders import (
     make_grab_pipeline,
     make_import_wait_manager,
     make_logger,
+    make_services,
     one_release_dict,
     pending_import,
 )
@@ -915,7 +917,7 @@ class TestRunMonitor:
 
 
 class TestImportWaitModeProperty:
-    """The engine exposes the run's RESOLVED wait mode (cli > config).
+    """The services hub exposes the run's RESOLVED wait mode (cli > config).
 
     The Sonarr strategy's seed-building gate reads this instead of the raw config
     so a CLI override that turns the feature on over an ``off`` config still
@@ -923,12 +925,11 @@ class TestImportWaitModeProperty:
     """
 
     def test_reflects_resolved_mode(self) -> None:
-        engine = make_bare_instance(
-            SeaDexArr,
+        services = make_services(
             _ctx=RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.HYBRID),
         )
 
-        assert engine.import_wait_mode is ImportWaitMode.HYBRID
+        assert services.import_wait_mode is ImportWaitMode.HYBRID
 
 
 def _attach_wait_manager(engine: SeaDexArr) -> None:
@@ -1010,10 +1011,13 @@ def _finalize_engine(calls: list[str], *, qbit: object, mode: ImportWaitMode) ->
     ``_FinalizeReporter`` / ``_RecordingCacheStore`` / ``_FinalizeWaitManager``), so
     ``_finalize_run``'s ordering is asserted on the recorded ``calls`` list without a
     live Sonarr/qBittorrent. The fake wait manager's reconcile/tally are silent
-    no-ops and its ``run_monitor`` records the ``"monitor"`` marker.
+    no-ops and its ``run_monitor`` records the ``"monitor"`` marker. The finalize's
+    preview fact comes off the services hub, so a bare one shares the engine's ctx
+    (and the ``qbit`` that decides preview).
     """
 
-    engine = make_bare_instance(
+    ctx = RunContext(arr=Arr.SONARR, import_wait_mode=mode)
+    return make_bare_instance(
         SeaDexArr,
         qbit=qbit,
         logger=make_logger(),
@@ -1025,9 +1029,9 @@ def _finalize_engine(calls: list[str], *, qbit: object, mode: ImportWaitMode) ->
         _reporter=_FinalizeReporter(calls),
         cache_store=_RecordingCacheStore(calls),
         _wait_manager=_FinalizeWaitManager(calls),
+        _services=make_services(qbit=qbit, _ctx=ctx),
+        _ctx=ctx,
     )
-    engine._ctx = RunContext(arr=Arr.SONARR, import_wait_mode=mode)
-    return engine
 
 
 class TestFinalizeRunOrdering:
@@ -1100,17 +1104,18 @@ def make_add_engine(
     qbit: object = CLIENT_SENTINEL,
     dry_run: bool = False,
     **config_overrides: object,
-) -> SeaDexArr:
-    """A bare ``SeaDexArr`` + an attached ``GrabPipeline`` + ``ImportWaitManager``.
+) -> tuple[SeaDexArr, GrabPipeline]:
+    """A bare ``SeaDexArr`` + a ``GrabPipeline`` + an attached ``ImportWaitManager``.
 
-    The produce side lives on :class:`GrabPipeline` and the consume side on
-    :class:`ImportWaitManager` now, so the engine gets both wired to the SAME
-    ``_ctx`` / ``cache_store`` / client it holds - an add through
-    ``engine._grab_pipeline`` registers into exactly the state the manager's
-    consume passes (``snapshot_pending_for_series`` / ``_monitor_working_set``)
-    read back. ``_active_strategy`` is the test's recording ``_RecordingStrategy``
-    and ``_reporter`` a recording ``_RecordingReporter`` so the snapshot can be
-    driven afterwards and asserted on recorded state.
+    The produce side lives on :class:`GrabPipeline` (held by the services hub in
+    production) and the consume side on :class:`ImportWaitManager`, so both are
+    wired to the SAME ``_ctx`` / ``cache_store`` / client the engine holds - an
+    add through the returned pipeline registers into exactly the state the
+    manager's consume passes (``snapshot_pending_for_series`` /
+    ``_monitor_working_set``) read back. ``_active_strategy`` is the test's
+    recording ``_RecordingStrategy`` and ``_reporter`` a recording
+    ``_RecordingReporter`` so the snapshot can be driven afterwards and asserted
+    on recorded state.
     """
 
     engine = make_bare_instance(
@@ -1118,13 +1123,12 @@ def make_add_engine(
         qbit=qbit,
         logger=make_logger(),
         _config=make_config(**config_overrides),
-        _torrents=torrents,
         _active_strategy=strategy,
         _reporter=_RecordingReporter(),
         cache_store=FakeCacheStore(),
     )
     engine._ctx = RunContext(arr=Arr.SONARR, dry_run=dry_run, import_wait_mode=mode)
-    engine._grab_pipeline = make_grab_pipeline(
+    pipeline = make_grab_pipeline(
         _config=engine._config,
         _torrents=torrents,
         cache_store=engine.cache_store,
@@ -1132,7 +1136,7 @@ def make_add_engine(
         _ctx=engine._ctx,
     )
     _attach_wait_manager(engine)
-    return engine
+    return engine, pipeline
 
 
 class TestRegisteredGrabSurvivesSnapshot:
@@ -1144,10 +1148,10 @@ class TestRegisteredGrabSurvivesSnapshot:
         # monitor owns it via the working set.
         torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "Show")})
         strategy = _RecordingStrategy()
-        engine = make_add_engine(torrents=torrents, strategy=strategy)
+        engine, pipeline = make_add_engine(torrents=torrents, strategy=strategy)
         seeds = {"h1": pending_import(infohash="h1", series_id=7, added_at=_FRESH)}
 
-        engine._grab_pipeline.add_torrent(
+        pipeline.add_torrent(
             one_release_dict(srg="NAN0", infohash="h1"),
             pending_seeds=seeds,
         )

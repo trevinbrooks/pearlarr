@@ -16,7 +16,7 @@ from seadex import EntryRecord
 from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
 from seadexarr.modules.config import Arr
 from seadexarr.modules.mappings import MappingEntry
-from seadexarr.modules.seadex_arr import SeaDexArr
+from seadexarr.modules.run_services import RunServices
 from seadexarr.modules.seadex_types import SeadexDict, SonarrEpisode
 from seadexarr.modules.sonarr_client import SonarrClient
 from seadexarr.modules.sonarr_episodes import (
@@ -34,11 +34,11 @@ from seadexarr.modules.sonarr_parse import (
 
 from .builders import (
     FakeCacheStore,
-    make_arr,
     make_bare_instance,
     make_config,
     make_entry_record,
     make_logger,
+    make_services,
     make_sonarr_episodes,
     make_sonarr_parse,
     rg_group,
@@ -381,14 +381,14 @@ class _Seadex:
 
 
 class TestAlIdNeedsScan:
-    """``SeaDexArr.al_id_needs_scan``: the side-effect-free mirror of the per-id
+    """``RunServices.al_id_needs_scan``: the side-effect-free mirror of the per-id
     loop's no-entry + ``cached_entry_skip`` gates, so ``prefetch_episodes`` warms
     only the series the loop would actually process (the SeaDex-modification-times
     fix). Pinned against the same cases as ``cached_entry_skip``."""
 
     @staticmethod
-    def _run(*, entry: EntryRecord | None, cache: FakeCacheStore, **cfg: object) -> SeaDexArr:
-        return make_arr(_seadex=_Seadex(entry), cache_store=cache, **cfg)
+    def _run(*, entry: EntryRecord | None, cache: FakeCacheStore, **cfg: object) -> RunServices:
+        return make_services(_seadex=_Seadex(entry), cache_store=cache, **cfg)
 
     def test_no_seadex_entry_does_not_need_scan(self) -> None:
         run = self._run(entry=None, cache=FakeCacheStore())

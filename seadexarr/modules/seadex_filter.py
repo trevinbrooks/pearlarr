@@ -25,9 +25,10 @@ class SeadexReleaseFilter:
 
     Owns no per-run caches; it binds the run :class:`RunContext` (``begin_run``)
     only so ``filter_downloads`` can stamp the public_only skip flags the grab tail
-    later reads. The engine keeps same-named thin delegators (``get_seadex_dict`` /
-    ``filter_seadex_interactive`` / ``filter_seadex_downloads``) forwarding here, so
-    the strategy<->services contract is unchanged.
+    later reads. :class:`~.run_services.RunServices` keeps same-named thin
+    delegators (``get_seadex_dict`` / ``filter_seadex_interactive`` /
+    ``filter_seadex_downloads``) forwarding here, so the strategy<->services
+    contract is unchanged.
     """
 
     def __init__(
@@ -45,8 +46,9 @@ class SeadexReleaseFilter:
         self.cache_store = cache_store
         self.logger = logger
         self.log_fmt = log_fmt
-        # Seeded with the engine's placeholder ctx; rebound each run via begin_run
-        # (the same object the engine holds, so a write here is seen by the grab tail).
+        # Seeded with the services hub's placeholder ctx; rebound each run via
+        # begin_run (the same object the hub holds, so a write here is seen by the
+        # grab tail).
         self._ctx = ctx
 
     def begin_run(self, ctx: RunContext) -> None:

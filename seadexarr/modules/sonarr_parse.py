@@ -16,7 +16,7 @@ from typing import Any, NamedTuple, NotRequired, TypedDict, cast
 
 from .cache import UPDATED_AT_STR_FORMAT, record_is_fresh
 from .log import indent_string
-from .seadex_arr import RunDeps
+from .run_services import RunDeps
 from .seadex_types import EpisodeRecord, SeadexDict
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import fetch_workers
@@ -158,7 +158,7 @@ class SonarrParseCache:
     """Owns the grab-time ``/parse`` + the durable, freshness-checked parse cache.
 
     Constructed once per run in :class:`~.seadex_sonarr.SonarrSync` from the shared
-    :class:`~.seadex_arr.RunDeps` and the strategy's Sonarr client. The cache is
+    :class:`~.run_services.RunDeps` and the strategy's Sonarr client. The cache is
     read-through ``cache_store`` (the same leaf the seed builder reads), so staged
     writes from ``parse_episodes_from_seadex`` are visible to a later same-run read.
     """

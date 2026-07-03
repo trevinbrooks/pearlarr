@@ -17,7 +17,7 @@ from .anilist import get_anilist_format, get_anilist_n_eps
 from .config import AppConfig
 from .mappings import MappingEntry, MappingMode, MappingSource
 from .radarr_client import IdField, collect_anime_items
-from .seadex_arr import RunDeps, SeaDexArr
+from .run_services import RunDeps, RunServices
 from .seadex_types import (
     ArrReleaseDict,
     ProgressSink,
@@ -120,11 +120,11 @@ class SonarrEpisodes:
     """Owns the per-run episode cache + the (series, al_id, mapping) -> episodes logic.
 
     Constructed once per run in :class:`~.seadex_sonarr.SonarrSync` from the shared
-    :class:`~.seadex_arr.RunDeps`, the strategy's Sonarr client, and the run
-    machinery (held as ``self._services`` for the prefetch needs-scan gate).
+    :class:`~.run_services.RunDeps`, the strategy's Sonarr client, and the services
+    hub (held as ``self._services`` for the prefetch needs-scan gate).
     """
 
-    def __init__(self, deps: RunDeps, sonarr: AbstractSonarrClient, services: SeaDexArr) -> None:
+    def __init__(self, deps: RunDeps, sonarr: AbstractSonarrClient, services: RunServices) -> None:
         """Bind the shared collaborators the episode logic reads.
 
         Args:
@@ -132,7 +132,7 @@ class SonarrEpisodes:
                 gateway/log formatter are unpacked off it).
             sonarr (AbstractSonarrClient): The strategy's Sonarr client (built once,
                 reused so a multi-season series fetches its episodes once).
-            services (SeaDexArr): The run machinery; ``prefetch`` calls into it to
+            services (RunServices): The services hub; ``prefetch`` calls into it to
                 resolve AniList ids and the needs-scan gate.
         """
 

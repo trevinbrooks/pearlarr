@@ -7,22 +7,26 @@
 
 These pin the contract between the run machinery and the Arr strategies: each
 ``ArrSync`` hook reaches the shared pipeline only through the injected
-``RunServices`` the strategy holds as ``self._services``. The strategies are
-built bare (``object.__new__``) so no live Sonarr/Radarr client is constructed.
+``RunServices`` the strategy holds as ``self._services`` - and since the hub
+split out of the old god class, that seam is literal: the scripted fake below
+is a real ``RunServices`` subclass. The strategies are built bare
+(``object.__new__``) so no live Sonarr/Radarr client is constructed.
 """
 
 import logging
 from collections.abc import Callable
-from typing import NamedTuple
+from typing import NamedTuple, override
 
 import pytest
 from seadex import EntryRecord
 
 from seadexarr.modules.cache import CacheRecord
+from seadexarr.modules.config import Arr
 from seadexarr.modules.grab_pipeline import GrabRequest
 from seadexarr.modules.log import EntryState
-from seadexarr.modules.manual_import import ImportProgress, ImportReadiness, PendingImport
+from seadexarr.modules.manual_import import ImportProgress, ImportReadiness, ImportWaitMode, PendingImport
 from seadexarr.modules.mappings import MappingEntry, MappingSource
+from seadexarr.modules.run_services import RunServices
 from seadexarr.modules.seadex_radarr import RadarrSync
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
@@ -90,14 +94,38 @@ class GetAniListIdsCall(NamedTuple):
     log_ignored: bool = True
 
 
-class _FakeRunServices:
-    """Typed stand-in for the ``RunServices`` seam a strategy holds as ``self._services``.
+class CheckAlIdInCacheCall(NamedTuple):
+    """One recorded ``check_al_id_in_cache`` call (its explicit cross-arr ``arr``)."""
 
-    Carries ONLY the methods the ``ArrSync`` hooks call; each scriptable result is
-    a constructor arg, and the methods whose call a test asserts RECORD it - so the
-    contract is pinned by recorded state. Absorbed as a bare attribute by
-    ``make_bare_instance``, so it need not satisfy the full ``RunServices`` protocol;
-    it only answers what the hook under test reaches.
+    arr: Arr
+    al_id: int
+    seadex_entry: EntryRecord
+
+
+class UpdateCacheCall(NamedTuple):
+    """One recorded ``update_cache`` call (the merged per-id record)."""
+
+    al_id: int
+    cache_details: CacheRecord | None = None
+
+
+class LogCachedEntryCall(NamedTuple):
+    """One recorded ``log_cached_entry`` call (its explicit cross-arr ``arr``)."""
+
+    arr: Arr
+    al_id: int
+    state: EntryState = EntryState.UNCHANGED
+
+
+class _FakeRunServices(RunServices):
+    """A scripted ``RunServices`` - the seam a strategy holds as ``self._services``.
+
+    A REAL ``RunServices`` subclass (the seam name is literal now, so it also
+    satisfies the constructors' typed ``services`` parameter), with its own
+    ``__init__`` that never calls the heavy real one. Every member of the
+    strategy-facing surface is overridden: each scriptable result is a
+    constructor arg, and the methods whose call a test asserts RECORD it - so
+    the contract is pinned by recorded state.
     """
 
     def __init__(
@@ -107,23 +135,35 @@ class _FakeRunServices:
         prologue_entry: EntryRecord | None = None,
         anilist_title: str = "Title",
         cached_skip: bool = False,
+        al_id_in_cache: bool = False,
+        needs_scan: bool = True,
         seadex_dict: SeadexDict | None = None,
         filter_downloads_result: tuple[list[str | None], SeadexDict] | None = None,
         grab_result: bool = False,
         no_releases_result: bool = False,
+        import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
     ) -> None:
         self._anilist_ids = anilist_ids or {}
         self._prologue_entry = prologue_entry
         self._anilist_title = anilist_title
         self._cached_skip = cached_skip
+        self._al_id_in_cache = al_id_in_cache
+        self._needs_scan = needs_scan
         self._seadex_dict: SeadexDict = seadex_dict if seadex_dict is not None else {}
         self._filter_downloads_result = filter_downloads_result
         self._grab_result = grab_result
         self._no_releases_result = no_releases_result
+        self._import_wait_mode = import_wait_mode
         self.get_anilist_ids_calls: list[GetAniListIdsCall] = []
         self.al_id_prologue_calls: list[int] = []
+        self.al_id_needs_scan_calls: list[int] = []
+        self.check_al_id_in_cache_calls: list[CheckAlIdInCacheCall] = []
+        self.update_cache_calls: list[UpdateCacheCall] = []
         self.log_entry_status_calls: list[tuple[EntryState, str]] = []
         self.log_al_title_calls: list[str] = []
+        self.log_unmonitored_calls: list[str] = []
+        self.log_cached_entry_calls: list[LogCachedEntryCall] = []
+        self.log_no_seadex_releases_calls = 0
         self.cached_skip_coverages: list[Callable[[], str]] = []
         self.get_seadex_dict_calls: list[EntryRecord] = []
         self.interactive_calls: list[SeadexDict] = []
@@ -131,6 +171,17 @@ class _FakeRunServices:
         self.grab_requests: list[GrabRequest] = []
         self.no_releases_calls: list[tuple[int, CacheRecord]] = []
 
+    @override
+    def check_al_id_in_cache(self, arr: Arr, al_id: int, seadex_entry: EntryRecord) -> bool:
+        self.check_al_id_in_cache_calls.append(CheckAlIdInCacheCall(arr, al_id, seadex_entry))
+        return self._al_id_in_cache
+
+    @override
+    def al_id_needs_scan(self, al_id: int) -> bool:
+        self.al_id_needs_scan_calls.append(al_id)
+        return self._needs_scan
+
+    @override
     def get_anilist_ids(
         self,
         tvdb_id: int | None = None,
@@ -143,10 +194,12 @@ class _FakeRunServices:
         )
         return self._anilist_ids
 
+    @override
     def al_id_prologue(self, al_id: int) -> EntryRecord | None:
         self.al_id_prologue_calls.append(al_id)
         return self._prologue_entry
 
+    @override
     def cached_entry_skip(
         self,
         al_id: int,
@@ -158,14 +211,17 @@ class _FakeRunServices:
         self.cached_skip_coverages.append(coverage)
         return self._cached_skip
 
+    @override
     def get_anilist_title(self, al_id: int) -> str:
         del al_id
         return self._anilist_title
 
+    @override
     def get_seadex_dict(self, sd_entry: EntryRecord) -> SeadexDict:
         self.get_seadex_dict_calls.append(sd_entry)
         return self._seadex_dict
 
+    @override
     def filter_seadex_interactive(
         self,
         seadex_dict: SeadexDict,
@@ -175,6 +231,7 @@ class _FakeRunServices:
         self.interactive_calls.append(seadex_dict)
         return seadex_dict
 
+    @override
     def filter_seadex_downloads(
         self,
         al_id: int,
@@ -188,22 +245,50 @@ class _FakeRunServices:
             return self._filter_downloads_result
         return ([], seadex_dict)
 
+    @property
+    @override
+    def import_wait_mode(self) -> ImportWaitMode:
+        return self._import_wait_mode
+
+    @override
+    def update_cache(self, al_id: int, cache_details: CacheRecord | None = None) -> None:
+        self.update_cache_calls.append(UpdateCacheCall(al_id, cache_details))
+
+    @override
     def no_releases_skip(self, al_id: int, cache_details: CacheRecord) -> bool:
         self.no_releases_calls.append((al_id, cache_details))
         return self._no_releases_result
 
+    @override
     def grab_and_cache(self, req: GrabRequest) -> bool:
         self.grab_requests.append(req)
         return self._grab_result
 
+    @override
     def log_entry_status(self, state: EntryState, label: str, style: str | None = "grey50") -> bool:
         del style
         self.log_entry_status_calls.append((state, label))
         return True
 
+    @override
+    def log_anilist_item_unmonitored(self, item_title: str) -> bool:
+        self.log_unmonitored_calls.append(item_title)
+        return True
+
+    @override
     def log_al_title(self, anilist_title: str, sd_entry: EntryRecord, coverage: str | None = None) -> bool:
         del sd_entry, coverage
         self.log_al_title_calls.append(anilist_title)
+        return True
+
+    @override
+    def log_cached_entry(self, arr: Arr, al_id: int, state: EntryState = EntryState.UNCHANGED) -> bool:
+        self.log_cached_entry_calls.append(LogCachedEntryCall(arr, al_id, state))
+        return True
+
+    @override
+    def log_no_seadex_releases(self) -> bool:
+        self.log_no_seadex_releases_calls += 1
         return True
 
 

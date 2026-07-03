@@ -235,7 +235,8 @@ def _run_arrs(
         # Pull the heavy run machinery now - after the instant title, before the
         # cockpit's first step - so this one-time import cost lands in the gap
         # between the banner and the spinner rather than stalling a live step.
-        from .seadex_arr import QbitConnectionError, RunDeps, SeaDexArr
+        from .run_services import QbitConnectionError, RunDeps, RunServices
+        from .seadex_arr import SeaDexArr
         from .seadex_radarr import RadarrSync
         from .seadex_sonarr import SonarrSync
 
@@ -248,7 +249,9 @@ def _run_arrs(
             app_config, mappings = shared
             try:
                 for arr_name, item_id in arrs:
-                    services = None
+                    # Bound before the try so a RunDeps.build failure can't hit an
+                    # UnboundLocalError in the finally's close.
+                    deps: RunDeps | None = None
                     try:
                         deps = RunDeps.build(
                             arr_name,
@@ -260,21 +263,20 @@ def _run_arrs(
                             cache_legacy=paths.cache_legacy,
                             boot=boot,
                         )
-                        services = SeaDexArr(deps, arr_name)
+                        services = RunServices(deps, arr_name)
+                        runner = SeaDexArr(deps, services)
                         match arr_name:
                             case Arr.SONARR:
-                                services.run_sync(
+                                runner.run_sync(
                                     SonarrSync(deps, services),
-                                    arr=arr_name,
                                     item_id=item_id,
                                     dry_run=dry_run,
                                     import_wait_mode=import_wait_mode,
                                     boot=boot,
                                 )
                             case Arr.RADARR:
-                                services.run_sync(
+                                runner.run_sync(
                                     RadarrSync(deps, services),
-                                    arr=arr_name,
                                     item_id=item_id,
                                     dry_run=dry_run,
                                     import_wait_mode=import_wait_mode,
@@ -291,8 +293,8 @@ def _run_arrs(
                         # one; a no-op on the happy path (run_sync already ended it
                         # before scanning), the safety net when a step failed.
                         boot.end_section()
-                        if services is not None:
-                            services.close()
+                        if deps is not None:
+                            deps.close()
             finally:
                 # The resolver owns mappings.db (shared across both arrs); close it once
                 # the cycle is done so the connection / WAL handles are released.

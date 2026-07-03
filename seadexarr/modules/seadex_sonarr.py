@@ -19,7 +19,7 @@ from .radarr_client import (
     collect_anime_movies,
     make_radarr_client,
 )
-from .seadex_arr import RunDeps, SeaDexArr
+from .run_services import RunDeps, RunServices
 from .seadex_types import (
     ProgressSink,
     RadarrItem,
@@ -40,7 +40,7 @@ def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
         seadex_dict (dict): Dictionary of SeaDex releases
     """
 
-    # Shares get_episode_keys with get_same_files_groups (seadex_arr) but
+    # Shares get_episode_keys with get_same_files_groups (planner) but
     # deliberately differs on unparsed releases: here an unparsed release is
     # assumed to overlap (we can't prove it doesn't), whereas get_same_files_groups
     # keeps it separate (so we never drop content we couldn't verify). Keep both
@@ -69,16 +69,16 @@ class SonarrSync(ArrSync[SonarrItem]):
     """Sonarr sync strategy: owns the Sonarr REST client + episode domain logic.
 
     Implements the :class:`~.protocols.ArrSync` hooks the run machinery drives.
-    The composition root injects the shared :class:`~.seadex_arr.RunDeps` (used to
-    stand up the client and the episode domain logic) and the
-    :class:`~.seadex_arr.SeaDexArr` run machinery (held as ``self._services``);
+    The composition root injects the shared :class:`~.run_services.RunDeps` (used
+    to stand up the client and the episode domain logic) and the
+    :class:`~.run_services.RunServices` hub (held as ``self._services``);
     the per-id hooks call the shared pipeline through it.
     """
 
     def __init__(
         self,
         deps: RunDeps,
-        services: SeaDexArr,
+        services: RunServices,
         *,
         sonarr_client: AbstractSonarrClient | None = None,
     ) -> None:
@@ -89,7 +89,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 this strategy reads directly are unpacked off it, and it's handed
                 to the Sonarr collaborators for the cache/AniList gateway/log
                 formatter they read.
-            services (SeaDexArr): The run machinery the per-id hooks call into.
+            services (RunServices): The services hub the per-id hooks call into.
             sonarr_client (AbstractSonarrClient | None): A pre-built client to use
                 instead of constructing the real network-validating
                 :class:`SonarrClient`. Defaults to None (build the real one); tests

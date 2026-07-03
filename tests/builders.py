@@ -5,13 +5,11 @@
 # reportPrivateUsage for tests.
 """Builders and a bare-instance factory for the characterization tests.
 
-These tests pin the *current* behaviour of ``seadex_arr.py``. The planner tests
-build the engine's
-inputs (typed episode records, flat release dicts) via the helpers here, and
-``make_arr`` builds a
-``SeaDexArr`` without running its heavy ``__init__`` (network downloads,
-qBittorrent login, disk I/O), assigning only the attributes the methods under
-test actually read.
+These tests pin the *current* behaviour of the run machinery. The planner tests
+build its inputs (typed episode records, flat release dicts) via the helpers
+here, and ``make_services`` builds a ``RunServices`` without running its heavy
+``__init__`` (network downloads, qBittorrent login, disk I/O), assigning only
+the attributes the methods under test actually read.
 """
 
 import logging
@@ -41,7 +39,7 @@ from seadexarr.modules.mappings import MappingResolver
 from seadexarr.modules.notify import Notifier
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.reporter import RunContext, RunReporter
-from seadexarr.modules.seadex_arr import RunDeps, SeaDexArr
+from seadexarr.modules.run_services import RunDeps, RunServices
 from seadexarr.modules.seadex_filter import SeadexReleaseFilter
 from seadexarr.modules.seadex_gateway import SeaDexSource
 from seadexarr.modules.seadex_sonarr import SonarrSync
@@ -68,7 +66,7 @@ from .fakes import FakeSonarrClient
 # settings group to AppConfig wires it in here for free. AppConfig declares ``sonarr``
 # before ``radarr``, so a name shared across the two arr groups (the ArrSettings keys
 # url/api_key/ignore_unmonitored/torrent_category) resolves to ``sonarr`` - the arr
-# make_config/make_arr default to - via the first-wins ``setdefault`` below.
+# make_config/make_services default to - via the first-wins ``setdefault`` below.
 _FIELD_GROUP: dict[str, str] = {}
 for _group, _group_field in AppConfig.model_fields.items():
     # ``annotation`` is the group's submodel class (typed Optional on FieldInfo, but
@@ -119,8 +117,8 @@ def _resolve_setting(key: str) -> tuple[str, str]:
     return _FIELD_GROUP.get(key, "seadex"), key
 
 
-# The override keys make_arr routes into self._config (rather than onto the bare
-# engine as a direct attribute/collaborator).
+# The override keys make_services routes into self._config (rather than onto the
+# bare instance as a direct attribute/collaborator).
 _CONFIG_SETTING_NAMES = frozenset(_FIELD_GROUP) | frozenset(_FLAT_ALIASES)
 
 
@@ -141,8 +139,8 @@ def make_bare_instance[T](cls: type[T], **attrs: Any) -> T:
 
     ``object.__new__`` skips the real, heavy ``__init__`` (network downloads,
     qBittorrent login, disk I/O); the tests assign just the attributes the
-    methods under test read. Shared by ``make_arr`` here and the strategy-seam
-    tests so the bypass idiom lives in one place.
+    methods under test read. Shared by ``make_services`` here and the
+    strategy-seam tests so the bypass idiom lives in one place.
     """
 
     obj = object.__new__(cls)
@@ -399,7 +397,7 @@ def make_logger(name: str = "seadexarr-test") -> logging.Logger:
 
 
 def make_config(**overrides: Any) -> AppConfig:
-    """An in-memory ``AppConfig`` carrying ``make_arr``'s decision-test defaults.
+    """An in-memory ``AppConfig`` carrying the decision-test defaults.
 
     The config flags are read through ``self._config`` (the single source of truth),
     so a bare instance needs a real ``AppConfig``. These defaults mirror the historical
@@ -521,38 +519,35 @@ def _real_torrents(logger: logging.Logger, session: requests.Session) -> Torrent
     return TorrentService(qbit=None, session=session, category="", tags=[], logger=logger)
 
 
-def make_arr(**overrides: Any) -> SeaDexArr:
-    """Build a bare ``SeaDexArr`` with only the attributes the methods read.
+def make_services(**overrides: Any) -> RunServices:
+    """Build a bare ``RunServices`` with only the attributes the methods read.
 
     Bypasses ``__init__`` via ``object.__new__`` and assigns sane defaults for
-    the collaborators the decision methods consult; the config flags live on an
-    in-memory ``AppConfig`` (``self._config``). Pass keyword overrides to vary a
-    single config flag (e.g. ``make_arr(public_only=True)``) or another attribute.
-
-    ``SeaDexArr`` is a concrete engine after Phase 6b (no abstract hooks), so
-    ``make_bare_instance`` builds one directly - the old no-op-hooks stub is gone.
+    the collaborators the per-id decision methods consult; the config flags live
+    on an in-memory ``AppConfig`` (``self._config``). Pass keyword overrides to
+    vary a single config flag (e.g. ``make_services(public_only=True)``) or
+    another attribute.
     """
 
     logger = make_logger()
 
-    # Config-backed flags are read via self._config after Phase 5b; route any passed
-    # as overrides through an in-memory AppConfig (popped from overrides in place),
+    # Config-backed flags are read via self._config; route any passed as
+    # overrides through an in-memory AppConfig (popped from overrides in place),
     # leaving the rest as direct attributes/collaborators.
     config = _split_config(overrides)
     defaults: dict[str, Any] = {
         "logger": logger,
         "log_fmt": LogFormatter(logger),
         "_config": config,
-        # The engine reads per-arr flags (e.g. ignore_unmonitored) off _arr_config,
-        # the Sonarr view of the same shared config.
-        "_arr_config": config.for_arr(Arr.SONARR),
-        # The real __init__ always sets a RunContext; faithful default so methods
-        # that read self._ctx.arr (the run-arr methods) work without each test
-        # wiring one. Override with _ctx=... for a specific run state.
+        # The real __init__ always sets the authoritative arr + a RunContext;
+        # faithful defaults so methods that read self._ctx.arr (the run-arr
+        # methods) work without each test wiring one. Override with _ctx=... for
+        # a specific run state.
+        "arr": Arr.SONARR,
         "_ctx": RunContext(arr=Arr.SONARR),
     }
     defaults.update(overrides)
-    return make_bare_instance(SeaDexArr, **defaults)
+    return make_bare_instance(RunServices, **defaults)
 
 
 def make_run_deps(
@@ -562,9 +557,9 @@ def make_run_deps(
     seadex: SeaDexSource | None = None,
     logger: logging.Logger | None = None,
 ) -> RunDeps:
-    """A real ``RunDeps`` (typed fakes) to drive the REAL ``SeaDexArr`` / ``SonarrSync``
-    ``__init__`` + ``begin_run`` rebind - the construction seam ``make_bare_instance``
-    bypasses.
+    """A real ``RunDeps`` (typed fakes) to drive the REAL ``RunServices`` /
+    ``SeaDexArr`` / ``SonarrSync`` ``__init__`` + ``begin_run`` rebind - the
+    construction seam ``make_bare_instance`` bypasses.
 
     Every field is passed to ``RunDeps`` by explicit keyword (no ``**dict[str, Any]``
     launder), so each is type-checked against the dataclass field at this seam - a
@@ -614,8 +609,8 @@ def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
 
     Config-backed flags (e.g. ``want_best``, ``public_only``) route through an
     in-memory ``AppConfig``; the rest pass straight to the constructor. Mirrors
-    ``make_arr``'s override routing so the ``build`` characterization tests read
-    the same as the old ``get_seadex_dict`` ones.
+    ``make_services``'s override routing so the ``build`` characterization tests
+    read the same as the old ``get_seadex_dict`` ones.
     """
 
     logger = make_logger()
@@ -632,7 +627,7 @@ def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
     return SeadexReleaseFilter(**defaults)
 
 
-# A truthy stand-in for a logged-in qBittorrent client, so _is_preview() is
+# A truthy stand-in for a logged-in qBittorrent client, so is_preview() is
 # False without a real login (the actual add is faked by FakeTorrents).
 CLIENT_SENTINEL = object()
 
@@ -739,7 +734,7 @@ def make_planner(**overrides: Any) -> DownloadPlanner:
     The planner reads three config flags plus a logger; pass keyword overrides
     to vary a single flag (e.g. ``make_planner(public_only=True)``). The logger
     defaults to WARNING so the hot-path debug f-strings aren't formatted, mirroring
-    ``make_arr``.
+    ``make_services``.
     """
 
     logger = make_logger()
@@ -910,7 +905,7 @@ def make_sonarr_sync(
     """Build a ``SonarrSync`` through its REAL ``__init__``, injecting a typed client.
 
     Shrunk from the old hand-rebuilt collaborator graph (~12 private field names,
-    zero type-checking): builds a real ``RunDeps`` + engine and calls the real
+    zero type-checking): builds a real ``RunDeps`` + services hub and calls the real
     constructor, passing the scripted client through the typed ``sonarr_client``
     seam (default a blank ``FakeSonarrClient``). So the real two-phase wiring runs -
     the collaborators all share the injected client + the strat's ``cache_store`` by
@@ -921,7 +916,7 @@ def make_sonarr_sync(
     """
 
     deps = make_run_deps(config=config, cache_store=cache_store)
-    services = SeaDexArr(deps, Arr.SONARR)
+    services = RunServices(deps, Arr.SONARR)
     strat = SonarrSync(
         deps,
         services,

@@ -1,8 +1,8 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# These read the engine's private run context (run._ctx); strict re-flags that and
+# These read the hub's private run context (run._ctx); strict re-flags that and
 # the repo disables reportPrivateUsage for tests.
-"""The cached-entry short-circuit (``SeaDexArr.cached_entry_skip``).
+"""The cached-entry short-circuit (``RunServices.cached_entry_skip``).
 
 Pins the skip decision after it was folded onto a single ``CacheStore.get_entry``
 read (was a ``check_al_id_in_cache`` + a per-field ``get_cached_field``): a cached
@@ -16,9 +16,9 @@ from datetime import datetime
 from seadexarr.modules.config import Arr
 from seadexarr.modules.log import EntryState
 from seadexarr.modules.reporter import RunContext
-from seadexarr.modules.seadex_arr import SeaDexArr
+from seadexarr.modules.run_services import RunServices
 
-from .builders import FakeCacheStore, make_arr, make_entry_record
+from .builders import FakeCacheStore, make_entry_record, make_services
 
 
 class _RecordingReporter:
@@ -41,17 +41,17 @@ class _RecordingReporter:
 
 class TestCachedEntrySkip:
     @staticmethod
-    def _run(cache: FakeCacheStore) -> SeaDexArr:
+    def _run(cache: FakeCacheStore) -> RunServices:
         # cached_entry_skip touches only cache_store + _config (real, default
         # ignore_seadex_update_times=False) + the reporter; ctx defaults to a SONARR
-        # RunContext (make_arr), which cached_entry_skip now reads for the arr.
-        return make_arr(cache_store=cache, _reporter=_RecordingReporter())
+        # RunContext (make_services), which cached_entry_skip now reads for the arr.
+        return make_services(cache_store=cache, _reporter=_RecordingReporter())
 
     def test_skips_when_cached_and_timestamp_matches(self) -> None:
         cache = FakeCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         reporter = _RecordingReporter()
-        run = make_arr(cache_store=cache, _reporter=reporter)
+        run = make_services(cache_store=cache, _reporter=reporter)
         assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "u", lambda: "") is True
         assert len(reporter.calls) == 1
 
@@ -95,7 +95,7 @@ class TestCrossArrLookupHonorsParam:
         cache = FakeCacheStore()
         # Present in the RADARR cache only; the run's ctx.arr is SONARR.
         cache.update_cache(Arr.RADARR, 7, {"updated_at": datetime(2021, 1, 1)})
-        run = make_arr(cache_store=cache, _ctx=RunContext(arr=Arr.SONARR))
+        run = make_services(cache_store=cache, _ctx=RunContext(arr=Arr.SONARR))
         entry = make_entry_record(updated_at=datetime(2021, 1, 1))
         # The explicit RADARR param must select the Radarr cache (hit)...
         assert run.check_al_id_in_cache(Arr.RADARR, 7, entry) is True
@@ -104,7 +104,7 @@ class TestCrossArrLookupHonorsParam:
 
     def test_log_cached_entry_forwards_param_arr_not_ctx(self) -> None:
         reporter = _RecordingReporter()
-        run = make_arr(_reporter=reporter, _ctx=RunContext(arr=Arr.SONARR))
+        run = make_services(_reporter=reporter, _ctx=RunContext(arr=Arr.SONARR))
         run.log_cached_entry(Arr.RADARR, 7, state=EntryState.IN_RADARR)
         # The reporter delegate receives the explicit cross-arr value, not ctx.arr.
         assert reporter.calls == [(run._ctx, Arr.RADARR, 7, EntryState.IN_RADARR)]

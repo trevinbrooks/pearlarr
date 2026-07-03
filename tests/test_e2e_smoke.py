@@ -2,9 +2,9 @@
 """End-to-end smoke tests: one full pass per arr through the REAL composition root.
 
 These are the tests that prove ``cli.run_single`` -> ``_run_arrs`` ->
-``RunDeps.build`` -> ``SeaDexArr.run_sync`` -> ``SonarrSync`` / ``RadarrSync``
-hooks actually run a sync wired together, with ONLY the external network leaves
-faked:
+``RunDeps.build`` -> ``RunServices`` -> ``SeaDexArr.run_sync`` -> ``SonarrSync``
+/ ``RadarrSync`` hooks actually run a sync wired together, with ONLY the
+external network leaves faked:
 
 * the SeaDex library, faked at the gateway's httpx boundary (``SeaDexEntry``);
 * qBittorrent, left unconfigured so the whole run is a perpetual preview;

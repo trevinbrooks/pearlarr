@@ -33,10 +33,11 @@ class ArrSync[ItemT: ArrItem](ABC):
 
     Owns the Arr REST client and the Arr's domain logic (episode mapping,
     release-group resolution). Provides the items to process and the per-id
-    body. The strategy is injected with the :class:`~.seadex_arr.SeaDexArr` run
-    machinery and holds it, so the run loop calls these hooks without passing
-    itself. Subclasses (``SonarrSync`` / ``RadarrSync``) must implement every
-    hook; the ABC enforces that at instantiation.
+    body. The strategy is injected with the :class:`~.run_services.RunServices`
+    hub and holds it, so the run loop calls these hooks without passing the
+    services (and the strategy never sees the loop type). Subclasses
+    (``SonarrSync`` / ``RadarrSync``) must implement every hook; the ABC
+    enforces that at instantiation.
 
     Generic in ``ItemT`` (the Arr's item protocol — :class:`~.seadex_types.SonarrItem`
     or :class:`~.seadex_types.RadarrItem`) so each subclass binds its own item

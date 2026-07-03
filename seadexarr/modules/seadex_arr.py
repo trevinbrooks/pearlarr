@@ -1,295 +1,61 @@
-import logging
-import os
 import time
-from collections.abc import Callable
-from dataclasses import dataclass
 from typing import final
 
-import qbittorrentapi
-import requests
-from requests.adapters import HTTPAdapter
-from seadex import EntryRecord
-from urllib3.util.retry import Retry
-
-from .anilist_gateway import AniListGateway
 from .boot_view import BootView, NullBootView
-from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, CacheRecord, CacheStore
-from .config import AppConfig, Arr, ArrSettings
-from .grab_pipeline import GrabPipeline, GrabRequest
+from .config import Arr
 from .import_wait import ImportWaitManager
-from .log import (
-    EntryState,
-    LogFormatter,
-    count_noun,
-    setup_logger,
-)
+from .log import count_noun
 from .manual_import import (
     ImportWaitMode,
     resolve_wait_mode,
 )
-from .mappings import MappingEntry, MappingResolver
-from .notify import Notifier
-from .planner import DownloadPlanner
 from .protocols import ArrSync, ImportCompleter
-from .reporter import RunContext, RunReporter, is_preview
-from .seadex_filter import SeadexReleaseFilter
-from .seadex_gateway import SeaDexGateway, SeaDexSource
-from .seadex_types import (
-    ArrItem,
-    ArrReleaseDict,
-    SeadexDict,
-    SonarrEpisode,
-)
-from .torrents import TorrentService
+from .reporter import RunContext
+from .run_services import RunDeps, RunServices
+from .seadex_types import ArrItem
 from .wait_view import (
     WaitResult,
 )
 
 
-class QbitConnectionError(Exception):
-    """qBittorrent auth/connection failed - a user-facing config problem.
-
-    Raised from ``RunDeps.build`` so the cli reports it as a clean one-line message
-    (wrong host / credentials) instead of a stack trace under "unexpected error".
-    """
-
-
-@dataclass(frozen=True)
-class RunDeps:
-    """The shared leaf collaborators for one Arr run, built once at the root.
-
-    A plain value object the composition root (``cli.py``) builds via
-    :meth:`build` and injects into both the :class:`SeaDexArr` run machinery and
-    the Arr-specific strategy. Keeping construction here (where every collaborator
-    type is already imported) and injection at the root means neither the engine
-    nor the strategy constructs the other's dependencies - the engine receives
-    these, the strategy receives the subset it needs. ``anime_mappings`` /
-    ``anidb_mappings`` / ``anibridge`` are read off ``mappings`` by consumers, not
-    stored separately. ``arr_config`` is the per-arr connection/behaviour submodel
-    (``config.for_arr(arr)``); ``config`` is the shared root reused by both arrs.
-    """
-
-    config: AppConfig
-    arr_config: ArrSettings
-    session: requests.Session
-    qbit: qbittorrentapi.Client | None
-    mappings: MappingResolver
-    logger: logging.Logger
-    seadex: SeaDexSource
-    cache_store: AbstractCacheStore
-    anilist: AniListGateway
-    torrents: TorrentService
-    notifier: Notifier
-    planner: DownloadPlanner
-    log_fmt: LogFormatter
-    reporter: RunReporter
-
-    @classmethod
-    def build(
-        cls,
-        arr: Arr,
-        config: str = "config.yml",
-        cache: str = "cache.db",
-        logger: logging.Logger | None = None,
-        *,
-        mappings: MappingResolver,
-        app_config: AppConfig | None = None,
-        cache_legacy: str | None = None,
-        boot: BootView | None = None,
-    ) -> "RunDeps":
-        """Construct the shared collaborators in dependency order.
-
-        Args:
-            arr (Arr): Which Arr is being run; selects the per-arr config submodel.
-            config (str, optional): Path to a config file. Defaults to "config.yml".
-            cache (str, optional): Path to the cache database. Defaults to "cache.db".
-            logger (logging.Logger | None, optional): Logger to use. Defaults to
-                None, which builds one from the config's log level.
-            mappings (MappingResolver): The id-mapping resolver, built once by the
-                CLI and shared across a scheduled Radarr->Sonarr cycle so the three
-                large mapping sources are downloaded, parsed and indexed once.
-            app_config (AppConfig | None, optional): A pre-loaded config injected by
-                the CLI so a scheduled cycle reads and validates the file once per
-                run. Defaults to None, which loads it here.
-            cache_legacy (str | None, optional): Path to a legacy ``cache.json`` to
-                migrate into ``cache.db`` when no db exists yet. Defaults to None.
-            boot (BootView | None, optional): The startup cockpit; the qBittorrent
-                login and cache open graduate into it as steps. Defaults to None (a
-                no-op view), so the standalone path runs without a cockpit.
-        """
-
-        boot = boot if boot is not None else NullBootView()
-
-        # Load, validate, and expose the config file as typed settings. AppConfig
-        # owns the file lifecycle (copy-template-if-missing, parse, validate) and is
-        # the single source of truth for every setting. The CLI may inject an
-        # already-loaded config (one read shared across the Radarr->Sonarr cycle);
-        # otherwise it's loaded here for the standalone path. ``arr_config`` is this
-        # arr's connection/behaviour submodel, injected alongside the shared root.
-        app_config = AppConfig.load(config) if app_config is None else app_config
-        arr_config = app_config.for_arr(arr)
-
-        if logger is None:
-            # Standalone path (the CLI always injects a logger): logs live in the
-            # data dir alongside the cache it was handed (unified layout).
-            log_dir = os.path.join(os.path.dirname(os.path.abspath(cache)), "logs")
-            logger = setup_logger(log_level=app_config.advanced.log_level, log_dir=log_dir)
-
-        # Shared keep-alive session for the raw Sonarr/Radarr calls. Retries
-        # transient failures on idempotent GETs only (POSTs never retry, so a
-        # command can't double-fire); pool_maxsize must stay >= the sweep's fetch
-        # concurrency (SONARR_FETCH_WORKERS) so parallel GETs don't queue.
-        # raise_on_status=False lets a still-5xx response return for the callers'
-        # status checks. Per-request timeouts are at the call sites.
-        session = requests.Session()
-        retry = Retry(
-            total=3,
-            connect=3,
-            read=3,
-            backoff_factor=0.5,
-            status_forcelist=(429, 500, 502, 503, 504),
-            allowed_methods=frozenset({"GET"}),
-            raise_on_status=False,
-        )
-        adapter = HTTPAdapter(max_retries=retry, pool_connections=16, pool_maxsize=16)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-
-        # qbit. None unless host/username/password are all set; with any unset, no
-        # client is created and the app treats `qbit is None` as "no client ->
-        # perpetual preview".
-        qbit: qbittorrentapi.Client | None = None
-        credentials = app_config.qbittorrent.credentials()
-        if credentials is not None:
-            host, username, password = credentials
-            # `options` forwards any extra qbittorrentapi.Client kwargs (e.g.
-            # VERIFY_WEBUI_CERTIFICATE for a self-signed WebUI); empty by default.
-            client = qbittorrentapi.Client(
-                host=host,
-                username=username,
-                password=password,
-                **app_config.qbittorrent.options,
-            )
-            with boot.step("Connecting to qBittorrent"):
-                try:
-                    client.auth_log_in()
-                except qbittorrentapi.APIConnectionError as e:
-                    # LoginFailed (bad credentials) subclasses APIConnectionError, so
-                    # this one arm covers both a wrong host and wrong credentials.
-                    raise QbitConnectionError(
-                        "qBittorrent connection failed - check the qbittorrent host and credentials in your config",
-                    ) from e
-            qbit = client
-        else:
-            # No credentials -> perpetual preview. Say so on the boot ledger (a ⚠
-            # step) instead of silently grabbing nothing all run.
-            with boot.step("Connecting to qBittorrent") as step:
-                step.warn("not configured - preview mode")
-
-        # Load the cache (or create its schema) and reconcile the descriptor against
-        # the current package version + config checksum. Each arr builds its own
-        # store that reads the file fresh, so a scheduled Radarr->Sonarr cycle hands
-        # off through cache.db rather than shared memory. A legacy cache.json (if
-        # present and there's no db yet) is migrated on the first real save.
-        with boot.step("Opening cache"):
-            cache_store = CacheStore.load(
-                cache,
-                config_checksum=app_config.checksum(),
-                migrate_from=cache_legacy,
-                logger=logger,
-            )
-
-        # AniList client gateway: owns the in-memory meta cache (al_cache) and the
-        # persisted anilist_meta block.
-        anilist = AniListGateway(cache_store=cache_store, logger=logger)
-
-        # qBittorrent adapter: parses a release URL by tracker and adds it. A None
-        # qbit is treated as a perpetual preview.
-        torrents = TorrentService(
-            qbit=qbit,
-            session=session,
-            category=arr_config.torrent_category,
-            tags=app_config.qbittorrent.tags,
-            logger=logger,
-        )
-
-        # All aligned detail rendering goes through this formatter.
-        log_fmt = LogFormatter(logger)
-
-        return cls(
-            config=app_config,
-            arr_config=arr_config,
-            session=session,
-            qbit=qbit,
-            mappings=mappings,
-            logger=logger,
-            # SeaDex API gateway (entry lookups, with connection-error handling)
-            seadex=SeaDexGateway(logger=logger),
-            cache_store=cache_store,
-            anilist=anilist,
-            torrents=torrents,
-            # Discord notifier; a no-op when no webhook is configured.
-            notifier=Notifier(
-                discord_url=app_config.notifications.discord_url,
-                webhook_url=app_config.notifications.wait_webhook_url,
-                logger=logger,
-            ),
-            # Download-decision engine: flips each release's download flag.
-            planner=DownloadPlanner(
-                public_only=app_config.seadex.public_only,
-                interactive=app_config.advanced.interactive,
-                use_torrent_hash_to_filter=app_config.seadex.use_torrent_hash_to_filter,
-                logger=logger,
-            ),
-            log_fmt=log_fmt,
-            # Presentation: owns every log_* method and the end-of-run summary.
-            reporter=RunReporter(
-                logger=logger,
-                log_fmt=log_fmt,
-                cache_store=cache_store,
-                anilist=anilist,
-            ),
-        )
-
-
 @final
 class SeaDexArr:
-    """The Arr-agnostic run machinery driving an injected strategy.
+    """The Arr-agnostic run loop driving an injected strategy.
 
-    Receives its shared collaborators as a :class:`RunDeps` bundle (built and
-    injected by the composition root in ``cli.py``) and owns the run loop, the
-    per-run :class:`RunContext`, and the shared per-id pipeline. It drives an
-    injected :class:`~.protocols.ArrSync` strategy (passed to :meth:`run_sync`)
-    for the Arr-specific pieces; the strategy holds *this* object as its
-    ``services`` and calls the pipeline through it. The engine never holds the
-    strategy and never constructs its own dependencies.
+    Receives its shared collaborators as a :class:`RunDeps` bundle plus the
+    :class:`RunServices` hub (both built and injected by the composition root
+    in ``cli.py``) and owns the run loop, the per-run :class:`RunContext`
+    lifecycle, and the wait-pass machinery. It drives an injected
+    :class:`~.protocols.ArrSync` strategy (passed to :meth:`run_sync`) for the
+    Arr-specific pieces; the strategy holds the :class:`RunServices` hub as its
+    ``services`` and calls the shared per-id pipeline through it, so it never
+    sees this loop type. The loop never holds the strategy and never constructs
+    its own dependencies.
     """
 
-    def __init__(self, deps: RunDeps, arr: Arr = Arr.SONARR) -> None:
-        """Receive the shared collaborators and set up per-run state.
+    def __init__(self, deps: RunDeps, services: RunServices) -> None:
+        """Receive the shared collaborators + services hub and set up per-run state.
 
         Args:
             deps (RunDeps): The shared collaborators
-            arr (Arr, optional): Which Arr is being run. Defaults to Arr.SONARR.
+            services (RunServices): The per-id services hub (also injected into
+                the strategy); the loop adopts its placeholder context and
+                pushes each run's fresh context back into it.
         """
 
         # Unpack the injected collaborators into the attribute names the run loop
-        # and pipeline methods read directly. The mapping sources are reached
-        # through the shared resolver (self._mappings), which owns them.
+        # methods read directly (the loop-side subset of the deps).
         self._config = deps.config
         self._arr_config = deps.arr_config
-        self.session = deps.session
         self.qbit = deps.qbit
-        self._mappings = deps.mappings
         self.logger = deps.logger
         self._seadex = deps.seadex
         self.cache_store = deps.cache_store
         self._anilist = deps.anilist
-        self._torrents = deps.torrents
         self._notifier = deps.notifier
-        self._planner = deps.planner
-        self.log_fmt = deps.log_fmt
         self._reporter = deps.reporter
+
+        self._services = services
 
         # The active strategy for the current run, (re)set at the top of run_sync;
         # the placeholder None here is replaced before any import hook is invoked.
@@ -298,33 +64,14 @@ class SeaDexArr:
         # All per-run state (stats tally, running torrent count, the active
         # title/url/coverage, the run clock, the public_only skip flags, plus the
         # run's dry_run + resolved wait-mode flags) lives on this context, replaced
-        # fresh at the start of each run by reset_run_stats. A placeholder is built
-        # here - its dry_run=False + OFF wait mode keep every preview / pending-
-        # import path a safe no-op - so the object is usable before run_sync.
-        self._ctx = RunContext(arr=arr)
+        # fresh at the start of each run by reset_run_stats. ADOPT the services
+        # hub's placeholder (one placeholder, never a second mint) - its
+        # dry_run=False + OFF wait mode keep every preview / pending-import path a
+        # safe no-op - so the object is usable before run_sync.
+        self._ctx = services.ctx
 
-        # Engine-internal collaborators, built from the unpacked deps + the
-        # placeholder ctx. begin_run rebinds their ctx at the top of each run.
-        self._filter = SeadexReleaseFilter(
-            config=self._config,
-            planner=self._planner,
-            cache_store=self.cache_store,
-            logger=self.logger,
-            log_fmt=self.log_fmt,
-            ctx=self._ctx,
-        )
-        self._grab_pipeline = GrabPipeline(
-            config=self._config,
-            planner=self._planner,
-            cache_store=self.cache_store,
-            torrents=self._torrents,
-            anilist=self._anilist,
-            notifier=self._notifier,
-            reporter=self._reporter,
-            log_fmt=self.log_fmt,
-            qbit=self.qbit,
-            ctx=self._ctx,
-        )
+        # Loop-side per-run collaborator, built from the unpacked deps + the
+        # adopted placeholder ctx. begin_run rebinds its ctx at the top of each run.
         self._wait_manager = ImportWaitManager(
             config=self._config,
             cache_store=self.cache_store,
@@ -336,223 +83,35 @@ class SeaDexArr:
         )
         self.begin_run(self._ctx)
 
-    def close(self) -> None:
-        """Release run-scoped resources: the HTTP session and the cache db.
-
-        Called once per arr run from ``cli.py``'s ``finally`` (each arr owns its
-        own ``CacheStore`` - no sharing - so this never double-closes). The cache
-        ``close`` rolls back anything not flushed by the end-of-run save point.
-        """
-        # self.session is the injected RunDeps.session (a requests.Session, never
-        # None), so it can be closed unconditionally.
-        self.session.close()
-        self.cache_store.close()
-
-    def check_al_id_in_cache(
-        self,
-        arr: Arr,
-        al_id: int,
-        seadex_entry: EntryRecord,
-    ) -> bool:
-        """Whether the cached entry matches SeaDex's last-updated timestamp."""
-
-        return self.cache_store.check_al_id_in_cache(arr, al_id, seadex_entry)
-
-    def al_id_needs_scan(self, al_id: int) -> bool:
-        """Side-effect-free mirror of process_al_id's no-entry + cached_entry_skip
-        gates: True iff the per-id loop would actually process this id.
-
-        Lets prefetch_episodes warm only the series the loop won't short-circuit
-        (no SeaDex entry, or cached and unchanged), instead of every mapped
-        series. No logging / stats / backfill - purely a predicate over the
-        warmed SeaDex cache and the entry cache.
-        """
-
-        sd_entry = self._seadex.entry(al_id)  # warmed cache, no network
-        if sd_entry is None:
-            return False
-        if self._config.seadex.ignore_seadex_update_times:
-            return True
-        return not self.cache_store.check_al_id_in_cache(self._ctx.arr, al_id, sd_entry)
-
-    def get_anilist_ids(
-        self,
-        tvdb_id: int | None = None,
-        tmdb_id: int | None = None,
-        imdb_id: str | None = None,
-        log_ignored: bool = True,
-    ) -> dict[int, MappingEntry]:
-        """Resolve external Arr ids to a {AniList id -> mapping} dict
-
-        The resolver does the mapping computation and reports which ids it
-        dropped (the user's ignore list); the logging stays here so the
-        presentation concern doesn't leak into the resolver.
-
-        Args:
-            tvdb_id (int | None): TVDB ID
-            tmdb_id (int | None): TMDB (movie) ID
-            imdb_id (str | None): IMDb ID
-            log_ignored (bool): Log a ledger row for each ignored AniList ID.
-                Defaults to True; pass False from the prefetch pass so ignored
-                ids aren't logged twice (once there, once in the main loop)
-        """
-
-        anilist_mappings, ids_to_drop = self._mappings.get_anilist_ids(
-            tvdb_id=tvdb_id,
-            tmdb_id=tmdb_id,
-            imdb_id=imdb_id,
-        )
-
-        # Log ignored ids per-call (not just on the cache-filling call), so the
-        # main loop still logs every ignored id even after the prefetch pass ran
-        if log_ignored:
-            for al_id in ids_to_drop:
-                self._reporter.log_ignored_anilist_id(al_id)
-
-        return anilist_mappings
-
-    def get_anilist_title(
-        self,
-        al_id: int,
-    ) -> str:
-        """Resolve and remember the AniList title for an ID (no logging)
-
-        The gateway resolves the raw title (no side-effects); the empty-result
-        fallback and the transitional ``current_title`` attribution live here so
-        later steps can attribute grabs to the active entry. The entry header is
-        logged separately by log_al_title, once episodes are known.
-
-        Args:
-            al_id (int): AniList ID
-        """
-
-        anilist_title = self._anilist.title(al_id)
-
-        # If the lookup came back empty (e.g., AniList was rate-limiting even
-        # after retries), fall back to the id so the entry is still identifiable
-        # rather than showing "None"
-        if not anilist_title:
-            anilist_title = f"AniList #{al_id}"
-
-        self._ctx.current_title = anilist_title
-
-        return anilist_title
-
-    def get_seadex_dict(self, sd_entry: EntryRecord) -> SeadexDict:
-        """Parse and filter a SeaDex entry into the run's release dict (delegates)."""
-
-        return self._filter.build(sd_entry)
-
-    def filter_seadex_interactive(
-        self,
-        seadex_dict: SeadexDict,
-        sd_entry: EntryRecord,
-    ) -> SeadexDict:
-        """Interactively pick which release group(s) to grab (delegates)."""
-
-        return self._filter.interactive_pick(seadex_dict, sd_entry)
-
-    def filter_seadex_downloads(
-        self,
-        al_id: int,
-        seadex_dict: SeadexDict,
-        arr_release_dict: ArrReleaseDict,
-        ep_list: list[SonarrEpisode] | None = None,
-    ) -> tuple[list[str | None], SeadexDict]:
-        """Apply the download plan, stamping public_only skips onto ctx (delegates)."""
-
-        return self._filter.filter_downloads(al_id, seadex_dict, arr_release_dict, ep_list)
-
-    def _is_preview(self) -> bool:
-        """A run is a no-op preview when an explicit dry run was requested OR
-        qBittorrent is not configured (nothing can actually be grabbed)."""
-        return is_preview(self._ctx, self.qbit)
-
-    @property
-    def import_wait_mode(self) -> ImportWaitMode:
-        """The wait mode resolved for the current run (cli > config > default).
-
-        Set at the top of ``run_sync``; the active strategy reads this (not the
-        raw ``config.imports.wait_mode``) so its seed-building gate agrees with the
-        engine's persist/reconcile/blocking gates - otherwise a CLI override that
-        turns the feature on over an ``off`` config would build no seeds and the
-        whole pass would silently no-op.
-        """
-
-        return self._ctx.import_wait_mode
-
-    def update_cache(
-        self,
-        al_id: int,
-        cache_details: CacheRecord | None = None,
-    ) -> None:
-        """Merge ``cache_details`` into an entry's cache record (in-memory only).
-
-        The run's save points flush it; see ``CacheStore.update_cache``.
-
-        Args:
-            al_id (int): AniList ID
-            cache_details (CacheRecord): Details for the cache entry. Defaults
-                to None
-        """
-
-        self.cache_store.update_cache(self._ctx.arr, al_id, cache_details)
-
-    def no_releases_skip(
-        self,
-        al_id: int,
-        cache_details: CacheRecord,
-    ) -> bool:
-        """Shared no-suitable-releases tail both Arr strategies fall into.
-
-        When SeaDex yields no usable releases for an id, every strategy does the
-        same four things: log the outcome, persist what it knows into the cache,
-        throttle, and report "not grabbed". Hoisted here so the two strategies
-        share one definition instead of a byte-for-byte duplicated block.
-
-        Args:
-            al_id (int): AniList ID.
-            cache_details (CacheRecord): Cache record assembled for this id.
-
-        Returns:
-            bool: Always ``False`` (nothing was grabbed).
-        """
-
-        self.log_no_seadex_releases()
-        self.update_cache(al_id=al_id, cache_details=cache_details)
-        time.sleep(self._config.advanced.sleep_time)
-        return False
-
     def begin_run(self, ctx: RunContext) -> None:
-        """Bind the fresh run context to the engine's per-run collaborators.
+        """Bind the fresh run context to every per-run collaborator.
 
-        Two-phase bind: called once with the placeholder ctx in ``__init__`` (so
-        pre-run paths are safe) and again from ``run_sync`` right after
-        ``reset_run_stats`` swaps in the run's real ctx, so every collaborator
-        rebinds to the fresh ctx.
+        Two-phase bind: called once with the adopted placeholder ctx in
+        ``__init__`` (so pre-run paths are safe) and again from ``run_sync``
+        right after ``reset_run_stats`` swaps in the run's real ctx, so every
+        collaborator - the services hub (and through it the filter + grab
+        pipeline) and the loop's wait manager - rebinds to the fresh ctx.
         """
 
-        self._filter.begin_run(ctx)
-        self._grab_pipeline.begin_run(ctx)
+        self._services.begin_run(ctx)
         self._wait_manager.begin_run(ctx, self._active_strategy)
 
     def reset_run_stats(
         self,
-        arr: Arr,
         dry_run: bool,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
     ) -> None:
         """Start a fresh run context and the run clock, and rebind collaborators
 
-        Replaces the run-scoped state wholesale with a new RunContext and
-        snapshots the logger-level counter (warning/error counts are diffed
-        against this when the summary is logged). The ``begin_run`` rebind is
-        folded in here so the ctx swap and the collaborator rebind can never
-        drift apart - a missed rebind would silently route a collaborator's
-        writes to the orphaned prior context.
+        Replaces the run-scoped state wholesale with a new RunContext - this is
+        the ONLY fresh-mint site; its ``arr`` is read off the services hub (the
+        authority) - and snapshots the logger-level counter (warning/error
+        counts are diffed against this when the summary is logged). The
+        ``begin_run`` rebind is folded in here so the ctx swap and the
+        collaborator rebind can never drift apart - a missed rebind would
+        silently route a collaborator's writes to the orphaned prior context.
 
         Args:
-            arr (Arr): Which Arr is being run.
             dry_run (bool): Whether this run simulates without grabbing/writing.
             import_wait_mode (ImportWaitMode): The run's resolved wait mode
                 (cli > config > default), stamped onto the fresh context.
@@ -560,7 +119,7 @@ class SeaDexArr:
 
         counter = getattr(self.logger, "seadex_counter", None)
         self._ctx = RunContext(
-            arr=arr,
+            arr=self._services.arr,
             dry_run=dry_run,
             import_wait_mode=import_wait_mode,
             # Monotonic so a wall-clock step (NTP, DST) can't yield negative elapsed
@@ -575,15 +134,14 @@ class SeaDexArr:
     # optional single-id filter, AniList prefetch, the per-item loop, and the
     # end-of-run save + summary). The Arr-specific pieces are the injected
     # strategy's hooks (get_items, filter_to_single, item_anilist_ids,
-    # process_al_id); the strategy holds this object as its services and calls
-    # the shared per-id head/tail (al_id_prologue / cached_entry_skip /
+    # process_al_id); the strategy holds the RunServices hub as its services and
+    # calls the shared per-id head/tail (al_id_prologue / cached_entry_skip /
     # grab_and_cache) through it.
 
     def run_sync[ItemT: ArrItem](
         self,
         strategy: ArrSync[ItemT],
         *,
-        arr: Arr,
         item_id: int | None,
         dry_run: bool,
         import_wait_mode: ImportWaitMode | None = None,
@@ -601,9 +159,8 @@ class SeaDexArr:
         Args:
             strategy (ArrSync[ItemT]): The Arr-specific strategy to drive (injected
                 by the composition root, which picks Sonarr/Radarr at runtime). It
-                already holds this object as its services, so its hooks are
-                called without passing self.
-            arr (Arr): Which Arr is being run
+                already holds the shared :class:`RunServices` hub as its services,
+                so its hooks are called without passing anything back.
             item_id (int | None): If set, only run for the single item with this
                 id (TMDB for Radarr, TVDB for Sonarr)
             dry_run (bool): Simulate the run without grabbing torrents, writing
@@ -620,7 +177,7 @@ class SeaDexArr:
 
         # Hold the active strategy (so _finalize_run / _grab can call its import
         # hook) and resolve the effective wait mode (cli > config > default) for
-        # the whole run. The engine only ever calls import_completed off it, so it
+        # the whole run. The loop only ever calls import_completed off it, so it
         # is held under the narrow, non-generic ImportCompleter protocol - which a
         # concrete ArrSync structurally satisfies, so no invariant-ItemT cast.
         self._active_strategy = strategy
@@ -629,9 +186,13 @@ class SeaDexArr:
             self._config.imports.wait_mode,
         )
 
+        # The run's arr comes off the services hub (the authority; each fresh
+        # ctx.arr is a per-run copy of it).
+        arr = self._services.arr
+
         # Start a fresh run context (stats + clock + counter snapshot + the run's
         # dry_run / wait-mode flags); reset_run_stats rebinds the collaborators to it.
-        self.reset_run_stats(arr=arr, dry_run=dry_run, import_wait_mode=resolved_wait_mode)
+        self.reset_run_stats(dry_run=dry_run, import_wait_mode=resolved_wait_mode)
 
         # Tend the durable pending-import store at run start (never on a preview,
         # since waiting/importing needs a real qBittorrent client). The TTL prune
@@ -640,7 +201,7 @@ class SeaDexArr:
         # report and import carried-over records run AFTER the per-item loop (the
         # inline per-series snapshot) and in _finalize_run (deferred reconcile +
         # the post-summary blocking monitor), never before the banner.
-        if self._ctx.import_wait_mode is not ImportWaitMode.OFF and not self._is_preview():
+        if self._ctx.import_wait_mode is not ImportWaitMode.OFF and not self._services.is_preview():
             self._wait_manager.prune_expired_pending()
 
         # Fetch the library (the long pre-scan network wait) inside the cockpit so
@@ -673,7 +234,7 @@ class SeaDexArr:
             )
 
         with boot.step("Fetching AniList metadata") as step:
-            fetched = self._anilist.prefetch(prefetch_ids, preview=self._is_preview(), progress=step)
+            fetched = self._anilist.prefetch(prefetch_ids, preview=self._services.is_preview(), progress=step)
             step.note("cached" if fetched == 0 else count_noun(fetched, "entry", "entries"))
 
         # Bulk-fetch SeaDex entries for the same ids in batched OR-filter queries,
@@ -762,7 +323,11 @@ class SeaDexArr:
                 # series block. Sonarr returns its series id; Radarr returns None
                 # (no pending records), short-circuiting the snapshot.
                 sid = strategy.pending_import_series_id(item)
-                if sid is not None and self._ctx.import_wait_mode is not ImportWaitMode.OFF and not self._is_preview():
+                if (
+                    sid is not None
+                    and self._ctx.import_wait_mode is not ImportWaitMode.OFF
+                    and not self._services.is_preview()
+                ):
                     self._wait_manager.snapshot_pending_for_series(sid)
 
             except Exception as e:
@@ -778,93 +343,10 @@ class SeaDexArr:
         # memory, so this finalize is what actually saves (and sorts by id).
         self._finalize_run()
 
-    def al_id_prologue(self, al_id: int) -> EntryRecord | None:
-        """Shared per-AniList-id head: reset skip flags, tally, fetch SeaDex entry
-
-        Returns the SeaDex entry to process, or None when the id has no SeaDex
-        entry - the caller moves to the next id.
-
-        Args:
-            al_id (int): AniList id being processed
-        """
-
-        # Reset the per-title skip flags (and the skipped group names) before we
-        # make any download decisions for this title
-        self._ctx.public_only_skipped = False
-        self._ctx.public_only_groups = []
-        self._ctx.unsupported_tracker_skipped = False
-        self._ctx.unsupported_tracker_groups = []
-        self._ctx.unsupported_tracker_hashes = []
-        self._ctx.stats.checked += 1
-
-        # Get the SeaDex entry if it exists
-        sd_entry = self._seadex.entry(al_id)
-        if sd_entry is None:
-            self._reporter.log_no_sd_entry(self._ctx, al_id)
-            return None
-
-        return sd_entry
-
-    def cached_entry_skip(
-        self,
-        al_id: int,
-        sd_entry: EntryRecord,
-        sd_url: str,
-        coverage: Callable[[], str],
-    ) -> bool:
-        """Shared cached-entry short-circuit for both Arr runners
-
-        When the id is already cached and we're honoring SeaDex update times,
-        backfill the url + coverage on legacy records that predate those fields,
-        log the cached entry, and return True so the caller skips it. ``coverage``
-        is a zero-arg callable so the (for Sonarr, episode-fetching) coverage
-        lookup runs only on the one-time backfill, never on the common
-        already-backfilled path.
-
-        Args:
-            al_id (int): AniList id being processed
-            sd_entry (EntryRecord): Resolved SeaDex entry
-            sd_url (str): SeaDex entry URL stored on the backfilled record
-            coverage (Callable[[], str]): Lazily builds the coverage string for
-                the backfill ("" for a movie, a season/episode range for a series)
-        """
-
-        # One read of the whole row serves both the freshness check and the
-        # url-backfill check below (was a SELECT updated_at + a SELECT url).
-        entry = self.cache_store.get_entry(self._ctx.arr, al_id)
-        # Mirrors check_al_id_in_cache: absent, or a timestamp that no longer matches
-        # SeaDex's, means re-process (don't skip).
-        if entry is None or entry.updated_at != sd_entry.updated_at.strftime(UPDATED_AT_STR_FORMAT):
-            return False
-        if self._config.seadex.ignore_seadex_update_times:
-            return False
-
-        # Backfill the enriched fields for records written before they existed,
-        # so cached rows can still link to SeaDex (and, for series, show the
-        # season/episode coverage). One-time per old entry.
-        if not entry.url:
-            self.update_cache(
-                al_id=al_id,
-                cache_details={"url": sd_url, "coverage": coverage()},
-            )
-        self._reporter.log_cached_entry(self._ctx, self._ctx.arr, al_id)
-        return True
-
-    def grab_and_cache(self, req: GrabRequest) -> bool:
-        """Shared per-id tail: add torrents, notify, cache the outcome (delegates).
-
-        Both strategies build a :class:`GrabRequest` and call this through their
-        services; the produce mechanics live on
-        :class:`~.grab_pipeline.GrabPipeline`. Returns True only when
-        max_torrents_to_add was reached (the caller stops the whole run).
-        """
-
-        return self._grab_pipeline.grab_and_cache(req)
-
     # --- Wait-for-completion orchestration ----------------------------------
     #
     # The completion wait/poll machinery lives on ``self._wait_manager``
-    # (:class:`~.import_wait.ImportWaitManager`); the engine keeps the run tail
+    # (:class:`~.import_wait.ImportWaitManager`); the loop keeps the run tail
     # (``_finalize_run``) that drives its passes in order plus the walk-away
     # completion notification. Every path is a no-op under preview (no client).
 
@@ -889,7 +371,7 @@ class SeaDexArr:
         Every wait/import path is skipped on a preview (no client / dry run).
         """
 
-        preview = self._is_preview()
+        preview = self._services.is_preview()
         active = self._ctx.import_wait_mode is not ImportWaitMode.OFF and not preview
 
         if active and self._ctx.import_wait_mode is ImportWaitMode.DEFERRED:
@@ -931,50 +413,3 @@ class SeaDexArr:
             _ = self._notifier.push_wait_summary(arr=self._ctx.arr, result=result)
         except Exception:
             self.logger.debug("wait completion notification failed", exc_info=True)
-
-    # --- Presentation seam (strategy-facing) ---------------------------------
-    #
-    # The engine logs through ``self._reporter`` directly (threading ``self._ctx``
-    # and the preview/client facts so the reporter stays free of orchestrator
-    # state). The only log_* methods kept here are the ones the Sonarr/Radarr
-    # strategies invoke through their services view; each delegates the same way.
-
-    def log_entry_status(
-        self,
-        state: EntryState,
-        label: str,
-        style: str | None = "grey50",
-    ) -> bool:
-        """Log a one-line entry status row (delegates to RunReporter)."""
-        return self._reporter.log_entry_status(state, label, style=style)
-
-    def log_anilist_item_unmonitored(self, item_title: str) -> bool:
-        """Log an unmonitored-item skip (delegates to RunReporter)."""
-        return self._reporter.log_arr_item_unmonitored(self._ctx, item_title)
-
-    def log_al_title(
-        self,
-        anilist_title: str,
-        sd_entry: EntryRecord,
-        coverage: str | None = None,
-    ) -> bool:
-        """Log the active-entry header (delegates to RunReporter)."""
-        return self._reporter.log_al_title(
-            self._ctx,
-            anilist_title,
-            sd_entry,
-            coverage=coverage,
-        )
-
-    def log_cached_entry(
-        self,
-        arr: Arr,
-        al_id: int,
-        state: EntryState = EntryState.UNCHANGED,
-    ) -> bool:
-        """Log a cached entry (delegates to RunReporter)."""
-        return self._reporter.log_cached_entry(self._ctx, arr, al_id, state=state)
-
-    def log_no_seadex_releases(self) -> bool:
-        """Log a no-suitable-releases outcome (delegates to RunReporter)."""
-        return self._reporter.log_no_seadex_releases(self._ctx)

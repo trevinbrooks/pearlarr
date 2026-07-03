@@ -1,14 +1,15 @@
 """The grab "produce" side: add torrents, register pending records, write cache.
 
-Extracted from :class:`~.seadex_arr.SeaDexArr`. ``GrabPipeline`` owns the per-id
+Extracted from the old ``SeaDexArr`` god class. ``GrabPipeline`` owns the per-id
 grab tail both strategies funnel into - add the recommended release(s) to
 qBittorrent, persist the durable :class:`PendingImport` records the end-of-run
 monitor waits on, notify, and write the cache outcome. It returns a pure bool
-(cap-reached) and never calls back into the engine; the engine keeps a thin
-``grab_and_cache`` delegator so the strategy<->engine contract is unchanged.
+(cap-reached) and never calls back into the run loop;
+:class:`~.run_services.RunServices` keeps a thin ``grab_and_cache`` delegator so
+the strategy<->services contract is unchanged.
 
 Binds the run :class:`RunContext` via :meth:`begin_run` (the same object the
-engine holds), so the grab bookkeeping the run summary reads stays in sync.
+run loop holds), so the grab bookkeeping the run summary reads stays in sync.
 """
 
 import logging
@@ -60,10 +61,10 @@ class GrabRequest:
 class GrabPipeline:
     """Adds the recommended release(s), registers pending records, writes the cache.
 
-    Constructed once per run in :class:`~.seadex_arr.SeaDexArr` from the unpacked
-    deps + the placeholder ctx; :meth:`begin_run` rebinds the ctx each run. The
-    engine's ``grab_and_cache`` delegates here; ``_grab`` returns a pure bool
-    (cap-reached) so the engine owns the single finalize site.
+    Constructed once per run in :class:`~.run_services.RunServices` from the
+    unpacked deps + the placeholder ctx; :meth:`begin_run` rebinds the ctx each
+    run. The hub's ``grab_and_cache`` delegates here; ``_grab`` returns a pure
+    bool (cap-reached) so the run loop owns the single finalize site.
     """
 
     def __init__(
