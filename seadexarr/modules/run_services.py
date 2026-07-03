@@ -35,6 +35,7 @@ from .reporter import RunContext, RunReporter, is_preview
 from .seadex_filter import SeadexReleaseFilter
 from .seadex_gateway import SeaDexGateway, SeaDexSource
 from .seadex_types import (
+    ARR_REQUEST_TIMEOUT_S,
     ArrReleaseDict,
     SeadexDict,
     SonarrEpisode,
@@ -160,11 +161,15 @@ class RunDeps:
             host, username, password = credentials
             # `options` forwards any extra qbittorrentapi.Client kwargs (e.g.
             # VERIFY_WEBUI_CERTIFICATE for a self-signed WebUI); empty by default.
+            # Every request gets the shared Arr timeout so a wedged qBittorrent
+            # socket can't hang a poll; a user REQUESTS_ARGS in `options` wins.
+            options = dict(app_config.qbittorrent.options)
+            options.setdefault("REQUESTS_ARGS", {"timeout": ARR_REQUEST_TIMEOUT_S})
             client = qbittorrentapi.Client(
                 host=host,
                 username=username,
                 password=password,
-                **app_config.qbittorrent.options,
+                **options,
             )
             with boot.step("Connecting to qBittorrent"):
                 try:
