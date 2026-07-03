@@ -698,6 +698,13 @@ class DownloadPlanner:
             for u in rg_item.urls.values():
                 u.download = False
 
+        def flagged_all_addable(rg_item: SeadexReleaseGroupItem) -> bool:
+            # No flagged private url (the add-time gate refuses those).
+            return all(u.is_public for u in rg_item.urls.values() if u.download)
+
+        def all_public(rg_item: SeadexReleaseGroupItem) -> bool:
+            return all(u.is_public for u in rg_item.urls.values())
+
         same_files_groups = get_same_files_groups(seadex_dict)
 
         for same_files in same_files_groups:
@@ -720,8 +727,14 @@ class DownloadPlanner:
                         if any(u.size_mismatch for rg in flagged for u in seadex_dict[rg].urls.values()):
                             # The private flag is an upgrade (the Arr holds the
                             # release at a stale size), so the unflagged fallback
-                            # is NOT owned: promote and grab it instead.
-                            keeper = fallback_groups[0]
+                            # is NOT owned: promote and grab it instead. Prefer a
+                            # fully-public group - promotion only flips public
+                            # urls, so a mixed group's private url would leave
+                            # part of the set's coverage ungrabbed.
+                            keeper = next(
+                                (rg for rg in fallback_groups if all_public(seadex_dict[rg])),
+                                fallback_groups[0],
+                            )
                             for u in seadex_dict[keeper].urls.values():
                                 if u.is_public:
                                     u.download = True
@@ -758,8 +771,15 @@ class DownloadPlanner:
                         unflag(seadex_dict[rg])
                     continue
 
-                # Keep the first public release group, drop everything else
-                keeper = public_flagged[0]
+                # Keep the first public release group whose flagged urls are all
+                # addable: a mixed group's flagged private url is refused at add
+                # time, losing the coverage only it carries, so a fully-addable
+                # group wins over it. When none qualifies, degrade to the first
+                # public group (the add-time gate then warns).
+                keeper = next(
+                    (rg for rg in public_flagged if flagged_all_addable(seadex_dict[rg])),
+                    public_flagged[0],
+                )
 
                 # Tell the user when the keeper is a non-preferred fallback
                 # standing in for private preferred picks (a plain public-over-

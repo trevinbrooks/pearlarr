@@ -115,6 +115,51 @@ class TestReduceOverlappingDownloads:
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].level == logging.INFO
 
+    def test_public_only_keeper_prefers_fully_addable_group(self) -> None:
+        # A mixed group (public + flagged private url) is first, but its private
+        # url would be refused at add time, losing the coverage only it carries:
+        # the fully-public group wins keeper regardless of order.
+        planner = make_planner(public_only=True)
+        seadex = {
+            "Mixed": rg_group(
+                {
+                    "u1": url_item(download=True, is_public=True),
+                    "u2": url_item(download=True, is_public=False),
+                },
+            ),
+            "Pub": rg_group({"u3": url_item(download=True, is_public=True)}),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["Pub"].urls["u3"].download is True
+        assert seadex["Mixed"].urls["u1"].download is False
+        assert seadex["Mixed"].urls["u2"].download is False
+        assert skips.skipped is False
+        assert skips.notices == []
+
+    def test_public_only_keeper_degrades_to_first_when_all_mixed(self) -> None:
+        # No fully-addable group in the set: keep the first public group (its
+        # private url then hits the add-time WARNING), matching the old order.
+        planner = make_planner(public_only=True)
+        seadex = {
+            "MixedA": rg_group(
+                {
+                    "u1": url_item(download=True, is_public=True),
+                    "u2": url_item(download=True, is_public=False),
+                },
+            ),
+            "MixedB": rg_group(
+                {
+                    "u3": url_item(download=True, is_public=True),
+                    "u4": url_item(download=True, is_public=False),
+                },
+            ),
+        }
+        planner.reduce_overlapping_downloads(seadex)
+        assert seadex["MixedA"].urls["u1"].download is True
+        assert seadex["MixedA"].urls["u2"].download is True
+        assert seadex["MixedB"].urls["u3"].download is False
+        assert seadex["MixedB"].urls["u4"].download is False
+
     def test_private_only_set_with_fallback_promotes_on_size_mismatch(self) -> None:
         # The private pick was re-flagged for a SIZE mismatch (an upgrade is
         # pending): the Arr holds a stale copy, not the fallback's files, so the
@@ -132,6 +177,29 @@ class TestReduceOverlappingDownloads:
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].level == logging.INFO
+        assert "falling back to Fall" in skips.notices[0].reason
+
+    def test_promotion_prefers_fully_public_fallback_group(self) -> None:
+        # Promotion only flips public urls, so a mixed fallback group (a public
+        # fallback sharing its release group with a private pick) would leave
+        # its private url's coverage ungrabbed: the fully-public group wins.
+        planner = make_planner(public_only=True)
+        seadex = {
+            "Priv": rg_group({"u1": url_item(download=True, is_public=False, size_mismatch=True)}),
+            "MixedFall": rg_group(
+                {
+                    "u2": url_item(download=False, is_public=False),
+                    "u3": url_item(download=False, is_public=True, is_fallback=True),
+                },
+            ),
+            "Fall": rg_group({"u4": url_item(download=False, is_public=True, is_fallback=True)}),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["Fall"].urls["u4"].download is True
+        assert seadex["MixedFall"].urls["u2"].download is False
+        assert seadex["MixedFall"].urls["u3"].download is False
+        assert seadex["Priv"].urls["u1"].download is False
+        assert len(skips.notices) == 1
         assert "falling back to Fall" in skips.notices[0].reason
 
     def test_fallback_keeper_over_private_notices(self) -> None:

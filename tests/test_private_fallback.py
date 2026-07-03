@@ -16,7 +16,7 @@ import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 
-from seadex import EntryRecord, Tracker
+from seadex import EntryRecord, TorrentRecord, Tracker
 
 from seadexarr.modules.config import Arr
 from seadexarr.modules.grab_pipeline import GrabRequest
@@ -340,6 +340,164 @@ class TestFilterDownloadsNoticeSeam:
         # The skip flag + group names land on the run context for the grab tail.
         assert ctx.public_only_skipped is True
         assert ctx.public_only_groups == ["PrivB"]
+
+
+class TestMixedGroupKeeperPreference:
+    """A mixed group's inflated coverage never shadows a fully-public batch.
+
+    The coverage-aware keep gives a mixed group (public S1-only + surviving
+    private S1+S2 batch) the same same-files key as a fully-public S1+S2 batch.
+    The keeper must prefer the batch whose flagged urls are all addable - a
+    mixed keeper's private url is refused at add time, losing S2 - and degrade
+    to the add-time WARNING only when no fully-addable group exists.
+    """
+
+    H_URL = "https://nyaa.si/view/2"
+    H_HASH = "b" * 40
+
+    def _mixed_group_torrents(self) -> tuple[TorrentRecord, TorrentRecord]:
+        g_pub = make_torrent_record(
+            release_group="G",
+            tracker=Tracker.NYAA,
+            url=PUB_URL,
+            infohash=PUB_HASH,
+            file_names=("G.S01E01.web.mkv",),
+            file_size=555,
+            is_best=True,
+        )
+        g_priv = make_torrent_record(
+            release_group="G",
+            tracker=Tracker.ANIMEBYTES,
+            url=PRIV_URL,
+            infohash=None,
+            file_names=("G - S01E01.mkv", "G - S02E01.mkv"),
+            file_size=999,
+            is_best=True,
+        )
+        return g_pub, g_priv
+
+    def test_mixed_group_first_still_grabs_the_public_batch(self) -> None:
+        # G is first in dict order, but its flagged private url would be refused
+        # at add time, so H wins keeper and S2 is actually obtained - pre-fix the
+        # keeper was order-dependent and a G win silently lost S2.
+        ctx = RunContext(arr=Arr.SONARR)
+        cache = FakeCacheStore()
+        filt = make_release_filter(
+            private_releases="warn",
+            want_best=True,
+            prefer_dual_audio=False,
+            planner=make_planner(public_only=True),
+            cache_store=cache,
+            ctx=ctx,
+        )
+        g_pub, g_priv = self._mixed_group_torrents()
+        h_pub = make_torrent_record(
+            release_group="H",
+            tracker=Tracker.NYAA,
+            url=self.H_URL,
+            infohash=self.H_HASH,
+            file_names=("H.S01E01.mkv", "H.S02E01.mkv"),
+            file_size=777,
+            is_best=True,
+        )
+        entry = make_entry_record(anilist_id=55, torrents=(g_pub, g_priv, h_pub))
+        sd = filt.build(entry)
+        # The coverage-aware drop keeps G's uncovered private batch.
+        assert set(sd["G"].urls) == {PUB_URL, PRIV_URL}
+        _fill_episodes(
+            sd,
+            {
+                PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+                PRIV_URL: [
+                    EpisodeRecord(season=1, episode=1, size=999),
+                    EpisodeRecord(season=2, episode=1, size=999),
+                ],
+                self.H_URL: [
+                    EpisodeRecord(season=1, episode=1, size=777),
+                    EpisodeRecord(season=2, episode=1, size=777),
+                ],
+            },
+        )
+
+        # Sonarr is missing both episodes: every url flags before the reducer.
+        with _capture(filt.logger) as handler:
+            hashes, out = filt.filter_downloads(55, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+
+        assert out["H"].urls[self.H_URL].download is True
+        assert out["G"].urls[PUB_URL].download is False
+        assert out["G"].urls[PRIV_URL].download is False
+        assert hashes == [self.H_HASH]
+        assert not [r for r in handler.records if r.levelno >= logging.WARNING]
+        assert ctx.public_only_skipped is False
+
+        torrents = FakeTorrents({self.H_HASH: (AddOutcome.ADDED, "H S01+S02")})
+        pipe = make_grab_pipeline(
+            cache_store=cache,
+            _ctx=ctx,
+            _torrents=torrents,
+            private_releases="warn",
+            sleep_time=0,
+        )
+        pipe._anilist.al_cache.update({55: {}})
+        stopped = pipe.grab_and_cache(_grab_request(55, out, hashes, entry))
+
+        assert stopped is False
+        assert torrents.calls == [self.H_HASH]
+        assert ctx.stats.needs_action == []
+        assert cache.check_al_id_in_cache(Arr.SONARR, 55, entry) is True
+        assert cache.torrent_hashes(Arr.SONARR, 55) == [self.H_HASH]
+
+    def test_no_public_batch_boundary_warns_at_add_time(self) -> None:
+        # No fully-addable group exists: the keeper degrades to the mixed group,
+        # its public S1 url is grabbed, and the surviving private batch is
+        # refused at add time with a WARNING + the hold flag - never silently.
+        ctx = RunContext(arr=Arr.SONARR)
+        cache = FakeCacheStore()
+        filt = make_release_filter(
+            private_releases="warn",
+            want_best=True,
+            prefer_dual_audio=False,
+            planner=make_planner(public_only=True),
+            cache_store=cache,
+            ctx=ctx,
+        )
+        g_pub, g_priv = self._mixed_group_torrents()
+        entry = make_entry_record(anilist_id=56, torrents=(g_pub, g_priv))
+        sd = filt.build(entry)
+        _fill_episodes(
+            sd,
+            {
+                PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+                PRIV_URL: [
+                    EpisodeRecord(season=1, episode=1, size=999),
+                    EpisodeRecord(season=2, episode=1, size=999),
+                ],
+            },
+        )
+
+        hashes, out = filt.filter_downloads(56, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+        assert out["G"].urls[PUB_URL].download is True
+        assert out["G"].urls[PRIV_URL].download is True
+        assert hashes == [PUB_HASH]
+
+        torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "G S01 web")})
+        pipe = make_grab_pipeline(
+            cache_store=cache,
+            _ctx=ctx,
+            _torrents=torrents,
+            private_releases="warn",
+            sleep_time=0,
+        )
+        pipe._anilist.al_cache.update({56: {}})
+        with _capture(pipe.log_fmt.logger) as handler:
+            pipe.grab_and_cache(_grab_request(56, out, hashes, entry))
+
+        warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+        assert any("private-only (private releases not allowed)" in m for m in warnings), warnings
+        assert ctx.public_only_skipped is True
+        assert ctx.public_only_groups == ["G"]
+        assert torrents.calls == [PUB_HASH]
+        assert cache.check_al_id_in_cache(Arr.SONARR, 56, entry) is True
 
 
 class TestSurvivingPrivateCoverage:
