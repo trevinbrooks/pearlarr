@@ -104,6 +104,10 @@ _FLAT_ALIASES: dict[str, tuple[str, str]] = {
     "radarr_ignore_unmonitored": ("radarr", "ignore_unmonitored"),
     "sonarr_torrent_category": ("sonarr", "torrent_category"),
     "radarr_torrent_category": ("radarr", "torrent_category"),
+    # The bare url/api_key flat names resolve to sonarr (first-wins); these reach
+    # the radarr connection keys for the Radarr-run builders/tests.
+    "radarr_url": ("radarr", "url"),
+    "radarr_api_key": ("radarr", "api_key"),
 }
 
 

@@ -1,22 +1,23 @@
 # pyright: strict
-"""End-to-end smoke test: one full Sonarr pass through the REAL composition root.
+"""End-to-end smoke tests: one full pass per arr through the REAL composition root.
 
-This is the single test that proves ``cli.run_single`` -> ``_run_arrs`` ->
-``RunDeps.build`` -> ``SeaDexArr.run_sync`` -> ``SonarrSync`` hooks actually run a
-sync wired together, with ONLY the external network leaves faked:
+These are the tests that prove ``cli.run_single`` -> ``_run_arrs`` ->
+``RunDeps.build`` -> ``SeaDexArr.run_sync`` -> ``SonarrSync`` / ``RadarrSync``
+hooks actually run a sync wired together, with ONLY the external network leaves
+faked:
 
 * the SeaDex library, faked at the gateway's httpx boundary (``SeaDexEntry``);
 * qBittorrent, left unconfigured so the whole run is a perpetual preview;
-* the Sonarr + AniList HTTP, mocked at the ``requests`` boundary via ``responses``;
+* the Arr + AniList HTTP, mocked at the ``requests`` boundary via ``responses``;
 * the Nyaa source (``pynyaa``/httpx, which ``responses`` can't intercept), faked
   at ``torrents.get_nyaa_torrent``.
 
 Everything in between is the real wiring. The id flows by hand-wired three-way
-agreement: the captured ``series`` fixture's ``tvdbId`` (299502) -> an inline
-``anime_mappings`` entry -> AniList id 20920 -> the faked SeaDex entry. The fakes
-record, so the assertions prove that id actually flowed end to end (a vacuous run
-that resolved nothing would still return True - the recorded calls are what make
-this non-hollow).
+agreement: the Arr item's external id (the ``series`` fixture's ``tvdbId``, the
+inline movie body's ``tmdbId``) -> an inline ``anime_mappings`` entry -> an
+AniList id -> the faked SeaDex entry. The fakes record, so the assertions prove
+that id actually flowed end to end (a vacuous run that resolved nothing would
+still return True - the recorded calls are what make this non-hollow).
 """
 
 import logging
@@ -140,6 +141,129 @@ def test_sonarr_run_drives_real_composition_root(tmp_path: Path, monkeypatch: py
     assert f"GET {_BASE}/series" in fired
     assert f"GET {_BASE}/episode" in fired
     assert f"GET {_BASE}/parse" in fired
+    # The resolved entry's release reached the (preview) grab at the torrent source.
+    assert nyaa_calls == [_NYAA_RELEASE_URL]
+    # ...and the whole pass logged no error (a swallowed failure would tally here).
+    counter = getattr(logging.getLogger("SeaDexArr"), "seadex_counter", None)
+    assert isinstance(counter, LogCounter)
+    assert counter.counts.get(logging.ERROR, 0) == 0
+    assert counter.counts.get(logging.CRITICAL, 0) == 0
+
+
+# Three-way id agreement for the Radarr pass: the inline movie body's tmdbId
+# (372058) -> the inline mapping -> AniList 21519 -> the faked SeaDex entry.
+_RADARR_TMDB = 372058
+_RADARR_ANILIST = 21519
+_RADARR_BASE = "http://radarr.test/api/v3"
+
+# A minimal valid AniList batch body for the movie id, so the real title-prefetch
+# succeeds in one request instead of retrying a blocked endpoint.
+_RADARR_ANILIST_BODY: dict[str, object] = {
+    "data": {
+        "Page": {
+            "media": [
+                {
+                    "id": _RADARR_ANILIST,
+                    "title": {"romaji": "Kimi no Na wa.", "english": "Your Name.", "native": None},
+                    "episodes": 1,
+                    "format": "MOVIE",
+                    "status": "FINISHED",
+                    "coverImage": {"large": None},
+                    "siteUrl": None,
+                },
+            ],
+        },
+    },
+}
+
+# A minimal ``/api/v3/movie`` record arrapi can parse (no captured Radarr fixtures
+# exist; ``Movie._load`` defaults every absent key). Every attribute the run READS
+# (id/title/tmdbId/imdbId/monitored) is non-None on purpose: arrapi's partial-
+# reload magic re-fetches ``/movie/{id}`` on any None attribute read.
+_MOVIE_BODY: dict[str, object] = {
+    "id": 42,
+    "title": "Your Name.",
+    "tmdbId": _RADARR_TMDB,
+    "imdbId": "tt5311514",
+    "monitored": True,
+    "year": 2016,
+    "hasFile": True,
+}
+
+
+def test_radarr_run_drives_real_composition_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The SeaDex entry the resolved id maps to: one grabbable Nyaa release (a
+    # movie is a single file; no episode parsing runs on the Radarr path).
+    entry = make_entry_record(
+        anilist_id=_RADARR_ANILIST,
+        torrents=(
+            make_torrent_record(
+                url=_NYAA_RELEASE_URL,
+                file_names=("Your Name (2016) [BD 1080p].mkv",),
+            ),
+        ),
+    )
+
+    # Fake the two external leaves; both record so the resolved id's flow is provable.
+    filter_calls: list[str] = []
+    nyaa_calls: list[str] = []
+
+    class _FakeSeaDexEntry:
+        """Stand-in for the SeaDex lib's ``SeaDexEntry`` (the gateway's httpx leaf)."""
+
+        def __init__(self) -> None: ...
+
+        def from_filter(self, query: str) -> list[EntryRecord]:
+            filter_calls.append(query)
+            return [entry]
+
+        def from_id(self, al_id: int) -> EntryRecord:
+            del al_id
+            return entry
+
+    def _fake_get_nyaa_torrent(url: str) -> tuple[str, str]:
+        nyaa_calls.append(url)
+        return ("magnet:?xt=urn:btih:" + "b" * 40, "Your Name (2016) [BD 1080p]")
+
+    monkeypatch.setattr(seadex_gateway, "SeaDexEntry", _FakeSeaDexEntry)
+    monkeypatch.setattr(torrents, "get_nyaa_torrent", _fake_get_nyaa_torrent)
+
+    # A real config.yml on disk: Radarr creds, qBittorrent unset -> preview, and
+    # the one inline tmdb->anilist mapping that lets the REAL resolver resolve a
+    # live id with no network (anidb/anibridge disabled).
+    monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+    config = make_config(
+        radarr_url="http://radarr.test",
+        radarr_api_key="testkey",
+        anime_mappings={"Your Name": {"anilist_id": _RADARR_ANILIST, "tmdb_movie_id": _RADARR_TMDB}},
+        anidb_mappings=False,
+        anibridge_mappings=False,
+        sleep_time=0,
+    )
+    (tmp_path / "config.yml").write_text(yaml.safe_dump(config.model_dump(mode="json")))
+
+    # The Radarr + AniList HTTP boundary. responses patches the requests adapter
+    # globally, so both the shared Session and arrapi's own Session are intercepted.
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        # arrapi's construction-time probe, the library fetch, and the per-movie
+        # file read (empty -> the {None: [None]} no-existing-file release dict).
+        rsps.add(responses.GET, f"{_RADARR_BASE}/system/status", json={"version": "5.0.0"})
+        rsps.add(responses.GET, f"{_RADARR_BASE}/movie", json=[_MOVIE_BODY])
+        rsps.add(responses.GET, f"{_RADARR_BASE}/moviefile", json=[])
+        rsps.add(responses.POST, _ANILIST_URL, json=_RADARR_ANILIST_BODY)
+
+        result = run_single(radarr=True, import_wait_mode=ImportWaitMode.OFF)
+
+        fired = {f"{call.request.method or ''} {(call.request.url or '').split('?')[0]}" for call in rsps.calls}
+
+    # The real composition root ran one full Radarr pass with zero real network.
+    assert result is True
+    # The inline tmdb->anilist mapping resolved id 21519 and the gateway was consulted
+    # for it - the anti-vacuity guard: a run that resolved nothing never gets here.
+    assert any(str(_RADARR_ANILIST) in query for query in filter_calls)
+    # The real Radarr client drove the library fetch + the movie-file read.
+    assert f"GET {_RADARR_BASE}/movie" in fired
+    assert f"GET {_RADARR_BASE}/moviefile" in fired
     # The resolved entry's release reached the (preview) grab at the torrent source.
     assert nyaa_calls == [_NYAA_RELEASE_URL]
     # ...and the whole pass logged no error (a swallowed failure would tally here).
