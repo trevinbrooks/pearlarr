@@ -10,11 +10,12 @@
 SeaDexArr is designed as a tool to ensure that you have Anime releases on the Arr apps that match with the best 
 releases tagged on SeaDex. SeaDexArr supports both Sonarr and Radarr.
 
-For Sonarr, it works by scanning through series, matching these up via the TVDB or IMDb IDs to AniList 
-mappings via the Kometa Anime Mappings (https://github.com/Kometa-Team/Anime-IDs), AniDB mappings 
-(https://github.com/Anime-Lists/anime-lists), and PlexAniBridge-Mappings 
-(https://github.com/eliasbenb/PlexAniBridge-Mappings) and ultimately finding releases in the SeaDex database. For 
-Radarr, this works much the same but instead using the TMDB and IMDb IDs.
+For Sonarr, it works by scanning through series, matching these up via the TVDB or IMDb IDs to AniList IDs 
+and ultimately finding releases in the SeaDex database. The primary mapping source is PlexAniBridge-Mappings 
+(https://github.com/eliasbenb/PlexAniBridge-Mappings), with the Kometa Anime Mappings 
+(https://github.com/Kometa-Team/Anime-IDs) and AniDB mappings (https://github.com/Anime-Lists/anime-lists) 
+as fallbacks for anything it misses. For Radarr, this works much the same but instead using the TMDB and 
+IMDb IDs.
 
 SeaDexArr will then do some cuts to select a "best" release, which can be pushed to Discord via a bot, and added
 automatically to a torrent client. This should make it significantly more hands-free to keep the best Anime releases 
@@ -22,20 +23,20 @@ out there.
 
 There are then two options for how SeaDexArr will filter releases to grab:
 
-Against existing files (default; `use_torrent_hash_to_filter = False`):
+Against existing files (default; `seadex.use_torrent_hash_to_filter: false`):
 
 SeaDexArr will attempt to match these releases to release groups in Sonarr/Radarr, and for Sonarr will also try to
 parse filenames to check against individual episodes. SeaDexArr also checks against filesizes, to attempt to catch when 
 release groups put out updated releases, or those at higher quality.
 
-Against torrent hashes (`use_torrent_hash_to_filter = True`):
+Against torrent hashes (`seadex.use_torrent_hash_to_filter: true`):
 
 SeaDexArr will match releases to torrent hashes in the cache. This will ensure that if releases get updated then they
 will be grabbed. However, if you already have an existing library then this could result in torrents being downloaded
 again, and will grab multiple overlapping results if you aren't in interactive mode.
 
 By default, SeaDexArr will not check a particular release again unless SeaDex has updated recently. You can override
-this behaviour by setting ``ignore_seadex_update_times`` to True in the config (see config section below).
+this behaviour by setting ``seadex.ignore_seadex_update_times`` to true in the config (see config section below).
 
 > [!TIP]
 > **If you make changes to your config, you should probably remove your cache. You can do so by CLI,
@@ -110,6 +111,11 @@ To run for just a single title, pass ``--movie-id`` with a movie's TMDB ID (runs
 ``run single --series-id 67890``. Either flag on its own implies a run of the matching module,
 so you don't also need ``--radarr``/``--sonarr``.
 
+``run single`` also accepts ``--dry-run``, which simulates the run without grabbing torrents,
+writing the cache, or sending notifications, and ``--import-wait-mode``, which overrides the
+configured ``imports.wait_mode`` (off/deferred/blocking/hybrid) for that run (see
+"Waiting for imports" below).
+
 ### ``seadexarr config``
 
 To generate a blank config file, simply enter ``config init``. You can then populate
@@ -122,92 +128,153 @@ Prints the resolved data directory and the files within it (config, caches, logs
 Useful for confirming where SeaDexArr is reading/writing, especially with a custom
 ``--data-dir`` or ``SEADEX_ARR_DATA_DIR``.
 
-### ```seadexarr cache```
+### ``seadexarr cache``
 
-There are a number of cache commands: ``cache backup`` will rename ``cache.json`` to ``cache.backup.json``,
-``cache restore`` will restore this backup, and ``cache remove`` will remove the cache file. This can
-be useful if you've changed the config and want to do a fresh run.
+There are five cache commands:
+
+- ``cache backup``: back up ``cache.db`` to ``cache.backup.db``, using the SQLite online-backup API
+  so the snapshot is consistent even mid-write
+- ``cache restore``: replace ``cache.db`` with ``cache.backup.db`` (clearing any stale WAL/SHM
+  sidecar files first)
+- ``cache remove``: delete ``cache.db`` and its WAL/SHM sidecar files. Useful if you've changed
+  the config and want to do a fresh run
+- ``cache stats``: print cache health (per-block row counts and on-disk size)
+- ``cache check``: run a SQLite integrity check on the cache database
 
 ## Scripting
 
-To run SeaDexArr in a Python script, the code is simple:
+The CLI is the primary interface — a one-off run is just ``seadexarr run single --sonarr --radarr``.
+The same composition is available programmatically: build the shared collaborators with
+``RunDeps.build``, inject them into the ``SeaDexArr`` engine plus an Arr strategy, and drive
+``run_sync``:
 
+```python
+from seadexarr import RunDeps, SeaDexArr, SonarrSync
+from seadexarr.modules.config import AppConfig, Arr
+from seadexarr.modules.mappings import MappingResolver
+from seadexarr.modules.paths import ensure_data_dir, resolve_paths
+
+paths = resolve_paths()
+ensure_data_dir(paths)
+config = AppConfig.load(paths.config)
+
+# Downloads/parses the ID-mapping sources once; shared across Arr runs.
+mappings = MappingResolver(
+    cache_time=config.advanced.cache_time,
+    ignore_anilist_ids=config.seadex.ignore_anilist_ids,
+    anime_mappings_cfg=config.mappings.anime_mappings,
+    anidb_mappings_cfg=config.mappings.anidb_mappings,
+    anibridge_mappings_cfg=config.mappings.anibridge_mappings,
+    mappings_db=paths.mappings_db,
+)
+try:
+    deps = RunDeps.build(
+        Arr.SONARR,
+        paths.config,
+        paths.cache,
+        mappings=mappings,
+        app_config=config,
+    )
+    services = SeaDexArr(deps, Arr.SONARR)
+    try:
+        services.run_sync(
+            SonarrSync(deps, services),
+            arr=Arr.SONARR,
+            item_id=None,
+            dry_run=False,
+        )
+    finally:
+        services.close()
+finally:
+    mappings.close()
 ```
-from seadexarr import SeaDexSonarr, SeaDexRadarr
 
-sds = SeaDexSonarr()
-sds.run()
-
-sdr = SeaDexRadarr()
-sdr.run()
-```
-
-On the first run, the code will generate a config file in the data directory (run
-``seadexarr paths`` to find it). This should be populated to your own preference, and then
-run the code again.
+A Radarr run is the same shape with ``RadarrSync`` and ``Arr.RADARR``. If no config file exists
+yet, ``AppConfig.load`` writes the starter template to the data directory (run ``seadexarr paths``
+to find it) and raises ``FileNotFoundError``; populate it to your own preference and run again.
 
 ## How SeaDexArr chooses a release
 
 SeaDexArr performs a number of cuts to get to a single best release for you. 
-First, it will filter out all torrents that have any tags as defined in ``ignore_tags``.
+First, it will filter out all torrents that have any tags as defined in ``seadex.ignore_tags``.
 Then, it will filter out all torrents coming from trackers that haven't been specified (if you haven't been more 
-granular, this will be all public trackers and potentially all private trackers; see ``trackers``). 
-Then, if you only want public torrents (``public_only``), it will filter out anything from a private tracker. 
-Next, if you only want to grab releases marked by SeaDex as "best" (``want_best``), it will down-select any torrents 
-marked as "best", as long as there's at least one. 
-Finally, if you want dual audio (``prefer_dual_audio``), it will down-select any dual-audio torrents, as long as 
-there's at least one. If this is instead set to ``False``, it will do the opposite, filtering out any dual-audio 
+granular, this will be all public trackers and potentially all private trackers; see ``seadex.trackers``). 
+Then, if you only want public torrents (``seadex.public_only``), it will filter out anything from a private tracker. 
+Next, if you only want to grab releases marked by SeaDex as "best" (``seadex.want_best``), it will down-select any 
+torrents marked as "best", as long as there's at least one. 
+Finally, if you want dual audio (``seadex.prefer_dual_audio``), it will down-select any dual-audio torrents, as long 
+as there's at least one. If this is instead set to ``false``, it will do the opposite, filtering out any dual-audio 
 torrents (so long as there's at least one not tagged as dual-audio). 
 By doing this, SeaDexArr should generally find a single best
-torrent, though if you're in interactive mode (``interactive``) and there are multiple options that match your
-criteria, it will give you an option to select one (or multiple).
+torrent, though if you're in interactive mode (``advanced.interactive``) and there are multiple options that match
+your criteria, it will give you an option to select one (or multiple).
+
+## Waiting for imports
+
+SeaDexArr can optionally wait for grabbed torrents to finish downloading and then shepherd them
+into Sonarr (Sonarr only; on Radarr runs this is a no-op). After a torrent is added, SeaDexArr
+waits for qBittorrent to finish it, then asks Sonarr to rescan and watches its queue: it lets
+Sonarr import the files itself, and only steps in with a series-pinned manual import (using
+SeaDexArr's own authoritative episode mapping) when Sonarr can't auto-import them or isn't
+tracking the download.
+
+The feature is controlled by ``imports.wait_mode``:
+
+- ``off``: disabled (default) — no waiting, no pending records, no manual import
+- ``deferred``: never block; import already-complete downloads on a later run
+- ``blocking``: block at the end of the run until downloads complete, then import
+- ``hybrid``: recommended — a deferred reconcile at the start of the run plus a blocking pass at
+  the end
+
+The remaining ``imports.*`` keys (timeouts, poll cadence, import mode, languages) are described in
+the config section below. To get a push notification when a wait pass finishes, set
+``notifications.wait_notify`` — it defaults to on whenever a Discord or generic webhook is
+configured (see ``notifications.wait_webhook_url``).
 
 ## Config
 
-There are a number of configuration settings to play around with. These should be self-explanatory, but a more detailed
-description of each is given below.
+The config file is nested YAML: settings live in eight groups (``sonarr``, ``radarr``,
+``qbittorrent``, ``seadex``, ``imports``, ``notifications``, ``mappings``, ``advanced``), referred
+to as ``group.key`` below. The config is validated on load — an unknown or misspelled key fails
+with an error naming it rather than being silently ignored — and keys left blank fall back to
+their defaults. These should be self-explanatory, but a more detailed description of each is given
+below.
 
-### Arr settings
+### Sonarr/Radarr settings
 
-- `sonarr_url`: URL for Sonarr. Required if running SeaDexSonarr
-- `sonarr_api_key`: API key for Sonarr (Settings/General/API Key). Required if running SeaDexSonarr
-- `ignore_movies_in_radarr`: If True, will not add releases found in Sonarr (movie specials) if they already
-  exist as movies in Radarr. Defaults to False
+- `sonarr.url`: URL for Sonarr. Required when running the Sonarr module
+- `sonarr.api_key`: API key for Sonarr (Settings/General/API Key). Required when running the Sonarr module
+- `sonarr.ignore_unmonitored`: If true, will skip series unmonitored in Sonarr. Defaults to false
+- `sonarr.torrent_category`: Sonarr torrent import category, if you have one. Defaults to blank, which won't
+  set a category
+- `sonarr.ignore_movies_in_radarr`: If true, will not add releases found in Sonarr (movie specials) if they already
+  exist as movies in Radarr. Defaults to false
 
-- `radarr_url`: URL for Radarr. Required if running SeaDexRadarr
-- `radarr_api_key`: API key for Radarr (Settings/General/API Key). Required if running SeaDexRadarr
+The `radarr` group takes the same keys (minus `ignore_movies_in_radarr`): `radarr.url`,
+`radarr.api_key`, `radarr.ignore_unmonitored`, and `radarr.torrent_category`.
 
-### Torrent settings
+### qBittorrent settings
 
-- `qbit_info`: Details for qBittorrent. This requires a host URL, username, and password to be set. 
-   Required if using qBittorrent
-- `sonarr_torrent_category`: Sonarr torrent import category, if you have one. Defaults to None, which won't 
-   set a category
-- `radarr_torrent_category`: Radarr torrent import category, if you have one. Defaults to None, which won't 
-   set a category
-- `torrent_tags`: Tags to add to the torrent when added to a client. Defaults to None, which won't add any tags
-- `max_torrents_to_add`: used to limit the number of torrents you add in one run. Defaults to None, which 
-   will just add everything it finds
-
-### Discord settings
-
-- `discord_url`: If you want to use Discord notifications (recommended), then set up a webhook following 
-   [this guide](https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks) and add the URL
-   here. Defaults to None, which won't use the Discord integration
+- `qbittorrent.host`/`qbittorrent.username`/`qbittorrent.password`: Details for qBittorrent. All three are
+  needed to add torrents; leave any blank and SeaDexArr runs in preview mode (nothing is grabbed)
+- `qbittorrent.tags`: Tags to add to the torrent when added to the client. Defaults to blank, which won't
+  add any tags
+- `qbittorrent.options`: Extra keyword arguments for the qBittorrent client, e.g.
+  `{VERIFY_WEBUI_CERTIFICATE: false}` for a self-signed WebUI. Defaults to empty
 
 ### SeaDex filters
 
-- `public_only`: Will only return results from public trackers. Defaults to True
-- `prefer_dual_audio`: Prefer results tagged as dual audio, if any exist. If False, will instead prefer Ja-only 
-  releases. Defaults to True
-- `want_best`: Prefer results tagged as best, if any exist. Defaults to True
-- `ignore_tags`: Can filter out based on SeaDex tags. Some examples:
+- `seadex.public_only`: Will only return results from public trackers. Defaults to true
+- `seadex.prefer_dual_audio`: Prefer results tagged as dual audio, if any exist. If false, will instead prefer
+  Ja-only releases. Defaults to true
+- `seadex.want_best`: Prefer results tagged as best, if any exist. Defaults to true
+- `seadex.ignore_tags`: Can filter out based on SeaDex tags. Some examples:
   - Dolby Vision
   - Misplaced Special
   - Deband Required
-- `trackers`: Can manually select a list of trackers. Defaults to None, which will use all the 
-  public trackers and private trackers if `public_only` is False. All trackers with torrents on SeaDex, and whether 
-  they are supported are below.
+- `seadex.trackers`: Can manually select a list of trackers. Defaults to blank, which will use all the 
+  public trackers and private trackers if `seadex.public_only` is false. All trackers with torrents on SeaDex, and
+  whether they are supported are below.
   - Public trackers
     - Nyaa (supported)
     - AnimeTosho (supported)
@@ -217,29 +284,69 @@ description of each is given below.
     - AB
     - BeyondHD
     - PassThePopcorn
+    - BroadcastTheNet
     - HDBits
     - Blutopia
     - Aither
+- `seadex.ignore_anilist_ids`: AniList IDs to never process (a list of integer IDs). Defaults to empty
+- `seadex.ignore_seadex_update_times`: If true, will not check against the update times in the cache to
+  decide whether to search for a release. Defaults to false
+- `seadex.use_torrent_hash_to_filter`: Can either try and filter by release groups in Sonarr/Radarr (false),
+  or by torrent hashes in the cache (true). Defaults to false. See a more detailed description above
+
+### Import settings
+
+These control the wait-for-completion and Sonarr manual-import feature (see "Waiting for imports"
+above; Sonarr only).
+
+- `imports.wait_mode`: `off` (disabled), `deferred`, `blocking`, or `hybrid`. Defaults to off
+- `imports.wait_timeout`: Seconds to wait per torrent for qBittorrent to finish. Defaults to 3600
+- `imports.ready_timeout`: Seconds to then wait for Sonarr to rescan and import. Defaults to 600
+- `imports.poll_interval`: Seconds between polls of qBittorrent and the Sonarr queue. Defaults to 30
+- `imports.progress_poll_interval`: Seconds between cheap progress re-reads for the wait screen's
+  files-imported bar. 0 disables it, and values at or above `imports.poll_interval` behave the same.
+  Defaults to 5
+- `imports.mode`: Sonarr import mode: `auto`, `move`, or `copy`. Defaults to auto
+- `imports.default_quality`: Fallback quality name (e.g. Bluray-2160p) for manual imports, useful on
+  a 4K instance. Defaults to blank
+- `imports.languages_dual`: Languages applied to imported dual-audio releases. Defaults to
+  [Japanese, English]
+- `imports.languages_single`: Languages applied to imported single-audio releases. Defaults to [Japanese]
+- `imports.pending_max_age_days`: Drop pending-import records older than this many days. Defaults to 14
+- `imports.digest_interval`: Target seconds between wait-progress digests on a non-TTY (Docker/cron).
+  Defaults to 300
+
+### Notification settings
+
+- `notifications.discord_url`: If you want to use Discord notifications (recommended), then set up a webhook
+  following [this guide](https://support.discord.com/hc/en-us/articles/228383668-Intro-to-Webhooks) and add the URL
+  here. Defaults to blank, which won't use the Discord integration
+- `notifications.wait_webhook_url`: Generic outbound webhook (ntfy/gotify/Home Assistant) for the wait
+  summary. Defaults to blank
+- `notifications.wait_notify`: Push a notification when a wait pass completes. Defaults to on whenever
+  either webhook above is set
+
+### Mapping settings
+
+- `mappings.anime_mappings`: Can provide custom Anime ID mappings here. Otherwise, will use the Kometa mappings.
+  Set to false to disable Anime ID mappings entirely. The general user should not set this. Defaults to blank
+- `mappings.anidb_mappings`: Set to false to disable AniDB mappings entirely. Otherwise, will use the AniDB
+  mappings (used for specials). The general user should not set this. Defaults to blank
+- `mappings.anibridge_mappings`: Can provide custom AniBridge mappings here. Otherwise, will use the
+  PlexAniBridge mappings (the primary mapping source). Set to false to disable AniBridge mappings entirely.
+  The general user should not set this. Defaults to blank
 
 ### Advanced settings
 
-- `ignore_seadex_update_times`: If True, will not check against the update times in the cache to
-  decide whether to search for a release. Defaults to False
-- `use_torrent_hash_to_filter`: Can either try and filter by release groups in Sonarr/Radarr (False),
-  or by torrent hashes in the cache (True). Defaults to False. See a more detailed description above
-- `sleep_time`: To avoid hitting API rate limits, after each query SeaDexArr will wait a number 
-   of seconds. Defaults to 2
-- `cache_time`: The mappings files don't change all the time, so are cached for a certain number
-   of days. Defaults to 1
-- `interactive`: If True, will enable interactive mode, which when multiple torrent options are
-   found, will ask for input to choose one. Otherwise, will just grab everything. Defaults to False
-- `anime_mappings`: Can provide custom Anime ID mappings here. Otherwise, will use the Kometa mappings.
-  Set to False to disable Anime ID mappings entirely. The general user should not set this. Defaults to None
-- `anidb_mappings`: Can provide custom AniDB mappings here. Otherwise, will use the AniDB mappings.
-  Set to False to disable AniDB mappings entirely. The general user should not set this. Defaults to None
-- `anibridge_mappings`: Can provide custom AniBridge mappings here. Otherwise, will use the PlexAniBridge mappings.
-  Set to False to disable AniBridge mappings entirely. The general user should not set this. Defaults to None
-- `log_level`: Controls the level of logging. Can be WARNING, INFO, or DEBUG. Defaults to "INFO"
+- `advanced.sleep_time`: To avoid hitting API rate limits, after each query SeaDexArr will wait a number 
+  of seconds. Defaults to 2
+- `advanced.cache_time`: The mappings files don't change all the time, so are cached for a certain number
+  of days. Defaults to 1
+- `advanced.interactive`: If true, will enable interactive mode, which when multiple torrent options are
+  found, will ask for input to choose one. Otherwise, will just grab everything. Defaults to false
+- `advanced.max_torrents_to_add`: Used to limit the number of torrents you add in one run. Defaults to blank,
+  which will just add everything it finds
+- `advanced.log_level`: Controls the level of logging. Can be WARNING, INFO, or DEBUG. Defaults to "INFO"
 
 ## Roadmap
 

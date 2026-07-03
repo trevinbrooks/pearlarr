@@ -2,6 +2,7 @@
 ==================
 
 - Store config, caches and logs together in one OS-standard data directory (via ``platformdirs``); override with ``SEADEX_ARR_DATA_DIR`` or the global ``--data-dir`` flag, and run ``seadexarr paths`` to print the resolved locations. **Breaking:** the default location moved off the install directory (e.g. ``~/.local/share/seadexarr`` on Linux, ``~/Library/Application Support/seadexarr`` on macOS); move an existing ``config.yml``/cache into the new directory, or set ``SEADEX_ARR_DATA_DIR``. Logs now follow the data directory instead of the working directory
+- Add wait-for-completion and Sonarr manual import (``imports.wait_mode``: off/deferred/blocking/hybrid): optionally wait for qBittorrent to finish grabbed torrents, let Sonarr import them, and step in with a manual import when it can't - with optional completion notifications (``notifications.wait_notify``)
 - When "public_only" is set, prefer public URLs per release group; if the only option for a release the Arr is missing is private, log an error and skip the title (leaving it uncached so it's retried) instead of grabbing a private release
 - Where multiple preferred release groups cover the exact same files, only download one (preferring a public release), rather than grabbing them all
 - Add "ignore_anilist_ids", which allows you to skip specific AniList IDs from being processed
