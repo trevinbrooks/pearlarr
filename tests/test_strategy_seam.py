@@ -18,12 +18,15 @@ from typing import NamedTuple
 import pytest
 from seadex import EntryRecord
 
+from seadexarr.modules.cache import CacheRecord
+from seadexarr.modules.grab_pipeline import GrabRequest
 from seadexarr.modules.log import EntryState
-from seadexarr.modules.manual_import import ImportReadiness, PendingImport
+from seadexarr.modules.manual_import import ImportProgress, ImportReadiness, PendingImport
 from seadexarr.modules.mappings import MappingEntry, MappingSource
 from seadexarr.modules.seadex_radarr import RadarrSync
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
+    ArrReleaseDict,
     CommandResource,
     Language,
     ManualImportCandidate,
@@ -32,6 +35,7 @@ from seadexarr.modules.seadex_types import (
     QualityDefinition,
     QueueRecord,
     RadarrItem,
+    SeadexDict,
     SonarrEpisode,
     SonarrItem,
 )
@@ -47,7 +51,9 @@ from .builders import (
     make_sonarr_sync,
     manual_candidate,
     pending_import,
+    rg_group,
     sonarr_ep,
+    url_item,
 )
 from .fakes import CaptureHandler, FakeSonarrClient
 
@@ -101,15 +107,29 @@ class _FakeRunServices:
         prologue_entry: EntryRecord | None = None,
         anilist_title: str = "Title",
         cached_skip: bool = False,
+        seadex_dict: SeadexDict | None = None,
+        filter_downloads_result: tuple[list[str | None], SeadexDict] | None = None,
+        grab_result: bool = False,
+        no_releases_result: bool = False,
     ) -> None:
         self._anilist_ids = anilist_ids or {}
         self._prologue_entry = prologue_entry
         self._anilist_title = anilist_title
         self._cached_skip = cached_skip
+        self._seadex_dict: SeadexDict = seadex_dict if seadex_dict is not None else {}
+        self._filter_downloads_result = filter_downloads_result
+        self._grab_result = grab_result
+        self._no_releases_result = no_releases_result
         self.get_anilist_ids_calls: list[GetAniListIdsCall] = []
         self.al_id_prologue_calls: list[int] = []
         self.log_entry_status_calls: list[tuple[EntryState, str]] = []
         self.log_al_title_calls: list[str] = []
+        self.cached_skip_coverages: list[Callable[[], str]] = []
+        self.get_seadex_dict_calls: list[EntryRecord] = []
+        self.interactive_calls: list[SeadexDict] = []
+        self.filter_downloads_calls: list[tuple[int, SeadexDict, ArrReleaseDict]] = []
+        self.grab_requests: list[GrabRequest] = []
+        self.no_releases_calls: list[tuple[int, CacheRecord]] = []
 
     def get_anilist_ids(
         self,
@@ -134,12 +154,47 @@ class _FakeRunServices:
         sd_url: str,
         coverage: Callable[[], str],
     ) -> bool:
-        del al_id, sd_entry, sd_url, coverage
+        del al_id, sd_entry, sd_url
+        self.cached_skip_coverages.append(coverage)
         return self._cached_skip
 
     def get_anilist_title(self, al_id: int) -> str:
         del al_id
         return self._anilist_title
+
+    def get_seadex_dict(self, sd_entry: EntryRecord) -> SeadexDict:
+        self.get_seadex_dict_calls.append(sd_entry)
+        return self._seadex_dict
+
+    def filter_seadex_interactive(
+        self,
+        seadex_dict: SeadexDict,
+        sd_entry: EntryRecord,
+    ) -> SeadexDict:
+        del sd_entry
+        self.interactive_calls.append(seadex_dict)
+        return seadex_dict
+
+    def filter_seadex_downloads(
+        self,
+        al_id: int,
+        seadex_dict: SeadexDict,
+        arr_release_dict: ArrReleaseDict,
+        ep_list: list[SonarrEpisode] | None = None,
+    ) -> tuple[list[str | None], SeadexDict]:
+        del ep_list
+        self.filter_downloads_calls.append((al_id, seadex_dict, arr_release_dict))
+        if self._filter_downloads_result is not None:
+            return self._filter_downloads_result
+        return ([], seadex_dict)
+
+    def no_releases_skip(self, al_id: int, cache_details: CacheRecord) -> bool:
+        self.no_releases_calls.append((al_id, cache_details))
+        return self._no_releases_result
+
+    def grab_and_cache(self, req: GrabRequest) -> bool:
+        self.grab_requests.append(req)
+        return self._grab_result
 
     def log_entry_status(self, state: EntryState, label: str, style: str | None = "grey50") -> bool:
         del style
@@ -1031,6 +1086,13 @@ class TestRadarrImportCompletedNoOp:
 
         assert strat.pending_import_series_id(_Item(id=5)) is None
 
+    def test_import_progress_is_indeterminate_zero(self) -> None:
+        # Radarr records no pending imports; the progress hook returns the safe
+        # "no bar, promote nothing" value.
+        strat = make_bare_instance(RadarrSync, logger=make_logger())
+
+        assert strat.import_progress(pending_import()) == ImportProgress(0, 0, determinate=False)
+
 
 class TestManualImportWarningGating:
     """The import warns loudly only at the deadline; otherwise it's debug.
@@ -1117,14 +1179,127 @@ class TestResolveLanguageObjects:
 
 
 class _FakeRadarr:
-    """Minimal Radarr client: scripts the per-movie movie-file list."""
+    """Minimal Radarr client: scripts (and records) the per-movie movie-file list."""
 
     def __init__(self, files: list[MovieFile]) -> None:
         self._files = files
+        self.movie_files_calls: list[int] = []
 
     def movie_files(self, movie_id: int) -> list[MovieFile]:
-        del movie_id
+        self.movie_files_calls.append(movie_id)
         return self._files
+
+
+def _one_group_dict(srg: str) -> SeadexDict:
+    """A one-group ``SeadexDict`` keyed by ``srg``, carrying a single URL record."""
+
+    url = f"https://nyaa.si/{srg}"
+    return {srg: rg_group({url: url_item(url=url)})}
+
+
+class TestRadarrProcessAlIdSeam:
+    """process_al_id's movie middle threads its facts through the held services."""
+
+    @staticmethod
+    def _make_strat(
+        run: _FakeRunServices,
+        *,
+        files: list[MovieFile] | None = None,
+        interactive: bool = False,
+    ) -> tuple[RadarrSync, _FakeRadarr]:
+        radarr = _FakeRadarr(files or [])
+        strat = make_bare_instance(
+            RadarrSync,
+            _services=run,
+            radarr=radarr,
+            logger=make_logger(),
+            _config=make_config(interactive=interactive),
+        )
+        return strat, radarr
+
+    def test_cached_entry_short_circuits_before_any_movie_read(self) -> None:
+        run = _FakeRunServices(prologue_entry=make_entry_record(), cached_skip=True)
+        strat, radarr = self._make_strat(run)
+
+        result = strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5))
+
+        assert result is False
+        # Neither the SeaDex parse nor the movie files were reached.
+        assert run.get_seadex_dict_calls == []
+        assert radarr.movie_files_calls == []
+        # The lazy backfill coverage passed is the movie's empty-coverage thunk.
+        [coverage] = run.cached_skip_coverages
+        assert coverage() == ""
+
+    def test_no_releases_routes_to_shared_skip_with_movie_cache_details(self) -> None:
+        entry = make_entry_record(anilist_id=5, url="https://releases.moe/5")
+        run = _FakeRunServices(
+            prologue_entry=entry,
+            anilist_title="Movie Title",
+            seadex_dict={},
+            no_releases_result=True,  # a sentinel: pins the pass-through return
+        )
+        strat, _ = self._make_strat(run)
+
+        result = strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5))
+
+        assert result is True
+        expected: CacheRecord = {
+            "name": "Movie Title",
+            "updated_at": entry.updated_at,
+            "torrent_hashes": [],
+            "url": "https://releases.moe/5",
+            "coverage": "",
+        }
+        assert run.no_releases_calls == [(5, expected)]
+        assert run.grab_requests == []
+
+    def test_happy_path_threads_release_dict_into_grab_request(self) -> None:
+        entry = make_entry_record(anilist_id=5, url="https://releases.moe/5")
+        seadex_dict = _one_group_dict("SubGroup")
+        filtered = _one_group_dict("SubGroup")
+        run = _FakeRunServices(
+            prologue_entry=entry,
+            anilist_title="Movie Title",
+            seadex_dict=seadex_dict,
+            filter_downloads_result=(["feedface"], filtered),
+            grab_result=True,
+        )
+        strat, _ = self._make_strat(run, files=[MovieFile(release_group="OldGroup", size=100)])
+
+        result = strat.process_al_id(_Item(id=3), "Item Title", 5, MappingEntry(anilist_id=5))
+
+        # grab_and_cache's scripted bool passes straight through.
+        assert result is True
+        # The download filter received the movie's accumulated release dict.
+        assert run.filter_downloads_calls == [(5, seadex_dict, {"OldGroup": [100]})]
+        [req] = run.grab_requests
+        assert req.al_id == 5
+        assert req.item_title == "Item Title"
+        assert req.anilist_title == "Movie Title"
+        assert req.sd_url == "https://releases.moe/5"
+        # The grab consumes the FILTERED dict + hashes, not the pre-filter dict.
+        assert req.seadex_dict is filtered
+        assert req.torrent_hashes == ["feedface"]
+        # release_group is the first key of the movie's release dict.
+        assert req.release_group == ["OldGroup"]
+
+    def _interactive_call_count(self, *, interactive: bool, n_groups: int) -> int:
+        """Run one process_al_id and count the interactive-filter invocations."""
+
+        seadex_dict: SeadexDict = {}
+        for idx in range(n_groups):
+            seadex_dict.update(_one_group_dict(f"Group{idx}"))
+        run = _FakeRunServices(prologue_entry=make_entry_record(), seadex_dict=seadex_dict)
+        strat, _ = self._make_strat(run, interactive=interactive)
+
+        strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5))
+        return len(run.interactive_calls)
+
+    def test_interactive_prompts_only_for_multi_release_interactive(self) -> None:
+        assert self._interactive_call_count(interactive=True, n_groups=2) == 1
+        assert self._interactive_call_count(interactive=True, n_groups=1) == 0
+        assert self._interactive_call_count(interactive=False, n_groups=2) == 0
 
 
 class TestRadarrReleaseDict:
