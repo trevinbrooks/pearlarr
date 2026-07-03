@@ -120,7 +120,8 @@ configured ``imports.wait_mode`` (off/deferred/blocking/hybrid) for that run (se
 
 To generate a blank config file, simply enter ``config init``. You can then populate
 to your liking. The file is written to the data directory (see above); run
-``seadexarr paths`` to find it.
+``seadexarr paths`` to find it. An existing ``config.yml`` is never overwritten
+unless you pass ``--force``.
 
 ### ``seadexarr paths``
 
@@ -144,6 +145,8 @@ There are five cache commands:
 ## Scripting
 
 The CLI is the primary interface — a one-off run is just ``seadexarr run single --sonarr --radarr``.
+Commands exit non-zero when they fail (a failed run, backup, or refused restore), so they compose
+with ``&&``, cron, and health checks.
 The same composition is available programmatically: build the shared collaborators with
 ``RunDeps.build``, inject them into the ``SeaDexArr`` engine plus an Arr strategy, and drive
 ``run_sync``:

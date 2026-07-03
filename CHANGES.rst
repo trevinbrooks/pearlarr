@@ -10,6 +10,10 @@
 - Add ``qbittorrent.tags``, which allows you to tag torrents as added to qBittorrent
 - Add ``seadex.ignore_tags``, which allows you to filter out SeaDex releases by tag
 - Use AniBridge mappings to mop up missed Sonarr/Radarr titles
+- Failed CLI commands now exit non-zero (previously always 0), and a missing cache/backup file is reported as a one-line message instead of a traceback
+- ``cache backup`` writes the snapshot via a temp file, so a failed backup can never replace or delete a previous good ``cache.backup.db``
+- ``config init`` refuses to overwrite an existing ``config.yml`` unless ``--force`` is passed
+- An invalid ``SCHEDULE_TIME`` falls back to 6 hours with a report instead of crashing the scheduler, and ``run single`` with no module selected prints a usage hint and fails
 
 0.9.0 (2025-09-13)
 ==================

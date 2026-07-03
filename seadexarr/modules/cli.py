@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
 import os
 import shutil
 import sqlite3
@@ -46,10 +47,31 @@ def _option(text: str) -> OptionInfo:
 # or a config/cache subcommand never touches. ``ImportWaitMode`` stays eager: it
 # rides a typer command signature, which typer resolves at invocation.
 
-seadexarr_cli = typer.Typer(name="seadexarr_cli")
-seadexarr_run = typer.Typer(name="run", help="Run SeaDexArr: a scheduled loop or a one-off single run.")
-seadexarr_config = typer.Typer(name="config", help="Manage the config file.")
-seadexarr_cache = typer.Typer(name="cache", help="Back up, restore, remove or inspect the cache database.")
+
+def _exit_on_failure(result: object, **_: object) -> None:
+    """Turn a command's ``False`` return into exit code 1.
+
+    typer/click ignore return values, so without this every failed command exits
+    0 and scripts can't detect the failure. Commands keep returning ``bool`` for
+    programmatic callers (tests call them directly, bypassing this callback).
+    """
+
+    if result is False:
+        raise typer.Exit(1)
+
+
+seadexarr_cli = typer.Typer(name="seadexarr_cli", result_callback=_exit_on_failure)
+seadexarr_run = typer.Typer(
+    name="run",
+    help="Run SeaDexArr: a scheduled loop or a one-off single run.",
+    result_callback=_exit_on_failure,
+)
+seadexarr_config = typer.Typer(name="config", help="Manage the config file.", result_callback=_exit_on_failure)
+seadexarr_cache = typer.Typer(
+    name="cache",
+    help="Back up, restore, remove or inspect the cache database.",
+    result_callback=_exit_on_failure,
+)
 
 seadexarr_cli.add_typer(seadexarr_run)
 seadexarr_cli.add_typer(seadexarr_config)
@@ -62,6 +84,19 @@ def _remove_db_sidecars(db_path: str) -> None:
     for suffix in ("-wal", "-shm"):
         with contextlib.suppress(OSError):
             os.remove(db_path + suffix)
+
+
+def _echo_missing(path: str) -> bool:
+    """True (after echoing why) when ``path`` doesn't exist.
+
+    The cache/config commands report a missing file as a one-line message plus a
+    failure exit, not a ``FileNotFoundError`` traceback.
+    """
+
+    if os.path.exists(path):
+        return False
+    typer.echo(f"No file at {path}.")
+    return True
 
 
 def _refused_by_active_run(acquired: bool, data_dir: str) -> bool:
@@ -80,21 +115,18 @@ def _refused_by_active_run(acquired: bool, data_dir: str) -> bool:
 
 
 @contextlib.contextmanager
-def _open_cache_readonly() -> Generator[CacheStore]:
+def _open_cache_readonly(cache_path: str) -> Generator[CacheStore]:
     """Open cache.db read-only for a diagnostic command, closing it afterwards.
 
     Read-only (no descriptor re-stamp, no WAL switch, no fail-open quarantine) so
     the diagnostic reflects the file as-is; a corrupt/not-a-database file raises
     ``sqlite3.DatabaseError`` from the first read, for the command to report.
+    The caller checks the file exists first (``_echo_missing``).
     """
 
     from .cache import CacheStore
 
-    paths = resolve_paths()
-    if not os.path.exists(paths.cache):
-        raise FileNotFoundError(f"File {paths.cache} not found")
-
-    store = CacheStore.open_readonly(paths.cache)
+    store = CacheStore.open_readonly(cache_path)
     try:
         yield store
     finally:
@@ -184,10 +216,10 @@ def _run_arrs(
     ``arrs`` is a list of ``(arr_name, item_id)`` pairs; each is delegated to
     ``_run_arr`` (which logs and closes independently, so one crashing doesn't ruin
     the other). The shared config read and mapping download/parse happen a single
-    time, and only when at least one arr is requested. Returns True when there was
-    nothing to do or the run proceeded; False - after ``_build_shared`` logs the
-    cause - when an arr was requested but the shared deps couldn't be built, so a
-    caller can tell a no-op-on-failure from a real run. ``import_wait_mode`` is the
+    time. Returns True when the run proceeded; False - after ``_build_shared`` logs
+    the cause - when the shared deps couldn't be built, so a caller can tell a
+    no-op-on-failure from a real run. An empty ``arrs`` is a defensive no-op
+    returning True (both callers guard against it). ``import_wait_mode`` is the
     resolved CLI override threaded into each arr (None in scheduled mode).
     """
 
@@ -330,6 +362,30 @@ def show_paths() -> bool:
     return True
 
 
+_DEFAULT_SCHEDULE_HOURS = 6.0
+
+
+def _schedule_hours() -> float:
+    """Hours between scheduled cycles, from SCHEDULE_TIME (default 6).
+
+    A value that isn't a positive finite number is reported and replaced by the
+    default, so a typo in the service environment degrades the cadence instead
+    of crashing the scheduler at startup (or sleeping forever on "inf").
+    """
+
+    raw = os.getenv("SCHEDULE_TIME")
+    if raw is None:
+        return _DEFAULT_SCHEDULE_HOURS
+    try:
+        hours = float(raw)
+    except ValueError:
+        hours = math.nan
+    if not (math.isfinite(hours) and hours > 0):
+        typer.echo(f"Invalid SCHEDULE_TIME {raw!r}; using {_DEFAULT_SCHEDULE_HOURS:g} hours.")
+        return _DEFAULT_SCHEDULE_HOURS
+    return hours
+
+
 @seadexarr_run.command("scheduled")
 def run_scheduled() -> None:
     """Run both arr modules on a loop (every SCHEDULE_TIME hours, default 6)."""
@@ -339,8 +395,7 @@ def run_scheduled() -> None:
     paths = resolve_paths()
     ensure_data_dir(paths)
 
-    # Get how often to run things
-    schedule_time = float(os.getenv("SCHEDULE_TIME", "6"))
+    schedule_time = _schedule_hours()
 
     while True:
         logger = setup_logger(log_level="INFO", log_dir=paths.log_dir)
@@ -402,13 +457,6 @@ def run_single(
             unset the config's ``imports.wait_mode`` wins (cli > config > default).
     """
 
-    # Resolve the data directory once and make sure it exists (config-template copy
-    # + run lock both need it).
-    paths = resolve_paths()
-    ensure_data_dir(paths)
-
-    logger = setup_logger(log_level="INFO", log_dir=paths.log_dir)
-
     # Passing a movie/series ID implies running that arr.
     arrs: list[tuple[Arr, int | None]] = []
     if radarr or movie_id is not None:
@@ -416,10 +464,21 @@ def run_single(
     if sonarr or series_id is not None:
         arrs.append((Arr.SONARR, series_id))
 
-    # Build the shared config + mappings once (only when an arr was requested) and
-    # run each. True when the run proceeded or nothing was requested; False when an
-    # arr was requested but the shared config/mappings couldn't be built, so a
-    # programmatic caller can tell a no-op-on-failure from a real run.
+    # A usage mistake, caught before the logger rotates log files for a no-op.
+    if not arrs:
+        typer.echo("Nothing selected: pass --radarr and/or --sonarr (or --movie-id / --series-id).")
+        return False
+
+    # Resolve the data directory once and make sure it exists (config-template copy
+    # + run lock both need it).
+    paths = resolve_paths()
+    ensure_data_dir(paths)
+
+    logger = setup_logger(log_level="INFO", log_dir=paths.log_dir)
+
+    # Build the shared config + mappings once and run each requested arr. True when
+    # the run proceeded; False when the shared config/mappings couldn't be built,
+    # so a programmatic caller can tell a no-op-on-failure from a real run.
     return _run_arrs(
         arrs,
         paths=paths,
@@ -431,17 +490,26 @@ def run_single(
 
 # Config commands
 @seadexarr_config.command("init")
-def config_init() -> bool:
+def config_init(
+    force: Annotated[bool, _option("Overwrite an existing config.yml with the starter template.")] = False,
+) -> bool:
     """Write a starter config.yml to the data directory.
 
     The file lands in the resolved data directory (see the paths command);
-    override the location with --data-dir or SEADEX_ARR_DATA_DIR.
+    override the location with --data-dir or SEADEX_ARR_DATA_DIR. An existing
+    config.yml is never overwritten unless --force is passed, so a re-run can't
+    wipe out a filled-in configuration.
     """
 
     paths = resolve_paths()
     ensure_data_dir(paths)
 
+    if os.path.exists(paths.config) and not force:
+        typer.echo(f"{paths.config} already exists; pass --force to overwrite it with the starter template.")
+        return False
+
     shutil.copyfile(template_path(), paths.config)
+    typer.echo(f"Wrote a starter config to {paths.config}.")
 
     return True
 
@@ -453,26 +521,34 @@ def cache_backup() -> bool:
 
     Uses the SQLite online-backup API so a consistent snapshot is taken even if a
     WAL has uncommitted pages, rather than a raw file copy that could miss them.
+    The snapshot lands via temp file + rename, so a failed backup can never
+    replace or delete a previous good cache.backup.db.
     """
 
     paths = resolve_paths()
 
-    if not os.path.exists(paths.cache):
-        raise FileNotFoundError(f"File {paths.cache} not found")
+    if _echo_missing(paths.cache):
+        return False
 
+    tmp_backup = paths.cache_backup + ".tmp"
     source = sqlite3.connect(paths.cache)
-    dest = sqlite3.connect(paths.cache_backup)
     try:
-        source.backup(dest)
+        dest = sqlite3.connect(tmp_backup)
+        try:
+            source.backup(dest)
+        finally:
+            dest.close()
     except sqlite3.DatabaseError as e:
-        # A corrupt/torn source raises here; report it cleanly rather than crashing
-        # the backup command on the very file it is meant to preserve.
+        # Report the corrupt/torn source cleanly and drop the torn temp file;
+        # a previous good cache.backup.db is left untouched.
+        with contextlib.suppress(OSError):
+            os.remove(tmp_backup)
         typer.echo(f"cache backup failed: {e}")
         return False
     finally:
-        dest.close()
         source.close()
 
+    os.replace(tmp_backup, paths.cache_backup)
     return True
 
 
@@ -486,8 +562,8 @@ def cache_restore() -> bool:
 
     paths = resolve_paths()
 
-    if not os.path.exists(paths.cache_backup):
-        raise FileNotFoundError(f"File {paths.cache_backup} not found")
+    if _echo_missing(paths.cache_backup):
+        return False
 
     with single_instance_lock(paths.data_dir) as acquired:
         if _refused_by_active_run(acquired, paths.data_dir):
@@ -507,8 +583,8 @@ def cache_remove() -> bool:
 
     paths = resolve_paths()
 
-    if not os.path.exists(paths.cache):
-        raise FileNotFoundError(f"File {paths.cache} not found")
+    if _echo_missing(paths.cache):
+        return False
 
     with single_instance_lock(paths.data_dir) as acquired:
         if _refused_by_active_run(acquired, paths.data_dir):
@@ -524,7 +600,11 @@ def cache_remove() -> bool:
 def cache_stats() -> bool:
     """Print cache health: per-block row counts and on-disk size."""
 
-    with _open_cache_readonly() as store:
+    paths = resolve_paths()
+    if _echo_missing(paths.cache):
+        return False
+
+    with _open_cache_readonly(paths.cache) as store:
         try:
             s = store.stats()
         except sqlite3.DatabaseError as e:
@@ -544,7 +624,11 @@ def cache_stats() -> bool:
 def cache_check() -> bool:
     """Run a SQLite integrity check on the cache database and print the result."""
 
-    with _open_cache_readonly() as store:
+    paths = resolve_paths()
+    if _echo_missing(paths.cache):
+        return False
+
+    with _open_cache_readonly(paths.cache) as store:
         try:
             result = store.integrity_check()
         except sqlite3.DatabaseError as e:
