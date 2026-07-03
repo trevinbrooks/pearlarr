@@ -7,10 +7,11 @@ import shutil
 import sqlite3
 import time
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 from pydantic import ValidationError
+from typer.models import OptionInfo
 
 from .boot_view import BootView, make_boot_view
 from .config import AppConfig, Arr, template_path
@@ -27,6 +28,18 @@ if TYPE_CHECKING:
     from .cache import CacheStore
     from .mappings import MappingResolver
 
+
+def _option(text: str) -> OptionInfo:
+    """``typer.Option(help=...)`` with a fully-known signature (typer's own is
+    partially unknown under strict: click 8.4 made ParamType generic).
+
+    ``default=...`` marks "no default here" - Annotated params take the signature
+    default, exactly as ``typer.Option`` passes it.
+    """
+
+    return OptionInfo(default=..., help=text)
+
+
 # The heavy clients (qBittorrent / arrapi / the SeaDex+httpx chain via cache) are
 # imported lazily inside the functions that use them, NOT at module load, so the
 # CLI starts and prints its title without paying ~150ms+ for libraries a `--help`
@@ -34,9 +47,9 @@ if TYPE_CHECKING:
 # rides a typer command signature, which typer resolves at invocation.
 
 seadexarr_cli = typer.Typer(name="seadexarr_cli")
-seadexarr_run = typer.Typer(name="run")
-seadexarr_config = typer.Typer(name="config")
-seadexarr_cache = typer.Typer(name="cache")
+seadexarr_run = typer.Typer(name="run", help="Run SeaDexArr: a scheduled loop or a one-off single run.")
+seadexarr_config = typer.Typer(name="config", help="Manage the config file.")
+seadexarr_cache = typer.Typer(name="cache", help="Back up, restore, remove or inspect the cache database.")
 
 seadexarr_cli.add_typer(seadexarr_run)
 seadexarr_cli.add_typer(seadexarr_config)
@@ -272,11 +285,21 @@ def _run_arrs(
 
 # Default command, schedule run
 @seadexarr_cli.callback(invoke_without_command=True)
-def main(ctx: typer.Context, data_dir: str | None = None) -> None:
-    """Run SeaDexArr in scheduled mode
+def main(
+    ctx: typer.Context,
+    data_dir: Annotated[
+        str | None,
+        _option(
+            "Override the data directory holding config, caches and logs "
+            "(default: SEADEX_ARR_DATA_DIR or the OS per-user data directory).",
+        ),
+    ] = None,
+) -> None:
+    """SeaDexArr: sync the best SeaDex-tagged anime releases into Sonarr and Radarr.
 
-    Will run both Radarr and Sonarr modules
+    Without a subcommand, runs in scheduled mode (both arrs, every few hours).
 
+    \f
     Args:
         data_dir: Override the data directory holding config, caches and logs
             (typer exposes this as ``--data-dir``). Defaults to None, which uses
@@ -309,10 +332,7 @@ def show_paths() -> bool:
 
 @seadexarr_run.command("scheduled")
 def run_scheduled() -> None:
-    """Run SeaDexArr in scheduled mode
-
-    Will run both Radarr and Sonarr modules
-    """
+    """Run both arr modules on a loop (every SCHEDULE_TIME hours, default 6)."""
 
     # Resolve the data directory once and make sure it exists (config-template copy
     # + run lock both need it).
@@ -343,17 +363,30 @@ def run_scheduled() -> None:
         time.sleep(schedule_time * 3600)
 
 
-# Single run
-@seadexarr_run.command("single")
+# Single run. The user-facing help lives on the decorator; the docstring below
+# (with its Args block) is for API readers and never reaches --help.
+@seadexarr_run.command("single", help="Do a single SeaDexArr run for the selected arr modules.")
 def run_single(
-    radarr: bool = False,
-    sonarr: bool = False,
-    movie_id: int | None = None,
-    series_id: int | None = None,
-    dry_run: bool = False,
-    import_wait_mode: ImportWaitMode | None = None,
+    radarr: Annotated[bool, _option("Run the Radarr module.")] = False,
+    sonarr: Annotated[bool, _option("Run the Sonarr module.")] = False,
+    movie_id: Annotated[
+        int | None,
+        _option("Only process the movie with this TMDB ID (implies --radarr)."),
+    ] = None,
+    series_id: Annotated[
+        int | None,
+        _option("Only process the series with this TVDB ID (implies --sonarr)."),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        _option("Simulate the run: no grabs, no cache writes, no notifications."),
+    ] = False,
+    import_wait_mode: Annotated[
+        ImportWaitMode | None,
+        _option("Override the configured imports.wait_mode for this run."),
+    ] = None,
 ) -> bool:
-    """Do a single SeaDexArr run
+    """Do a single SeaDexArr run for the selected arr modules.
 
     Args:
         radarr: Do a Radarr run? Defaults to False
@@ -399,10 +432,10 @@ def run_single(
 # Config commands
 @seadexarr_config.command("init")
 def config_init() -> bool:
-    """Initialise a configuration file in the data directory.
+    """Write a starter config.yml to the data directory.
 
-    Writes ``config.yml`` to the resolved data directory (see ``seadexarr paths``);
-    override the location with ``--data-dir`` or ``SEADEX_ARR_DATA_DIR``.
+    The file lands in the resolved data directory (see the paths command);
+    override the location with --data-dir or SEADEX_ARR_DATA_DIR.
     """
 
     paths = resolve_paths()
@@ -416,7 +449,7 @@ def config_init() -> bool:
 # Cache commands
 @seadexarr_cache.command("backup")
 def cache_backup() -> bool:
-    """Back up the cache database to ``cache.backup.db``.
+    """Back up the cache database to cache.backup.db.
 
     Uses the SQLite online-backup API so a consistent snapshot is taken even if a
     WAL has uncommitted pages, rather than a raw file copy that could miss them.
@@ -445,9 +478,9 @@ def cache_backup() -> bool:
 
 @seadexarr_cache.command("restore")
 def cache_restore() -> bool:
-    """Restore the cache database from ``cache.backup.db``.
+    """Restore the cache database from cache.backup.db.
 
-    Replaces ``cache.db`` (and clears any stale WAL/SHM sidecars first so the
+    Replaces cache.db (and clears any stale WAL/SHM sidecars first so the
     restored snapshot isn't shadowed by a leftover WAL).
     """
 
@@ -470,7 +503,7 @@ def cache_restore() -> bool:
 
 @seadexarr_cache.command("remove")
 def cache_remove() -> bool:
-    """Remove the cache database (``cache.db`` and its WAL/SHM sidecars)."""
+    """Remove the cache database (cache.db and its WAL/SHM sidecars)."""
 
     paths = resolve_paths()
 
