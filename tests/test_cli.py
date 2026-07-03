@@ -68,12 +68,18 @@ class TestCacheRoundTrip:
         assert (tmp_path / "cache.backup.db").exists()
 
         # A stale WAL left next to cache.db must not shadow the restored snapshot;
-        # restore clears the sidecars before moving the backup into place.
+        # restore clears the sidecars before swapping the copy into place.
         (tmp_path / "cache.db-wal").write_text("stale")
 
         assert cache_restore() is True
-        assert not (tmp_path / "cache.backup.db").exists()  # consumed by the move
+        # Copy-restore: the backup SURVIVES (a post-restore corruption can be
+        # restored again) and no temp file is left behind.
+        assert (tmp_path / "cache.backup.db").exists()
+        assert not (tmp_path / "cache.db.tmp").exists()
         assert not (tmp_path / "cache.db-wal").exists()  # stale sidecar cleared
+
+        # Restore is repeatable off the surviving backup.
+        assert cache_restore() is True
 
         # The restored db still holds the original entry.
         store = CacheStore.open_readonly(str(tmp_path / "cache.db"))

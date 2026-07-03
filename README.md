@@ -135,8 +135,8 @@ There are five cache commands:
 
 - ``cache backup``: back up ``cache.db`` to ``cache.backup.db``, using the SQLite online-backup API
   so the snapshot is consistent even mid-write
-- ``cache restore``: replace ``cache.db`` with ``cache.backup.db`` (clearing any stale WAL/SHM
-  sidecar files first)
+- ``cache restore``: replace ``cache.db`` with a copy of ``cache.backup.db`` (the backup is
+  kept, so a restore is repeatable; stale WAL/SHM sidecar files are cleared first)
 - ``cache remove``: delete ``cache.db`` and its WAL/SHM sidecar files. Useful if you've changed
   the config and want to do a fresh run
 - ``cache stats``: print cache health (per-block row counts and on-disk size)

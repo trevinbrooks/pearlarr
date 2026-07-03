@@ -13,7 +13,7 @@
 - **Breaking:** Python 3.13+ is now required (3.12 dropped); CI and the Docker image run 3.13/3.14. Runtime dependencies bumped to latest (notably typer 0.26, rich 15, qbittorrent-api 2026.6, requests 2.34)
 - **Breaking (scripting API):** the run machinery is split into a ``RunServices`` per-id hub (which the strategies hold) and the ``SeaDexArr`` run loop: build ``RunDeps.build`` → ``RunServices(deps, arr)`` → ``SeaDexArr(deps, services)`` and call ``run_sync`` without the ``arr`` kwarg; close resources via ``deps.close()`` (``SeaDexArr.close`` is gone). See the README scripting example
 - Failed CLI commands now exit non-zero (previously always 0), and a missing cache/backup file is reported as a one-line message instead of a traceback
-- ``cache backup`` writes the snapshot via a temp file, so a failed backup can never replace or delete a previous good ``cache.backup.db``
+- ``cache backup`` writes the snapshot via a temp file, so a failed backup can never replace or delete a previous good ``cache.backup.db``; ``cache restore`` now copies the backup into place instead of consuming it, so a restore is repeatable
 - ``config init`` refuses to overwrite an existing ``config.yml`` unless ``--force`` is passed
 - An invalid ``SCHEDULE_TIME`` falls back to 6 hours with a report instead of crashing the scheduler, and ``run single`` with no module selected prints a usage hint and fails
 

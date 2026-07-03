@@ -42,6 +42,9 @@ def _exit_on_failure(result: object, **_: object) -> None:
     typer/click ignore return values, so without this every failed command exits
     0 and scripts can't detect the failure. Commands keep returning ``bool`` for
     programmatic callers (tests call them directly, bypassing this callback).
+    The ROOT app's registration is the load-bearing one (a sub-command's False
+    propagates up through callback-less groups); the sub-app registrations are
+    defense-in-depth, so don't "simplify" the root one away.
     """
 
     if result is False:
@@ -544,10 +547,11 @@ def cache_backup() -> bool:
 
 @seadexarr_cache.command("restore")
 def cache_restore() -> bool:
-    """Restore the cache database from cache.backup.db.
+    """Restore the cache database from cache.backup.db, keeping the backup.
 
-    Replaces cache.db (and clears any stale WAL/SHM sidecars first so the
-    restored snapshot isn't shadowed by a leftover WAL).
+    Copy-restore via temp file + atomic swap: the backup survives (so a restore
+    is repeatable), cache.db never vanishes mid-restore, and stale WAL/SHM
+    sidecars are cleared so the restored snapshot isn't shadowed by them.
     """
 
     paths = resolve_paths()
@@ -559,10 +563,10 @@ def cache_restore() -> bool:
         if _refused_by_active_run(acquired, paths.data_dir):
             return False
 
+        tmp_restore = paths.cache + ".tmp"
+        shutil.copyfile(paths.cache_backup, tmp_restore)
         _remove_db_sidecars(paths.cache)
-        if os.path.exists(paths.cache):
-            os.remove(paths.cache)
-        shutil.move(paths.cache_backup, paths.cache)
+        os.replace(tmp_restore, paths.cache)
 
     return True
 
