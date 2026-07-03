@@ -435,11 +435,8 @@ class RunReporter:
 
     def log_pending_snapshot(
         self,
-        ctx: RunContext,
         state: PendingState,
-        title: str,
-        coverage: str | None,
-        url: str | None,
+        pending: PendingImport,
     ) -> bool:
         """Render a carried-over pending record's status inline in the series block.
 
@@ -452,21 +449,17 @@ class RunReporter:
         never double-counted.
 
         Args:
-            ctx (RunContext): The run's state (unused for counting; accepted for a
-                uniform reporter signature).
             state (PendingState): The record's classified status this poll.
-            title (str): The release title (or infohash) the row is attributed to.
-            coverage (str | None): The record's season/episode coverage, if known.
-            url (str | None): The record's SeaDex link, if known.
+            pending (PendingImport): The carried-over record; its display label,
+                coverage and SeaDex link attribute the row.
         """
 
-        del ctx
         entry_state = self._PENDING_ENTRY_STATES.get(state)
         if entry_state is None:
             return False
         style = "green" if entry_state is EntryState.IMPORTED else "grey50"
-        self.log_entry_status(entry_state, title, style=style)
-        self.log_entry_coverage(coverage, url)
+        self.log_entry_status(entry_state, pending.display_label, style=style)
+        self.log_entry_coverage(pending.coverage, pending.url)
         return True
 
     def log_arr_start(

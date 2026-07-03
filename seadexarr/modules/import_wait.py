@@ -319,13 +319,7 @@ class ImportWaitManager:
             if infohash in run_grabs:
                 continue
             pending, state = self._reconcile_one(infohash, record)
-            self._reporter.log_pending_snapshot(
-                self._ctx,
-                state,
-                pending.display_label,
-                pending.coverage,
-                pending.url,
-            )
+            self._reporter.log_pending_snapshot(state, pending)
 
     def reconcile_remaining(self) -> None:
         """Non-blocking force-poll of carried-over records NOT snapshotted this run.
@@ -695,7 +689,6 @@ class MonitorPass:
                 bytes_done=poll.bytes_done,
                 bytes_total=poll.bytes_total,
                 phase_elapsed_s=self.now() - self.dl_start[h],
-                phase_timeout_s=self.dl_timeout,
                 speed_history=(*history, poll.speed_bps or 0)[-SPARK_SAMPLES:],
             )
             return
@@ -743,7 +736,6 @@ class MonitorPass:
                 import_done=(done if total else None),
                 import_total=(total if total else None),
                 phase_elapsed_s=self.now() - self.import_start[h],
-                phase_timeout_s=self.import_timeout,
                 command_issued=probe.command_issued,
             )
 

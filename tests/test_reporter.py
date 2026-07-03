@@ -34,7 +34,7 @@ from seadexarr.modules.reporter import (
 )
 from seadexarr.modules.torrents import AddOutcome, ReleaseOutcome
 
-from .builders import FakeCacheStore, make_entry_record, make_logger
+from .builders import FakeCacheStore, make_entry_record, make_logger, pending_import
 from .fakes import CaptureHandler
 
 
@@ -188,11 +188,8 @@ class TestPendingSnapshot:
         ctx = RunContext(arr=Arr.SONARR)
 
         rendered = reporter.log_pending_snapshot(
-            ctx,
             PendingState.IMPORTED,
-            "My Show",
-            "S01 E01-E13",
-            "https://releases.moe/1",
+            pending_import(title="My Show", coverage="S01 E01-E13", url="https://releases.moe/1"),
         )
 
         assert rendered is True
@@ -203,15 +200,11 @@ class TestPendingSnapshot:
 
     def test_missing_state_renders_nothing(self) -> None:
         reporter = _make_reporter()
-        ctx = RunContext(arr=Arr.SONARR)
 
         assert (
             reporter.log_pending_snapshot(
-                ctx,
                 PendingState.MISSING,
-                "Gone",
-                None,
-                None,
+                pending_import(title="Gone"),
             )
             is False
         )

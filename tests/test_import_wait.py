@@ -383,13 +383,10 @@ class _RecordingReporter:
 
     def log_pending_snapshot(
         self,
-        ctx: RunContext,
         state: PendingState,
-        title: str,
-        coverage: str | None,
-        url: str | None,
+        pending: PendingImport,
     ) -> bool:
-        self.snapshot_calls.append(_SnapshotCall(state, title, coverage, url))
+        self.snapshot_calls.append(_SnapshotCall(state, pending.display_label, pending.coverage, pending.url))
         return True
 
 

@@ -320,7 +320,7 @@ def test_log_view_digest_is_calm_and_durable() -> None:
     view.close()
 
     out = _plain(console)
-    assert "Waiting on 2 download(s)" in out
+    assert "Waiting on 2 downloads" in out
     assert out.count("still waiting") == 1  # one aggregate pulse, not per-torrent spam
     assert "1 downloading" in out and "1 importing" in out
     assert "imported" in out and "Show A" in out

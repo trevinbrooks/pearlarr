@@ -23,6 +23,7 @@ import time
 from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Callable
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
 from enum import Enum, auto
 from typing import ClassVar, final, override
@@ -102,7 +103,6 @@ class TorrentView:
     bytes_done: int | None = None
     bytes_total: int | None = None
     phase_elapsed_s: float = 0.0
-    phase_timeout_s: float = 0.0
     command_issued: bool = False
     # "Files inserted" bar for an IMPORTING row: both set -> a determinate
     # done/total bar; both None -> indeterminate (just the "importing" word).
@@ -161,7 +161,7 @@ class WaitSnapshot:
             if torrent.phase in (Phase.TERMINAL, Phase.IMPORTING):
                 total += 1.0
             else:
-                total += max(0.0, min(1.0, torrent.fraction))
+                total += _clamp01(torrent.fraction)
         return total / len(self.torrents)
 
 
@@ -213,7 +213,13 @@ class WaitResult:
         return sum(1 for row in self.rows if row.outcome.category is category)
 
 
-def graduations(seen: frozenset[str], snapshot: WaitSnapshot) -> list[TorrentView]:
+def _clamp01(value: float) -> float:
+    """Clamp a progress fraction into [0, 1]."""
+
+    return max(0.0, min(1.0, value))
+
+
+def graduations(seen: AbstractSet[str], snapshot: WaitSnapshot) -> list[TorrentView]:
     """The terminal torrents not yet printed - pure, deterministic.
 
     A torrent graduates exactly once: the view tracks the keys it has already
@@ -382,7 +388,7 @@ def _row_model(torrent: TorrentView, *, spark: bool) -> RowModel:
         return RowModel(
             label=torrent.label,
             phase=torrent.phase,
-            fraction=max(0.0, min(1.0, torrent.fraction)),
+            fraction=_clamp01(torrent.fraction),
             count=f"{round(torrent.fraction * 100)}%",
             speed=rate,
             time="" if torrent.eta_s is None else _compact_eta(torrent.eta_s),
@@ -397,7 +403,7 @@ def _row_model(torrent: TorrentView, *, spark: bool) -> RowModel:
             return RowModel(
                 label=torrent.label,
                 phase=torrent.phase,
-                fraction=max(0.0, min(1.0, torrent.fraction)),
+                fraction=_clamp01(torrent.fraction),
                 count=f"{torrent.import_done}/{torrent.import_total}",
                 time=elapsed,
                 show_bar=True,
@@ -478,7 +484,7 @@ def sparkline(samples: tuple[int, ...]) -> str:
 def _human_bytes(num: float) -> str:
     """A compact human byte size, e.g. ``"3.2 MB"`` / ``"1.8 GB"``."""
 
-    val = float(num)
+    val = num
     for unit in ("B", "KB", "MB", "GB"):
         if val < 1024:
             return f"{val:.0f} {unit}" if unit == "B" else f"{val:.1f} {unit}"
@@ -562,7 +568,7 @@ class _DurableWaitView(WaitView):
             self._logger.debug("wait view close failed", exc_info=True)
 
     def _emit_new_graduations(self, snapshot: WaitSnapshot) -> None:
-        for torrent in graduations(frozenset(self._seen), snapshot):
+        for torrent in graduations(self._seen, snapshot):
             outcome = torrent.outcome
             if outcome is None:  # pragma: no cover - graduations() guarantees this
                 continue
@@ -842,7 +848,7 @@ class LogWaitView(_DurableWaitView):
             self._started = True
             self._next_pulse = self._interval
             self._logger.info(
-                f"Waiting on {snapshot.total()} download(s) to complete and import...",
+                f"Waiting on {count_noun(snapshot.total(), 'download')} to complete and import...",
             )
             return
         if snapshot.elapsed_s < self._next_pulse:
