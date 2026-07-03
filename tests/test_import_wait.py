@@ -1377,6 +1377,154 @@ class TestDropPending:
         assert mgr._ctx.pending_imports == [keep]
 
 
+class CategoryQbit(FakeQbit):
+    """A :class:`FakeQbit` recording the category writes the post-import move makes.
+
+    ``set_errors`` scripts per-call ``torrents_set_category`` failures (popped in
+    order), so the create-on-409 retry and the best-effort warn path can be driven.
+    """
+
+    def __init__(
+        self,
+        results: list[list[FakeTorrent] | Exception],
+        *,
+        set_errors: list[Exception] | None = None,
+    ) -> None:
+        super().__init__(results)
+        self._set_errors = list(set_errors or [])
+        self.set_category_calls: list[tuple[str, str]] = []
+        self.created_categories: list[str] = []
+
+    def torrents_set_category(self, *, category: str, torrent_hashes: str) -> None:
+        if self._set_errors:
+            raise self._set_errors.pop(0)
+        self.set_category_calls.append((category, torrent_hashes))
+
+    def torrents_create_category(self, *, name: str) -> None:
+        self.created_categories.append(name)
+
+
+class TestPostImportCategory:
+    """apply_post_import_category: verified imports move to imports.post_import_category."""
+
+    @staticmethod
+    def _imported_manager(
+        qbit: CategoryQbit,
+        post_import_category: str | None = None,
+    ) -> ImportWaitManager:
+        """A manager whose one carried-over record reconciles straight to IMPORTED.
+
+        A ``None`` category routes through ``make_config`` to the blank-drop, so it
+        exercises the same "left unset" default a real config file yields.
+        """
+
+        return make_orchestration_manager(
+            qbit=qbit,
+            strategy=_RecordingStrategy(
+                completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+            ),
+            store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
+            post_import_category=post_import_category,
+        )
+
+    def test_reconcile_moves_imported_torrent(self) -> None:
+        # The inline snapshot confirms the import -> the torrent moves category
+        # BEFORE the record is dropped.
+        qbit = CategoryQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
+        mgr = self._imported_manager(qbit, "seadexarr-done")
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert qbit.set_category_calls == [("seadexarr-done", "h")]
+        assert qbit.created_categories == []  # no 409 -> no create
+        assert mgr._pending_store() == {}
+
+    def test_monitor_moves_imported_torrent(self) -> None:
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.RETRY, files_present=True),
+        )
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = CategoryQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[pending],
+            pending=[pending],
+            post_import_category="seadexarr-done",
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=30)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        assert view.final("h").outcome is Outcome.IMPORTED
+        assert qbit.set_category_calls == [("seadexarr-done", "h")]
+
+    def test_missing_torrent_is_not_recategorized(self) -> None:
+        # MISSING also drops the record, but only a verified IMPORT moves category.
+        pending = pending_import(infohash="h", added_at=_FRESH)
+        qbit = CategoryQbit([[]])
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=_RecordingStrategy(),
+            store_records=[pending],
+            pending=[pending],
+            post_import_category="seadexarr-done",
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
+        )
+        view = RecordingWaitView()
+        clock = FakeClock(step=30)
+
+        mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
+
+        assert view.final("h").outcome is Outcome.MISSING
+        assert mgr._pending_store() == {}  # still dropped
+        assert qbit.set_category_calls == []
+
+    def test_creates_category_on_409_and_retries(self) -> None:
+        # qBittorrent 409s an unknown category: create it, then re-apply.
+        qbit = CategoryQbit(
+            [[FakeTorrent(is_complete=True, content_path="/d")]],
+            set_errors=[qbittorrentapi.Conflict409Error("unknown category")],
+        )
+        mgr = self._imported_manager(qbit, "seadexarr-done")
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert qbit.created_categories == ["seadexarr-done"]
+        assert qbit.set_category_calls == [("seadexarr-done", "h")]
+
+    def test_client_error_warns_and_import_still_lands(self) -> None:
+        # Best-effort: a client error must not undo the import - the record is
+        # still dropped and counted, the category is just left as-is.
+        qbit = CategoryQbit(
+            [[FakeTorrent(is_complete=True, content_path="/d")]],
+            set_errors=[qbittorrentapi.APIConnectionError("down")],
+        )
+        mgr = self._imported_manager(qbit, "seadexarr-done")
+
+        mgr.snapshot_pending_for_series(7)  # must not raise
+
+        assert qbit.set_category_calls == []
+        assert mgr._pending_store() == {}
+        assert mgr._ctx.stats.imported == 1
+
+    def test_unconfigured_category_makes_no_call(self) -> None:
+        qbit = CategoryQbit([[FakeTorrent(is_complete=True, content_path="/d")]])
+        mgr = self._imported_manager(qbit)  # post_import_category left blank
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert qbit.set_category_calls == []
+        assert qbit.created_categories == []
+        assert mgr._pending_store() == {}
+
+
 def make_add_engine(
     *,
     torrents: FakeTorrents,

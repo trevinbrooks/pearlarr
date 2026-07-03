@@ -318,6 +318,12 @@ above; Sonarr only).
   files-imported bar and live download telemetry. 0 disables it, and values at or above
   `imports.poll_interval` behave the same. Defaults to 5
 - `imports.mode`: Sonarr import mode: `auto`, `move`, or `copy`. Defaults to auto
+- `imports.post_import_category`: qBittorrent category to move a torrent to once its import is
+  verified complete (e.g. to hand finished torrents different seeding rules). The category is
+  created if it doesn't exist. The move happens when seadexarr verifies the import, so it needs a
+  non-off wait mode. Note that with qBittorrent's Automatic Torrent Management enabled, changing
+  category can relocate the torrent's data to the new category's save path. Defaults to blank,
+  which leaves the add-time category in place
 - `imports.default_quality`: Fallback quality name (e.g. Bluray-2160p) for manual imports, useful on
   a 4K instance. Defaults to blank
 - `imports.languages_dual`: Languages applied to imported dual-audio releases. Defaults to

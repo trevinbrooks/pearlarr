@@ -244,6 +244,11 @@ class ImportsSettings(_ConfigBase):
     # Sonarr importMode, forwarded verbatim (sonarr_client.manual_import_execute).
     # Constrained so a typo is a clean ValidationError at load, not a Sonarr API error.
     mode: Literal["auto", "move", "copy"] = "auto"
+    # qBittorrent category applied to a torrent once its import is verified
+    # complete (e.g. to hand it to different seeding rules). Blank leaves the
+    # add-time category in place. Applied by the wait machinery, so it only
+    # fires when the run's resolved wait mode is non-off.
+    post_import_category: str | None = None
     default_quality: str | None = None
     languages_dual: list[str] = Field(default_factory=lambda: list(_LANGUAGES_DUAL_DEFAULT))
     languages_single: list[str] = Field(default_factory=lambda: list(_LANGUAGES_SINGLE_DEFAULT))

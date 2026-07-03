@@ -52,6 +52,7 @@ imports:
   poll_interval: 30                # Seconds between polls (qBittorrent + Sonarr queue)
   progress_poll_interval: 5        # Seconds between cheap wait-screen refreshes (bars/speed; 0 disables)
   mode: auto                       # Sonarr importMode: auto/move/copy
+  post_import_category:            # Category applied once an import is verified (needs a wait_mode)
   default_quality:                 # Fallback quality (e.g. Bluray-2160p) on a 4K instance
   languages_dual:                  # Languages for dual-audio releases (default: [Japanese, English])
   languages_single:                # Languages for single-audio releases (default: [Japanese])

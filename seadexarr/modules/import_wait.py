@@ -30,6 +30,7 @@ from .manual_import import (
     ImportProgress,
     ImportReadiness,
     Outcome,
+    OutcomeCategory,
     PendingImport,
     PendingState,
     TorrentProbe,
@@ -281,6 +282,7 @@ class ImportWaitManager:
         state = classify_pending(poll.outcome, probe.files_present)
         self._ctx.pending_states[infohash] = state
         if state is PendingState.IMPORTED:
+            self.apply_post_import_category(infohash)
             self.drop_pending(infohash)
             self._ctx.stats.imported += 1
         elif state is PendingState.MISSING:
@@ -545,6 +547,29 @@ class ImportWaitManager:
         self.cache_store.drop_pending(self._ctx.arr, infohash)
         self._ctx.pending_imports = [p for p in self._ctx.pending_imports if p.infohash != infohash]
 
+    def apply_post_import_category(self, infohash: str) -> None:
+        """Move a verified-imported torrent to ``imports.post_import_category``.
+
+        Called at the two confirmed-import sites (the reconcile passes and the
+        monitor's IMPORTED terminal) - never for MISSING or a TTL drop. Creates
+        the category on first use (qBittorrent 409s an unknown one). Best-effort:
+        the import already succeeded, so a client error only warns.
+        """
+
+        category = self._config.imports.post_import_category
+        if not category or self.qbit is None:
+            return
+        try:
+            try:
+                self.qbit.torrents_set_category(category=category, torrent_hashes=infohash)
+            except qbittorrentapi.Conflict409Error:
+                self.qbit.torrents_create_category(name=category)
+                self.qbit.torrents_set_category(category=category, torrent_hashes=infohash)
+        except (qbittorrentapi.APIError, qbittorrentapi.APIConnectionError) as e:
+            self.logger.warning(
+                f"Could not move imported torrent {infohash} to category {category!r}: {e}",
+            )
+
 
 class MonitorPass:
     """One blocking-monitor invocation's mutable state + per-cycle advance logic.
@@ -605,8 +630,10 @@ class MonitorPass:
 
         Drops the durable record when (and only when) ``outcome.dropped`` - True for
         exactly IMPORTED and MISSING, so the displayed word and the store mutation
-        can't diverge. The terminal row carries the pass-elapsed clock and (for an
-        import) the verified files count, so the graduation ledger can state them.
+        can't diverge; a SUCCESS-class outcome additionally gets the post-import
+        category, keyed off the same pinned enum vocabulary. The terminal row
+        carries the pass-elapsed clock and (for an import) the verified files
+        count, so the graduation ledger can state them.
         """
 
         self.views[h] = TorrentView(
@@ -619,6 +646,8 @@ class MonitorPass:
             phase_elapsed_s=self.now() - self.dl_start[h],
         )
         self.results.append(WaitOutcomeRow(label=label, outcome=outcome))
+        if outcome.category is OutcomeCategory.SUCCESS:
+            self._mgr.apply_post_import_category(h)
         if outcome.dropped:
             self._mgr.drop_pending(h)
         self.active.discard(h)
