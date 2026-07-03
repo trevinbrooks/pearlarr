@@ -10,6 +10,7 @@ from the episode collaborator that computes it.
 
 import concurrent.futures
 import os
+from collections.abc import Iterator, Sequence
 from datetime import datetime, timedelta
 from typing import Any, NamedTuple, NotRequired, TypedDict, cast
 
@@ -107,6 +108,19 @@ def is_video_candidate(basename: str) -> bool:
     if any(skip in basename for skip in TORRENT_FILENAMES_TO_SKIP):
         return False
     return os.path.splitext(basename)[1].lower() not in NON_VIDEO_EXTENSIONS
+
+
+def video_file_entries(files: Sequence[str]) -> Iterator[tuple[int, str]]:
+    """Yield ``(index, basename)`` for each importable video file in ``files``.
+
+    The one basename+skip iteration the warm pass, the parse loop, and the seed
+    builder share; the index survives so an index-aligned size list stays usable.
+    """
+
+    for idx, name in enumerate(files):
+        base = os.path.basename(name)
+        if is_video_candidate(base):
+            yield idx, base
 
 
 class ParseWindow(NamedTuple):
@@ -252,9 +266,8 @@ class SonarrParseCache:
         seen: set[str] = set()
         for srg_item in seadex_dict.values():
             for url_item in srg_item.urls.values():
-                for seadex_file in url_item.files:
-                    f = os.path.basename(seadex_file)
-                    if f in seen or not is_video_candidate(f):
+                for _, f in video_file_entries(url_item.files):
+                    if f in seen:
                         continue
                     seen.add(f)
                     record = self.cache_store.get_sonarr_parse(f)
@@ -339,15 +352,9 @@ class SonarrParseCache:
                 url_item.episodes = episodes
                 sizes = url_item.size
 
-                for sd_file_idx, seadex_file in enumerate(url_item.files):
-                    # Get basename from the file
-                    f = os.path.basename(seadex_file)
-
-                    # Skip non-episode files (NCED/NCOP, subs, fonts, audio, ...)
-                    # before hitting Sonarr - the same rule the warm pass uses.
-                    if not is_video_candidate(f):
-                        continue
-
+                # Video files only (NCED/NCOP, subs, fonts, audio dropped) - the
+                # same rule the warm pass uses; the index keys the size list.
+                for sd_file_idx, f in video_file_entries(url_item.files):
                     # Fresh cache hit, or query Sonarr and cache the result so it
                     # expires (re-validates) rather than being trusted forever.
                     parsed = self._episodes_for(f, window=window)

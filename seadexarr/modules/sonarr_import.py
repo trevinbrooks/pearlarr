@@ -62,7 +62,7 @@ from .seadex_types import (
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import SonarrEpisodes
 from .sonarr_mapper import FileEpisodeMapper
-from .sonarr_parse import is_video_candidate
+from .sonarr_parse import video_file_entries
 
 # RefreshMonitoredDownloads is quick (Sonarr re-scans its clients); poll its
 # command status up to this many times, sleeping this long between, before
@@ -271,8 +271,11 @@ class ImportExecutor:
                 case ImportAction.IMPORT:
                     files.append(self._build_file_entry(decision, pending, content_path))
                 case _:
-                    # SAMPLE / ALREADY / SKIP_DONE -> nothing to import for this file.
-                    continue
+                    # SAMPLE / ALREADY / SKIP_DONE -> nothing to import for this
+                    # file; surface the distinct vocabulary at debug.
+                    self.logger.debug(
+                        indent_string(f"{decision.action.name}: {decision.basename}"),
+                    )
 
         if missing:
             # Intended files our map covers but Sonarr can't see yet. An early poll
@@ -511,11 +514,7 @@ class ImportReconciler:
 
                 # The video files this torrent should import (subs / fonts / NCED
                 # dropped).
-                video_files: list[str] = []
-                for seadex_file in url_item.files:
-                    base = os.path.basename(seadex_file)
-                    if is_video_candidate(base):
-                        video_files.append(base)
+                video_files = [base for _, base in video_file_entries(url_item.files)]
 
                 # No importable video files at all -> nothing to track.
                 if not video_files:

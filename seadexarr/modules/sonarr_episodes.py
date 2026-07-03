@@ -75,15 +75,9 @@ def check_ep_by_anime_ids(
         tvdb_season (int): TVDB season number
     """
 
-    # First, check by season
-    season_number = ep.season_number
-
-    # If the TVDB season is -1, this is anything but specials
-    if tvdb_season == -1 and season_number == 0:
-        return False
-
-    # Else, if we have a season defined, and it doesn't match, don't include
-    return not (tvdb_season != -1 and season_number != tvdb_season)
+    if tvdb_season == -1:
+        return ep.season_number != 0  # -1 = anything but specials
+    return ep.season_number == tvdb_season
 
 
 def check_ep_by_anibridge(
