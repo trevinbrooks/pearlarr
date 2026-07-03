@@ -1258,16 +1258,7 @@ def derive_languages(
     dual: list[str],
     single: list[str],
 ) -> list[str]:
-    """Pick the language name list for the import.
-
-    Args:
-        is_dual_audio (bool): Whether the SeaDex release is dual-audio.
-        dual (list[str]): Language names for a dual-audio release.
-        single (list[str]): Language names for a single-audio release.
-
-    Returns:
-        list[str]: ``dual`` when ``is_dual_audio`` else ``single``.
-    """
+    """Pick the import language list: ``dual`` when dual-audio, else ``single``."""
 
     return dual if is_dual_audio else single
 
@@ -1364,46 +1355,20 @@ def resolve_quality(
 
 
 def resolve_language_objects(
-    names: Sequence[object] | None,
+    names: list[str],
     lang_defs: list[Language],
 ) -> list[Language]:
-    """Resolve language names to Sonarr ``{id, name}`` language objects.
+    """Resolve configured language names to Sonarr ``{id, name}`` objects.
 
-    Matches each requested name (case-insensitive) against the
-    ``/api/v3/language`` list and returns the matched ``{"id", "name"}`` objects
-    in request order, skipping any name with no match (so an unknown configured
-    language is simply dropped rather than failing the import).
-
-    ``names`` is typed ``Sequence[object] | None`` rather than ``list[str]`` because
-    the contract is "configured language names" but the *runtime* value is sourced
-    from open YAML: a blank/malformed ``import_languages_*`` key can hand this a
-    ``None`` or a non-string entry (a bare int, etc.). The ``names or []`` guard and
-    the per-entry ``isinstance`` check below are therefore live, not dead - the
-    honest looser type is what keeps them necessary while still accepting the
-    documented ``list[str]`` callers pass.
-
-    Args:
-        names (Sequence[object] | None): Language names to resolve (e.g.
-            ``["Japanese"]``); ``None`` or non-string entries from a malformed
-            config are tolerated (``None`` -> no languages, bad entries skipped).
-        lang_defs (list[Language]): The ``/api/v3/language`` list; each entry has
-            ``id`` and ``name`` (a ``LanguageResource`` ``{id, name}``).
-
-    Returns:
-        list[Language]: The matched ``{"id", "name"}`` objects (unknown names
-        omitted).
+    Case-insensitive match against the ``/api/v3/language`` list, in request
+    order; a name with no match is dropped rather than failing the import.
     """
 
     by_name: dict[str, Language] = {
         name.casefold(): definition for definition in lang_defs if isinstance((name := definition.get("name")), str)
     }
     resolved: list[Language] = []
-    # ``names or []`` and the str guard keep a blank/None or malformed configured
-    # language list from raising (a blank YAML value parses to None, which would
-    # otherwise blow up on ``for name in None`` / ``None.casefold()``).
-    for name in names or []:
-        if not isinstance(name, str):
-            continue
+    for name in names:
         definition = by_name.get(name.casefold())
         if definition is not None:
             resolved.append({"id": definition.get("id"), "name": definition.get("name")})

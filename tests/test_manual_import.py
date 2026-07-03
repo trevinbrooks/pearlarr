@@ -36,7 +36,6 @@ from seadexarr.modules.manual_import import (
     plan_import_files,
     quality_axes_from_model,
     quality_axes_from_name,
-    resolve_language_objects,
     resolve_quality,
     resolve_wait_mode,
     targets_needing_import,
@@ -45,7 +44,6 @@ from seadexarr.modules.planner import normalize_rg
 from seadexarr.modules.seadex_types import (
     SONARR_MISSING_KEY,
     CommandResource,
-    Language,
     QualityDefinition,
     QualityModel,
     QualitySource,
@@ -648,16 +646,3 @@ class TestClassifyQueue:
 
     def test_case_insensitive(self) -> None:
         assert classify_queue(["IMPORTBLOCKED"]) is QueueVerdict.STEP_IN
-
-
-class TestResolveLanguageObjectsDefensive:
-    """resolve_language_objects survives a blank/None or malformed name list."""
-
-    def test_none_names_returns_empty(self) -> None:
-        defs: list[Language] = [{"id": 8, "name": "Japanese"}]
-        assert resolve_language_objects(None, defs) == []
-
-    def test_non_string_names_are_skipped(self) -> None:
-        defs: list[Language] = [{"id": 8, "name": "Japanese"}]
-        names: list[object] = [None, 5, "Japanese"]
-        assert resolve_language_objects(names, defs) == [{"id": 8, "name": "Japanese"}]
