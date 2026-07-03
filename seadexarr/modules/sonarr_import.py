@@ -533,18 +533,13 @@ class ImportReconciler:
                     if file_ids:
                         file_episode_map[normalize_basename(base)] = file_ids
 
-                # The flat fallback is a legitimate guess ONLY for a genuine
-                # single-file torrent; a multi-file pack leaves it empty so the
-                # single-file rule can never stamp a whole season onto one file.
-                episode_ids: list[int] = []
-                if len(video_files) == 1 and file_episode_map:
-                    episode_ids = next(iter(file_episode_map.values()))
-
                 pending_seeds[url_item.infohash] = PendingImport(
                     infohash=url_item.infohash,
                     series_id=sonarr_series_id,
                     file_episode_map=file_episode_map,
-                    episode_ids=episode_ids,
+                    # episode_ids is a legacy read-only fallback: never seeded (any
+                    # value here would only duplicate the map, which readers dedupe).
+                    episode_ids=[],
                     release_group=srg,
                     is_dual_audio=url_item.is_dual_audio,
                     seadex_files=video_files,

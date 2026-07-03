@@ -64,8 +64,8 @@ class TestBuildPendingSeeds:
         assert seed.title == "Show"
         assert seed.file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
         assert seed.seadex_files == ["Show - 01.mkv"]
-        # A single-file torrent gets the flat fallback (its one file's ids).
-        assert seed.episode_ids == [101]
+        # episode_ids is a legacy read-only fallback; new seeds never write it.
+        assert seed.episode_ids == []
 
     def test_multi_file_pack_de_unions_flat_fallback(self) -> None:
         ep_list = [_ep(101, 1, 1), _ep(102, 1, 2)]
@@ -98,8 +98,8 @@ class TestBuildPendingSeeds:
             normalize_basename("Show - 01.mkv"): [101],
             normalize_basename("Show - 02.mkv"): [102],
         }
-        # The cross-file union bug fix: a multi-file pack carries NO flat fallback,
-        # so the single-file rule can never stamp the whole season onto one file.
+        # No seed ever carries the flat fallback (it's legacy read-only), so the
+        # old cross-file union bug (a whole season stamped onto one file) is out.
         assert seed.episode_ids == []
 
     def test_unparsed_video_still_seeded_for_import_time_repair(self) -> None:

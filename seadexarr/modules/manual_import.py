@@ -585,8 +585,9 @@ class PendingImport:
             Sonarr episode ids; the primary file->episode mapping. Repaired and
             extended in place at import time when a grabbed file wasn't parseable
             at grab time, so the map self-heals.
-        episode_ids (list[int]): Flat fallback ids, used ONLY for a genuine
-            single-file torrent whose one file our parse couldn't resolve.
+        episode_ids (list[int]): Legacy read-only fallback: new seeds always
+            write ``[]`` (a value could only duplicate ``file_episode_map``);
+            readers still fold it in so an old persisted record rehydrates.
         ordered_episode_ids (list[int]): The resolved episode ids for this entry,
             in season order - the authoritative set the import assigns into. Lifted
             straight from the add-flow ``ep_list`` (which already applied the
