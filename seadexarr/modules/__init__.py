@@ -7,10 +7,10 @@ from .log import setup_logger
 # The public surface is the CLI (``seadexarr_cli``). The composition pieces are
 # exported for programmatic use: build a ``RunDeps`` (the shared collaborators),
 # wrap it in a ``RunServices`` (the per-id services hub), inject both into
-# ``SeaDexArr`` (the run loop) and a strategy, then drive ``SeaDexArr.run_sync``
+# ``RunLoop`` and a strategy, then drive ``RunLoop.run_sync``
 # - this is what ``cli.py`` does (the facades were dropped).
 #
-# ``RunDeps``/``RunServices``/``SeaDexArr``/``RadarrSync``/``SonarrSync`` are
+# ``RunDeps``/``RunServices``/``RunLoop``/``RadarrSync``/``SonarrSync`` are
 # exported LAZILY (PEP 562): importing this package - which the ``seadexarr``
 # entry point does just to reach ``seadexarr_cli`` - must not pull the heavy run
 # machinery (qBittorrent / arrapi / the SeaDex+httpx chain), so the CLI starts
@@ -18,14 +18,14 @@ from .log import setup_logger
 _LAZY: dict[str, str] = {
     "RunDeps": ".run_services",
     "RunServices": ".run_services",
-    "SeaDexArr": ".seadex_arr",
+    "RunLoop": ".run_loop",
     "RadarrSync": ".seadex_radarr",
     "SonarrSync": ".seadex_sonarr",
 }
 
 if TYPE_CHECKING:
+    from .run_loop import RunLoop
     from .run_services import RunDeps, RunServices
-    from .seadex_arr import SeaDexArr
     from .seadex_radarr import RadarrSync
     from .seadex_sonarr import SonarrSync
 
@@ -40,8 +40,8 @@ def __getattr__(name: str) -> object:
 __all__ = [
     "RadarrSync",
     "RunDeps",
+    "RunLoop",
     "RunServices",
-    "SeaDexArr",
     "SonarrSync",
     "seadexarr_cli",
     "setup_logger",

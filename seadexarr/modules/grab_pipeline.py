@@ -1,6 +1,6 @@
 """The grab "produce" side: add torrents, register pending records, write cache.
 
-Extracted from the old ``SeaDexArr`` god class. ``GrabPipeline`` owns the per-id
+Extracted from the old ``RunLoop`` god class. ``GrabPipeline`` owns the per-id
 grab tail both strategies funnel into - add the recommended release(s) to
 qBittorrent, persist the durable :class:`PendingImport` records the end-of-run
 monitor waits on, notify, and write the cache outcome. It returns a pure bool

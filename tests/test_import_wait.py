@@ -41,7 +41,7 @@ from seadexarr.modules.manual_import import (
     WaitOutcome,
 )
 from seadexarr.modules.reporter import RunContext
-from seadexarr.modules.seadex_arr import SeaDexArr
+from seadexarr.modules.run_loop import RunLoop
 from seadexarr.modules.torrents import AddOutcome
 from seadexarr.modules.wait_view import (
     SPARK_SAMPLES,
@@ -1334,7 +1334,7 @@ class TestImportWaitModeProperty:
         assert services.import_wait_mode is ImportWaitMode.HYBRID
 
 
-def _attach_wait_manager(engine: SeaDexArr) -> None:
+def _attach_wait_manager(engine: RunLoop) -> None:
     """Attach an ``ImportWaitManager`` sharing the engine's run state.
 
     The wait/poll machinery lives on the manager now, so a finalize/snapshot test
@@ -1406,7 +1406,7 @@ class _FinalizeWaitManager:
         return None
 
 
-def _finalize_engine(calls: list[str], *, qbit: object, mode: ImportWaitMode) -> SeaDexArr:
+def _finalize_engine(calls: list[str], *, qbit: object, mode: ImportWaitMode) -> RunLoop:
     """A bare engine whose summary / save / monitor each append a marker to ``calls``.
 
     The reporter, cache store, and wait manager are typed recorders (a
@@ -1420,7 +1420,7 @@ def _finalize_engine(calls: list[str], *, qbit: object, mode: ImportWaitMode) ->
 
     ctx = RunContext(arr=Arr.SONARR, import_wait_mode=mode)
     return make_bare_instance(
-        SeaDexArr,
+        RunLoop,
         qbit=qbit,
         logger=make_logger(),
         _config=make_config(
@@ -1688,8 +1688,8 @@ def make_add_engine(
     qbit: object = CLIENT_SENTINEL,
     dry_run: bool = False,
     **config_overrides: object,
-) -> tuple[SeaDexArr, GrabPipeline]:
-    """A bare ``SeaDexArr`` + a ``GrabPipeline`` + an attached ``ImportWaitManager``.
+) -> tuple[RunLoop, GrabPipeline]:
+    """A bare ``RunLoop`` + a ``GrabPipeline`` + an attached ``ImportWaitManager``.
 
     The produce side lives on :class:`GrabPipeline` (held by the services hub in
     production) and the consume side on :class:`ImportWaitManager`, so both are
@@ -1703,7 +1703,7 @@ def make_add_engine(
     """
 
     engine = make_bare_instance(
-        SeaDexArr,
+        RunLoop,
         qbit=qbit,
         logger=make_logger(),
         _config=make_config(**config_overrides),

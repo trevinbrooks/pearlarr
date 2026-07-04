@@ -2,7 +2,7 @@
 
 The central ``seadex_dict`` is a four-level mapping built once per AniList entry
 by :meth:`seadexarr.modules.seadex_filter.SeadexReleaseFilter.build` (reached via
-the ``SeaDexArr.get_seadex_dict`` delegator) and threaded through the decision engine
+the ``RunServices.get_seadex_dict`` delegator) and threaded through the decision engine
 (:mod:`seadexarr.modules.planner`) and the Discord notifier
 (:mod:`seadexarr.modules.notify`). The two keyed levels stay plain ``dict``\\ s
 (release groups keyed by name, urls keyed by url string), but the *value

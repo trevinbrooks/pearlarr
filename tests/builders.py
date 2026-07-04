@@ -561,7 +561,7 @@ def make_run_deps(
     logger: logging.Logger | None = None,
 ) -> RunDeps:
     """A real ``RunDeps`` (typed fakes) to drive the REAL ``RunServices`` /
-    ``SeaDexArr`` / ``SonarrSync`` ``__init__`` + ``begin_run`` rebind - the
+    ``RunLoop`` / ``SonarrSync`` ``__init__`` + ``begin_run`` rebind - the
     construction seam ``make_bare_instance`` bypasses.
 
     Every field is passed to ``RunDeps`` by explicit keyword (no ``**dict[str, Any]``

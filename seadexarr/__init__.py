@@ -8,19 +8,19 @@ from .modules import seadexarr_cli, setup_logger
 # or pull the heavy run machinery (qBittorrent / arrapi / the SeaDex+httpx chain).
 # ``from .. import __version__`` in cache.py and ``seadexarr.<Sync>`` for
 # programmatic use both still resolve through ``__getattr__``.
-_LAZY_EXPORTS = frozenset({"RadarrSync", "RunDeps", "RunServices", "SeaDexArr", "SonarrSync"})
+_LAZY_EXPORTS = frozenset({"RadarrSync", "RunDeps", "RunLoop", "RunServices", "SonarrSync"})
 
 if TYPE_CHECKING:
     # Declared for type checkers; the values are produced at runtime by
     # __getattr__ (PEP 562), so these never execute / never import eagerly.
     __version__: str
-    from .modules import RadarrSync, RunDeps, RunServices, SeaDexArr, SonarrSync
+    from .modules import RadarrSync, RunDeps, RunLoop, RunServices, SonarrSync
 
 __all__ = [
     "RadarrSync",
     "RunDeps",
+    "RunLoop",
     "RunServices",
-    "SeaDexArr",
     "SonarrSync",
     "__version__",
     "seadexarr_cli",

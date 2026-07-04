@@ -19,7 +19,7 @@ from .wait_view import (
 
 
 @final
-class SeaDexArr:
+class RunLoop:
     """The Arr-agnostic run loop driving an injected strategy.
 
     Receives its shared collaborators as a :class:`RunDeps` bundle plus the

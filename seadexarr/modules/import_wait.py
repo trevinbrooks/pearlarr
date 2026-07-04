@@ -1,6 +1,6 @@
 """The completion-wait "consume" side: poll, reconcile, and the blocking monitor.
 
-Extracted from :class:`~.seadex_arr.SeaDexArr`. ``ImportWaitManager`` owns the
+Extracted from :class:`~.run_loop.RunLoop`. ``ImportWaitManager`` owns the
 wait-for-completion machinery: one-shot qBittorrent polls, the carried-over
 pending-record reconciliation (the per-series inline snapshot + the deferred
 reconcile + the pre-summary tally), the durable-store TTL prune, and the
@@ -72,7 +72,7 @@ def _info_row_telemetry(row: object) -> TorrentTelemetry:
 class ImportWaitManager:
     """Polls, reconciles, and runs the blocking monitor for one Arr run.
 
-    Constructed once per run in :class:`~.seadex_arr.SeaDexArr` from the unpacked
+    Constructed once per run in :class:`~.run_loop.RunLoop` from the unpacked
     deps + the placeholder ctx; :meth:`begin_run` rebinds the ctx + active strategy
     each run. The five passes the engine drives are the public surface: ``run_sync``
     calls :meth:`prune_expired_pending` (run start) and

@@ -246,8 +246,8 @@ def _run_arrs(
         # Pull the heavy run machinery now - after the instant title, before the
         # cockpit's first step - so this one-time import cost lands in the gap
         # between the banner and the spinner rather than stalling a live step.
+        from .run_loop import RunLoop
         from .run_services import QbitConnectionError, RunDeps, RunServices
-        from .seadex_arr import SeaDexArr
         from .seadex_radarr import RadarrSync
         from .seadex_sonarr import SonarrSync
 
@@ -275,7 +275,7 @@ def _run_arrs(
                             boot=boot,
                         )
                         services = RunServices(deps, arr_name)
-                        runner = SeaDexArr(deps, services)
+                        runner = RunLoop(deps, services)
                         match arr_name:
                             case Arr.SONARR:
                                 runner.run_sync(

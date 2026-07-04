@@ -19,7 +19,7 @@ class TorrentParseError(Exception):
 
 # Reused when a caller doesn't pass its own session, so even standalone use of
 # these helpers gets keep-alive connection pooling. The main code path threads
-# in SeaDexArr.session instead.
+# in RunDeps.session instead.
 _DEFAULT_SESSION = requests.Session()
 # pynyaa rides httpx: give its client the same bounds (and keep pynyaa's own
 # User-Agent, which its default client would otherwise set).

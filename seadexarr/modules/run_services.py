@@ -1,10 +1,10 @@
 """The per-run dependency bundle and the per-AniList-id services hub.
 
-Split out of ``seadex_arr.py``: :class:`RunDeps` is the shared leaf-collaborator
+Split out of ``run_loop.py``: :class:`RunDeps` is the shared leaf-collaborator
 bundle the composition root builds once per arr run, and :class:`RunServices` is
 the services hub the Arr strategies hold as ``self._services`` and call the
 shared per-id pipeline through. The run loop itself stays in
-:class:`~.seadex_arr.SeaDexArr`, which adopts the hub's placeholder context and
+:class:`~.run_loop.RunLoop`, which adopts the hub's placeholder context and
 pushes each run's fresh context down via :meth:`RunServices.begin_run` - so the
 strategies depend on this module only and never see the loop type.
 """
@@ -57,7 +57,7 @@ class RunDeps:
 
     A plain value object the composition root (``cli.py``) builds via
     :meth:`build` and injects into the :class:`RunServices` hub, the
-    :class:`~.seadex_arr.SeaDexArr` run loop, and the Arr-specific strategy.
+    :class:`~.run_loop.RunLoop` run loop, and the Arr-specific strategy.
     Keeping construction here (where every collaborator type is already imported)
     and injection at the root means none of them constructs another's
     dependencies - each receives the subset it needs. ``anime_mappings`` /
@@ -275,7 +275,7 @@ class RunServices:
     pipeline the Arr strategies reach through ``self._services``: the release
     filter, the grab tail, the cache checks, and the strategy-facing log
     delegates. ``arr`` is THE authority for which Arr is being run (``ctx.arr``
-    is the per-run copy); the :class:`~.seadex_arr.SeaDexArr` run loop adopts
+    is the per-run copy); the :class:`~.run_loop.RunLoop` run loop adopts
     the placeholder context minted here and pushes each run's fresh context
     down via :meth:`begin_run`, so the strategies never see the loop type.
     """
@@ -343,7 +343,7 @@ class RunServices:
     def ctx(self) -> RunContext:
         """The current run context (the placeholder until a run begins).
 
-        Read by the :class:`~.seadex_arr.SeaDexArr` run loop at construction so
+        Read by the :class:`~.run_loop.RunLoop` run loop at construction so
         it adopts the same placeholder instead of minting a second one.
         """
 

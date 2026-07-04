@@ -19,7 +19,7 @@ from seadexarr.modules.config import Arr
 from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.protocols import ImportCompleter
 from seadexarr.modules.reporter import RunContext
-from seadexarr.modules.seadex_arr import SeaDexArr
+from seadexarr.modules.run_loop import RunLoop
 from seadexarr.modules.seadex_types import ProgressSink
 
 from .builders import make_bare_instance, make_config, make_services
@@ -67,7 +67,7 @@ class _FakeBound:
 
 
 class _FinalizeRecorder:
-    """A typed stand-in for ``SeaDexArr._finalize_run`` that counts its calls."""
+    """A typed stand-in for ``RunLoop._finalize_run`` that counts its calls."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -76,8 +76,8 @@ class _FinalizeRecorder:
         self.calls += 1
 
 
-def _engine(finalize: _FinalizeRecorder, logger: logging.Logger) -> SeaDexArr:
-    """A bare ``SeaDexArr`` wired with typed fakes for the run-loop collaborators.
+def _engine(finalize: _FinalizeRecorder, logger: logging.Logger) -> RunLoop:
+    """A bare ``RunLoop`` wired with typed fakes for the run-loop collaborators.
 
     The strategy reaches ``run_sync`` typed (it's an ``ArrSync``); the rest are
     injected as bare attributes (the methods only read them), and ``_finalize_run``
@@ -93,7 +93,7 @@ def _engine(finalize: _FinalizeRecorder, logger: logging.Logger) -> SeaDexArr:
         _grab_pipeline=_FakeBound(),
     )
     return make_bare_instance(
-        SeaDexArr,
+        RunLoop,
         qbit=None,
         logger=logger,
         _config=config,

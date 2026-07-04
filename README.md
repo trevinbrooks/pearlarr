@@ -149,11 +149,11 @@ The CLI is the primary interface — a one-off run is just ``seadexarr run singl
 Commands exit non-zero when they fail (a failed run, backup, or refused restore), so they compose
 with ``&&``, cron, and health checks.
 The same composition is available programmatically: build the shared collaborators with
-``RunDeps.build``, wrap them in a ``RunServices`` hub, inject both into the ``SeaDexArr``
-run loop plus an Arr strategy, and drive ``run_sync``:
+``RunDeps.build``, wrap them in a ``RunServices`` hub, inject both into the ``RunLoop``
+plus an Arr strategy, and drive ``run_sync``:
 
 ```python
-from seadexarr import RunDeps, RunServices, SeaDexArr, SonarrSync
+from seadexarr import RunDeps, RunLoop, RunServices, SonarrSync
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.mappings import MappingResolver
 from seadexarr.modules.paths import ensure_data_dir, resolve_paths
@@ -181,7 +181,7 @@ try:
     )
     try:
         services = RunServices(deps, Arr.SONARR)
-        runner = SeaDexArr(deps, services)
+        runner = RunLoop(deps, services)
         runner.run_sync(
             SonarrSync(deps, services),
             item_id=None,

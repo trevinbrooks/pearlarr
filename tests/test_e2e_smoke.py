@@ -2,7 +2,7 @@
 """End-to-end smoke tests: one full pass per arr through the REAL composition root.
 
 These are the tests that prove ``cli.run_single`` -> ``_run_arrs`` ->
-``RunDeps.build`` -> ``RunServices`` -> ``SeaDexArr.run_sync`` -> ``SonarrSync``
+``RunDeps.build`` -> ``RunServices`` -> ``RunLoop.run_sync`` -> ``SonarrSync``
 / ``RadarrSync`` hooks actually run a sync wired together, with ONLY the
 external network leaves faked:
 

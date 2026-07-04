@@ -6,14 +6,14 @@
 
 The rest of the suite builds the hub/loop/strategy via ``make_bare_instance``
 (``object.__new__``), which bypasses ``__init__``. These drive the real
-``RunServices`` / ``SeaDexArr`` / ``SonarrSync`` constructors off a hand-built
+``RunServices`` / ``RunLoop`` / ``SonarrSync`` constructors off a hand-built
 ``RunDeps`` so the collaborator wiring and the ``begin_run`` two-phase rebind
 have an in-suite guard (previously only an offline smoke).
 """
 
 from seadexarr.modules.config import Arr
+from seadexarr.modules.run_loop import RunLoop
 from seadexarr.modules.run_services import RunServices
-from seadexarr.modules.seadex_arr import SeaDexArr
 from seadexarr.modules.seadex_radarr import RadarrSync
 from seadexarr.modules.seadex_sonarr import SonarrSync
 
@@ -21,7 +21,7 @@ from .builders import make_config, make_run_deps
 from .fakes import FakeRadarrClient, FakeSonarrClient
 
 
-def _ctx_holders(runner: SeaDexArr, services: RunServices) -> list[object]:
+def _ctx_holders(runner: RunLoop, services: RunServices) -> list[object]:
     """Structurally discover every rebindable ctx-holder hanging off the pair.
 
     Introspective on purpose: a hand-enumerated holder list silently passes when
@@ -40,7 +40,7 @@ def _ctx_holders(runner: SeaDexArr, services: RunServices) -> list[object]:
 def test_runner_adopts_placeholder_then_rebinds_fresh_ctx() -> None:
     deps = make_run_deps()
     services = RunServices(deps, Arr.SONARR)
-    runner = SeaDexArr(deps, services)
+    runner = RunLoop(deps, services)
 
     # Phase 1 (adoption): the runner adopts the hub's single placeholder - no
     # second mint - and every ctx-holding collaborator is bound to that object.
