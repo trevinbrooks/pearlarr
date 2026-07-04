@@ -115,11 +115,11 @@ class RichConsoleHandler(logging.Handler):
                 line.append(value)
         elif value != "":
             line.append(" ")
-            line.append(Text(str(value), style=kv["value_style"] or ""))
+            line.append(Text(value, style=kv["value_style"] or ""))
         tail = kv["tail"]
         if tail:
             line.append(" ")
-            line.append(Text(str(tail), style=kv["tail_style"] or "yellow"))
+            line.append(Text(tail, style=kv["tail_style"] or "yellow"))
         return line
 
     @override

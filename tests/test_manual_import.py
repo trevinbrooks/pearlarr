@@ -53,6 +53,8 @@ from seadexarr.modules.sonarr_import_plan import (
     targets_needing_import,
 )
 
+from .builders import SEP
+
 
 def _ep(
     *,
@@ -532,7 +534,7 @@ class TestPendingImportRoundTrip:
         grouped = PendingImport.from_json(
             {"infohash": "h", "series_id": 1, "title": "Show", "release_group": "Era-Raws"},
         )
-        assert grouped.display_label == "Show · Era-Raws"
+        assert grouped.display_label == f"Show{SEP}Era-Raws"
 
     def test_old_record_with_unknown_keys_rehydrates(self) -> None:
         # Back-compat: a record persisted with since-removed keys still loads

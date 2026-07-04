@@ -580,9 +580,9 @@ class TestSurvivingPrivateCoverage:
         # in every run's summary until a covering public release lands.
         assert cache.check_al_id_in_cache(Arr.SONARR, 33, entry) is False
         assert [n.kind for n in ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
-        assert [n.reason for n in ctx.stats.needs_action] == [
-            "private-only release; no public alternative covers these files",
-        ]
+        # Exact wording pinned once, in test_grab_pipeline's
+        # test_private_only_in_fallback_mode_surfaces_no_alternative.
+        assert "no public alternative" in ctx.stats.needs_action[0].reason
 
 
 class TestPromotionGeneralization:

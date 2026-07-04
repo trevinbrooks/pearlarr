@@ -155,8 +155,10 @@ def coerce_int(value: object) -> int | None:
     anything else (including None) is None.
     """
 
+    if isinstance(value, bool):
+        return int(value)  # normalize True/False to 1/0
     if isinstance(value, int):
-        return int(value)
+        return value
     if isinstance(value, float):
         return None if math.isnan(value) else int(value)
     if isinstance(value, str):

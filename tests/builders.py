@@ -61,6 +61,10 @@ from seadexarr.modules.torrents import AddOutcome, AddResult, TorrentService
 
 from .fakes import FakeSonarrClient
 
+# The " · " display separator the cockpit/ledger/report rows join parts with.
+# Assertions build expected strings from this so a separator change is one edit.
+SEP = " · "
+
 # Map each flat (group-local) setting name to its config group, derived straight from
 # AppConfig's own field tree so it can't drift into a stale subset: adding a 9th
 # settings group to AppConfig wires it in here for free. AppConfig declares ``sonarr``
@@ -200,9 +204,7 @@ class FakeCacheStore(AbstractCacheStore):
         pending: dict[str, dict[str, dict[str, Any]]] | None = None,
     ) -> None:
         self._sonarr_parse: dict[str, dict[str, Any]] = dict(sonarr_parse or {})
-        self._pending: dict[str, dict[str, dict[str, Any]]] = {
-            str(arr): dict(recs) for arr, recs in (pending or {}).items()
-        }
+        self._pending: dict[str, dict[str, dict[str, Any]]] = {arr: dict(recs) for arr, recs in (pending or {}).items()}
         # Per-entry records: the scalar columns keyed by (arr, al_id), and the
         # entry's torrent-hash set kept separately (the entries / torrent_hashes
         # split). An entry present with an empty scalar dict still "exists" - the

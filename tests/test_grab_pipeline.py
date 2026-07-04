@@ -517,10 +517,10 @@ class TestFallbackHoldNeverCaches:
         assert pipeline._ctx.torrents_added == 1
         assert pipeline._ctx.public_only_skipped is True
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
-        assert [r.reason for r in pipeline._ctx.stats.needs_action] == [
-            "private-only release; no public alternative covers these files"
-        ]
-        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
+        rows = pipeline._ctx.stats.needs_action
+        assert [r.kind for r in rows] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
+        # Exact wording pinned once, in test_private_only_in_fallback_mode_surfaces_no_alternative.
+        assert "no public alternative" in rows[0].reason
 
     def test_interactive_partial_grab_still_caches(self) -> None:
         # Interactive: the hold is the user's own hand-picked private release, so

@@ -41,6 +41,8 @@ from seadexarr.modules.wait_view import (
     sparkline,
 )
 
+from .builders import SEP
+
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 
 
@@ -180,7 +182,7 @@ def test_live_view_graduates_and_summarizes() -> None:
     out = _plain(console)
     assert "Bocchi the Rock!" in out
     assert "imported" in out  # graduation ledger word
-    assert "(12 files · 3m 12s)" in out  # the imported ledger coda
+    assert f"(12 files{SEP}3m 12s)" in out  # the imported ledger coda
     assert "timed out" in out
     assert "(retries next run)" in out  # a deferred outcome never reads as lost
     assert "wait complete" in out  # closing summary
@@ -493,7 +495,7 @@ def test_sparkline_needs_two_samples() -> None:
 def test_graduation_tail_states_files_and_elapsed_for_an_import() -> None:
     row = _terminal("h", "A", Outcome.IMPORTED, files=12, elapsed=192)
 
-    assert graduation_tail(row, Outcome.IMPORTED) == "12 files · 3m 12s"
+    assert graduation_tail(row, Outcome.IMPORTED) == f"12 files{SEP}3m 12s"
 
 
 def test_graduation_tail_is_empty_when_an_import_has_no_detail() -> None:

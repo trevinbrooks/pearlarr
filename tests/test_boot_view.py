@@ -36,7 +36,7 @@ from seadexarr.modules.log import RichConsoleHandler
 from seadexarr.modules.mappings import MappingResolver
 from seadexarr.modules.run_services import RunDeps
 
-from .builders import make_bare_instance, make_config
+from .builders import SEP, make_bare_instance, make_config
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 
@@ -123,7 +123,7 @@ def test_live_view_graduates_and_summarizes() -> None:
     out = _plain(console)
     assert "SeaDexArr" in out  # brand banner
     assert "✔ Reading config" in out
-    assert "✔ Connecting to Sonarr · 42 series" in out  # detail rides the ledger line
+    assert f"✔ Connecting to Sonarr{SEP}42 series" in out  # detail rides the ledger line
     assert "ready in" in out  # capstone
 
 
@@ -197,13 +197,13 @@ def test_log_view_is_calm_one_line_per_step() -> None:
         for frac in (0.25, 0.5, 0.75, 1.0):
             clock.tick(0.3)
             step.progress(frac, "anime_ids.json")
-        step.note("anime-ids · anidb")
+        step.note(f"anime-ids{SEP}anidb")
     view.end_section()
     view.close()
 
     out = _plain(console)
     assert out.count("Refreshing mappings…") == 1  # one heads-up, not four
-    assert "✔ Refreshing mappings · anime-ids · anidb" in out
+    assert f"✔ Refreshing mappings{SEP}anime-ids{SEP}anidb" in out
     assert "ready in" in out
 
 
@@ -252,7 +252,7 @@ def test_rundeps_build_warns_deferred_when_qbit_unconfigured(tmp_path: Path) -> 
 
     assert deps.qbit is None
     out = _plain(console)
-    assert "⚠ Connecting to qBittorrent · not configured - preview mode" in out
+    assert f"⚠ Connecting to qBittorrent{SEP}not configured - preview mode" in out
 
 
 # --- pure render helper --------------------------------------------------------

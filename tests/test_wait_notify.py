@@ -30,7 +30,7 @@ from seadexarr.modules.manual_import import Outcome
 from seadexarr.modules.notify import Notifier
 from seadexarr.modules.wait_view import WaitOutcomeRow, WaitResult
 
-from .builders import make_logger
+from .builders import SEP, make_logger
 from .fakes import CaptureHandler
 
 
@@ -125,7 +125,7 @@ def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> N
     assert notifier.push_wait_summary(arr=Arr.RADARR, result=_result()) is True
     embed = pushes[0]
     assert embed.title == "Radarr wait complete"
-    assert "2 imported · 1 left · 1 failed" in embed.description
+    assert f"2 imported{SEP}1 left{SEP}1 failed" in embed.description
     names = [field.name for field in embed.fields]
     assert names == ["Imported (2)", "Left for a later run (1)", "Failed (1)"]
     assert "Frieren" in embed.fields[0].value
