@@ -208,6 +208,118 @@ class TestAddOneUrlRegistersPending:
         assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED]
 
 
+def _nyaa_release(*, url: str, infohash: str) -> SeadexUrlItem:
+    """A download-flagged Nyaa release that clears every add-path filter."""
+
+    item = url_item(url=url, infohash=infohash, download=True)
+    item.tracker = Tracker.NYAA
+    return item
+
+
+class TestAddTorrentCap:
+    """add_torrent honours max_torrents_to_add within ONE title's url loop."""
+
+    def test_cap_stops_after_exactly_cap_adds(self) -> None:
+        # MUTATION PIN: `cap = None` and `>= cap` -> `> cap` both over-grab. Three
+        # flagged urls under a cap of 2: exactly the first two reach the service,
+        # both counters read 2, and the third url is never attempted.
+        u1 = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
+        u2 = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
+        u3 = _nyaa_release(url="https://nyaa.si/view/3", infohash="h3")
+        seadex_dict: SeadexDict = {"RG": rg_group({u1.url: u1, u2.url: u2, u3.url: u3})}
+        torrents = FakeTorrents(
+            {
+                "h1": (AddOutcome.ADDED, "one"),
+                "h2": (AddOutcome.ADDED, "two"),
+                "h3": (AddOutcome.ADDED, "three"),
+            }
+        )
+        pipeline = _pipeline(torrents=torrents, max_torrents_to_add=2)
+
+        n_added, results = pipeline.add_torrent(seadex_dict, pending_seeds=None)
+
+        assert torrents.calls == ["h1", "h2"]  # early stop: h3 never attempted
+        assert n_added == 2
+        assert pipeline._ctx.torrents_added == 2
+        assert [r.outcome for r in results] == [AddOutcome.ADDED, AddOutcome.ADDED]
+
+    def test_non_added_url_does_not_stop_the_loop(self) -> None:
+        # MUTATION PIN: the non-ADDED `continue` flipped to `break` would abandon
+        # the rest of the group's urls. ALREADY_ADDED first, ADDED second, ONE
+        # group: both must be attempted, in order.
+        u1 = _nyaa_release(url="https://nyaa.si/view/1", infohash="already")
+        u2 = _nyaa_release(url="https://nyaa.si/view/2", infohash="fresh")
+        seadex_dict: SeadexDict = {"RG": rg_group({u1.url: u1, u2.url: u2})}
+        torrents = FakeTorrents(
+            {
+                "already": (AddOutcome.ALREADY_ADDED, "old"),
+                "fresh": (AddOutcome.ADDED, "new"),
+            }
+        )
+        pipeline = _pipeline(torrents=torrents)
+
+        n_added, results = pipeline.add_torrent(seadex_dict, pending_seeds=None)
+
+        assert torrents.calls == ["already", "fresh"]
+        assert n_added == 1
+        assert [r.outcome for r in results] == [AddOutcome.ALREADY_ADDED, AddOutcome.ADDED]
+
+
+class TestGrabAndCacheCapStop:
+    """grab_and_cache propagates the cap stop: True out, and NO cache write."""
+
+    def test_cap_stop_returns_true_and_skips_the_cache_write(self) -> None:
+        # MUTATION PIN: the cap branch's `return True` flipped to `False` would
+        # fall through to the per-title cache update - caching a title mid-cap -
+        # and tell the engine to keep scanning. Drive the real add path to the cap.
+        torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")})
+        pipeline = _pipeline(torrents=torrents, max_torrents_to_add=1, sleep_time=0)
+        pipeline._anilist.al_cache.update({42: {}})
+        pipeline._ctx.current_title = "Show S1"
+
+        req = GrabRequest(
+            al_id=42,
+            item_title="Show",
+            anilist_title="Show",
+            sd_url="https://seadex.example/42",
+            seadex_dict=one_release_dict(srg="RG", infohash="h1"),
+            torrent_hashes=["h1"],
+            cache_details={"updated_at": "2026-01-01 00:00:00"},
+            release_group=None,
+        )
+
+        stop = pipeline.grab_and_cache(req)
+
+        assert stop is True
+        assert pipeline._ctx.torrents_added == 1
+        # The engine's single finalize site owns the save; no per-title write here.
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
+
+
+class TestUpToDateTally:
+    """The up-to-date counter accumulates across titles."""
+
+    def test_two_up_to_date_titles_both_counted(self) -> None:
+        # MUTATION PIN: `stats.up_to_date += 1` degraded to `= 1` clamps at one;
+        # two nothing-to-download titles must tally 2.
+        pipeline = _pipeline(torrents=FakeTorrents({}), sleep_time=0)
+
+        for al_id in (1, 2):
+            req = GrabRequest(
+                al_id=al_id,
+                item_title="Show",
+                anilist_title="Show",
+                sd_url=f"https://seadex.example/{al_id}",
+                seadex_dict={},
+                torrent_hashes=[],
+                cache_details={},
+                release_group=None,
+            )
+            assert pipeline.grab_and_cache(req) is False
+
+        assert pipeline._ctx.stats.up_to_date == 2
+
+
 def _anidex_release(*, url: str, infohash: str) -> SeadexUrlItem:
     """A download-flagged release on AniDex - public (clears public_only) and in the
     default tracker set, but with no parser, so it hits ``_add_one_url``'s new skip."""

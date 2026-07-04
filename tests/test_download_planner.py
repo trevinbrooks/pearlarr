@@ -284,6 +284,52 @@ class TestReduceOverlappingDownloads:
         assert skips.notices[0].level == logging.INFO
         assert "Fall" in skips.notices[0].reason
 
+    def test_flagged_mixed_group_never_promotes_itself(self) -> None:
+        # MUTATION PIN (_promote_public_alternative): the candidate filter's
+        # `not flagged AND public` flipped to `or` admits the flagged mixed group
+        # itself, which then "promotes" over itself and unflags everything. With
+        # no unflagged public group the keeper must degrade to the mixed group,
+        # both its urls staying flagged, with no notice.
+        planner = make_planner(public_only=True)
+        seadex = {
+            "M": rg_group(
+                {
+                    "u_pub": url_item(download=True, is_public=True),
+                    "u_priv": url_item(download=True, is_public=False, size_mismatch=True),
+                },
+            ),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["M"].urls["u_pub"].download is True
+        assert seadex["M"].urls["u_priv"].download is True
+        assert skips.skipped is False
+        assert skips.notices == []
+
+    def test_promotes_mixed_unflagged_group_flipping_only_public_urls(self) -> None:
+        # MUTATION PIN (_promote_public_alternative): the `next(..., candidates[0])`
+        # fallback-to-first mutated away would return None and fall to the
+        # warn-and-hold. An upgrade-pending set whose ONLY unflagged public group
+        # is MIXED must still promote it, flipping just its public url.
+        planner = make_planner(public_only=True)
+        seadex = {
+            "P": rg_group({"p": url_item(download=True, is_public=False, size_mismatch=True, infohash=None)}),
+            "M": rg_group(
+                {
+                    "m_pub": url_item(download=False, is_public=True, infohash="m1"),
+                    "m_priv": url_item(download=False, is_public=False, infohash=None),
+                },
+            ),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["M"].urls["m_pub"].download is True
+        assert seadex["M"].urls["m_priv"].download is False  # promotion is public-only
+        assert seadex["P"].urls["p"].download is False
+        assert skips.skipped is False
+        assert len(skips.notices) == 1
+        assert skips.notices[0].level == logging.INFO
+        # M is a preferred group, not a fallback, so the verb must say so.
+        assert skips.notices[0].reason == "private-only; grabbing public alternative M"
+
     def test_different_files_both_kept(self) -> None:
         planner = make_planner(public_only=False)
         seadex = {
@@ -590,6 +636,52 @@ class TestReduceDropRescue:
         planner.reduce_overlapping_downloads(seadex)
         assert seadex["A"].urls["a_pub"].download is True
         assert seadex["B"].urls["b_pub"].download is False
+
+    def test_equal_coverage_drop_stays_dropped(self) -> None:
+        # MUTATION PIN (_rescue_dropped_coverage): `url_keys <= survivor_keys`
+        # flipped to `<` re-flags a dropped url whose coverage EQUALS the
+        # survivors' - a pure duplicate grab. Equal single-episode coverage on
+        # both public groups: the loser must stay dropped.
+        planner = make_planner(public_only=True)
+        seadex = {
+            "A": rg_group(
+                {"a_pub": url_item(download=True, is_public=True, episodes=[self.E11], infohash="a1")},
+                all_episodes=[self.E11],
+            ),
+            "B": rg_group(
+                {"b_pub": url_item(download=True, is_public=True, episodes=[self.E11], infohash="b1")},
+                all_episodes=[self.E11],
+            ),
+        }
+        planner.reduce_overlapping_downloads(seadex)
+        assert seadex["A"].urls["a_pub"].download is True
+        assert seadex["B"].urls["b_pub"].download is False
+
+    def test_rescue_accumulates_survivor_coverage(self) -> None:
+        # MUTATION PIN (_rescue_dropped_coverage): `survivor_keys |= url_keys`
+        # degraded to `=` forgets the ORIGINAL survivors after the first rescue.
+        # Keeper A covers S1; dropped B (S2) is rescued; dropped C (S1) is already
+        # covered by A and must stay dropped - under `=` it would be re-flagged.
+        planner = make_planner(public_only=True)
+        shared = [self.E11, self.E21]
+        seadex = {
+            "A": rg_group(
+                {"a_pub": url_item(download=True, is_public=True, episodes=[self.E11], infohash="a1")},
+                all_episodes=shared,
+            ),
+            "B": rg_group(
+                {"b_pub": url_item(download=True, is_public=True, episodes=[self.E21], infohash="b1")},
+                all_episodes=shared,
+            ),
+            "C": rg_group(
+                {"c_pub": url_item(download=True, is_public=True, episodes=[self.E11], infohash="c1")},
+                all_episodes=shared,
+            ),
+        }
+        planner.reduce_overlapping_downloads(seadex)
+        assert seadex["A"].urls["a_pub"].download is True
+        assert seadex["B"].urls["b_pub"].download is True  # rescued: only S2 carrier
+        assert seadex["C"].urls["c_pub"].download is False  # covered by keeper A
 
     def test_movie_urls_never_rescued(self) -> None:
         # Movie/no-parse urls have no episode vocabulary, so the rescue can't

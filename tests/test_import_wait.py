@@ -21,10 +21,12 @@ the contracts are pinned by recorded state.
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import override
 
 import qbittorrentapi
 
+from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
 from seadexarr.modules.config import Arr
 from seadexarr.modules.grab_pipeline import GrabPipeline
 from seadexarr.modules.import_wait import ImportWaitManager, MonitorPass
@@ -497,6 +499,26 @@ class TestPruneExpiredPending:
 
         assert set(mgr._pending_records()) == {"fresh"}
 
+    def test_ttl_direction_keeps_recent_drops_aged(self) -> None:
+        # MUTATION PIN: `cutoff = now() - timedelta` flipped to `+` survived the
+        # century-scale _FRESH/_EXPIRED stamps above. Real near-now stamps pin the
+        # sign: 1h old with a 30-day TTL is KEPT, 31 days old is dropped.
+        hour_old = (datetime.now() - timedelta(hours=1)).strftime(UPDATED_AT_STR_FORMAT)
+        month_old = (datetime.now() - timedelta(days=31)).strftime(UPDATED_AT_STR_FORMAT)
+        mgr = make_orchestration_manager(
+            qbit=None,
+            strategy=_RecordingStrategy(),
+            store_records=[
+                pending_import(infohash="recent", added_at=hour_old),
+                pending_import(infohash="aged", added_at=month_old),
+            ],
+            import_pending_max_age_days=30,
+        )
+
+        mgr.prune_expired_pending()
+
+        assert set(mgr._pending_records()) == {"recent"}
+
 
 class RecordingWaitView(WaitView):
     """Records every snapshot the manager pushes, for assertion.
@@ -626,6 +648,28 @@ class TestSnapshotPendingForSeries:
         assert "other" not in mgr._ctx.pending_states
         assert set(mgr._pending_records()) == {"other"}
 
+    def test_complete_without_content_path_stays_importing(self) -> None:
+        # MUTATION PIN (_reconcile_one): COMPLETE with an empty content_path must
+        # NOT attempt an import (`and` -> `or`) and must classify IMPORTING, kept -
+        # never IMPORTED/dropped (the default probe's files_present=False -> True).
+        strategy = _RecordingStrategy()
+        reporter = _RecordingReporter()
+        qbit = FakeQbit({"h": [FakeTorrent(is_complete=True)]})  # no content_path
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            reporter=reporter,
+            store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
+        )
+
+        mgr.snapshot_pending_for_series(7)
+
+        assert strategy.import_calls == []
+        assert mgr._ctx.pending_states["h"] is PendingState.IMPORTING
+        assert set(mgr._pending_records()) == {"h"}
+        assert mgr._ctx.stats.imported == 0
+        assert [c.state for c in reporter.snapshot_calls] == [PendingState.IMPORTING]
+
 
 class TestReconcileRemaining:
     """reconcile_remaining force-polls carried-over records not snapshotted this run."""
@@ -676,6 +720,32 @@ class TestReconcileRemaining:
 
         assert strategy.import_calls == []
 
+    def test_two_imports_both_counted(self) -> None:
+        # MUTATION PIN: `stats.imported += 1` degraded to `= 1` clamps at one;
+        # two carried-over imports in one pass must tally 2.
+        strategy = _RecordingStrategy(
+            completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
+        )
+        qbit = FakeQbit(
+            {
+                "h1": [FakeTorrent(is_complete=True, content_path="/d1")],
+                "h2": [FakeTorrent(is_complete=True, content_path="/d2")],
+            },
+        )
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=strategy,
+            store_records=[
+                pending_import(infohash="h1", added_at=_FRESH),
+                pending_import(infohash="h2", added_at=_FRESH),
+            ],
+        )
+
+        mgr.reconcile_remaining()
+
+        assert mgr._ctx.stats.imported == 2
+        assert mgr._pending_records() == {}
+
 
 class TestTallyCarriedOverIntoStats:
     """tally_carried_over_into_stats counts each still-pending record once."""
@@ -713,6 +783,47 @@ class TestTallyCarriedOverIntoStats:
 
         assert mgr._ctx.stats.queued == 0
         assert mgr._ctx.stats.importing == 0
+
+    def test_two_importing_records_both_tallied(self) -> None:
+        # MUTATION PIN: `stats.importing += 1` degraded to `= 1` clamps at one;
+        # two known-IMPORTING records must tally 2.
+        mgr = make_orchestration_manager(
+            qbit=None,
+            strategy=_RecordingStrategy(),
+            store_records=[
+                pending_import(infohash="i1", added_at=_FRESH),
+                pending_import(infohash="i2", added_at=_FRESH),
+            ],
+        )
+        mgr._ctx.pending_states = {
+            "i1": PendingState.IMPORTING,
+            "i2": PendingState.IMPORTING,
+        }
+
+        mgr.tally_carried_over_into_stats()
+
+        assert mgr._ctx.stats.importing == 2
+        assert mgr._ctx.stats.queued == 0
+
+
+class TestMonitorWorkingSet:
+    """_monitor_working_set dedups by infohash, the in-memory record winning."""
+
+    def test_in_memory_record_wins_the_store_collision(self) -> None:
+        # MUTATION PIN: the first loop's `not in seen` flipped to `in seen` skips
+        # every this-run grab, so the store's (staler) copy would be monitored
+        # instead. One infohash in BOTH places, differing by title: exactly one
+        # record survives and it is the in-memory one.
+        mgr = make_orchestration_manager(
+            qbit=None,
+            strategy=_RecordingStrategy(),
+            store_records=[pending_import(infohash="h", title="StoreCopy", added_at=_FRESH)],
+            pending=[pending_import(infohash="h", title="InMemory", added_at=_FRESH)],
+        )
+
+        records = mgr._monitor_working_set()
+
+        assert [p.title for p in records] == ["InMemory"]
 
 
 class TestRunMonitor:

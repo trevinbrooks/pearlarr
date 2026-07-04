@@ -316,6 +316,80 @@ class TestPrivateFallback:
         # The coverage-aware per-group drop still keeps the uncovered private url.
         assert set(result["A"].urls) == {"priv", "pub"}
 
+    def test_exactly_covered_private_files_skip_the_search(self) -> None:
+        # MUTATION PIN (needs_fallback): the coverage check `<= public_file_names`
+        # flipped to `<` treats an EXACTLY-equal fileset as uncovered and runs the
+        # fallback search. Priv's files match Pub's file-for-file: no search, so
+        # the non-best Alt never enters the dict.
+        filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
+        entry = make_entry_record(
+            torrents=(
+                make_torrent_record(
+                    release_group="Priv",
+                    tracker=Tracker.ANIMEBYTES,
+                    url="priv",
+                    infohash=None,
+                    file_names=("Show - S01E01.mkv",),
+                    is_best=True,
+                ),
+                make_torrent_record(
+                    release_group="Pub",
+                    tracker=Tracker.NYAA,
+                    url="pub",
+                    infohash="c" * 40,
+                    file_names=("Show - S01E01.mkv",),
+                    is_best=True,
+                ),
+                make_torrent_record(
+                    release_group="Alt",
+                    tracker=Tracker.NYAA,
+                    url="alt",
+                    infohash="d" * 40,
+                    file_names=("Show.S01E01.web.mkv",),
+                    is_best=False,
+                ),
+            ),
+        )
+        result = filt.build(entry)
+        assert set(result) == {"Priv", "Pub"}
+
+    def test_private_first_iteration_still_registers_group_public(self) -> None:
+        # MUTATION PIN (group_has_public accumulation): `prior or is_pub` degraded
+        # (e.g. to `and`) loses the group's public flag when a PRIVATE candidate
+        # iterates first. Group A: blind private then public - A is covered
+        # per-group, so no search runs and Alt stays out.
+        filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
+        entry = make_entry_record(
+            torrents=(
+                make_torrent_record(
+                    release_group="A",
+                    tracker=Tracker.ANIMEBYTES,
+                    url="priv",
+                    infohash=None,
+                    file_names=(),  # blind private -> the per-group gate decides
+                    is_best=True,
+                ),
+                make_torrent_record(
+                    release_group="A",
+                    tracker=Tracker.NYAA,
+                    url="pub",
+                    infohash="c" * 40,
+                    file_names=("A - S01E01.mkv",),
+                    is_best=True,
+                ),
+                make_torrent_record(
+                    release_group="Alt",
+                    tracker=Tracker.NYAA,
+                    url="alt",
+                    infohash="d" * 40,
+                    file_names=("Alt.S01E01.mkv",),
+                    is_best=False,
+                ),
+            ),
+        )
+        result = filt.build(entry)
+        assert set(result) == {"A"}
+
     def test_mixed_group_private_files_uncovered_triggers_the_search(self) -> None:
         # Group A has a public S1 AND a private S2 among the preferred picks: the
         # gate is per-candidate file coverage (not per-group), so the private S2
@@ -357,6 +431,21 @@ class TestPrivateFallback:
 
 
 class TestInteractivePick:
+    def test_comma_separated_multi_pick_keeps_each_selection(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # MUTATION PIN: the comma-separated selection path was never exercised -
+        # a mutated split/parse collapses "0, 2" to nothing. Both picked groups
+        # (with the space-padded token) must survive, the unpicked one dropped.
+        filt = make_release_filter()
+        seadex_dict = {"GroupA": rg_group({}), "GroupB": rg_group({}), "GroupC": rg_group({})}
+
+        def fake_input(prompt: str = "") -> str:
+            del prompt
+            return "0, 2"
+
+        monkeypatch.setattr("builtins.input", fake_input)
+        result = filt.interactive_pick(seadex_dict, make_entry_record())
+        assert list(result) == ["GroupA", "GroupC"]
+
     def test_tolerates_non_numeric_input(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:

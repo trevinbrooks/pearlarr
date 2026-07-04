@@ -12,17 +12,21 @@ pure, no network or disk; :class:`SonarrEpisode` is built directly via
 :meth:`SonarrEpisode.from_api`.
 """
 
+import pytest
+
 from seadexarr.modules.manual_import import (
     ImportProbe,
     ImportReadiness,
     ImportWaitMode,
     PendingImport,
     PendingState,
+    TorrentTelemetry,
     WaitOutcome,
     classify_pending,
     normalize_basename,
     normalize_group,
     resolve_wait_mode,
+    sanitize_torrent_telemetry,
 )
 from seadexarr.modules.planner import normalize_rg
 from seadexarr.modules.seadex_types import (
@@ -112,6 +116,13 @@ class TestNormalize:
 
     def test_group_casefold(self) -> None:
         assert normalize_group("SubGroup") == normalize_group("subgroup")
+
+    def test_group_strip_only_removes_wrapping_dashes(self) -> None:
+        # MUTATION PIN: strip("-") widened to a multi-char strip set would eat
+        # the X off an X-edged group; only wrapping dashes (and whitespace) go,
+        # and interior dashes always stay.
+        assert normalize_group("Xrays-") == "xrays"
+        assert normalize_group("X-Raws") == "x-raws"
 
     def test_group_dash_wrapped_agrees_with_planner(self) -> None:
         # normalize_group is the single source of truth normalize_rg delegates to;
@@ -625,6 +636,55 @@ class TestClassifyPending:
         # The copy is still in flight -> importing, never imported, until the
         # files are verified present.
         assert classify_pending(WaitOutcome.COMPLETE, False) is PendingState.IMPORTING
+
+
+class TestSanitizeTorrentTelemetry:
+    """MUTATION PIN: the pure telemetry sanitizer's clamps, sentinel folds and the
+    numeric-string ``_as_float`` path (a cluster of ~10 surviving mutants)."""
+
+    @pytest.mark.parametrize(
+        ("progress", "dlspeed", "eta", "completed", "size", "expected"),
+        [
+            # All-None getattr reads fold to the empty telemetry.
+            (None, None, None, None, None, TorrentTelemetry(0.0, None, None, None, None)),
+            # A clean row passes through untouched.
+            (0.64, 3_200_000, 130, 1_800, 2_900, TorrentTelemetry(0.64, 3_200_000, 130, 1_800, 2_900)),
+            # NaN progress (float and string) folds to 0.0, not a poisoned bar.
+            (float("nan"), 100, 130, 50, 200, TorrentTelemetry(0.0, 100, 130, 50, 200)),
+            ("nan", None, None, None, None, TorrentTelemetry(0.0, None, None, None, None)),
+            # Numeric-string progress parses; junk folds to 0.0.
+            ("0.75", None, None, None, None, TorrentTelemetry(0.75, None, None, None, None)),
+            ("fast", None, None, None, None, TorrentTelemetry(0.0, None, None, None, None)),
+            # Progress clamps to [0, 1] on both ends.
+            (1.5, None, None, None, None, TorrentTelemetry(1.0, None, None, None, None)),
+            (-0.25, None, None, None, None, TorrentTelemetry(0.0, None, None, None, None)),
+            # Idle (0) and negative speeds read as "no speed", never a 0 B/s row.
+            (0.5, 0, None, None, None, TorrentTelemetry(0.5, None, None, None, None)),
+            (0.5, -5, None, None, None, TorrentTelemetry(0.5, None, None, None, None)),
+            # qBittorrent's 8_640_000 "infinite" eta and a 0/negative eta are unknown;
+            # the last finite second still renders.
+            (0.5, 100, 8_640_000, None, None, TorrentTelemetry(0.5, 100, None, None, None)),
+            (0.5, 100, 0, None, None, TorrentTelemetry(0.5, 100, None, None, None)),
+            (0.5, 100, 8_639_999, None, None, TorrentTelemetry(0.5, 100, 8_639_999, None, None)),
+            # Zero/negative byte counts are unknown, not empty-progress readings.
+            (0.5, None, None, 0, 0, TorrentTelemetry(0.5, None, None, None, None)),
+            (0.5, None, None, -3, -1, TorrentTelemetry(0.5, None, None, None, None)),
+            # An over-count clamps done to the total, never a >100% bar.
+            (0.5, None, None, 500, 200, TorrentTelemetry(0.5, None, None, 200, 200)),
+            # Bytes done without a known total still renders.
+            (0.5, None, None, 100, None, TorrentTelemetry(0.5, None, None, 100, None)),
+        ],
+    )
+    def test_edge_inputs(
+        self,
+        progress: object,
+        dlspeed: object,
+        eta: object,
+        completed: object,
+        size: object,
+        expected: TorrentTelemetry,
+    ) -> None:
+        assert sanitize_torrent_telemetry(progress, dlspeed, eta, completed, size) == expected
 
 
 def test_wait_outcome_members_exist() -> None:
