@@ -13,7 +13,7 @@ import logging
 
 from seadexarr.modules.config import Arr
 from seadexarr.modules.planner import DownloadPlanner
-from seadexarr.modules.seadex_types import EpisodeRecord
+from seadexarr.modules.seadex_types import EpisodeRecord, SeadexReleaseGroupItem
 
 from .builders import make_planner, rg_group, sonarr_ep, url_item
 
@@ -201,6 +201,71 @@ class TestReduceOverlappingDownloads:
         assert seadex["Priv"].urls["u1"].download is False
         assert len(skips.notices) == 1
         assert "falling back to Fall" in skips.notices[0].reason
+
+    def test_promotion_considers_preferred_public_group(self) -> None:
+        # The size-mismatch promotion pool is any unflagged public group in the
+        # set, not just fallbacks: a PREFERRED public pick with the same coverage
+        # is promoted instead of the old warn-and-hold.
+        planner = make_planner(public_only=True)
+        seadex = {
+            "Priv": rg_group({"u1": url_item(download=True, is_public=False, size_mismatch=True)}),
+            "Pub": rg_group({"u2": url_item(download=False, is_public=True)}),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["Pub"].urls["u2"].download is True
+        assert seadex["Priv"].urls["u1"].download is False
+        assert skips.skipped is False
+        assert skips.groups == []
+        assert len(skips.notices) == 1
+        assert skips.notices[0].groups == ["Priv"]
+        assert skips.notices[0].level == logging.INFO
+        # A preferred group is not a fallback, so the notice must not say so.
+        assert skips.notices[0].reason == "private-only; grabbing public alternative Pub"
+
+    def test_degraded_keeper_promotes_unflagged_public_on_size_mismatch(self) -> None:
+        # A mixed group's unflagged (owned) public url makes it public_flagged,
+        # so the old promotion arm was unreachable: the keeper degraded to the
+        # mixed group and its stale private url was refused at add time. With a
+        # size mismatch present, the unflagged public group is promoted instead.
+        planner = make_planner(public_only=True)
+        seadex = {
+            "M": rg_group(
+                {
+                    "u1": url_item(download=False, is_public=True),
+                    "u2": url_item(download=True, is_public=False, size_mismatch=True),
+                },
+            ),
+            "F": rg_group({"u3": url_item(download=False, is_public=True, is_fallback=True)}),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["F"].urls["u3"].download is True
+        assert seadex["M"].urls["u1"].download is False
+        assert seadex["M"].urls["u2"].download is False
+        assert skips.skipped is False
+        assert len(skips.notices) == 1
+        assert skips.notices[0].groups == ["M"]
+        assert skips.notices[0].level == logging.INFO
+        assert skips.notices[0].reason == "remaining files private-only; falling back to F"
+
+    def test_degraded_keeper_without_mismatch_does_not_promote(self) -> None:
+        # No size mismatch means the flags may be plain missing-content grabs;
+        # the unflagged public group could be genuinely owned, so the keeper
+        # degrades as before and nothing is promoted.
+        planner = make_planner(public_only=True)
+        seadex = {
+            "Mixed": rg_group(
+                {
+                    "u1": url_item(download=True, is_public=True),
+                    "u2": url_item(download=True, is_public=False),
+                },
+            ),
+            "P": rg_group({"u3": url_item(download=False, is_public=True)}),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["Mixed"].urls["u1"].download is True
+        assert seadex["Mixed"].urls["u2"].download is True
+        assert seadex["P"].urls["u3"].download is False
+        assert skips.notices == []
 
     def test_fallback_keeper_over_private_notices(self) -> None:
         # Same files: the public fallback is kept over the private preferred pick,
@@ -466,3 +531,96 @@ class TestFilterByReleaseGroup:
         assert result.torrent_hashes == ["h1"]
         # Reset so a later test doesn't inherit DEBUG from the shared logger
         planner.logger.setLevel(logging.WARNING)
+
+
+class TestReduceDropRescue:
+    """Group-atomic drops must not lose episode coverage (the rescue pass)."""
+
+    E11 = EpisodeRecord(season=1, episode=1, size=100)
+    E21 = EpisodeRecord(season=2, episode=1, size=100)
+
+    def _equal_union_pair(self, *, b_first: bool) -> dict[str, SeadexReleaseGroupItem]:
+        # Two mixed groups whose unions match (the private batches inflate both
+        # keys to {S1E1, S2E1}), so they land in ONE same-files set.
+        a = rg_group(
+            {
+                "a_pub": url_item(download=True, is_public=True, episodes=[self.E11], infohash="a1"),
+                "a_priv": url_item(download=True, is_public=False, episodes=[self.E11, self.E21], infohash=None),
+            },
+            all_episodes=[self.E11, self.E21],
+        )
+        b = rg_group(
+            {
+                "b_pub": url_item(download=True, is_public=True, episodes=[self.E21], infohash="b1"),
+                "b_priv": url_item(download=True, is_public=False, episodes=[self.E11, self.E21], infohash=None),
+            },
+            all_episodes=[self.E11, self.E21],
+        )
+        return {"B": b, "A": a} if b_first else {"A": a, "B": b}
+
+    def test_losers_uncovered_public_url_is_rescued(self) -> None:
+        # Neither mixed group is fully addable, so the keeper degrades to the
+        # first; the loser's public url carries the set's only addable S2 (or S1)
+        # coverage and must be re-flagged, whichever group wins.
+        for b_first in (False, True):
+            planner = make_planner(public_only=True)
+            seadex = self._equal_union_pair(b_first=b_first)
+            planner.reduce_overlapping_downloads(seadex)
+            assert seadex["A"].urls["a_pub"].download is True, f"b_first={b_first}"
+            assert seadex["B"].urls["b_pub"].download is True, f"b_first={b_first}"
+            # Exactly one private batch survives (the keeper's); the loser's is dropped.
+            priv_flags = [seadex["A"].urls["a_priv"].download, seadex["B"].urls["b_priv"].download]
+            assert sorted(priv_flags) == [False, True], f"b_first={b_first}"
+
+    def test_covered_drop_stays_dropped(self) -> None:
+        # The loser's public url adds nothing over the keeper's surviving public
+        # coverage: it stays dropped (no duplicate grab).
+        planner = make_planner(public_only=True)
+        seadex = {
+            "A": rg_group(
+                {"a_pub": url_item(download=True, is_public=True, episodes=[self.E11, self.E21], infohash="a1")},
+                all_episodes=[self.E11, self.E21],
+            ),
+            "B": rg_group(
+                {"b_pub": url_item(download=True, is_public=True, episodes=[self.E11], infohash="b1")},
+                # The union is inflated to match A's key (the R1 mechanic).
+                all_episodes=[self.E11, self.E21],
+            ),
+        }
+        planner.reduce_overlapping_downloads(seadex)
+        assert seadex["A"].urls["a_pub"].download is True
+        assert seadex["B"].urls["b_pub"].download is False
+
+    def test_movie_urls_never_rescued(self) -> None:
+        # Movie/no-parse urls have no episode vocabulary, so the rescue can't
+        # (and mustn't) reason about their coverage.
+        planner = make_planner(public_only=True)
+        seadex = {
+            "A": rg_group({"a_pub": url_item(download=True, is_public=True, infohash="a1")}),
+            "B": rg_group({"b_pub": url_item(download=True, is_public=True, infohash="b1")}),
+        }
+        planner.reduce_overlapping_downloads(seadex)
+        assert seadex["A"].urls["a_pub"].download is True
+        assert seadex["B"].urls["b_pub"].download is False
+
+    def test_owned_public_url_never_resurrected(self) -> None:
+        # A matcher-unflagged (owned) url is not part of this pass's drops, so
+        # the rescue never touches it - even when its coverage leaves the set.
+        planner = make_planner(public_only=True)
+        seadex = {
+            "A": rg_group(
+                {"a_pub": url_item(download=True, is_public=True, episodes=[self.E11], infohash="a1")},
+                all_episodes=[self.E11, self.E21],
+            ),
+            "B": rg_group(
+                {
+                    "b_owned": url_item(download=False, is_public=True, episodes=[self.E21], infohash="b2"),
+                    "b_priv": url_item(download=True, is_public=False, episodes=[self.E11, self.E21], infohash=None),
+                },
+                all_episodes=[self.E11, self.E21],
+            ),
+        }
+        planner.reduce_overlapping_downloads(seadex)
+        assert seadex["A"].urls["a_pub"].download is True
+        assert seadex["B"].urls["b_owned"].download is False
+        assert seadex["B"].urls["b_priv"].download is False

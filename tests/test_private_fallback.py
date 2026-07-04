@@ -583,3 +583,300 @@ class TestSurvivingPrivateCoverage:
         assert [n.reason for n in ctx.stats.needs_action] == [
             "private-only release; no public alternative covers these files",
         ]
+
+
+class TestPromotionGeneralization:
+    """The size-mismatch promotion reaches preferred publics and degraded keepers."""
+
+    def _preferred_pair_entry(self, al_id: int) -> EntryRecord:
+        # Both releases are PREFERRED (is_best) with identical coverage - the
+        # public one is not a fallback, which the old promotion arm required.
+        priv = make_torrent_record(
+            release_group="Priv",
+            tracker=Tracker.ANIMEBYTES,
+            url=PRIV_URL,
+            infohash=None,
+            file_names=("Show - S01E01.mkv",),
+            file_size=999,
+            is_best=True,
+        )
+        pub = make_torrent_record(
+            release_group="Pub",
+            tracker=Tracker.NYAA,
+            url=PUB_URL,
+            infohash=PUB_HASH,
+            file_names=("Show.S01E01.web.mkv",),
+            file_size=555,
+            is_best=True,
+        )
+        return make_entry_record(anilist_id=al_id, torrents=(priv, pub))
+
+    def test_preferred_public_alternative_is_promoted(self) -> None:
+        # Upgrade-pending private pick + preferred public twin: pre-graft this
+        # warned "no public alternative" and held the title forever; now the
+        # public group is promoted, grabbed, and the title caches normally.
+        ctx = RunContext(arr=Arr.SONARR)
+        cache = FakeCacheStore()
+        filt = make_release_filter(
+            private_releases="fallback",
+            want_best=True,
+            prefer_dual_audio=False,
+            planner=make_planner(public_only=True),
+            cache_store=cache,
+            ctx=ctx,
+        )
+        entry = self._preferred_pair_entry(66)
+        sd = filt.build(entry)
+        _fill_episodes(
+            sd,
+            {
+                PRIV_URL: [EpisodeRecord(season=1, episode=1, size=999)],
+                PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+            },
+        )
+        ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
+
+        with _capture(filt.logger) as handler:
+            hashes, out = filt.filter_downloads(66, sd, {"Priv": [100]}, ep_list)
+
+        assert out["Pub"].urls[PUB_URL].download is True
+        assert out["Priv"].urls[PRIV_URL].download is False
+        assert hashes == [PUB_HASH]
+        info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
+        assert any("grabbing public alternative Pub" in m for m in info), info
+        assert not [r for r in handler.records if r.levelno >= logging.WARNING]
+        assert ctx.public_only_skipped is False
+
+        torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "Show S01 web")})
+        pipe = make_grab_pipeline(
+            cache_store=cache,
+            _ctx=ctx,
+            _torrents=torrents,
+            private_releases="fallback",
+            sleep_time=0,
+        )
+        pipe._anilist.al_cache.update({66: {}})
+        stopped = pipe.grab_and_cache(_grab_request(66, out, hashes, entry))
+
+        assert stopped is False
+        assert torrents.calls == [PUB_HASH]
+        assert ctx.stats.needs_action == []
+        # Nothing is held, so the fallback-hold uncache must not fire.
+        assert cache.check_al_id_in_cache(Arr.SONARR, 66, entry) is True
+
+    def test_radarr_preferred_public_alternative_is_promoted(self) -> None:
+        # The no-parse (Radarr) twin of the preferred-pair upgrade: the public
+        # movie is grabbed instead of the old warn-and-hold.
+        ctx = RunContext(arr=Arr.RADARR)
+        filt = make_release_filter(
+            private_releases="fallback",
+            want_best=True,
+            prefer_dual_audio=False,
+            planner=make_planner(public_only=True),
+            ctx=ctx,
+        )
+        sd = filt.build(self._preferred_pair_entry(73))
+
+        with _capture(filt.logger) as handler:
+            hashes, out = filt.filter_downloads(73, sd, {"Priv": [100]}, None)
+
+        assert out["Pub"].urls[PUB_URL].download is True
+        assert out["Priv"].urls[PRIV_URL].download is False
+        assert hashes == [PUB_HASH]
+        assert not [r for r in handler.records if r.levelno >= logging.WARNING]
+        assert ctx.public_only_skipped is False
+
+    M_PUB_URL = "https://nyaa.si/view/3"
+    M_PUB_HASH = "c" * 40
+    F_URL = "https://nyaa.si/view/4"
+    F_HASH = "d" * 40
+
+    def test_owned_mixed_group_promotes_the_exact_fallback(self) -> None:
+        # Mixed group M: its public S1 url is OWNED (unflagged), its private
+        # batch holds S2 at a stale size. M counts as public_flagged, so the old
+        # promotion arm was unreachable and the set degraded to an add-time
+        # refusal with no notice; now the exact-coverage fallback F is promoted.
+        ctx = RunContext(arr=Arr.SONARR)
+        filt = make_release_filter(
+            private_releases="fallback",
+            want_best=True,
+            prefer_dual_audio=False,
+            planner=make_planner(public_only=True),
+            ctx=ctx,
+        )
+        m_pub = make_torrent_record(
+            release_group="M",
+            tracker=Tracker.NYAA,
+            url=self.M_PUB_URL,
+            infohash=self.M_PUB_HASH,
+            file_names=("M.S01E01.web.mkv",),
+            file_size=555,
+            is_best=True,
+        )
+        m_priv = make_torrent_record(
+            release_group="M",
+            tracker=Tracker.ANIMEBYTES,
+            url=PRIV_URL,
+            infohash=None,
+            file_names=("M - S01E01.mkv", "M - S02E01.mkv"),
+            file_size=999,
+            is_best=True,
+        )
+        fall = make_torrent_record(
+            release_group="F",
+            tracker=Tracker.NYAA,
+            url=self.F_URL,
+            infohash=self.F_HASH,
+            file_names=("F.S01E01.mkv", "F.S02E01.mkv"),
+            file_size=777,
+            is_best=False,
+        )
+        entry = make_entry_record(anilist_id=77, torrents=(m_pub, m_priv, fall))
+        sd = filt.build(entry)
+        assert set(sd) == {"M", "F"}
+        _fill_episodes(
+            sd,
+            {
+                self.M_PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+                PRIV_URL: [
+                    EpisodeRecord(season=1, episode=1, size=999),
+                    EpisodeRecord(season=2, episode=1, size=999),
+                ],
+                self.F_URL: [
+                    EpisodeRecord(season=1, episode=1, size=777),
+                    EpisodeRecord(season=2, episode=1, size=777),
+                ],
+            },
+        )
+        # S01E01 owned at matching size; S02E01 held at a stale size.
+        ep_list = [
+            sonarr_ep(1, 1, size=555, release_group="M"),
+            sonarr_ep(2, 1, size=100, release_group="M"),
+        ]
+
+        with _capture(filt.logger) as handler:
+            hashes, out = filt.filter_downloads(77, sd, {"M": [555, 100]}, ep_list)
+
+        assert out["F"].urls[self.F_URL].download is True
+        assert out["M"].urls[self.M_PUB_URL].download is False
+        assert out["M"].urls[PRIV_URL].download is False
+        assert hashes == [self.F_HASH]
+        info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
+        assert any("falling back to F" in m for m in info), info
+        assert not [r for r in handler.records if r.levelno >= logging.WARNING]
+        assert ctx.public_only_skipped is False
+
+
+class TestEqualUnionMixedGroups:
+    """Two equal-union mixed groups: no episode's public url may be lost."""
+
+    A_PUB_URL = "https://nyaa.si/view/5"
+    A_PUB_HASH = "a" * 40
+    A_PRIV_URL = "https://animebytes.tv/torrents.php?id=2"
+    B_PUB_URL = "https://nyaa.si/view/6"
+    B_PUB_HASH = "b" * 40
+    B_PRIV_URL = "https://animebytes.tv/torrents.php?id=3"
+
+    def _torrents(self) -> tuple[TorrentRecord, TorrentRecord, TorrentRecord, TorrentRecord]:
+        a_pub = make_torrent_record(
+            release_group="A",
+            tracker=Tracker.NYAA,
+            url=self.A_PUB_URL,
+            infohash=self.A_PUB_HASH,
+            file_names=("A.S01E01.mkv",),
+            file_size=555,
+            is_best=True,
+        )
+        a_priv = make_torrent_record(
+            release_group="A",
+            tracker=Tracker.ANIMEBYTES,
+            url=self.A_PRIV_URL,
+            infohash=None,
+            file_names=("A - S01E01.mkv", "A - S02E01.mkv"),
+            file_size=999,
+            is_best=True,
+        )
+        b_pub = make_torrent_record(
+            release_group="B",
+            tracker=Tracker.NYAA,
+            url=self.B_PUB_URL,
+            infohash=self.B_PUB_HASH,
+            file_names=("B.S02E01.mkv",),
+            file_size=556,
+            is_best=True,
+        )
+        b_priv = make_torrent_record(
+            release_group="B",
+            tracker=Tracker.ANIMEBYTES,
+            url=self.B_PRIV_URL,
+            infohash=None,
+            file_names=("B - S01E01.mkv", "B - S02E01.mkv"),
+            file_size=998,
+            is_best=True,
+        )
+        return a_pub, a_priv, b_pub, b_priv
+
+    def test_no_episode_lost_regardless_of_group_order(self) -> None:
+        # Pre-rescue, the losing group's public url was unflagged wholesale and
+        # its episode silently lost (order-dependent; warn mode then cached the
+        # loss as done). Both public urls must now grab in either order.
+        a_pub, a_priv, b_pub, b_priv = self._torrents()
+        for al_id, order in ((91, (a_pub, a_priv, b_pub, b_priv)), (92, (b_pub, b_priv, a_pub, a_priv))):
+            ctx = RunContext(arr=Arr.SONARR)
+            cache = FakeCacheStore()
+            filt = make_release_filter(
+                private_releases="warn",
+                want_best=True,
+                prefer_dual_audio=False,
+                planner=make_planner(public_only=True),
+                cache_store=cache,
+                ctx=ctx,
+            )
+            entry = make_entry_record(anilist_id=al_id, torrents=order)
+            sd = filt.build(entry)
+            _fill_episodes(
+                sd,
+                {
+                    self.A_PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+                    self.A_PRIV_URL: [
+                        EpisodeRecord(season=1, episode=1, size=999),
+                        EpisodeRecord(season=2, episode=1, size=999),
+                    ],
+                    self.B_PUB_URL: [EpisodeRecord(season=2, episode=1, size=556)],
+                    self.B_PRIV_URL: [
+                        EpisodeRecord(season=1, episode=1, size=998),
+                        EpisodeRecord(season=2, episode=1, size=998),
+                    ],
+                },
+            )
+
+            # Sonarr is missing both episodes: every url flags before the reducer.
+            hashes, out = filt.filter_downloads(al_id, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
+            assert out["A"].urls[self.A_PUB_URL].download is True, f"order={al_id}"
+            assert out["B"].urls[self.B_PUB_URL].download is True, f"order={al_id}"
+            assert set(hashes) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
+
+            torrents = FakeTorrents(
+                {
+                    self.A_PUB_HASH: (AddOutcome.ADDED, "A S01"),
+                    self.B_PUB_HASH: (AddOutcome.ADDED, "B S02"),
+                },
+            )
+            pipe = make_grab_pipeline(
+                cache_store=cache,
+                _ctx=ctx,
+                _torrents=torrents,
+                private_releases="warn",
+                sleep_time=0,
+            )
+            pipe._anilist.al_cache.update({al_id: {}})
+            with _capture(pipe.log_fmt.logger) as handler:
+                pipe.grab_and_cache(_grab_request(al_id, out, hashes, entry))
+
+            # Both episodes obtained; the keeper's surviving private batch is
+            # refused with a WARNING, and warn mode still caches the title.
+            assert set(torrents.calls) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
+            warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+            assert any("private-only (private releases not allowed)" in m for m in warnings), warnings
+            assert ctx.public_only_skipped is True
+            assert cache.check_al_id_in_cache(Arr.SONARR, al_id, entry) is True

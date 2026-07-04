@@ -159,6 +159,36 @@ def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
     return list(grouped.values())
 
 
+def _is_flagged(rg_item: SeadexReleaseGroupItem) -> bool:
+    return any(u.download for u in rg_item.urls.values())
+
+
+def _is_public_group(rg_item: SeadexReleaseGroupItem) -> bool:
+    return any(u.is_public for u in rg_item.urls.values())
+
+
+def _is_fallback_group(rg_item: SeadexReleaseGroupItem) -> bool:
+    return any(u.is_fallback for u in rg_item.urls.values())
+
+
+def _all_public(rg_item: SeadexReleaseGroupItem) -> bool:
+    return all(u.is_public for u in rg_item.urls.values())
+
+
+def _flagged_all_addable(rg_item: SeadexReleaseGroupItem) -> bool:
+    # No flagged private url (the add-time gate refuses those).
+    return all(u.is_public for u in rg_item.urls.values() if u.download)
+
+
+def _unflag(rg_item: SeadexReleaseGroupItem, dropped: list[SeadexUrlItem]) -> None:
+    """Unflag a whole group, recording the urls this pass actually dropped."""
+
+    for u in rg_item.urls.values():
+        if u.download:
+            dropped.append(u)
+        u.download = False
+
+
 def get_all_seadex_rgs_per_episode(
     seadex_dict: SeadexDict,
     sonarr_by_key: dict[tuple[int, int], SonarrEpisode],
@@ -663,15 +693,18 @@ class DownloadPlanner:
         public_only is set, we prefer a public release group and drop the
         private ones. If the only options are private, we record a warning
         SkipNotice and skip the title (without caching it as done) rather than
-        grabbing a private release - unless a public fallback covering the same
-        files rides along (``private_releases: fallback``). Then the private
-        groups are dropped with an INFO notice instead: the fallback is promoted
-        (grabbed) when a private flag was a size-mismatch upgrade, and left
-        alone when the Arr genuinely already owns its files.
+        grabbing a private release - unless an unflagged public group covering
+        the same files rides along (a ``private_releases: fallback`` stand-in
+        or a preferred public pick). Then the private groups are dropped with
+        an INFO notice instead: the public group is promoted (grabbed) when a
+        private flag was a size-mismatch upgrade, and left alone when the Arr
+        genuinely already owns its files.
 
-        Finally, within each group, flagged urls carrying identical non-empty
-        file-name sets (cross-seeded copies of one release) are deduped to the
-        first.
+        After each set resolves, just-dropped public urls whose coverage no
+        surviving url carries are re-flagged (group-atomic drops must not lose
+        episodes). Finally, within each group, flagged urls carrying identical
+        non-empty file-name sets (cross-seeded copies of one release) are
+        deduped to the first.
 
         Mutates the download flags on seadex_dict in place and returns the
         private-only skip outcome (skipped flag, group names, notices to log).
@@ -689,128 +722,14 @@ class DownloadPlanner:
         if self.interactive:
             return skips
 
-        def is_flagged(rg_item: SeadexReleaseGroupItem) -> bool:
-            return any(u.download for u in rg_item.urls.values())
-
-        def is_public_group(rg_item: SeadexReleaseGroupItem) -> bool:
-            return any(u.is_public for u in rg_item.urls.values())
-
-        def is_fallback_group(rg_item: SeadexReleaseGroupItem) -> bool:
-            return any(u.is_fallback for u in rg_item.urls.values())
-
-        def unflag(rg_item: SeadexReleaseGroupItem) -> None:
-            for u in rg_item.urls.values():
-                u.download = False
-
-        def flagged_all_addable(rg_item: SeadexReleaseGroupItem) -> bool:
-            # No flagged private url (the add-time gate refuses those).
-            return all(u.is_public for u in rg_item.urls.values() if u.download)
-
-        def all_public(rg_item: SeadexReleaseGroupItem) -> bool:
-            return all(u.is_public for u in rg_item.urls.values())
-
-        same_files_groups = get_same_files_groups(seadex_dict)
-
-        for same_files in same_files_groups:
+        for same_files in get_same_files_groups(seadex_dict):
             # Only the release groups the Arr doesn't already have are flagged
-            flagged = [rg for rg in same_files if is_flagged(seadex_dict[rg])]
+            flagged = [rg for rg in same_files if _is_flagged(seadex_dict[rg])]
             if len(flagged) == 0:
                 continue
 
-            if self.public_only:
-                public_flagged = [rg for rg in flagged if is_public_group(seadex_dict[rg])]
-
-                if len(public_flagged) == 0:
-                    # A public fallback in THIS same-files set can stand in; it's
-                    # necessarily unflagged here (a flagged public group would
-                    # have taken the keeper branch). A fallback covering OTHER
-                    # files doesn't excuse dropping this set, so the gate is
-                    # per-set, never per-entry.
-                    fallback_groups = [rg for rg in same_files if is_fallback_group(seadex_dict[rg])]
-                    if fallback_groups:
-                        if any(u.size_mismatch for rg in flagged for u in seadex_dict[rg].urls.values()):
-                            # The private flag is an upgrade (the Arr holds the
-                            # release at a stale size), so the unflagged fallback
-                            # is NOT owned: promote and grab it instead. Prefer a
-                            # fully-public group - promotion only flips public
-                            # urls, so a mixed group's private url would leave
-                            # part of the set's coverage ungrabbed.
-                            keeper = next(
-                                (rg for rg in fallback_groups if all_public(seadex_dict[rg])),
-                                fallback_groups[0],
-                            )
-                            for u in seadex_dict[keeper].urls.values():
-                                if u.is_public:
-                                    u.download = True
-                            reason = f"private-only; falling back to {keeper}"
-                        else:
-                            # Unflagged with no size mismatch: the Arr genuinely
-                            # already owns the fallback's files.
-                            reason = "private-only; a public fallback already covers these files"
-                        skips.notices.append(
-                            SkipNotice(
-                                groups=list(flagged),
-                                reason=reason,
-                                level=logging.INFO,
-                            ),
-                        )
-                        for rg in flagged:
-                            unflag(seadex_dict[rg])
-                        continue
-
-                    # The Arr has none of these release groups, private grabs
-                    # are off, and none are available on a public tracker. Don't
-                    # grab a private release, just record a skip notice and skip.
-                    # Flag the skip so the caller doesn't cache the title as done
-                    skips.notices.append(
-                        SkipNotice(
-                            groups=list(flagged),
-                            reason="private-only (private releases not allowed)",
-                            level=logging.WARNING,
-                        ),
-                    )
-                    skips.skipped = True
-                    skips.groups.extend(flagged)
-                    for rg in flagged:
-                        unflag(seadex_dict[rg])
-                    continue
-
-                # Keep the first public release group whose flagged urls are all
-                # addable: a mixed group's flagged private url is refused at add
-                # time, losing the coverage only it carries, so a fully-addable
-                # group wins over it. When none qualifies, degrade to the first
-                # public group (the add-time gate then warns).
-                keeper = next(
-                    (rg for rg in public_flagged if flagged_all_addable(seadex_dict[rg])),
-                    public_flagged[0],
-                )
-
-                # Tell the user when the keeper is a non-preferred fallback
-                # standing in for private preferred picks (a plain public-over-
-                # private keeper stays a debug line, as ever).
-                private_dropped = [rg for rg in flagged if not is_public_group(seadex_dict[rg])]
-                if private_dropped and is_fallback_group(seadex_dict[keeper]):
-                    skips.notices.append(
-                        SkipNotice(
-                            groups=private_dropped,
-                            reason=f"private-only; falling back to {keeper}",
-                            level=logging.INFO,
-                        ),
-                    )
-            else:
-                # We don't care about public/private, just keep the first one
-                keeper = flagged[0]
-
-            for rg in flagged:
-                if rg == keeper:
-                    continue
-
-                self.logger.debug(
-                    indent_string(
-                        f"Not downloading release group {rg}: release group {keeper} already covers the same files",
-                    ),
-                )
-                unflag(seadex_dict[rg])
+            dropped = self._reduce_same_files_set(seadex_dict, same_files, flagged, skips)
+            self._rescue_dropped_coverage(seadex_dict, same_files, dropped)
 
         # Within ONE group, flagged urls with identical non-empty file-name sets
         # are the same release cross-seeded (distinct infohashes = duplicate
@@ -829,6 +748,222 @@ class DownloadPlanner:
                     seen.add(file_names)
 
         return skips
+
+    def _reduce_same_files_set(
+        self,
+        seadex_dict: SeadexDict,
+        same_files: list[str],
+        flagged: list[str],
+        skips: PublicOnlySkips,
+    ) -> list[SeadexUrlItem]:
+        """Resolve ONE same-files set down to a single keeper (or a skip).
+
+        Appends any notices/skip state to ``skips`` and returns the urls this
+        pass unflagged, for the coverage rescue.
+        """
+
+        dropped: list[SeadexUrlItem] = []
+
+        if not self.public_only:
+            # We don't care about public/private, just keep the first one
+            self._drop_losers(seadex_dict, flagged, flagged[0], dropped)
+            return dropped
+
+        public_flagged = [rg for rg in flagged if _is_public_group(seadex_dict[rg])]
+        # The held-stale-not-owned marker: a size-mismatch flag means the Arr
+        # holds the release at a STALE size (upgrade pending), so an unflagged
+        # public group in this set is NOT owned and may be promoted in its
+        # place. Without it, promotion would re-download owned content.
+        upgrade_pending = any(u.size_mismatch for rg in flagged for u in seadex_dict[rg].urls.values())
+
+        if len(public_flagged) == 0:
+            # An unflagged public group in THIS same-files set can stand in
+            # (fallback or preferred; a flagged one would have taken the keeper
+            # branch below). A public group covering OTHER files doesn't excuse
+            # dropping this set, so the gate is per-set, never per-entry.
+            if upgrade_pending:
+                promoted = self._promote_public_alternative(seadex_dict, same_files)
+                if promoted is not None:
+                    self._drop_promoted_over(seadex_dict, flagged, "private-only", promoted, skips, dropped)
+                    return dropped
+            elif any(_is_fallback_group(seadex_dict[rg]) for rg in same_files):
+                # Unflagged with no size mismatch: the Arr genuinely already
+                # owns the fallback's files.
+                skips.notices.append(
+                    SkipNotice(
+                        groups=list(flagged),
+                        reason="private-only; a public fallback already covers these files",
+                        level=logging.INFO,
+                    ),
+                )
+                for rg in flagged:
+                    _unflag(seadex_dict[rg], dropped)
+                return dropped
+
+            # The Arr has none of these release groups, private grabs are off,
+            # and no public url covers the same files. Don't grab a private
+            # release, just record a skip notice and skip. Flag the skip so the
+            # caller doesn't cache the title as done.
+            skips.notices.append(
+                SkipNotice(
+                    groups=list(flagged),
+                    reason="private-only (private releases not allowed)",
+                    level=logging.WARNING,
+                ),
+            )
+            skips.skipped = True
+            skips.groups.extend(flagged)
+            for rg in flagged:
+                _unflag(seadex_dict[rg], dropped)
+            return dropped
+
+        # Keep the first public release group whose flagged urls are all
+        # addable: a mixed group's flagged private url is refused at add time,
+        # losing the coverage only it carries, so a fully-addable group wins
+        # over it.
+        keeper = next((rg for rg in public_flagged if _flagged_all_addable(seadex_dict[rg])), None)
+        if keeper is None:
+            # No fully-addable group: when the private flags are stale-size
+            # upgrades, an unflagged public group covering this set still grabs
+            # cleanly - promote it rather than degrading to an add-time refusal.
+            if upgrade_pending:
+                promoted = self._promote_public_alternative(seadex_dict, same_files)
+                if promoted is not None:
+                    self._drop_promoted_over(
+                        seadex_dict,
+                        flagged,
+                        "remaining files private-only",
+                        promoted,
+                        skips,
+                        dropped,
+                    )
+                    return dropped
+            # Degrade to the first public group (the add-time gate then warns).
+            keeper = public_flagged[0]
+
+        # Tell the user when the keeper is a non-preferred fallback standing in
+        # for private preferred picks (a plain public-over-private keeper stays
+        # a debug line, as ever).
+        private_dropped = [rg for rg in flagged if not _is_public_group(seadex_dict[rg])]
+        if private_dropped and _is_fallback_group(seadex_dict[keeper]):
+            skips.notices.append(
+                SkipNotice(
+                    groups=private_dropped,
+                    reason=f"private-only; falling back to {keeper}",
+                    level=logging.INFO,
+                ),
+            )
+
+        self._drop_losers(seadex_dict, flagged, keeper, dropped)
+        return dropped
+
+    def _drop_losers(
+        self,
+        seadex_dict: SeadexDict,
+        flagged: list[str],
+        keeper: str,
+        dropped: list[SeadexUrlItem],
+    ) -> None:
+        """Unflag every flagged group but the keeper, recording the drops."""
+
+        for rg in flagged:
+            if rg == keeper:
+                continue
+
+            self.logger.debug(
+                indent_string(
+                    f"Not downloading release group {rg}: release group {keeper} already covers the same files",
+                ),
+            )
+            _unflag(seadex_dict[rg], dropped)
+
+    @staticmethod
+    def _promote_public_alternative(seadex_dict: SeadexDict, same_files: list[str]) -> str | None:
+        """Flip on an unflagged public group covering this set; None if there is none.
+
+        Prefer a fully-public group - promotion only flips public urls, so a
+        mixed group's private url would leave part of the set's coverage
+        ungrabbed.
+        """
+
+        candidates = [rg for rg in same_files if not _is_flagged(seadex_dict[rg]) and _is_public_group(seadex_dict[rg])]
+        if not candidates:
+            return None
+
+        promoted = next((rg for rg in candidates if _all_public(seadex_dict[rg])), candidates[0])
+        for u in seadex_dict[promoted].urls.values():
+            if u.is_public:
+                u.download = True
+        return promoted
+
+    @staticmethod
+    def _drop_promoted_over(
+        seadex_dict: SeadexDict,
+        flagged: list[str],
+        prefix: str,
+        promoted: str,
+        skips: PublicOnlySkips,
+        dropped: list[SeadexUrlItem],
+    ) -> None:
+        """Drop the flagged groups a promoted public group now stands in for.
+
+        The INFO notice says "falling back to" only for a genuine fallback
+        stand-in; a promoted preferred group reads "grabbing public alternative".
+        """
+
+        verb = "falling back to" if _is_fallback_group(seadex_dict[promoted]) else "grabbing public alternative"
+        skips.notices.append(
+            SkipNotice(
+                groups=list(flagged),
+                reason=f"{prefix}; {verb} {promoted}",
+                level=logging.INFO,
+            ),
+        )
+        for rg in flagged:
+            _unflag(seadex_dict[rg], dropped)
+
+    def _rescue_dropped_coverage(
+        self,
+        seadex_dict: SeadexDict,
+        same_files: list[str],
+        dropped: list[SeadexUrlItem],
+    ) -> None:
+        """Re-flag just-dropped public urls whose coverage no survivor carries.
+
+        A group-atomic drop can lose episodes: two mixed groups with equal
+        coverage unions land in one set, and unflagging the loser wholesale
+        drops its public url's unique coverage. Those urls were flagged by the
+        matcher (the Arr provably lacks their files) before this pass dropped
+        them, so re-flagging can't re-download owned content. Scoped to THIS
+        set's just-dropped urls only - never matcher-unflagged ones - and a url
+        with no parsed episodes (movies, unparsed groups) has no coverage
+        vocabulary, so it is never rescued.
+        """
+
+        rescuable = [u for u in dropped if u.is_public and u.episodes]
+        if not rescuable:
+            return
+
+        # What the set will actually obtain: surviving flagged urls the add-time
+        # gate accepts (private urls count only when private grabs are allowed).
+        survivor_keys = {
+            key
+            for rg in same_files
+            for u in seadex_dict[rg].urls.values()
+            if u.download and (u.is_public or not self.public_only)
+            for key in get_episode_keys(u.episodes)
+        }
+        for u in rescuable:
+            url_keys = get_episode_keys(u.episodes)
+            if url_keys <= survivor_keys:
+                continue
+            self.logger.debug(
+                indent_string(
+                    f"Re-flagging {u.url}: no surviving release covers its episodes",
+                ),
+            )
+            u.download = True
+            survivor_keys |= url_keys
 
     @staticmethod
     def get_any_to_download(seadex_dict: SeadexDict) -> bool:
