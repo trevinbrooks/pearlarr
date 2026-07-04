@@ -330,8 +330,9 @@ class AniListMediaNode:
 #
 # Derived from the Sonarr v3 OpenAPI ``ManualImportResource`` (and its nested
 # ``QualityModel`` / ``Quality`` / ``Revision`` / ``Language`` /
-# ``ImportRejectionResource``) in ``schemas/sonarr.schema``. Nullability mirrors
-# the schema exactly (a schema ``string | null`` field -> ``str | None``).
+# ``ImportRejectionResource``), captured in ``schemas/sonarr.schema`` in the
+# source repository. Nullability mirrors the schema exactly (a schema
+# ``string | null`` field -> ``str | None``).
 #
 # Two kinds of model live here, per the repo's hybrid rule:
 #   * ``Quality`` / ``Revision`` / ``QualityModel`` / ``Language`` are TypedDicts:
@@ -353,8 +354,8 @@ class QualitySource(StrEnum):
     """Sonarr's ``QualitySource`` enum (schema ``QualitySource``).
 
     The structured ``source`` axis of a :class:`Quality`, modeled verbatim from
-    the Sonarr OpenAPI schema (``schemas/sonarr.schema``) - the values are
-    camelCase strings as Sonarr serializes them. Quality is matched on the
+    the Sonarr OpenAPI schema (``schemas/sonarr.schema`` in the source
+    repository) - the values are camelCase strings as Sonarr serializes them. Quality is matched on the
     ``(source, resolution)`` pair (never on the display name), so this enum is the
     authoritative source vocabulary the manual-import quality decision works in.
     ``BLURAY_RAW`` is a BD remux; ``TELEVISION_RAW`` is Raw-HD.
@@ -530,8 +531,9 @@ class ManualImportFile(TypedDict):
 
 # --- Sonarr queue (``/api/v3/queue`` records) -------------------------------
 #
-# Derived from the Sonarr v3 OpenAPI ``QueueResource`` in ``schemas/sonarr.schema``.
-# The endpoint pages its records under a wrapper object's ``records`` array.
+# Derived from the Sonarr v3 OpenAPI ``QueueResource``, captured in
+# ``schemas/sonarr.schema`` in the source repository. The endpoint pages its
+# records under a wrapper object's ``records`` array.
 
 
 @dataclass(frozen=True, slots=True)
@@ -690,9 +692,9 @@ class CommandResource:
 
 # --- Radarr movie files (``/api/v3/moviefile`` records) ----------------------
 #
-# Derived from the Radarr v3 OpenAPI ``MovieFileResource`` in
-# ``schemas/radarr.schema``. Nullability mirrors the schema exactly (a schema
-# ``string | null`` field -> ``str | None``).
+# Derived from the Radarr v3 OpenAPI ``MovieFileResource``, captured in
+# ``schemas/radarr.schema`` in the source repository. Nullability mirrors the
+# schema exactly (a schema ``string | null`` field -> ``str | None``).
 
 
 @dataclass(frozen=True, slots=True)

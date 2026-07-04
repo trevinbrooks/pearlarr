@@ -98,6 +98,20 @@ class TestLogRouting:
         assert os.path.isfile(os.path.join(log_dir, "SeaDexArr.log"))
         assert not os.path.exists(tmp_path / "logs")
 
+    def test_error_level_is_honored(self, tmp_path: Path) -> None:
+        # ERROR is a first-class level now (it used to warn-and-default to INFO).
+        log_dir = str(tmp_path / "logs")
+
+        logger = setup_logger(log_level="ERROR", log_dir=log_dir)
+        logger.error("kept")
+
+        assert logger.level == logging.ERROR
+        for handler in logger.handlers:
+            handler.flush()
+        content = Path(log_dir, "SeaDexArr.log").read_text(encoding="utf-8")
+        assert "Invalid log level" not in content
+        assert "kept" in content
+
     def test_invalid_log_level_complaint_reaches_the_file_log(self, tmp_path: Path) -> None:
         # The complaint used to fire before the handlers were attached, so it only
         # reached logging.lastResort (stderr) - never the file log it warns about.

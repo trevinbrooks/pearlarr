@@ -129,6 +129,7 @@ def _build_shared(
     logger: logging.Logger,
     mappings_db: str,
     boot: BootView,
+    retry_note: str | None = None,
 ) -> tuple[AppConfig, MappingResolver] | None:
     """Load the config once and build the id-mapping resolver both arrs share.
 
@@ -144,17 +145,22 @@ def _build_shared(
     cause - when the config is missing/unreadable or a mapping source can't be
     fetched, so the caller skips this run and retries next cycle instead of
     crashing. The failure cause is distinguished so the log says whether the user
-    needs to fix their config or a source endpoint was unreachable.
+    needs to fix their config or a source endpoint was unreachable. ``retry_note``
+    (set in scheduled mode) is appended to the missing-config message so a first
+    run states when the loop retries.
     """
 
     from .mappings import MappingResolver
 
+    # In scheduled mode retry_note states the loop's next move on every skip
+    # (a single run just exits, so there is nothing to append).
+    retry = f" - {retry_note}" if retry_note else ""
     try:
         with boot.step("Reading config"):
             app_config = AppConfig.load(config)
     except FileNotFoundError:
         logger.error(
-            f"No config file at {config} - a starter template was written; fill it in and re-run. Skipping this run.",
+            f"No config file at {config} - a starter template was written; fill it in and re-run. Skipping this run{retry}.",
         )
         return None
     except ValidationError as e:
@@ -162,11 +168,11 @@ def _build_shared(
         # then skip + retry next cycle - same contract as the missing-file branch.
         details = "\n".join(f"  - {'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in e.errors())
         logger.error(
-            f"Invalid configuration in {config}:\n{details}\nFix the listed keys and re-run. Skipping this run.",
+            f"Invalid configuration in {config}:\n{details}\nFix the listed keys and re-run. Skipping this run{retry}.",
         )
         return None
     except Exception:
-        logger.error(f"Could not load config {config}; skipping this run", exc_info=True)
+        logger.error(f"Could not load config {config}; skipping this run{retry}", exc_info=True)
         return None
 
     try:
@@ -201,6 +207,7 @@ def _run_arrs(
     logger: logging.Logger,
     dry_run: bool = False,
     import_wait_mode: ImportWaitMode | None = None,
+    retry_note: str | None = None,
 ) -> bool:
     """Build the shared config + mappings once, then run each requested arr.
 
@@ -211,7 +218,8 @@ def _run_arrs(
     the cause - when the shared deps couldn't be built, so a caller can tell a
     no-op-on-failure from a real run. An empty ``arrs`` is a defensive no-op
     returning True (both callers guard against it). ``import_wait_mode`` is the
-    resolved CLI override threaded into each arr (None in scheduled mode).
+    resolved CLI override threaded into each arr (None in scheduled mode);
+    ``retry_note`` is threaded into ``_build_shared`` (scheduled mode only).
     """
 
     if not arrs:
@@ -245,7 +253,7 @@ def _run_arrs(
 
         try:
             # The parsed/indexed mapping cache lives beside cache.db in the data dir.
-            shared = _build_shared(paths.config, logger, paths.mappings_db, boot)
+            shared = _build_shared(paths.config, logger, paths.mappings_db, boot, retry_note)
             if shared is None:
                 return False
 
@@ -403,6 +411,7 @@ def run_scheduled() -> None:
             [(Arr.RADARR, None), (Arr.SONARR, None)],
             paths=paths,
             logger=logger,
+            retry_note=f"will retry in {schedule_time:g}h (Ctrl-C to stop)",
         )
 
         next_run_time = (datetime.now() + timedelta(hours=schedule_time)).strftime("%H:%M")

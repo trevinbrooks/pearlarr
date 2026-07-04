@@ -78,4 +78,4 @@ advanced:
   cache_time: 1                    # Days to cache the downloaded mapping sources
   interactive: false               # Prompt when multiple torrent options match
   max_torrents_to_add:             # Cap torrents added per run (default: unlimited)
-  log_level: "INFO"                # DEBUG / INFO / WARNING / CRITICAL (case-insensitive)
+  log_level: "INFO"                # DEBUG / INFO / WARNING / ERROR / CRITICAL (case-insensitive)

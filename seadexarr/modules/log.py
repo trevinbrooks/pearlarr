@@ -267,13 +267,14 @@ class _CountingLogger(Protocol):
     seadex_counter: LogCounter
 
 
-# The level names the file logger honors; any other value (including ERROR or a
-# typo) warns and falls back to INFO. Kept as an explicit table, so the string
-# ladder isn't reinvented for both the logger and the console handler below.
+# The level names the file logger honors; any other value (a typo) warns and
+# falls back to INFO. Kept as an explicit table, so the string ladder isn't
+# reinvented for both the logger and the console handler below.
 _LOG_LEVELS = {
     "DEBUG": logging.DEBUG,
     "INFO": logging.INFO,
     "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
     "CRITICAL": logging.CRITICAL,
 }
 
@@ -322,10 +323,10 @@ def setup_logger(
     logger.propagate = False
 
     # Resolve the configured level once through the name->constant table instead
-    # of a hand-rolled string ladder. Only the four names the logger has always
-    # honored are accepted; anything else (including ERROR or a typo) falls back
-    # to INFO - the complaint is emitted below, AFTER the handlers are attached,
-    # so it reaches the console/file rather than logging.lastResort.
+    # of a hand-rolled string ladder. Only the five standard names are accepted;
+    # anything else (a typo) falls back to INFO - the complaint is emitted below,
+    # AFTER the handlers are attached, so it reaches the console/file rather
+    # than logging.lastResort.
     level = _LOG_LEVELS.get(log_level.upper())
     invalid_log_level = log_level if level is None else None
     if level is None:

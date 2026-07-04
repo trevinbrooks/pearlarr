@@ -322,7 +322,7 @@ class AdvancedSettings(_ConfigBase):
     max_torrents_to_add: int | None = None
     # Constrained to the levels the logger honors, so a typo is a clean
     # ValidationError at load instead of a runtime warn-and-default.
-    log_level: Literal["DEBUG", "INFO", "WARNING", "CRITICAL"] = "INFO"
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     @field_validator("log_level", mode="before")
     @classmethod

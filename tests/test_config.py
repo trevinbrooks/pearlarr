@@ -285,6 +285,10 @@ class TestNormalization:
     def test_log_level_is_uppercased(self) -> None:
         assert AdvancedSettings.model_validate({"log_level": "debug"}).log_level == "DEBUG"
 
+    def test_log_level_error_is_accepted(self) -> None:
+        # ERROR is a real level now (log.py honors it); it must validate like the rest.
+        assert AdvancedSettings.model_validate({"log_level": "error"}).log_level == "ERROR"
+
     def test_log_level_typo_raises_validation_error(self) -> None:
         # Constrained at load: a typo is a clean ValidationError, not the logger's
         # runtime warn-and-default (which stays for non-config setup_logger callers).

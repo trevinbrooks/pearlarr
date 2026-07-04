@@ -365,7 +365,7 @@ above; Sonarr only).
   found, will ask for input to choose one. Otherwise, will just grab everything. Defaults to false
 - `advanced.max_torrents_to_add`: Used to limit the number of torrents you add in one run. Defaults to blank,
   which will just add everything it finds
-- `advanced.log_level`: Controls the level of logging. Can be WARNING, INFO, or DEBUG. Defaults to "INFO"
+- `advanced.log_level`: Controls the level of logging. Can be DEBUG, INFO, WARNING, ERROR, or CRITICAL. Defaults to "INFO"
 
 ## Roadmap
 
