@@ -279,6 +279,43 @@ class TestPrivateFallback:
         result = filt.build(entry)
         assert set(result["A"].urls) == {"pub"}
 
+    def test_same_group_blind_public_copy_skips_the_search(self) -> None:
+        # Group A: a private pick with KNOWN files + a public copy whose fileset
+        # SeaDex doesn't know (empty). The blind public copy counts as covering
+        # its group - mirroring the private side's per-group gate - so the search
+        # is skipped and group B's alternative stays out of the dict.
+        filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)
+        entry = make_entry_record(
+            torrents=(
+                make_torrent_record(
+                    release_group="A",
+                    tracker=Tracker.ANIMEBYTES,
+                    url="priv",
+                    infohash=None,
+                    file_names=("A - S01E01.mkv",),
+                    is_best=True,
+                ),
+                make_torrent_record(
+                    release_group="A",
+                    tracker=Tracker.NYAA,
+                    url="pub",
+                    file_names=(),
+                    is_best=True,
+                ),
+                make_torrent_record(
+                    release_group="B",
+                    tracker=Tracker.NYAA,
+                    url="b_pub",
+                    file_names=("B.S01E01.mkv",),
+                    is_best=False,
+                ),
+            ),
+        )
+        result = filt.build(entry)
+        assert set(result) == {"A"}
+        # The coverage-aware per-group drop still keeps the uncovered private url.
+        assert set(result["A"].urls) == {"priv", "pub"}
+
     def test_mixed_group_private_files_uncovered_triggers_the_search(self) -> None:
         # Group A has a public S1 AND a private S2 among the preferred picks: the
         # gate is per-candidate file coverage (not per-group), so the private S2

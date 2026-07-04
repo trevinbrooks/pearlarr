@@ -111,7 +111,16 @@ def get_rutracker_torrent(
     Returns:
         tuple: (magnet_url, torrent_title) - the magnet link and the
             human-readable torrent title scraped from the page
+
+    Raises:
+        TorrentParseError: If ``infohash`` is None (a magnet needs the hash) or
+            the page carries no title.
     """
+
+    # No hash means no valid magnet ("urn:btih:None" is garbage); fail as the
+    # usual parse miss before fetching anything.
+    if infohash is None:
+        raise TorrentParseError("RuTracker release has no infohash to build a magnet link from")
 
     session = session or _DEFAULT_SESSION
 

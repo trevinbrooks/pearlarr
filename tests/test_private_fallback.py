@@ -575,7 +575,11 @@ class TestSurvivingPrivateCoverage:
         assert ctx.public_only_skipped is True
         assert ctx.public_only_groups == ["A"]
         assert torrents.calls == [PUB_HASH]
-        # The mixed-title gate still caches (something was grabbed); the add-time
-        # warning is the surfaced signal, so no needs-action row.
-        assert cache.check_al_id_in_cache(Arr.SONARR, 33, entry) is True
-        assert ctx.stats.needs_action == []
+        # A non-interactive fallback hold blocks the cache even on a partial grab
+        # (the S2 files stay missing), and the no-fallback row resurfaces the title
+        # in every run's summary until a covering public release lands.
+        assert cache.check_al_id_in_cache(Arr.SONARR, 33, entry) is False
+        assert [n.kind for n in ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
+        assert [n.reason for n in ctx.stats.needs_action] == [
+            "private-only release; no public alternative covers these files",
+        ]

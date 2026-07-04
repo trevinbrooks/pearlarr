@@ -211,3 +211,15 @@ def test_get_rutracker_torrent_missing_title_raises() -> None:
         )
         with pytest.raises(TorrentParseError, match="Could not find torrent title"):
             get_rutracker_torrent(url, "deadbeef", session=requests.Session())
+
+
+def test_get_rutracker_torrent_no_infohash_raises() -> None:
+    """A None infohash can't make a magnet ("urn:btih:None"): raise the parse
+    error before any fetch (the empty mock proves nothing was requested)."""
+
+    with responses.RequestsMock(), pytest.raises(TorrentParseError, match="no infohash"):
+        get_rutracker_torrent(
+            "https://rutracker.org/forum/viewtopic.php?t=1",
+            None,
+            session=requests.Session(),
+        )

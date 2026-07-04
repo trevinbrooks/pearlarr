@@ -669,6 +669,10 @@ class DownloadPlanner:
         (grabbed) when a private flag was a size-mismatch upgrade, and left
         alone when the Arr genuinely already owns its files.
 
+        Finally, within each group, flagged urls carrying identical non-empty
+        file-name sets (cross-seeded copies of one release) are deduped to the
+        first.
+
         Mutates the download flags on seadex_dict in place and returns the
         private-only skip outcome (skipped flag, group names, notices to log).
         Skipped entirely in interactive mode, where the user has already
@@ -807,6 +811,22 @@ class DownloadPlanner:
                     ),
                 )
                 unflag(seadex_dict[rg])
+
+        # Within ONE group, flagged urls with identical non-empty file-name sets
+        # are the same release cross-seeded (distinct infohashes = duplicate
+        # downloads; the promotion branch above can flip several at once): keep
+        # the first, unflag the rest. An empty fileset can't prove identity, so
+        # it's never deduped; cross-group overlap is the same-files logic above.
+        for rg_item in seadex_dict.values():
+            seen: set[frozenset[str]] = set()
+            for u in rg_item.urls.values():
+                if not u.download or not u.files:
+                    continue
+                file_names = frozenset(u.files)
+                if file_names in seen:
+                    u.download = False
+                else:
+                    seen.add(file_names)
 
         return skips
 

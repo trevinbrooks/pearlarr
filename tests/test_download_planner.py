@@ -236,6 +236,72 @@ class TestReduceOverlappingDownloads:
         assert seadex["B"].urls["u2"].download is True
 
 
+class TestSameGroupDuplicateDedup:
+    """Within one group, flagged urls with identical non-empty filesets dedup to
+    the first; unknown filesets never dedup (can't prove identity)."""
+
+    def test_identical_filesets_keep_first(self) -> None:
+        planner = make_planner(public_only=False)
+        seadex = {
+            "A": rg_group(
+                {
+                    "u1": url_item(files=["A - S01E01.mkv"], download=True),
+                    "u2": url_item(files=["A - S01E01.mkv"], download=True),
+                },
+            ),
+        }
+        planner.reduce_overlapping_downloads(seadex)
+        assert seadex["A"].urls["u1"].download is True
+        assert seadex["A"].urls["u2"].download is False
+
+    def test_promoted_fallback_duplicates_dedup(self) -> None:
+        # The promotion branch flips EVERY public url of the fallback group: two
+        # cross-seeded copies of one release must still yield a single grab.
+        planner = make_planner(public_only=True)
+        seadex = {
+            "Priv": rg_group({"u1": url_item(download=True, is_public=False, size_mismatch=True)}),
+            "Fall": rg_group(
+                {
+                    "u2": url_item(files=["F - S01E01.mkv"], download=False, is_public=True, is_fallback=True),
+                    "u3": url_item(files=["F - S01E01.mkv"], download=False, is_public=True, is_fallback=True),
+                },
+            ),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["Fall"].urls["u2"].download is True
+        assert seadex["Fall"].urls["u3"].download is False
+        assert seadex["Priv"].urls["u1"].download is False
+        assert "falling back to Fall" in skips.notices[0].reason
+
+    def test_different_filesets_both_kept(self) -> None:
+        planner = make_planner(public_only=False)
+        seadex = {
+            "A": rg_group(
+                {
+                    "u1": url_item(files=["A - S01E01.mkv"], download=True),
+                    "u2": url_item(files=["A - S02E01.mkv"], download=True),
+                },
+            ),
+        }
+        planner.reduce_overlapping_downloads(seadex)
+        assert seadex["A"].urls["u1"].download is True
+        assert seadex["A"].urls["u2"].download is True
+
+    def test_unknown_filesets_both_kept(self) -> None:
+        planner = make_planner(public_only=False)
+        seadex = {
+            "A": rg_group(
+                {
+                    "u1": url_item(download=True),
+                    "u2": url_item(download=True),
+                },
+            ),
+        }
+        planner.reduce_overlapping_downloads(seadex)
+        assert seadex["A"].urls["u1"].download is True
+        assert seadex["A"].urls["u2"].download is True
+
+
 class TestFilterByTorrentHash:
     def test_flags_uncached_hashes(self) -> None:
         planner = make_planner(public_only=False)

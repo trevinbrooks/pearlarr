@@ -344,11 +344,23 @@ class GrabPipeline:
         # Work out whether THIS title actually grabbed anything
         added_this_title = self._ctx.torrents_added - torrents_before
 
+        # A non-interactive fallback-mode private hold means the fallback COULDN'T
+        # cover these files: never cache the title (even on a partial grab) so
+        # every run re-checks and resurfaces it. Warn mode and interactive picks
+        # keep the plain gate below.
+        fallback_hold = (
+            self._ctx.public_only_skipped
+            and self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK
+            and not self._config.advanced.interactive
+        )
+
         # Cache the title as done only when something was grabbed, or nothing was
         # skipped. A private-only OR unsupported-tracker skip that left nothing
         # grabbed keeps it uncached, so it's re-checked once a public release /
         # parser / config change lands.
-        if added_this_title > 0 or not (self._ctx.public_only_skipped or self._ctx.unsupported_tracker_skipped):
+        if not fallback_hold and (
+            added_this_title > 0 or not (self._ctx.public_only_skipped or self._ctx.unsupported_tracker_skipped)
+        ):
             # A mixed title (grabbed + unsupported-tracker skip) is cached, but the
             # skipped hashes are excluded so the release is re-considered on the
             # entry's next update once a parser lands. Private-only hashes are
@@ -362,18 +374,19 @@ class GrabPipeline:
                 req.al_id,
                 req.cache_details,
             )
-        # Nothing added, but a release was skipped for a reason outside the user's
-        # control: surface ONE needs-action reason for the title (private-only wins)
-        # so it isn't cached as done and shows in the summary. In fallback mode the
-        # hold is a fallback that couldn't (no public alternative covered the
-        # missing files) or wouldn't (the user's own interactive private pick)
-        # fall back - either way the tip must not suggest the fallback already on.
+        # A release was skipped for a reason outside the user's control (and either
+        # nothing was added or a fallback hold blocks the cache): surface ONE
+        # needs-action reason for the title (private-only wins) so it shows in the
+        # summary. In fallback mode the hold is a fallback that couldn't (no public
+        # alternative covered the missing files) or wouldn't (the user's own
+        # interactive private pick) fall back - either way the tip must not
+        # suggest the fallback already on.
         elif self._ctx.public_only_skipped:
             if self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK:
                 reason = (
                     "hand-picked private release; private releases not allowed"
                     if self._config.advanced.interactive
-                    else "private-only release; no public alternative found"
+                    else "private-only release; no public alternative covers these files"
                 )
                 kind = NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK
             else:

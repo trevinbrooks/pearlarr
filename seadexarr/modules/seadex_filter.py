@@ -112,20 +112,26 @@ class SeadexReleaseFilter:
         fallback_urls: set[str] = set()
         if self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK:
             group_has_public: dict[str, bool] = {}
+            group_has_blind_public: dict[str, bool] = {}
             for t in candidates:
-                group_has_public[t.release_group] = group_has_public.get(t.release_group, False) or _is_public_torrent(
-                    t,
-                )
+                rg, is_pub = t.release_group, _is_public_torrent(t)
+                group_has_public[rg] = group_has_public.get(rg, False) or is_pub
+                # A public candidate with an UNKNOWN fileset: treated per-group as
+                # covering (the cross-seed case), mirroring the private side.
+                group_has_blind_public[rg] = group_has_blind_public.get(rg, False) or (is_pub and not t.files)
             public_file_names = {f.name for t in candidates if _is_public_torrent(t) for f in t.files}
 
             def needs_fallback(t: TorrentRecord) -> bool:
                 """A private candidate needs a public alternative unless the public
-                candidates cover its files (unknown files: the per-group gate)."""
+                candidates cover its files (an unknown fileset on either side
+                degrades to the per-group gate)."""
 
                 if _is_public_torrent(t):
                     return False
                 if not t.files:
                     return not group_has_public[t.release_group]
+                if group_has_blind_public[t.release_group]:
+                    return False
                 return not {f.name for f in t.files} <= public_file_names
 
             if any(needs_fallback(t) for t in candidates):
