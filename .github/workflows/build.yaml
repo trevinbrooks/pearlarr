@@ -24,6 +24,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           submodules: true
+          # Full history so diff-cover can diff against the PR base branch.
+          fetch-depth: 0
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -46,7 +48,15 @@ jobs:
         run: uv run pyrefly check seadexarr tests --preset strict
       # Branch coverage with the fail_under floor from [tool.coverage.report].
       - name: Pytest (with coverage gate)
-        run: uv run pytest tests/ --cov=seadexarr --cov-report=term-missing
+        run: uv run pytest tests/ --cov=seadexarr --cov-report=term-missing --cov-report=xml
+      # Changed-line coverage gate: diff against the PR base (base_ref on PRs,
+      # main on branch pushes); skipped on main itself, which has no base to diff.
+      - name: Diff coverage (changed lines, 90% floor)
+        if: github.ref != 'refs/heads/main'
+        run: |
+          base="${{ github.base_ref || 'main' }}"
+          git fetch origin "$base"
+          uv run diff-cover coverage.xml --compare-branch "origin/$base" --fail-under=90
 
   build_sdist_and_wheel:
     name: Build source distribution
