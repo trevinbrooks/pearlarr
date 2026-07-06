@@ -307,7 +307,7 @@ class RunServices:
         self.arr = arr
 
         # All per-run state (stats tally, running torrent count, the active
-        # title/url/coverage, the run clock, the public_only skip flags, plus the
+        # title/url/coverage, the run clock, the private-only skip flags, plus the
         # run's dry_run + resolved wait-mode flags) lives on this context, replaced
         # fresh at the start of each run by the loop's reset_run_stats. The single
         # placeholder is minted here - its dry_run=False + OFF wait mode keep every
@@ -498,7 +498,7 @@ class RunServices:
         arr_release_dict: ArrReleaseDict,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> FilterResult:
-        """Apply the download plan, stamping public_only skips onto ctx (delegates)."""
+        """Apply the download plan, stamping private-only skips onto ctx (delegates)."""
 
         return self._filter.filter_downloads(al_id, seadex_dict, arr_release_dict, ep_list)
 
@@ -574,8 +574,8 @@ class RunServices:
 
         # Reset the per-title skip flags (and the skipped group names) before we
         # make any download decisions for this title
-        self._ctx.public_only_skipped = False
-        self._ctx.public_only_groups = []
+        self._ctx.private_only_skipped = False
+        self._ctx.private_only_groups = []
         self._ctx.unsupported_tracker_skipped = False
         self._ctx.unsupported_tracker_groups = []
         self._ctx.unsupported_tracker_hashes = []

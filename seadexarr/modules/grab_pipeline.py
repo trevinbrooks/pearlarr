@@ -189,8 +189,8 @@ class GrabPipeline:
                 value_style="yellow",
                 level=logging.WARNING,
             )
-            self._ctx.public_only_skipped = True
-            self._ctx.public_only_groups.append(srg)
+            self._ctx.private_only_skipped = True
+            self._ctx.private_only_groups.append(srg)
             return None
 
         # Skip trackers not in the user's selected list
@@ -328,7 +328,7 @@ class GrabPipeline:
         torrents_before = self._ctx.torrents_added
 
         if not any_to_download:
-            if not self._ctx.public_only_skipped:
+            if not self._ctx.private_only_skipped:
                 self._ctx.stats.up_to_date += 1
                 self.log_fmt.detail(
                     "status",
@@ -349,7 +349,7 @@ class GrabPipeline:
         # every run re-checks and resurfaces it. Warn mode and interactive picks
         # keep the plain gate below.
         fallback_hold = (
-            self._ctx.public_only_skipped
+            self._ctx.private_only_skipped
             and self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK
             and not self._config.advanced.interactive
         )
@@ -359,7 +359,7 @@ class GrabPipeline:
         # grabbed keeps it uncached, so it's re-checked once a public release /
         # parser / config change lands.
         if not fallback_hold and (
-            added_this_title > 0 or not (self._ctx.public_only_skipped or self._ctx.unsupported_tracker_skipped)
+            added_this_title > 0 or not (self._ctx.private_only_skipped or self._ctx.unsupported_tracker_skipped)
         ):
             # A mixed title (grabbed + unsupported-tracker skip) is cached, but the
             # skipped hashes are excluded so the release is re-considered on the
@@ -381,7 +381,7 @@ class GrabPipeline:
         # alternative covered the missing files) or wouldn't (the user's own
         # interactive private pick) fall back - either way the tip must not
         # suggest the fallback already on.
-        elif self._ctx.public_only_skipped:
+        elif self._ctx.private_only_skipped:
             if self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK:
                 reason = (
                     "hand-picked private release; private releases not allowed"
@@ -395,7 +395,7 @@ class GrabPipeline:
                     NeedsActionKind.PRIVATE_ONLY,
                 )
             self._ctx.stats.needs_action.append(
-                self._needs_action(self._ctx.public_only_groups, reason, kind),
+                self._needs_action(self._ctx.private_only_groups, reason, kind),
             )
         elif self._ctx.unsupported_tracker_skipped:
             self._ctx.stats.needs_action.append(

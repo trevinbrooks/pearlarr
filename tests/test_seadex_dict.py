@@ -3,7 +3,7 @@
 
 This is the SeaDexGateway logic (the engine reaches it via ``get_seadex_dict``):
 tracker filtering, the want_best / prefer_dual_audio narrowing, the is_public
-computation, and the public_only per-group private-url drop.
+computation, and the per-group private-url drop.
 """
 
 import logging
@@ -121,7 +121,7 @@ class TestGetSeadexDict:
         result = filt.build(entry)
         assert result["A"].urls["u1"].is_public is False
 
-    def test_public_only_drops_private_url_when_public_exists(self) -> None:
+    def test_drops_private_url_when_public_exists(self) -> None:
         filt = make_release_filter(private_releases="warn", want_best=False, prefer_dual_audio=False)
         entry = _entry(
             _torrent(release_group="A", url="pub", tracker=Tracker.NYAA),
@@ -130,7 +130,7 @@ class TestGetSeadexDict:
         result = filt.build(entry)
         assert set(result["A"].urls) == {"pub"}
 
-    def test_public_only_keeps_private_only_group(self) -> None:
+    def test_keeps_private_only_group(self) -> None:
         # A group with no public option is kept here; it's only dropped later in
         # reduce_overlapping_downloads if the Arr already has a match.
         filt = make_release_filter(private_releases="warn", want_best=False, prefer_dual_audio=False)

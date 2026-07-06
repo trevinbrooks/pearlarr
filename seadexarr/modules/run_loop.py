@@ -63,7 +63,7 @@ class RunLoop:
         self._active_strategy: ImportCompleter | None = None
 
         # All per-run state (stats tally, running torrent count, the active
-        # title/url/coverage, the run clock, the public_only skip flags, plus the
+        # title/url/coverage, the run clock, the private-only skip flags, plus the
         # run's dry_run + resolved wait-mode flags) lives on this context, replaced
         # fresh at the start of each run by reset_run_stats. ADOPT the services
         # hub's placeholder (one placeholder, never a second mint) - its

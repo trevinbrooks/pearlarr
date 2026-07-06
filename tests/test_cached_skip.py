@@ -204,8 +204,8 @@ class TestAlIdPrologue:
     def test_entry_found_resets_skip_flags_and_tallies(self) -> None:
         entry = make_entry_record()
         run = make_services(_seadex=FakeSeaDexSource({5: entry}), _reporter=_TailReporter())
-        run._ctx.public_only_skipped = True  # stale flag from a previous title
+        run._ctx.private_only_skipped = True  # stale flag from a previous title
 
         assert run.al_id_prologue(5) is entry
-        assert run._ctx.public_only_skipped is False
+        assert run._ctx.private_only_skipped is False
         assert run._ctx.stats.checked == 1

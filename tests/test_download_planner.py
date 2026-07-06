@@ -6,7 +6,7 @@ This is the core domain logic extracted into ``DownloadPlanner`` in Phase 4:
 ``filter_by_torrent_hash`` and ``filter_by_release_group``. The tests assert on
 the resulting per-url ``download`` flags, the returned hash list, and the
 private-only skip outcome surfaced on the :class:`PlanResult` /
-:class:`PublicOnlySkips` (rather than mutated run state, as before Phase 4).
+:class:`PrivateOnlySkips` (rather than mutated run state, as before Phase 4).
 """
 
 import logging
@@ -50,7 +50,7 @@ class TestReduceOverlappingDownloads:
         assert seadex["A"].urls["u1"].download is True
         assert seadex["B"].urls["u2"].download is False
 
-    def test_public_only_prefers_public_keeper(self) -> None:
+    def test_prefers_public_keeper(self) -> None:
         planner = make_planner()
         seadex = {
             "Priv": rg_group({"u1": url_item(download=True, is_public=False)}),
@@ -63,7 +63,7 @@ class TestReduceOverlappingDownloads:
         # (only a fallback keeper gets an INFO notice).
         assert skips.notices == []
 
-    def test_public_only_private_only_skips_and_flags(self) -> None:
+    def test_private_only_skips_and_flags(self) -> None:
         planner = make_planner()
         seadex = {"Priv": rg_group({"u1": url_item(download=True, is_public=False)})}
         skips = planner.reduce_overlapping_downloads(seadex)
@@ -115,7 +115,7 @@ class TestReduceOverlappingDownloads:
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].level == logging.INFO
 
-    def test_public_only_keeper_prefers_fully_addable_group(self) -> None:
+    def test_keeper_prefers_fully_addable_group(self) -> None:
         # A mixed group (public + flagged private url) is first, but its private
         # url would be refused at add time, losing the coverage only it carries:
         # the fully-public group wins keeper regardless of order.
@@ -136,7 +136,7 @@ class TestReduceOverlappingDownloads:
         assert skips.skipped is False
         assert skips.notices == []
 
-    def test_public_only_keeper_degrades_to_first_when_all_mixed(self) -> None:
+    def test_keeper_degrades_to_first_when_all_mixed(self) -> None:
         # No fully-addable group in the set: keep the first public group (its
         # private url then hits the add-time WARNING), matching the old order.
         planner = make_planner()

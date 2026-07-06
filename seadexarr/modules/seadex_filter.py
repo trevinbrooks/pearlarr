@@ -49,7 +49,7 @@ class SeadexReleaseFilter:
     """Turns a SeaDex ``EntryRecord`` into the run's filtered/ranked release dict.
 
     Owns no per-run caches; it binds the run :class:`RunContext` (``begin_run``)
-    only so ``filter_downloads`` can stamp the public_only skip flags the grab tail
+    only so ``filter_downloads`` can stamp the private-only skip flags the grab tail
     later reads. :class:`~.run_services.RunServices` keeps same-named thin
     delegators (``get_seadex_dict`` / ``filter_seadex_interactive`` /
     ``filter_seadex_downloads``) forwarding here, so the strategy<->services
@@ -77,7 +77,7 @@ class SeadexReleaseFilter:
         self._ctx = ctx
 
     def begin_run(self, ctx: RunContext) -> None:
-        """Bind the run context ``filter_downloads`` stamps public_only flags onto."""
+        """Bind the run context ``filter_downloads`` stamps private-only flags onto."""
 
         self._ctx = ctx
 
@@ -278,7 +278,7 @@ class SeadexReleaseFilter:
         Thin orchestrator seam over the :class:`DownloadPlanner`: pass it the
         entry's cached hashes, then apply the plan's private-only skip outcome back
         onto the run context the grab/cache tail still reads (the SkipNotice log
-        lines, the public_only_skipped flag, and the skipped group names).
+        lines, the private_only_skipped flag, and the skipped group names).
 
         Args:
             al_id: AniList ID
@@ -308,8 +308,8 @@ class SeadexReleaseFilter:
 
         # Carry the skip flag/groups onto the run context (reset per title in the
         # prologue; add_torrent may append more before grab_and_cache reads them).
-        if result.public_only_skipped:
-            self._ctx.public_only_skipped = True
-            self._ctx.public_only_groups.extend(result.public_only_groups)
+        if result.private_only_skipped:
+            self._ctx.private_only_skipped = True
+            self._ctx.private_only_groups.extend(result.private_only_groups)
 
         return FilterResult(result.torrent_hashes, result.seadex_dict)

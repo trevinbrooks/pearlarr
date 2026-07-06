@@ -131,11 +131,11 @@ class RunContext:
     current_title: str | None = None
     current_url: str | None = None
     current_coverage: str | None = None
-    # Set per-title when public_only forces a skip of a private-only release, so
+    # Set per-title when a private-only release forces a skip, so
     # the caller knows not to cache the title as done; the group names ride along
     # for the run summary's "needs action" list.
-    public_only_skipped: bool = False
-    public_only_groups: list[str] = field(default_factory=list[str])
+    private_only_skipped: bool = False
+    private_only_groups: list[str] = field(default_factory=list[str])
     # Set per-title when a recommended release is on a tracker we have no parser for
     # (so we can't grab it, but the user didn't deselect it): keeps the title from
     # being cached as done, and the group names ride along for the summary. The
@@ -809,7 +809,7 @@ class RunReporter:
         already_downloading = bool(results) and not added
 
         # Nothing grabbed and nothing already present (e.g., all releases skipped
-        # by public_only): leave the status to the inline "skipped" warning
+        # as private-only): leave the status to the inline "skipped" warning
         if not results and not dry_run:
             return False
 

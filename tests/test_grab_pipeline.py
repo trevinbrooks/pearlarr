@@ -321,7 +321,7 @@ class TestUpToDateTally:
 
 
 def _anidex_release(*, url: str, infohash: str) -> SeadexUrlItem:
-    """A download-flagged release on AniDex - public (clears public_only) and in the
+    """A download-flagged release on AniDex - public (clears the private-only gate) and in the
     default tracker set, but with no parser, so it hits ``_add_one_url``'s new skip."""
 
     item = url_item(url=url, infohash=infohash, download=True)
@@ -413,7 +413,7 @@ class TestUnsupportedTrackerSkip:
         pipeline.grab_and_cache(req)
 
         # Both skips happened...
-        assert pipeline._ctx.public_only_skipped is True
+        assert pipeline._ctx.private_only_skipped is True
         assert pipeline._ctx.unsupported_tracker_skipped is True
         # ...but only the private-only reason is surfaced, and the title stays uncached.
         assert [r.reason for r in pipeline._ctx.stats.needs_action] == [
@@ -448,7 +448,7 @@ class TestUnsupportedTrackerSkip:
 
         pipeline.grab_and_cache(req)
 
-        assert pipeline._ctx.public_only_skipped is True
+        assert pipeline._ctx.private_only_skipped is True
         assert [r.reason for r in pipeline._ctx.stats.needs_action] == [
             "private-only release; no public alternative covers these files"
         ]
@@ -518,7 +518,7 @@ class TestUnsupportedTrackerSkip:
 
         assert stop is False
         assert pipeline._ctx.torrents_added == 1
-        assert pipeline._ctx.public_only_skipped is False
+        assert pipeline._ctx.private_only_skipped is False
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is not None
         assert pipeline.cache_store.torrent_hashes(Arr.SONARR, 42) == ["hF"]
         assert pipeline._ctx.stats.needs_action == []
@@ -559,7 +559,7 @@ class TestUnsupportedTrackerSkip:
 
     def test_mixed_grab_keeps_the_private_hash_cached(self) -> None:
         # The private-only sibling deliberately does NOT get the exclusion:
-        # public_only is a user-configured exclusion, so the private release stays
+        # private releases are never grabbed, so the private release stays
         # quietly suppressed by its cached hash.
         private = url_item(url="https://ab.example/1", infohash="hP", is_public=False, download=True)
         private.tracker = Tracker.ANIMEBYTES
@@ -585,7 +585,7 @@ class TestUnsupportedTrackerSkip:
 
         pipeline.grab_and_cache(req)
 
-        assert pipeline._ctx.public_only_skipped is True
+        assert pipeline._ctx.private_only_skipped is True
         assert set(pipeline.cache_store.torrent_hashes(Arr.SONARR, 7)) == {"hN", "hP"}
 
 
@@ -627,7 +627,7 @@ class TestFallbackHoldNeverCaches:
 
         assert stop is False
         assert pipeline._ctx.torrents_added == 1
-        assert pipeline._ctx.public_only_skipped is True
+        assert pipeline._ctx.private_only_skipped is True
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
         rows = pipeline._ctx.stats.needs_action
         assert [r.kind for r in rows] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
@@ -644,6 +644,6 @@ class TestFallbackHoldNeverCaches:
 
         pipeline.grab_and_cache(self._request(43))
 
-        assert pipeline._ctx.public_only_skipped is True
+        assert pipeline._ctx.private_only_skipped is True
         assert pipeline.cache_store.get_entry(Arr.SONARR, 43) is not None
         assert pipeline._ctx.stats.needs_action == []

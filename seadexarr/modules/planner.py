@@ -4,7 +4,7 @@
 Arr's current release info, an optional episode list, and the cached torrent
 hashes, and returns a :class:`PlanResult`. It flips the per-url ``download``
 flags in place and reports *what to log* (``skip_notices``) and *what was skipped
-for being private-only* (``public_only_*``) as data, rather than reaching into
+for being private-only* (``private_only_*``) as data, rather than reaching into
 the orchestrator's run state or its log formatter.
 """
 
@@ -44,7 +44,7 @@ class SkipNotice:
 
 
 @dataclass
-class PublicOnlySkips:
+class PrivateOnlySkips:
     """The private-only skip outcome of ``reduce_overlapping_downloads``.
 
     ``skipped`` is True when at least one set of same-files release groups was
@@ -74,8 +74,8 @@ class PlanResult:
     # private torrent has no infohash, so this can hold None entries (the
     # release-group path filters those out, but the type must cover both).
     torrent_hashes: list[str | None]
-    public_only_skipped: bool = False
-    public_only_groups: list[str] = field(default_factory=list[str])
+    private_only_skipped: bool = False
+    private_only_groups: list[str] = field(default_factory=list[str])
     skip_notices: list[SkipNotice] = field(default_factory=list[SkipNotice])
 
 
@@ -365,8 +365,8 @@ class DownloadPlanner:
         return PlanResult(
             seadex_dict=seadex_dict,
             torrent_hashes=torrent_hashes,
-            public_only_skipped=skips.skipped,
-            public_only_groups=skips.groups,
+            private_only_skipped=skips.skipped,
+            private_only_groups=skips.groups,
             skip_notices=skips.notices,
         )
 
@@ -478,8 +478,8 @@ class DownloadPlanner:
         return PlanResult(
             seadex_dict=seadex_dict,
             torrent_hashes=torrent_hashes,
-            public_only_skipped=skips.skipped,
-            public_only_groups=skips.groups,
+            private_only_skipped=skips.skipped,
+            private_only_groups=skips.groups,
             skip_notices=skips.notices,
         )
 
@@ -683,7 +683,7 @@ class DownloadPlanner:
     def reduce_overlapping_downloads(
         self,
         seadex_dict: SeadexDict,
-    ) -> PublicOnlySkips:
+    ) -> PrivateOnlySkips:
         """Reduce overlapping flagged downloads down to a single release group
 
         Where multiple preferred release groups cover the same files and the
@@ -714,7 +714,7 @@ class DownloadPlanner:
             seadex_dict (dict): Dictionary of SeaDex releases
         """
 
-        skips = PublicOnlySkips()
+        skips = PrivateOnlySkips()
 
         # In interactive mode the user has explicitly chosen which releases to
         # grab, so don't second-guess them by dropping any
@@ -753,7 +753,7 @@ class DownloadPlanner:
         seadex_dict: SeadexDict,
         same_files: list[str],
         flagged: list[str],
-        skips: PublicOnlySkips,
+        skips: PrivateOnlySkips,
     ) -> list[SeadexUrlItem]:
         """Resolve ONE same-files set down to a single keeper (or a skip).
 
@@ -896,7 +896,7 @@ class DownloadPlanner:
         flagged: list[str],
         prefix: str,
         promoted: str,
-        skips: PublicOnlySkips,
+        skips: PrivateOnlySkips,
         dropped: list[SeadexUrlItem],
     ) -> None:
         """Drop the flagged groups a promoted public group now stands in for.

@@ -278,8 +278,8 @@ class TestSummaryPendingCounters:
         assert not any("queued" in m for m in messages)
 
 
-class TestPublicOnlyTip:
-    """The public-only guidance tip gates on the record's KIND, never on the
+class TestPrivateOnlyTip:
+    """The private-only guidance tip gates on the record's KIND, never on the
     display ``reason`` text (rewording the string must not kill the tip)."""
 
     def _needs_ctx(self, kind: NeedsActionKind) -> RunContext:

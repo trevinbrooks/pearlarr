@@ -143,7 +143,7 @@ class TestUpgradePendingPromotesFallback:
         info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
         assert any("falling back to Fall" in m for m in info), info
         assert not [r for r in handler.records if r.levelno >= logging.WARNING]
-        assert ctx.public_only_skipped is False
+        assert ctx.private_only_skipped is False
 
         # The title caches as done only via the grab itself.
         assert cache.get_entry(Arr.SONARR, 11) is None
@@ -187,7 +187,7 @@ class TestUpgradePendingPromotesFallback:
         info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
         assert any("falling back to Fall" in m for m in info), info
         assert not [r for r in handler.records if r.levelno >= logging.WARNING]
-        assert ctx.public_only_skipped is False
+        assert ctx.private_only_skipped is False
 
     def test_warn_mode_upgrade_pending_warns_and_holds(self) -> None:
         # Parity: warn mode on the same upgrade-pending state warns and leaves
@@ -214,7 +214,7 @@ class TestUpgradePendingPromotesFallback:
 
         warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
         assert any("private-only (private releases not allowed)" in m for m in warnings), warnings
-        assert ctx.public_only_skipped is True
+        assert ctx.private_only_skipped is True
 
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="warn", sleep_time=0)
         pipe.grab_and_cache(_grab_request(11, out, hashes, entry))
@@ -254,7 +254,7 @@ class TestOwnedFallbackSoftSkip:
         info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
         assert any("a public fallback already covers these files" in m for m in info), info
         assert not [r for r in handler.records if r.levelno >= logging.WARNING]
-        assert ctx.public_only_skipped is False
+        assert ctx.private_only_skipped is False
 
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
         pipe.grab_and_cache(_grab_request(11, out, hashes, entry))
@@ -338,8 +338,8 @@ class TestFilterDownloadsNoticeSeam:
         assert any("PrivA private-only; falling back to FallA" in m for m in info), info
         assert any("PrivB private-only (private releases not allowed)" in m for m in warnings), warnings
         # The skip flag + group names land on the run context for the grab tail.
-        assert ctx.public_only_skipped is True
-        assert ctx.public_only_groups == ["PrivB"]
+        assert ctx.private_only_skipped is True
+        assert ctx.private_only_groups == ["PrivB"]
 
 
 class TestMixedGroupKeeperPreference:
@@ -428,7 +428,7 @@ class TestMixedGroupKeeperPreference:
         assert out["G"].urls[PRIV_URL].download is False
         assert hashes == [self.H_HASH]
         assert not [r for r in handler.records if r.levelno >= logging.WARNING]
-        assert ctx.public_only_skipped is False
+        assert ctx.private_only_skipped is False
 
         torrents = FakeTorrents({self.H_HASH: (AddOutcome.ADDED, "H S01+S02")})
         pipe = make_grab_pipeline(
@@ -494,8 +494,8 @@ class TestMixedGroupKeeperPreference:
 
         warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
         assert any("private-only (private releases not allowed)" in m for m in warnings), warnings
-        assert ctx.public_only_skipped is True
-        assert ctx.public_only_groups == ["G"]
+        assert ctx.private_only_skipped is True
+        assert ctx.private_only_groups == ["G"]
         assert torrents.calls == [PUB_HASH]
         assert cache.check_al_id_in_cache(Arr.SONARR, 56, entry) is True
 
@@ -572,8 +572,8 @@ class TestSurvivingPrivateCoverage:
 
         warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
         assert any("private-only (private releases not allowed)" in m for m in warnings), warnings
-        assert ctx.public_only_skipped is True
-        assert ctx.public_only_groups == ["A"]
+        assert ctx.private_only_skipped is True
+        assert ctx.private_only_groups == ["A"]
         assert torrents.calls == [PUB_HASH]
         # A non-interactive fallback hold blocks the cache even on a partial grab
         # (the S2 files stay missing), and the no-fallback row resurfaces the title
@@ -645,7 +645,7 @@ class TestPromotionGeneralization:
         info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
         assert any("grabbing public alternative Pub" in m for m in info), info
         assert not [r for r in handler.records if r.levelno >= logging.WARNING]
-        assert ctx.public_only_skipped is False
+        assert ctx.private_only_skipped is False
 
         torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "Show S01 web")})
         pipe = make_grab_pipeline(
@@ -684,7 +684,7 @@ class TestPromotionGeneralization:
         assert out["Priv"].urls[PRIV_URL].download is False
         assert hashes == [PUB_HASH]
         assert not [r for r in handler.records if r.levelno >= logging.WARNING]
-        assert ctx.public_only_skipped is False
+        assert ctx.private_only_skipped is False
 
     M_PUB_URL = "https://nyaa.si/view/3"
     M_PUB_HASH = "c" * 40
@@ -764,7 +764,7 @@ class TestPromotionGeneralization:
         info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
         assert any("falling back to F" in m for m in info), info
         assert not [r for r in handler.records if r.levelno >= logging.WARNING]
-        assert ctx.public_only_skipped is False
+        assert ctx.private_only_skipped is False
 
 
 class TestEqualUnionMixedGroups:
@@ -878,5 +878,5 @@ class TestEqualUnionMixedGroups:
             assert set(torrents.calls) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
             warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
             assert any("private-only (private releases not allowed)" in m for m in warnings), warnings
-            assert ctx.public_only_skipped is True
+            assert ctx.private_only_skipped is True
             assert cache.check_al_id_in_cache(Arr.SONARR, al_id, entry) is True
