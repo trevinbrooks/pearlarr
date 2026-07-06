@@ -9,6 +9,7 @@
 - Add ``imports.post_import_category``: once a torrent's import is verified complete (so a non-off ``imports.wait_mode`` is required), move it to this qBittorrent category (created if missing), e.g. to hand finished torrents different seeding rules
 - Private releases are never grabbed: prefer public URLs per release group; if the only option for a release the Arr is missing is private, log a warning and skip the title (leaving it uncached so it's retried) instead of grabbing a private release
 - **Breaking:** ``seadex.public_only`` is replaced by ``seadex.private_releases`` (``warn`` / ``fallback``): ``warn`` (the default) warns and skips when the preferred release is only available privately, and ``fallback`` grabs the entry's best public alternative instead, warning only when no public alternative can be found
+- In ``fallback`` mode a public substitute never replaces a copy of the preferred private release you already own: when the Arr holds it at a stale size (SeaDex's record changed), the title now warns and holds every run - the summary tip names both ways out (update it from its tracker, or delete the stale files) - instead of grabbing the fallback over it. A preferred public release still supersedes as before
 - Where multiple preferred release groups cover the exact same files, only download one (preferring a public release), rather than grabbing them all
 - Add ``seadex.ignore_anilist_ids``, which allows you to skip specific AniList IDs from being processed
 - Add ``qbittorrent.tags``, which allows you to tag torrents as added to qBittorrent

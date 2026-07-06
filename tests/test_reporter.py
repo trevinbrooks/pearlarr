@@ -308,6 +308,17 @@ class TestPrivateOnlyTip:
         assert not any("private_releases" in m for m in messages)
         assert any("re-checked every run" in m for m in messages)
 
+    def test_stale_kind_renders_the_owned_stale_tip(self) -> None:
+        # The fallback-never-replaces-an-owned-copy hold: the tip names the two
+        # ways out (update or delete) and, with fallback already on, no setting.
+        messages = _summary_messages(_make_reporter(), self._needs_ctx(NeedsActionKind.PRIVATE_ONLY_STALE))
+        assert not any("private_releases" in m for m in messages)
+        assert any(
+            "you own these releases at a stale size; update them from their private tracker, "
+            "or delete the stale files to let the public fallback stand in." in m
+            for m in messages
+        )
+
     def test_unsupported_tracker_kind_renders_no_tip(self) -> None:
         messages = _summary_messages(_make_reporter(), self._needs_ctx(NeedsActionKind.UNSUPPORTED_TRACKER))
         assert not any("private_releases" in m for m in messages)

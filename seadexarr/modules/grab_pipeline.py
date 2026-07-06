@@ -379,16 +379,22 @@ class GrabPipeline:
         # needs-action reason for the title (private-only wins) so it shows in the
         # summary. In fallback mode the hold is a fallback that couldn't (no public
         # alternative covered the missing files) or wouldn't (the user's own
-        # interactive private pick) fall back - either way the tip must not
-        # suggest the fallback already on.
+        # interactive private pick, or an owned-at-stale-size pick a fallback must
+        # not replace) fall back - either way the tip must not suggest the
+        # fallback already on.
         elif self._ctx.private_only_skipped:
             if self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK:
-                reason = (
-                    "hand-picked private release; private releases not allowed"
-                    if self._config.advanced.interactive
-                    else "private-only release; no public alternative covers these files"
-                )
-                kind = NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK
+                if self._config.advanced.interactive:
+                    reason = "hand-picked private release; private releases not allowed"
+                    kind = NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK
+                elif self._ctx.private_only_stale_held:
+                    # One row per title: the stale bit wins over a coexisting
+                    # plain hold (self-correcting across runs; never cached).
+                    reason = "private-only release; you own it at a stale size and only a fallback covers it"
+                    kind = NeedsActionKind.PRIVATE_ONLY_STALE
+                else:
+                    reason = "private-only release; no public alternative covers these files"
+                    kind = NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK
             else:
                 reason, kind = (
                     "private-only release; private releases not allowed",

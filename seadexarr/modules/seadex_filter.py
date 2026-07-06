@@ -311,5 +311,7 @@ class SeadexReleaseFilter:
         if result.private_only_skipped:
             self._ctx.private_only_skipped = True
             self._ctx.private_only_groups.extend(result.private_only_groups)
+        if result.private_only_stale_held:
+            self._ctx.private_only_stale_held = True
 
         return FilterResult(result.torrent_hashes, result.seadex_dict)

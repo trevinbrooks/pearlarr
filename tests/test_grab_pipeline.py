@@ -455,6 +455,39 @@ class TestUnsupportedTrackerSkip:
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
         assert pipeline.cache_store.get_entry(Arr.SONARR, 7) is None
 
+    def test_stale_held_in_fallback_mode_surfaces_stale_kind(self) -> None:
+        # The planner held an owned-at-stale-size pick a fallback must not
+        # replace (the stale ctx bit rides in): the needs-action row gets its
+        # own kind + reason, and the title stays uncached.
+        private = url_item(url="https://ab.example/1", infohash="hP", is_public=False, download=True)
+        private.tracker = Tracker.ANIMEBYTES
+        seadex_dict: SeadexDict = {"Priv": rg_group({private.url: private})}
+
+        pipeline = _pipeline(torrents=FakeTorrents({}), private_releases="fallback", sleep_time=0)
+        pipeline._anilist.al_cache.update({7: {}})
+        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.private_only_stale_held = True
+
+        req = GrabRequest(
+            al_id=7,
+            item_title="Show",
+            anilist_title="Show",
+            sd_url="https://seadex.example/7",
+            seadex_dict=seadex_dict,
+            torrent_hashes=["hP"],
+            cache_details={},
+            release_group=None,
+        )
+
+        pipeline.grab_and_cache(req)
+
+        assert pipeline._ctx.private_only_skipped is True
+        assert [r.reason for r in pipeline._ctx.stats.needs_action] == [
+            "private-only release; you own it at a stale size and only a fallback covers it"
+        ]
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_STALE]
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 7) is None
+
     def test_interactive_private_pick_reads_as_a_hand_picked_no_fallback(self) -> None:
         # Interactive + fallback: a hold here is the user's own private pick, so
         # the reason says so - but the kind stays NO_FALLBACK so the summary tip

@@ -70,6 +70,8 @@ class TestReduceOverlappingDownloads:
         assert seadex["Priv"].urls["u1"].download is False
         assert skips.skipped is True
         assert skips.groups == ["Priv"]
+        # Plain-reason mutant killer: no fallback rides, so no stale hold.
+        assert skips.stale_held is False
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].reason == "private-only (private releases not allowed)"
@@ -160,47 +162,49 @@ class TestReduceOverlappingDownloads:
         assert seadex["MixedB"].urls["u3"].download is False
         assert seadex["MixedB"].urls["u4"].download is False
 
-    def test_private_only_set_with_fallback_promotes_on_size_mismatch(self) -> None:
-        # The private pick was re-flagged for a SIZE mismatch (an upgrade is
-        # pending): the Arr holds a stale copy, not the fallback's files, so the
-        # fallback is promoted and grabbed instead of the soft-skip firing.
+    def test_private_only_set_with_fallback_holds_on_size_mismatch(self) -> None:
+        # The private pick was re-flagged for a SIZE mismatch: the Arr owns the
+        # preferred release at a stale size, and a fallback (a cascade loser)
+        # never replaces an owned copy - warn and hold instead of promoting.
         planner = make_planner()
         seadex = {
             "Priv": rg_group({"u1": url_item(download=True, is_public=False, size_mismatch=True)}),
             "Fall": rg_group({"u2": url_item(download=False, is_public=True, is_fallback=True)}),
         }
         skips = planner.reduce_overlapping_downloads(seadex)
-        assert seadex["Fall"].urls["u2"].download is True
+        assert seadex["Fall"].urls["u2"].download is False
         assert seadex["Priv"].urls["u1"].download is False
-        assert skips.skipped is False
-        assert skips.groups == []
+        assert skips.skipped is True
+        assert skips.groups == ["Priv"]
+        assert skips.stale_held is True
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
-        assert skips.notices[0].level == logging.INFO
-        assert "falling back to Fall" in skips.notices[0].reason
+        assert skips.notices[0].level == logging.WARNING
+        stale_reason = "private-only; you own this release at a stale size and only a fallback covers it"
+        assert skips.notices[0].reason == stale_reason
 
-    def test_promotion_prefers_fully_public_fallback_group(self) -> None:
-        # Promotion only flips public urls, so a mixed fallback group (a public
-        # fallback sharing its release group with a private pick) would leave
-        # its private url's coverage ungrabbed: the fully-public group wins.
+    def test_promotion_prefers_fully_public_group(self) -> None:
+        # Promotion only flips public urls, so a mixed group (a public url
+        # sharing its release group with a private pick) would leave its private
+        # url's coverage ungrabbed: the fully-public group wins.
         planner = make_planner()
         seadex = {
             "Priv": rg_group({"u1": url_item(download=True, is_public=False, size_mismatch=True)}),
-            "MixedFall": rg_group(
+            "MixedPub": rg_group(
                 {
                     "u2": url_item(download=False, is_public=False),
-                    "u3": url_item(download=False, is_public=True, is_fallback=True),
+                    "u3": url_item(download=False, is_public=True),
                 },
             ),
-            "Fall": rg_group({"u4": url_item(download=False, is_public=True, is_fallback=True)}),
+            "Pub": rg_group({"u4": url_item(download=False, is_public=True)}),
         }
         skips = planner.reduce_overlapping_downloads(seadex)
-        assert seadex["Fall"].urls["u4"].download is True
-        assert seadex["MixedFall"].urls["u2"].download is False
-        assert seadex["MixedFall"].urls["u3"].download is False
+        assert seadex["Pub"].urls["u4"].download is True
+        assert seadex["MixedPub"].urls["u2"].download is False
+        assert seadex["MixedPub"].urls["u3"].download is False
         assert seadex["Priv"].urls["u1"].download is False
         assert len(skips.notices) == 1
-        assert "falling back to Fall" in skips.notices[0].reason
+        assert "grabbing public alternative Pub" in skips.notices[0].reason
 
     def test_promotion_considers_preferred_public_group(self) -> None:
         # The size-mismatch promotion pool is any unflagged public group in the
@@ -222,11 +226,12 @@ class TestReduceOverlappingDownloads:
         # A preferred group is not a fallback, so the notice must not say so.
         assert skips.notices[0].reason == "private-only; grabbing public alternative Pub"
 
-    def test_degraded_keeper_promotes_unflagged_public_on_size_mismatch(self) -> None:
-        # A mixed group's unflagged (owned) public url makes it public_flagged,
-        # so the old promotion arm was unreachable: the keeper degraded to the
-        # mixed group and its stale private url was refused at add time. With a
-        # size mismatch present, the unflagged public group is promoted instead.
+    def test_degraded_keeper_holds_when_only_a_fallback_could_stand_in(self) -> None:
+        # A mixed group's unflagged (owned) public url makes it public_flagged
+        # and no group is fully addable. The only unflagged public alternative
+        # is a FALLBACK, which never replaces M's owned stale copy: the keeper
+        # degrades to M (the add-time gate then refuses its private url) and the
+        # stale bit is set - deliberately with no planner notice.
         planner = make_planner()
         seadex = {
             "M": rg_group(
@@ -238,14 +243,36 @@ class TestReduceOverlappingDownloads:
             "F": rg_group({"u3": url_item(download=False, is_public=True, is_fallback=True)}),
         }
         skips = planner.reduce_overlapping_downloads(seadex)
-        assert seadex["F"].urls["u3"].download is True
+        assert seadex["F"].urls["u3"].download is False
+        assert seadex["M"].urls["u1"].download is False
+        assert seadex["M"].urls["u2"].download is True
+        assert skips.skipped is False
+        assert skips.stale_held is True
+        assert skips.notices == []
+
+    def test_degraded_keeper_promotes_preferred_public_on_size_mismatch(self) -> None:
+        # Same degraded-keeper shape, but the unflagged alternative is a
+        # PREFERRED public group: equal rank still supersedes, so it's promoted.
+        planner = make_planner()
+        seadex = {
+            "M": rg_group(
+                {
+                    "u1": url_item(download=False, is_public=True),
+                    "u2": url_item(download=True, is_public=False, size_mismatch=True),
+                },
+            ),
+            "P": rg_group({"u3": url_item(download=False, is_public=True)}),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["P"].urls["u3"].download is True
         assert seadex["M"].urls["u1"].download is False
         assert seadex["M"].urls["u2"].download is False
         assert skips.skipped is False
+        assert skips.stale_held is False
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["M"]
         assert skips.notices[0].level == logging.INFO
-        assert skips.notices[0].reason == "remaining files private-only; falling back to F"
+        assert skips.notices[0].reason == "remaining files private-only; grabbing public alternative P"
 
     def test_degraded_keeper_without_mismatch_does_not_promote(self) -> None:
         # No size mismatch means the flags may be plain missing-content grabs;
@@ -282,7 +309,8 @@ class TestReduceOverlappingDownloads:
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].level == logging.INFO
-        assert "Fall" in skips.notices[0].reason
+        # The keeper flow is now the sole producer of this wording; pin it exactly.
+        assert skips.notices[0].reason == "private-only; falling back to Fall"
 
     def test_flagged_mixed_group_never_promotes_itself(self) -> None:
         # MUTATION PIN (_promote_public_alternative): the candidate filter's
@@ -365,24 +393,24 @@ class TestSameGroupDuplicateDedup:
         assert seadex["A"].urls["u1"].download is True
         assert seadex["A"].urls["u2"].download is False
 
-    def test_promoted_fallback_duplicates_dedup(self) -> None:
-        # The promotion branch flips EVERY public url of the fallback group: two
+    def test_promoted_duplicates_dedup(self) -> None:
+        # The promotion branch flips EVERY public url of the promoted group: two
         # cross-seeded copies of one release must still yield a single grab.
         planner = make_planner()
         seadex = {
             "Priv": rg_group({"u1": url_item(download=True, is_public=False, size_mismatch=True)}),
-            "Fall": rg_group(
+            "Pub": rg_group(
                 {
-                    "u2": url_item(files=["F - S01E01.mkv"], download=False, is_public=True, is_fallback=True),
-                    "u3": url_item(files=["F - S01E01.mkv"], download=False, is_public=True, is_fallback=True),
+                    "u2": url_item(files=["P - S01E01.mkv"], download=False, is_public=True),
+                    "u3": url_item(files=["P - S01E01.mkv"], download=False, is_public=True),
                 },
             ),
         }
         skips = planner.reduce_overlapping_downloads(seadex)
-        assert seadex["Fall"].urls["u2"].download is True
-        assert seadex["Fall"].urls["u3"].download is False
+        assert seadex["Pub"].urls["u2"].download is True
+        assert seadex["Pub"].urls["u3"].download is False
         assert seadex["Priv"].urls["u1"].download is False
-        assert "falling back to Fall" in skips.notices[0].reason
+        assert "grabbing public alternative Pub" in skips.notices[0].reason
 
     def test_different_filesets_both_kept(self) -> None:
         planner = make_planner()

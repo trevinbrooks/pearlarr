@@ -33,7 +33,10 @@ Against torrent hashes (`seadex.use_torrent_hash_to_filter: true`):
 
 SeaDexArr will match releases to torrent hashes in the cache. This will ensure that if releases get updated then they
 will be grabbed. However, if you already have an existing library then this could result in torrents being downloaded
-again, and will grab multiple overlapping results if you aren't in interactive mode.
+again, and will grab multiple overlapping results if you aren't in interactive mode. This mode is also blind to what
+the Arr actually has on disk: it only consults the hashes SeaDexArr itself grabbed, so releases obtained out-of-band
+(e.g. a private release grabbed directly from its tracker) are invisible to it, and the owned-file protections of the
+default mode don't apply.
 
 By default, SeaDexArr will not check a particular release again unless SeaDex has updated recently. You can override
 this behaviour by setting ``seadex.ignore_seadex_update_times`` to true in the config (see config section below).
@@ -213,6 +216,10 @@ torrents (so long as there's at least one not tagged as dual-audio).
 If the release this lands on is only available on private trackers you won't grab from, SeaDexArr by default 
 (``seadex.private_releases: warn``) warns and re-checks the title every run until a public release appears; set 
 ``seadex.private_releases: fallback`` to instead grab the entry's best public alternative. 
+A fallback never replaces a copy of the preferred private release you already own: if the Arr holds it at a stale 
+size (SeaDex's record changed, e.g. the group patched it), the title warns and holds instead of grabbing the 
+substitute — update the release from its private tracker, or delete the stale files to let the fallback stand in. 
+A preferred public release (equal rank) still supersedes as usual. 
 By doing this, SeaDexArr should generally find a single best
 torrent, though if you're in interactive mode (``advanced.interactive``) and there are multiple options that match
 your criteria, it will give you an option to select one (or multiple).
@@ -276,7 +283,8 @@ The `radarr` group takes the same keys (minus `ignore_movies_in_radarr`): `radar
   Private releases are never grabbed (SeaDex carries no downloadable link for them). `warn` (the default) warns
   and leaves the title uncached, so it's re-checked every run until a public release appears. `fallback` instead
   grabs the entry's best public alternative (the same best/dual-audio preferences applied to the public torrents
-  only), warning only when it can't find a public alternative for those files
+  only), warning only when it can't find a public alternative for those files, or when you already own the
+  preferred private release at a stale size (a fallback never replaces an owned copy)
 - `seadex.prefer_dual_audio`: Prefer results tagged as dual audio, if any exist. If false, will instead prefer
   Ja-only releases. Defaults to true
 - `seadex.want_best`: Prefer results tagged as best, if any exist. Defaults to true

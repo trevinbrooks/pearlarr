@@ -6,10 +6,11 @@
 
 Drive the full build -> filter_downloads -> grab_and_cache path over one SeaDex
 entry, pinning the fallback contract: when a preferred release is private-only,
-grab the entry's best public alternative; warn only when no public alternative
-exists; soft-skip (INFO, cached as done) only when the Arr genuinely already
-owns the files. Regression coverage for the upgrade-pending false soft-skip
-(the size-mismatch promote) and the coverage-blind per-group drop.
+grab the entry's best public alternative; warn when no public alternative
+exists, or when the Arr owns the preferred private release at a stale size (a
+fallback never replaces an owned copy); soft-skip (INFO, cached as done) only
+when the Arr genuinely already owns the files. Regression coverage for the
+preferred-public size-mismatch promote and the coverage-blind per-group drop.
 """
 
 import logging
@@ -39,6 +40,10 @@ from .fakes import CaptureHandler
 PRIV_URL = "https://animebytes.tv/torrents.php?id=1"
 PUB_URL = "https://nyaa.si/view/1"
 PUB_HASH = "f" * 40
+
+# The stale-owned hold's planner notice and needs-action row wording, pinned.
+STALE_NOTICE = "private-only; you own this release at a stale size and only a fallback covers it"
+STALE_ROW_REASON = "private-only release; you own it at a stale size and only a fallback covers it"
 
 
 def _entry_private_pick_plus_public_alt() -> EntryRecord:
@@ -106,13 +111,13 @@ def _grab_request(al_id: int, seadex_dict: SeadexDict, hashes: list[str | None],
     )
 
 
-class TestUpgradePendingPromotesFallback:
-    """An upgrade-pending private pick promotes the fallback, never soft-skips."""
+class TestUpgradePendingHoldsForOwnedStale:
+    """An owned-at-stale-size private pick warns and holds - a fallback never replaces it."""
 
-    def test_sonarr_upgrade_pending_promotes_the_fallback(self) -> None:
+    def test_sonarr_upgrade_pending_warns_and_holds(self) -> None:
         # The Arr holds Priv's release at a STALE size (the SeaDex entry updated):
-        # the size-mismatch re-flag means the unflagged fallback is NOT owned, so
-        # it's promoted and grabbed with the INFO keeper notice.
+        # a fallback (a cascade loser) must not supersede the owned preferred
+        # copy, so nothing is promoted and the set warns with the stale reason.
         ctx = RunContext(arr=Arr.SONARR)
         cache = FakeCacheStore()
         filt = make_release_filter(
@@ -137,37 +142,27 @@ class TestUpgradePendingPromotesFallback:
         with _capture(filt.logger) as handler:
             hashes, out = filt.filter_downloads(11, sd, {"Priv": [100]}, ep_list)
 
-        assert out["Fall"].urls[PUB_URL].download is True
+        assert out["Fall"].urls[PUB_URL].download is False
         assert out["Priv"].urls[PRIV_URL].download is False
-        assert hashes == [PUB_HASH]
-        info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
-        assert any("falling back to Fall" in m for m in info), info
-        assert not [r for r in handler.records if r.levelno >= logging.WARNING]
-        assert ctx.private_only_skipped is False
+        assert hashes == []
+        warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+        assert any(STALE_NOTICE in m for m in warnings), warnings
+        assert ctx.private_only_skipped is True
+        assert ctx.private_only_stale_held is True
 
-        # The title caches as done only via the grab itself.
-        assert cache.get_entry(Arr.SONARR, 11) is None
-        torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "Show S01 web")})
-        pipe = make_grab_pipeline(
-            cache_store=cache,
-            _ctx=ctx,
-            _torrents=torrents,
-            private_releases="fallback",
-            sleep_time=0,
-        )
-        pipe._anilist.al_cache.update({11: {}})
+        # The fallback hold keeps the title uncached and surfaces the STALE row,
+        # so it resurfaces every run until the user updates or deletes the copy.
+        pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
         stopped = pipe.grab_and_cache(_grab_request(11, out, hashes, entry))
 
         assert stopped is False
-        assert torrents.calls == [PUB_HASH]
-        assert len(ctx.stats.added) == 1
-        assert ctx.stats.needs_action == []
-        assert cache.check_al_id_in_cache(Arr.SONARR, 11, entry) is True
-        assert cache.torrent_hashes(Arr.SONARR, 11) == [PUB_HASH]
+        assert cache.get_entry(Arr.SONARR, 11) is None
+        assert [n.kind for n in ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_STALE]
+        assert [n.reason for n in ctx.stats.needs_action] == [STALE_ROW_REASON]
 
-    def test_radarr_size_disjoint_promotes_the_fallback(self) -> None:
+    def test_radarr_size_disjoint_warns_and_holds(self) -> None:
         # The no-episode (Radarr) twin: the size-disjoint branch re-flags the
-        # private pick, so the same-set fallback is promoted, not soft-skipped.
+        # private pick, and the same-set fallback stays un-promoted - hold.
         ctx = RunContext(arr=Arr.RADARR)
         filt = make_release_filter(
             private_releases="fallback",
@@ -181,13 +176,97 @@ class TestUpgradePendingPromotesFallback:
         with _capture(filt.logger) as handler:
             hashes, out = filt.filter_downloads(22, sd, {"Priv": [100]}, None)
 
-        assert out["Fall"].urls[PUB_URL].download is True
+        assert out["Fall"].urls[PUB_URL].download is False
         assert out["Priv"].urls[PRIV_URL].download is False
-        assert hashes == [PUB_HASH]
-        info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
-        assert any("falling back to Fall" in m for m in info), info
-        assert not [r for r in handler.records if r.levelno >= logging.WARNING]
+        assert hashes == []
+        warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+        assert any(STALE_NOTICE in m for m in warnings), warnings
+        assert ctx.private_only_skipped is True
+        assert ctx.private_only_stale_held is True
+
+
+class TestOwnedPreferredPrivateAtMatchingSize:
+    """The Arr owns the preferred private release at SeaDex's size: fully protected.
+
+    The matcher never flags the private pick (group + size match) NOR the riding
+    fallback (another recommended group already covers its files), so the title
+    reads up-to-date and caches as done - no notices, no needs-action rows.
+    Also mutation-kills the two matcher already-covered gates.
+    """
+
+    def test_sonarr_owned_private_at_matching_size_stays_untouched(self) -> None:
+        ctx = RunContext(arr=Arr.SONARR)
+        cache = FakeCacheStore()
+        filt = make_release_filter(
+            private_releases="fallback",
+            want_best=True,
+            prefer_dual_audio=False,
+            planner=make_planner(),
+            cache_store=cache,
+            ctx=ctx,
+        )
+        entry = _entry_private_pick_plus_public_alt()
+        sd = filt.build(entry)
+        _fill_episodes(
+            sd,
+            {
+                PRIV_URL: [EpisodeRecord(season=1, episode=1, size=999)],
+                PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+            },
+        )
+        # Sonarr holds Priv's release at the MATCHING SeaDex size.
+        ep_list = [sonarr_ep(1, 1, size=999, release_group="Priv")]
+
+        with _capture(filt.logger) as handler:
+            hashes, out = filt.filter_downloads(11, sd, {"Priv": [999]}, ep_list)
+
+        assert out["Priv"].urls[PRIV_URL].download is False
+        assert out["Fall"].urls[PUB_URL].download is False
+        assert hashes == []
+        assert handler.records == []
         assert ctx.private_only_skipped is False
+        assert ctx.private_only_stale_held is False
+
+        pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
+        stopped = pipe.grab_and_cache(_grab_request(11, out, hashes, entry))
+
+        assert stopped is False
+        assert ctx.stats.up_to_date == 1
+        assert ctx.stats.needs_action == []
+        assert cache.check_al_id_in_cache(Arr.SONARR, 11, entry) is True
+
+    def test_radarr_owned_private_at_matching_size_stays_untouched(self) -> None:
+        # The no-episode (Radarr) twin, via the arr_release_dict size overlap.
+        ctx = RunContext(arr=Arr.RADARR)
+        cache = FakeCacheStore()
+        filt = make_release_filter(
+            private_releases="fallback",
+            want_best=True,
+            prefer_dual_audio=False,
+            planner=make_planner(),
+            cache_store=cache,
+            ctx=ctx,
+        )
+        entry = _entry_private_pick_plus_public_alt()
+        sd = filt.build(entry)
+
+        with _capture(filt.logger) as handler:
+            hashes, out = filt.filter_downloads(22, sd, {"Priv": [999]}, None)
+
+        assert out["Priv"].urls[PRIV_URL].download is False
+        assert out["Fall"].urls[PUB_URL].download is False
+        assert hashes == []
+        assert handler.records == []
+        assert ctx.private_only_skipped is False
+        assert ctx.private_only_stale_held is False
+
+        pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
+        stopped = pipe.grab_and_cache(_grab_request(22, out, hashes, entry))
+
+        assert stopped is False
+        assert ctx.stats.up_to_date == 1
+        assert ctx.stats.needs_action == []
+        assert cache.check_al_id_in_cache(Arr.RADARR, 22, entry) is True
 
     def test_warn_mode_upgrade_pending_warns_and_holds(self) -> None:
         # Parity: warn mode on the same upgrade-pending state warns and leaves
@@ -269,13 +348,14 @@ class TestFilterDownloadsNoticeSeam:
 
     PRIVA_URL = "https://animebytes.tv/torrents.php?id=10"
     PRIVB_URL = "https://animebytes.tv/torrents.php?id=20"
-    FALLA_URL = "https://nyaa.si/view/9"
-    FALLA_HASH = "e" * 40
+    PUBA_URL = "https://nyaa.si/view/9"
+    PUBA_HASH = "e" * 40
 
     def test_renders_both_levels_and_carries_skip_state(self) -> None:
-        # One entry, two same-files sets: {PrivA, FallA} promotes the fallback
-        # (an INFO notice); {PrivB} is private-only with no fallback (a WARNING
-        # notice, plus the skip flag + group carried onto the RunContext).
+        # One entry, two same-files sets: {PrivA, PubA} promotes the preferred
+        # public group (an INFO notice); {PrivB} is private-only with no cover
+        # (a WARNING notice, plus the skip flag + group carried onto the
+        # RunContext).
         ctx = RunContext(arr=Arr.SONARR)
         filt = make_release_filter(
             private_releases="fallback",
@@ -302,23 +382,23 @@ class TestFilterDownloadsNoticeSeam:
             file_size=777,
             is_best=True,
         )
-        fall_a = make_torrent_record(
-            release_group="FallA",
+        pub_a = make_torrent_record(
+            release_group="PubA",
             tracker=Tracker.NYAA,
-            url=self.FALLA_URL,
-            infohash=self.FALLA_HASH,
+            url=self.PUBA_URL,
+            infohash=self.PUBA_HASH,
             file_names=("A.S01E01.web.mkv",),
             file_size=555,
-            is_best=False,
+            is_best=True,
         )
-        sd = filt.build(make_entry_record(anilist_id=44, torrents=(priv_a, priv_b, fall_a)))
-        assert set(sd) == {"PrivA", "PrivB", "FallA"}
+        sd = filt.build(make_entry_record(anilist_id=44, torrents=(priv_a, priv_b, pub_a)))
+        assert set(sd) == {"PrivA", "PrivB", "PubA"}
         _fill_episodes(
             sd,
             {
                 self.PRIVA_URL: [EpisodeRecord(season=1, episode=1, size=999)],
                 self.PRIVB_URL: [EpisodeRecord(season=2, episode=1, size=777)],
-                self.FALLA_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+                self.PUBA_URL: [EpisodeRecord(season=1, episode=1, size=555)],
             },
         )
         # S01E01 is held at a stale size (upgrade pending); S02E01 is missing.
@@ -327,19 +407,21 @@ class TestFilterDownloadsNoticeSeam:
         with _capture(filt.logger) as handler:
             hashes, out = filt.filter_downloads(44, sd, {"PrivA": [100]}, ep_list)
 
-        assert out["FallA"].urls[self.FALLA_URL].download is True
+        assert out["PubA"].urls[self.PUBA_URL].download is True
         assert out["PrivA"].urls[self.PRIVA_URL].download is False
         assert out["PrivB"].urls[self.PRIVB_URL].download is False
-        assert hashes == [self.FALLA_HASH]
+        assert hashes == [self.PUBA_HASH]
         # Each SkipNotice reaches the logger at ITS level: the promoted set at
         # INFO, the truly-blocked set at WARNING.
         info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
         warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
-        assert any("PrivA private-only; falling back to FallA" in m for m in info), info
+        assert any("PrivA private-only; grabbing public alternative PubA" in m for m in info), info
         assert any("PrivB private-only (private releases not allowed)" in m for m in warnings), warnings
-        # The skip flag + group names land on the run context for the grab tail.
+        # The skip flag + group names land on the run context for the grab tail
+        # (a promotion succeeded, so no stale hold rides along).
         assert ctx.private_only_skipped is True
         assert ctx.private_only_groups == ["PrivB"]
+        assert ctx.private_only_stale_held is False
 
 
 class TestMixedGroupKeeperPreference:
@@ -586,7 +668,7 @@ class TestSurvivingPrivateCoverage:
 
 
 class TestPromotionGeneralization:
-    """The size-mismatch promotion reaches preferred publics and degraded keepers."""
+    """The size-mismatch promotion reaches preferred publics (never fallbacks)."""
 
     def _preferred_pair_entry(self, al_id: int) -> EntryRecord:
         # Both releases are PREFERRED (is_best) with identical coverage - the
@@ -691,11 +773,12 @@ class TestPromotionGeneralization:
     F_URL = "https://nyaa.si/view/4"
     F_HASH = "d" * 40
 
-    def test_owned_mixed_group_promotes_the_exact_fallback(self) -> None:
+    def test_owned_mixed_group_holds_its_stale_batch(self) -> None:
         # Mixed group M: its public S1 url is OWNED (unflagged), its private
-        # batch holds S2 at a stale size. M counts as public_flagged, so the old
-        # promotion arm was unreachable and the set degraded to an add-time
-        # refusal with no notice; now the exact-coverage fallback F is promoted.
+        # batch holds S2 at a stale size. The only alternative is a FALLBACK,
+        # which never replaces the owned stale copy: nothing is promoted, the
+        # stale bit is set (no planner notice - the add-time gate warns), and
+        # the batch stays flagged for that gate to refuse.
         ctx = RunContext(arr=Arr.SONARR)
         filt = make_release_filter(
             private_releases="fallback",
@@ -757,14 +840,13 @@ class TestPromotionGeneralization:
         with _capture(filt.logger) as handler:
             hashes, out = filt.filter_downloads(77, sd, {"M": [555, 100]}, ep_list)
 
-        assert out["F"].urls[self.F_URL].download is True
+        assert out["F"].urls[self.F_URL].download is False
         assert out["M"].urls[self.M_PUB_URL].download is False
-        assert out["M"].urls[PRIV_URL].download is False
-        assert hashes == [self.F_HASH]
-        info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
-        assert any("falling back to F" in m for m in info), info
-        assert not [r for r in handler.records if r.levelno >= logging.WARNING]
+        assert out["M"].urls[PRIV_URL].download is True
+        assert hashes == []
+        assert handler.records == []
         assert ctx.private_only_skipped is False
+        assert ctx.private_only_stale_held is True
 
 
 class TestEqualUnionMixedGroups:

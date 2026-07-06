@@ -50,12 +50,15 @@ class PrivateOnlySkips:
     ``skipped`` is True when at least one set of same-files release groups was
     dropped because none were available publicly and no public fallback
     covered the same files; ``groups`` names them (for the run summary) and
-    ``notices`` is what to log.
+    ``notices`` is what to log. ``stale_held`` marks a hold where the Arr owns
+    the preferred private release at a stale size and only a fallback could
+    stand in (a fallback never replaces an owned copy).
     """
 
     skipped: bool = False
     groups: list[str] = field(default_factory=list[str])
     notices: list[SkipNotice] = field(default_factory=list[SkipNotice])
+    stale_held: bool = False
 
 
 @dataclass
@@ -77,6 +80,8 @@ class PlanResult:
     private_only_skipped: bool = False
     private_only_groups: list[str] = field(default_factory=list[str])
     skip_notices: list[SkipNotice] = field(default_factory=list[SkipNotice])
+    # The stale-owned hold (see PrivateOnlySkips.stale_held), for the summary row.
+    private_only_stale_held: bool = False
 
 
 def normalize_rg(name: str | None) -> str | None:
@@ -368,6 +373,7 @@ class DownloadPlanner:
             private_only_skipped=skips.skipped,
             private_only_groups=skips.groups,
             skip_notices=skips.notices,
+            private_only_stale_held=skips.stale_held,
         )
 
     def filter_by_release_group(
@@ -481,6 +487,7 @@ class DownloadPlanner:
             private_only_skipped=skips.skipped,
             private_only_groups=skips.groups,
             skip_notices=skips.notices,
+            private_only_stale_held=skips.stale_held,
         )
 
     def _match_url_no_episodes(
@@ -694,10 +701,11 @@ class DownloadPlanner:
         done) rather than grabbing a private release - unless an unflagged
         public group covering the same files rides along (a
         ``private_releases: fallback`` stand-in or a preferred public pick).
-        Then the private groups are dropped with an INFO notice instead: the
-        public group is promoted (grabbed) when a private flag was a
-        size-mismatch upgrade, and left alone when the Arr genuinely already
-        owns its files.
+        Then the private groups are dropped with an INFO notice instead: a
+        *preferred* public group is promoted (grabbed) when a private flag was
+        a size-mismatch upgrade, and left alone when the Arr genuinely already
+        owns its files. A fallback is never promoted over an owned copy of the
+        preferred private release - those sets warn and hold (``stale_held``).
 
         After each set resolves, just-dropped public urls whose coverage no
         surviving url carries are re-flagged (group-atomic drops must not lose
@@ -775,12 +783,15 @@ class DownloadPlanner:
             # (fallback or preferred; a flagged one would have taken the keeper
             # branch below). A public group covering OTHER files doesn't excuse
             # dropping this set, so the gate is per-set, never per-entry.
+            fallback_rides = any(_is_fallback_group(seadex_dict[rg]) for rg in same_files)
             if upgrade_pending:
                 promoted = self._promote_public_alternative(seadex_dict, same_files)
                 if promoted is not None:
-                    self._drop_promoted_over(seadex_dict, flagged, "private-only", promoted, skips, dropped)
+                    self._drop_promoted_over(flagged, "private-only", promoted, skips)
+                    for rg in flagged:
+                        _unflag(seadex_dict[rg], dropped)
                     return dropped
-            elif any(_is_fallback_group(seadex_dict[rg]) for rg in same_files):
+            elif fallback_rides:
                 # Unflagged with no size mismatch: the Arr genuinely already
                 # owns the fallback's files.
                 skips.notices.append(
@@ -795,13 +806,21 @@ class DownloadPlanner:
                 return dropped
 
             # The Arr has none of these release groups, private grabs are off,
-            # and no public url covers the same files. Don't grab a private
-            # release, just record a skip notice and skip. Flag the skip so the
-            # caller doesn't cache the title as done.
+            # and no promotable public url covers the same files. Don't grab a
+            # private release, just record a skip notice and skip. Flag the skip
+            # so the caller doesn't cache the title as done. A riding fallback
+            # here means an owned-at-stale-size preferred pick it must not
+            # replace (only reachable upgrade-pending; the soft-skip consumed
+            # the other case): mark the stale hold for the summary row.
+            if fallback_rides:
+                reason = "private-only; you own this release at a stale size and only a fallback covers it"
+                skips.stale_held = True
+            else:
+                reason = "private-only (private releases not allowed)"
             skips.notices.append(
                 SkipNotice(
                     groups=list(flagged),
-                    reason="private-only (private releases not allowed)",
+                    reason=reason,
                     level=logging.WARNING,
                 ),
             )
@@ -823,15 +842,15 @@ class DownloadPlanner:
             if upgrade_pending:
                 promoted = self._promote_public_alternative(seadex_dict, same_files)
                 if promoted is not None:
-                    self._drop_promoted_over(
-                        seadex_dict,
-                        flagged,
-                        "remaining files private-only",
-                        promoted,
-                        skips,
-                        dropped,
-                    )
+                    self._drop_promoted_over(flagged, "remaining files private-only", promoted, skips)
+                    for rg in flagged:
+                        _unflag(seadex_dict[rg], dropped)
                     return dropped
+                # Promotion refused with an unflagged fallback riding: an
+                # owned-at-stale-size pick a fallback must not replace. Mark the
+                # stale hold (no notice; the add-time private gate warns).
+                if any(not _is_flagged(seadex_dict[rg]) and _is_fallback_group(seadex_dict[rg]) for rg in same_files):
+                    skips.stale_held = True
             # Degrade to the first public group (the add-time gate then warns).
             keeper = public_flagged[0]
 
@@ -875,12 +894,19 @@ class DownloadPlanner:
     def _promote_public_alternative(seadex_dict: SeadexDict, same_files: list[str]) -> str | None:
         """Flip on an unflagged public group covering this set; None if there is none.
 
-        Prefer a fully-public group - promotion only flips public urls, so a
-        mixed group's private url would leave part of the set's coverage
-        ungrabbed.
+        Never a fallback group - a substitute must not replace an owned stale
+        copy of the preferred pick; the caller holds instead. Prefer a
+        fully-public group - promotion only flips public urls, so a mixed
+        group's private url would leave part of the set's coverage ungrabbed.
         """
 
-        candidates = [rg for rg in same_files if not _is_flagged(seadex_dict[rg]) and _is_public_group(seadex_dict[rg])]
+        candidates = [
+            rg
+            for rg in same_files
+            if not _is_flagged(seadex_dict[rg])
+            and _is_public_group(seadex_dict[rg])
+            and not _is_fallback_group(seadex_dict[rg])
+        ]
         if not candidates:
             return None
 
@@ -892,29 +918,24 @@ class DownloadPlanner:
 
     @staticmethod
     def _drop_promoted_over(
-        seadex_dict: SeadexDict,
         flagged: list[str],
         prefix: str,
         promoted: str,
         skips: PrivateOnlySkips,
-        dropped: list[SeadexUrlItem],
     ) -> None:
-        """Drop the flagged groups a promoted public group now stands in for.
-
-        The INFO notice says "falling back to" only for a genuine fallback
-        stand-in; a promoted preferred group reads "grabbing public alternative".
+        """The INFO notice for flagged groups a promoted group now stands in for
+        (the caller unflags them). Promotion never picks a fallback group, so the
+        verb is always "grabbing public alternative"; the keeper flow owns
+        "falling back to".
         """
 
-        verb = "falling back to" if _is_fallback_group(seadex_dict[promoted]) else "grabbing public alternative"
         skips.notices.append(
             SkipNotice(
                 groups=list(flagged),
-                reason=f"{prefix}; {verb} {promoted}",
+                reason=f"{prefix}; grabbing public alternative {promoted}",
                 level=logging.INFO,
             ),
         )
-        for rg in flagged:
-            _unflag(seadex_dict[rg], dropped)
 
     def _rescue_dropped_coverage(
         self,

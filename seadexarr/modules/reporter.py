@@ -59,10 +59,14 @@ class NeedsActionKind(Enum):
     PRIVATE_ONLY_NO_FALLBACK is fallback mode that couldn't (no public
     alternative covers the held files) or wouldn't (an interactive private
     pick) fall back, so its tip must not suggest turning fallback on.
+    PRIVATE_ONLY_STALE is fallback mode refusing to replace an owned stale
+    copy of the preferred private release (an alternative exists; the
+    fallback-never-supersedes rule holds it).
     """
 
     PRIVATE_ONLY = auto()
     PRIVATE_ONLY_NO_FALLBACK = auto()
+    PRIVATE_ONLY_STALE = auto()
     UNSUPPORTED_TRACKER = auto()
 
 
@@ -136,6 +140,9 @@ class RunContext:
     # for the run summary's "needs action" list.
     private_only_skipped: bool = False
     private_only_groups: list[str] = field(default_factory=list[str])
+    # Set per-title when an owned-at-stale-size private pick is held because only
+    # a fallback covers it (never a replacement): picks the summary row's kind.
+    private_only_stale_held: bool = False
     # Set per-title when a recommended release is on a tracker we have no parser for
     # (so we can't grab it, but the user didn't deselect it): keeps the title from
     # being cached as done, and the group names ride along for the summary. The
@@ -401,12 +408,18 @@ class RunReporter:
         # A single guidance line if anything was skipped purely for being
         # private-only, rather than repeating it per-entry during the run. Kept
         # at indent 1, so it reads as part of the summary block, not detached.
-        # The two kinds can't co-occur (private_releases is run-wide); the
-        # no-fallback tip omits the fallback suggestion, which is already on.
+        # PRIVATE_ONLY can't co-occur with the fallback-mode kinds
+        # (private_releases is run-wide); those two can, and the no-fallback tip
+        # (which omits the fallback suggestion, already on) wins over the stale one.
         if any(item.kind is NeedsActionKind.PRIVATE_ONLY for item in needs):
             tip = "Tip: set private_releases: fallback to grab a public alternative, or wait for a public release."
         elif any(item.kind is NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK for item in needs):
             tip = "Tip: no public alternative exists yet; the title is re-checked every run until one appears."
+        elif any(item.kind is NeedsActionKind.PRIVATE_ONLY_STALE for item in needs):
+            tip = (
+                "Tip: you own these releases at a stale size; update them from their private tracker, "
+                "or delete the stale files to let the public fallback stand in."
+            )
         else:
             tip = None
         if tip is not None:

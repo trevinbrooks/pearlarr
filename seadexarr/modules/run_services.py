@@ -576,6 +576,7 @@ class RunServices:
         # make any download decisions for this title
         self._ctx.private_only_skipped = False
         self._ctx.private_only_groups = []
+        self._ctx.private_only_stale_held = False
         self._ctx.unsupported_tracker_skipped = False
         self._ctx.unsupported_tracker_groups = []
         self._ctx.unsupported_tracker_hashes = []
