@@ -283,26 +283,88 @@ class TestRunSingleSelection:
 
 
 class TestScheduleHours:
-    """SCHEDULE_TIME parses leniently: bad values fall back to 6 with a report."""
+    """Cadence precedence: valid SCHEDULE_TIME env (deprecated) > config > 6."""
 
-    def test_unset_uses_the_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @staticmethod
+    def _write_config(tmp_path: Path, interval_hours: float | None = None) -> str:
+        path = tmp_path / "config.yml"
+        body = "" if interval_hours is None else f"schedule:\n  interval_hours: {interval_hours}\n"
+        path.write_text(body)
+        return str(path)
+
+    def test_unset_env_and_missing_config_uses_the_default(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
-        assert _schedule_hours() == 6.0
+        missing = tmp_path / "config.yml"
+        assert _schedule_hours(str(missing)) == 6.0
+        # No template-copy side effect: _build_shared owns the first-run copy.
+        assert not missing.exists()
 
-    def test_a_valid_value_is_used(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_unset_env_reads_the_config_value(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
+        assert _schedule_hours(self._write_config(tmp_path, 2.5)) == 2.5
+
+    def test_unreadable_config_falls_back_to_the_default(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
+        path = tmp_path / "config.yml"
+        path.write_text("schedule:\n  interval_hours: -1\n")  # fails validation
+        assert _schedule_hours(str(path)) == 6.0
+
+    def test_a_valid_env_value_wins_over_config_with_deprecation_echo(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
         monkeypatch.setenv("SCHEDULE_TIME", "0.5")
-        assert _schedule_hours() == 0.5
+        assert _schedule_hours(self._write_config(tmp_path, 2.5)) == 0.5
+        assert "deprecated" in capsys.readouterr().out
 
     @pytest.mark.parametrize("raw", ["banana", "0", "-3", "inf", "nan"])
-    def test_bad_values_fall_back_to_the_default(
+    def test_bad_env_values_fall_through_to_config(
         self,
         raw: str,
+        tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.setenv("SCHEDULE_TIME", raw)
-        assert _schedule_hours() == 6.0
-        assert "Invalid SCHEDULE_TIME" in capsys.readouterr().out
+        assert _schedule_hours(self._write_config(tmp_path, 2.5)) == 2.5
+        out = capsys.readouterr().out
+        assert "Invalid SCHEDULE_TIME" in out
+        # The echo reports the value actually used, not a claim about its source.
+        assert "using 2.5 hours" in out
+
+    def test_bad_env_with_missing_config_reports_the_default(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("SCHEDULE_TIME", "banana")
+        assert _schedule_hours(str(tmp_path / "config.yml")) == 6.0
+        assert "using 6 hours" in capsys.readouterr().out
+
+    def test_malformed_yaml_falls_back_to_the_default(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
+        path = tmp_path / "config.yml"
+        path.write_text("schedule: [unclosed\n")
+        assert _schedule_hours(str(path)) == 6.0
 
 
 class TestExitCodes:

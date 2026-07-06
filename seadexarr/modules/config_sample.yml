@@ -65,6 +65,10 @@ notifications:
   wait_webhook_url:                # Generic outbound webhook (ntfy/gotify/HA) for the wait summary
   wait_notify:                     # Push on wait-complete (default: on if any webhook is set)
 
+# Scheduled mode (the default command / `run scheduled`)
+schedule:
+  interval_hours: 6                # Hours between scheduled cycles
+
 # ID/episode mapping sources. Leave blank to auto-download, or set to false to disable.
 # anibridge is the primary source; the others are fallbacks for anything it misses.
 mappings:

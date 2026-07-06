@@ -21,7 +21,9 @@
 - Failed CLI commands now exit non-zero (previously always 0), and a missing cache/backup file is reported as a one-line message instead of a traceback
 - ``cache backup`` writes the snapshot via a temp file, so a failed backup can never replace or delete a previous good ``cache.backup.db``; ``cache restore`` now copies the backup into place instead of consuming it, so a restore is repeatable
 - ``config init`` refuses to overwrite an existing ``config.yml`` unless ``--force`` is passed
-- An invalid ``SCHEDULE_TIME`` falls back to 6 hours with a report instead of crashing the scheduler, and ``run single`` with no module selected prints a usage hint and fails
+- Detect Sonarr/Radarr-side file changes between runs (``advanced.detect_arr_activity``, on by default): each pass polls the arr's history once and re-checks just the entries whose files were imported or deleted arr-side since the last pass, so a quality upgrade or manual grab under an unchanged SeaDex entry is re-evaluated without waiting for SeaDex to update it. The first scan covers the last 30 days, and a coverage gap (stopped longer than that) re-checks everything once
+- The scheduled-run cadence is now a config field, ``schedule.interval_hours`` (default 6), re-read each cycle so an edit takes effect without a restart; the ``SCHEDULE_TIME`` env var is deprecated but still wins when set
+- An invalid ``SCHEDULE_TIME`` falls back to the configured ``schedule.interval_hours`` with a report instead of crashing the scheduler, and ``run single`` with no module selected prints a usage hint and fails
 
 0.9.0 (2025-09-13)
 ==================

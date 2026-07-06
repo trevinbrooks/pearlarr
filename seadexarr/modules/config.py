@@ -313,6 +313,12 @@ class NotificationsSettings(_ConfigBase):
         return raw
 
 
+class ScheduleSettings(_ConfigBase):
+    """Scheduled-mode cadence (hours between cycles)."""
+
+    interval_hours: float = Field(default=6.0, gt=0, allow_inf_nan=False)
+
+
 class AdvancedSettings(_ConfigBase):
     """Advanced knobs (rate limiting, caching, run cap, logging)."""
 
@@ -360,6 +366,7 @@ class AppConfig(_ConfigBase):
     seadex: SeadexSettings = Field(default_factory=SeadexSettings)
     imports: ImportsSettings = Field(default_factory=ImportsSettings)
     notifications: NotificationsSettings = Field(default_factory=NotificationsSettings)
+    schedule: ScheduleSettings = Field(default_factory=ScheduleSettings)
     advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)
     mappings: MappingsSettings = Field(default_factory=MappingsSettings)
 

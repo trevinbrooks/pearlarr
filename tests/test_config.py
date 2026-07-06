@@ -92,11 +92,18 @@ class TestDefaults:
         assert cfg.advanced.log_level == "INFO"
         assert cfg.advanced.max_torrents_to_add is None
         assert cfg.advanced.detect_arr_activity is True
+        assert cfg.schedule.interval_hours == 6.0
         assert cfg.notifications.discord_url is None
         assert cfg.qbittorrent.tags is None
         assert cfg.qbittorrent.credentials() is None
         assert cfg.sonarr.torrent_category is None
         assert cfg.mappings.anime_mappings is None
+
+    def test_schedule_interval_bounds(self) -> None:
+        assert AppConfig.model_validate({"schedule": {"interval_hours": 0.5}}).schedule.interval_hours == 0.5
+        for bad in (0, -3, float("inf"), float("nan")):
+            with pytest.raises(ValidationError):
+                AppConfig.model_validate({"schedule": {"interval_hours": bad}})
 
     def test_import_defaults_when_absent(self) -> None:
         imp = ImportsSettings()

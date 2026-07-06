@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Annotated
 
 import typer
+import yaml
 from pydantic import ValidationError
 
 from .boot_view import BootView, make_boot_view
@@ -366,40 +367,52 @@ def show_paths() -> bool:
 _DEFAULT_SCHEDULE_HOURS = 6.0
 
 
-def _schedule_hours() -> float:
-    """Hours between scheduled cycles, from SCHEDULE_TIME (default 6).
+def _schedule_hours(config_path: str) -> float:
+    """Hours between scheduled cycles: SCHEDULE_TIME env (deprecated) > config > 6.
 
-    A value that isn't a positive finite number is reported and replaced by the
-    default, so a typo in the service environment degrades the cadence instead
-    of crashing the scheduler at startup (or sleeping forever on "inf").
+    A valid positive finite SCHEDULE_TIME still wins (with a deprecation echo);
+    an invalid one is reported with the value actually used instead. Config read
+    failures - including a still-missing file - degrade to the default quietly:
+    ``_build_shared`` owns the user-facing config errors (and the first-run
+    template copy), so no load side effects happen here.
     """
 
     raw = os.getenv("SCHEDULE_TIME")
-    if raw is None:
-        return _DEFAULT_SCHEDULE_HOURS
-    try:
-        hours = float(raw)
-    except ValueError:
-        hours = math.nan
-    if not (math.isfinite(hours) and hours > 0):
-        typer.echo(f"Invalid SCHEDULE_TIME {raw!r}; using {_DEFAULT_SCHEDULE_HOURS:g} hours.")
-        return _DEFAULT_SCHEDULE_HOURS
-    return hours
+    if raw is not None:
+        try:
+            hours = float(raw)
+        except ValueError:
+            hours = math.nan
+        if math.isfinite(hours) and hours > 0:
+            typer.echo("SCHEDULE_TIME is deprecated; set schedule.interval_hours in the config instead.")
+            return hours
+
+    fallback = _DEFAULT_SCHEDULE_HOURS
+    # The load's real failure set (unreadable file, bad YAML, failed validation);
+    # anything else is a programming bug and must surface.
+    with contextlib.suppress(OSError, yaml.YAMLError, ValidationError):
+        if os.path.exists(config_path):
+            fallback = AppConfig.load(config_path).schedule.interval_hours
+    if raw is not None:
+        typer.echo(f"Invalid SCHEDULE_TIME {raw!r}; using {fallback:g} hours.")
+    return fallback
 
 
 @seadexarr_run.command("scheduled")
 def run_scheduled() -> None:
-    """Run both arr modules on a loop (every SCHEDULE_TIME hours, default 6)."""
+    """Run both arr modules on a loop (every schedule.interval_hours, default 6)."""
 
     # Resolve the data directory once and make sure it exists (config-template copy
     # + run lock both need it).
     paths = resolve_paths()
     ensure_data_dir(paths)
 
-    schedule_time = _schedule_hours()
-
     while True:
         logger = setup_logger(log_level="INFO", log_dir=paths.log_dir)
+
+        # Re-read the cadence each cycle so a config edit takes effect without a
+        # restart.
+        schedule_time = _schedule_hours(paths.config)
 
         # Build the shared config + id-mapping resolver once and run both arrs
         # (one config read + one download/parse per cycle, reused by both). On a

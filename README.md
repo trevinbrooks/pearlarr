@@ -53,7 +53,7 @@ services:
     image: ghcr.io/bbtufty/seadexarr:latest  # or seadexarr:main for the cutting edge
     container_name: seadexarr
     environment: 
-      - SCHEDULE_TIME=6  # How often to run, in hours
+      - SCHEDULE_TIME=6  # Deprecated: set schedule.interval_hours in config.yml instead (env still wins if set)
     volumes:
       - /path/to/config:/config
     restart: unless-stopped
