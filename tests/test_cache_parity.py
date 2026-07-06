@@ -53,12 +53,15 @@ def _apply_ops(store: AbstractCacheStore) -> None:
             coverage="S1",
             updated_at=_ENTRY_STAMP,
             torrent_hashes=[None, "hb", "ha"],
+            fallback_satisfied=True,
         ),
     )
-    # Partial re-update of the SAME entry (omits name/url/updated_at): pins the scalar
-    # merge (absent columns untouched, not clobbered) + the hash-set replace (not append).
+    # Partial re-update of the SAME entry (omits name/url/updated_at/marker): pins the
+    # scalar merge (absent columns untouched - incl. the fallback marker, still True)
+    # + the hash-set replace (not append).
     store.update_cache(Arr.SONARR, 7, CacheRecord(coverage="S2", torrent_hashes=[None, "hc", "ha"]))
-    # A cross-arr row + a duplicate/None hash list, to exercise the dedup + None marker.
+    # A cross-arr row + a duplicate/None hash list, to exercise the dedup + None
+    # marker; no fallback_satisfied key, pinning the default-False parity.
     store.update_cache(Arr.RADARR, 99, CacheRecord(name="Movie", torrent_hashes=["z", "z", None]))
 
     store.put_anilist_meta(7, {"fetched_at": _NEW, "data": {"title": "Show"}})
@@ -83,6 +86,7 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
     stats = store.stats()
     return {
         "entry_s7": store.get_entry(Arr.SONARR, 7),
+        "entry_r99": store.get_entry(Arr.RADARR, 99),
         "entry_missing": store.get_entry(Arr.SONARR, 4242),
         "hashes_s7": store.torrent_hashes(Arr.SONARR, 7),
         "hashes_r99": store.torrent_hashes(Arr.RADARR, 99),

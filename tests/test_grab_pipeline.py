@@ -552,7 +552,10 @@ class TestUnsupportedTrackerSkip:
         assert stop is False
         assert pipeline._ctx.torrents_added == 1
         assert pipeline._ctx.private_only_skipped is False
-        assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is not None
+        cached = pipeline.cache_store.get_entry(Arr.SONARR, 42)
+        assert cached is not None
+        # A fallback grab marks the entry, so a switch to warn mode re-checks it.
+        assert cached.fallback_satisfied is True
         assert pipeline.cache_store.torrent_hashes(Arr.SONARR, 42) == ["hF"]
         assert pipeline._ctx.stats.needs_action == []
 
@@ -586,9 +589,43 @@ class TestUnsupportedTrackerSkip:
 
         assert stop is False
         assert pipeline._ctx.torrents_added == 1
-        assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is not None
+        cached = pipeline.cache_store.get_entry(Arr.SONARR, 42)
+        assert cached is not None
+        # A plain (non-fallback) grab never marks the entry.
+        assert cached.fallback_satisfied is False
         assert pipeline.cache_store.torrent_hashes(Arr.SONARR, 42) == ["hN"]
         assert pipeline._ctx.stats.needs_action == []
+
+    def test_warn_mode_grab_clears_a_preseeded_marker(self) -> None:
+        # A prior fallback run left fallback_satisfied=True; a later genuine grab
+        # recomputes False and clears it (the marker is always written - the
+        # partial-merge upsert would otherwise preserve the stale True forever).
+        nyaa = url_item(url="https://nyaa.si/view/2", infohash="hN", download=True)
+        nyaa.tracker = Tracker.NYAA
+        seadex_dict: SeadexDict = {"Pub": rg_group({nyaa.url: nyaa})}
+
+        torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-Pub")})
+        pipeline = _pipeline(torrents=torrents, private_releases="warn", sleep_time=0)
+        pipeline.cache_store.update_cache(Arr.SONARR, 7, {"fallback_satisfied": True})
+        pipeline._anilist.al_cache.update({7: {}})
+        pipeline._ctx.current_title = "Show S1"
+
+        req = GrabRequest(
+            al_id=7,
+            item_title="Show",
+            anilist_title="Show",
+            sd_url="https://seadex.example/7",
+            seadex_dict=seadex_dict,
+            torrent_hashes=["hN"],
+            cache_details={"updated_at": "2026-01-01 00:00:00"},
+            release_group=None,
+        )
+
+        pipeline.grab_and_cache(req)
+
+        cached = pipeline.cache_store.get_entry(Arr.SONARR, 7)
+        assert cached is not None
+        assert cached.fallback_satisfied is False
 
     def test_mixed_grab_keeps_the_private_hash_cached(self) -> None:
         # The private-only sibling deliberately does NOT get the exclusion:

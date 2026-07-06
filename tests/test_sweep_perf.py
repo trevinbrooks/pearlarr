@@ -441,6 +441,22 @@ class TestAlIdNeedsScan:
         run.mark_dirty([7])
         assert run.al_id_needs_scan(7) is False
 
+    @staticmethod
+    def _marked_cache() -> FakeCacheStore:
+        cache = FakeCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1), "fallback_satisfied": True})
+        return cache
+
+    def test_warn_mode_fallback_marker_needs_scan(self) -> None:
+        # Prefetch must agree with cached_entry_skip's warn-mode resurfacing of
+        # fallback-satisfied entries, or the reprocessed id goes un-warmed.
+        run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=self._marked_cache(), private_releases="warn")
+        assert run.al_id_needs_scan(7) is True
+
+    def test_fallback_mode_fallback_marker_does_not_need_scan(self) -> None:
+        run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=self._marked_cache(), private_releases="fallback")
+        assert run.al_id_needs_scan(7) is False
+
 
 class TestPrefetchSkipsUnchanged:
     """``prefetch_episodes`` warms only series with at least one scannable id, so a

@@ -284,7 +284,8 @@ The `radarr` group takes the same keys (minus `ignore_movies_in_radarr`): `radar
   and leaves the title uncached, so it's re-checked every run until a public release appears. `fallback` instead
   grabs the entry's best public alternative (the same best/dual-audio preferences applied to the public torrents
   only), warning only when it can't find a public alternative for those files, or when you already own the
-  preferred private release at a stale size (a fallback never replaces an owned copy)
+  preferred private release at a stale size (a fallback never replaces an owned copy). Titles satisfied by a
+  fallback are remembered; switching back to `warn` re-checks them and resurfaces the private-only warning
 - `seadex.prefer_dual_audio`: Prefer results tagged as dual audio, if any exist. If false, will instead prefer
   Ja-only releases. Defaults to true
 - `seadex.want_best`: Prefer results tagged as best, if any exist. Defaults to true

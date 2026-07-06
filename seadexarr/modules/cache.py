@@ -65,8 +65,9 @@ UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
 # NOTE: there is NO schema-migration mechanism here - ``CREATE TABLE IF NOT EXISTS``
 # creates a missing table but silently does NOT alter an existing one. So changing a
 # column on a shipped table (e.g. relaxing a NOT NULL) won't reach an upgraded
-# cache.db and will diverge or crash; such a change needs a real migration, or - as
-# ``torrent_hashes`` does for its None marker - a storage trick that leaves the
+# cache.db and will diverge or crash; until real migrations land (pre-public), schema
+# changes are applied manually against live dbs (a one-off ``ALTER TABLE``), or - as
+# ``torrent_hashes`` does for its None marker - via a storage trick that leaves the
 # column type unchanged. anilist_meta / sonarr_parse store the record as a JSONB blob
 # and expose the fetch timestamp as a VIRTUAL generated column indexed for the TTL
 # sweep - the spike confirmed the index is used by ``DELETE ... WHERE fetched_at < ?``.
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS entries (
     url        TEXT,
     coverage   TEXT,
     updated_at TEXT,
+    fallback_satisfied INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (arr, al_id)
 );
 
@@ -182,6 +184,9 @@ class CacheRecord(TypedDict, total=False):
     url: str
     coverage: str
     updated_at: "str | datetime"
+    # Whether a public fallback satisfied the title (a fallback grab, or the Arr
+    # already owning the fallback's files); warn mode re-checks marked entries.
+    fallback_satisfied: bool
     # A SeaDex url's infohash is ``str | None`` and is appended unconditionally
     # (planner.filter_by_torrent_hash), so a remembered list can carry ``None``; the
     # store preserves those Nones because the planner dedups on None membership.
@@ -190,18 +195,19 @@ class CacheRecord(TypedDict, total=False):
 
 @dataclass(frozen=True, slots=True)
 class CachedEntry:
-    """The four scalar columns of one ``entries`` row, read in a single query.
+    """The scalar columns of one ``entries`` row, read in a single query.
 
     Lets a caller that needs several fields of the same ``(arr, al_id)`` row fetch
     them in one round-trip (see :meth:`CacheStore.get_entry`) instead of issuing a
-    point ``SELECT`` per field. Each column is nullable on disk, so every field is
-    ``str | None``.
+    point ``SELECT`` per field. The text columns are nullable on disk, so those
+    fields are ``str | None``; ``fallback_satisfied`` is NOT NULL (default 0).
     """
 
     updated_at: str | None
     name: str | None
     url: str | None
     coverage: str | None
+    fallback_satisfied: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,10 +223,10 @@ class HistoryCheckpoint:
     last_id: int
 
 
-# The four scalar columns of ``entries`` that ``update_cache`` may merge. A closed
+# The scalar columns of ``entries`` that ``update_cache`` may merge. A closed
 # tuple so the partial-update path only touches columns actually supplied (the old
 # dict ``.update`` left absent fields untouched - this preserves that).
-_ENTRY_SCALAR_COLUMNS = ("name", "url", "coverage", "updated_at")
+_ENTRY_SCALAR_COLUMNS = ("name", "url", "coverage", "updated_at", "fallback_satisfied")
 
 # Sentinel stored in ``torrent_hashes.infohash`` (a NOT NULL column) for a remembered
 # ``None`` marker - a hashless release the planner still dedups on. A real infohash is
@@ -632,7 +638,7 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None:
-        """The four scalar columns of an entry's row in one query, or None.
+        """The scalar columns of an entry's row in one query, or None.
 
         Folds what used to be a point ``SELECT`` per field into a single read for
         callers that need several columns of the same ``(arr, al_id)`` row (the
@@ -641,10 +647,10 @@ class CacheStore(AbstractCacheStore):
         """
 
         row = self._conn.execute(
-            "SELECT updated_at, name, url, coverage FROM entries WHERE arr = ? AND al_id = ?",
+            "SELECT updated_at, name, url, coverage, fallback_satisfied FROM entries WHERE arr = ? AND al_id = ?",
             (_arr_key(arr), al_id),
         ).fetchone()
-        return None if row is None else CachedEntry(row[0], row[1], row[2], row[3])
+        return None if row is None else CachedEntry(row[0], row[1], row[2], row[3], bool(row[4]))
 
     @override
     def torrent_hashes(self, arr: Arr, al_id: int) -> list[str | None]:

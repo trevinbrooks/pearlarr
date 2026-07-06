@@ -80,7 +80,9 @@ class PrivateReleaseAction(StrEnum):
     warns and skips without caching when the preferred release is private-only,
     so the title is re-checked every run until a public release appears.
     FALLBACK grabs the entry's best public alternative instead, warning only
-    when none exists at all.
+    when none exists at all. Titles satisfied by a fallback are remembered (a
+    cache marker); switching back to WARN re-checks them and resurfaces the
+    private-only warning.
     """
 
     WARN = "warn"

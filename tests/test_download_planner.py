@@ -70,8 +70,10 @@ class TestReduceOverlappingDownloads:
         assert seadex["Priv"].urls["u1"].download is False
         assert skips.skipped is True
         assert skips.groups == ["Priv"]
-        # Plain-reason mutant killer: no fallback rides, so no stale hold.
+        # Plain-reason mutant killer: no fallback rides, so no stale hold and
+        # nothing fallback-covered.
         assert skips.stale_held is False
+        assert skips.fallback_covered is False
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].reason == "private-only (private releases not allowed)"
@@ -113,6 +115,9 @@ class TestReduceOverlappingDownloads:
         assert seadex["Priv"].urls["u1"].download is False
         assert skips.skipped is False
         assert skips.groups == []
+        # The soft-skip is the ONE producer of the fallback-covered bit (the
+        # cache's fallback-satisfied marker).
+        assert skips.fallback_covered is True
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].level == logging.INFO
@@ -177,6 +182,8 @@ class TestReduceOverlappingDownloads:
         assert skips.skipped is True
         assert skips.groups == ["Priv"]
         assert skips.stale_held is True
+        # A hold is not a soft-skip: the marker bit must stay off.
+        assert skips.fallback_covered is False
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].level == logging.WARNING
@@ -306,6 +313,9 @@ class TestReduceOverlappingDownloads:
         assert seadex["Fall"].urls["u2"].download is True
         assert seadex["Priv"].urls["u1"].download is False
         assert skips.skipped is False
+        # The keeper GRABS the fallback; the covered bit is only for the
+        # owned-fallback soft-skip (the grab itself marks the cache).
+        assert skips.fallback_covered is False
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].level == logging.INFO

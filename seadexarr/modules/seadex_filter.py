@@ -313,5 +313,7 @@ class SeadexReleaseFilter:
             self._ctx.private_only_groups.extend(result.private_only_groups)
         if result.private_only_stale_held:
             self._ctx.private_only_stale_held = True
+        if result.fallback_covered:
+            self._ctx.fallback_covered = True
 
         return FilterResult(result.torrent_hashes, result.seadex_dict)

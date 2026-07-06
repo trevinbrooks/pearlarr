@@ -52,13 +52,16 @@ class PrivateOnlySkips:
     covered the same files; ``groups`` names them (for the run summary) and
     ``notices`` is what to log. ``stale_held`` marks a hold where the Arr owns
     the preferred private release at a stale size and only a fallback could
-    stand in (a fallback never replaces an owned copy).
+    stand in (a fallback never replaces an owned copy). ``fallback_covered``
+    marks the owned-fallback soft-skip (the Arr genuinely owns a public
+    fallback's files), which drives the cache's fallback-satisfied marker.
     """
 
     skipped: bool = False
     groups: list[str] = field(default_factory=list[str])
     notices: list[SkipNotice] = field(default_factory=list[SkipNotice])
     stale_held: bool = False
+    fallback_covered: bool = False
 
 
 @dataclass
@@ -82,6 +85,9 @@ class PlanResult:
     skip_notices: list[SkipNotice] = field(default_factory=list[SkipNotice])
     # The stale-owned hold (see PrivateOnlySkips.stale_held), for the summary row.
     private_only_stale_held: bool = False
+    # The owned-fallback soft-skip (see PrivateOnlySkips.fallback_covered), for
+    # the cache's fallback-satisfied marker.
+    fallback_covered: bool = False
 
 
 def normalize_rg(name: str | None) -> str | None:
@@ -374,6 +380,7 @@ class DownloadPlanner:
             private_only_groups=skips.groups,
             skip_notices=skips.notices,
             private_only_stale_held=skips.stale_held,
+            fallback_covered=skips.fallback_covered,
         )
 
     def filter_by_release_group(
@@ -488,6 +495,7 @@ class DownloadPlanner:
             private_only_groups=skips.groups,
             skip_notices=skips.notices,
             private_only_stale_held=skips.stale_held,
+            fallback_covered=skips.fallback_covered,
         )
 
     def _match_url_no_episodes(
@@ -794,6 +802,7 @@ class DownloadPlanner:
             elif fallback_rides:
                 # Unflagged with no size mismatch: the Arr genuinely already
                 # owns the fallback's files.
+                skips.fallback_covered = True
                 skips.notices.append(
                     SkipNotice(
                         groups=list(flagged),

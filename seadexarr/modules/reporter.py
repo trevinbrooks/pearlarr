@@ -143,6 +143,9 @@ class RunContext:
     # Set per-title when an owned-at-stale-size private pick is held because only
     # a fallback covers it (never a replacement): picks the summary row's kind.
     private_only_stale_held: bool = False
+    # Set per-title when the Arr already owns a public fallback's files (the
+    # owned-fallback soft-skip): drives the cache's fallback-satisfied marker.
+    fallback_covered: bool = False
     # Set per-title when a recommended release is on a tracker we have no parser for
     # (so we can't grab it, but the user didn't deselect it): keeps the title from
     # being cached as done, and the group names ride along for the summary. The

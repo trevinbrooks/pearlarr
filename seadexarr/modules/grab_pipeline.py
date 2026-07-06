@@ -368,7 +368,14 @@ class GrabPipeline:
             # their quiet suppression is the intended behavior.
             skipped = set(self._ctx.unsupported_tracker_hashes)
             cacheable = [h for h in req.torrent_hashes if h is None or h not in skipped]
-            req.cache_details.update({"torrent_hashes": cacheable})
+            # The fallback-satisfied marker: a fallback grab or the owned-fallback
+            # soft-skip. Always written - the partial-merge upsert would otherwise
+            # preserve a stale True after a later genuine grab.
+            fallback_satisfied = self._ctx.fallback_covered or any(
+                u.is_fallback and u.download for rg_item in req.seadex_dict.values() for u in rg_item.urls.values()
+            )
+            req.cache_details["torrent_hashes"] = cacheable
+            req.cache_details["fallback_satisfied"] = fallback_satisfied
             self.cache_store.update_cache(
                 self._ctx.arr,
                 req.al_id,

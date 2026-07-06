@@ -120,6 +120,46 @@ class TestCachedEntrySkip:
         assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "u", lambda: "") is True
 
 
+class TestFallbackSatisfiedResurfacing:
+    """The fallback-satisfied marker bypasses the cache skip in warn mode only."""
+
+    @staticmethod
+    def _cache(*, marker: bool) -> FakeCacheStore:
+        cache = FakeCacheStore()
+        cache.update_cache(
+            Arr.SONARR,
+            7,
+            {"url": "u", "updated_at": datetime(2021, 1, 1), "fallback_satisfied": marker},
+        )
+        return cache
+
+    @staticmethod
+    def _skips(cache: FakeCacheStore, private_releases: str) -> bool:
+        run = make_services(cache_store=cache, _reporter=_RecordingReporter(), private_releases=private_releases)
+        return run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "u", lambda: "")
+
+    def test_warn_mode_reprocesses_a_marked_entry(self) -> None:
+        # Fresh timestamp, but the title was satisfied by a fallback: warn mode
+        # re-processes it so the private-only warning resurfaces.
+        assert self._skips(self._cache(marker=True), "warn") is False
+
+    def test_fallback_mode_still_skips_a_marked_entry(self) -> None:
+        assert self._skips(self._cache(marker=True), "fallback") is True
+
+    def test_warn_mode_skips_an_unmarked_entry(self) -> None:
+        assert self._skips(self._cache(marker=False), "warn") is True
+
+    def test_no_releases_skip_clears_a_preseeded_marker(self) -> None:
+        # A title that stops yielding usable releases is never fallback-satisfied:
+        # the shared tail overwrites a stale True.
+        cache = self._cache(marker=True)
+        run = make_services(cache_store=cache, _reporter=_TailReporter(), sleep_time=0)
+        assert run.no_releases_skip(7, {"name": "Title"}) is False
+        entry = cache.get_entry(Arr.SONARR, 7)
+        assert entry is not None
+        assert entry.fallback_satisfied is False
+
+
 class _CtxBind:
     """A no-op ctx-bind collaborator for driving ``begin_run`` on a bare hub."""
 

@@ -143,6 +143,49 @@ class TestEntries:
         store.close()
 
 
+class TestFallbackSatisfied:
+    def test_defaults_false_and_roundtrips_as_bool(self, tmp_path: Path) -> None:
+        store = _open(tmp_path)
+        # A row written without the key reads back False (NOT NULL DEFAULT 0)...
+        store.update_cache(Arr.SONARR, 7, {"name": "Title"})
+        entry = store.get_entry(Arr.SONARR, 7)
+        assert entry is not None
+        assert entry.fallback_satisfied is False
+        # ...and a written True reads back as a real bool, not the stored int.
+        store.update_cache(Arr.SONARR, 7, {"fallback_satisfied": True})
+        entry = store.get_entry(Arr.SONARR, 7)
+        assert entry is not None
+        assert entry.fallback_satisfied is True
+        store.close()
+
+    def test_persists_across_save_and_reopen(self, tmp_path: Path) -> None:
+        store = _open(tmp_path)
+        store.update_cache(Arr.SONARR, 7, {"fallback_satisfied": True})
+        store.save(preview=False)
+        store.close()
+
+        reopened = _open(tmp_path)
+        entry = reopened.get_entry(Arr.SONARR, 7)
+        assert entry is not None
+        assert entry.fallback_satisfied is True
+        reopened.close()
+
+    def test_partial_update_preserves_until_rewritten(self, tmp_path: Path) -> None:
+        store = _open(tmp_path)
+        store.update_cache(Arr.SONARR, 7, {"fallback_satisfied": True})
+        # A partial merge that omits the key must not clear the marker...
+        store.update_cache(Arr.SONARR, 7, {"coverage": "S01"})
+        entry = store.get_entry(Arr.SONARR, 7)
+        assert entry is not None
+        assert entry.fallback_satisfied is True
+        # ...but a supplied False overwrites it.
+        store.update_cache(Arr.SONARR, 7, {"fallback_satisfied": False})
+        entry = store.get_entry(Arr.SONARR, 7)
+        assert entry is not None
+        assert entry.fallback_satisfied is False
+        store.close()
+
+
 class TestTorrentHashes:
     def test_roundtrip_preserves_none_marker(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
@@ -168,16 +211,19 @@ class TestTorrentHashes:
         store.close()
 
     def test_none_marker_on_a_preexisting_db(self, tmp_path: Path) -> None:
-        # Upgrade path: a cache.db from the first release has `infohash TEXT NOT NULL`,
-        # and CREATE TABLE IF NOT EXISTS will NOT alter it - so the None marker must
+        # Upgrade path: a pre-existing cache.db has `infohash TEXT NOT NULL`, and
+        # CREATE TABLE IF NOT EXISTS will NOT alter it - so the None marker must
         # round-trip via the sentinel WITHOUT an IntegrityError, not lean on a schema
         # change that never reaches an existing db. (This test fails if torrent_hashes
-        # is made nullable instead, since the old table stays NOT NULL.)
+        # is made nullable instead, since the old table stays NOT NULL.) The raw
+        # schema tracks _SCHEMA's current shape: dbs from older schemas are
+        # unsupported until real migrations land (manual ALTERs bridge the gap).
         db = str(tmp_path / "cache.db")
         raw = sqlite3.connect(db)
         raw.executescript(
             "CREATE TABLE entries (arr TEXT NOT NULL, al_id INTEGER NOT NULL, name TEXT, "
-            "url TEXT, coverage TEXT, updated_at TEXT, PRIMARY KEY (arr, al_id));"
+            "url TEXT, coverage TEXT, updated_at TEXT, "
+            "fallback_satisfied INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (arr, al_id));"
             "CREATE TABLE torrent_hashes (arr TEXT NOT NULL, al_id INTEGER NOT NULL, "
             "infohash TEXT NOT NULL, PRIMARY KEY (arr, al_id, infohash), "
             "FOREIGN KEY (arr, al_id) REFERENCES entries (arr, al_id) ON DELETE CASCADE);",

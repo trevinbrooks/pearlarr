@@ -21,17 +21,20 @@ from seadex import EntryRecord, TorrentRecord, Tracker
 
 from seadexarr.modules.config import Arr
 from seadexarr.modules.grab_pipeline import GrabRequest
+from seadexarr.modules.log import EntryState
 from seadexarr.modules.reporter import NeedsActionKind, RunContext
 from seadexarr.modules.seadex_types import EpisodeRecord, SeadexDict
 
 from .builders import (
     AddOutcome,
     FakeCacheStore,
+    FakeSeaDexSource,
     FakeTorrents,
     make_entry_record,
     make_grab_pipeline,
     make_planner,
     make_release_filter,
+    make_services,
     make_torrent_record,
     sonarr_ep,
 )
@@ -234,6 +237,11 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         assert ctx.stats.up_to_date == 1
         assert ctx.stats.needs_action == []
         assert cache.check_al_id_in_cache(Arr.SONARR, 11, entry) is True
+        cached = cache.get_entry(Arr.SONARR, 11)
+        assert cached is not None
+        # The owned PREFERRED private pick satisfied the title, not the idle
+        # fallback pool - the false positive the coarse any(is_fallback) had.
+        assert cached.fallback_satisfied is False
 
     def test_radarr_owned_private_at_matching_size_stays_untouched(self) -> None:
         # The no-episode (Radarr) twin, via the arr_release_dict size overlap.
@@ -267,6 +275,9 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         assert ctx.stats.up_to_date == 1
         assert ctx.stats.needs_action == []
         assert cache.check_al_id_in_cache(Arr.RADARR, 22, entry) is True
+        cached = cache.get_entry(Arr.RADARR, 22)
+        assert cached is not None
+        assert cached.fallback_satisfied is False
 
     def test_warn_mode_upgrade_pending_warns_and_holds(self) -> None:
         # Parity: warn mode on the same upgrade-pending state warns and leaves
@@ -334,6 +345,7 @@ class TestOwnedFallbackSoftSkip:
         assert any("a public fallback already covers these files" in m for m in info), info
         assert not [r for r in handler.records if r.levelno >= logging.WARNING]
         assert ctx.private_only_skipped is False
+        assert ctx.fallback_covered is True
 
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
         pipe.grab_and_cache(_grab_request(11, out, hashes, entry))
@@ -341,6 +353,10 @@ class TestOwnedFallbackSoftSkip:
         assert ctx.stats.up_to_date == 1
         assert ctx.stats.needs_action == []
         assert cache.check_al_id_in_cache(Arr.SONARR, 11, entry) is True
+        cached = cache.get_entry(Arr.SONARR, 11)
+        assert cached is not None
+        # The owned-fallback soft-skip marks the cache, so warn mode re-checks it.
+        assert cached.fallback_satisfied is True
 
 
 class TestFilterDownloadsNoticeSeam:
@@ -745,6 +761,10 @@ class TestPromotionGeneralization:
         assert ctx.stats.needs_action == []
         # Nothing is held, so the fallback-hold uncache must not fire.
         assert cache.check_al_id_in_cache(Arr.SONARR, 66, entry) is True
+        cached = cache.get_entry(Arr.SONARR, 66)
+        assert cached is not None
+        # A promoted PREFERRED public group is not a fallback: no marker.
+        assert cached.fallback_satisfied is False
 
     def test_radarr_preferred_public_alternative_is_promoted(self) -> None:
         # The no-parse (Radarr) twin of the preferred-pair upgrade: the public
@@ -962,3 +982,115 @@ class TestEqualUnionMixedGroups:
             assert any("private-only (private releases not allowed)" in m for m in warnings), warnings
             assert ctx.private_only_skipped is True
             assert cache.check_al_id_in_cache(Arr.SONARR, al_id, entry) is True
+
+
+class _CachedEntryReporter:
+    """Just enough reporter surface for ``cached_entry_skip``'s logging tail."""
+
+    def log_cached_entry(
+        self,
+        ctx: RunContext,
+        arr: Arr,
+        al_id: int,
+        state: EntryState = EntryState.UNCHANGED,
+    ) -> bool:
+        del ctx, arr, al_id, state
+        return True
+
+
+class TestModeSwitchResurfacesFallbackSatisfied:
+    """A fallback-satisfied title resurfaces under warn mode, and only there.
+
+    The marker exists so warn's "warn every run" contract survives a spell in
+    fallback mode: without it, the fallback-satisfied title stays cache-skipped
+    until SeaDex updates the entry.
+    """
+
+    def test_fallback_marker_resurfaces_under_warn_and_persists(self) -> None:
+        # 1) fallback run: Sonarr misses the episode, the keeper flow grabs the
+        # public fallback, and the title caches with the marker set.
+        ctx = RunContext(arr=Arr.SONARR)
+        cache = FakeCacheStore()
+        filt = make_release_filter(
+            private_releases="fallback",
+            want_best=True,
+            prefer_dual_audio=False,
+            planner=make_planner(),
+            cache_store=cache,
+            ctx=ctx,
+        )
+        entry = _entry_private_pick_plus_public_alt()
+        sd = filt.build(entry)
+        _fill_episodes(
+            sd,
+            {
+                PRIV_URL: [EpisodeRecord(season=1, episode=1, size=999)],
+                PUB_URL: [EpisodeRecord(season=1, episode=1, size=555)],
+            },
+        )
+        hashes, out = filt.filter_downloads(11, sd, {}, [sonarr_ep(1, 1)])
+        assert out["Fall"].urls[PUB_URL].download is True
+
+        torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "Fall S01")})
+        pipe = make_grab_pipeline(
+            cache_store=cache,
+            _ctx=ctx,
+            _torrents=torrents,
+            private_releases="fallback",
+            sleep_time=0,
+        )
+        pipe._anilist.al_cache.update({11: {}})
+        pipe.grab_and_cache(_grab_request(11, out, hashes, entry))
+        cached = cache.get_entry(Arr.SONARR, 11)
+        assert cached is not None
+        assert cached.fallback_satisfied is True
+
+        # 2) warn services over the same cache: BOTH gates re-process the id
+        # (prefetch warming and the loop's skip must agree).
+        seadex = FakeSeaDexSource({11: entry})
+        warn_run = make_services(
+            cache_store=cache,
+            _seadex=seadex,
+            _reporter=_CachedEntryReporter(),
+            private_releases="warn",
+        )
+        assert warn_run.al_id_needs_scan(11) is True
+        assert warn_run.cached_entry_skip(11, entry, "u", lambda: "") is False
+
+        # 3) the warn-mode reprocess warns and holds: the private pick is all
+        # that's offered (the Arr owns the grabbed fallback's file), nothing is
+        # cached, and the marker persists for the next run.
+        warn_ctx = RunContext(arr=Arr.SONARR)
+        warn_filt = make_release_filter(
+            private_releases="warn",
+            want_best=True,
+            prefer_dual_audio=False,
+            planner=make_planner(),
+            cache_store=cache,
+            ctx=warn_ctx,
+        )
+        sd_warn = warn_filt.build(entry)
+        assert set(sd_warn) == {"Priv"}  # warn mode adds no fallback
+        _fill_episodes(sd_warn, {PRIV_URL: [EpisodeRecord(season=1, episode=1, size=999)]})
+        ep_list = [sonarr_ep(1, 1, size=555, release_group="Fall")]
+        with _capture(warn_filt.logger) as handler:
+            warn_hashes, warn_out = warn_filt.filter_downloads(11, sd_warn, {"Fall": [555]}, ep_list)
+        warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+        assert any("private-only (private releases not allowed)" in m for m in warnings), warnings
+
+        warn_pipe = make_grab_pipeline(cache_store=cache, _ctx=warn_ctx, private_releases="warn", sleep_time=0)
+        warn_pipe.grab_and_cache(_grab_request(11, warn_out, warn_hashes, entry))
+        assert [n.kind for n in warn_ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
+        persisted = cache.get_entry(Arr.SONARR, 11)
+        assert persisted is not None
+        assert persisted.fallback_satisfied is True  # the hold wrote nothing
+
+        # 4) switching back to fallback mode: the marked entry skips as cached.
+        fallback_run = make_services(
+            cache_store=cache,
+            _seadex=seadex,
+            _reporter=_CachedEntryReporter(),
+            private_releases="fallback",
+        )
+        assert fallback_run.al_id_needs_scan(11) is False
+        assert fallback_run.cached_entry_skip(11, entry, "u", lambda: "") is True

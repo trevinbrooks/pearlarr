@@ -23,8 +23,8 @@ from urllib3.util.retry import Retry
 
 from .anilist_gateway import AniListGateway
 from .boot_view import BootView, NullBootView
-from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, CacheRecord, CacheStore
-from .config import AppConfig, Arr, ArrSettings
+from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
+from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction
 from .grab_pipeline import GrabPipeline, GrabRequest
 from .log import EntryState, LogFormatter, setup_logger
 from .manual_import import ImportWaitMode
@@ -390,19 +390,28 @@ class RunServices:
         sd_entry = self._seadex.entry(al_id)  # warmed cache, no network
         if sd_entry is None:
             return False
-        if self._bypass_entry_cache(al_id):
-            return True
-        return not self.cache_store.check_al_id_in_cache(self._ctx.arr, al_id, sd_entry)
+        return self._skippable_entry(al_id, sd_entry) is None
 
-    def _bypass_entry_cache(self, al_id: int) -> bool:
-        """Whether this id must be re-processed despite a fresh cache row.
+    def _skippable_entry(self, al_id: int, sd_entry: EntryRecord) -> CachedEntry | None:
+        """The cached row iff the per-id loop may skip this id; None re-processes.
 
-        The single predicate BOTH cache gates share: ``al_id_needs_scan`` picks
-        what prefetch warms and ``cached_entry_skip`` what the loop re-processes,
-        and the two must agree or un-warmed ids hit AniList one at a time.
+        The single decision BOTH cache gates share: ``al_id_needs_scan`` picks
+        what prefetch warms and ``cached_entry_skip`` what the loop skips, and
+        the two must agree or un-warmed ids hit AniList one at a time. Run-wide
+        bypasses come first (no db read); then the SeaDex-timestamp compare
+        (mirrors ``check_al_id_in_cache``); then warn mode re-processes
+        fallback-satisfied entries, so their private-only warning resurfaces
+        after a switch back from fallback mode.
         """
 
-        return self._config.seadex.ignore_seadex_update_times or al_id in self._dirty_al_ids
+        if self._config.seadex.ignore_seadex_update_times or al_id in self._dirty_al_ids:
+            return None
+        entry = self.cache_store.get_entry(self._ctx.arr, al_id)
+        if entry is None or entry.updated_at != sd_entry.updated_at.strftime(UPDATED_AT_STR_FORMAT):
+            return None
+        if entry.fallback_satisfied and self._config.seadex.private_releases is PrivateReleaseAction.WARN:
+            return None
+        return entry
 
     def mark_dirty(self, al_ids: Iterable[int]) -> None:
         """Record AniList ids whose arr-side file state changed since the last pass.
@@ -558,6 +567,8 @@ class RunServices:
         """
 
         self._log_no_seadex_releases()
+        # Never fallback-satisfied: overwrite any stale True from a prior fallback run.
+        cache_details["fallback_satisfied"] = False
         self._update_cache(al_id=al_id, cache_details=cache_details)
         time.sleep(self._config.advanced.sleep_time)
         return False
@@ -577,6 +588,7 @@ class RunServices:
         self._ctx.private_only_skipped = False
         self._ctx.private_only_groups = []
         self._ctx.private_only_stale_held = False
+        self._ctx.fallback_covered = False
         self._ctx.unsupported_tracker_skipped = False
         self._ctx.unsupported_tracker_groups = []
         self._ctx.unsupported_tracker_hashes = []
@@ -614,14 +626,10 @@ class RunServices:
                 the backfill ("" for a movie, a season/episode range for a series)
         """
 
-        # One read of the whole row serves both the freshness check and the
-        # url-backfill check below (was a SELECT updated_at + a SELECT url).
-        entry = self.cache_store.get_entry(self._ctx.arr, al_id)
-        # Mirrors check_al_id_in_cache: absent, or a timestamp that no longer matches
-        # SeaDex's, means re-process (don't skip).
-        if entry is None or entry.updated_at != sd_entry.updated_at.strftime(UPDATED_AT_STR_FORMAT):
-            return False
-        if self._bypass_entry_cache(al_id):
+        # The shared skip decision; its one row read also serves the url-backfill
+        # check below (was a SELECT updated_at + a SELECT url).
+        entry = self._skippable_entry(al_id, sd_entry)
+        if entry is None:
             return False
 
         # Backfill the enriched fields for records written before they existed,

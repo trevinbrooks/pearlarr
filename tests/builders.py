@@ -267,7 +267,7 @@ class FakeCacheStore(AbstractCacheStore):
 
     @override
     def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None:
-        """The four scalar columns of the entry as a ``CachedEntry``, or None."""
+        """The scalar columns of the entry as a ``CachedEntry``, or None."""
 
         entry = self._entries.get((str(arr), al_id))
         if entry is None:
@@ -277,6 +277,7 @@ class FakeCacheStore(AbstractCacheStore):
             name=entry.get("name"),
             url=entry.get("url"),
             coverage=entry.get("coverage"),
+            fallback_satisfied=bool(entry.get("fallback_satisfied", False)),
         )
 
     @override
