@@ -48,9 +48,9 @@ class PublicOnlySkips:
     """The private-only skip outcome of ``reduce_overlapping_downloads``.
 
     ``skipped`` is True when at least one set of same-files release groups was
-    dropped because, with ``public_only`` on, none were available publicly and
-    no public fallback covered the same files; ``groups`` names them (for the
-    run summary) and ``notices`` is what to log.
+    dropped because none were available publicly and no public fallback
+    covered the same files; ``groups`` names them (for the run summary) and
+    ``notices`` is what to log.
     """
 
     skipped: bool = False
@@ -239,7 +239,7 @@ def get_all_seadex_rgs_per_episode(
 class DownloadPlanner:
     """Decides which SeaDex releases to grab for one AniList entry.
 
-    Constructed once per run with the three config flags it consults; every
+    Constructed once per run with the two config flags it consults; every
     decision method takes the already-shaped ``seadex_dict`` plus the Arr's
     release info as arguments and returns a :class:`PlanResult`. The planner
     keeps a logger only for the per-release debug breadcrumbs; the user-facing
@@ -249,12 +249,10 @@ class DownloadPlanner:
     def __init__(
         self,
         *,
-        public_only: bool,
         interactive: bool,
         use_torrent_hash_to_filter: bool,
         logger: logging.Logger,
     ) -> None:
-        self.public_only = public_only
         self.interactive = interactive
         self.use_torrent_hash_to_filter = use_torrent_hash_to_filter
         self.logger = logger
@@ -361,7 +359,7 @@ class DownloadPlanner:
                     )
 
         # Where multiple preferred release groups cover the same files and the
-        # Arr has none of them, only grab one (preferring public if public_only)
+        # Arr has none of them, only grab one (preferring a public group)
         skips = self.reduce_overlapping_downloads(seadex_dict=seadex_dict)
 
         return PlanResult(
@@ -464,7 +462,7 @@ class DownloadPlanner:
                 )
 
         # Where multiple preferred release groups cover the same files and the
-        # Arr has none of them, only grab one (preferring public if public_only)
+        # Arr has none of them, only grab one (preferring a public group)
         skips = self.reduce_overlapping_downloads(seadex_dict=seadex_dict)
 
         # Build the hash list from whatever is still flagged for download, so it
@@ -689,16 +687,17 @@ class DownloadPlanner:
         """Reduce overlapping flagged downloads down to a single release group
 
         Where multiple preferred release groups cover the same files and the
-        Arr doesn't already have any of them, we only want to grab one. If
-        public_only is set, we prefer a public release group and drop the
-        private ones. If the only options are private, we record a warning
-        SkipNotice and skip the title (without caching it as done) rather than
-        grabbing a private release - unless an unflagged public group covering
-        the same files rides along (a ``private_releases: fallback`` stand-in
-        or a preferred public pick). Then the private groups are dropped with
-        an INFO notice instead: the public group is promoted (grabbed) when a
-        private flag was a size-mismatch upgrade, and left alone when the Arr
-        genuinely already owns its files.
+        Arr doesn't already have any of them, we only want to grab one. We
+        prefer a public release group and drop the private ones (private
+        releases are never grabbed). If the only options are private, we
+        record a warning SkipNotice and skip the title (without caching it as
+        done) rather than grabbing a private release - unless an unflagged
+        public group covering the same files rides along (a
+        ``private_releases: fallback`` stand-in or a preferred public pick).
+        Then the private groups are dropped with an INFO notice instead: the
+        public group is promoted (grabbed) when a private flag was a
+        size-mismatch upgrade, and left alone when the Arr genuinely already
+        owns its files.
 
         After each set resolves, just-dropped public urls whose coverage no
         surviving url carries are re-flagged (group-atomic drops must not lose
@@ -763,11 +762,6 @@ class DownloadPlanner:
         """
 
         dropped: list[SeadexUrlItem] = []
-
-        if not self.public_only:
-            # We don't care about public/private, just keep the first one
-            self._drop_losers(seadex_dict, flagged, flagged[0], dropped)
-            return dropped
 
         public_flagged = [rg for rg in flagged if _is_public_group(seadex_dict[rg])]
         # The held-stale-not-owned marker: a size-mismatch flag means the Arr
@@ -945,12 +939,12 @@ class DownloadPlanner:
             return
 
         # What the set will actually obtain: surviving flagged urls the add-time
-        # gate accepts (private urls count only when private grabs are allowed).
+        # gate accepts (private urls are refused there, so they never count).
         survivor_keys = {
             key
             for rg in same_files
             for u in seadex_dict[rg].urls.values()
-            if u.download and (u.is_public or not self.public_only)
+            if u.download and u.is_public
             for key in get_episode_keys(u.episodes)
         }
         for u in rescuable:

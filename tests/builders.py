@@ -423,16 +423,14 @@ def make_config(**overrides: Any) -> AppConfig:
 
     The config flags are read through ``self._config`` (the single source of truth),
     so a bare instance needs a real ``AppConfig``. These defaults mirror the historical
-    ``make_arr`` flags - notably ``private_releases="allow"`` (``AppConfig``'s own
-    default is ``warn``) - and leave ``trackers`` unset so it defaults to PUBLIC |
-    PRIVATE. Each flat override is routed to its config group (``_FIELD_GROUP``) and the
+    ``make_arr`` flags and leave ``trackers`` unset so it defaults to PUBLIC | PRIVATE.
+    Each flat override is routed to its config group (``_FIELD_GROUP``) and the
     nested mapping is validated through the models, so the before-validators run exactly
     as on a real load.
     """
 
     nested: dict[str, dict[str, Any]] = {
         "seadex": {
-            "private_releases": "allow",
             "want_best": True,
             "prefer_dual_audio": True,
             "ignore_tags": [],
@@ -757,8 +755,8 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
 def make_planner(**overrides: Any) -> DownloadPlanner:
     """Build a ``DownloadPlanner`` with test-friendly defaults.
 
-    The planner reads three config flags plus a logger; pass keyword overrides
-    to vary a single flag (e.g. ``make_planner(public_only=True)``). The logger
+    The planner reads two config flags plus a logger; pass keyword overrides
+    to vary a single flag (e.g. ``make_planner(interactive=True)``). The logger
     defaults to WARNING so the hot-path debug f-strings aren't formatted, mirroring
     ``make_services``.
     """
@@ -766,7 +764,6 @@ def make_planner(**overrides: Any) -> DownloadPlanner:
     logger = make_logger()
 
     defaults: dict[str, Any] = {
-        "public_only": False,
         "interactive": False,
         "use_torrent_hash_to_filter": False,
         "logger": logger,

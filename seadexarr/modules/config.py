@@ -75,14 +75,14 @@ class Arr(StrEnum):
 class PrivateReleaseAction(StrEnum):
     """The ``seadex.private_releases`` policy for private-tracker releases.
 
-    ALLOW grabs them like any other. WARN (default) never grabs them, and when
-    the preferred release is private-only it warns and skips without caching,
+    Private releases are never grabbed: SeaDex carries no downloadable link or
+    infohash for them, and no private-tracker auth is supported. WARN (default)
+    warns and skips without caching when the preferred release is private-only,
     so the title is re-checked every run until a public release appears.
-    FALLBACK never grabs them either, but grabs the entry's best public
-    alternative instead, warning only when none exists at all.
+    FALLBACK grabs the entry's best public alternative instead, warning only
+    when none exists at all.
     """
 
-    ALLOW = "allow"
     WARN = "warn"
     FALLBACK = "fallback"
 
@@ -182,16 +182,6 @@ class SeadexSettings(_ConfigBase):
     ignore_anilist_ids: set[int] = Field(default_factory=set[int])
     ignore_seadex_update_times: bool = False
     use_torrent_hash_to_filter: bool = False
-
-    @property
-    def public_only(self) -> bool:
-        """Whether private releases must never be grabbed (WARN or FALLBACK).
-
-        Derived from ``private_releases`` - the old standalone bool folded into
-        that policy enum - so the code keeps its natural predicate.
-        """
-
-        return self.private_releases is not PrivateReleaseAction.ALLOW
 
     @field_validator("trackers", mode="before")
     @classmethod

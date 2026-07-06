@@ -237,7 +237,6 @@ class RunDeps:
             ),
             # Download-decision engine: flips each release's download flag.
             planner=DownloadPlanner(
-                public_only=app_config.seadex.public_only,
                 interactive=app_config.advanced.interactive,
                 use_torrent_hash_to_filter=app_config.seadex.use_torrent_hash_to_filter,
                 logger=logger,

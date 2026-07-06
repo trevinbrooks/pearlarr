@@ -166,7 +166,7 @@ class GrabPipeline:
         """Resolve a single SeaDex url to an add outcome (or ``None`` to skip).
 
         Returns ``None`` for a release that's filtered out (not flagged for
-        download, private-only under ``public_only``, or an unselected tracker)
+        download, private-only, or an unselected tracker)
         and for a service ``add`` that neither added nor was already present. On
         an ``AddOutcome.ADDED`` the run-summary grab record is appended here; the
         caller owns the torrents_added/cap bookkeeping. On EITHER ``ADDED`` or
@@ -182,7 +182,7 @@ class GrabPipeline:
 
         tracker = url_item.tracker
 
-        if self._config.seadex.public_only and not url_item.is_public:
+        if not url_item.is_public:
             self.log_fmt.detail(
                 "skipped",
                 f"{tracker} private-only (private releases not allowed)",
@@ -364,8 +364,8 @@ class GrabPipeline:
             # A mixed title (grabbed + unsupported-tracker skip) is cached, but the
             # skipped hashes are excluded so the release is re-considered on the
             # entry's next update once a parser lands. Private-only hashes are
-            # deliberately NOT excluded: public_only is a user-configured exclusion,
-            # so its quiet suppression is the intended behavior.
+            # deliberately NOT excluded: private releases are never grabbed, so
+            # their quiet suppression is the intended behavior.
             skipped = set(self._ctx.unsupported_tracker_hashes)
             cacheable = [h for h in req.torrent_hashes if h is None or h not in skipped]
             req.cache_details.update({"torrent_hashes": cacheable})
@@ -432,8 +432,8 @@ class GrabPipeline:
 
         # Add torrents to qBittorrent. add_torrent runs even in a preview
         # (no client / dry run): the service simulates the add, while the
-        # download-flag, public_only and tracker filters still apply, so only
-        # releases that would actually be grabbed are counted.
+        # download-flag, private-release and tracker filters still apply, so
+        # only releases that would actually be grabbed are counted.
         n_torrents_added, results = self.add_torrent(
             torrent_dict=req.seadex_dict,
             pending_seeds=req.pending_seeds,

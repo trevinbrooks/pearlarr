@@ -119,7 +119,7 @@ class TestUpgradePendingPromotesFallback:
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
-            planner=make_planner(public_only=True),
+            planner=make_planner(),
             cache_store=cache,
             ctx=ctx,
         )
@@ -173,7 +173,7 @@ class TestUpgradePendingPromotesFallback:
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
-            planner=make_planner(public_only=True),
+            planner=make_planner(),
             ctx=ctx,
         )
         sd = filt.build(_entry_private_pick_plus_public_alt())
@@ -198,7 +198,7 @@ class TestUpgradePendingPromotesFallback:
             private_releases="warn",
             want_best=True,
             prefer_dual_audio=False,
-            planner=make_planner(public_only=True),
+            planner=make_planner(),
             cache_store=cache,
             ctx=ctx,
         )
@@ -238,7 +238,7 @@ class TestOwnedFallbackSoftSkip:
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
-            planner=make_planner(public_only=True, use_torrent_hash_to_filter=True),
+            planner=make_planner(use_torrent_hash_to_filter=True),
             cache_store=cache,
             ctx=ctx,
         )
@@ -281,7 +281,7 @@ class TestFilterDownloadsNoticeSeam:
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
-            planner=make_planner(public_only=True),
+            planner=make_planner(),
             ctx=ctx,
         )
         priv_a = make_torrent_record(
@@ -386,7 +386,7 @@ class TestMixedGroupKeeperPreference:
             private_releases="warn",
             want_best=True,
             prefer_dual_audio=False,
-            planner=make_planner(public_only=True),
+            planner=make_planner(),
             cache_store=cache,
             ctx=ctx,
         )
@@ -457,7 +457,7 @@ class TestMixedGroupKeeperPreference:
             private_releases="warn",
             want_best=True,
             prefer_dual_audio=False,
-            planner=make_planner(public_only=True),
+            planner=make_planner(),
             cache_store=cache,
             ctx=ctx,
         )
@@ -514,7 +514,7 @@ class TestSurvivingPrivateCoverage:
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=True,
-            planner=make_planner(public_only=True),
+            planner=make_planner(),
             cache_store=cache,
             ctx=ctx,
         )
@@ -621,7 +621,7 @@ class TestPromotionGeneralization:
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
-            planner=make_planner(public_only=True),
+            planner=make_planner(),
             cache_store=cache,
             ctx=ctx,
         )
@@ -672,7 +672,7 @@ class TestPromotionGeneralization:
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
-            planner=make_planner(public_only=True),
+            planner=make_planner(),
             ctx=ctx,
         )
         sd = filt.build(self._preferred_pair_entry(73))
@@ -701,7 +701,7 @@ class TestPromotionGeneralization:
             private_releases="fallback",
             want_best=True,
             prefer_dual_audio=False,
-            planner=make_planner(public_only=True),
+            planner=make_planner(),
             ctx=ctx,
         )
         m_pub = make_torrent_record(
@@ -828,7 +828,7 @@ class TestEqualUnionMixedGroups:
                 private_releases="warn",
                 want_best=True,
                 prefer_dual_audio=False,
-                planner=make_planner(public_only=True),
+                planner=make_planner(),
                 cache_store=cache,
                 ctx=ctx,
             )

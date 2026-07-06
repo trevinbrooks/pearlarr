@@ -161,20 +161,19 @@ class SeadexReleaseFilter:
                 is_fallback=t.url in fallback_urls,
             )
 
-        # If we only want public releases, then within each release group drop
+        # Private releases are never grabbed, so within each release group drop
         # any private URL whose files the group's public URLs cover (an unknown
         # fileset counts as covered - the plain cross-seed case). We deliberately
         # do this per-group rather than across the whole list: a private URL with
         # uncovered files is kept for now and only filtered out later if the Arr
         # doesn't already have a matching download (see reduce_overlapping_downloads)
-        if self._config.seadex.public_only:
-            for release_group_item in seadex_release_groups.values():
-                urls = release_group_item.urls
-                group_public_files = {f for u in urls.values() if u.is_public for f in u.files}
-                if any(u.is_public for u in urls.values()):
-                    release_group_item.urls = {
-                        url: u for url, u in urls.items() if u.is_public or not set(u.files) <= group_public_files
-                    }
+        for release_group_item in seadex_release_groups.values():
+            urls = release_group_item.urls
+            group_public_files = {f for u in urls.values() if u.is_public for f in u.files}
+            if any(u.is_public for u in urls.values()):
+                release_group_item.urls = {
+                    url: u for url, u in urls.items() if u.is_public or not set(u.files) <= group_public_files
+                }
 
         return seadex_release_groups
 

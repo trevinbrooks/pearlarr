@@ -25,7 +25,7 @@ qbittorrent:
 
 # SeaDex release-selection filters
 seadex:
-  private_releases: warn           # allow (grab them) / warn (never grab; skip + re-check, default) / fallback (never grab; take the best public alternative)
+  private_releases: warn           # Private releases are never grabbed: warn (skip + re-check, default) / fallback (take the best public alternative)
   prefer_dual_audio: true          # Prefer dual-audio releases (else prefer Ja-only)
   want_best: true                  # Prefer releases tagged "best"
   ignore_tags:                     # SeaDex tags to skip (e.g. Dolby Vision, Deband Required)

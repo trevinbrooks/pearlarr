@@ -39,11 +39,10 @@ class TestFileLifecycle:
 
     def test_load_preserves_user_values(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "config.yml"
-        cfg_path.write_text("sonarr:\n  url: http://x\nseadex:\n  private_releases: allow\n")
+        cfg_path.write_text("sonarr:\n  url: http://x\nseadex:\n  private_releases: fallback\n")
         cfg = AppConfig.load(str(cfg_path))
         assert cfg.sonarr.url == "http://x"
-        assert cfg.seadex.private_releases is PrivateReleaseAction.ALLOW
-        assert cfg.seadex.public_only is False
+        assert cfg.seadex.private_releases is PrivateReleaseAction.FALLBACK
 
     def test_template_loads_as_all_defaults(self, tmp_path: Path) -> None:
         # The shipped template is all-blank, so it must validate to the defaults.
@@ -80,8 +79,6 @@ class TestDefaults:
     def test_group_defaults_when_absent(self) -> None:
         cfg = AppConfig()
         assert cfg.seadex.private_releases is PrivateReleaseAction.WARN
-        # The derived predicate: WARN and FALLBACK both mean "never grab private".
-        assert cfg.seadex.public_only is True
         assert cfg.seadex.prefer_dual_audio is True
         assert cfg.seadex.want_best is True
         assert cfg.seadex.ignore_seadex_update_times is False
@@ -127,12 +124,12 @@ class TestDefaults:
     def test_nested_explicit_values_override(self) -> None:
         cfg = AppConfig.model_validate(
             {
-                "seadex": {"private_releases": "allow", "want_best": False},
+                "seadex": {"private_releases": "fallback", "want_best": False},
                 "advanced": {"sleep_time": 9},
                 "notifications": {"discord_url": "u"},
             },
         )
-        assert cfg.seadex.public_only is False
+        assert cfg.seadex.private_releases is PrivateReleaseAction.FALLBACK
         assert cfg.seadex.want_best is False
         assert cfg.advanced.sleep_time == 9
         assert cfg.notifications.discord_url == "u"
@@ -204,7 +201,6 @@ class TestStrictValidation:
 
     def test_private_releases_coerces_valid_strings(self) -> None:
         for raw, member in [
-            ("allow", PrivateReleaseAction.ALLOW),
             ("warn", PrivateReleaseAction.WARN),
             ("fallback", PrivateReleaseAction.FALLBACK),
         ]:
@@ -215,7 +211,7 @@ class TestStrictValidation:
             SeadexSettings.model_validate({"private_releases": "maybe"})
 
     def test_removed_public_only_key_is_rejected(self) -> None:
-        # public_only was folded into private_releases (allow/warn/fallback); an
+        # public_only was folded into private_releases (warn/fallback); an
         # old config still setting it must fail loudly, not be silently ignored.
         with pytest.raises(ValidationError):
             SeadexSettings.model_validate({"public_only": True})

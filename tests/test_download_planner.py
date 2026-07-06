@@ -41,7 +41,7 @@ class TestReduceOverlappingDownloads:
 
     def test_keeps_first_of_same_files(self) -> None:
         # No all_episodes -> all treated as the same files -> keep first flagged
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         seadex = {
             "A": rg_group({"u1": url_item(download=True)}),
             "B": rg_group({"u2": url_item(download=True)}),
@@ -51,7 +51,7 @@ class TestReduceOverlappingDownloads:
         assert seadex["B"].urls["u2"].download is False
 
     def test_public_only_prefers_public_keeper(self) -> None:
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "Priv": rg_group({"u1": url_item(download=True, is_public=False)}),
             "Pub": rg_group({"u2": url_item(download=True, is_public=True)}),
@@ -64,7 +64,7 @@ class TestReduceOverlappingDownloads:
         assert skips.notices == []
 
     def test_public_only_private_only_skips_and_flags(self) -> None:
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {"Priv": rg_group({"u1": url_item(download=True, is_public=False)})}
         skips = planner.reduce_overlapping_downloads(seadex)
         assert seadex["Priv"].urls["u1"].download is False
@@ -79,7 +79,7 @@ class TestReduceOverlappingDownloads:
         # The fallback covers DIFFERENT files (own same-files set): it doesn't
         # excuse dropping this set, so the private set still warns and holds
         # the title while the fallback proceeds.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "Priv": rg_group(
                 {"u1": url_item(download=True, is_public=False)},
@@ -102,7 +102,7 @@ class TestReduceOverlappingDownloads:
         # Same files, and the public fallback is unflagged (the Arr already has
         # its release): drop the private pick at INFO with no skipped flag, so
         # the title can still cache as done.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "Priv": rg_group({"u1": url_item(download=True, is_public=False)}),
             "Fall": rg_group({"u2": url_item(download=False, is_public=True, is_fallback=True)}),
@@ -119,7 +119,7 @@ class TestReduceOverlappingDownloads:
         # A mixed group (public + flagged private url) is first, but its private
         # url would be refused at add time, losing the coverage only it carries:
         # the fully-public group wins keeper regardless of order.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "Mixed": rg_group(
                 {
@@ -139,7 +139,7 @@ class TestReduceOverlappingDownloads:
     def test_public_only_keeper_degrades_to_first_when_all_mixed(self) -> None:
         # No fully-addable group in the set: keep the first public group (its
         # private url then hits the add-time WARNING), matching the old order.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "MixedA": rg_group(
                 {
@@ -164,7 +164,7 @@ class TestReduceOverlappingDownloads:
         # The private pick was re-flagged for a SIZE mismatch (an upgrade is
         # pending): the Arr holds a stale copy, not the fallback's files, so the
         # fallback is promoted and grabbed instead of the soft-skip firing.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "Priv": rg_group({"u1": url_item(download=True, is_public=False, size_mismatch=True)}),
             "Fall": rg_group({"u2": url_item(download=False, is_public=True, is_fallback=True)}),
@@ -183,7 +183,7 @@ class TestReduceOverlappingDownloads:
         # Promotion only flips public urls, so a mixed fallback group (a public
         # fallback sharing its release group with a private pick) would leave
         # its private url's coverage ungrabbed: the fully-public group wins.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "Priv": rg_group({"u1": url_item(download=True, is_public=False, size_mismatch=True)}),
             "MixedFall": rg_group(
@@ -206,7 +206,7 @@ class TestReduceOverlappingDownloads:
         # The size-mismatch promotion pool is any unflagged public group in the
         # set, not just fallbacks: a PREFERRED public pick with the same coverage
         # is promoted instead of the old warn-and-hold.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "Priv": rg_group({"u1": url_item(download=True, is_public=False, size_mismatch=True)}),
             "Pub": rg_group({"u2": url_item(download=False, is_public=True)}),
@@ -227,7 +227,7 @@ class TestReduceOverlappingDownloads:
         # so the old promotion arm was unreachable: the keeper degraded to the
         # mixed group and its stale private url was refused at add time. With a
         # size mismatch present, the unflagged public group is promoted instead.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "M": rg_group(
                 {
@@ -251,7 +251,7 @@ class TestReduceOverlappingDownloads:
         # No size mismatch means the flags may be plain missing-content grabs;
         # the unflagged public group could be genuinely owned, so the keeper
         # degrades as before and nothing is promoted.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "Mixed": rg_group(
                 {
@@ -270,7 +270,7 @@ class TestReduceOverlappingDownloads:
     def test_fallback_keeper_over_private_notices(self) -> None:
         # Same files: the public fallback is kept over the private preferred pick,
         # with an INFO notice naming the keeper (and no skipped flag).
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "Priv": rg_group({"u1": url_item(download=True, is_public=False)}),
             "Fall": rg_group({"u2": url_item(download=True, is_public=True, is_fallback=True)}),
@@ -290,7 +290,7 @@ class TestReduceOverlappingDownloads:
         # itself, which then "promotes" over itself and unflags everything. With
         # no unflagged public group the keeper must degrade to the mixed group,
         # both its urls staying flagged, with no notice.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "M": rg_group(
                 {
@@ -310,7 +310,7 @@ class TestReduceOverlappingDownloads:
         # fallback-to-first mutated away would return None and fall to the
         # warn-and-hold. An upgrade-pending set whose ONLY unflagged public group
         # is MIXED must still promote it, flipping just its public url.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "P": rg_group({"p": url_item(download=True, is_public=False, size_mismatch=True, infohash=None)}),
             "M": rg_group(
@@ -331,7 +331,7 @@ class TestReduceOverlappingDownloads:
         assert skips.notices[0].reason == "private-only; grabbing public alternative M"
 
     def test_different_files_both_kept(self) -> None:
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         seadex = {
             "A": rg_group(
                 {"u1": url_item(download=True)},
@@ -352,7 +352,7 @@ class TestSameGroupDuplicateDedup:
     the first; unknown filesets never dedup (can't prove identity)."""
 
     def test_identical_filesets_keep_first(self) -> None:
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         seadex = {
             "A": rg_group(
                 {
@@ -368,7 +368,7 @@ class TestSameGroupDuplicateDedup:
     def test_promoted_fallback_duplicates_dedup(self) -> None:
         # The promotion branch flips EVERY public url of the fallback group: two
         # cross-seeded copies of one release must still yield a single grab.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "Priv": rg_group({"u1": url_item(download=True, is_public=False, size_mismatch=True)}),
             "Fall": rg_group(
@@ -385,7 +385,7 @@ class TestSameGroupDuplicateDedup:
         assert "falling back to Fall" in skips.notices[0].reason
 
     def test_different_filesets_both_kept(self) -> None:
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         seadex = {
             "A": rg_group(
                 {
@@ -399,7 +399,7 @@ class TestSameGroupDuplicateDedup:
         assert seadex["A"].urls["u2"].download is True
 
     def test_unknown_filesets_both_kept(self) -> None:
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         seadex = {
             "A": rg_group(
                 {
@@ -415,14 +415,14 @@ class TestSameGroupDuplicateDedup:
 
 class TestFilterByTorrentHash:
     def test_flags_uncached_hashes(self) -> None:
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         seadex = {"A": rg_group({"u1": url_item(infohash="h1", download=False)})}
         result = planner.filter_by_torrent_hash(seadex_dict=seadex, cached_hashes=[])
         assert result.seadex_dict["A"].urls["u1"].download is True
         assert result.torrent_hashes == ["h1"]
 
     def test_cached_hash_not_flagged_but_still_listed(self) -> None:
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         seadex = {"A": rg_group({"u1": url_item(infohash="h1", download=False)})}
         result = planner.filter_by_torrent_hash(
             seadex_dict=seadex,
@@ -434,7 +434,7 @@ class TestFilterByTorrentHash:
 
 class TestFilterByReleaseGroup:
     def test_new_group_no_episodes_downloads(self) -> None:
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         seadex = {"NewRG": rg_group({"u1": url_item(episodes=[], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
@@ -446,7 +446,7 @@ class TestFilterByReleaseGroup:
         assert result.torrent_hashes == ["h1"]
 
     def test_matching_group_sizes_match_no_download(self) -> None:
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
@@ -458,7 +458,7 @@ class TestFilterByReleaseGroup:
         assert result.torrent_hashes == []
 
     def test_matching_group_sizes_differ_downloads(self) -> None:
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[200], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
@@ -470,7 +470,7 @@ class TestFilterByReleaseGroup:
         assert result.torrent_hashes == ["h1"]
 
     def test_episode_match_same_rg_and_size_no_download(self) -> None:
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         seadex = {
             "Era-Raws": rg_group(
                 {
@@ -488,7 +488,7 @@ class TestFilterByReleaseGroup:
         assert result.torrent_hashes == []
 
     def test_episode_different_rg_downloads(self) -> None:
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         seadex = {
             "Era-Raws": rg_group(
                 {
@@ -506,7 +506,7 @@ class TestFilterByReleaseGroup:
         assert result.torrent_hashes == ["h1"]
 
     def test_episode_same_rg_all_sizes_differ_downloads(self) -> None:
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         seadex = {
             "Era-Raws": rg_group(
                 {
@@ -524,7 +524,7 @@ class TestFilterByReleaseGroup:
         assert result.torrent_hashes == ["h1"]
 
     def test_episodes_but_no_ep_list_skips(self) -> None:
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         seadex = {
             "Era-Raws": rg_group(
                 {
@@ -545,7 +545,7 @@ class TestFilterByReleaseGroup:
         # Radarr's release dict carries an empty size list when the movie has no
         # file. as_size_list keeps that [], which is disjoint from the real
         # SeaDex sizes, so the group is grabbed.
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
@@ -558,7 +558,7 @@ class TestFilterByReleaseGroup:
 
     def test_debug_logging_path_does_not_crash(self) -> None:
         # Exercise the debug_on=True branch (its f-strings are otherwise skipped)
-        planner = make_planner(public_only=False)
+        planner = make_planner()
         planner.logger.setLevel(logging.DEBUG)
         seadex = {
             "Era-Raws": rg_group(
@@ -609,7 +609,7 @@ class TestReduceDropRescue:
         # first; the loser's public url carries the set's only addable S2 (or S1)
         # coverage and must be re-flagged, whichever group wins.
         for b_first in (False, True):
-            planner = make_planner(public_only=True)
+            planner = make_planner()
             seadex = self._equal_union_pair(b_first=b_first)
             planner.reduce_overlapping_downloads(seadex)
             assert seadex["A"].urls["a_pub"].download is True, f"b_first={b_first}"
@@ -621,7 +621,7 @@ class TestReduceDropRescue:
     def test_covered_drop_stays_dropped(self) -> None:
         # The loser's public url adds nothing over the keeper's surviving public
         # coverage: it stays dropped (no duplicate grab).
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "A": rg_group(
                 {"a_pub": url_item(download=True, is_public=True, episodes=[self.E11, self.E21], infohash="a1")},
@@ -642,7 +642,7 @@ class TestReduceDropRescue:
         # flipped to `<` re-flags a dropped url whose coverage EQUALS the
         # survivors' - a pure duplicate grab. Equal single-episode coverage on
         # both public groups: the loser must stay dropped.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "A": rg_group(
                 {"a_pub": url_item(download=True, is_public=True, episodes=[self.E11], infohash="a1")},
@@ -662,7 +662,7 @@ class TestReduceDropRescue:
         # degraded to `=` forgets the ORIGINAL survivors after the first rescue.
         # Keeper A covers S1; dropped B (S2) is rescued; dropped C (S1) is already
         # covered by A and must stay dropped - under `=` it would be re-flagged.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         shared = [self.E11, self.E21]
         seadex = {
             "A": rg_group(
@@ -686,7 +686,7 @@ class TestReduceDropRescue:
     def test_movie_urls_never_rescued(self) -> None:
         # Movie/no-parse urls have no episode vocabulary, so the rescue can't
         # (and mustn't) reason about their coverage.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "A": rg_group({"a_pub": url_item(download=True, is_public=True, infohash="a1")}),
             "B": rg_group({"b_pub": url_item(download=True, is_public=True, infohash="b1")}),
@@ -698,7 +698,7 @@ class TestReduceDropRescue:
     def test_owned_public_url_never_resurrected(self) -> None:
         # A matcher-unflagged (owned) url is not part of this pass's drops, so
         # the rescue never touches it - even when its coverage leaves the set.
-        planner = make_planner(public_only=True)
+        planner = make_planner()
         seadex = {
             "A": rg_group(
                 {"a_pub": url_item(download=True, is_public=True, episodes=[self.E11], infohash="a1")},

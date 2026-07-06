@@ -404,12 +404,9 @@ class RunReporter:
         # The two kinds can't co-occur (private_releases is run-wide); the
         # no-fallback tip omits the fallback suggestion, which is already on.
         if any(item.kind is NeedsActionKind.PRIVATE_ONLY for item in needs):
-            tip = (
-                "Tip: set private_releases: allow to grab private releases, private_releases: "
-                "fallback to grab a public alternative, or wait for a public release."
-            )
+            tip = "Tip: set private_releases: fallback to grab a public alternative, or wait for a public release."
         elif any(item.kind is NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK for item in needs):
-            tip = "Tip: set private_releases: allow to grab private releases, or wait for a public release."
+            tip = "Tip: no public alternative exists yet; the title is re-checked every run until one appears."
         else:
             tip = None
         if tip is not None:

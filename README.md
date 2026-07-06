@@ -203,8 +203,8 @@ SeaDexArr performs a number of cuts to get to a single best release for you.
 First, it will filter out all torrents that have any tags as defined in ``seadex.ignore_tags``.
 Then, it will filter out all torrents coming from trackers that haven't been specified (if you haven't been more 
 granular, this will be all public trackers and potentially all private trackers; see ``seadex.trackers``). 
-Then, unless you allow private torrents (``seadex.private_releases: allow``), it will filter out anything from a 
-private tracker. 
+SeaDexArr never grabs private releases (SeaDex carries no downloadable link for them), so anything from a private 
+tracker is filtered out; ``seadex.private_releases`` sets the policy for titles only available privately. 
 Next, if you only want to grab releases marked by SeaDex as "best" (``seadex.want_best``), it will down-select any 
 torrents marked as "best", as long as there's at least one. 
 Finally, if you want dual audio (``seadex.prefer_dual_audio``), it will down-select any dual-audio torrents, as long 
@@ -272,11 +272,11 @@ The `radarr` group takes the same keys (minus `ignore_movies_in_radarr`): `radar
 
 ### SeaDex filters
 
-- `seadex.private_releases`: What to do with releases on private trackers. `allow` grabs them like any other.
-  `warn` (the default) never grabs them, and when the preferred release is only available privately it warns and
-  leaves the title uncached, so it's re-checked every run until a public release appears. `fallback` never grabs
-  them either, but instead grabs the entry's best public alternative (the same best/dual-audio preferences
-  applied to the public torrents only), warning only when it can't find a public alternative for those files
+- `seadex.private_releases`: What to do when the preferred release is only available on private trackers.
+  Private releases are never grabbed (SeaDex carries no downloadable link for them). `warn` (the default) warns
+  and leaves the title uncached, so it's re-checked every run until a public release appears. `fallback` instead
+  grabs the entry's best public alternative (the same best/dual-audio preferences applied to the public torrents
+  only), warning only when it can't find a public alternative for those files
 - `seadex.prefer_dual_audio`: Prefer results tagged as dual audio, if any exist. If false, will instead prefer
   Ja-only releases. Defaults to true
 - `seadex.want_best`: Prefer results tagged as best, if any exist. Defaults to true

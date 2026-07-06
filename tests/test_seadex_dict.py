@@ -114,7 +114,7 @@ class TestGetSeadexDict:
         # second conjunct (a real private tracker is_public()==False already, which would
         # short-circuit before the membership check ever ran).
         monkeypatch.setattr(seadex_filter, "PRIVATE_TRACKERS", {"nyaa"})
-        filt = make_release_filter(private_releases="allow", want_best=False, prefer_dual_audio=False)
+        filt = make_release_filter(want_best=False, prefer_dual_audio=False)
         entry = _entry(
             _torrent(release_group="A", url="u1", tracker=Tracker.NYAA),
         )
