@@ -22,6 +22,7 @@ from .radarr_client import (
 )
 from .run_services import RunDeps, RunServices
 from .seadex_types import (
+    HistoryRecord,
     ProgressSink,
     RadarrItem,
     SeadexDict,
@@ -237,6 +238,12 @@ class SonarrSync(ArrSync[SonarrItem]):
         """
 
         return self._episodes.prefetch(items, progress=progress)
+
+    @override
+    def history_since(self, date: str) -> list[HistoryRecord] | None:
+        """Sonarr history since ``date`` (delegates to the client)."""
+
+        return self.sonarr.history_since(date)
 
     @override
     def process_al_id(

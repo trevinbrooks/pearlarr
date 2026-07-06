@@ -17,7 +17,7 @@ import requests
 import responses
 
 from seadexarr.modules.radarr_client import RadarrClient, collect_anime_movies
-from seadexarr.modules.seadex_types import MovieFile, RadarrItem
+from seadexarr.modules.seadex_types import HistoryRecord, MovieFile, RadarrItem
 
 from .builders import make_bare_instance
 
@@ -72,6 +72,107 @@ def test_movie_files_request_error_returns_empty() -> None:
         client = _make_client(rsps)
         rsps.add(responses.GET, f"{_BASE}/moviefile", body=requests.exceptions.ConnectionError("boom"))
         assert client.movie_files(7) == []
+
+
+def test_history_since_decodes_records_and_builds_request() -> None:
+    """``history_since()`` keys the item id on ``movieId`` and the request pins
+    ``includeMovie=false``; a record with no ``data`` map parses to a None reason.
+    """
+
+    body: list[object] = [
+        {
+            "id": 3,
+            "movieId": 9,
+            "date": "2026-07-01T10:00:00Z",
+            "eventType": "movieFileDeleted",
+            "downloadId": "abc123",
+            "data": {"reason": "upgrade"},
+        },
+        {
+            "id": 4,
+            "movieId": 10,
+            "date": "2026-07-01T11:00:00Z",
+            "eventType": "downloadFolderImported",
+        },
+    ]
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/history/since", json=body)
+        records = client.history_since("2026-06-30T08:00:00Z")
+        url = rsps.calls[-1].request.url
+
+    assert records == [
+        HistoryRecord(
+            id=3,
+            date="2026-07-01T10:00:00Z",
+            item_id=9,
+            event_type="movieFileDeleted",
+            download_id="abc123",
+            reason="upgrade",
+        ),
+        HistoryRecord(
+            id=4,
+            date="2026-07-01T11:00:00Z",
+            item_id=10,
+            event_type="downloadFolderImported",
+            download_id=None,
+            reason=None,
+        ),
+    ]
+    assert url is not None
+    assert "date=2026-06-30T08%3A00%3A00Z" in url
+    assert "includeMovie=false" in url
+    assert "apikey=testkey" in url
+
+
+def test_history_since_non_200_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """A non-200 history read returns None with a warning (fail-open)."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/history/since", status=500)
+        with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
+            result = client.history_since("2026-06-30T08:00:00Z")
+
+    assert result is None
+    assert any(r.levelno == logging.WARNING for r in caplog.records)
+
+
+def test_history_since_request_error_returns_none() -> None:
+    """A transient request error is swallowed to None (fail-open)."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/history/since", body=requests.exceptions.ConnectionError("boom"))
+        assert client.history_since("2026-06-30T08:00:00Z") is None
+
+
+def test_history_since_non_json_body_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """A 200 with a non-JSON body fails open to None (the shared-helper hardening)."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/history/since", body="<html>login</html>", content_type="text/html")
+        with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
+            result = client.history_since("2026-06-30T08:00:00Z")
+
+    assert result is None
+    assert any(r.levelno == logging.WARNING for r in caplog.records)
+
+
+def test_trailing_slash_url_is_normalized() -> None:
+    """A trailing-slash base url must not become a ``//api`` join (login redirect)."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        rsps.add(responses.GET, f"{_BASE}/system/status", json={"version": "5.0.0"})
+        client = RadarrClient(
+            url=f"{_URL}/",
+            api_key=_KEY,
+            session=requests.Session(),
+            logger=logging.getLogger("seadexarr.test"),
+        )
+        rsps.add(responses.GET, f"{_BASE}/history/since", json=[])
+        assert client.history_since("2026-06-30T08:00:00Z") == []
 
 
 # A realistic Radarr v3 ``/api/v3/movie`` record. Every attribute the run READS

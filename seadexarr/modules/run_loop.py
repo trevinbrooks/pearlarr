@@ -1,6 +1,7 @@
 import time
 from typing import final
 
+from .arr_activity import ArrActivityMonitor
 from .boot_view import BootView, NullBootView
 from .config import Arr
 from .import_wait import ImportWaitManager
@@ -218,6 +219,27 @@ class RunLoop:
                 count_noun(n_items, "movie") if arr is Arr.RADARR else count_noun(n_items, "series", "series"),
             )
 
+        # Arr-side activity scan: one /history/since poll marks items whose files
+        # the arr changed since the last pass dirty, so the cached-entry skip
+        # re-evaluates just those (everything, on a coverage gap). Runs BEFORE
+        # the prefetches so al_id_needs_scan warms exactly the dirty subset (the
+        # sweep-perf invariant); skipped when ignore_seadex_update_times already
+        # re-processes everything.
+        monitor: ArrActivityMonitor | None = None
+        if self._config.advanced.detect_arr_activity and not self._config.seadex.ignore_seadex_update_times:
+            with boot.step(f"Checking {arr.capitalize()} activity") as step:
+                monitor = ArrActivityMonitor(arr, self.cache_store, self.logger)
+                scan = monitor.scan(strategy.history_since)
+                dirty: set[int] = set()
+                for item in all_items:
+                    if scan.rescan_all or item.id in scan.touched:
+                        dirty.update(strategy.item_anilist_ids(item, log_ignored=False))
+                self._services.mark_dirty(dirty)
+                if scan.rescan_all:
+                    step.note("history gap - rechecking all")
+                else:
+                    step.note("none" if not dirty else count_noun(len(dirty), "changed entry", "changed entries"))
+
         # Warm the AniList cache before the per-item loop: reuse what past runs
         # fetched, then batch-fetch (id_in pages) everything still missing, so the
         # loop rarely hits AniList one id at a time and trips its rate limit.
@@ -337,6 +359,12 @@ class RunLoop:
                     exc_info=True,
                 )
                 continue
+
+        # Advance the history checkpoint only when the pass covered the whole
+        # library (a single-item or capped run leaves later activity unseen); the
+        # staged write persists only at _finalize_run's non-preview save.
+        if monitor is not None and item_id is None and not cap_reached:
+            monitor.commit_checkpoint()
 
         # Run the end-of-run blocking pass (blocking/hybrid only), then persist
         # the run and log the summary. Per-title update_cache calls only mutate

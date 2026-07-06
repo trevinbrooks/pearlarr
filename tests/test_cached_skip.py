@@ -89,6 +89,43 @@ class TestCachedEntrySkip:
         )
         assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "u", lambda: "") is False
 
+    def test_dirty_id_reprocesses_even_when_fresh(self) -> None:
+        # An arr-side file change bypasses the skip despite a matching timestamp.
+        cache = FakeCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
+        run = self._run(cache)
+        run.mark_dirty([7])
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "u", lambda: "") is False
+
+    def test_non_dirty_sibling_still_skips(self) -> None:
+        # Marking one id dirty must not widen the bypass to other cached ids.
+        cache = FakeCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
+        run = self._run(cache)
+        run.mark_dirty([8])
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "u", lambda: "") is True
+
+    def test_begin_run_clears_the_dirty_set(self) -> None:
+        # Dirty ids are per-run state: the next run's rebind must reset them.
+        cache = FakeCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
+        run = make_services(
+            cache_store=cache,
+            _reporter=_RecordingReporter(),
+            _filter=_CtxBind(),
+            _grab_pipeline=_CtxBind(),
+        )
+        run.mark_dirty([7])
+        run.begin_run(run.ctx)
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "u", lambda: "") is True
+
+
+class _CtxBind:
+    """A no-op ctx-bind collaborator for driving ``begin_run`` on a bare hub."""
+
+    def begin_run(self, ctx: RunContext) -> None:
+        del ctx
+
 
 class TestCrossArrLookupHonorsParam:
     """``check_al_id_in_cache`` / ``log_cached_entry`` read the ``arr`` PARAMETER,

@@ -3,7 +3,7 @@ from typing import Protocol
 
 from .manual_import import ImportProbe, ImportProgress, PendingImport
 from .mappings import MappingEntry
-from .seadex_types import ArrItem, ProgressSink
+from .seadex_types import ArrItem, HistoryRecord, ProgressSink
 
 
 class ImportCompleter(Protocol):
@@ -91,6 +91,15 @@ class ArrSync[ItemT: ArrItem](ABC):
         Returns:
             int: How many items were warmed (attempted), for the caller's ledger
             detail. ``RadarrSync`` returns 0.
+        """
+
+    @abstractmethod
+    def history_since(self, date: str) -> list[HistoryRecord] | None:
+        """Arr history records since ``date``, or None on failure.
+
+        A one-line delegation to the arr client's ``history_since``; the run
+        machinery's activity scan reads it to spot arr-side file changes
+        (imports / non-upgrade deletes) between SeaDex passes.
         """
 
     @abstractmethod

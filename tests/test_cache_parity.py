@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from seadexarr.modules.cache import AbstractCacheStore, CacheRecord, CacheStore
+from seadexarr.modules.cache import AbstractCacheStore, CacheRecord, CacheStore, HistoryCheckpoint
 from seadexarr.modules.config import Arr
 
 from .builders import FakeCacheStore, make_entry_record
@@ -71,6 +71,10 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     store.put_pending(Arr.SONARR, "hashA", {"series_id": 7, "title": "A"})
     store.put_pending(Arr.SONARR, "hashB", {"series_id": 8, "title": "B"})
 
+    # History checkpoint: an initial write then an upsert (only the last survives).
+    store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-01T00:00:00Z", 5))
+    store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-02T00:00:00Z", 9))
+
 
 def _observe(store: AbstractCacheStore) -> dict[str, object]:
     """Every observable read the fake-trusting tests rely on, as one comparable snapshot."""
@@ -90,6 +94,10 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
         "sonarr_parse_stale": store.get_sonarr_parse("stale.mkv"),
         "pending_sonarr": store.get_pending(Arr.SONARR),
         "pending_series7": store.get_pending_for_series(Arr.SONARR, 7),
+        "checkpoint_sonarr": store.get_history_checkpoint(Arr.SONARR),
+        "checkpoint_radarr": store.get_history_checkpoint(Arr.RADARR),
+        "own_ids_sonarr": store.own_download_ids(Arr.SONARR),
+        "own_ids_radarr": store.own_download_ids(Arr.RADARR),
         "stats_no_size": stats._replace(size_bytes=0),
         "integrity": store.integrity_check(),
     }

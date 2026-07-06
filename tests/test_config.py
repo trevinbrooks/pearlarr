@@ -91,6 +91,7 @@ class TestDefaults:
         assert cfg.advanced.cache_time == 1
         assert cfg.advanced.log_level == "INFO"
         assert cfg.advanced.max_torrents_to_add is None
+        assert cfg.advanced.detect_arr_activity is True
         assert cfg.notifications.discord_url is None
         assert cfg.qbittorrent.tags is None
         assert cfg.qbittorrent.credentials() is None

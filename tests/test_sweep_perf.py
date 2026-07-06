@@ -427,6 +427,20 @@ class TestAlIdNeedsScan:
         run = self._run(entry=None, cache=FakeCacheStore(), ignore_seadex_update_times=True)
         assert run.al_id_needs_scan(7) is False
 
+    def test_dirty_id_needs_scan_despite_matching_cache(self) -> None:
+        # An arr-side file change re-warms the id even when the cache matches.
+        cache = FakeCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})
+        run = self._run(entry=_entry(datetime(2021, 1, 1)), cache=cache)
+        run.mark_dirty([7])
+        assert run.al_id_needs_scan(7) is True
+
+    def test_dirty_id_without_seadex_entry_still_skips(self) -> None:
+        # The no-entry short-circuit stays first: dirty or not, no entry -> no scan.
+        run = self._run(entry=None, cache=FakeCacheStore())
+        run.mark_dirty([7])
+        assert run.al_id_needs_scan(7) is False
+
 
 class TestPrefetchSkipsUnchanged:
     """``prefetch_episodes`` warms only series with at least one scannable id, so a

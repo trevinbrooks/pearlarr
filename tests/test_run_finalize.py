@@ -15,14 +15,14 @@ pinned by asserting recorded state.
 
 import logging
 
-from seadexarr.modules.config import Arr
+from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.protocols import ImportCompleter
 from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.run_loop import RunLoop
 from seadexarr.modules.seadex_types import ProgressSink
 
-from .builders import make_bare_instance, make_config, make_services
+from .builders import FakeCacheStore, make_bare_instance, make_config, make_services
 from .fakes import CaptureHandler, FakeArrItem, FakeStrategy
 
 
@@ -76,17 +76,24 @@ class _FinalizeRecorder:
         self.calls += 1
 
 
-def _engine(finalize: _FinalizeRecorder, logger: logging.Logger) -> RunLoop:
+def _engine(
+    finalize: _FinalizeRecorder,
+    logger: logging.Logger,
+    *,
+    config: AppConfig | None = None,
+) -> RunLoop:
     """A bare ``RunLoop`` wired with typed fakes for the run-loop collaborators.
 
     The strategy reaches ``run_sync`` typed (it's an ``ArrSync``); the rest are
     injected as bare attributes (the methods only read them), and ``_finalize_run``
     is shadowed by the recorder so the single finalize site is observable. The
     ``_services`` hub is a bare real ``RunServices`` (the loop reads its ``arr``,
-    ``begin_run`` and ``is_preview``) whose per-id collaborators are ctx-bind fakes.
+    ``begin_run``, ``mark_dirty`` and ``is_preview``) whose per-id collaborators are
+    ctx-bind fakes; the ``cache_store`` backs the activity scan's checkpoint.
+    ``config`` overrides the loop's config (the activity-scan toggle tests).
     """
 
-    config = make_config()
+    config = config if config is not None else make_config()
     services = make_services(
         qbit=None,
         _filter=_FakeBound(),
@@ -104,6 +111,7 @@ def _engine(finalize: _FinalizeRecorder, logger: logging.Logger) -> RunLoop:
         _services=services,
         _wait_manager=_FakeBound(),
         _finalize_run=finalize,
+        cache_store=FakeCacheStore(),
     )
 
 

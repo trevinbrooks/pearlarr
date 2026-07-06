@@ -12,7 +12,7 @@ strategies depend on this module only and never see the loop type.
 import logging
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 import qbittorrentapi
@@ -316,6 +316,10 @@ class RunServices:
         # before run_sync; the run loop ADOPTS it (via :attr:`ctx`) at construction.
         self._ctx = RunContext(arr=arr)
 
+        # AniList ids whose arr-side files changed since the last pass (fed by the
+        # run loop's activity scan); they bypass the cached-entry skip once.
+        self._dirty_al_ids: set[int] = set()
+
         # The shared per-id collaborators, built from the unpacked deps + the
         # placeholder ctx. begin_run rebinds their ctx at the top of each run.
         self._filter = SeadexReleaseFilter(
@@ -359,6 +363,8 @@ class RunServices:
         """
 
         self._ctx = ctx
+        # Per-run state: the loop's activity scan re-marks dirty ids after this.
+        self._dirty_al_ids.clear()
         self._filter.begin_run(ctx)
         self._grab_pipeline.begin_run(ctx)
 
@@ -385,9 +391,29 @@ class RunServices:
         sd_entry = self._seadex.entry(al_id)  # warmed cache, no network
         if sd_entry is None:
             return False
-        if self._config.seadex.ignore_seadex_update_times:
+        if self._bypass_entry_cache(al_id):
             return True
         return not self.cache_store.check_al_id_in_cache(self._ctx.arr, al_id, sd_entry)
+
+    def _bypass_entry_cache(self, al_id: int) -> bool:
+        """Whether this id must be re-processed despite a fresh cache row.
+
+        The single predicate BOTH cache gates share: ``al_id_needs_scan`` picks
+        what prefetch warms and ``cached_entry_skip`` what the loop re-processes,
+        and the two must agree or un-warmed ids hit AniList one at a time.
+        """
+
+        return self._config.seadex.ignore_seadex_update_times or al_id in self._dirty_al_ids
+
+    def mark_dirty(self, al_ids: Iterable[int]) -> None:
+        """Record AniList ids whose arr-side file state changed since the last pass.
+
+        Fed by the run loop's :class:`~.arr_activity.ArrActivityMonitor` scan;
+        ``al_id_needs_scan`` and ``cached_entry_skip`` bypass the cached-entry
+        short-circuit for exactly these ids.
+        """
+
+        self._dirty_al_ids.update(al_ids)
 
     def get_anilist_ids(
         self,
@@ -595,7 +621,7 @@ class RunServices:
         # SeaDex's, means re-process (don't skip).
         if entry is None or entry.updated_at != sd_entry.updated_at.strftime(UPDATED_AT_STR_FORMAT):
             return False
-        if self._config.seadex.ignore_seadex_update_times:
+        if self._bypass_entry_cache(al_id):
             return False
 
         # Backfill the enriched fields for records written before they existed,

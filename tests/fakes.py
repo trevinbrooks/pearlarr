@@ -22,6 +22,7 @@ from seadexarr.modules.protocols import ArrSync
 from seadexarr.modules.radarr_client import AbstractRadarrClient
 from seadexarr.modules.seadex_types import (
     CommandResource,
+    HistoryRecord,
     Language,
     ManualImportCandidate,
     ManualImportFile,
@@ -68,12 +69,16 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         anilist_ids: dict[int, MappingEntry],
         process_returns: bool = False,
         process_raises_on: int | None = None,
+        history: list[HistoryRecord] | None = None,
     ) -> None:
         self._items = items
         self._anilist_ids = anilist_ids
         self._process_returns = process_returns
         self._process_raises_on = process_raises_on
         self.process_calls: list[int] = []
+        # Scripted history; reassign to None mid-test to script the failure path.
+        self.history: list[HistoryRecord] | None = [] if history is None else history
+        self.history_calls: list[str] = []
 
     @override
     def get_items(self) -> list[FakeArrItem]:
@@ -95,6 +100,11 @@ class FakeStrategy(ArrSync[FakeArrItem]):
     @override
     def prefetch_episodes(self, items: list[FakeArrItem], *, progress: ProgressSink | None = None) -> int:
         return 0
+
+    @override
+    def history_since(self, date: str) -> list[HistoryRecord] | None:
+        self.history_calls.append(date)
+        return self.history
 
     @override
     def process_al_id(self, item: FakeArrItem, item_title: str, al_id: int, mapping: MappingEntry) -> bool:
@@ -150,6 +160,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         execute_command_id: int | None = None,
         command_status: CommandResource | None = None,
         refresh_count: int | None = 7,
+        history_since: list[HistoryRecord] | None = None,
     ) -> None:
         self.all_series_return: list[SonarrItem] = all_series or []
         self.queue_return: list[QueueRecord] = queue or []
@@ -165,6 +176,7 @@ class FakeSonarrClient(AbstractSonarrClient):
             command_status if command_status is not None else CommandResource(status="completed")
         )
         self.refresh_count = refresh_count
+        self.history_since_return: list[HistoryRecord] | None = [] if history_since is None else history_since
         # Recorded calls: the import commands keep their full args; the plain reads
         # keep a count / arg-list so a test can assert (not-)called.
         self.candidate_calls: list[PendingImport] = []
@@ -173,6 +185,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.queue_calls: int = 0
         self.episodes_calls: list[int] = []
         self.refresh_calls: int = 0
+        self.history_calls: list[str] = []
 
     @override
     def all_series(self) -> list[SonarrItem]:
@@ -240,6 +253,11 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.execute_calls.append((files, import_mode))
         return self.execute_command_id
 
+    @override
+    def history_since(self, date: str) -> list[HistoryRecord] | None:
+        self.history_calls.append(date)
+        return self.history_since_return
+
 
 class FakeRadarrClient(AbstractRadarrClient):
     """A typed, scriptable stand-in for the :class:`AbstractRadarrClient` surface.
@@ -255,10 +273,13 @@ class FakeRadarrClient(AbstractRadarrClient):
         *,
         movies: list[RadarrItem] | None = None,
         movie_files: list[MovieFile] | None = None,
+        history_since: list[HistoryRecord] | None = None,
     ) -> None:
         self.movies_return: list[RadarrItem] = movies or []
         self.movie_files_return: list[MovieFile] = movie_files or []
+        self.history_since_return: list[HistoryRecord] | None = [] if history_since is None else history_since
         self.movie_files_calls: list[int] = []
+        self.history_calls: list[str] = []
 
     @override
     def all_movies(self) -> list[RadarrItem]:
@@ -268,6 +289,11 @@ class FakeRadarrClient(AbstractRadarrClient):
     def movie_files(self, movie_id: int) -> list[MovieFile]:
         self.movie_files_calls.append(movie_id)
         return self.movie_files_return
+
+    @override
+    def history_since(self, date: str) -> list[HistoryRecord] | None:
+        self.history_calls.append(date)
+        return self.history_since_return
 
 
 class CaptureHandler(logging.Handler):

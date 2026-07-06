@@ -570,6 +570,60 @@ class QueueRecord:
         )
 
 
+# --- Arr history (``/api/v3/history/since`` records) -------------------------
+#
+# Derived from the Sonarr/Radarr v3 OpenAPI ``HistoryResource``. The endpoint
+# returns a bare, date-ascending array; ``id`` is the per-arr autoincrement, so
+# it doubles as a monotone cursor.
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryRecord:
+    """One arr ``HistoryResource`` record, reduced to what the activity scan reads.
+
+    ``id`` is the monotone cursor; ``date`` the raw ISO8601 arr-clock stamp;
+    ``item_id`` the ``seriesId``/``movieId`` (0 when absent); ``download_id``
+    the infohash (``string | null``; Sonarr uppercases, so compare casefolded);
+    ``event_type`` the camelCase event name; ``reason`` the ``data`` map's
+    reason value (key read case-insensitively). Parsed at the client boundary
+    via :meth:`from_api`, mirroring :class:`QueueRecord`.
+    """
+
+    id: int = 0
+    date: str = ""
+    item_id: int = 0
+    event_type: str = ""
+    download_id: str | None = None
+    reason: str | None = None
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any], *, item_key: str) -> Self:
+        """Build from one raw ``HistoryResource`` dict.
+
+        Args:
+            raw (dict[str, Any]): The raw record.
+            item_key (str): The arr's item-id field (``seriesId``/``movieId``).
+        """
+
+        download_id = raw.get("downloadId")
+        event_type = raw.get("eventType")
+        data = raw.get("data")
+        reason: str | None = None
+        if isinstance(data, dict):
+            for key, value in cast("dict[str, Any]", data).items():
+                if key.casefold() == "reason" and isinstance(value, str):
+                    reason = value
+                    break
+        return cls(
+            id=coerce_int(raw.get("id")) or 0,
+            date=str(raw.get("date") or ""),
+            item_id=coerce_int(raw.get(item_key)) or 0,
+            event_type=event_type if isinstance(event_type, str) else "",
+            download_id=download_id if isinstance(download_id, str) else None,
+            reason=reason,
+        )
+
+
 # --- Sonarr quality definitions (``/api/v3/qualitydefinition``) --------------
 
 

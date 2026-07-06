@@ -250,6 +250,7 @@ def test_radarr_run_drives_real_composition_root(tmp_path: Path, monkeypatch: py
         rsps.add(responses.GET, f"{_RADARR_BASE}/system/status", json={"version": "5.0.0"})
         rsps.add(responses.GET, f"{_RADARR_BASE}/movie", json=[_MOVIE_BODY])
         rsps.add(responses.GET, f"{_RADARR_BASE}/moviefile", json=[])
+        rsps.add(responses.GET, f"{_RADARR_BASE}/history/since", json=[])
         rsps.add(responses.POST, _ANILIST_URL, json=_RADARR_ANILIST_BODY)
 
         result = run_single(radarr=True, import_wait_mode=ImportWaitMode.OFF)

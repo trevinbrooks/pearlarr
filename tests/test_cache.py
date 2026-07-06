@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 import seadexarr
-from seadexarr.modules.cache import CacheStore
+from seadexarr.modules.cache import CacheStore, HistoryCheckpoint
 from seadexarr.modules.config import Arr
 from seadexarr.modules.sqlite_util import is_corruption
 
@@ -292,6 +292,47 @@ class TestPendingImports:
         # Fresh per call: a drop is reflected immediately (no stale snapshot).
         store.drop_pending(Arr.SONARR, "a")
         assert store.get_pending_for_series(Arr.SONARR, 5) == {"b": b}
+        store.close()
+
+
+class TestHistoryCheckpoints:
+    def test_roundtrip_upsert_and_arr_isolation(self, tmp_path: Path) -> None:
+        store = _open(tmp_path)
+        assert store.get_history_checkpoint(Arr.SONARR) is None
+
+        store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-01T10:00:00Z", 12))
+        store.put_history_checkpoint(Arr.RADARR, HistoryCheckpoint("2026-07-02T10:00:00Z", 3))
+        assert store.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint("2026-07-01T10:00:00Z", 12)
+        assert store.get_history_checkpoint(Arr.RADARR) == HistoryCheckpoint("2026-07-02T10:00:00Z", 3)
+
+        # Upsert: a later advance replaces the arr's single row.
+        store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-03T10:00:00Z", 40))
+        assert store.get_history_checkpoint(Arr.SONARR) == HistoryCheckpoint("2026-07-03T10:00:00Z", 40)
+        store.close()
+
+    def test_preview_save_does_not_persist_checkpoint(self, tmp_path: Path) -> None:
+        # The dry-run gate: a previewed run must never advance the cursor.
+        db = tmp_path / "cache.db"
+        store = _open(tmp_path)
+        store.save(preview=False)  # promote so the preview below has a real file
+        store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-01T10:00:00Z", 12))
+        store.save(preview=True)
+        store.close()
+
+        assert db.exists()
+        reopened = _open(tmp_path)
+        assert reopened.get_history_checkpoint(Arr.SONARR) is None
+        reopened.close()
+
+    def test_own_download_ids_unions_and_casefolds(self, tmp_path: Path) -> None:
+        store = _open(tmp_path)
+        # Remembered hashes incl. a None marker (stored as the "" sentinel, excluded).
+        store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["ABCDEF", None]})
+        store.put_pending(Arr.SONARR, "FEDCBA", {"series_id": 7})
+        store.put_pending(Arr.RADARR, "other", {})
+
+        assert store.own_download_ids(Arr.SONARR) == frozenset({"abcdef", "fedcba"})
+        assert store.own_download_ids(Arr.RADARR) == frozenset({"other"})
         store.close()
 
 

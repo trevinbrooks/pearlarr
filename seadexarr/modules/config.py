@@ -320,6 +320,10 @@ class AdvancedSettings(_ConfigBase):
     cache_time: int = 1
     interactive: bool = False
     max_torrents_to_add: int | None = None
+    # Poll each arr's history at run start and re-check entries whose files the
+    # arr changed since the last pass. Opt-out: the re-check can re-grab a
+    # release the user deliberately replaced arr-side.
+    detect_arr_activity: bool = True
     # Constrained to the levels the logger honors, so a typo is a clean
     # ValidationError at load instead of a runtime warn-and-default.
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"

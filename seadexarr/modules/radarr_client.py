@@ -11,7 +11,8 @@ import requests
 from arrapi import RadarrAPI
 
 from .anibridge import AniBridge
-from .seadex_types import ARR_REQUEST_TIMEOUT_S, ArrItem, MovieFile, RadarrItem
+from .arr_http import fetch_history_since
+from .seadex_types import ARR_REQUEST_TIMEOUT_S, ArrItem, HistoryRecord, MovieFile, RadarrItem
 
 
 def make_radarr_client(
@@ -63,6 +64,10 @@ class AbstractRadarrClient(ABC):
     def movie_files(self, movie_id: int) -> list[MovieFile]:
         """Movie-file records for a movie (``/api/v3/moviefile``)."""
 
+    @abstractmethod
+    def history_since(self, date: str) -> list[HistoryRecord] | None:
+        """History records since ``date`` (``/api/v3/history/since``)."""
+
 
 class RadarrClient(AbstractRadarrClient):
     """Thin wrapper over the Radarr API (``arrapi`` + one raw endpoint)."""
@@ -85,7 +90,9 @@ class RadarrClient(AbstractRadarrClient):
             logger (logging.Logger): For request warnings.
         """
 
-        self._url = url
+        # Tolerate a trailing-slash config url: a "//api/..." join redirects to
+        # the login page instead of the API.
+        self._url = url.rstrip("/")
         self._api_key = api_key
         self._session = session
         self._logger = logger
@@ -132,6 +139,21 @@ class RadarrClient(AbstractRadarrClient):
         # record into the typed MovieFile view.
         raw = cast("list[dict[str, Any]]", mov_req.json())
         return [MovieFile.from_api(record) for record in raw]
+
+    @override
+    def history_since(self, date: str) -> list[HistoryRecord] | None:
+        """History since ``date``, or None on failure (fail-open; shared helper)."""
+
+        return fetch_history_since(
+            self._session,
+            self._url,
+            self._api_key,
+            self._logger,
+            date,
+            arr_label="Radarr",
+            include_flags={"includeMovie": "false"},
+            item_key="movieId",
+        )
 
 
 @dataclass(frozen=True)

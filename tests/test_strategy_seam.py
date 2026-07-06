@@ -282,7 +282,7 @@ def test_fake_overrides_the_full_public_surface() -> None:
 
     # Loop-driven members (the runner calls these, strategies never do), so the
     # fake doesn't script them.
-    lifecycle = {"begin_run", "ctx", "is_preview"}
+    lifecycle = {"begin_run", "ctx", "is_preview", "mark_dirty"}
     surface = {
         name
         for name, member in vars(RunServices).items()

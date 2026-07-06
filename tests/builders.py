@@ -29,6 +29,7 @@ from seadexarr.modules.cache import (
     CachedEntry,
     CacheRecord,
     CacheStats,
+    HistoryCheckpoint,
 )
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.grab_pipeline import GrabPipeline
@@ -212,6 +213,7 @@ class FakeCacheStore(AbstractCacheStore):
         self._entries: dict[tuple[str, int], dict[str, Any]] = {}
         self._entry_hashes: dict[tuple[str, int], list[str | None]] = {}
         self._anilist_meta: dict[int, dict[str, Any]] = {}
+        self._history_checkpoints: dict[str, HistoryCheckpoint] = {}
 
     # -- lifecycle --
     @override
@@ -338,6 +340,24 @@ class FakeCacheStore(AbstractCacheStore):
     @override
     def drop_pending(self, arr: Arr, infohash: str) -> None:
         self._pending.get(str(arr), {}).pop(infohash, None)
+
+    # -- history checkpoints --
+    @override
+    def get_history_checkpoint(self, arr: Arr) -> HistoryCheckpoint | None:
+        return self._history_checkpoints.get(str(arr))
+
+    @override
+    def put_history_checkpoint(self, arr: Arr, checkpoint: HistoryCheckpoint) -> None:
+        self._history_checkpoints[str(arr)] = checkpoint
+
+    @override
+    def own_download_ids(self, arr: Arr) -> frozenset[str]:
+        """Casefolded union of remembered + pending hashes (None/"" excluded)."""
+
+        key = str(arr)
+        hashes = {h.casefold() for k, hs in self._entry_hashes.items() if k[0] == key for h in hs if h}
+        hashes |= {ih.casefold() for ih in self._pending.get(key, {})}
+        return frozenset(hashes)
 
     # -- maintenance: stats, integrity --
     @override
@@ -548,6 +568,9 @@ def make_services(**overrides: Any) -> RunServices:
         # a specific run state.
         "arr": Arr.SONARR,
         "_ctx": RunContext(arr=Arr.SONARR),
+        # The real __init__ always mints this; bare instances need it too or the
+        # dirty-aware skip predicates fail at runtime.
+        "_dirty_al_ids": set[int](),
     }
     defaults.update(overrides)
     return make_bare_instance(RunServices, **defaults)

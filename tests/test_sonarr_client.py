@@ -22,6 +22,7 @@ from responses import matchers
 from seadexarr.modules.manual_import import PendingImport
 from seadexarr.modules.seadex_types import (
     CommandResource,
+    HistoryRecord,
     ManualImportFile,
     ParsedFileInfo,
     QueueRecord,
@@ -488,6 +489,145 @@ def test_list_commands_non_200_returns_empty() -> None:
         client = _make_client(rsps)
         rsps.add(responses.GET, f"{_BASE}/command", status=503)
         assert client.list_commands() == []
+
+
+# --- history_since() ----------------------------------------------------------
+
+
+def test_history_since_decodes_records_and_builds_request() -> None:
+    """``history_since()`` narrows each record to a ``HistoryRecord`` (incl. the
+    case-insensitive ``data`` reason key and a null ``downloadId``); the request
+    pins the date + the include flags off.
+    """
+
+    body: list[object] = [
+        {
+            "id": 12,
+            "seriesId": 4,
+            "date": "2026-07-01T10:00:00Z",
+            "eventType": "episodeFileDeleted",
+            "downloadId": "ABC123",
+            "data": {"Reason": "Upgrade"},
+        },
+        {
+            "id": 13,
+            "seriesId": 5,
+            "date": "2026-07-01T11:00:00Z",
+            "eventType": "downloadFolderImported",
+            "downloadId": None,
+            "data": {"reason": "MissingFromDisk"},
+        },
+    ]
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/history/since", json=body)
+        records = client.history_since("2026-06-30T08:00:00Z")
+        url = rsps.calls[-1].request.url
+
+    assert records == [
+        HistoryRecord(
+            id=12,
+            date="2026-07-01T10:00:00Z",
+            item_id=4,
+            event_type="episodeFileDeleted",
+            download_id="ABC123",
+            reason="Upgrade",
+        ),
+        HistoryRecord(
+            id=13,
+            date="2026-07-01T11:00:00Z",
+            item_id=5,
+            event_type="downloadFolderImported",
+            download_id=None,
+            reason="MissingFromDisk",
+        ),
+    ]
+    assert url is not None
+    assert "date=2026-06-30T08%3A00%3A00Z" in url
+    assert "includeSeries=false" in url
+    assert "includeEpisode=false" in url
+    assert "apikey=testkey" in url
+
+
+def test_history_since_non_200_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """A non-200 history read returns None (the activity scan fails open)."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/history/since", status=500)
+        with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
+            result = client.history_since("2026-06-30T08:00:00Z")
+
+    assert result is None
+    assert any(r.levelno == logging.WARNING for r in caplog.records)
+
+
+def test_history_since_request_error_returns_none() -> None:
+    """A transient request error is swallowed to None (fail-open)."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/history/since", body=requests.exceptions.ConnectionError("boom"))
+        assert client.history_since("2026-06-30T08:00:00Z") is None
+
+
+def test_history_since_non_json_body_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """A 200 with a non-JSON body (e.g. a proxy login page) fails open to None."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/history/since", body="<html>login</html>", content_type="text/html")
+        with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
+            result = client.history_since("2026-06-30T08:00:00Z")
+
+    assert result is None
+    assert any(r.levelno == logging.WARNING for r in caplog.records)
+
+
+def test_history_since_non_array_payload_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """A JSON object (not the expected array) fails open to None."""
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/history/since", json={"message": "unauthorized"})
+        with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
+            result = client.history_since("2026-06-30T08:00:00Z")
+
+    assert result is None
+    assert any(r.levelno == logging.WARNING for r in caplog.records)
+
+
+def test_history_since_skips_non_dict_elements() -> None:
+    """Stray non-object array elements are dropped, not crashed on."""
+
+    body: list[object] = [
+        {"id": 1, "seriesId": 2, "date": "2026-07-01T10:00:00Z", "eventType": "grabbed"},
+        "stray",
+        42,
+    ]
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/history/since", json=body)
+        records = client.history_since("2026-06-30T08:00:00Z")
+
+    assert records == [HistoryRecord(id=1, date="2026-07-01T10:00:00Z", item_id=2, event_type="grabbed")]
+
+
+def test_trailing_slash_url_is_normalized() -> None:
+    """A trailing-slash base url must not become a ``//api`` join - live Sonarr
+    302s that to the login page, breaking every raw endpoint.
+    """
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        rsps.add(responses.GET, f"{_BASE}/system/status", json={"version": "3.0.10"})
+        client = SonarrClient(
+            url=f"{_URL}/",
+            api_key=_KEY,
+            session=requests.Session(),
+            logger=logging.getLogger("seadexarr.test"),
+        )
+        rsps.add(responses.GET, f"{_BASE}/history/since", json=[])
+        assert client.history_since("2026-06-30T08:00:00Z") == []
 
 
 # --- quality_definitions() / languages() ------------------------------------

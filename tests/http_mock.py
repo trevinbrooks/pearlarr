@@ -40,7 +40,8 @@ def register_sonarr_reads(
     arrapi's construction-time probe; ``series``/``episode`` drive the library
     fetch; ``parse`` (matched on the base path, query ignored) replays a captured
     parse for every SeaDex filename. ``qualitydefinition``/``language`` default to
-    empty (only touched when an import payload is built).
+    empty (only touched when an import payload is built); ``history/since``
+    replays an empty window so the activity scan stays quiet.
     """
 
     rsps.add(responses.GET, f"{base}/system/status", json={"version": "3.0.10"})
@@ -49,3 +50,4 @@ def register_sonarr_reads(
     rsps.add(responses.GET, f"{base}/parse", json=parse)
     rsps.add(responses.GET, f"{base}/qualitydefinition", json=quality_definitions or [])
     rsps.add(responses.GET, f"{base}/language", json=languages or [])
+    rsps.add(responses.GET, f"{base}/history/since", json=[])

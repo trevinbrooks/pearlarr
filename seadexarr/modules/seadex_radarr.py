@@ -9,7 +9,7 @@ from .mappings import MappingEntry
 from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, collect_anime_movies, make_radarr_client
 from .run_services import RunDeps, RunServices
-from .seadex_types import ArrReleaseDict, ProgressSink, RadarrItem
+from .seadex_types import ArrReleaseDict, HistoryRecord, ProgressSink, RadarrItem
 
 
 class RadarrSync(ArrSync[RadarrItem]):
@@ -111,6 +111,12 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         del items, progress
         return 0
+
+    @override
+    def history_since(self, date: str) -> list[HistoryRecord] | None:
+        """Radarr history since ``date`` (delegates to the client)."""
+
+        return self.radarr.history_since(date)
 
     @override
     def process_al_id(

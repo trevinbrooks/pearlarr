@@ -121,6 +121,12 @@ CREATE TABLE IF NOT EXISTS pending_imports (
     record   BLOB NOT NULL,
     PRIMARY KEY (arr, infohash)
 );
+
+CREATE TABLE IF NOT EXISTS history_checkpoints (
+    arr        TEXT PRIMARY KEY,
+    since_date TEXT    NOT NULL,
+    last_id    INTEGER NOT NULL
+);
 """
 
 
@@ -196,6 +202,19 @@ class CachedEntry:
     name: str | None
     url: str | None
     coverage: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class HistoryCheckpoint:
+    """One arr's history cursor: the last-seen record's date + monotone id.
+
+    ``since_date`` is the raw ISO8601 stamp of the newest seen record (arr-clock
+    domain); ``last_id`` its per-arr autoincrement id, used for strict
+    ``record.id > last_id`` dedup across the overlapped re-query window.
+    """
+
+    since_date: str
+    last_id: int
 
 
 # The four scalar columns of ``entries`` that ``update_cache`` may merge. A closed
@@ -330,6 +349,12 @@ class AbstractCacheStore(ABC):
     def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None: ...
     @abstractmethod
     def drop_pending(self, arr: Arr, infohash: str) -> None: ...
+    @abstractmethod
+    def get_history_checkpoint(self, arr: Arr) -> HistoryCheckpoint | None: ...
+    @abstractmethod
+    def put_history_checkpoint(self, arr: Arr, checkpoint: HistoryCheckpoint) -> None: ...
+    @abstractmethod
+    def own_download_ids(self, arr: Arr) -> frozenset[str]: ...
     @abstractmethod
     def stats(self) -> CacheStats: ...
     @abstractmethod
@@ -844,6 +869,49 @@ class CacheStore(AbstractCacheStore):
             "DELETE FROM pending_imports WHERE arr = ? AND infohash = ?",
             (_arr_key(arr), infohash),
         )
+
+    # -- history checkpoints --------------------------------------------------
+
+    @override
+    def get_history_checkpoint(self, arr: Arr) -> HistoryCheckpoint | None:
+        """The arr's stored history cursor, or None before the first advance."""
+
+        row = self._conn.execute(
+            "SELECT since_date, last_id FROM history_checkpoints WHERE arr = ?",
+            (_arr_key(arr),),
+        ).fetchone()
+        return None if row is None else HistoryCheckpoint(since_date=row[0], last_id=row[1])
+
+    @override
+    def put_history_checkpoint(self, arr: Arr, checkpoint: HistoryCheckpoint) -> None:
+        """Upsert the arr's history cursor (staged; persisted at a save point).
+
+        A perpetual-preview deployment never commits, so its checkpoint never
+        advances and every pass re-scans the overlap window - harmless, since a
+        preview grabs nothing.
+        """
+
+        self._conn.execute(
+            "INSERT INTO history_checkpoints (arr, since_date, last_id) VALUES (?, ?, ?) "
+            "ON CONFLICT (arr) DO UPDATE SET since_date = excluded.since_date, last_id = excluded.last_id",
+            (_arr_key(arr), checkpoint.since_date, checkpoint.last_id),
+        )
+
+    @override
+    def own_download_ids(self, arr: Arr) -> frozenset[str]:
+        """Casefolded infohashes of our own grabs (remembered + pending) for an arr.
+
+        The activity scan drops history records carrying one of these, so our own
+        imports never mark an entry dirty. The ``_NO_HASH`` sentinel is excluded
+        (it stands in for "no hash", never a real download id).
+        """
+
+        rows = self._conn.execute(
+            "SELECT infohash FROM torrent_hashes WHERE arr = ? AND infohash != '' "
+            "UNION SELECT infohash FROM pending_imports WHERE arr = ?",
+            (_arr_key(arr), _arr_key(arr)),
+        ).fetchall()
+        return frozenset(str(row[0]).casefold() for row in rows)
 
     # -- maintenance: eviction, stats, integrity -----------------------------
 

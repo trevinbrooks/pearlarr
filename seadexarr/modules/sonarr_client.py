@@ -13,12 +13,14 @@ from urllib.parse import urlencode
 import requests
 from arrapi import SonarrAPI
 
+from .arr_http import fetch_history_since
 from .log import indent_string
 from .manual_import import PendingImport
 from .seadex_types import (
     ARR_REQUEST_TIMEOUT_S,
     CommandBody,
     CommandResource,
+    HistoryRecord,
     Json,
     Language,
     ManualImportCandidate,
@@ -96,6 +98,9 @@ class AbstractSonarrClient(ABC):
     @abstractmethod
     def list_commands(self) -> list[CommandResource]: ...
 
+    @abstractmethod
+    def history_since(self, date: str) -> list[HistoryRecord] | None: ...
+
 
 class SonarrClient(AbstractSonarrClient):
     """Thin wrapper over the Sonarr API (``arrapi`` + two raw endpoints)."""
@@ -119,7 +124,9 @@ class SonarrClient(AbstractSonarrClient):
             logger (logging.Logger): For request warnings.
         """
 
-        self._url = url
+        # Tolerate a trailing-slash config url: a "//api/..." join redirects to
+        # the login page instead of the API.
+        self._url = url.rstrip("/")
         self._api_key = api_key
         self._session = session
         self._logger = logger
@@ -643,3 +650,18 @@ class SonarrClient(AbstractSonarrClient):
         # to the fields the guard reads via from_api.
         raw_commands = cast("list[dict[str, Any]]", commands_req.json())
         return [CommandResource.from_api(command) for command in raw_commands]
+
+    @override
+    def history_since(self, date: str) -> list[HistoryRecord] | None:
+        """History since ``date``, or None on failure (fail-open; shared helper)."""
+
+        return fetch_history_since(
+            self._session,
+            self._url,
+            self._api_key,
+            self._logger,
+            date,
+            arr_label="Sonarr",
+            include_flags={"includeSeries": "false", "includeEpisode": "false"},
+            item_key="seriesId",
+        )
