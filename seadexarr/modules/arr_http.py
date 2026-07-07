@@ -18,7 +18,7 @@ from urllib.parse import urlencode
 import httpx
 import requests
 
-from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord
+from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord, Json
 
 # Transient statuses worth another try on an idempotent GET - the same set the
 # retired urllib3 Retry policy on the requests session used.
@@ -74,7 +74,8 @@ class ArrHttp:
 
     Owns the boilerplate every raw endpoint used to copy: the auth header rides
     each request (the client is shared across arrs, so never on the client),
-    transient GET failures retry with jittered backoff, EVERY body is parsed
+    transient GET failures retry with jittered backoff (a POST is not
+    idempotent, so :meth:`post_json` never retries), EVERY body is parsed
     behind a JSON guard (a 200 HTML proxy page reads as a miss, never an
     abort), and each failure warns once through the caller's ``warn`` template
     with the failure detail filled in. The one fail-CLOSED read is
@@ -119,21 +120,31 @@ class ArrHttp:
         self,
         path: str,
         params: Mapping[str, str] | None,
+        *,
+        timeout: float | None = None,
     ) -> tuple[httpx.Response | None, str]:
         """The retrying GET core the fail-open and strict paths share.
 
         Retries transient failures (connect/read errors, 429/5xx) up to
         ``GET_RETRIES`` times with jittered exponential backoff - GETs only, so
-        this stays safe for idempotent reads. Returns the final response (a
-        200, or the terminal / retry-exhausted non-200) paired with a detail
-        naming the failure, or ``(None, detail)`` when no request completed.
+        this stays safe for idempotent reads. ``timeout`` overrides the
+        client-level timeout per request (the 120s manual-import scans);
+        None rides the client default. Returns the final response (a 200, or
+        the terminal / retry-exhausted non-200) paired with a detail naming
+        the failure, or ``(None, detail)`` when no request completed.
         """
 
+        request_timeout = httpx.USE_CLIENT_DEFAULT if timeout is None else httpx.Timeout(timeout)
         response: httpx.Response | None = None
         detail = "request failed"
         for attempt in range(GET_RETRIES + 1):
             try:
-                response = self.client.get(f"{self.base_url}{path}", params=params, headers=self.headers)
+                response = self.client.get(
+                    f"{self.base_url}{path}",
+                    params=params,
+                    headers=self.headers,
+                    timeout=request_timeout,
+                )
             except (httpx.HTTPError, httpx.InvalidURL) as e:
                 # InvalidURL is NOT an HTTPError subclass; a config URL weird
                 # enough to fail httpx's parser must still fail open, not abort.
@@ -156,6 +167,7 @@ class ArrHttp:
         *,
         params: Mapping[str, str] | None = None,
         warn: str | None,
+        timeout: float | None = None,
     ) -> object | None:
         """GET ``path`` and parse the JSON body; fail open to None with one warning.
 
@@ -169,9 +181,11 @@ class ArrHttp:
             params (Mapping[str, str] | None): Query params. Defaults to None.
             warn (str | None): Warning template with a ``{detail}`` placeholder,
                 or None to fail open silently.
+            timeout (float | None): Per-request timeout override (seconds).
+                Defaults to None (the client-level timeout).
         """
 
-        response, detail = self._get_with_retries(path, params)
+        response, detail = self._get_with_retries(path, params, timeout=timeout)
         if response is None or response.status_code != 200:
             return self._fail(warn, detail)
         try:
@@ -185,10 +199,11 @@ class ArrHttp:
         *,
         params: Mapping[str, str] | None = None,
         warn: str | None,
+        timeout: float | None = None,
     ) -> list[object] | None:
         """:meth:`get_json` narrowed to a JSON array (fails open on any other shape)."""
 
-        payload = self.get_json(path, params=params, warn=warn)
+        payload = self.get_json(path, params=params, warn=warn, timeout=timeout)
         if payload is None:
             return None
         if not isinstance(payload, list):
@@ -201,15 +216,48 @@ class ArrHttp:
         *,
         params: Mapping[str, str] | None = None,
         warn: str | None,
+        timeout: float | None = None,
     ) -> dict[str, object] | None:
         """:meth:`get_json` narrowed to a JSON object (fails open on any other shape)."""
 
-        payload = self.get_json(path, params=params, warn=warn)
+        payload = self.get_json(path, params=params, warn=warn, timeout=timeout)
         if payload is None:
             return None
         if not isinstance(payload, dict):
             return self._fail(warn, "unexpected payload")
         return cast("dict[str, object]", payload)
+
+    def post_json(
+        self,
+        path: str,
+        *,
+        json: Json,
+        warn: str | None,
+    ) -> object | None:
+        """POST ``json`` to ``path`` and parse the body; fail open to None with one warning.
+
+        ONE attempt, never retried: a POST is not idempotent, so a retry could
+        double-queue a command. Both 200 and 201 read as success; any failure
+        (request error, other status, non-JSON body) warns via ``warn`` - the
+        same ``{detail}`` template as :meth:`get_json` - and returns None.
+
+        Args:
+            path (str): Endpoint path (e.g. ``"/api/v3/command"``).
+            json (Json): The JSON request body.
+            warn (str | None): Warning template with a ``{detail}`` placeholder,
+                or None to fail open silently.
+        """
+
+        try:
+            response = self.client.post(f"{self.base_url}{path}", json=json, headers=self.headers)
+        except (httpx.HTTPError, httpx.InvalidURL) as e:
+            return self._fail(warn, f"request failed ({type(e).__name__})")
+        if response.status_code not in (200, 201):
+            return self._fail(warn, f"status code {response.status_code}")
+        try:
+            return cast("object", response.json())
+        except ValueError:
+            return self._fail(warn, "non-JSON body")
 
     def get_json_list_strict(
         self,

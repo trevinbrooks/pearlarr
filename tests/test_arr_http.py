@@ -5,13 +5,17 @@ The httpx-native transport the raw arr endpoints share. Pins the fail-open
 matrix (request error / non-200 / non-JSON / wrong shape -> None + ONE warning
 naming the cause), the strict library-fetch matrix (the same failures RAISE
 typed ``ArrConnectionError``/``ArrAuthError`` instead), the GET retry policy
-(transient statuses retry with backoff, terminal ones don't), and the two
+(transient statuses retry with backoff, terminal ones don't), the POST policy
+(``post_json`` NEVER retries - not idempotent), the per-request GET timeout
+override, and the two
 security invariants: the API key rides the ``X-Api-Key`` header (never the
 URL) and a redirect is NEVER followed (a 3xx must not replay the key at a new
 location).
 """
 
+import json
 import logging
+from typing import cast
 
 import httpx
 import pytest
@@ -163,6 +167,88 @@ def test_warn_none_fails_open_silently() -> None:
 
     assert http.get_json("/api/v3/thing", warn=None) is None
     assert capture.records == []
+
+
+@respx.mock
+def test_get_timeout_override_rides_the_request() -> None:
+    """``timeout=`` overrides the client-level timeout for that request only
+    (the 120s manual-import scans); the default rides the client's timeout.
+    """
+
+    seen: list[dict[str, float | None]] = []
+
+    def _serve(request: httpx.Request) -> httpx.Response:
+        seen.append(cast("dict[str, float | None]", request.extensions["timeout"]))
+        return httpx.Response(200, json=[])
+
+    respx.get(f"{_URL}/api/v3/manualimport").mock(side_effect=_serve)
+    http, _ = _bind("arr-http-timeout")
+
+    assert http.get_json("/api/v3/manualimport", warn=None, timeout=120) == []
+    assert http.get_json("/api/v3/manualimport", warn=None) == []
+    assert seen[0] == {"connect": 120, "read": 120, "write": 120, "pool": 120}
+    assert seen[1] == {"connect": 5.0, "read": 5.0, "write": 5.0, "pool": 5.0}
+
+
+# --- post_json() (single attempt, never retried) ------------------------------
+
+
+@respx.mock
+def test_post_json_sends_body_and_key_in_header_only() -> None:
+    route = respx.post(f"{_URL}/api/v3/command").respond(json={"id": 7})
+    http, capture = _bind("arr-http-post-ok")
+
+    payload = http.post_json("/api/v3/command", json={"name": "ManualImport"}, warn="unused ({detail})")
+
+    assert payload == {"id": 7}
+    request = route.calls.last.request
+    assert json.loads(request.content) == {"name": "ManualImport"}
+    assert request.headers["X-Api-Key"] == "testkey"
+    assert "testkey" not in str(request.url)
+    assert capture.records == []
+
+
+@respx.mock
+def test_post_json_accepts_201_created() -> None:
+    respx.post(f"{_URL}/api/v3/command").respond(status_code=201, json={"id": 8})
+    http, capture = _bind("arr-http-post-201")
+
+    assert http.post_json("/api/v3/command", json={"name": "X"}, warn="cmd ({detail})") == {"id": 8}
+    assert capture.records == []
+
+
+@respx.mock
+def test_post_json_does_not_retry_a_retryable_status() -> None:
+    # 500 retries on a GET; a POST is not idempotent, so ONE attempt only.
+    route = respx.post(f"{_URL}/api/v3/command").respond(status_code=500)
+    http, capture = _bind("arr-http-post-500")
+
+    assert http.post_json("/api/v3/command", json={"name": "X"}, warn="cmd ({detail})") is None
+    assert route.call_count == 1
+    [record] = capture.records
+    assert record.levelno == logging.WARNING
+    assert record.getMessage() == "cmd (status code 500)"
+
+
+@respx.mock
+def test_post_json_does_not_retry_a_transport_error() -> None:
+    route = respx.post(f"{_URL}/api/v3/command").mock(side_effect=httpx.ConnectError("boom"))
+    http, capture = _bind("arr-http-post-conn")
+
+    assert http.post_json("/api/v3/command", json={"name": "X"}, warn="cmd ({detail})") is None
+    assert route.call_count == 1
+    [record] = capture.records
+    assert record.getMessage() == "cmd (request failed (ConnectError))"
+
+
+@respx.mock
+def test_post_json_non_json_body_fails_open() -> None:
+    respx.post(f"{_URL}/api/v3/command").respond(content=b"<html>login</html>", content_type="text/html")
+    http, capture = _bind("arr-http-post-html")
+
+    assert http.post_json("/api/v3/command", json={"name": "X"}, warn="cmd ({detail})") is None
+    [record] = capture.records
+    assert record.getMessage() == "cmd (non-JSON body)"
 
 
 # --- get_json_list_strict() (the fail-CLOSED library fetch) ------------------
