@@ -17,6 +17,7 @@ inline body. POST bodies are asserted by decoding the captured request content
 
 import json
 import logging
+from typing import cast
 
 import httpx
 import pytest
@@ -33,6 +34,7 @@ from seadexarr.modules.seadex_types import (
 )
 from seadexarr.modules.sonarr_client import SonarrClient
 
+from .fakes import CaptureHandler
 from .http_mock import sonarr_fixture
 
 _URL = "http://sonarr.test"
@@ -340,10 +342,33 @@ def test_parse_skips_entries_missing_season_or_episode() -> None:
 def test_parse_clean_no_match_returns_empty_list() -> None:
     """A clean 200 where Sonarr matched no episode returns ``[]`` (a *confirmed*
     no-match the caller may negative-cache) - distinct from a failure's None.
+    A missing ``episodes`` key is the same clean no-match.
     """
 
-    respx.get(f"{_BASE}/parse").respond(json={"episodes": []})
+    respx.get(f"{_BASE}/parse").mock(
+        side_effect=[
+            httpx.Response(200, json={"episodes": []}),
+            httpx.Response(200, json={}),
+        ],
+    )
     assert _make_client().parse("Unmatched.Release.mkv") == []
+    assert _make_client().parse("Unmatched.Release.mkv") == []
+
+
+@respx.mock
+def test_parse_wrong_shape_episodes_returns_none() -> None:
+    """A 200 whose ``episodes`` is present but not a list (a mangled response)
+    returns the uncacheable None, NOT the negative-cacheable ``[]``.
+    """
+
+    respx.get(f"{_BASE}/parse").mock(
+        side_effect=[
+            httpx.Response(200, json={"episodes": {"mangled": True}}),
+            httpx.Response(200, json={"episodes": None}),
+        ],
+    )
+    assert _make_client().parse("Cool.Anime.S01E01.mkv") is None
+    assert _make_client().parse("Cool.Anime.S01E01.mkv") is None
 
 
 @respx.mock
@@ -385,6 +410,9 @@ def test_parse_episode_info_decodes_season_episode() -> None:
     assert "title=" in url
     assert "apikey" not in url
     assert request.headers["X-Api-Key"] == "testkey"
+    # Import-path parses ride the long manual-import timeout, not the 30s default.
+    timeout = cast("dict[str, float | None]", request.extensions["timeout"])
+    assert timeout == {"connect": 120, "read": 120, "write": 120, "pool": 120}
 
 
 @respx.mock
@@ -448,6 +476,9 @@ def test_manual_import_candidates_decodes_and_uppercases_downloadid() -> None:
     url = str(route.calls.last.request.url)
     assert "downloadId=ABCDEF0123456789ABCDEF0123456789ABCDEF01" in url
     assert "filterExistingFiles=false" in url
+    # The scan must ride the long manual-import timeout (slow remote mounts).
+    timeout = cast("dict[str, float | None]", route.calls.last.request.extensions["timeout"])
+    assert timeout == {"connect": 120, "read": 120, "write": 120, "pool": 120}
 
 
 @respx.mock
@@ -528,6 +559,23 @@ def test_post_command_request_error_returns_none() -> None:
     route = respx.post(f"{_BASE}/command").mock(side_effect=httpx.ConnectError("boom"))
     assert _make_client().refresh_monitored_downloads() is None
     assert route.call_count == 1  # ONE attempt: a retry could double-queue
+
+
+@respx.mock
+def test_post_command_2xx_non_object_warns_and_returns_none() -> None:
+    """A 2xx command POST whose body isn't a JSON object warns before returning
+    None - Sonarr may still have queued the command, so leave a breadcrumb.
+    """
+
+    logger = logging.getLogger("seadexarr.test.post-command-payload")
+    capture = CaptureHandler()
+    logger.addHandler(capture)
+    client = SonarrClient(url=_URL, api_key=_KEY, http=httpx.Client(), logger=logger)
+    client._http.sleep = lambda _s: None
+
+    respx.post(f"{_BASE}/command").respond(status_code=201, json=[])
+    assert client.refresh_monitored_downloads() is None
+    assert any(r.levelno == logging.WARNING and "unexpected payload" in r.getMessage() for r in capture.records)
 
 
 @respx.mock

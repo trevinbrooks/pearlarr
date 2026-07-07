@@ -140,7 +140,7 @@ class FakeSonarrClient(AbstractSonarrClient):
     (e.g. ``fake.episodes_return = [...]``); the two import commands RECORD their
     typed call args, so a test asserts on recorded state (``execute_calls`` /
     ``candidate_calls``). Subclasses the ``AbstractSonarrClient`` ABC, so it's
-    nominally checked against the real client's full twelve-method surface - a
+    nominally checked against the real client's full method surface - a
     missing method is a static ``reportAbstractUsage`` error and an
     un-instantiable ``TypeError``, not a silently-absorbed ``Any``.
     """

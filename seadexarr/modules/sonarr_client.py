@@ -42,7 +42,7 @@ class AbstractSonarrClient(ABC):
     """The Sonarr read/command surface the four Sonarr collaborators consume.
 
     A nominal seam (``cosmicpython``'s ``AbstractRepository`` pattern) over the
-    twelve public methods the episode / parse / mapper / import collaborators call
+    public methods the episode / parse / mapper / import collaborators call
     on their injected ``sonarr``. Both the real :class:`SonarrClient` and the test
     ``FakeSonarrClient`` subclass it, so an incomplete fake is a static
     ``reportAbstractUsage`` error *and* an un-instantiable ``TypeError`` - the
@@ -217,11 +217,12 @@ class SonarrClient(AbstractSonarrClient):
 
         # The ParseResource's "episodes" is an array of EpisodeResource objects:
         # cast each at the parse boundary (skipping strays) before reading their
-        # season/episode numbers.
-        raw_eps = payload.get("episodes")
-        episode_info: list[ParsedEpisode] = []
-        if isinstance(raw_eps, list):
-            episode_info = [cast("ParsedEpisode", ep) for ep in cast("list[object]", raw_eps) if isinstance(ep, dict)]
+        # season/episode numbers. A present-but-non-list "episodes" is a mangled
+        # response, not a confirmed no-match: fail open to the uncacheable None.
+        raw_eps = payload.get("episodes", [])
+        if not isinstance(raw_eps, list):
+            return None
+        episode_info = [cast("ParsedEpisode", ep) for ep in cast("list[object]", raw_eps) if isinstance(ep, dict)]
 
         parsed: list[dict[str, int]] = []
         for ep in episode_info:
@@ -396,8 +397,12 @@ class SonarrClient(AbstractSonarrClient):
             json=cast("Json", body),
             warn=indent_string(f"Could not queue {body['name']} command ({{detail}})"),
         )
+        if payload is None:
+            return None
         if not isinstance(payload, dict):
-            # None already warned; a 2xx non-object body carries no id to read.
+            # A 2xx whose body carries no readable id: Sonarr may still have
+            # queued the command, so leave a breadcrumb before reporting None.
+            self._logger.warning(indent_string(f"Could not queue {body['name']} command (unexpected payload)"))
             return None
 
         # The returned CommandResource's "id" is the queued command id (0 when
