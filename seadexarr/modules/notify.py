@@ -36,6 +36,19 @@ _MAX_FIELD_TITLES = 25
 _PUSH_SPACING_S = 1.0
 
 
+def _failure_detail(exc: requests.RequestException) -> str:
+    """Describe a request failure WITHOUT interpolating the exception.
+
+    A requests exception's str embeds the request URL - for a webhook that URL
+    IS the credential - so only the HTTP status (when a response exists) or the
+    exception type name is reported.
+    """
+
+    if exc.response is not None:
+        return f"HTTP {exc.response.status_code}"
+    return type(exc).__name__
+
+
 def _wait_color(result: WaitResult) -> int:
     """The summary accent: red if anything failed, orange if deferred, else green."""
 
@@ -73,7 +86,7 @@ class Notifier:
 
     @property
     def enabled(self) -> bool:
-        """True when a Discord webhook is configured."""
+        """True when a Discord webhook is configured (and not disabled by a dead-webhook 4xx)."""
 
         return self.discord_url is not None
 
@@ -177,7 +190,9 @@ class Notifier:
         try:
             requests.post(url, json=payload, timeout=10)
         except requests.RequestException as exc:
-            self.logger.warning(f"Wait-report webhook POST failed: {exc}")
+            self.logger.warning(
+                f"Wait-report webhook POST failed ({_failure_detail(exc)}) - check notifications.wait_webhook_url",
+            )
             return False
         return True
 
@@ -247,7 +262,10 @@ class Notifier:
 
         A no-op (returns False) when no webhook is configured. A request failure
         is contained here (warn, return False): a notification failure must never
-        abort a grab or skip the cache-update tail.
+        abort a grab or skip the cache-update tail. A 4xx means the webhook
+        itself is bad (e.g. deleted -> 404), so Discord pushes are disabled for
+        the rest of the run instead of warning once per grab; 5xx / connection
+        errors are transient and stay per-push.
         """
 
         if self.discord_url is None:
@@ -257,6 +275,14 @@ class Notifier:
         try:
             discord_push(url=self.discord_url, embed=embed)
         except requests.RequestException as exc:
-            self.logger.warning(f"Discord push failed: {exc}")
+            detail = _failure_detail(exc)
+            if exc.response is not None and 400 <= exc.response.status_code < 500:
+                self.discord_url = None
+                self.logger.warning(
+                    f"Discord notification failed ({detail}) - disabling Discord notifications "
+                    f"for this run; check notifications.discord_url",
+                )
+            else:
+                self.logger.warning(f"Discord notification failed ({detail}) - check notifications.discord_url")
             return False
         return True

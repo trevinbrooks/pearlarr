@@ -84,7 +84,8 @@ class RadarrClient(AbstractRadarrClient):
 
         Args:
             url (str): Radarr base URL.
-            api_key (str): Radarr API key.
+            api_key (str): Radarr API key, sent as the ``X-Api-Key`` header (never
+                a query param, so it can't leak through URLs in logs/exceptions).
             session (requests.Session): Shared keep-alive session for the raw
                 endpoints.
             logger (logging.Logger): For request warnings.
@@ -93,7 +94,9 @@ class RadarrClient(AbstractRadarrClient):
         # Tolerate a trailing-slash config url: a "//api/..." join redirects to
         # the login page instead of the API.
         self._url = url.rstrip("/")
-        self._api_key = api_key
+        # The session is shared across clients (each with its own key), so the
+        # header rides each request rather than session.headers.
+        self._headers = {"X-Api-Key": api_key}
         self._session = session
         self._logger = logger
         self._api = RadarrAPI(url=url, apikey=api_key)
@@ -122,15 +125,16 @@ class RadarrClient(AbstractRadarrClient):
             movie_id (int): ID for the movie in Radarr.
         """
 
-        mov_req_url = f"{self._url}/api/v3/moviefile?movieId={movie_id}&apikey={self._api_key}"
+        mov_req_url = f"{self._url}/api/v3/moviefile?movieId={movie_id}"
         try:
-            mov_req = self._session.get(mov_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
+            mov_req = self._session.get(mov_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             mov_req = None
 
         if mov_req is None or mov_req.status_code != 200:
+            detail = "request failed" if mov_req is None else f"status code {mov_req.status_code}"
             self._logger.warning(
-                "Could not fetch movie files from Radarr; it may be unreachable",
+                f"Could not fetch files for movie {movie_id} from Radarr ({detail}); assuming none",
             )
             return []
 
@@ -147,7 +151,7 @@ class RadarrClient(AbstractRadarrClient):
         return fetch_history_since(
             self._session,
             self._url,
-            self._api_key,
+            self._headers,
             self._logger,
             date,
             arr_label="Radarr",

@@ -143,6 +143,25 @@ def _format_validation_errors(e: ValidationError) -> str:
     return "\n".join(f"  - {'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in e.errors())
 
 
+def _format_yaml_error(e: yaml.YAMLError) -> str:
+    """Describe a YAML parse error from its parts, never via ``str(e)``.
+
+    ``str(e)`` renders a snippet of the offending source line - which IS the
+    secret when the syntax error sits on a credential line - so only the
+    problem/context text and the line/column position are reported.
+    """
+
+    if isinstance(e, yaml.MarkedYAMLError):
+        parts = [part for part in (e.context, e.problem) if part]
+        description = ", ".join(parts)
+        mark = e.problem_mark
+        if mark is not None and description:
+            description += f" at line {mark.line + 1}, column {mark.column + 1}"
+        if description:
+            return description
+    return type(e).__name__
+
+
 def _load_shared_config(
     config: str,
     logger: logging.Logger,
@@ -176,7 +195,10 @@ def _load_shared_config(
     except yaml.YAMLError as e:
         # Malformed YAML is a user-facing config problem like a failed validation:
         # a clean report + retry, not the unexpected-error traceback arm below.
-        logger.error(f"Unreadable YAML in {config}:\n{e}\nFix the file and re-run. Skipping this run{retry}.")
+        logger.error(
+            f"Unreadable YAML in {config} ({_format_yaml_error(e)}). "
+            f"Fix the file and re-run. Skipping this run{retry}.",
+        )
     except Exception:
         logger.error(f"Could not load config {config}; skipping this run{retry}", exc_info=True)
     return None
@@ -735,7 +757,7 @@ def _load_config_reporting(path: str) -> AppConfig | None:
         typer.echo(f"Invalid configuration in {path}:\n{_format_validation_errors(e)}")
         return None
     except yaml.YAMLError as e:
-        typer.echo(f"Unreadable YAML in {path}: {e}")
+        typer.echo(f"Unreadable YAML in {path}: {_format_yaml_error(e)}")
         return None
     except OSError as e:
         typer.echo(f"Could not read {path}: {e}")

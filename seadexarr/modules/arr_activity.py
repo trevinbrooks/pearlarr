@@ -92,8 +92,10 @@ class ArrActivityMonitor:
     ) -> ActivityScan:
         """Scan the window since the checkpoint for arr-side file changes.
 
-        Fetch failure (None) fails open: warn, mark nothing dirty, leave the
-        checkpoint untouched (a coverage gap is then re-detected next pass). An
+        Fetch failure (None) fails open: mark nothing dirty, leave the
+        checkpoint untouched (a coverage gap is then re-detected next pass); the
+        fetch helper owns the user-facing warning, so only a debug line lands
+        here. An
         empty window stashes no checkpoint either (the bootstrap retries next
         pass). Own grabs - records whose ``downloadId`` matches a remembered or
         pending infohash - are suppressed. Broken coverage (checkpoint beyond
@@ -130,7 +132,10 @@ class ArrActivityMonitor:
 
         records = fetch(format_history_date(query_date))
         if records is None:
-            self._logger.warning(
+            # The fetch helper already warned (with the HTTP-level reason and the
+            # same consequence), so this stays a debug breadcrumb, not a second
+            # stacked warning.
+            self._logger.debug(
                 f"Could not read {self._arr.capitalize()} history; skipping activity detection this run",
             )
             return ActivityScan(touched=frozenset(), rescan_all=False)

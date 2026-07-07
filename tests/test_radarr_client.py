@@ -44,12 +44,15 @@ def test_movie_files_decodes_records_and_builds_request() -> None:
         client = _make_client(rsps)
         rsps.add(responses.GET, f"{_BASE}/moviefile", json=body)
         files = client.movie_files(7)
-        url = rsps.calls[-1].request.url
+        request = rsps.calls[-1].request
 
     assert files == [MovieFile(release_group="SubsPlease", size=123)]
+    url = request.url
     assert url is not None
     assert "movieId=7" in url
-    assert "apikey=testkey" in url
+    # The key rides the X-Api-Key header, never the URL (it would leak via logs).
+    assert "apikey" not in url
+    assert request.headers["X-Api-Key"] == "testkey"
 
 
 def test_movie_files_non_200_returns_empty_and_warns(caplog: pytest.LogCaptureFixture) -> None:
@@ -62,7 +65,8 @@ def test_movie_files_non_200_returns_empty_and_warns(caplog: pytest.LogCaptureFi
             files = client.movie_files(7)
 
     assert files == []
-    assert any(r.levelno == logging.WARNING for r in caplog.records)
+    warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
+    assert warning.getMessage() == "Could not fetch files for movie 7 from Radarr (status code 500); assuming none"
 
 
 def test_movie_files_request_error_returns_empty() -> None:
@@ -99,7 +103,7 @@ def test_history_since_decodes_records_and_builds_request() -> None:
         client = _make_client(rsps)
         rsps.add(responses.GET, f"{_BASE}/history/since", json=body)
         records = client.history_since("2026-06-30T08:00:00Z")
-        url = rsps.calls[-1].request.url
+        request = rsps.calls[-1].request
 
     assert records == [
         HistoryRecord(
@@ -119,10 +123,12 @@ def test_history_since_decodes_records_and_builds_request() -> None:
             reason=None,
         ),
     ]
+    url = request.url
     assert url is not None
     assert "date=2026-06-30T08%3A00%3A00Z" in url
     assert "includeMovie=false" in url
-    assert "apikey=testkey" in url
+    assert "apikey" not in url
+    assert request.headers["X-Api-Key"] == "testkey"
 
 
 def test_history_since_non_200_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:

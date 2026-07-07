@@ -117,7 +117,8 @@ class SonarrClient(AbstractSonarrClient):
 
         Args:
             url (str): Sonarr base URL.
-            api_key (str): Sonarr API key.
+            api_key (str): Sonarr API key, sent as the ``X-Api-Key`` header (never
+                a query param, so it can't leak through URLs in logs/exceptions).
             session (requests.Session): Shared keep-alive session for the raw
                 endpoints. ``parse`` fires one request per file, so reusing it
                 removes a per-file handshake.
@@ -127,7 +128,9 @@ class SonarrClient(AbstractSonarrClient):
         # Tolerate a trailing-slash config url: a "//api/..." join redirects to
         # the login page instead of the API.
         self._url = url.rstrip("/")
-        self._api_key = api_key
+        # The session is shared across clients (each with its own key), so the
+        # header rides each request rather than session.headers.
+        self._headers = {"X-Api-Key": api_key}
         self._session = session
         self._logger = logger
         self._api = SonarrAPI(url=url, apikey=api_key)
@@ -156,22 +159,17 @@ class SonarrClient(AbstractSonarrClient):
                 fails, on the main thread when ``get_ep_list`` re-fetches.
         """
 
-        eps_req_url = (
-            f"{self._url}/api/v3/episode?"
-            f"seriesId={series_id}&"
-            f"includeImages=false&"
-            f"includeEpisodeFile=true&"
-            f"apikey={self._api_key}"
-        )
+        eps_req_url = f"{self._url}/api/v3/episode?seriesId={series_id}&includeImages=false&includeEpisodeFile=true"
         try:
-            eps_req = self._session.get(eps_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
+            eps_req = self._session.get(eps_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             eps_req = None
 
         if eps_req is None or eps_req.status_code != 200:
             if not quiet:
+                detail = "request failed" if eps_req is None else f"status code {eps_req.status_code}"
                 self._logger.warning(
-                    "Could not fetch episode data from Sonarr; it may be unreachable",
+                    f"Could not fetch episodes for series {series_id} from Sonarr ({detail}); skipping",
                 )
             return None
 
@@ -213,13 +211,12 @@ class SonarrClient(AbstractSonarrClient):
                 the request failed.
         """
 
-        d = {"title": filename, "apikey": self._api_key}
-        d_enc = urlencode(d)
+        d_enc = urlencode({"title": filename})
 
         # Parse through Sonarr
         parse_req_url = f"{self._url}/api/v3/parse?{d_enc}"
         try:
-            parse_req = self._session.get(parse_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
+            parse_req = self._session.get(parse_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             self._logger.warning(
                 indent_string(
@@ -250,7 +247,7 @@ class SonarrClient(AbstractSonarrClient):
             if season is None or episode is None:
                 self._logger.debug(
                     indent_string(
-                        f"Season or episode came up None for {filename}; skipping this episode entry",
+                        f"Sonarr's parse returned no season/episode number for {filename}; skipping it",
                     ),
                 )
                 continue
@@ -278,13 +275,14 @@ class SonarrClient(AbstractSonarrClient):
             filename (str): Filename to parse (basename, not full path).
         """
 
-        d_enc = urlencode({"title": filename, "apikey": self._api_key})
+        d_enc = urlencode({"title": filename})
         parse_req_url = f"{self._url}/api/v3/parse?{d_enc}"
         try:
-            parse_req = self._session.get(parse_req_url, timeout=MANUAL_IMPORT_TIMEOUT_S)
+            parse_req = self._session.get(parse_req_url, headers=self._headers, timeout=MANUAL_IMPORT_TIMEOUT_S)
         except requests.RequestException as e:
+            # The type name only: a requests exception's str can embed the URL.
             self._logger.warning(
-                indent_string(f"Could not parse {filename} via Sonarr ({e}); will retry"),
+                indent_string(f"Could not parse {filename} via Sonarr ({type(e).__name__}); will retry"),
             )
             return None
 
@@ -343,7 +341,6 @@ class SonarrClient(AbstractSonarrClient):
             # Never filter existing files: our import may replace an episode's
             # non-recommended file, whose candidate a filtered scan would drop.
             "filterExistingFiles": "false",
-            "apikey": self._api_key,
         }
         params_enc = urlencode(params)
 
@@ -351,12 +348,13 @@ class SonarrClient(AbstractSonarrClient):
         try:
             candidates_req = self._session.get(
                 candidates_req_url,
+                headers=self._headers,
                 timeout=MANUAL_IMPORT_TIMEOUT_S,
             )
         except requests.RequestException as e:
             self._logger.warning(
                 indent_string(
-                    f"Manual-import scan of {pending.title} did not respond ({e}); will retry",
+                    f"Manual-import scan of {pending.title} did not respond ({type(e).__name__}); will retry",
                 ),
             )
             return None
@@ -437,12 +435,16 @@ class SonarrClient(AbstractSonarrClient):
             body (CommandBody): The outgoing command body (must carry ``name``).
         """
 
-        d_enc = urlencode({"apikey": self._api_key})
-        command_req_url = f"{self._url}/api/v3/command?{d_enc}"
+        command_req_url = f"{self._url}/api/v3/command"
         try:
             # CommandBody is JSON-safe but a non-closed TypedDict can never be
             # proven against the recursive alias, so cast at the wire boundary.
-            command_req = self._session.post(command_req_url, json=cast("Json", body), timeout=ARR_REQUEST_TIMEOUT_S)
+            command_req = self._session.post(
+                command_req_url,
+                json=cast("Json", body),
+                headers=self._headers,
+                timeout=ARR_REQUEST_TIMEOUT_S,
+            )
         except requests.RequestException:
             command_req = None
 
@@ -486,12 +488,11 @@ class SonarrClient(AbstractSonarrClient):
             {
                 "pageSize": "1000",
                 "includeUnknownSeriesItems": "true",
-                "apikey": self._api_key,
             },
         )
         queue_req_url = f"{self._url}/api/v3/queue?{params}"
         try:
-            queue_req = self._session.get(queue_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
+            queue_req = self._session.get(queue_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             queue_req = None
 
@@ -525,15 +526,16 @@ class SonarrClient(AbstractSonarrClient):
                 empty on failure.
         """
 
-        defs_req_url = f"{self._url}/api/v3/qualitydefinition?apikey={self._api_key}"
+        defs_req_url = f"{self._url}/api/v3/qualitydefinition"
         try:
-            defs_req = self._session.get(defs_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
+            defs_req = self._session.get(defs_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             defs_req = None
 
         if defs_req is None or defs_req.status_code != 200:
+            detail = "request failed" if defs_req is None else f"status code {defs_req.status_code}"
             self._logger.warning(
-                "Could not fetch quality definitions from Sonarr; it may be unreachable",
+                f"Could not fetch quality definitions from Sonarr ({detail})",
             )
             return []
 
@@ -557,15 +559,16 @@ class SonarrClient(AbstractSonarrClient):
                 resolver matches by name and re-emits verbatim); empty on failure.
         """
 
-        langs_req_url = f"{self._url}/api/v3/language?apikey={self._api_key}"
+        langs_req_url = f"{self._url}/api/v3/language"
         try:
-            langs_req = self._session.get(langs_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
+            langs_req = self._session.get(langs_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             langs_req = None
 
         if langs_req is None or langs_req.status_code != 200:
+            detail = "request failed" if langs_req is None else f"status code {langs_req.status_code}"
             self._logger.warning(
-                "Could not fetch languages from Sonarr; it may be unreachable",
+                f"Could not fetch languages from Sonarr ({detail})",
             )
             return []
 
@@ -593,9 +596,9 @@ class SonarrClient(AbstractSonarrClient):
                 a default (``status`` None) on failure.
         """
 
-        status_req_url = f"{self._url}/api/v3/command/{command_id}?apikey={self._api_key}"
+        status_req_url = f"{self._url}/api/v3/command/{command_id}"
         try:
-            status_req = self._session.get(status_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
+            status_req = self._session.get(status_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             status_req = None
 
@@ -632,9 +635,9 @@ class SonarrClient(AbstractSonarrClient):
             list[CommandResource]: The parsed commands; empty on failure.
         """
 
-        commands_req_url = f"{self._url}/api/v3/command?apikey={self._api_key}"
+        commands_req_url = f"{self._url}/api/v3/command"
         try:
-            commands_req = self._session.get(commands_req_url, timeout=ARR_REQUEST_TIMEOUT_S)
+            commands_req = self._session.get(commands_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
         except requests.RequestException:
             commands_req = None
 
@@ -658,7 +661,7 @@ class SonarrClient(AbstractSonarrClient):
         return fetch_history_since(
             self._session,
             self._url,
-            self._api_key,
+            self._headers,
             self._logger,
             date,
             arr_label="Sonarr",

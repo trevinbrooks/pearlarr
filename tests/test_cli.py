@@ -595,13 +595,18 @@ class TestRunFailuresAreCleanAndNonzero:
         assert "Traceback" not in out
 
     def test_malformed_yaml_fails_the_run_cleanly(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # The syntax error sits ON the credential line: the report must carry the
+        # problem + position (from the error's parts), never str(e)'s source
+        # snippet, which would quote the api key back to the console/log.
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("sonarr: [unclosed\n")
+        Path(paths.config).write_text('sonarr:\n  api_key: "hunter2\n')
 
         assert run_single(sonarr=True) is False
         out = capsys.readouterr().out
         assert "Unreadable YAML" in out
+        assert "line 3" in out  # the position survives, so the user can find it
+        assert "hunter2" not in out
         assert "Traceback" not in out
 
     def test_a_mapping_source_failure_fails_the_run(
@@ -677,9 +682,12 @@ class TestConfigInspection:
     def test_validate_reports_malformed_yaml_cleanly(self, capsys: pytest.CaptureFixture[str]) -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("sonarr: [unclosed\n")
+        Path(paths.config).write_text('sonarr:\n  api_key: "hunter2\n')
         assert config_validate() is False
-        assert "Unreadable YAML" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "Unreadable YAML" in out
+        # Never str(e): its snippet quotes the offending (credential) line.
+        assert "hunter2" not in out
 
     def test_validate_reports_what_a_run_would_use(self, capsys: pytest.CaptureFixture[str]) -> None:
         paths = resolve_paths()

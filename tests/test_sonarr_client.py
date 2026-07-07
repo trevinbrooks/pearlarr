@@ -126,18 +126,21 @@ def test_episodes_decodes_sorted_and_builds_request() -> None:
         client = _make_client(rsps)
         rsps.add(responses.GET, f"{_BASE}/episode", json=sonarr_fixture("episodes_228_bahamut.json"))
         episodes = client.episodes(228)
-        url = rsps.calls[-1].request.url
+        request = rsps.calls[-1].request
 
     assert episodes is not None
     assert len(episodes) == 13
     # sorted: the lone S00 special leads, S01E12 trails (decode + order in one).
     assert (episodes[0].season_number, episodes[0].episode_number, episodes[0].id) == (0, 1, 8475)
     assert (episodes[-1].season_number, episodes[-1].episode_number, episodes[-1].id) == (1, 12, 8487)
+    url = request.url
     assert url is not None
     assert "seriesId=228" in url
     assert "includeImages=false" in url
     assert "includeEpisodeFile=true" in url
-    assert "apikey=testkey" in url
+    # The key rides the X-Api-Key header, never the URL (it would leak via logs).
+    assert "apikey" not in url
+    assert request.headers["X-Api-Key"] == "testkey"
 
 
 def test_episodes_non_200_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
@@ -150,7 +153,8 @@ def test_episodes_non_200_returns_none_and_warns(caplog: pytest.LogCaptureFixtur
             result = client.episodes(228)
 
     assert result is None
-    assert any(r.levelno == logging.WARNING for r in caplog.records)
+    warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
+    assert warning.getMessage() == "Could not fetch episodes for series 228 from Sonarr (status code 500); skipping"
 
 
 def test_episodes_quiet_suppresses_unreachable_warning(caplog: pytest.LogCaptureFixture) -> None:
@@ -233,14 +237,14 @@ def test_parse_request_error_returns_none() -> None:
 
 def test_parse_episode_info_decodes_season_episode() -> None:
     """An ``SxxExx`` release decodes to its season + episode numbers; the request
-    carries the title + apikey.
+    carries the title in the URL and the api key in the X-Api-Key header.
     """
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
         client = _make_client(rsps)
         rsps.add(responses.GET, f"{_BASE}/parse", json=sonarr_fixture("parse_bahamut_s01e01.json"))
         info = client.parse_episode_info("Bahamut.S01E01.mkv")
-        url = rsps.calls[-1].request.url
+        request = rsps.calls[-1].request
 
     assert info == ParsedFileInfo(
         season_number=1,
@@ -248,9 +252,11 @@ def test_parse_episode_info_decodes_season_episode() -> None:
         absolute_episode_numbers=(),
         special=False,
     )
+    url = request.url
     assert url is not None
     assert "title=" in url
-    assert "apikey=testkey" in url
+    assert "apikey" not in url
+    assert request.headers["X-Api-Key"] == "testkey"
 
 
 def test_parse_episode_info_decodes_absolute() -> None:
@@ -371,11 +377,15 @@ def test_manual_import_execute_posts_body_and_returns_id() -> None:
             match=[matchers.json_params_matcher(expected_body)],
         )
         command_id = client.manual_import_execute(files=[file], import_mode="move")
-        url = rsps.calls[-1].request.url
+        request = rsps.calls[-1].request
 
     assert command_id == 4242
+    url = request.url
     assert url is not None
     assert url.startswith(f"{_BASE}/command")
+    # The POST authenticates through the header too, never the query string.
+    assert "apikey" not in url
+    assert request.headers["X-Api-Key"] == "testkey"
 
 
 def test_manual_import_execute_non_2xx_returns_none() -> None:
@@ -522,7 +532,7 @@ def test_history_since_decodes_records_and_builds_request() -> None:
         client = _make_client(rsps)
         rsps.add(responses.GET, f"{_BASE}/history/since", json=body)
         records = client.history_since("2026-06-30T08:00:00Z")
-        url = rsps.calls[-1].request.url
+        request = rsps.calls[-1].request
 
     assert records == [
         HistoryRecord(
@@ -542,11 +552,13 @@ def test_history_since_decodes_records_and_builds_request() -> None:
             reason="MissingFromDisk",
         ),
     ]
+    url = request.url
     assert url is not None
     assert "date=2026-06-30T08%3A00%3A00Z" in url
     assert "includeSeries=false" in url
     assert "includeEpisode=false" in url
-    assert "apikey=testkey" in url
+    assert "apikey" not in url
+    assert request.headers["X-Api-Key"] == "testkey"
 
 
 def test_history_since_non_200_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
@@ -559,7 +571,11 @@ def test_history_since_non_200_returns_none_and_warns(caplog: pytest.LogCaptureF
             result = client.history_since("2026-06-30T08:00:00Z")
 
     assert result is None
-    assert any(r.levelno == logging.WARNING for r in caplog.records)
+    # The single warning for a failed history fetch states its consequence too
+    # (the activity monitor only debug-logs, so this line is all the user sees).
+    warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
+    expected = "Could not fetch Sonarr history (status code 500); skipping activity detection this run"
+    assert warning.getMessage() == expected
 
 
 def test_history_since_request_error_returns_none() -> None:
@@ -642,11 +658,13 @@ def test_quality_definitions_returns_raw_list() -> None:
         client = _make_client(rsps)
         rsps.add(responses.GET, f"{_BASE}/qualitydefinition", json=sonarr_fixture("qualitydefinitions.json"))
         defs = client.quality_definitions()
-        url = rsps.calls[-1].request.url
+        request = rsps.calls[-1].request
 
     assert defs[0].get("quality") == {"id": 0, "name": "Unknown", "source": "unknown", "resolution": 0}
+    url = request.url
     assert url is not None
-    assert "apikey=testkey" in url
+    assert "apikey" not in url
+    assert request.headers["X-Api-Key"] == "testkey"
 
 
 def test_languages_returns_raw_list() -> None:

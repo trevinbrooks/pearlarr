@@ -24,7 +24,7 @@ from urllib3.util.retry import Retry
 from .anilist_gateway import AniListGateway
 from .boot_view import BootView, NullBootView
 from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
-from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction
+from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_value
 from .grab_pipeline import GrabPipeline, GrabRequest
 from .log import EntryState, LogFormatter, setup_logger
 from .manual_import import ImportWaitMode
@@ -229,10 +229,11 @@ class RunDeps:
             cache_store=cache_store,
             anilist=anilist,
             torrents=torrents,
-            # Discord notifier; a no-op when no webhook is configured.
+            # Discord notifier; a no-op when no webhook is configured. The
+            # SecretStr urls are unwrapped here, at their point of use.
             notifier=Notifier(
-                discord_url=app_config.notifications.discord_url,
-                webhook_url=app_config.notifications.wait_webhook_url,
+                discord_url=secret_value(app_config.notifications.discord_url),
+                webhook_url=secret_value(app_config.notifications.wait_webhook_url),
                 logger=logger,
             ),
             # Download-decision engine: flips each release's download flag.

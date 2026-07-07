@@ -224,6 +224,7 @@ class TestScan:
 
     def test_fetch_failure_fails_open(self) -> None:
         logger = make_logger()
+        logger.setLevel(logging.DEBUG)
         capture = CaptureHandler()
         logger.addHandler(capture)
         cache = FakeCacheStore()
@@ -235,7 +236,10 @@ class TestScan:
 
         assert scan.touched == frozenset()
         assert scan.rescan_all is False
-        assert any(r.levelno == logging.WARNING for r in capture.records)
+        # The fetch helper (arr_http) owns the user-facing warning; the monitor
+        # leaves only a debug breadcrumb, so one failure never warns twice.
+        assert not any(r.levelno == logging.WARNING for r in capture.records)
+        assert any(r.levelno == logging.DEBUG for r in capture.records)
         # No pending checkpoint either: commit is a no-op.
         monitor.commit_checkpoint()
         assert cache.get_history_checkpoint(Arr.SONARR) is None

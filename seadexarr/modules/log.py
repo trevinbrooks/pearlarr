@@ -146,10 +146,11 @@ class RichConsoleHandler(logging.Handler):
             message = record.getMessage()
 
             # An unexpected exception (logged with exc_info): show a colored
-            # level badge + message, then a rich traceback with locals and a
-            # capped frame count so a crash is legible at a glance. The file
-            # handler still records the full plain-text traceback (the formatter
-            # renders exc_info), so nothing is lost from the log file.
+            # level badge + message, then a rich traceback with a capped frame
+            # count so a crash is legible at a glance. Frame locals are never
+            # rendered - they can hold config secrets (api keys, webhook URLs).
+            # The file handler still records the full plain-text traceback (the
+            # formatter renders exc_info), so nothing is lost from the log file.
             if record.exc_info:
                 label, style = self.LEVEL_BADGES.get(
                     record.levelno,
@@ -165,7 +166,7 @@ class RichConsoleHandler(logging.Handler):
                             exc_type,
                             exc_value,
                             exc_tb,
-                            show_locals=True,
+                            show_locals=False,
                             max_frames=self.MAX_TRACEBACK_FRAMES,
                         ),
                     )

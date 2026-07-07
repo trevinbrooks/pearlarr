@@ -129,8 +129,13 @@ class _FakeSession:
         self._body = body
         self._boom = boom
 
-    def get(self, url: str, timeout: tuple[int, int] | None = None) -> _FakeResponse:
-        del url, timeout
+    def get(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+        timeout: tuple[int, int] | None = None,
+    ) -> _FakeResponse:
+        del url, headers, timeout
         if self._boom:
             raise requests.ConnectionError("down")
         return _FakeResponse(self._status, self._body)
@@ -148,7 +153,7 @@ class TestParseClientTransientVsEmpty:
         return make_bare_instance(
             SonarrClient,
             _url="http://sonarr",
-            _api_key="k",
+            _headers={"X-Api-Key": "k"},
             _session=session,
             _logger=make_logger(),
         )

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from seadexarr.modules.config import (
     PRIVATE_TRACKERS,
@@ -24,6 +24,7 @@ from seadexarr.modules.config import (
     PrivateReleaseAction,
     QbittorrentSettings,
     SeadexSettings,
+    secret_value,
 )
 from seadexarr.modules.manual_import import ImportWaitMode
 
@@ -132,7 +133,7 @@ class TestDefaults:
         assert cfg.seadex.private_releases is PrivateReleaseAction.FALLBACK
         assert cfg.seadex.want_best is False
         assert cfg.advanced.sleep_time == 9
-        assert cfg.notifications.discord_url == "u"
+        assert cfg.notifications.discord_url == SecretStr("u")
 
 
 class TestBlankCoalescing:
@@ -366,3 +367,57 @@ class TestConnection:
         cfg = AppConfig.model_validate({"sonarr": {"url": "http://s", "api_key": "sk"}})
         assert cfg.radarr.url is None
         assert cfg.radarr.api_key is None
+
+
+class TestSecrets:
+    """The credential fields are ``SecretStr``: masked everywhere but their point of use."""
+
+    _RAW = {
+        "sonarr": {"url": "http://s", "api_key": "sonarr-key"},
+        "radarr": {"api_key": "radarr-key"},
+        "qbittorrent": {"host": "h", "username": "u", "password": "hunter2"},
+        "notifications": {
+            "discord_url": "https://discord.com/api/webhooks/1/tok",
+            "wait_webhook_url": "https://hook.example/secret",
+        },
+    }
+
+    def test_secret_fields_parse_to_secretstr(self) -> None:
+        cfg = AppConfig.model_validate(self._RAW)
+        assert cfg.sonarr.api_key == SecretStr("sonarr-key")
+        assert cfg.radarr.api_key == SecretStr("radarr-key")
+        assert cfg.qbittorrent.password == SecretStr("hunter2")
+        assert cfg.notifications.discord_url == SecretStr("https://discord.com/api/webhooks/1/tok")
+        assert cfg.notifications.wait_webhook_url == SecretStr("https://hook.example/secret")
+
+    def test_repr_and_json_dump_mask_every_secret(self) -> None:
+        # The whole point of SecretStr: an incidentally logged/dumped config
+        # (repr in a traceback, model_dump in a bug report) can't leak.
+        cfg = AppConfig.model_validate(self._RAW)
+        for rendering in (repr(cfg), str(cfg), str(cfg.model_dump(mode="json"))):
+            for secret in ("sonarr-key", "radarr-key", "hunter2", "webhooks/1/tok", "hook.example/secret"):
+                assert secret not in rendering
+
+    def test_validation_errors_hide_the_input_value(self) -> None:
+        # hide_input_in_errors: a credential pasted under the wrong key (here a
+        # str where an int belongs) must not be echoed back in the error text.
+        with pytest.raises(ValidationError) as excinfo:
+            AppConfig.model_validate({"advanced": {"sleep_time": "hunter2"}})
+        assert "hunter2" not in str(excinfo.value)
+
+    def test_points_of_use_unwrap_to_plain_strings(self) -> None:
+        # require_connection / credentials() are the sanctioned unwrap points;
+        # their callers (client construction, qbit login) get plain strings.
+        cfg = AppConfig.model_validate(self._RAW)
+        assert cfg.require_connection(Arr.SONARR) == ("http://s", "sonarr-key")
+        assert cfg.qbittorrent.credentials() == ("h", "u", "hunter2")
+
+    def test_secret_value_unwraps_optionals(self) -> None:
+        assert secret_value(SecretStr("tok")) == "tok"
+        assert secret_value(None) is None
+
+    def test_empty_secret_reads_as_unset(self) -> None:
+        # missing_arr_keys / credentials() gate on truthiness; an empty SecretStr
+        # (a blank quoted value) must read as unset, like an empty plain string.
+        cfg = AppConfig.model_validate({"sonarr": {"url": "http://s", "api_key": ""}})
+        assert cfg.missing_arr_keys(Arr.SONARR) == ("sonarr.api_key",)

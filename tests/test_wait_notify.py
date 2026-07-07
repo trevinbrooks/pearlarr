@@ -60,6 +60,19 @@ def _capture(logger: logging.Logger) -> Generator[CaptureHandler]:
         logger.removeHandler(handler)
 
 
+def _http_error(status: int) -> requests.HTTPError:
+    """An ``HTTPError`` carrying a response, as ``raise_for_status`` raises it.
+
+    The response url stands in for the webhook credential: the containment
+    tests assert it never reaches a warning message.
+    """
+
+    response = requests.Response()
+    response.status_code = status
+    response.url = "https://discord.example/api/webhooks/1/secret-token"
+    return requests.HTTPError(response=response)
+
+
 def _result() -> WaitResult:
     return WaitResult(
         (
@@ -116,7 +129,11 @@ def test_push_wait_summary_webhook_failure_warns_and_returns_false(monkeypatch: 
         posted = notifier.push_wait_summary(arr=Arr.SONARR, result=_result())  # must not raise
 
     assert posted is False
-    assert any(r.levelno == logging.WARNING and "webhook POST failed" in r.getMessage() for r in handler.records)
+    [warning] = [r.getMessage() for r in handler.records if r.levelno == logging.WARNING]
+    # The exception is never interpolated: its str embeds the webhook URL,
+    # which IS the credential. The config key points the user at the fix.
+    assert warning == "Wait-report webhook POST failed (ConnectionError) - check notifications.wait_webhook_url"
+    assert "hook.example" not in warning
 
 
 def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> None:
@@ -206,6 +223,18 @@ def test_push_grab_builds_linked_embed(pushes: list[DiscordEmbed]) -> None:
     assert embed.thumb_url == "https://img.anili.st/cover.png"
 
 
+def _push_grab(notifier: Notifier) -> bool:
+    """Drive one grab push with minimal embed data (the containment tests' focus)."""
+
+    return notifier.push_grab(
+        arr_title="Show",
+        al_title="Show",
+        seadex_url="https://releases.moe/1",
+        fields=[],
+        thumb_url=None,
+    )
+
+
 def test_push_grab_discord_failure_warns_and_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
     # The invariant the engine relies on: a Discord failure is contained in
     # _push (warn, False) - it must never abort the grab that triggered it.
@@ -218,13 +247,62 @@ def test_push_grab_discord_failure_warns_and_returns_false(monkeypatch: pytest.M
     notifier = Notifier(discord_url="https://discord.example", logger=logger)
 
     with _capture(logger) as handler:
-        posted = notifier.push_grab(  # must not raise
-            arr_title="Show",
-            al_title="Show",
-            seadex_url="https://releases.moe/1",
-            fields=[],
-            thumb_url=None,
-        )
+        posted = _push_grab(notifier)  # must not raise
 
     assert posted is False
-    assert any(r.levelno == logging.WARNING and "Discord push failed" in r.getMessage() for r in handler.records)
+    [warning] = [r.getMessage() for r in handler.records if r.levelno == logging.WARNING]
+    # The exception type only - a requests exception's str embeds the webhook
+    # URL (the credential) - and the config key to check.
+    assert warning == "Discord notification failed (ConnectionError) - check notifications.discord_url"
+    assert "discord.example" not in warning
+
+
+def test_push_grab_4xx_disables_discord_for_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A 4xx (e.g. a deleted webhook's 404) is permanent: one actionable warning,
+    # then Discord pushes are disabled - no warn-per-grab retry storm.
+    posts: list[str] = []
+
+    def raising_discord_push(*, url: str, embed: DiscordEmbed) -> None:
+        del embed
+        posts.append(url)
+        raise _http_error(404)
+
+    monkeypatch.setattr(notify, "discord_push", raising_discord_push)
+    logger = make_logger()
+    notifier = Notifier(discord_url="https://discord.example", logger=logger)
+
+    with _capture(logger) as handler:
+        assert _push_grab(notifier) is False
+        assert _push_grab(notifier) is False
+
+    assert posts == ["https://discord.example"]  # the dead webhook is POSTed once
+    assert notifier.enabled is False
+    warnings = [r.getMessage() for r in handler.records if r.levelno == logging.WARNING]
+    assert warnings == [
+        "Discord notification failed (HTTP 404) - disabling Discord notifications "
+        "for this run; check notifications.discord_url",
+    ]
+    assert all("secret-token" not in message for message in warnings)
+
+
+def test_push_grab_5xx_stays_per_push(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A 5xx is transient (Discord hiccup): keep trying - and warning - per push.
+    def raising_discord_push(*, url: str, embed: DiscordEmbed) -> None:
+        del url, embed
+        raise _http_error(500)
+
+    def no_sleep(seconds: float) -> None:
+        del seconds  # the second push would otherwise pay the real 1s pacing
+
+    monkeypatch.setattr(notify, "discord_push", raising_discord_push)
+    monkeypatch.setattr(time, "sleep", no_sleep)
+    logger = make_logger()
+    notifier = Notifier(discord_url="https://discord.example", logger=logger)
+
+    with _capture(logger) as handler:
+        assert _push_grab(notifier) is False
+        assert _push_grab(notifier) is False
+
+    assert notifier.enabled is True
+    warnings = [r.getMessage() for r in handler.records if r.levelno == logging.WARNING]
+    assert warnings == ["Discord notification failed (HTTP 500) - check notifications.discord_url"] * 2

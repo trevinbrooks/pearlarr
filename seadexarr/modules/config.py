@@ -25,6 +25,7 @@ from pydantic import (
     ConfigDict,
     Field,
     PrivateAttr,
+    SecretStr,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -95,15 +96,23 @@ def template_path() -> str:
     return os.path.join(os.path.dirname(__file__), CONFIG_TEMPLATE_FILE)
 
 
+def secret_value(secret: SecretStr | None) -> str | None:
+    """Unwrap an optional :class:`SecretStr` at a point of use."""
+
+    return secret.get_secret_value() if secret is not None else None
+
+
 class _ConfigBase(BaseModel):
     """Shared base for every settings group: strict, immutable, blank-tolerant.
 
     ``extra="forbid"`` turns a typo'd key into a ``ValidationError`` (the whole point
     of validating); ``frozen=True`` matches the project's value-object convention and
-    makes sharing one loaded config across both arrs provably safe.
+    makes sharing one loaded config across both arrs provably safe;
+    ``hide_input_in_errors=True`` keeps a rejected value (which could be a
+    credential pasted under the wrong key) out of the ValidationError text.
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
 
     @model_validator(mode="before")
     @classmethod
@@ -125,10 +134,15 @@ class _ConfigBase(BaseModel):
 
 
 class ArrSettings(_ConfigBase):
-    """Connection + per-arr behaviour, shared by the ``sonarr`` and ``radarr`` groups."""
+    """Connection + per-arr behaviour, shared by the ``sonarr`` and ``radarr`` groups.
+
+    ``api_key`` is a :class:`SecretStr` so a dumped/logged model masks it;
+    :meth:`AppConfig.require_connection` (and the Sonarr->Radarr cross-check)
+    unwrap it at the client-construction boundary.
+    """
 
     url: str | None = None
-    api_key: str | None = None
+    api_key: SecretStr | None = None
     ignore_unmonitored: bool = False
     torrent_category: str | None = None
 
@@ -152,7 +166,7 @@ class QbittorrentSettings(_ConfigBase):
 
     host: str | None = None
     username: str | None = None
-    password: str | None = None
+    password: SecretStr | None = None
     tags: list[str] | None = None
     # Extra keyword arguments splatted into qbittorrentapi.Client alongside the
     # connection triple. Empty by default; nest advanced client kwargs here.
@@ -162,11 +176,12 @@ class QbittorrentSettings(_ConfigBase):
         """The ``(host, username, password)`` triple, or ``None`` if any part is unset.
 
         All three are needed to add torrents; a missing one means run in preview mode
-        (nothing is grabbed). The caller builds the client with explicit kwargs.
+        (nothing is grabbed). The caller builds the client with explicit kwargs; the
+        password is unwrapped here, at its point of use.
         """
 
         if self.host and self.username and self.password:
-            return self.host, self.username, self.password
+            return self.host, self.username, self.password.get_secret_value()
         return None
 
 
@@ -279,10 +294,15 @@ class ImportsSettings(_ConfigBase):
 
 
 class NotificationsSettings(_ConfigBase):
-    """Discord + generic webhook + the walk-away wait-complete ping."""
+    """Discord + generic webhook + the walk-away wait-complete ping.
 
-    discord_url: str | None = None
-    wait_webhook_url: str | None = None
+    Both webhook URLs are :class:`SecretStr`: the URL itself embeds the
+    credential (the Discord path IS the token), so a dumped/logged model masks
+    them; the Notifier construction unwraps them.
+    """
+
+    discord_url: SecretStr | None = None
+    wait_webhook_url: SecretStr | None = None
     wait_notify: bool = False
 
     @model_validator(mode="before")
@@ -437,4 +457,4 @@ class AppConfig(_ConfigBase):
             raise ValueError(f"{arr.value}.url must be set in {self._path}")
         if not sub.api_key:
             raise ValueError(f"{arr.value}.api_key must be set in {self._path}")
-        return sub.url, sub.api_key
+        return sub.url, sub.api_key.get_secret_value()

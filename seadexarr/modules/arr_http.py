@@ -18,7 +18,7 @@ from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord
 def fetch_history_since(
     session: requests.Session,
     base_url: str,
-    api_key: str,
+    headers: Mapping[str, str],
     logger: logging.Logger,
     date: str,
     *,
@@ -31,12 +31,14 @@ def fetch_history_since(
     One unfiltered call (``eventType`` is single-valued server-side; the activity
     scan filters client-side). Fails open with a warning - None on a request
     error, a non-200, a non-JSON body (e.g. a proxy login page), or a non-array
-    payload - so a broken endpoint can never abort the run.
+    payload - so a broken endpoint can never abort the run. The warning states
+    the consequence too: this helper only feeds activity detection, and the
+    caller (``ArrActivityMonitor.scan``) doesn't re-warn.
 
     Args:
         session (requests.Session): The client's shared session.
         base_url (str): The arr's base url (no trailing slash).
-        api_key (str): The arr's API key.
+        headers (Mapping[str, str]): The client's auth headers (``X-Api-Key``).
         logger (logging.Logger): Warn sink for the fail-open paths.
         date (str): ISO8601 lower bound (arr-clock, inclusive).
         arr_label (str): "Sonarr"/"Radarr", for the warning text.
@@ -44,22 +46,29 @@ def fetch_history_since(
         item_key (str): The record's item-id field (``seriesId``/``movieId``).
     """
 
-    params = urlencode({"date": date, **include_flags, "apikey": api_key})
+    def fail_open(reason: str) -> None:
+        logger.warning(f"Could not fetch {arr_label} history ({reason}); skipping activity detection this run")
+
+    params = urlencode({"date": date, **include_flags})
     try:
-        response = session.get(f"{base_url}/api/v3/history/since?{params}", timeout=ARR_REQUEST_TIMEOUT_S)
+        response = session.get(
+            f"{base_url}/api/v3/history/since?{params}",
+            headers=headers,
+            timeout=ARR_REQUEST_TIMEOUT_S,
+        )
     except requests.RequestException:
-        logger.warning(f"Could not fetch {arr_label} history (request failed)")
+        fail_open("request failed")
         return None
     if response.status_code != 200:
-        logger.warning(f"Could not fetch {arr_label} history (status code {response.status_code})")
+        fail_open(f"status code {response.status_code}")
         return None
     try:
         payload: object = response.json()
     except ValueError:
-        logger.warning(f"Could not fetch {arr_label} history (non-JSON body)")
+        fail_open("non-JSON body")
         return None
     if not isinstance(payload, list):
-        logger.warning(f"Could not fetch {arr_label} history (unexpected payload)")
+        fail_open("unexpected payload")
         return None
 
     # Element dicts are unvalidated JSON: cast at the parse boundary, skip strays.
