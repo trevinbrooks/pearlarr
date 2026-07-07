@@ -8,8 +8,6 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, cast, override
 
-import httpx
-
 from .arr_http import ArrHttp
 from .log import indent_string
 from .manual_import import PendingImport
@@ -105,9 +103,7 @@ class SonarrClient(AbstractSonarrClient):
     def __init__(
         self,
         *,
-        url: str,
-        api_key: str,
-        http: httpx.Client,
+        http: ArrHttp,
         logger: logging.Logger,
     ) -> None:
         """Instantiate the Sonarr API client.
@@ -117,17 +113,13 @@ class SonarrClient(AbstractSonarrClient):
         that call's typed error / fail-open path, never a constructor hang.
 
         Args:
-            url (str): Sonarr base URL (a trailing slash is normalized away by
-                the bind - a "//api" join redirects to the login page).
-            api_key (str): Sonarr API key, sent as the ``X-Api-Key`` header (never
-                a query param, so it can't leak through URLs in logs/exceptions).
-            http (httpx.Client): The run's shared client the bound
-                :class:`~.arr_http.ArrHttp` rides (shared across arrs, so the
-                key travels per request, never on the client).
-            logger (logging.Logger): For request warnings.
+            http (ArrHttp): The transport already bound to Sonarr's url + key
+                (``ArrHttp.bind`` with ``label="Sonarr"``).
+            logger (logging.Logger): For the client's own non-transport warnings
+                (the bound transport carries its own logger for request lines).
         """
 
-        self._http = ArrHttp.bind(client=http, url=url, api_key=api_key, label="Sonarr", logger=logger)
+        self._http = http
         self._logger = logger
 
     @override

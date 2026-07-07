@@ -1,7 +1,4 @@
 # pyright: strict
-# pyright: reportPrivateUsage=false
-# _make_client stubs the bound ArrHttp's sleep so fail-open tests don't wait
-# out real retry backoffs; strict re-flags that private write.
 """Direct tests for ``SonarrClient``, the Sonarr REST adapter.
 
 Each test builds a REAL ``SonarrClient`` (construction is network-free), then
@@ -23,6 +20,7 @@ import httpx
 import pytest
 import respx
 
+from seadexarr.modules.arr_http import ArrHttp
 from seadexarr.modules.manual_import import PendingImport
 from seadexarr.modules.seadex_types import (
     CommandResource,
@@ -46,18 +44,22 @@ def _make_client() -> SonarrClient:
     """Build a real ``SonarrClient`` (construction is network-free).
 
     Every endpoint rides the bound ``ArrHttp`` over the httpx client, mocked
-    through ``respx``. The bound helper's ``sleep`` is stubbed out so fail-open
-    tests don't wait out real backoffs.
+    through ``respx``. The bind's ``sleep`` is stubbed out so fail-open tests
+    don't wait out real backoffs.
     """
 
-    client = SonarrClient(
-        url=_URL,
-        api_key=_KEY,
-        http=httpx.Client(),
-        logger=logging.getLogger("seadexarr.test"),
+    logger = logging.getLogger("seadexarr.test")
+    return SonarrClient(
+        http=ArrHttp.bind(
+            client=httpx.Client(),
+            url=_URL,
+            api_key=_KEY,
+            label="Sonarr",
+            logger=logger,
+            sleep=lambda _s: None,
+        ),
+        logger=logger,
     )
-    client._http.sleep = lambda _s: None
-    return client
 
 
 def _make_pending(*, infohash: str, title: str) -> PendingImport:
@@ -570,8 +572,17 @@ def test_post_command_2xx_non_object_warns_and_returns_none() -> None:
     logger = logging.getLogger("seadexarr.test.post-command-payload")
     capture = CaptureHandler()
     logger.addHandler(capture)
-    client = SonarrClient(url=_URL, api_key=_KEY, http=httpx.Client(), logger=logger)
-    client._http.sleep = lambda _s: None
+    client = SonarrClient(
+        http=ArrHttp.bind(
+            client=httpx.Client(),
+            url=_URL,
+            api_key=_KEY,
+            label="Sonarr",
+            logger=logger,
+            sleep=lambda _s: None,
+        ),
+        logger=logger,
+    )
 
     respx.post(f"{_BASE}/command").respond(status_code=201, json=[])
     assert client.refresh_monitored_downloads() is None
@@ -779,11 +790,10 @@ def test_trailing_slash_url_is_normalized() -> None:
     302s that to the login page, breaking every raw endpoint.
     """
 
+    logger = logging.getLogger("seadexarr.test")
     client = SonarrClient(
-        url=f"{_URL}/",
-        api_key=_KEY,
-        http=httpx.Client(),
-        logger=logging.getLogger("seadexarr.test"),
+        http=ArrHttp.bind(client=httpx.Client(), url=f"{_URL}/", api_key=_KEY, label="Sonarr", logger=logger),
+        logger=logger,
     )
     respx.get(f"{_BASE}/history/since").respond(json=[])
     assert client.history_since("2026-06-30T08:00:00Z") == []

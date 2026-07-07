@@ -2,7 +2,7 @@ import time
 from typing import override
 
 from . import coverage as _coverage
-from .arr_http import make_httpx_client
+from .arr_http import ArrHttp, make_httpx_client
 from .cache import CacheRecord
 from .config import Arr, secret_value
 from .grab_pipeline import GrabRequest
@@ -121,9 +121,13 @@ class SonarrSync(ArrSync[SonarrItem]):
         else:
             sonarr_url, sonarr_api_key = self._config.require_connection(Arr.SONARR)
             self.sonarr = SonarrClient(
-                url=sonarr_url,
-                api_key=sonarr_api_key,
-                http=deps.http,
+                http=ArrHttp.bind(
+                    client=deps.http,
+                    url=sonarr_url,
+                    api_key=sonarr_api_key,
+                    label="Sonarr",
+                    logger=self.logger,
+                ),
                 logger=self.logger,
             )
 

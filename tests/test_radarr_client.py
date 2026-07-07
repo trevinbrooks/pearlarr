@@ -1,7 +1,4 @@
 # pyright: strict
-# pyright: reportPrivateUsage=false
-# _make_client stubs the bound ArrHttp's sleep so fail-open tests don't wait
-# out real retry backoffs; strict re-flags that private write.
 """Direct tests for the ``radarr_client`` module's contracts.
 
 Mirrors ``test_sonarr_client``: a REAL ``RadarrClient`` (construction is
@@ -19,6 +16,7 @@ import httpx
 import pytest
 import respx
 
+from seadexarr.modules.arr_http import ArrHttp
 from seadexarr.modules.radarr_client import RadarrClient, collect_anime_movies
 from seadexarr.modules.seadex_types import HistoryRecord, MovieFile, RadarrItem, RadarrMovie
 
@@ -32,18 +30,22 @@ _KEY = "testkey"
 def _make_client() -> RadarrClient:
     """Build a real ``RadarrClient`` (construction is network-free).
 
-    The bound ``ArrHttp``'s ``sleep`` is stubbed out so fail-open tests don't
-    wait out real retry backoffs.
+    The bind's ``sleep`` is stubbed out so fail-open tests don't wait out real
+    retry backoffs.
     """
 
-    client = RadarrClient(
-        url=_URL,
-        api_key=_KEY,
-        http=httpx.Client(),
-        logger=logging.getLogger("seadexarr.test"),
+    logger = logging.getLogger("seadexarr.test")
+    return RadarrClient(
+        http=ArrHttp.bind(
+            client=httpx.Client(),
+            url=_URL,
+            api_key=_KEY,
+            label="Radarr",
+            logger=logger,
+            sleep=lambda _s: None,
+        ),
+        logger=logger,
     )
-    client._http.sleep = lambda _s: None
-    return client
 
 
 @respx.mock
@@ -186,11 +188,10 @@ def test_history_since_non_json_body_returns_none_and_warns(caplog: pytest.LogCa
 def test_trailing_slash_url_is_normalized() -> None:
     """A trailing-slash base url must not become a ``//api`` join (login redirect)."""
 
+    logger = logging.getLogger("seadexarr.test")
     client = RadarrClient(
-        url=f"{_URL}/",
-        api_key=_KEY,
-        http=httpx.Client(),
-        logger=logging.getLogger("seadexarr.test"),
+        http=ArrHttp.bind(client=httpx.Client(), url=f"{_URL}/", api_key=_KEY, label="Radarr", logger=logger),
+        logger=logger,
     )
     respx.get(f"{_BASE}/history/since").respond(json=[])
     assert client.history_since("2026-06-30T08:00:00Z") == []
