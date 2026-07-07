@@ -55,11 +55,9 @@ class KvLine:
 
 @dataclass(frozen=True, slots=True)
 class StyledLine:
-    """A plain message with a console style and an optional emphasized tail."""
+    """A plain message with a console style."""
 
     style: str = ""
-    tail: str | None = None
-    tail_style: str = "yellow"
 
 
 type ConsoleRender = TitledRule | SectionRule | KvLine | StyledLine
@@ -105,8 +103,7 @@ class RichConsoleHandler(logging.Handler):
       value stays in its aligned column; LogCounter still tallies the severity
       for the run summary.
     * :class:`StyledLine` -> a style applied to an otherwise plain message
-      (used to dim no-op lines such as the collapsed "cached" one-liner), plus
-      an optional emphasized ``tail`` suffix, e.g., a "(marked incomplete)" note.
+      (used to dim no-op lines such as the collapsed "cached" one-liner).
 
     Messages are rendered as literal text rather than ``rich`` markup, so
     bracketed content such as "[1/1]" or "[MARKED INCOMPLETE]" is never
@@ -167,7 +164,7 @@ class RichConsoleHandler(logging.Handler):
             self.console.print(Rule(style="grey37", characters="─"))
 
     def _print_line(self, record: logging.LogRecord, message: str, payload: StyledLine | None) -> None:
-        """A plain message: level badge for WARNING+, optional style and tail.
+        """A plain message: level badge for WARNING+, optional style.
 
         Emitted whole (soft_wrap) so the terminal handles any overflow, rather
         than rich re-wrapping with unindented continuation lines.
@@ -179,11 +176,6 @@ class RichConsoleHandler(logging.Handler):
             label, style = badge
             line = Text(f"{label:<8} ", style=style)
             line.append(message)
-
-        # An optional emphasized suffix (e.g., an "incomplete" note)
-        if payload is not None and payload.tail is not None:
-            line.append(" ")
-            line.append(Text(payload.tail, style=payload.tail_style))
 
         self.console.print(line, highlight=False, soft_wrap=True)
 
@@ -352,11 +344,14 @@ def apply_log_level(logger: logging.Logger, log_level: str) -> None:
             handler.setLevel(_console_level(level))
 
 
+# Logger and log-file name; also the log rotation cap (.log -> .log.1 ... .log.9).
+LOG_NAME = "SeaDexArr"
+MAX_LOG_FILES = 9
+
+
 def setup_logger(
     log_level: str,
     log_dir: str,
-    log_name: str = "SeaDexArr",
-    max_logs: int = 9,
 ) -> logging.Logger:
     """
     Set up the logger.
@@ -365,10 +360,6 @@ def setup_logger(
         log_level (str): The log level to use
         log_dir (str): Full path to the directory for log files (resolved by the
             caller via ``paths.log_dir``; created here if missing).
-        log_name (str): The name of the log file.
-            Defaults to "SeaDexArr"
-        max_logs (int): Maximum number of log files to keep.
-            Defaults to 9
 
     Returns:
         A logger object for logging messages.
@@ -376,9 +367,9 @@ def setup_logger(
 
     os.makedirs(log_dir, exist_ok=True)
 
-    log_file = os.path.join(log_dir, f"{log_name}.log")
+    log_file = os.path.join(log_dir, f"{LOG_NAME}.log")
 
-    logger = logging.getLogger(log_name)
+    logger = logging.getLogger(LOG_NAME)
     logger.propagate = False
 
     # Close and detach any handlers from a previous call FIRST (scheduled mode
@@ -388,16 +379,16 @@ def setup_logger(
         logger.removeHandler(old_handler)
         old_handler.close()
 
-    # Rotate prior logs: .log -> .log.1 -> ... -> .log.<max_logs>. os.replace
+    # Rotate prior logs: .log -> .log.1 -> ... -> .log.<MAX_LOG_FILES>. os.replace
     # overwrites the oldest atomically, so no copy/remove dance is needed.
     if os.path.isfile(log_file):
-        for i in range(max_logs - 1, 0, -1):
-            old_log = os.path.join(log_dir, f"{log_name}.log.{i}")
-            new_log = os.path.join(log_dir, f"{log_name}.log.{i + 1}")
+        for i in range(MAX_LOG_FILES - 1, 0, -1):
+            old_log = os.path.join(log_dir, f"{LOG_NAME}.log.{i}")
+            new_log = os.path.join(log_dir, f"{LOG_NAME}.log.{i + 1}")
             if os.path.exists(old_log):
                 os.replace(old_log, new_log)
 
-        os.replace(log_file, os.path.join(log_dir, f"{log_name}.log.1"))
+        os.replace(log_file, os.path.join(log_dir, f"{LOG_NAME}.log.1"))
 
     # Resolve the configured level once through the name->constant table instead
     # of a hand-rolled string ladder. Only the five standard names are accepted;
@@ -592,30 +583,19 @@ def log_styled(
     logger: logging.Logger,
     message: str,
     style: str | None,
-    *,
-    level: int = logging.INFO,
-    tail: str | None = None,
-    tail_style: str = "yellow",
 ) -> None:
     """Log a plain message that the console renders with a style
 
     The file log stores the plain message; the console applies ``style`` (e.g.,
-    "grey50" to dim a no-op line) and appends the optional emphasized tail.
+    "grey50" to dim a no-op line).
 
     Args:
         logger: Logger the line is emitted through
         message: The message text (file log and console)
         style: Rich style for the console line; None renders unstyled
-        level: Logging level. Defaults to logging.INFO
-        tail: Optional emphasized suffix (console only). Defaults to None
-        tail_style: Style for the tail. Defaults to "yellow"
     """
 
-    logger.log(
-        level,
-        message,
-        extra={CONSOLE_EXTRA: StyledLine(style=style or "", tail=tail, tail_style=tail_style)},
-    )
+    logger.info(message, extra={CONSOLE_EXTRA: StyledLine(style=style or "")})
 
 
 def log_titled_rule(
@@ -623,7 +603,6 @@ def log_titled_rule(
     title: str,
     *,
     heavy: bool = False,
-    style: str = "bold cyan",
     message: str | None = None,
 ) -> None:
     """Log a titled section header: a full-width rule, then the bold title line
@@ -633,14 +612,13 @@ def log_titled_rule(
         title: The section title the console renders under the rule
         heavy: Draw a heavy rule ("━", run boundaries) instead of a light one
             ("─", per-title headers). Defaults to False
-        style: Rich style for the rule and title. Defaults to "bold cyan"
         message: The plain text the file log stores. Defaults to the title;
             pass it when a console-only annotation rides the rendered title
     """
 
     logger.info(
         message if message is not None else title,
-        extra={CONSOLE_EXTRA: TitledRule(title=title, style=style, heavy=heavy)},
+        extra={CONSOLE_EXTRA: TitledRule(title=title, heavy=heavy)},
     )
 
 
@@ -794,7 +772,6 @@ class LogFormatter:
         key_width: int,
         sep: str = " :",
         tail: str | None = None,
-        tail_style: str = "yellow",
     ) -> None:
         """Log an aligned "key : value" (or gutter "key value") detail line
 
@@ -813,7 +790,6 @@ class LogFormatter:
                 the colon-less gutter format (see detail)
             tail: Optional emphasized suffix (console only), e.g., an "incomplete"
                 note. Defaults to None
-            tail_style: Style for the tail. Defaults to "yellow"
         """
 
         payload = KvLine(
@@ -824,7 +800,6 @@ class LogFormatter:
             indent=indent,
             sep=sep,
             tail=tail,
-            tail_style=tail_style,
         )
         self.logger.log(
             level,
@@ -836,10 +811,10 @@ class LogFormatter:
         self,
         label: str,
         value: str | Text,
+        *,
         value_style: str | None = None,
         level: int = logging.INFO,
         tail: str | None = None,
-        tail_style: str = "yellow",
     ) -> None:
         """Log an entry-detail line: dim gutter label, value at the title column
 
@@ -855,7 +830,6 @@ class LogFormatter:
             value_style: Optional rich style for the value (e.g. "green")
             level: Logging level. Defaults to logging.INFO
             tail: Optional emphasized suffix (console only). Defaults to None
-            tail_style: Style for the tail. Defaults to "yellow"
         """
 
         self.kv(
@@ -867,7 +841,6 @@ class LogFormatter:
             key_width=DETAIL_KEY_WIDTH,
             sep="",
             tail=tail,
-            tail_style=tail_style,
         )
 
     def blank(self) -> None:
