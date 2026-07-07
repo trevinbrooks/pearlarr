@@ -42,7 +42,7 @@ from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.reporter import RunContext, RunReporter
 from seadexarr.modules.run_services import RunDeps, RunServices
 from seadexarr.modules.seadex_filter import SeadexReleaseFilter
-from seadexarr.modules.seadex_gateway import SeaDexSource
+from seadexarr.modules.seadex_gateway import SeaDexMiss, SeaDexSource
 from seadexarr.modules.seadex_sonarr import SonarrSync
 from seadexarr.modules.seadex_types import (
     EpisodeRecord,
@@ -383,12 +383,15 @@ class FakeSeaDexSource(SeaDexSource):
     Retires ``make_run_deps``'s ``make_bare_instance(SeaDexGateway)`` landmine - a
     zero-attribute bare instance laundered to ``Any``, every access an
     ``AttributeError`` waiting to happen. Backed by a plain ``{al_id: EntryRecord}``
-    map: ``entry`` serves from it; ``prefetch`` is a no-op that records the ids and
-    reports their count (mirroring the real "how many needed fetching" return).
+    map: ``entry`` serves from it (a miss is NO_ENTRY, or OUTAGE when constructed
+    with ``outage=True``, mirroring the real gateway's short-circuit); ``prefetch``
+    is a no-op that records the ids and reports their count (mirroring the real
+    "how many needed fetching" return).
     """
 
-    def __init__(self, entries: dict[int, EntryRecord] | None = None) -> None:
+    def __init__(self, entries: dict[int, EntryRecord] | None = None, *, outage: bool = False) -> None:
         self._entries: dict[int, EntryRecord] = dict(entries or {})
+        self._outage = outage
         self.prefetch_calls: list[list[int]] = []
 
     @override
@@ -399,8 +402,16 @@ class FakeSeaDexSource(SeaDexSource):
         return len(ids)
 
     @override
-    def entry(self, al_id: int) -> EntryRecord | None:
-        return self._entries.get(al_id)
+    def entry(self, al_id: int) -> EntryRecord | SeaDexMiss:
+        found = self._entries.get(al_id)
+        if found is not None:
+            return found
+        return SeaDexMiss.OUTAGE if self._outage else SeaDexMiss.NO_ENTRY
+
+    @property
+    @override
+    def outage(self) -> bool:
+        return self._outage
 
 
 def make_logger(name: str = "seadexarr-test") -> logging.Logger:

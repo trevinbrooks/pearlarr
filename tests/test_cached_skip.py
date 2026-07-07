@@ -199,11 +199,12 @@ class TestCrossArrLookupHonorsParam:
 
 
 class _TailReporter:
-    """Records the no-releases and no-entry outcomes the shared tails report."""
+    """Records the no-releases / no-entry / outage-skip outcomes the shared tails report."""
 
     def __init__(self) -> None:
         self.no_releases_ctxs: list[RunContext] = []
         self.no_sd_entry_ids: list[int] = []
+        self.outage_skip_ids: list[int] = []
 
     def log_no_seadex_releases(self, ctx: RunContext) -> bool:
         self.no_releases_ctxs.append(ctx)
@@ -212,6 +213,11 @@ class _TailReporter:
     def log_no_sd_entry(self, ctx: RunContext, al_id: int) -> bool:
         del ctx
         self.no_sd_entry_ids.append(al_id)
+        return True
+
+    def log_seadex_outage_skip(self, ctx: RunContext, al_id: int) -> bool:
+        del ctx
+        self.outage_skip_ids.append(al_id)
         return True
 
 
@@ -239,6 +245,18 @@ class TestAlIdPrologue:
 
         assert run.al_id_prologue(5) is None
         assert reporter.no_sd_entry_ids == [5]
+        assert reporter.outage_skip_ids == []
+        assert run._ctx.stats.checked == 1
+
+    def test_outage_skip_reports_distinctly_and_returns_none(self) -> None:
+        # A SeaDex-unreachable skip must never be reported as "no entry" - it
+        # takes the outage reporter hook and its own tally.
+        reporter = _TailReporter()
+        run = make_services(_seadex=FakeSeaDexSource(outage=True), _reporter=reporter)
+
+        assert run.al_id_prologue(5) is None
+        assert reporter.outage_skip_ids == [5]
+        assert reporter.no_sd_entry_ids == []
         assert run._ctx.stats.checked == 1
 
     def test_entry_found_resets_skip_flags_and_tallies(self) -> None:

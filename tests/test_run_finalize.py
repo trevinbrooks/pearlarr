@@ -13,9 +13,14 @@ and ``_finalize_run`` is replaced by a typed recorder - so the contracts are
 pinned by asserting recorded state.
 """
 
+import contextlib
 import logging
+from collections.abc import Generator
+from typing import override
 
+from seadexarr.modules.boot_view import BootStep, BootView
 from seadexarr.modules.config import AppConfig, Arr
+from seadexarr.modules.manual_import import OutcomeCategory
 from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.protocols import ImportCompleter
 from seadexarr.modules.reporter import RunContext
@@ -28,6 +33,9 @@ from .fakes import CaptureHandler, FakeArrItem, FakeStrategy
 
 class _FakeGateway:
     """Stands in for the AniList/SeaDex gateways: a cache-warm no-op (0 fetched)."""
+
+    # The loop reads the SeaDex outage flag for the boot note; never down here.
+    outage: bool = False
 
     def load_cache(self) -> None:
         pass
@@ -81,6 +89,7 @@ def _engine(
     logger: logging.Logger,
     *,
     config: AppConfig | None = None,
+    seadex: _FakeGateway | None = None,
 ) -> RunLoop:
     """A bare ``RunLoop`` wired with typed fakes for the run-loop collaborators.
 
@@ -106,7 +115,7 @@ def _engine(
         _config=config,
         _arr_config=config.for_arr(Arr.SONARR),
         _anilist=_FakeGateway(),
-        _seadex=_FakeGateway(),
+        _seadex=seadex if seadex is not None else _FakeGateway(),
         _reporter=_FakeReporter(),
         _services=services,
         _wait_manager=_FakeBound(),
@@ -166,3 +175,73 @@ class TestPerIdErrorContainment:
         assert any(r.levelno == logging.ERROR for r in capture.records)
         # The single finalize still ran once on the normal end-of-run path.
         assert finalize.calls == 1
+
+
+class _RecordingBoot(BootView):
+    """A ``BootView`` that records each step's graduated (label, detail, category)."""
+
+    def __init__(self) -> None:
+        self.steps: list[tuple[str, str | None, OutcomeCategory]] = []
+
+    @override
+    def banner(self) -> None:
+        return
+
+    @override
+    def step(self, label: str) -> contextlib.AbstractContextManager[BootStep]:
+        return self._record(label)
+
+    @contextlib.contextmanager
+    def _record(self, label: str) -> Generator[BootStep]:
+        step = BootStep(lambda _step: None, label)
+        try:
+            yield step
+        finally:
+            self.steps.append((step.label, step.detail, step.category))
+
+    @override
+    def end_section(self) -> None:
+        return
+
+    @override
+    def close(self) -> None:
+        return
+
+
+class TestSeaDexBootNote:
+    """The SeaDex prefetch step's ledger note must be truthful on an outage."""
+
+    def _seadex_step(self, boot: _RecordingBoot) -> tuple[str, str | None, OutcomeCategory]:
+        [step] = [s for s in boot.steps if s[0] == "Fetching SeaDex entries"]
+        return step
+
+    def _run(self, logger: logging.Logger, *, seadex: _FakeGateway) -> _RecordingBoot:
+        strategy = FakeStrategy(
+            items=[FakeArrItem(item_id=1, title="A")],
+            anilist_ids={1: MappingEntry(anilist_id=1)},
+        )
+        boot = _RecordingBoot()
+        _engine(_FinalizeRecorder(), logger, seadex=seadex).run_sync(
+            strategy,
+            item_id=None,
+            dry_run=True,
+            boot=boot,
+        )
+        return boot
+
+    def test_outage_notes_unreachable_not_a_count(self, logger: logging.Logger) -> None:
+        # The prefetch "return" is how many ids NEEDED fetching; on an outage
+        # none were actually fetched, so the old "N entries" note was a lie.
+        seadex = _FakeGateway()
+        seadex.outage = True
+
+        _label, detail, category = self._seadex_step(self._run(logger, seadex=seadex))
+
+        assert detail == "SeaDex unreachable - continuing without"
+        assert category is OutcomeCategory.DEFERRED  # graduates as a warning
+
+    def test_healthy_prefetch_keeps_the_count_note(self, logger: logging.Logger) -> None:
+        _label, detail, category = self._seadex_step(self._run(logger, seadex=_FakeGateway()))
+
+        assert detail == "cached"  # the fake reports 0 fetched -> cache-warm
+        assert category is OutcomeCategory.SUCCESS

@@ -17,6 +17,7 @@ from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
 from seadexarr.modules.config import Arr
 from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.run_services import RunServices
+from seadexarr.modules.seadex_gateway import SeaDexMiss
 from seadexarr.modules.seadex_types import SeadexDict, SonarrEpisode
 from seadexarr.modules.sonarr_client import SonarrClient
 from seadexarr.modules.sonarr_episodes import (
@@ -375,14 +376,14 @@ def _entry(dt: datetime) -> EntryRecord:
 
 
 class _Seadex:
-    """A SeaDex gateway stand-in returning one fixed entry for any al_id."""
+    """A SeaDex gateway stand-in returning one fixed entry (or a miss) for any al_id."""
 
     def __init__(self, entry: EntryRecord | None) -> None:
         self._entry = entry
 
-    def entry(self, al_id: int) -> EntryRecord | None:
+    def entry(self, al_id: int) -> EntryRecord | SeaDexMiss:
         del al_id
-        return self._entry
+        return self._entry if self._entry is not None else SeaDexMiss.NO_ENTRY
 
 
 class TestAlIdNeedsScan:

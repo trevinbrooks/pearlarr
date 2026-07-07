@@ -33,7 +33,7 @@ from .notify import Notifier
 from .planner import DownloadPlanner
 from .reporter import RunContext, RunReporter, is_preview
 from .seadex_filter import FilterResult, SeadexReleaseFilter
-from .seadex_gateway import SeaDexGateway, SeaDexSource
+from .seadex_gateway import SeaDexGateway, SeaDexMiss, SeaDexSource
 from .seadex_types import (
     ARR_REQUEST_TIMEOUT_S,
     ArrReleaseDict,
@@ -389,7 +389,7 @@ class RunServices:
         """
 
         sd_entry = self._seadex.entry(al_id)  # warmed cache, no network
-        if sd_entry is None:
+        if isinstance(sd_entry, SeaDexMiss):
             return False
         return self._skippable_entry(al_id, sd_entry) is None
 
@@ -577,8 +577,11 @@ class RunServices:
     def al_id_prologue(self, al_id: int) -> EntryRecord | None:
         """Shared per-AniList-id head: reset skip flags, tally, fetch SeaDex entry
 
-        Returns the SeaDex entry to process, or None when the id has no SeaDex
-        entry - the caller moves to the next id.
+        Returns the SeaDex entry to process, or None when there's nothing to do -
+        either the id has no SeaDex entry, or the lookup was skipped because
+        SeaDex is unreachable this run. The two misses are reported distinctly
+        (an outage skip must never read as "no entry"); the caller moves to the
+        next id either way.
 
         Args:
             al_id (int): AniList id being processed
@@ -597,8 +600,11 @@ class RunServices:
 
         # Get the SeaDex entry if it exists
         sd_entry = self._seadex.entry(al_id)
-        if sd_entry is None:
-            self._reporter.log_no_sd_entry(self._ctx, al_id)
+        if isinstance(sd_entry, SeaDexMiss):
+            if sd_entry is SeaDexMiss.OUTAGE:
+                self._reporter.log_seadex_outage_skip(self._ctx, al_id)
+            else:
+                self._reporter.log_no_sd_entry(self._ctx, al_id)
             return None
 
         return sd_entry

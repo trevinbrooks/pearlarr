@@ -262,9 +262,13 @@ class RunLoop:
         # Bulk-fetch SeaDex entries for the same ids in batched OR-filter queries,
         # collapsing the per-id from_id round-trips (one per library id, just to read
         # updated_at) into a handful. entry() then serves from this warmed cache.
+        # An outage mid-prefetch must not claim "N entries" it never fetched.
         with boot.step("Fetching SeaDex entries") as step:
             fetched = self._seadex.prefetch(prefetch_ids, progress=step)
-            step.note("cached" if fetched == 0 else count_noun(fetched, "entry", "entries"))
+            if self._seadex.outage:
+                step.warn("SeaDex unreachable - continuing without")
+            else:
+                step.note("cached" if fetched == 0 else count_noun(fetched, "entry", "entries"))
 
         # Warm the per-item episode lists concurrently (Sonarr only; Radarr no-ops,
         # so it gets no step). Kept FRESH - not cached across runs - so the grab/skip

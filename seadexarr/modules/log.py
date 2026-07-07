@@ -469,6 +469,7 @@ class EntryState(StrEnum):
     NO_EPISODES = "no episodes"
     IGNORED = "ignored"
     NO_ENTRY = "no entry"
+    SKIPPED = "skipped"
     QUEUED = "queued"
     IMPORTING = "importing"
     IMPORTED = "imported"

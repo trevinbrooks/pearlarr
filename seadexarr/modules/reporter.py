@@ -7,7 +7,6 @@ import qbittorrentapi
 from rich.text import Text
 from seadex import EntryRecord
 
-from .anilist import get_anilist_title
 from .anilist_gateway import AniListGateway
 from .cache import AbstractCacheStore
 from .config import Arr
@@ -103,6 +102,9 @@ class RunStats:
     up_to_date: int = 0
     cached: int = 0
     no_seadex_entry: int = 0
+    # Lookups skipped because SeaDex was unreachable this run - counted apart
+    # from no_seadex_entry so an outage never reads as "SeaDex has no data".
+    seadex_unreachable: int = 0
     no_releases: int = 0
     no_mappings: int = 0
     needs_action: list[NeedsActionRecord] = field(
@@ -395,6 +397,10 @@ class RunReporter:
         # (an entry exists but nothing suitable to grab) so they don't conflate
         if stats.no_seadex_entry:
             summary_kv("no entry", str(stats.no_seadex_entry))
+        # Outage skips are neither: SeaDex was unreachable, so these titles
+        # weren't looked up at all (they're re-checked next run).
+        if stats.seadex_unreachable:
+            summary_kv("seadex down", str(stats.seadex_unreachable), value_style="yellow")
         if stats.no_releases:
             summary_kv("no release", str(stats.no_releases))
 
@@ -670,15 +676,44 @@ class RunReporter:
         """
 
         ctx.stats.no_seadex_entry += 1
+        return self._log_titled_entry(EntryState.NO_ENTRY, al_id)
 
-        # Resolve a human title so the line is meaningful. There's no SeaDex
-        # entry and the id isn't cached (we only cache processed ids), so this
-        # is a live AniList lookup; the id rides its own "anilist" detail line.
-        anilist_title = get_anilist_title(al_id, al_cache=self.anilist.al_cache)
-        self.log_entry_status(
-            EntryState.NO_ENTRY,
-            anilist_title or f"AniList #{al_id}",
+    def log_seadex_outage_skip(
+        self,
+        ctx: RunContext,
+        al_id: int,
+    ) -> bool:
+        """Log a title whose SeaDex lookup was skipped (SeaDex unreachable)
+
+        The outage skip is NOT a missing entry - the gateway warned once when
+        SeaDex went unreachable - so the ledger says "skipped" with the reason
+        on a detail line, and the tally lands in its own counter.
+
+        Args:
+            ctx (RunContext): The run's state (stats tally).
+            al_id (int): Al ID
+        """
+
+        ctx.stats.seadex_unreachable += 1
+        self._log_titled_entry(EntryState.SKIPPED, al_id)
+        self.log_fmt.detail(
+            "status",
+            "lookup skipped (SeaDex unreachable)",
+            value_style="grey50",
         )
+        return True
+
+    def _log_titled_entry(self, state: EntryState, al_id: int) -> bool:
+        """A ledger row for an id with no SeaDex entry to show, titled via AniList.
+
+        Resolves a human title so the line is meaningful. The id isn't cached
+        (we only cache processed ids), so this may be a live AniList lookup -
+        through the gateway, so its retry log narrates any backoff; the id rides
+        its own "anilist" detail line.
+        """
+
+        anilist_title = self.anilist.title(al_id)
+        self.log_entry_status(state, anilist_title or f"AniList #{al_id}")
         # Only repeat the id on its own line when the ledger shows a title;
         # otherwise the ledger already reads "AniList #<id>" and a detail line
         # would just duplicate it
@@ -760,8 +795,9 @@ class RunReporter:
         entry = self.cache_store.get_entry(arr, al_id)
         anilist_title = entry.name if entry is not None else None
         if anilist_title is None:
-            # Older cache without a stored name - fall back to a lookup
-            anilist_title = get_anilist_title(al_id, al_cache=self.anilist.al_cache)
+            # Older cache without a stored name - fall back to a (gateway)
+            # lookup, so its retry log narrates any backoff.
+            anilist_title = self.anilist.title(al_id)
         if anilist_title is None:
             anilist_title = "(unknown title)"
 

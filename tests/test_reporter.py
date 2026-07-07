@@ -19,6 +19,7 @@ import time
 
 import pytest
 
+from seadexarr.modules.anilist import AniListCache, AniListRetryLog
 from seadexarr.modules.anilist_gateway import AniListGateway
 from seadexarr.modules.cache import AbstractCacheStore, CacheRecord
 from seadexarr.modules.config import Arr
@@ -93,22 +94,79 @@ class TestStatsCounters:
 
     def test_no_sd_entry_increments_and_caches_title(self, monkeypatch: pytest.MonkeyPatch) -> None:
         reporter = _make_reporter()
-        monkeypatch.setattr(
-            "seadexarr.modules.reporter.get_anilist_title",
-            _fake_get_title,
-        )
+        recorder = _patch_title(monkeypatch)
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_no_sd_entry(ctx, 42)
         assert ctx.stats.no_seadex_entry == 1
-        # The lookup caches into the gateway's al_cache in place
-        assert reporter.anilist.al_cache == {42: "Resolved"}
+        # Routed through the gateway: its al_cache is warmed in place and its
+        # per-run retry log rides along, so a rate-limit backoff narrates instead
+        # of hanging silently.
+        assert 42 in reporter.anilist.al_cache
+        assert recorder.retry_logs == [reporter.anilist.retry_log]
+
+    def test_cached_without_stored_name_falls_back_to_gateway_title(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A legacy record predating name storage: the title fallback routes
+        # through the gateway too (retry log threaded), never the bare helper.
+        store = FakeCacheStore()
+        store.update_cache(Arr.SONARR, 1, CacheRecord(coverage="S01", url="u"))
+        reporter = _make_reporter(store)
+        recorder = _patch_title(monkeypatch)
+        ctx = RunContext(arr=Arr.SONARR)
+        reporter.log_cached_entry(ctx, Arr.SONARR, 1)
+        assert ctx.stats.cached == 1
+        assert recorder.retry_logs == [reporter.anilist.retry_log]
+
+    def test_outage_skip_tallies_and_renders_distinctly(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A SeaDex-unreachable skip lands in its own counter and its ledger row
+        # reads "skipped" with the reason - never "no entry".
+        reporter = _make_reporter()
+        recorder = _patch_title(monkeypatch)
+        ctx = RunContext(arr=Arr.SONARR)
+        handler = CaptureHandler()
+        reporter.logger.addHandler(handler)
+        reporter.logger.setLevel(logging.DEBUG)
+        try:
+            reporter.log_seadex_outage_skip(ctx, 42)
+        finally:
+            reporter.logger.removeHandler(handler)
+
+        assert ctx.stats.seadex_unreachable == 1
+        assert ctx.stats.no_seadex_entry == 0
+        joined = "\n".join(r.getMessage() for r in handler.records)
+        assert "skipped" in joined and "Resolved" in joined
+        assert "lookup skipped (SeaDex unreachable)" in joined
+        assert "no entry" not in joined
+        assert recorder.retry_logs == [reporter.anilist.retry_log]
 
 
-def _fake_get_title(al_id: int, al_cache: dict[int, str]) -> str:
-    """Stand-in for ``get_anilist_title``: resolves a fixed title, caching in place."""
+class _RecordingTitle:
+    """Recording stand-in for the gateway's ``get_anilist_title``.
 
-    al_cache[al_id] = "Resolved"
-    return "Resolved"
+    Captures the threaded retry log (the narration seam under test) and caches a
+    fixed title body in place, like the real helper.
+    """
+
+    def __init__(self) -> None:
+        self.retry_logs: list[AniListRetryLog | None] = []
+
+    def __call__(
+        self,
+        al_id: int,
+        al_cache: AniListCache | None = None,
+        retry_log: AniListRetryLog | None = None,
+    ) -> str:
+        self.retry_logs.append(retry_log)
+        if al_cache is not None:
+            al_cache[al_id] = {"data": {"Media": {"id": al_id}}}
+        return "Resolved"
+
+
+def _patch_title(monkeypatch: pytest.MonkeyPatch) -> _RecordingTitle:
+    """Route the gateway's title resolution into a recording stand-in."""
+
+    recorder = _RecordingTitle()
+    monkeypatch.setattr("seadexarr.modules.anilist_gateway.get_anilist_title", recorder)
+    return recorder
 
 
 class TestActiveTitle:
@@ -293,6 +351,25 @@ class TestSummaryNoReleaseRow:
         messages = _summary_messages(_make_reporter(), ctx)
 
         assert any("no release" in m and "2" in m for m in messages)
+
+
+class TestSummarySeadexDownRow:
+    """Outage skips get their own gated "seadex down" row - never the alarming
+    (and untrue) "no entry" count."""
+
+    def test_zero_count_renders_no_row(self) -> None:
+        messages = _summary_messages(_make_reporter(), RunContext(arr=Arr.SONARR))
+
+        assert not any("seadex down" in m for m in messages)
+
+    def test_non_zero_count_renders_the_row_not_no_entry(self) -> None:
+        ctx = RunContext(arr=Arr.SONARR)
+        ctx.stats.seadex_unreachable = 3
+
+        messages = _summary_messages(_make_reporter(), ctx)
+
+        assert any("seadex down" in m and "3" in m for m in messages)
+        assert not any("no entry" in m for m in messages)
 
 
 class TestPrivateOnlyTip:
