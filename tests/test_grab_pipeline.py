@@ -390,7 +390,7 @@ class TestUnsupportedTrackerSkip:
         assert stop is False
         assert pipeline._ctx.torrents_added == 0
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
-        assert [r.reason for r in pipeline._ctx.stats.needs_action] == ["unsupported tracker; no parser yet"]
+        assert [r.reason for r in pipeline._ctx.stats.needs_action] == ["tracker not yet supported; grab manually"]
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.UNSUPPORTED_TRACKER]
 
     def test_private_and_unsupported_surfaces_only_private(self) -> None:
@@ -490,7 +490,8 @@ class TestUnsupportedTrackerSkip:
 
         assert pipeline._ctx.private_only_skipped is True
         assert [r.reason for r in pipeline._ctx.stats.needs_action] == [
-            "private-only release; you own it at a stale size and only a fallback covers it"
+            "private-only release; your copy is outdated (its file size no longer matches) "
+            "and only a fallback covers it"
         ]
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_STALE]
         assert pipeline.cache_store.get_entry(Arr.SONARR, 7) is None

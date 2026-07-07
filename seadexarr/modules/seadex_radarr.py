@@ -168,7 +168,7 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         self.logger.debug(
             indent_string(
-                f"Radarr release group: {radarr_release_group}",
+                f"Radarr release group: {radarr_release_group or '(none)'}",
             ),
         )
 

@@ -554,7 +554,7 @@ class TestAnidbMappingDict:
     def test_ambiguous_id_raises(self) -> None:
         resolver = _anidb_resolver()
         try:
-            with pytest.raises(ValueError, match="Multiple AniDB mappings"):
+            with pytest.raises(ValueError, match="appears in multiple anime-list entries"):
                 resolver.anidb_mapping_dict(2, 1)
         finally:
             resolver.close()
@@ -703,7 +703,7 @@ def _anidb_oracle(root: ElementTree.Element, anidb_id: int, tvdb_season: int) ->
 
     items = [a for a in root.findall("anime") if a.get("anidbid") == str(anidb_id)]
     if len(items) > 1:
-        raise ValueError("Multiple AniDB mappings found. This should not happen!")
+        raise ValueError(f"AniDB id {anidb_id} appears in multiple anime-list entries")
     if len(items) != 1:
         return {}
     result: dict[int, dict[int, int]] = {}
@@ -791,7 +791,7 @@ class TestRealDataParity:
                     try:
                         expected = _anidb_oracle(root, anidb_id, season)
                     except ValueError:
-                        with pytest.raises(ValueError, match="Multiple AniDB mappings"):
+                        with pytest.raises(ValueError, match="appears in multiple anime-list entries"):
                             resolver.anidb_mapping_dict(anidb_id, season)
                         continue
                     assert resolver.anidb_mapping_dict(anidb_id, season) == expected

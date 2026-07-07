@@ -254,7 +254,7 @@ class RunReporter:
         # configured at all - annotate (and later dim) the summary either way.
         is_dry_run = is_preview
         if is_dry_run:
-            note = "nothing grabbed" if has_client else ("no client; nothing grabbed")
+            note = "nothing grabbed" if has_client else ("qBittorrent not configured; nothing grabbed")
             rule_title += f"   (DRY RUN — {note})"
         # A blank before the rule separates the last item from the summary.
         self.log_fmt.blank()
@@ -395,7 +395,8 @@ class RunReporter:
         # (an entry exists but nothing suitable to grab) so they don't conflate
         if stats.no_seadex_entry:
             summary_kv("no entry", str(stats.no_seadex_entry))
-        summary_kv("no release", str(stats.no_releases))
+        if stats.no_releases:
+            summary_kv("no release", str(stats.no_releases))
 
         if stats.unmonitored:
             summary_kv("unmonitored", str(stats.unmonitored))
@@ -423,8 +424,9 @@ class RunReporter:
             tip = "Tip: no public alternative exists yet; the title is re-checked every run until one appears."
         elif any(item.kind is NeedsActionKind.PRIVATE_ONLY_STALE for item in needs):
             tip = (
-                "Tip: you own these releases at a stale size; update them from their private tracker, "
-                "or delete the stale files to let the public fallback stand in."
+                "Tip: your copies of these releases are outdated (their file sizes no longer match); "
+                "update them from their private tracker, or delete the outdated files to let the "
+                "public fallback stand in."
             )
         else:
             tip = None
@@ -797,19 +799,19 @@ class RunReporter:
         """Log the action block for a title that differs from SeaDex's pick
 
         Called after the adding has run, so the status reflects what actually
-        happened rather than what we set out to do. Three outcomes: a fresh (or
-        dry-run) grab reads "adding"; a recommended release already in the client
-        from a PRIOR run - still downloading, not yet imported - reads "already
-        downloading" (and, when the end-of-run monitor is active this session,
-        "waiting to import"); the genuine "you already own it" never reaches here
-        (that's the any_to_download=False path). The block is, in order: the status
-        line, then each recommended release group, then the per-release outcome
-        (added / downloading).
+        happened rather than what we set out to do. Three outcomes: a fresh grab
+        reads "adding" (a dry run reads "would add"); a recommended release
+        already in the client from a PRIOR run - still downloading, not yet
+        imported - reads "already downloading" (and, when the end-of-run monitor
+        is active this session, "waiting to import"); the genuine "you already
+        own it" never reaches here (that's the any_to_download=False path). The
+        block is, in order: the status line, then each recommended release group,
+        then the per-release outcome (added / downloading).
 
         Args:
             seadex_dict (SeadexDict): SeaDex entries (used for the recommended groups)
-            results (list): add_torrent's per-release outcomes (empty on a dry
-                run, where there are no client-reported names)
+            results (list): add_torrent's per-release outcomes (a preview run
+                simulates its adds, so these are present on a dry run too)
             dry_run (bool): No torrent client, so nothing was really grabbed, but
                 we'd have added everything. Defaults to False
             monitor_active (bool): The run will wait on / import pending torrents
@@ -835,10 +837,12 @@ class RunReporter:
         if added:
             self.log_fmt.detail(
                 "status",
-                "your copy differs from SeaDex's pick - adding a better release",
+                "would add SeaDex's recommended release (dry run)"
+                if dry_run
+                else "adding SeaDex's recommended release",
             )
         elif already_downloading:
-            message = "your copy is incomplete - SeaDex's pick is already downloading"
+            message = "SeaDex's pick is already downloading in qBittorrent"
             if monitor_active:
                 message += " - waiting to import"
             self.log_fmt.detail("status", message, value_style="yellow")
@@ -859,7 +863,11 @@ class RunReporter:
         # rather than rendering the literal "None".
         for r in results:
             if r.added:
-                self.log_fmt.detail("added", r.name or r.group, value_style="green")
+                self.log_fmt.detail(
+                    "would add" if dry_run else "added",
+                    r.name or r.group,
+                    value_style="green",
+                )
             elif r.outcome is AddOutcome.ALREADY_ADDED:
                 self.log_fmt.detail("downloading", r.name or r.group, value_style="yellow")
 
@@ -869,7 +877,7 @@ class RunReporter:
         """Produce a log message about hitting the maximum number of torrents added"""
 
         self.logger.info(
-            "Reached the maximum torrents for this run; stopping",
+            "Reached the maximum number of torrents for this run (advanced.max_torrents_to_add); stopping",
             extra={"line_style": "yellow"},
         )
 

@@ -236,7 +236,7 @@ class RunLoop:
                         dirty.update(strategy.item_anilist_ids(item, log_ignored=False))
                 self._services.mark_dirty(dirty)
                 if scan.rescan_all:
-                    step.note("history gap - rechecking all")
+                    step.note("history gap - rechecking all entries")
                 else:
                     step.note("none" if not dirty else count_noun(len(dirty), "changed entry", "changed entries"))
 
@@ -330,7 +330,7 @@ class RunLoop:
                         # Contain a per-id failure to THIS AniList id: a transient error
                         # on one season must not skip the item's other seasons.
                         self.logger.error(
-                            f"{item_title} (anilist {al_id}): unexpected error: {e}",
+                            f"{item_title} (AniList #{al_id}): unexpected error: {e}",
                             exc_info=True,
                         )
                         continue
@@ -440,4 +440,4 @@ class RunLoop:
         try:
             _ = self._notifier.push_wait_summary(arr=self._ctx.arr, result=result)
         except Exception:
-            self.logger.debug("wait completion notification failed", exc_info=True)
+            self.logger.warning("Wait completion notification failed unexpectedly", exc_info=True)

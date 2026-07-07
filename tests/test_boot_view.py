@@ -210,7 +210,8 @@ def test_log_view_is_calm_one_line_per_step() -> None:
 def test_log_view_heads_up_flag_rides_the_step_not_an_id_set() -> None:
     # An id(step)-keyed dedup set can collide once a dead step's address is reused
     # (CPython freelists), swallowing a later step's one-time heads-up; the flag
-    # must live on the step itself.
+    # must live on the step itself. unicode=False also pins the heads-up ellipsis
+    # degrading to ASCII dots alongside the glyphs.
     logger, console = _logger_with_console(force_terminal=False)
     caps = Capabilities(live=False, color=False, unicode=False, width=100, height=40)
     view = LogBootView(logger, caps, time_source=_FakeClock())
@@ -224,8 +225,9 @@ def test_log_view_heads_up_flag_rides_the_step_not_an_id_set() -> None:
     view._on_change(second)
 
     out = _plain(console)
-    assert out.count("First step…") == 1
-    assert out.count("Second step…") == 1
+    assert out.count("First step...") == 1
+    assert out.count("Second step...") == 1
+    assert "…" not in out  # an ASCII console never sees the unicode ellipsis
 
 
 # --- production wiring: the unconfigured-qBittorrent boot warning ---------------
@@ -289,6 +291,23 @@ def test_live_frame_text_ascii_bar_without_unicode() -> None:
     text = view._frame_text(step).plain
     assert "#" in text and "-" in text  # ascii fallback bar
     assert "█" not in text
+
+
+def test_live_frame_text_ascii_ellipsis_without_unicode() -> None:
+    # The bare "working" frame (no progress, no detail) must degrade its ellipsis
+    # to ASCII dots on a console that can't encode "…", like the glyphs do.
+    caps = Capabilities(live=True, color=True, unicode=False, width=100, height=40)
+    view = LiveBootView(
+        Console(file=io.StringIO(), force_terminal=True),
+        caps,
+        logging.getLogger("boot-frame-ellipsis"),
+        time_source=_FakeClock(),
+    )
+    step = BootStep(lambda _s: None, "Reading config")
+
+    text = view._frame_text(step).plain
+    assert text == "Reading config..."
+    assert "…" not in text
 
 
 # --- NullBootView --------------------------------------------------------------

@@ -188,7 +188,7 @@ class GrabPipeline:
         if not url_item.is_public:
             self.log_fmt.detail(
                 "skipped",
-                f"{tracker} private-only",
+                f"{srg} on {tracker} (private-only)",
                 value_style="yellow",
                 level=logging.WARNING,
             )
@@ -423,7 +423,10 @@ class GrabPipeline:
                 elif self._ctx.private_only_stale_held:
                     # One row per title: the stale bit wins over a coexisting
                     # plain hold (self-correcting across runs; never cached).
-                    reason = "private-only release; you own it at a stale size and only a fallback covers it"
+                    reason = (
+                        "private-only release; your copy is outdated (its file size no longer matches) "
+                        "and only a fallback covers it"
+                    )
                     kind = NeedsActionKind.PRIVATE_ONLY_STALE
                 else:
                     reason = "private-only release; no public alternative covers these files"
@@ -440,7 +443,7 @@ class GrabPipeline:
             self._ctx.stats.needs_action.append(
                 self._needs_action(
                     self._ctx.unsupported_tracker_groups,
-                    "unsupported tracker; no parser yet",
+                    "tracker not yet supported; grab manually",
                     NeedsActionKind.UNSUPPORTED_TRACKER,
                 ),
             )

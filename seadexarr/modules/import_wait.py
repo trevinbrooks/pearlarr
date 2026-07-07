@@ -24,6 +24,7 @@ import qbittorrentapi
 
 from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore
 from .config import AppConfig
+from .log import count_noun
 from .manual_import import (
     ImportProbe,
     ImportProgress,
@@ -223,7 +224,7 @@ class ImportWaitManager:
             )
         except Exception:
             self.logger.error(
-                f"Manual import for pending {pending.infohash} raised; leaving it pending for a later run",
+                f"Manual import failed for {pending.display_label}; leaving it for a later run",
                 exc_info=True,
             )
             return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
@@ -278,7 +279,7 @@ class ImportWaitManager:
         state = classify_pending(poll.outcome, probe.files_present)
         self._ctx.pending_states[infohash] = state
         if state is PendingState.IMPORTED:
-            self.apply_post_import_category(infohash)
+            self.apply_post_import_category(infohash, pending.display_label)
             self.drop_pending(infohash)
             self._ctx.stats.imported += 1
         elif state is PendingState.MISSING:
@@ -527,7 +528,8 @@ class ImportWaitManager:
                 continue
             if added_at < cutoff:
                 self.logger.info(
-                    f"Pending import {infohash} older than {self._config.imports.pending_max_age_days} days; dropping",
+                    f"Pending import {pending.display_label} is older than "
+                    f"{count_noun(self._config.imports.pending_max_age_days, 'day')}; giving up on it",
                 )
                 self.drop_pending(infohash)
 
@@ -537,13 +539,14 @@ class ImportWaitManager:
         self.cache_store.drop_pending(self._ctx.arr, infohash)
         self._ctx.pending_imports = [p for p in self._ctx.pending_imports if p.infohash != infohash]
 
-    def apply_post_import_category(self, infohash: str) -> None:
+    def apply_post_import_category(self, infohash: str, label: str) -> None:
         """Move a verified-imported torrent to ``imports.post_import_category``.
 
         Called at the two confirmed-import sites (the reconcile passes and the
         monitor's IMPORTED terminal) - never for MISSING or a TTL drop. Creates
         the category on first use (qBittorrent 409s an unknown one). Best-effort:
-        the import already succeeded, so a client error only warns.
+        the import already succeeded, so a client error only warns - naming the
+        record by its ``label`` (display label), not the bare infohash.
         """
 
         category = self._config.imports.post_import_category
@@ -557,7 +560,7 @@ class ImportWaitManager:
                 self.qbit.torrents_set_category(category=category, torrent_hashes=infohash)
         except (qbittorrentapi.APIError, qbittorrentapi.APIConnectionError) as e:
             self.logger.warning(
-                f"Could not move imported torrent {infohash} to category {category!r}: {e}",
+                f"Could not move imported torrent {label} to category {category!r}: {e}",
             )
 
 
@@ -637,7 +640,7 @@ class MonitorPass:
         )
         self.results.append(WaitOutcomeRow(label=label, outcome=outcome))
         if outcome.category is OutcomeCategory.SUCCESS:
-            self._mgr.apply_post_import_category(h)
+            self._mgr.apply_post_import_category(h, label)
         if outcome.dropped:
             self._mgr.drop_pending(h)
         self.active.discard(h)

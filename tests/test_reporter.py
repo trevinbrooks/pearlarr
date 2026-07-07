@@ -136,7 +136,7 @@ class TestRunSummary:
                 coverage="S02",
                 group="Priv",
                 url="u2",
-                reason="private-only release; private releases not allowed",
+                reason="private-only release; private releases not supported",
                 kind=NeedsActionKind.PRIVATE_ONLY,
             ),
         ]
@@ -278,6 +278,23 @@ class TestSummaryPendingCounters:
         assert not any("queued" in m for m in messages)
 
 
+class TestSummaryNoReleaseRow:
+    """The "no release" row is gated on non-zero, like its no-mapping/no-entry siblings."""
+
+    def test_zero_count_renders_no_row(self) -> None:
+        messages = _summary_messages(_make_reporter(), RunContext(arr=Arr.SONARR))
+
+        assert not any("no release" in m for m in messages)
+
+    def test_non_zero_count_renders_the_row(self) -> None:
+        ctx = RunContext(arr=Arr.SONARR)
+        ctx.stats.no_releases = 2
+
+        messages = _summary_messages(_make_reporter(), ctx)
+
+        assert any("no release" in m and "2" in m for m in messages)
+
+
 class TestPrivateOnlyTip:
     """The private-only guidance tip gates on the record's KIND, never on the
     display ``reason`` text (rewording the string must not kill the tip)."""
@@ -314,8 +331,9 @@ class TestPrivateOnlyTip:
         messages = _summary_messages(_make_reporter(), self._needs_ctx(NeedsActionKind.PRIVATE_ONLY_STALE))
         assert not any("private_releases" in m for m in messages)
         assert any(
-            "you own these releases at a stale size; update them from their private tracker, "
-            "or delete the stale files to let the public fallback stand in." in m
+            "your copies of these releases are outdated (their file sizes no longer match); "
+            "update them from their private tracker, or delete the outdated files to let the "
+            "public fallback stand in." in m
             for m in messages
         )
 
@@ -358,7 +376,7 @@ class TestLogSeadexAction:
         joined = "\n".join(messages)
 
         assert logged is True
-        assert "adding a better release" in joined
+        assert "adding SeaDex's recommended release" in joined
         assert "added" in joined
         assert "Show-NAN0" in joined
 
@@ -415,15 +433,24 @@ class TestLogSeadexAction:
         )
         joined = "\n".join(messages)
 
-        assert "adding a better release" in joined
+        assert "adding SeaDex's recommended release" in joined
         assert "already downloading" not in joined
         assert "new" in joined and "old" in joined
 
-    def test_dry_run_reads_adding(self) -> None:
-        logged, messages = _action_messages(_make_reporter(), [], dry_run=True)
+    def test_dry_run_reads_would_add(self) -> None:
+        # A dry run must never read like a real grab: the status says "would add
+        # ... (dry run)" and the per-release row is labeled "would add".
+        logged, messages = _action_messages(
+            _make_reporter(),
+            [ReleaseOutcome(outcome=AddOutcome.ADDED, name="Show-NAN0", group="NAN0")],
+            dry_run=True,
+        )
+        joined = "\n".join(messages)
 
         assert logged is True
-        assert "adding a better release" in "\n".join(messages)
+        assert "would add SeaDex's recommended release (dry run)" in joined
+        assert any("would add" in m and "Show-NAN0" in m for m in messages)
+        assert "adding SeaDex's recommended release" not in joined
 
     def test_all_skipped_returns_false_and_emits_nothing(self) -> None:
         logged, messages = _action_messages(_make_reporter(), [])

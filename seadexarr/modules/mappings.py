@@ -463,9 +463,10 @@ class MappingResolver:
                     raise
                 if self.logger is not None:
                     self.logger.warning(
-                        "mappings.db unusable; rebuilding indexes in memory for this run",
-                        exc_info=True,
+                        f"Mapping cache at {mappings_db} could not be written; rebuilding it "
+                        "in memory for this run (slower startup, no data lost)",
                     )
+                    self.logger.debug("Mapping cache rebuild cause:", exc_info=True)
                 self._store.close()
                 self._store = MappingStore.open(":memory:", logger=logger)
                 self._build(anime_mappings_cfg, anidb_mappings_cfg, anibridge_mappings_cfg)
@@ -658,7 +659,9 @@ class MappingResolver:
         if not self._anidb_enabled:
             return {}
         if self._store.anidb_is_ambiguous(anidb_id):
-            raise ValueError("Multiple AniDB mappings found. This should not happen!")
+            raise ValueError(
+                f"AniDB id {anidb_id} appears in multiple anime-list entries; cannot resolve its episode mapping",
+            )
         rows = self._store.anidb_rows(anidb_id, tvdb_season)
         if not rows:
             return {}

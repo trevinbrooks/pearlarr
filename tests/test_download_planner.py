@@ -76,7 +76,7 @@ class TestReduceOverlappingDownloads:
         assert skips.fallback_covered is False
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
-        assert skips.notices[0].reason == "private-only (private releases not allowed)"
+        assert skips.notices[0].reason == "private-only (private releases not supported)"
         assert skips.notices[0].level == logging.WARNING
 
     def test_private_only_set_with_unrelated_fallback_still_warns(self) -> None:
@@ -187,7 +187,10 @@ class TestReduceOverlappingDownloads:
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].level == logging.WARNING
-        stale_reason = "private-only; you own this release at a stale size and only a fallback covers it"
+        stale_reason = (
+            "private-only; your copy is outdated (its file size no longer matches the release) "
+            "and only a fallback covers it"
+        )
         assert skips.notices[0].reason == stale_reason
 
     def test_promotion_prefers_fully_public_group(self) -> None:

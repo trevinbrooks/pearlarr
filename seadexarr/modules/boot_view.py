@@ -319,7 +319,7 @@ class LiveBootView(_DurableBootView):
             line.append("  ")
             line.append(step.detail, style="grey50")
         else:
-            line.append("…", style="bold")
+            line.append("…" if self._caps.unicode else "...", style="bold")
         return line
 
 
@@ -342,7 +342,8 @@ class LogBootView(_DurableBootView):
         if step.announced:
             return
         step.announced = True
-        self._logger.info(indent_string(f"{step.label}…"))
+        ellipsis = "…" if self._caps.unicode else "..."
+        self._logger.info(indent_string(f"{step.label}{ellipsis}"))
 
     @override
     def _stop_live(self) -> None:

@@ -1767,7 +1767,7 @@ class TestPostImportCategory:
         handler = CaptureHandler()
         mgr.logger.addHandler(handler)
         try:
-            mgr.apply_post_import_category("h")  # must not raise
+            mgr.apply_post_import_category("h", "Show S01")  # must not raise
         finally:
             mgr.logger.removeHandler(handler)
 

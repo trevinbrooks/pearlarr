@@ -362,7 +362,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 # ANIBRIDGE) and a degraded imdb/tmdb-resolved entry (mode ANIME_IDS),
                 # while a legit Kometa whole-series entry (source ANIME_IDS) stays quiet.
                 self.logger.warning(
-                    indent_string("AniBridge has no usable season ranges for this series; skipping"),
+                    indent_string(f"AniBridge has no usable season ranges for {anilist_title}; skipping"),
                 )
             time.sleep(self._config.advanced.sleep_time)
             return False
@@ -395,7 +395,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         self.logger.debug(
             indent_string(
-                f"Sonarr release group(s): {', '.join(str(rg) for rg in sonarr_release_groups)}",
+                f"Sonarr release group(s): {', '.join(rg or '(none)' for rg in sonarr_release_groups)}",
             ),
         )
 

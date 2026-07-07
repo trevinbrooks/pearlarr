@@ -107,6 +107,12 @@ def normalize_rg(name: str | None) -> str | None:
     return normalize_group(name)
 
 
+def _render_groups(groups: Iterable[str | None]) -> str:
+    """Comma-join release group names for a log line, rendering None as ``(none)``."""
+
+    return ", ".join(rg or "(none)" for rg in groups)
+
+
 def get_episode_keys(
     all_episodes: Iterable[EpisodeRecord],
 ) -> set[tuple[int | None, int | None]]:
@@ -358,7 +364,8 @@ class DownloadPlanner:
                 elif infohash is None:
                     self.logger.debug(
                         indent_string(
-                            "Hashless release already represented by the cache's None marker; skipping (see above)",
+                            "Hashless release already represented by the cache's None marker; "
+                            "skipping (hashless releases can't be told apart)",
                         ),
                     )
 
@@ -527,7 +534,7 @@ class DownloadPlanner:
                 self.logger.debug(
                     indent_string(
                         f"SeaDex release group {seadex_rg} in {arr.capitalize()} releases: "
-                        f"{', '.join([str(x) for x in arr_release_groups])}, but file sizes do not match - will download {url}",
+                        f"{_render_groups(arr_release_groups)}, but file sizes do not match - will download {url}",
                     ),
                 )
 
@@ -538,14 +545,14 @@ class DownloadPlanner:
                 self.logger.debug(
                     indent_string(
                         f"SeaDex release group {seadex_rg} in {arr.capitalize()} releases: "
-                        f"{', '.join([str(x) for x in arr_release_groups])}, and file sizes match",
+                        f"{_render_groups(arr_release_groups)}, and file sizes match",
                     ),
                 )
         elif not overlapping_results:
             self.logger.debug(
                 indent_string(
                     f"SeaDex release group {seadex_rg} not in {arr.capitalize()} releases: "
-                    f"{', '.join([str(x) for x in arr_release_groups])} - will download {url}",
+                    f"{_render_groups(arr_release_groups)} - will download {url}",
                 ),
             )
 
@@ -650,7 +657,7 @@ class DownloadPlanner:
                             indent_string(
                                 f"SeaDex release group {seadex_rg} differs from "
                                 f"{arr.capitalize()} release for "
-                                f"{season_ep_str} ({sonarr_rg}) and no other "
+                                f"{season_ep_str} ({sonarr_rg or 'no group'}) and no other "
                                 f"recommended release covers it - will download {url}",
                             ),
                         )
@@ -822,10 +829,13 @@ class DownloadPlanner:
             # replace (only reachable upgrade-pending; the soft-skip consumed
             # the other case): mark the stale hold for the summary row.
             if fallback_rides:
-                reason = "private-only; you own this release at a stale size and only a fallback covers it"
+                reason = (
+                    "private-only; your copy is outdated (its file size no longer matches the release) "
+                    "and only a fallback covers it"
+                )
                 skips.stale_held = True
             else:
-                reason = "private-only (private releases not allowed)"
+                reason = "private-only (private releases not supported)"
             skips.notices.append(
                 SkipNotice(
                     groups=list(flagged),

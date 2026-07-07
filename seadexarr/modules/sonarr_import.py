@@ -22,7 +22,7 @@ from typing import Any, NamedTuple
 
 from .cache import UPDATED_AT_STR_FORMAT
 from .config import Arr
-from .log import indent_string
+from .log import count_noun, indent_string, pluralize
 from .manual_import import (
     ImportProbe,
     ImportProgress,
@@ -286,7 +286,8 @@ class ImportExecutor:
             # loudly only then, debug otherwise. Either way the record is retried,
             # never dropped silently.
             message = indent_string(
-                f"{content_path}: {len(missing)} intended file(s) not visible to Sonarr for {pending.display_label}; will retry",
+                f"{content_path}: {count_noun(len(missing), 'intended file')} "
+                f"not visible to Sonarr for {pending.display_label}; will retry",
             )
             if at_deadline:
                 self.logger.warning(message)
@@ -315,7 +316,7 @@ class ImportExecutor:
         # the files imported on command acceptance: report RETRY + command_issued,
         # so the next monitor cycle flips to files_present once they appear.
         self.logger.debug(
-            indent_string(f"{content_path}: queued {len(files)} file(s) for import (command {cmd_id})"),
+            indent_string(f"{content_path}: queued {count_noun(len(files), 'file')} for import (command {cmd_id})"),
         )
         return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=True)
 
@@ -339,8 +340,8 @@ class ImportExecutor:
         coverage = f" ({pending.coverage})" if pending.coverage else ""
         self.logger.warning(
             indent_string(
-                f"{label}{coverage}: {len(unplaceable)} file(s) could not be mapped "
-                f"to a resolved episode and were left unimported",
+                f"{label}{coverage}: {count_noun(len(unplaceable), 'file')} could not be matched "
+                f"to an episode and {pluralize(len(unplaceable), 'was', 'were')} not imported",
             ),
         )
 

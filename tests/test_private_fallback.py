@@ -45,8 +45,12 @@ PUB_URL = "https://nyaa.si/view/1"
 PUB_HASH = "f" * 40
 
 # The stale-owned hold's planner notice and needs-action row wording, pinned.
-STALE_NOTICE = "private-only; you own this release at a stale size and only a fallback covers it"
-STALE_ROW_REASON = "private-only release; you own it at a stale size and only a fallback covers it"
+STALE_NOTICE = (
+    "private-only; your copy is outdated (its file size no longer matches the release) and only a fallback covers it"
+)
+STALE_ROW_REASON = (
+    "private-only release; your copy is outdated (its file size no longer matches) and only a fallback covers it"
+)
 
 
 def _entry_private_pick_plus_public_alt() -> EntryRecord:
@@ -303,7 +307,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
             hashes, out = filt.filter_downloads(11, sd, {"Priv": [100]}, ep_list)
 
         warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
-        assert any("private-only (private releases not allowed)" in m for m in warnings), warnings
+        assert any("private-only (private releases not supported)" in m for m in warnings), warnings
         assert ctx.private_only_skipped is True
 
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="warn", sleep_time=0)
@@ -432,7 +436,7 @@ class TestFilterDownloadsNoticeSeam:
         info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
         warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
         assert any("PrivA private-only; grabbing public alternative PubA" in m for m in info), info
-        assert any("PrivB private-only (private releases not allowed)" in m for m in warnings), warnings
+        assert any("PrivB private-only (private releases not supported)" in m for m in warnings), warnings
         # The skip flag + group names land on the run context for the grab tail
         # (a promotion succeeded, so no stale hold rides along).
         assert ctx.private_only_skipped is True
@@ -1076,7 +1080,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         with _capture(warn_filt.logger) as handler:
             warn_hashes, warn_out = warn_filt.filter_downloads(11, sd_warn, {"Fall": [555]}, ep_list)
         warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
-        assert any("private-only (private releases not allowed)" in m for m in warnings), warnings
+        assert any("private-only (private releases not supported)" in m for m in warnings), warnings
 
         warn_pipe = make_grab_pipeline(cache_store=cache, _ctx=warn_ctx, private_releases="warn", sleep_time=0)
         warn_pipe.grab_and_cache(_grab_request(11, warn_out, warn_hashes, entry))
