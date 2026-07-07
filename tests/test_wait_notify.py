@@ -285,6 +285,43 @@ def test_push_grab_4xx_disables_discord_for_the_run(monkeypatch: pytest.MonkeyPa
     assert all("secret-token" not in message for message in warnings)
 
 
+def test_push_grab_429_stays_per_push_and_names_the_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A 429 is Discord throttling a HEALTHY webhook (a first-sync burst can outrun
+    # the 1s pacing), not a dead one: it must NOT disable pushes for the run, and
+    # the warning must name the rate limit rather than blaming the config.
+    posts: list[str] = []
+
+    def raising_discord_push(*, url: str, embed: DiscordEmbed) -> None:
+        del embed
+        posts.append(url)
+        raise _http_error(429)
+
+    def no_sleep(seconds: float) -> None:
+        del seconds  # the second push would otherwise pay the real 1s pacing
+
+    monkeypatch.setattr(notify, "discord_push", raising_discord_push)
+    monkeypatch.setattr(time, "sleep", no_sleep)
+    logger = make_logger()
+    notifier = Notifier(discord_url="https://discord.example", logger=logger)
+
+    with _capture(logger) as handler:
+        assert _push_grab(notifier) is False
+        assert _push_grab(notifier) is False
+
+    assert notifier.enabled is True  # NOT disabled - later pushes still go out
+    assert posts == ["https://discord.example"] * 2  # both pushes were attempted
+    warnings = [r.getMessage() for r in handler.records if r.levelno == logging.WARNING]
+    assert (
+        warnings
+        == [
+            "Discord notification failed (HTTP 429) - rate limited by Discord; later notifications will still be sent",
+        ]
+        * 2
+    )
+    assert all("discord_url" not in message for message in warnings)  # config isn't at fault
+    assert all("secret-token" not in message for message in warnings)
+
+
 def test_push_grab_5xx_stays_per_push(monkeypatch: pytest.MonkeyPatch) -> None:
     # A 5xx is transient (Discord hiccup): keep trying - and warning - per push.
     def raising_discord_push(*, url: str, embed: DiscordEmbed) -> None:

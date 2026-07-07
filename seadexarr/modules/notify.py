@@ -264,8 +264,9 @@ class Notifier:
         is contained here (warn, return False): a notification failure must never
         abort a grab or skip the cache-update tail. A 4xx means the webhook
         itself is bad (e.g. deleted -> 404), so Discord pushes are disabled for
-        the rest of the run instead of warning once per grab; 5xx / connection
-        errors are transient and stay per-push.
+        the rest of the run instead of warning once per grab - EXCEPT a 429,
+        which is Discord throttling a healthy webhook (a burst can outrun the 1s
+        pacing), so it stays per-push like the transient 5xx / connection errors.
         """
 
         if self.discord_url is None:
@@ -276,7 +277,15 @@ class Notifier:
             discord_push(url=self.discord_url, embed=embed)
         except requests.RequestException as exc:
             detail = _failure_detail(exc)
-            if exc.response is not None and 400 <= exc.response.status_code < 500:
+            status = exc.response.status_code if exc.response is not None else None
+            if status == 429:
+                # Rate-limited, not a dead webhook: this push is dropped, later
+                # ones still go out. Don't point at the config - it's fine.
+                self.logger.warning(
+                    f"Discord notification failed ({detail}) - rate limited by Discord; "
+                    f"later notifications will still be sent",
+                )
+            elif status is not None and 400 <= status < 500:
                 self.discord_url = None
                 self.logger.warning(
                     f"Discord notification failed ({detail}) - disabling Discord notifications "
