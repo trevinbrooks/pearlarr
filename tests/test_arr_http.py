@@ -137,6 +137,18 @@ def test_shape_helpers_reject_the_wrong_shape() -> None:
 
 
 @respx.mock
+def test_warn_template_with_literal_braces_is_safe() -> None:
+    # Migration call sites embed filenames/titles, which can carry braces
+    # ("Steins;{Gate}"); the fail-open warning must never crash on them.
+    respx.get(f"{_URL}/api/v3/thing").respond(status_code=404)
+    http, capture = _bind("arr-http-braces")
+
+    assert http.get_json("/api/v3/thing", warn="Could not parse Steins;{Gate} ({detail})") is None
+    [record] = capture.records
+    assert record.getMessage() == "Could not parse Steins;{Gate} (status code 404)"
+
+
+@respx.mock
 def test_warn_none_fails_open_silently() -> None:
     respx.get(f"{_URL}/api/v3/thing").respond(status_code=404)
     http, capture = _bind("arr-http-quiet")

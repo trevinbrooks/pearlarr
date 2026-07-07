@@ -525,6 +525,23 @@ class TestFilterByReleaseGroup:
         assert result.seadex_dict["Ember"].urls["u1"].download is False
         assert result.torrent_hashes == []
 
+    def test_matching_group_case_insensitive_size_mismatch_downloads(self) -> None:
+        # The same normalized group with DISJOINT sizes must still upgrade.
+        # This pins the membership + size-lookup normalization specifically:
+        # the overlap-gate normalization alone would read the group as covered
+        # and leave download False (a silently missed upgrade).
+        planner = make_planner()
+        seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[200], infohash="h1")})}
+        result = planner.filter_by_release_group(
+            seadex_dict=seadex,
+            arr=Arr.RADARR,
+            arr_release_dict={"EMBER": [100]},
+            ep_list=None,
+        )
+        assert result.seadex_dict["Ember"].urls["u1"].download is True
+        assert result.seadex_dict["Ember"].urls["u1"].size_mismatch is True
+        assert result.torrent_hashes == ["h1"]
+
     def test_episode_match_same_rg_and_size_no_download(self) -> None:
         planner = make_planner()
         seadex = {

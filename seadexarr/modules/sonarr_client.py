@@ -511,9 +511,14 @@ class SonarrClient(AbstractSonarrClient):
                 return records
 
             # The paged object's "records" is the array of QueueResource objects;
-            # cast at the parse boundary, then narrow each to the fields the
-            # wait reads via from_api.
-            raw_records = cast("list[dict[str, Any]]", paged.get("records", []))
+            # guard the element shape too (a stray non-object entry is skipped,
+            # never crashed on), then narrow each to the fields the wait reads.
+            raw = paged.get("records")
+            raw_records: list[dict[str, Any]] = []
+            if isinstance(raw, list):
+                raw_records = [
+                    cast("dict[str, Any]", record) for record in cast("list[object]", raw) if isinstance(record, dict)
+                ]
             records.extend(QueueRecord.from_api(record) for record in raw_records)
 
             total = paged.get("totalRecords")

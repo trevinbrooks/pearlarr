@@ -121,8 +121,10 @@ class ArrHttp:
         for attempt in range(GET_RETRIES + 1):
             try:
                 response = self.client.get(f"{self.base_url}{path}", params=params, headers=self.headers)
-            except httpx.HTTPError as e:
-                # Name the failure type: "ConnectError" beats a bare "failed".
+            except (httpx.HTTPError, httpx.InvalidURL) as e:
+                # InvalidURL is NOT an HTTPError subclass; a config URL weird
+                # enough to fail httpx's parser must still fail open, not abort.
+                # Naming the failure type: "ConnectError" beats a bare "failed".
                 detail = f"request failed ({type(e).__name__})"
                 response = None
             else:
@@ -176,10 +178,14 @@ class ArrHttp:
         return cast("dict[str, object]", payload)
 
     def _fail(self, warn: str | None, detail: str) -> None:
-        """The single fail-open tail: warn (when wanted) and return None."""
+        """The single fail-open tail: warn (when wanted) and return None.
+
+        Literal replace, NOT str.format: templates will embed filenames/titles
+        (which can carry braces), and the fail-open path must never crash.
+        """
 
         if warn is not None:
-            self.logger.warning(warn.format(detail=detail))
+            self.logger.warning(warn.replace("{detail}", detail))
         return None
 
 
