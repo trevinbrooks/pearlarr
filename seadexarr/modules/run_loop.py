@@ -262,7 +262,7 @@ class RunLoop:
         with boot.step("Fetching SeaDex entries") as step:
             fetched = self._seadex.prefetch(prefetch_ids, progress=step)
             if self._seadex.outage:
-                step.warn("SeaDex unreachable - continuing without")
+                step.warn("SeaDex unreachable - unfetched titles will be skipped")
             else:
                 step.note("cached" if fetched == 0 else count_noun(fetched, "entry", "entries"))
 

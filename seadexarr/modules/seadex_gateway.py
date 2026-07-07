@@ -84,9 +84,9 @@ class SeaDexGateway(SeaDexSource):
         # is known-absent and ``entry`` can skip the per-id fallback call.
         self._entry_cache: dict[int, EntryRecord] = {}
         self._prefetched: set[int] = set()
-        # Set once a request has failed twice (batches get one immediate retry):
-        # SeaDex is down for this run, so every later batch/lookup short-circuits
-        # instead of re-timing-out per id.
+        # Set once a request has failed twice (batch and single-id lookups both
+        # get one immediate retry): SeaDex is down for this run, so every later
+        # batch/lookup short-circuits instead of re-timing-out per id.
         self._outage = False
 
     @property
@@ -197,12 +197,21 @@ class SeaDexGateway(SeaDexSource):
     def _entry_single(self, al_id: int) -> EntryRecord | SeaDexMiss:
         """Single by-id lookup with the orchestrator's graceful degradation.
 
-        A missing entry (``EntryNotFoundError``) is NO_ENTRY; a SeaDex outage (any
-        ``httpx.HTTPError`` - connection failure, timeout, HTTP error status; the
-        same breadth :meth:`prefetch` catches) is OUTAGE, so the caller can report
-        the skip truthfully; the first outage warns once and mutes later lookups.
+        A missing entry (``EntryNotFoundError``) is NO_ENTRY, immediately - that's
+        SeaDex answering, not failing. A failed request (any ``httpx.HTTPError`` -
+        connection failure, timeout, HTTP error status; the same breadth
+        :meth:`prefetch` catches) gets ONE immediate silent retry, mirroring
+        :meth:`_fetch_chunk` (a single transient 502 must not write off the whole
+        run); only a lookup that fails twice is OUTAGE, so the caller can report
+        the skip truthfully - it warns once and mutes later lookups.
         """
 
+        try:
+            return self.seadex.from_id(al_id)
+        except EntryNotFoundError:
+            return SeaDexMiss.NO_ENTRY
+        except httpx.HTTPError:
+            pass
         try:
             return self.seadex.from_id(al_id)
         except EntryNotFoundError:

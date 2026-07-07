@@ -667,7 +667,11 @@ class RunReporter:
         """
 
         ctx.stats.seadex_unreachable += 1
-        self._log_titled_entry(EntryState.SKIPPED, al_id)
+        # Many outage-skipped ids were processed on a past run, so their name
+        # sits in the cache row: prefer it over an AniList lookup, which in a
+        # compound SeaDex+AniList outage would pay retry backoff per title.
+        entry = self.cache_store.get_entry(ctx.arr, al_id)
+        self._log_titled_entry(EntryState.SKIPPED, al_id, name=entry.name if entry is not None else None)
         self.log_fmt.detail(
             "status",
             "lookup skipped (SeaDex unreachable)",
@@ -675,16 +679,16 @@ class RunReporter:
         )
         return True
 
-    def _log_titled_entry(self, state: EntryState, al_id: int) -> bool:
-        """A ledger row for an id with no SeaDex entry to show, titled via AniList.
+    def _log_titled_entry(self, state: EntryState, al_id: int, *, name: str | None = None) -> bool:
+        """A ledger row for an id with no SeaDex entry to show.
 
-        Resolves a human title so the line is meaningful. The id isn't cached
-        (we only cache processed ids), so this may be a live AniList lookup -
-        through the gateway, so its retry log narrates any backoff; the id rides
-        its own "anilist" detail line.
+        Renders the caller-supplied ``name`` when one is known (the outage path
+        reads it off the cache row); otherwise resolves a human title live via
+        AniList - through the gateway, so its retry log narrates any backoff.
+        Either way the id rides its own "anilist" detail line.
         """
 
-        anilist_title = self.anilist.title(al_id)
+        anilist_title = name if name is not None else self.anilist.title(al_id)
         self.log_entry_status(state, anilist_title or f"AniList #{al_id}")
         # Only repeat the id on its own line when the ledger shows a title;
         # otherwise the ledger already reads "AniList #<id>" and a detail line

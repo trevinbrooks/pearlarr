@@ -118,7 +118,8 @@ class TestStatsCounters:
 
     def test_outage_skip_tallies_and_renders_distinctly(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # A SeaDex-unreachable skip lands in its own counter and its ledger row
-        # reads "skipped" with the reason - never "no entry".
+        # reads "skipped" with the reason - never "no entry". An UNCACHED id has
+        # no stored name, so the title still comes from the gateway lookup.
         reporter = _make_reporter()
         recorder = _patch_title(monkeypatch)
         ctx = RunContext(arr=Arr.SONARR)
@@ -137,6 +138,27 @@ class TestStatsCounters:
         assert "lookup skipped (SeaDex unreachable)" in joined
         assert "no entry" not in joined
         assert recorder.retry_logs == [reporter.anilist.retry_log]
+
+    def test_outage_skip_prefers_cached_name_over_anilist(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A previously-processed title's name sits in the cache row: the outage
+        # skip must render it from there with NO AniList lookup - in a compound
+        # SeaDex+AniList outage a lookup would pay retry backoff per title.
+        reporter = _make_reporter(_seeded_store(name="Stored Title", coverage="S01", url="u"))
+        recorder = _patch_title(monkeypatch)
+        ctx = RunContext(arr=Arr.SONARR)
+        handler = CaptureHandler()
+        reporter.logger.addHandler(handler)
+        reporter.logger.setLevel(logging.DEBUG)
+        try:
+            reporter.log_seadex_outage_skip(ctx, 1)
+        finally:
+            reporter.logger.removeHandler(handler)
+
+        assert ctx.stats.seadex_unreachable == 1
+        joined = "\n".join(r.getMessage() for r in handler.records)
+        assert "Stored Title" in joined
+        assert "lookup skipped (SeaDex unreachable)" in joined
+        assert recorder.retry_logs == []  # the stored name spared the lookup
 
 
 class _RecordingTitle:
