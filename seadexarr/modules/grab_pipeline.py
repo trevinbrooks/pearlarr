@@ -331,9 +331,10 @@ class GrabPipeline:
 
         Identical across both Arrs once the (Arr-specific) ``seadex_dict`` and
         release-group info have been resolved (bundled into ``req``). Returns True
-        only when max_torrents_to_add has been reached (cache saved and summary
-        logged), so the caller stops the whole run; otherwise False (move to the
-        next id).
+        only when max_torrents_to_add has been reached (after the needs-action
+        tail has recorded this title's summary row; the engine's single finalize
+        site does the save + summary), so the caller stops the whole run;
+        otherwise False (move to the next id).
         """
 
         # Reset the per-title grab-failure note (set in _add_one_url, read below).
@@ -346,6 +347,13 @@ class GrabPipeline:
         # THIS title actually grabbed anything
         torrents_before = self._ctx.torrents_added
 
+        # Set when _grab hits max_torrents_to_add: the needs-action tail below
+        # still runs (a contained grab failure on this title must land its summary
+        # row even at the cap), but the per-title cache update is skipped - the cap
+        # can stop the url loop mid-title - and True stops the run (the engine's
+        # single finalize site does the actual cache save).
+        cap_reached = False
+
         if not any_to_download:
             if not self._ctx.private_only_skipped:
                 self._ctx.stats.up_to_date += 1
@@ -354,11 +362,8 @@ class GrabPipeline:
                     "already have the recommended release",
                     value_style="blue",
                 )
-        elif self._grab(req):
-            # max_torrents_to_add reached: _grab logged the cap and the run stops
-            # here (the per-title cache update below is deliberately skipped); the
-            # engine's single finalize site does the actual cache save.
-            return True
+        else:
+            cap_reached = self._grab(req)
 
         # Work out whether THIS title actually grabbed anything
         added_this_title = self._ctx.torrents_added - torrents_before
@@ -381,9 +386,12 @@ class GrabPipeline:
         # Cache the title as done only when something was grabbed, or nothing was
         # skipped. A private-only OR unsupported-tracker skip that left nothing
         # grabbed keeps it uncached, so it's re-checked once a public release /
-        # parser / config change lands.
+        # parser / config change lands. A cap-reached title is never cached (the
+        # cap can leave its later urls unattempted), but still falls through to
+        # the needs-action classification below.
         if (
-            not fallback_hold
+            not cap_reached
+            and not fallback_hold
             and not grab_failed
             and (added_this_title > 0 or not (self._ctx.private_only_skipped or self._ctx.unsupported_tracker_skipped))
         ):
@@ -458,6 +466,11 @@ class GrabPipeline:
                     NeedsActionKind.GRAB_FAILED,
                 ),
             )
+
+        # Cap reached: stop the run now that the summary rows are recorded (no
+        # point throttling a run that's over).
+        if cap_reached:
+            return True
 
         # Add in a wait, if required
         time.sleep(self._config.advanced.sleep_time)

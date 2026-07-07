@@ -301,6 +301,8 @@ class TestGrabAndCacheCapStop:
         assert pipeline._ctx.torrents_added == 1
         # The engine's single finalize site owns the save; no per-title write here.
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
+        # A clean cap stop reports nothing extra (no phantom needs-action row).
+        assert pipeline._ctx.stats.needs_action == []
 
 
 class TestUpToDateTally:
@@ -774,6 +776,31 @@ class TestGrabFailureContainment:
         assert pipeline._ctx.torrents_added == 1
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.GRAB_FAILED]
+
+    def test_cap_reached_with_a_failure_still_lands_the_grab_failed_row(self) -> None:
+        # A title whose grab failed AND whose sibling add hit max_torrents_to_add
+        # used to report nothing (the cap return skipped the needs-action tail):
+        # the GRAB_FAILED row must still land, the run still stops, and the
+        # cap-stopped title still isn't cached.
+        bad = _nyaa_release(url="https://nyaa.si/view/1", infohash="hBad")
+        good = _nyaa_release(url="https://nyaa.si/view/2", infohash="hGood")
+        seadex_dict: SeadexDict = {"RG": rg_group({bad.url: bad, good.url: good})}
+        torrents = FakeTorrents(
+            {"hGood": (AddOutcome.ADDED, "Show-RG")},
+            raises={"hBad": httpx.ConnectError("nyaa down")},
+        )
+        pipeline = _pipeline(torrents=torrents, max_torrents_to_add=1, sleep_time=0)
+        pipeline._anilist.al_cache.update({42: {}})
+        pipeline._ctx.current_title = "Show S1"
+
+        stop = pipeline.grab_and_cache(self._request(42, seadex_dict, ["hBad", "hGood"]))
+
+        assert stop is True  # the cap still stops the run
+        assert pipeline._ctx.torrents_added == 1
+        rows = pipeline._ctx.stats.needs_action
+        assert [r.kind for r in rows] == [NeedsActionKind.GRAB_FAILED]
+        assert rows[0].group == "RG"
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
 
     def test_next_clean_title_caches_after_a_failed_one(self) -> None:
         # The per-title failure note resets: title 1's failure must not hold
