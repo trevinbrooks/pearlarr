@@ -9,7 +9,6 @@ from typing import NamedTuple
 import httpx
 import pynyaa
 import qbittorrentapi
-import requests
 from seadex import Tracker
 
 from .log import indent_string
@@ -26,36 +25,35 @@ class TorrentAddError(Exception):
     """qBittorrent rejected the add (a non-``"Ok."`` ``torrents_add`` result)."""
 
 
-# The expected external failures a grab can hit: the tracker scrape (requests /
-# pynyaa's httpx), the parse itself, and the qBittorrent add. The grab pipeline
-# contains these per release; anything else is a bug and propagates.
+# The expected external failures a grab can hit: the tracker scrape (all
+# httpx, incl. pynyaa's), the parse itself, and the qBittorrent add. The grab
+# pipeline contains these per release; anything else is a bug and propagates.
 GRAB_FAILURES: tuple[type[Exception], ...] = (
     TorrentParseError,
     TorrentAddError,
-    requests.RequestException,
     httpx.HTTPError,
     pynyaa.PyNyaaError,
     qbittorrentapi.APIError,
 )
 
 
-# Uniform parser signature: (url, infohash, session) -> (download/magnet link,
+# Uniform parser signature: (url, infohash, client) -> (download/magnet link,
 # release title scraped from the source page). Wrappers adapt the per-tracker args.
-type _Parser = Callable[[str, str | None, requests.Session], tuple[str | None, str]]
+type _Parser = Callable[[str, str | None, httpx.Client], tuple[str | None, str]]
 
 
-def _parse_nyaa(url: str, infohash: str | None, session: requests.Session) -> tuple[str | None, str]:
-    del infohash, session
+def _parse_nyaa(url: str, infohash: str | None, client: httpx.Client) -> tuple[str | None, str]:
+    del infohash, client
     return get_nyaa_torrent(url=url)
 
 
-def _parse_animetosho(url: str, infohash: str | None, session: requests.Session) -> tuple[str | None, str]:
+def _parse_animetosho(url: str, infohash: str | None, client: httpx.Client) -> tuple[str | None, str]:
     del infohash
-    return get_animetosho_torrent(url=url, session=session)
+    return get_animetosho_torrent(url=url, client=client)
 
 
-def _parse_rutracker(url: str, infohash: str | None, session: requests.Session) -> tuple[str | None, str]:
-    return get_rutracker_torrent(url=url, infohash=infohash, session=session)
+def _parse_rutracker(url: str, infohash: str | None, client: httpx.Client) -> tuple[str | None, str]:
+    return get_rutracker_torrent(url=url, infohash=infohash, client=client)
 
 
 # One parser per supported tracker; PARSEABLE_TRACKERS derives from this table so
@@ -116,25 +114,25 @@ class TorrentService:
         self,
         *,
         qbit: qbittorrentapi.Client | None,
-        session: requests.Session,
+        web: httpx.Client,
         category: str | None,
         tags: list[str] | None,
         logger: logging.Logger,
     ) -> None:
-        """Wire the adapter to the client and the shared HTTP session.
+        """Wire the adapter to the client and the shared web HTTP client.
 
         Args:
             qbit (qbittorrentapi.Client | None): The logged-in client, or None
                 when no client is configured (every add is then a preview).
-            session (requests.Session): Shared keep-alive session for the
-                tracker page scrapes.
+            web (httpx.Client): Shared keep-alive client for the tracker page
+                scrapes.
             category (str | None): qBittorrent category for added torrents.
             tags (list[str] | None): qBittorrent tags for added torrents.
             logger (logging.Logger): For the "already in qBittorrent" debug line.
         """
 
         self.qbit = qbit
-        self.session = session
+        self.web = web
         self.category = category
         self.tags = tags
         self.logger = logger
@@ -162,7 +160,7 @@ class TorrentService:
         parser = _PARSERS.get(item.tracker)
         if parser is None:
             raise ValueError(f"Unable to parse torrent links from {item.tracker}")
-        parsed_url, source_name = parser(item.url, item.infohash, self.session)
+        parsed_url, source_name = parser(item.url, item.infohash, self.web)
 
         if parsed_url is None:
             raise TorrentParseError(f"Could not extract a torrent download link from {item.url}")

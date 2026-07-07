@@ -394,7 +394,11 @@ def _run_arrs(
         from .run_services import QbitConnectionError, RunDeps, RunServices
         from .seadex_radarr import RadarrSync
         from .seadex_sonarr import SonarrSync
+        from .web_client import make_web_client
 
+        # One shared client for all non-arr web traffic this cycle (tracker
+        # scrapes, AniList, webhooks); both arr legs reuse its pool.
+        web = make_web_client()
         try:
             # In scheduled mode retry_note states the loop's next move on every
             # skip (a single run just exits, so there is nothing to append).
@@ -433,6 +437,7 @@ def _run_arrs(
                             logger=logger,
                             mappings=mappings,
                             app_config=app_config,
+                            web=web,
                             cache_legacy=paths.cache_legacy,
                             boot=boot,
                         )
@@ -499,6 +504,7 @@ def _run_arrs(
                 mappings.close()
         finally:
             boot.close()
+            web.close()
 
         return all_arrs_completed
 

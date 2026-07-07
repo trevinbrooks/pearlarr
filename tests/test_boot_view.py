@@ -20,6 +20,7 @@ import re
 from pathlib import Path
 from typing import override
 
+import httpx
 from rich.console import Console
 
 from seadexarr.modules.boot_view import (
@@ -247,6 +248,7 @@ def test_rundeps_build_warns_deferred_when_qbit_unconfigured(tmp_path: Path) -> 
         logger=logger,
         mappings=make_bare_instance(MappingResolver),
         app_config=make_config(),  # no qbittorrent credentials
+        web=httpx.Client(),
         boot=view,
     )
     view.close()

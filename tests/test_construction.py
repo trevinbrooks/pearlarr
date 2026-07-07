@@ -119,6 +119,7 @@ def test_rundeps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest.Monk
         logger=logging.getLogger("seadexarr.test"),
         mappings=make_bare_instance(MappingResolver),
         app_config=make_config(verify_ssl=False),
+        web=httpx.Client(),
     )
     deps.close()
 

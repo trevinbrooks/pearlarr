@@ -2,19 +2,20 @@
 """Direct tests for the tracker HTML/feed parsers in ``torrent``.
 
 The three ``get_*_torrent`` helpers scrape a release page (and, for AnimeTosho,
-a JSON feed) into ``(download_url, title)``. AnimeTosho and RuTracker take a
-``requests.Session``, so they are driven with saved HTML fixtures over a
-``responses``-mocked boundary; Nyaa uses ``pynyaa`` (httpx, which ``responses``
-can't intercept), so its module-level session is swapped for a typed stub. The
-documented error raises are exercised alongside the success paths.
+a JSON feed) into ``(download_url, title)``. AnimeTosho and RuTracker take an
+``httpx.Client``, so they are driven with saved HTML fixtures over a
+``respx``-mocked boundary; Nyaa uses ``pynyaa`` (its own httpx client), so its
+module-level session is swapped for a typed stub. The documented error raises
+are exercised alongside the success paths; the 5xx paths stub the retry
+helper's backoff sleep so retry exhaustion doesn't wait for real.
 """
 
 import re
 from pathlib import Path
 
+import httpx
 import pytest
-import requests
-import responses
+import respx
 
 import seadexarr.modules.torrent as torrent
 from seadexarr.modules.torrent import (
@@ -24,6 +25,7 @@ from seadexarr.modules.torrent import (
     get_nyaa_torrent,
     get_rutracker_torrent,
 )
+from seadexarr.modules.web_client import get_with_retries
 
 _TORRENT_FIXTURES = Path(__file__).parent / "fixtures" / "torrent"
 
@@ -36,6 +38,20 @@ def _torrent_fixture(name: str) -> str:
     """Read a saved tracker-page HTML fixture by file name."""
 
     return (_TORRENT_FIXTURES / name).read_text()
+
+
+def _stub_retry_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Re-point the parsers' retry helper at a no-sleep twin.
+
+    A 5xx response is transient, so ``get_with_retries`` retries it with real
+    backoff sleeps; the retry policy itself is pinned in ``test_web_client``,
+    so these tests only need the exhausted response, not the waits.
+    """
+
+    def _no_sleep_get(client: httpx.Client, url: str) -> httpx.Response:
+        return get_with_retries(client, url, sleep=lambda _s: None)
+
+    monkeypatch.setattr(torrent, "get_with_retries", _no_sleep_get)
 
 
 # --- Nyaa (pynyaa session swapped for a typed stub) -------------------------
@@ -87,6 +103,7 @@ def test_get_nyaa_torrent_returns_download_and_title(monkeypatch: pytest.MonkeyP
 # --- AnimeTosho (scrape the page title, then look it up in the JSON feed) ----
 
 
+@respx.mock
 def test_get_animetosho_torrent_success() -> None:
     """The scraped page title plus the feed entry whose ``link`` matches the URL
     yield ``(torrent_url, title)``.
@@ -95,26 +112,19 @@ def test_get_animetosho_torrent_success() -> None:
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
     feed_torrent = "https://animetosho.org/storage/torrent/abc/cool-anime-01.torrent"
 
-    with responses.RequestsMock() as rsps:
-        rsps.add(
-            responses.GET,
-            page_url,
-            body=_torrent_fixture("animetosho_page.html"),
-            content_type="text/html",
-        )
-        rsps.add(
-            responses.GET,
-            ANIMETOSHO_FEED_URL,
-            json=[
-                {"link": "https://animetosho.org/view/some-other.999", "torrent_url": "https://other/x.torrent"},
-                {"link": page_url, "torrent_url": feed_torrent},
-            ],
-        )
-        result = get_animetosho_torrent(page_url, session=requests.Session())
+    respx.get(page_url).respond(html=_torrent_fixture("animetosho_page.html"))
+    respx.get(ANIMETOSHO_FEED_URL).respond(
+        json=[
+            {"link": "https://animetosho.org/view/some-other.999", "torrent_url": "https://other/x.torrent"},
+            {"link": page_url, "torrent_url": feed_torrent},
+        ],
+    )
+    result = get_animetosho_torrent(page_url, client=httpx.Client())
 
     assert result == (feed_torrent, _ANIMETOSHO_TITLE)
 
 
+@respx.mock
 def test_get_animetosho_torrent_no_feed_match_returns_none_url() -> None:
     """When no feed entry's ``link`` matches the page URL, the download URL is
     ``None`` but the scraped title is still returned.
@@ -122,112 +132,82 @@ def test_get_animetosho_torrent_no_feed_match_returns_none_url() -> None:
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
 
-    with responses.RequestsMock() as rsps:
-        rsps.add(
-            responses.GET,
-            page_url,
-            body=_torrent_fixture("animetosho_page.html"),
-            content_type="text/html",
-        )
-        rsps.add(
-            responses.GET,
-            ANIMETOSHO_FEED_URL,
-            json=[{"link": "https://animetosho.org/view/unrelated.1", "torrent_url": "https://other/x.torrent"}],
-        )
-        download_url, title = get_animetosho_torrent(page_url, session=requests.Session())
+    respx.get(page_url).respond(html=_torrent_fixture("animetosho_page.html"))
+    respx.get(ANIMETOSHO_FEED_URL).respond(
+        json=[{"link": "https://animetosho.org/view/unrelated.1", "torrent_url": "https://other/x.torrent"}],
+    )
+    download_url, title = get_animetosho_torrent(page_url, client=httpx.Client())
 
     assert download_url is None
     assert title == _ANIMETOSHO_TITLE
 
 
+@respx.mock
 def test_get_animetosho_torrent_missing_title_raises() -> None:
     """A page with no ``<h2 id="title">`` raises before the feed is queried."""
 
     page_url = "https://animetosho.org/view/no-title.1"
 
-    with responses.RequestsMock() as rsps:
-        rsps.add(
-            responses.GET,
-            page_url,
-            body="<html><body><p>no title here</p></body></html>",
-            content_type="text/html",
-        )
-        with pytest.raises(TorrentParseError, match=f"Could not find the torrent title on {re.escape(page_url)}"):
-            get_animetosho_torrent(page_url, session=requests.Session())
+    respx.get(page_url).respond(html="<html><body><p>no title here</p></body></html>")
+    with pytest.raises(TorrentParseError, match=f"Could not find the torrent title on {re.escape(page_url)}"):
+        get_animetosho_torrent(page_url, client=httpx.Client())
 
 
+@respx.mock
 def test_get_animetosho_torrent_two_titles_raises() -> None:
     """A page with more than one ``<h2 id="title">`` is ambiguous and raises."""
 
     page_url = "https://animetosho.org/view/two-titles.1"
 
-    with responses.RequestsMock() as rsps:
-        rsps.add(
-            responses.GET,
-            page_url,
-            body='<html><body><h2 id="title">First</h2><h2 id="title">Second</h2></body></html>',
-            content_type="text/html",
-        )
-        with pytest.raises(TorrentParseError, match="more than one torrent title"):
-            get_animetosho_torrent(page_url, session=requests.Session())
+    respx.get(page_url).respond(html='<html><body><h2 id="title">First</h2><h2 id="title">Second</h2></body></html>')
+    with pytest.raises(TorrentParseError, match="more than one torrent title"):
+        get_animetosho_torrent(page_url, client=httpx.Client())
 
 
-def test_get_animetosho_torrent_http_500_raises_http_error() -> None:
-    """A 5xx page raises ``HTTPError`` (a contained grab failure) instead of
-    scraping the error body into a misleading "no title" parse error."""
+@respx.mock
+def test_get_animetosho_torrent_http_500_raises_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 5xx page (still 5xx once the transient retries run out) raises
+    ``HTTPStatusError`` (a contained grab failure) instead of scraping the
+    error body into a misleading "no title" parse error."""
 
+    _stub_retry_sleep(monkeypatch)
     page_url = "https://animetosho.org/view/down.1"
 
-    with responses.RequestsMock() as rsps:
-        rsps.add(responses.GET, page_url, body="<html>Server Error</html>", status=500)
-        with pytest.raises(requests.HTTPError):
-            get_animetosho_torrent(page_url, session=requests.Session())
+    respx.get(page_url).respond(status_code=500, html="<html>Server Error</html>")
+    with pytest.raises(httpx.HTTPStatusError):
+        get_animetosho_torrent(page_url, client=httpx.Client())
 
 
+@respx.mock
 def test_get_animetosho_torrent_non_json_feed_is_a_parse_error() -> None:
     """An HTML error body from the feed (HTTP 200 but not JSON) surfaces as a
     ``TorrentParseError`` naming the feed URL, not a raw ``JSONDecodeError``."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
 
-    with responses.RequestsMock() as rsps:
-        rsps.add(
-            responses.GET,
-            page_url,
-            body=_torrent_fixture("animetosho_page.html"),
-            content_type="text/html",
-        )
-        rsps.add(
-            responses.GET,
-            ANIMETOSHO_FEED_URL,
-            body="<html>interstitial</html>",
-            content_type="text/html",
-        )
-        with pytest.raises(TorrentParseError, match="non-JSON response"):
-            get_animetosho_torrent(page_url, session=requests.Session())
+    respx.get(page_url).respond(html=_torrent_fixture("animetosho_page.html"))
+    respx.get(ANIMETOSHO_FEED_URL).respond(html="<html>interstitial</html>")
+    with pytest.raises(TorrentParseError, match="non-JSON response"):
+        get_animetosho_torrent(page_url, client=httpx.Client())
 
 
+@respx.mock
 def test_get_animetosho_torrent_non_list_json_is_a_parse_error() -> None:
     """A JSON error OBJECT from the feed (rate limit / API error) surfaces as a
     ``TorrentParseError``, not an AttributeError from iterating its keys."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
 
-    with responses.RequestsMock() as rsps:
-        rsps.add(
-            responses.GET,
-            page_url,
-            body=_torrent_fixture("animetosho_page.html"),
-            content_type="text/html",
-        )
-        rsps.add(responses.GET, ANIMETOSHO_FEED_URL, json={"error": "rate limited"})
-        with pytest.raises(TorrentParseError, match="not a list"):
-            get_animetosho_torrent(page_url, session=requests.Session())
+    respx.get(page_url).respond(html=_torrent_fixture("animetosho_page.html"))
+    respx.get(ANIMETOSHO_FEED_URL).respond(json={"error": "rate limited"})
+    with pytest.raises(TorrentParseError, match="not a list"):
+        get_animetosho_torrent(page_url, client=httpx.Client())
 
 
 # --- RuTracker (scrape the maintitle, build the magnet locally) --------------
 
 
+@respx.mock
 def test_get_rutracker_torrent_builds_magnet() -> None:
     """The RuTracker parser scrapes the maintitle and builds the magnet from the
     hash, the fixed announce, and the title as ``dn``.
@@ -236,14 +216,8 @@ def test_get_rutracker_torrent_builds_magnet() -> None:
     url = "https://rutracker.org/forum/viewtopic.php?t=1234567"
     infohash = "abcdef0123456789abcdef0123456789abcdef01"
 
-    with responses.RequestsMock() as rsps:
-        rsps.add(
-            responses.GET,
-            url,
-            body=_torrent_fixture("rutracker_page.html"),
-            content_type="text/html",
-        )
-        magnet, title = get_rutracker_torrent(url, infohash, session=requests.Session())
+    respx.get(url).respond(html=_torrent_fixture("rutracker_page.html"))
+    magnet, title = get_rutracker_torrent(url, infohash, client=httpx.Client())
 
     assert title == _RUTRACKER_TITLE
     assert magnet.startswith(f"magnet:?xt=urn%3Abtih%3A{infohash}")
@@ -251,40 +225,37 @@ def test_get_rutracker_torrent_builds_magnet() -> None:
     assert "dn=" in magnet
 
 
+@respx.mock
 def test_get_rutracker_torrent_missing_title_raises() -> None:
     """A page with no ``h1.maintitle`` raises."""
 
     url = "https://rutracker.org/forum/viewtopic.php?t=7654321"
 
-    with responses.RequestsMock() as rsps:
-        rsps.add(
-            responses.GET,
-            url,
-            body="<html><body><div>no maintitle</div></body></html>",
-            content_type="text/html",
-        )
-        with pytest.raises(TorrentParseError, match=f"Could not find the torrent title on {re.escape(url)}"):
-            get_rutracker_torrent(url, "deadbeef", session=requests.Session())
+    respx.get(url).respond(html="<html><body><div>no maintitle</div></body></html>")
+    with pytest.raises(TorrentParseError, match=f"Could not find the torrent title on {re.escape(url)}"):
+        get_rutracker_torrent(url, "deadbeef", client=httpx.Client())
 
 
-def test_get_rutracker_torrent_http_500_raises_http_error() -> None:
-    """A 5xx topic page raises ``HTTPError`` rather than a misleading parse error."""
+@respx.mock
+def test_get_rutracker_torrent_http_500_raises_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 5xx topic page raises ``HTTPStatusError`` rather than a misleading parse error."""
 
+    _stub_retry_sleep(monkeypatch)
     url = "https://rutracker.org/forum/viewtopic.php?t=1234567"
 
-    with responses.RequestsMock() as rsps:
-        rsps.add(responses.GET, url, body="<html>Server Error</html>", status=500)
-        with pytest.raises(requests.HTTPError):
-            get_rutracker_torrent(url, "deadbeef", session=requests.Session())
+    respx.get(url).respond(status_code=500, html="<html>Server Error</html>")
+    with pytest.raises(httpx.HTTPStatusError):
+        get_rutracker_torrent(url, "deadbeef", client=httpx.Client())
 
 
+@respx.mock
 def test_get_rutracker_torrent_no_infohash_raises() -> None:
     """A None infohash can't make a magnet ("urn:btih:None"): raise the parse
-    error before any fetch (the empty mock proves nothing was requested)."""
+    error before any fetch (the routeless mock proves nothing was requested)."""
 
-    with responses.RequestsMock(), pytest.raises(TorrentParseError, match="no infohash"):
+    with pytest.raises(TorrentParseError, match="no infohash"):
         get_rutracker_torrent(
             "https://rutracker.org/forum/viewtopic.php?t=1",
             None,
-            session=requests.Session(),
+            client=httpx.Client(),
         )

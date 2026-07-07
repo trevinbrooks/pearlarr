@@ -16,10 +16,7 @@ from dataclasses import dataclass
 
 import httpx
 import qbittorrentapi
-import requests
-from requests.adapters import HTTPAdapter
 from seadex import EntryRecord
-from urllib3.util.retry import Retry
 
 from .anilist_gateway import AniListGateway
 from .arr_http import make_httpx_client
@@ -69,7 +66,7 @@ class RunDeps:
 
     config: AppConfig
     arr_config: ArrSettings
-    session: requests.Session
+    web: httpx.Client
     http: httpx.Client
     qbit: qbittorrentapi.Client | None
     mappings: MappingResolver
@@ -92,6 +89,7 @@ class RunDeps:
         logger: logging.Logger,
         mappings: MappingResolver,
         app_config: AppConfig,
+        web: httpx.Client,
         cache_legacy: str | None = None,
         boot: BootView | None = None,
     ) -> "RunDeps":
@@ -107,6 +105,9 @@ class RunDeps:
                 large mapping sources are downloaded, parsed and indexed once.
             app_config (AppConfig): The loaded config, read and validated once by
                 the CLI per run and shared across a scheduled Radarr->Sonarr cycle.
+            web (httpx.Client): The shared non-arr web client (tracker scrapes,
+                AniList, webhooks), built once by the CLI per cycle and owned
+                there - ``close`` deliberately leaves it open.
             cache_legacy (str | None, optional): Path to a legacy ``cache.json`` to
                 migrate into ``cache.db`` when no db exists yet. Defaults to None.
             boot (BootView | None, optional): The startup cockpit; the qBittorrent
@@ -119,25 +120,6 @@ class RunDeps:
         # ``arr_config`` is this arr's connection/behaviour submodel, injected
         # alongside the shared root.
         arr_config = app_config.for_arr(arr)
-
-        # Shared keep-alive session for the torrent machinery's tracker fetches
-        # (the arr clients are fully on the shared httpx client below). Retries
-        # transient failures on idempotent GETs only (POSTs never retry);
-        # raise_on_status=False lets a still-5xx response return for the callers'
-        # status checks. Per-request timeouts are at the call sites.
-        session = requests.Session()
-        retry = Retry(
-            total=3,
-            connect=3,
-            read=3,
-            backoff_factor=0.5,
-            status_forcelist=(429, 500, 502, 503, 504),
-            allowed_methods=frozenset({"GET"}),
-            raise_on_status=False,
-        )
-        adapter = HTTPAdapter(max_retries=retry, pool_connections=16, pool_maxsize=16)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
 
         # The httpx client every raw arr endpoint rides (ArrHttp binds it per
         # arr); pinned timeouts / no-redirects / pool sizing live in its factory.
@@ -200,7 +182,7 @@ class RunDeps:
         # qbit is treated as a perpetual preview.
         torrents = TorrentService(
             qbit=qbit,
-            session=session,
+            web=web,
             category=arr_config.torrent_category,
             tags=app_config.qbittorrent.tags,
             logger=logger,
@@ -212,7 +194,7 @@ class RunDeps:
         return cls(
             config=app_config,
             arr_config=arr_config,
-            session=session,
+            web=web,
             http=http,
             qbit=qbit,
             mappings=mappings,
@@ -246,15 +228,13 @@ class RunDeps:
         )
 
     def close(self) -> None:
-        """Release run-scoped resources: the HTTP session and the cache db.
+        """Release run-scoped resources: the arr HTTP client and the cache db.
 
         Called once per arr run from ``cli.py``'s ``finally`` (each arr owns its
         own ``CacheStore`` - no sharing - so this never double-closes). The cache
         ``close`` rolls back anything not flushed by the end-of-run save point.
+        ``web`` is NOT closed here: the CLI owns it across the whole cycle.
         """
-        # self.session is a requests.Session (never None), so it can be closed
-        # unconditionally; likewise the httpx client.
-        self.session.close()
         self.http.close()
         self.cache_store.close()
 

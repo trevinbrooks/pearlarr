@@ -18,8 +18,8 @@ import httpx
 
 from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord, Json
 
-# Transient statuses worth another try on an idempotent GET - the same set the
-# urllib3 Retry policy on the (now torrents-only) requests session uses.
+# Transient statuses worth another try on an idempotent GET - shared with the
+# web client's ``get_with_retries`` so the two stacks retry the same set.
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 GET_RETRIES = 3
 BACKOFF_BASE_S = 0.5

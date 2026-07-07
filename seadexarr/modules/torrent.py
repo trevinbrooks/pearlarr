@@ -3,14 +3,16 @@ from urllib.parse import urlencode, urljoin
 
 import httpx
 import pynyaa
-import requests
 from bs4 import BeautifulSoup
+
+from .web_client import get_with_retries, make_web_client
 
 ANIMETOSHO_FEED_URL = "https://animetosho.org/feed/json"
 RUTRACKER_MAGNET_ANNOUNCE = "http://bt2.t-ru.org/ann?magnet"
 
 # (connect, read) timeout for the tracker page/feed scrapes, so a hung tracker
-# surfaces as a transient miss instead of blocking the run.
+# surfaces as a transient miss instead of blocking the run. The shared web
+# client bakes the same bounds in, so only the pynyaa client below reads this.
 TRACKER_REQUEST_TIMEOUT_S = (5, 30)
 
 
@@ -18,10 +20,10 @@ class TorrentParseError(Exception):
     """A tracker page/feed didn't yield the release's torrent link or title."""
 
 
-# Reused when a caller doesn't pass its own session, so even standalone use of
-# these helpers gets keep-alive connection pooling. The main code path threads
-# in RunDeps.session instead.
-_DEFAULT_SESSION = requests.Session()
+# Reused when a caller doesn't pass its own client, so even standalone use of
+# these helpers gets keep-alive pooling and the transient-retry policy. The
+# main code path threads in RunDeps.web instead.
+_DEFAULT_CLIENT = make_web_client()
 # pynyaa rides httpx: give its client the same bounds (and keep pynyaa's own
 # User-Agent, which its default client would otherwise set).
 _NYAA_SESSION = pynyaa.Nyaa(
@@ -50,13 +52,13 @@ def get_nyaa_torrent(url: str) -> tuple[str, str]:
 
 def get_animetosho_torrent(
     url: str,
-    session: requests.Session | None = None,
+    client: httpx.Client | None = None,
 ) -> tuple[str | None, str]:
     """Get the AnimeTosho download link and release title from a URL
 
     Args:
         url (str): URL of the AnimeTosho release page
-        session (requests.Session, optional): Session to reuse for the two
+        client (httpx.Client, optional): Client to reuse for the two
             requests this makes to the same host. Defaults to a shared one.
 
     Returns:
@@ -65,11 +67,11 @@ def get_animetosho_torrent(
             human-readable release title scraped from the page
     """
 
-    session = session or _DEFAULT_SESSION
+    client = client or _DEFAULT_CLIENT
 
     # Start by getting the webpage, so we can get a title. A 5xx/Cloudflare page
     # would otherwise scrape as a misleading "no title" parse error.
-    r = session.get(url, timeout=TRACKER_REQUEST_TIMEOUT_S)
+    r = get_with_retries(client, url)
     r.raise_for_status()
     soup = BeautifulSoup(r.content, "html.parser")
     titles = soup.find_all("h2", attrs={"id": "title"})
@@ -85,7 +87,7 @@ def get_animetosho_torrent(
     # Query the feed API for the matching release (encode the title so reserved
     # characters in it don't malform the query string)
     query_url = urljoin(ANIMETOSHO_FEED_URL, "?" + urlencode({"t": "search", "q": title}))
-    r = session.get(query_url, timeout=TRACKER_REQUEST_TIMEOUT_S)
+    r = get_with_retries(client, query_url)
     r.raise_for_status()
     try:
         j = r.json()
@@ -115,14 +117,14 @@ def get_animetosho_torrent(
 def get_rutracker_torrent(
     url: str,
     infohash: str | None,
-    session: requests.Session | None = None,
+    client: httpx.Client | None = None,
 ) -> tuple[str, str]:
     """Get the RuTracker magnet link and torrent title from a URL
 
     Args:
         url (str): URL of the RuTracker topic
         infohash (str | None): Torrent info hash
-        session (requests.Session, optional): Session to reuse for the page
+        client (httpx.Client, optional): Client to reuse for the page
             fetch. Defaults to a shared one.
 
     Returns:
@@ -139,12 +141,12 @@ def get_rutracker_torrent(
     if infohash is None:
         raise TorrentParseError("RuTracker release has no infohash to build a magnet link from")
 
-    session = session or _DEFAULT_SESSION
+    client = client or _DEFAULT_CLIENT
 
     # Pull the torrent title from souping the URL. Use the stdlib html.parser
     # (as the AnimeTosho scraper does) - lxml is not a dependency, and the page
     # only needs a single class lookup, so the built-in parser is plenty.
-    r = session.get(url, timeout=TRACKER_REQUEST_TIMEOUT_S)
+    r = get_with_retries(client, url)
     r.raise_for_status()
     soup = BeautifulSoup(r.content, "html.parser")
     main_title = soup.find("h1", attrs={"class": "maintitle"})

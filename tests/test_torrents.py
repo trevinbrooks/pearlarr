@@ -22,7 +22,6 @@ import httpx
 import pynyaa
 import pytest
 import qbittorrentapi
-import requests
 from seadex import Tracker
 
 import seadexarr.modules.torrents as torrents
@@ -102,7 +101,7 @@ def _service(qbit: _FakeQbit, *, category: str | None = "anime", tags: list[str]
 
     return TorrentService(
         qbit=cast("qbittorrentapi.Client", qbit),
-        session=requests.Session(),
+        web=httpx.Client(),
         category=category,
         tags=tags if tags is not None else ["seadex"],
         logger=logging.getLogger("seadexarr.test"),
@@ -197,8 +196,8 @@ def test_add_qbit_rejects_add_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     """When the tracker parser yields no download URL, the add raises before qbit."""
 
-    def _none_animetosho(url: str, session: requests.Session) -> tuple[str | None, str]:
-        del url, session
+    def _none_animetosho(url: str, client: httpx.Client) -> tuple[str | None, str]:
+        del url, client
         return (None, "Title")
 
     monkeypatch.setattr(torrents, "get_animetosho_torrent", _none_animetosho)
@@ -222,12 +221,12 @@ def _patch_all_parsers(monkeypatch: pytest.MonkeyPatch) -> None:
         del url
         return (_PARSED_URL, _SOURCE_TITLE)
 
-    def _animetosho(url: str, session: requests.Session) -> tuple[str | None, str]:
-        del url, session
+    def _animetosho(url: str, client: httpx.Client) -> tuple[str | None, str]:
+        del url, client
         return (_PARSED_URL, _SOURCE_TITLE)
 
-    def _rutracker(url: str, infohash: str | None, session: requests.Session) -> tuple[str | None, str]:
-        del url, infohash, session
+    def _rutracker(url: str, infohash: str | None, client: httpx.Client) -> tuple[str | None, str]:
+        del url, infohash, client
         return (_PARSED_URL, _SOURCE_TITLE)
 
     monkeypatch.setattr(torrents, "get_nyaa_torrent", _nyaa)
@@ -256,13 +255,12 @@ def test_add_raises_iff_tracker_unparseable(tracker: Tracker, monkeypatch: pytes
 
 def test_grab_failures_covers_every_expected_boundary_error() -> None:
     """Drift guard: the containment tuple catches each boundary's failure mode -
-    the parse/add raises, a requests blip (tracker scrape), an httpx blip
-    (pynyaa / seadex transport), a pynyaa error, and any qbittorrentapi error."""
+    the parse/add raises, an httpx blip (the tracker scrapes and pynyaa / seadex
+    transport all ride httpx), a pynyaa error, and any qbittorrentapi error."""
 
     expected = (
         TorrentParseError("x"),
         TorrentAddError("x"),
-        requests.ConnectionError("x"),
         httpx.ConnectError("x"),
         pynyaa.PyNyaaError("x"),
         qbittorrentapi.APIConnectionError("x"),
@@ -300,4 +298,5 @@ def test_qbit_login_failure_maps_to_qbit_connection_error(monkeypatch: pytest.Mo
             app_config=config,
             logger=logging.getLogger("seadexarr.test"),
             mappings=make_bare_instance(MappingResolver),
+            web=httpx.Client(),
         )

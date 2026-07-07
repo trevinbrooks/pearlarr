@@ -20,7 +20,6 @@ from datetime import datetime
 from typing import Any, override
 
 import httpx
-import requests
 from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
 from seadexarr.modules.anilist_gateway import AniListGateway
@@ -552,10 +551,10 @@ def _real_reporter(logger: logging.Logger, log_fmt: LogFormatter, cache_store: A
     )
 
 
-def _real_torrents(logger: logging.Logger, session: requests.Session) -> TorrentService:
+def _real_torrents(logger: logging.Logger, web: httpx.Client) -> TorrentService:
     """A real, client-less ``TorrentService`` (``qbit=None`` -> preview no-op add)."""
 
-    return TorrentService(qbit=None, session=session, category="", tags=[], logger=logger)
+    return TorrentService(qbit=None, web=web, category="", tags=[], logger=logger)
 
 
 def make_services(**overrides: Any) -> RunServices:
@@ -617,12 +616,14 @@ def make_run_deps(
     cache_store = cache_store or FakeCacheStore()
     logger = logger or make_logger()
     log_fmt = LogFormatter(logger)
-    session = requests.Session()
+    # The one deliberately-leaked httpx client backs BOTH deps.http and
+    # deps.web (never used for real traffic here; httpx clients don't warn on GC).
+    http = httpx.Client()
     return RunDeps(
         config=config,
         arr_config=config.for_arr(Arr.SONARR),
-        session=session,
-        http=httpx.Client(),
+        web=http,
+        http=http,
         qbit=None,
         # A real resolver over empty in-memory mappings (no network) - it carries a
         # real (empty) ``anibridge`` the strategy reads at construction.
@@ -637,7 +638,7 @@ def make_run_deps(
         seadex=seadex or FakeSeaDexSource(),
         cache_store=cache_store,
         anilist=AniListGateway(cache_store=cache_store, logger=logger),
-        torrents=_real_torrents(logger, session),
+        torrents=_real_torrents(logger, http),
         notifier=Notifier(discord_url=None, webhook_url=None, logger=logger),
         planner=make_planner(),
         log_fmt=log_fmt,
@@ -731,12 +732,12 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
     logger = make_logger()
     log_fmt = LogFormatter(logger)
     cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
-    session = requests.Session()
+    web = httpx.Client()
     defaults: dict[str, Any] = {
         "_config": config,
         "_planner": make_planner(),
         "cache_store": cache_store,
-        "_torrents": _real_torrents(logger, session),
+        "_torrents": _real_torrents(logger, web),
         "_anilist": AniListGateway(cache_store=cache_store, logger=logger),
         # No discord/webhook url -> a disabled, best-effort no-op notifier.
         "_notifier": Notifier(discord_url=None, webhook_url=None, logger=logger),

@@ -17,7 +17,6 @@ from collections.abc import Mapping
 import httpx
 import pytest
 import qbittorrentapi
-import requests
 from seadex import Tracker
 
 from seadexarr.modules.config import Arr
@@ -692,11 +691,11 @@ class TestGrabFailureContainment:
         [
             TorrentParseError("Could not find the torrent title on https://nyaa.si/view/1"),
             TorrentAddError("qBittorrent rejected the torrent"),
-            requests.ConnectionError("tracker down"),
+            httpx.ConnectError("tracker down"),
             httpx.ConnectError("nyaa down"),
             qbittorrentapi.APIConnectionError("qbit died mid-run"),
         ],
-        ids=["parse", "add", "requests", "httpx", "qbit"],
+        ids=["parse", "add", "tracker", "pynyaa", "qbit"],
     )
     def test_failure_is_one_clean_warning_no_traceback(self, error: Exception) -> None:
         # Every boundary failure mode lands as a single WARNING with no exc_info
@@ -727,7 +726,7 @@ class TestGrabFailureContainment:
         seadex_dict: SeadexDict = {"RG": rg_group({bad.url: bad, good.url: good})}
         torrents = FakeTorrents(
             {"hGood": (AddOutcome.ADDED, "Show-RG")},
-            raises={"hBad": requests.ConnectionError("nyaa down")},
+            raises={"hBad": httpx.ConnectError("nyaa down")},
         )
         pipeline = _pipeline(torrents=torrents)
 
