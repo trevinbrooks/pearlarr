@@ -10,7 +10,6 @@ strategies depend on this module only and never see the loop type.
 """
 
 import logging
-import os
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -28,7 +27,7 @@ from .boot_view import BootView, NullBootView
 from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
 from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_value
 from .grab_pipeline import GrabPipeline, GrabRequest
-from .log import EntryState, LogFormatter, setup_logger
+from .log import EntryState, LogFormatter
 from .manual_import import ImportWaitMode
 from .mappings import MappingEntry, MappingResolver
 from .notify import Notifier
@@ -88,12 +87,11 @@ class RunDeps:
     def build(
         cls,
         arr: Arr,
-        config: str = "config.yml",
         cache: str = "cache.db",
-        logger: logging.Logger | None = None,
         *,
+        logger: logging.Logger,
         mappings: MappingResolver,
-        app_config: AppConfig | None = None,
+        app_config: AppConfig,
         cache_legacy: str | None = None,
         boot: BootView | None = None,
     ) -> "RunDeps":
@@ -101,16 +99,14 @@ class RunDeps:
 
         Args:
             arr (Arr): Which Arr is being run; selects the per-arr config submodel.
-            config (str, optional): Path to a config file. Defaults to "config.yml".
             cache (str, optional): Path to the cache database. Defaults to "cache.db".
-            logger (logging.Logger | None, optional): Logger to use. Defaults to
-                None, which builds one from the config's log level.
+            logger (logging.Logger): Logger to use (the CLI builds it before the
+                config file can even be read, so config errors are loggable).
             mappings (MappingResolver): The id-mapping resolver, built once by the
                 CLI and shared across a scheduled Radarr->Sonarr cycle so the three
                 large mapping sources are downloaded, parsed and indexed once.
-            app_config (AppConfig | None, optional): A pre-loaded config injected by
-                the CLI so a scheduled cycle reads and validates the file once per
-                run. Defaults to None, which loads it here.
+            app_config (AppConfig): The loaded config, read and validated once by
+                the CLI per run and shared across a scheduled Radarr->Sonarr cycle.
             cache_legacy (str | None, optional): Path to a legacy ``cache.json`` to
                 migrate into ``cache.db`` when no db exists yet. Defaults to None.
             boot (BootView | None, optional): The startup cockpit; the qBittorrent
@@ -120,20 +116,9 @@ class RunDeps:
 
         boot = boot if boot is not None else NullBootView()
 
-        # Load, validate, and expose the config file as typed settings. AppConfig
-        # owns the file lifecycle (copy-template-if-missing, parse, validate) and is
-        # the single source of truth for every setting. The CLI may inject an
-        # already-loaded config (one read shared across the Radarr->Sonarr cycle);
-        # otherwise it's loaded here for the standalone path. ``arr_config`` is this
-        # arr's connection/behaviour submodel, injected alongside the shared root.
-        app_config = AppConfig.load(config) if app_config is None else app_config
+        # ``arr_config`` is this arr's connection/behaviour submodel, injected
+        # alongside the shared root.
         arr_config = app_config.for_arr(arr)
-
-        if logger is None:
-            # Standalone path (the CLI always injects a logger): logs live in the
-            # data dir alongside the cache it was handed (unified layout).
-            log_dir = os.path.join(os.path.dirname(os.path.abspath(cache)), "logs")
-            logger = setup_logger(log_level=app_config.advanced.log_level, log_dir=log_dir)
 
         # Shared keep-alive session for the torrent machinery's tracker fetches
         # (the arr clients are fully on the shared httpx client below). Retries

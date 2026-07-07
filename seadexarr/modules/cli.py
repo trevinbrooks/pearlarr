@@ -427,9 +427,8 @@ def _run_arrs(
                     try:
                         deps = RunDeps.build(
                             arr_name,
-                            paths.config,
                             paths.cache,
-                            logger,
+                            logger=logger,
                             mappings=mappings,
                             app_config=app_config,
                             cache_legacy=paths.cache_legacy,
