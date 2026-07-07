@@ -561,52 +561,44 @@ def test_refresh_monitored_downloads_posts_command_name() -> None:
 # --- command_status() / list_commands() -------------------------------------
 
 
+@respx.mock
 def test_command_status_decodes() -> None:
     """A single-command GET narrows to a ``CommandResource`` with status/result."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(
-            responses.GET,
-            f"{_BASE}/command/55",
-            json={"id": 55, "status": "completed", "result": "successful"},
-        )
-        status = client.command_status(55)
+    respx.get(f"{_BASE}/command/55").respond(json={"id": 55, "status": "completed", "result": "successful"})
+    status = _make_client().command_status(55)
 
     assert status.id == 55
     assert status.status == "completed"
     assert status.result == "successful"
 
 
+@respx.mock
 def test_command_status_non_200_returns_default() -> None:
     """A non-200 status read yields a default (status-None) ``CommandResource``."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/command/9", status=503)
-        assert client.command_status(9) == CommandResource()
+    respx.get(f"{_BASE}/command/9").respond(status_code=503)
+    assert _make_client().command_status(9) == CommandResource()
 
 
+@respx.mock
 def test_command_status_request_error_returns_default() -> None:
     """A transient request error also yields the default ``CommandResource`` (the
     caller treats the import as unverified and leaves it pending).
     """
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/command/9", body=requests.exceptions.ConnectionError("boom"))
-        assert client.command_status(9) == CommandResource()
+    respx.get(f"{_BASE}/command/9").mock(side_effect=httpx.ConnectError("boom"))
+    assert _make_client().command_status(9) == CommandResource()
 
 
+@respx.mock
 def test_list_commands_decodes_with_nested_files() -> None:
     """The command LIST narrows each command, including the nested ``body.files``
     each in-flight ManualImport carries (the guard's match signal).
     """
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/command", json=sonarr_fixture("command_list.json"))
-        commands = client.list_commands()
+    respx.get(f"{_BASE}/command").respond(json=sonarr_fixture("command_list.json"))
+    commands = _make_client().list_commands()
 
     assert len(commands) == 5
     first = commands[0]
@@ -618,13 +610,12 @@ def test_list_commands_decodes_with_nested_files() -> None:
     assert first.files[0].episode_ids == (6605,)
 
 
+@respx.mock
 def test_list_commands_non_200_returns_empty() -> None:
     """A non-200 command list reads as "nothing in flight" (empty list)."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/command", status=503)
-        assert client.list_commands() == []
+    respx.get(f"{_BASE}/command").respond(status_code=503)
+    assert _make_client().list_commands() == []
 
 
 # --- history_since() ----------------------------------------------------------
@@ -775,49 +766,42 @@ def test_trailing_slash_url_is_normalized() -> None:
 # --- quality_definitions() / languages() ------------------------------------
 
 
+@respx.mock
 def test_quality_definitions_returns_raw_list() -> None:
     """Quality definitions are passed through verbatim (the resolver re-emits the
     nested ``quality`` into the outgoing payload).
     """
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/qualitydefinition", json=sonarr_fixture("qualitydefinitions.json"))
-        defs = client.quality_definitions()
-        request = rsps.calls[-1].request
+    route = respx.get(f"{_BASE}/qualitydefinition").respond(json=sonarr_fixture("qualitydefinitions.json"))
+    defs = _make_client().quality_definitions()
 
     assert defs[0].get("quality") == {"id": 0, "name": "Unknown", "source": "unknown", "resolution": 0}
-    url = request.url
-    assert url is not None
-    assert "apikey" not in url
+    request = route.calls.last.request
+    assert "apikey" not in str(request.url)
     assert request.headers["X-Api-Key"] == "testkey"
 
 
+@respx.mock
 def test_languages_returns_raw_list() -> None:
     """Languages are passed through verbatim (POSTed into the file payload)."""
 
     body: list[object] = [{"id": 1, "name": "English"}, {"id": 8, "name": "Japanese"}]
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/language", json=body)
-        result = client.languages()
+    respx.get(f"{_BASE}/language").respond(json=body)
 
-    assert result == [{"id": 1, "name": "English"}, {"id": 8, "name": "Japanese"}]
+    assert _make_client().languages() == [{"id": 1, "name": "English"}, {"id": 8, "name": "Japanese"}]
 
 
+@respx.mock
 def test_quality_definitions_non_200_returns_empty() -> None:
     """A non-200 quality-definitions read falls back to an empty list."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/qualitydefinition", status=500)
-        assert client.quality_definitions() == []
+    respx.get(f"{_BASE}/qualitydefinition").respond(status_code=500)
+    assert _make_client().quality_definitions() == []
 
 
+@respx.mock
 def test_languages_non_200_returns_empty() -> None:
     """A non-200 languages read falls back to an empty list."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/language", status=500)
-        assert client.languages() == []
+    respx.get(f"{_BASE}/language").respond(status_code=500)
+    assert _make_client().languages() == []

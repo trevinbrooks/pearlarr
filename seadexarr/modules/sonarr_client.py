@@ -499,23 +499,16 @@ class SonarrClient(AbstractSonarrClient):
                 empty on failure.
         """
 
-        defs_req_url = f"{self._url}/api/v3/qualitydefinition"
-        try:
-            defs_req = self._session.get(defs_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
-        except requests.RequestException:
-            defs_req = None
-
-        if defs_req is None or defs_req.status_code != 200:
-            detail = "request failed" if defs_req is None else f"status code {defs_req.status_code}"
-            self._logger.warning(
-                f"Could not fetch quality definitions from Sonarr ({detail})",
-            )
+        raw = self._http.get_json_list(
+            "/api/v3/qualitydefinition",
+            warn="Could not fetch quality definitions from Sonarr ({detail})",
+        )
+        if raw is None:
             return []
 
-        # response.json() is untyped; the endpoint returns a JSON array of
-        # QualityDefinitionResource objects whose nested "quality" the resolver
-        # re-emits verbatim, so cast at the parse boundary.
-        return cast("list[QualityDefinition]", defs_req.json())
+        # QualityDefinitionResource dicts pass through verbatim (the resolver
+        # re-emits the nested "quality"): cast at the parse boundary, skip strays.
+        return [cast("QualityDefinition", record) for record in raw if isinstance(record, dict)]
 
     @override
     def languages(self) -> list[Language]:
@@ -532,23 +525,16 @@ class SonarrClient(AbstractSonarrClient):
                 resolver matches by name and re-emits verbatim); empty on failure.
         """
 
-        langs_req_url = f"{self._url}/api/v3/language"
-        try:
-            langs_req = self._session.get(langs_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
-        except requests.RequestException:
-            langs_req = None
-
-        if langs_req is None or langs_req.status_code != 200:
-            detail = "request failed" if langs_req is None else f"status code {langs_req.status_code}"
-            self._logger.warning(
-                f"Could not fetch languages from Sonarr ({detail})",
-            )
+        raw = self._http.get_json_list(
+            "/api/v3/language",
+            warn="Could not fetch languages from Sonarr ({detail})",
+        )
+        if raw is None:
             return []
 
-        # response.json() is untyped; the endpoint returns a JSON array of
-        # LanguageResource objects ({id, name}) the resolver re-emits verbatim, so
-        # cast at the parse boundary.
-        return cast("list[Language]", langs_req.json())
+        # LanguageResource dicts ({id, name}) pass through verbatim (the resolver
+        # matches by name and re-emits): cast at the parse boundary, skip strays.
+        return [cast("Language", record) for record in raw if isinstance(record, dict)]
 
     @override
     def command_status(self, command_id: int) -> CommandResource:
@@ -569,23 +555,16 @@ class SonarrClient(AbstractSonarrClient):
                 a default (``status`` None) on failure.
         """
 
-        status_req_url = f"{self._url}/api/v3/command/{command_id}"
-        try:
-            status_req = self._session.get(status_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
-        except requests.RequestException:
-            status_req = None
-
-        if status_req is None or status_req.status_code != 200:
-            detail = "request failed" if status_req is None else f"status code {status_req.status_code}"
-            self._logger.warning(
-                indent_string(f"Could not fetch status for command {command_id} ({detail})"),
-            )
+        payload = self._http.get_json_dict(
+            f"/api/v3/command/{command_id}",
+            warn=indent_string(f"Could not fetch status for command {command_id} ({{detail}})"),
+        )
+        if payload is None:
             return CommandResource()
 
-        # response.json() is untyped; the endpoint returns a single
-        # CommandResource JSON object, so cast at the parse boundary and narrow it
-        # to the consumed fields.
-        return CommandResource.from_api(cast("dict[str, Any]", status_req.json()))
+        # The single CommandResource object is unvalidated JSON: cast at the
+        # parse boundary and narrow it to the consumed fields.
+        return CommandResource.from_api(cast("dict[str, Any]", payload))
 
     @override
     def list_commands(self) -> list[CommandResource]:
@@ -608,24 +587,18 @@ class SonarrClient(AbstractSonarrClient):
             list[CommandResource]: The parsed commands; empty on failure.
         """
 
-        commands_req_url = f"{self._url}/api/v3/command"
-        try:
-            commands_req = self._session.get(commands_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
-        except requests.RequestException:
-            commands_req = None
-
-        if commands_req is None or commands_req.status_code != 200:
-            detail = "request failed" if commands_req is None else f"status code {commands_req.status_code}"
-            self._logger.warning(
-                indent_string(f"Could not fetch the Sonarr command list ({detail})"),
-            )
+        raw = self._http.get_json_list(
+            "/api/v3/command",
+            warn=indent_string("Could not fetch the Sonarr command list ({detail})"),
+        )
+        if raw is None:
             return []
 
-        # response.json() is untyped; the command endpoint returns a JSON array of
-        # CommandResource objects, so cast at the parse boundary, then narrow each
-        # to the fields the guard reads via from_api.
-        raw_commands = cast("list[dict[str, Any]]", commands_req.json())
-        return [CommandResource.from_api(command) for command in raw_commands]
+        # Element dicts are unvalidated CommandResource objects: cast at the parse
+        # boundary (skipping strays), then narrow each to the fields the guard reads.
+        return [
+            CommandResource.from_api(cast("dict[str, Any]", command)) for command in raw if isinstance(command, dict)
+        ]
 
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:

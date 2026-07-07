@@ -49,6 +49,6 @@ def register_sonarr_reads(
 
     respx.get(f"{base}/episode").respond(json=episodes)
     respx.get(f"{base}/parse").respond(json=parse)
-    rsps.add(responses.GET, f"{base}/qualitydefinition", json=quality_definitions or [])
-    rsps.add(responses.GET, f"{base}/language", json=languages or [])
+    respx.get(f"{base}/qualitydefinition").respond(json=quality_definitions or [])
+    respx.get(f"{base}/language").respond(json=languages or [])
     rsps.add(responses.GET, f"{base}/history/since", json=[])
