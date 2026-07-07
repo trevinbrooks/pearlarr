@@ -12,7 +12,7 @@ from typing import Any, cast, override
 import httpx
 import requests
 
-from .arr_http import ArrHttp, fetch_history_since
+from .arr_http import ArrHttp
 from .log import indent_string
 from .manual_import import PendingImport
 from .seadex_types import (
@@ -593,13 +593,8 @@ class SonarrClient(AbstractSonarrClient):
     def history_since(self, date: str) -> list[HistoryRecord] | None:
         """History since ``date``, or None on failure (fail-open; shared helper)."""
 
-        return fetch_history_since(
-            self._session,
-            self._url,
-            self._headers,
-            self._logger,
+        return self._http.history_since(
             date,
-            arr_label="Sonarr",
             include_flags={"includeSeries": "false", "includeEpisode": "false"},
             item_key="seriesId",
         )

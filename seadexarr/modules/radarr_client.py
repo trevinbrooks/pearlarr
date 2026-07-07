@@ -11,7 +11,7 @@ import httpx
 import requests
 
 from .anibridge import AniBridge
-from .arr_http import ArrHttp, fetch_history_since
+from .arr_http import ArrHttp
 from .seadex_types import ArrItem, HistoryRecord, MovieFile, RadarrItem, RadarrMovie
 
 
@@ -154,13 +154,8 @@ class RadarrClient(AbstractRadarrClient):
     def history_since(self, date: str) -> list[HistoryRecord] | None:
         """History since ``date``, or None on failure (fail-open; shared helper)."""
 
-        return fetch_history_since(
-            self._session,
-            self._url,
-            self._headers,
-            self._logger,
+        return self._http.history_since(
             date,
-            arr_label="Radarr",
             include_flags={"includeMovie": "false"},
             item_key="movieId",
         )

@@ -6,9 +6,8 @@
 
 Each test builds a REAL ``SonarrClient`` (construction is network-free), then
 drives one method and asserts the request URL / body it builds AND the decoded
-return view its ``from_api`` parsers produce. The endpoints ride the
-httpx-based ``ArrHttp`` and are mocked via ``respx``; the one still on
-``requests`` (``history_since``) via ``responses``. Bodies come from the
+return view its ``from_api`` parsers produce. Every endpoint rides the
+httpx-based ``ArrHttp``, mocked via ``respx``. Bodies come from the
 captured ``tests/fixtures/sonarr`` JSON where one exists (queue /
 manual-import / command-list / quality-definitions), otherwise a minimal
 inline body. POST bodies are asserted by decoding the captured request content
@@ -22,7 +21,6 @@ import logging
 import httpx
 import pytest
 import requests
-import responses
 import respx
 
 from seadexarr.modules.manual_import import PendingImport
@@ -609,6 +607,7 @@ def test_list_commands_non_200_returns_empty() -> None:
 # --- history_since() ----------------------------------------------------------
 
 
+@respx.mock
 def test_history_since_decodes_records_and_builds_request() -> None:
     """``history_since()`` narrows each record to a ``HistoryRecord`` (incl. the
     case-insensitive ``data`` reason key and a null ``downloadId``); the request
@@ -633,11 +632,8 @@ def test_history_since_decodes_records_and_builds_request() -> None:
             "data": {"reason": "MissingFromDisk"},
         },
     ]
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/history/since", json=body)
-        records = client.history_since("2026-06-30T08:00:00Z")
-        request = rsps.calls[-1].request
+    route = respx.get(f"{_BASE}/history/since").respond(json=body)
+    records = _make_client().history_since("2026-06-30T08:00:00Z")
 
     assert records == [
         HistoryRecord(
@@ -657,8 +653,8 @@ def test_history_since_decodes_records_and_builds_request() -> None:
             reason="MissingFromDisk",
         ),
     ]
-    url = request.url
-    assert url is not None
+    request = route.calls.last.request
+    url = str(request.url)
     assert "date=2026-06-30T08%3A00%3A00Z" in url
     assert "includeSeries=false" in url
     assert "includeEpisode=false" in url
@@ -666,14 +662,14 @@ def test_history_since_decodes_records_and_builds_request() -> None:
     assert request.headers["X-Api-Key"] == "testkey"
 
 
+@respx.mock
 def test_history_since_non_200_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
     """A non-200 history read returns None (the activity scan fails open)."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/history/since", status=500)
-        with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-            result = client.history_since("2026-06-30T08:00:00Z")
+    respx.get(f"{_BASE}/history/since").respond(status_code=500)
+    client = _make_client()
+    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
+        result = client.history_since("2026-06-30T08:00:00Z")
 
     assert result is None
     # The single warning for a failed history fetch states its consequence too
@@ -683,41 +679,41 @@ def test_history_since_non_200_returns_none_and_warns(caplog: pytest.LogCaptureF
     assert warning.getMessage() == expected
 
 
+@respx.mock
 def test_history_since_request_error_returns_none() -> None:
     """A transient request error is swallowed to None (fail-open)."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/history/since", body=requests.exceptions.ConnectionError("boom"))
-        assert client.history_since("2026-06-30T08:00:00Z") is None
+    respx.get(f"{_BASE}/history/since").mock(side_effect=httpx.ConnectError("boom"))
+    assert _make_client().history_since("2026-06-30T08:00:00Z") is None
 
 
+@respx.mock
 def test_history_since_non_json_body_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
     """A 200 with a non-JSON body (e.g. a proxy login page) fails open to None."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/history/since", body="<html>login</html>", content_type="text/html")
-        with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-            result = client.history_since("2026-06-30T08:00:00Z")
+    respx.get(f"{_BASE}/history/since").respond(content=b"<html>login</html>", content_type="text/html")
+    client = _make_client()
+    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
+        result = client.history_since("2026-06-30T08:00:00Z")
 
     assert result is None
     assert any(r.levelno == logging.WARNING for r in caplog.records)
 
 
+@respx.mock
 def test_history_since_non_array_payload_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
     """A JSON object (not the expected array) fails open to None."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/history/since", json={"message": "unauthorized"})
-        with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-            result = client.history_since("2026-06-30T08:00:00Z")
+    respx.get(f"{_BASE}/history/since").respond(json={"message": "unauthorized"})
+    client = _make_client()
+    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
+        result = client.history_since("2026-06-30T08:00:00Z")
 
     assert result is None
     assert any(r.levelno == logging.WARNING for r in caplog.records)
 
 
+@respx.mock
 def test_history_since_skips_non_dict_elements() -> None:
     """Stray non-object array elements are dropped, not crashed on."""
 
@@ -726,14 +722,13 @@ def test_history_since_skips_non_dict_elements() -> None:
         "stray",
         42,
     ]
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/history/since", json=body)
-        records = client.history_since("2026-06-30T08:00:00Z")
+    respx.get(f"{_BASE}/history/since").respond(json=body)
+    records = _make_client().history_since("2026-06-30T08:00:00Z")
 
     assert records == [HistoryRecord(id=1, date="2026-07-01T10:00:00Z", item_id=2, event_type="grabbed")]
 
 
+@respx.mock
 def test_trailing_slash_url_is_normalized() -> None:
     """A trailing-slash base url must not become a ``//api`` join - live Sonarr
     302s that to the login page, breaking every raw endpoint.
@@ -746,9 +741,8 @@ def test_trailing_slash_url_is_normalized() -> None:
         http=httpx.Client(),
         logger=logging.getLogger("seadexarr.test"),
     )
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        rsps.add(responses.GET, f"{_BASE}/history/since", json=[])
-        assert client.history_since("2026-06-30T08:00:00Z") == []
+    respx.get(f"{_BASE}/history/since").respond(json=[])
+    assert client.history_since("2026-06-30T08:00:00Z") == []
 
 
 # --- quality_definitions() / languages() ------------------------------------

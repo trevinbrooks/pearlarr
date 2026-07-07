@@ -8,9 +8,9 @@ external network leaves faked:
 
 * the SeaDex library, faked at the gateway's httpx boundary (``SeaDexEntry``);
 * qBittorrent, left unconfigured so the whole run is a perpetual preview;
-* the Arr + AniList HTTP, mocked at the ``requests`` boundary via ``responses``
-  (the arr endpoints migrated onto the httpx-based ``ArrHttp`` - the library
-  fetch and the movie-file read - via ``respx``);
+* the Arr HTTP (every raw endpoint rides the httpx-based ``ArrHttp``), mocked
+  via ``respx``; the AniList POST, still at the ``requests`` boundary, via
+  ``responses``;
 * the Nyaa source (``pynyaa``/httpx, which ``responses`` can't intercept), faked
   at ``torrents.get_nyaa_torrent``.
 
@@ -125,13 +125,12 @@ def test_sonarr_run_drives_real_composition_root(
     )
     (tmp_path / "config.yml").write_text(yaml.safe_dump(config.model_dump(mode="json")))
 
-    # The Sonarr + AniList HTTP boundary. responses patches the requests adapter
-    # globally (the shared Session); respx covers the endpoints migrated onto the
-    # httpx-based ArrHttp (the library fetch).
+    # The Sonarr + AniList HTTP boundary. respx covers every Sonarr endpoint
+    # (all on the httpx-based ArrHttp); responses patches the requests adapter
+    # for the AniList POST.
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps, respx.mock:
         series_route = respx.get(f"{_BASE}/series").respond(json=sonarr_fixture("series_subset.json"))
         register_sonarr_reads(
-            rsps,
             _BASE,
             episodes=sonarr_fixture("episodes_228_bahamut.json"),
             parse=sonarr_fixture("parse_bahamut_s01e01.json"),
@@ -261,14 +260,14 @@ def test_radarr_run_drives_real_composition_root(
     )
     (tmp_path / "config.yml").write_text(yaml.safe_dump(config.model_dump(mode="json")))
 
-    # The Radarr + AniList HTTP boundary. responses patches the requests adapter
-    # globally (the shared Session); respx covers the endpoints migrated onto the
-    # httpx-based ArrHttp (the library fetch and the per-movie file read, the
-    # latter empty -> the {None: [None]} no-existing-file release dict).
+    # The Radarr + AniList HTTP boundary. respx covers every Radarr endpoint
+    # (all on the httpx-based ArrHttp; the empty moviefile read -> the
+    # {None: [None]} no-existing-file release dict); responses patches the
+    # requests adapter for the AniList POST.
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps, respx.mock:
         movie_route = respx.get(f"{_RADARR_BASE}/movie").respond(json=[_MOVIE_BODY])
         moviefile_route = respx.get(f"{_RADARR_BASE}/moviefile").respond(json=[])
-        rsps.add(responses.GET, f"{_RADARR_BASE}/history/since", json=[])
+        respx.get(f"{_RADARR_BASE}/history/since").respond(json=[])
         rsps.add(responses.POST, _ANILIST_URL, json=_RADARR_ANILIST_BODY)
 
         result = run_single(radarr=True, import_wait_mode=ImportWaitMode.OFF)
