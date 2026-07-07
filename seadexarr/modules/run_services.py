@@ -253,7 +253,6 @@ class RunDeps:
             log_fmt=log_fmt,
             # Presentation: owns every log_* method and the end-of-run summary.
             reporter=RunReporter(
-                logger=logger,
                 log_fmt=log_fmt,
                 cache_store=cache_store,
                 anilist=anilist,
@@ -637,7 +636,6 @@ class RunServices:
         self,
         al_id: int,
         sd_entry: EntryRecord,
-        sd_url: str,
         coverage: Callable[[], str],
     ) -> bool:
         """Shared cached-entry short-circuit for both Arr runners
@@ -651,8 +649,8 @@ class RunServices:
 
         Args:
             al_id (int): AniList id being processed
-            sd_entry (EntryRecord): Resolved SeaDex entry
-            sd_url (str): SeaDex entry URL stored on the backfilled record
+            sd_entry (EntryRecord): Resolved SeaDex entry (its url is stored on
+                the backfilled record)
             coverage (Callable[[], str]): Lazily builds the coverage string for
                 the backfill ("" for a movie, a season/episode range for a series)
         """
@@ -669,7 +667,7 @@ class RunServices:
         if not entry.url:
             self._update_cache(
                 al_id=al_id,
-                cache_details={"url": sd_url, "coverage": coverage()},
+                cache_details={"url": sd_entry.url, "coverage": coverage()},
             )
         self._reporter.log_cached_entry(self._ctx, self._ctx.arr, al_id)
         return True

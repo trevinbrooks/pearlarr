@@ -121,7 +121,6 @@ class RadarrSync(ArrSync[RadarrItem]):
     def process_al_id(
         self,
         item: RadarrItem,
-        item_title: str,
         al_id: int,
         mapping: MappingEntry,
     ) -> bool:
@@ -142,7 +141,7 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         # Skip if already cached. Movies have no episode coverage, so the
         # one-time backfill on a legacy record is just the URL.
-        if run.cached_entry_skip(al_id, sd_entry, sd_url, lambda: ""):
+        if run.cached_entry_skip(al_id, sd_entry, lambda: ""):
             return False
 
         # Resolve the AniList title, then log the active entry (a movie has no
@@ -204,7 +203,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         return run.grab_and_cache(
             GrabRequest(
                 al_id=al_id,
-                item_title=item_title,
+                item_title=item.title,
                 anilist_title=anilist_title,
                 sd_url=sd_url,
                 seadex_dict=seadex_dict,

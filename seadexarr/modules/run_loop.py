@@ -320,7 +320,6 @@ class RunLoop:
                     try:
                         if strategy.process_al_id(
                             item=item,
-                            item_title=item_title,
                             al_id=al_id,
                             mapping=mapping,
                         ):

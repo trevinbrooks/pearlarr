@@ -46,7 +46,6 @@ def _make_reporter(cache_store: AbstractCacheStore | None = None) -> RunReporter
     # its ``al_cache`` dict, so the real wiring is exercised without a network.
     anilist = AniListGateway(cache_store=FakeCacheStore(), logger=logger)
     return RunReporter(
-        logger=logger,
         log_fmt=LogFormatter(logger),
         cache_store=store,
         anilist=anilist,

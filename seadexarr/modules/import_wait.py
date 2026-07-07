@@ -618,7 +618,7 @@ class MonitorPass:
 
         return WaitSnapshot(tuple(self.views.values()), elapsed_s=self.elapsed())
 
-    def _terminal(self, outcome: Outcome, h: str, label: str, *, files: int | None = None) -> None:
+    def _terminal(self, outcome: Outcome, record: PendingImport, *, files: int | None = None) -> None:
         """Record a terminal outcome: snapshot row + result + (maybe) drop + retire.
 
         Drops the durable record when (and only when) ``outcome.dropped`` - True for
@@ -629,6 +629,8 @@ class MonitorPass:
         count, so the graduation ledger can state them.
         """
 
+        h = record.infohash
+        label = record.display_label
         self.views[h] = TorrentView(
             key=h,
             label=label,
@@ -663,7 +665,7 @@ class MonitorPass:
 
         if poll.outcome is None:
             if self.now() - self.dl_start[h] >= self.dl_timeout:
-                self._terminal(Outcome.DOWNLOAD_TIMED_OUT, h, label)
+                self._terminal(Outcome.DOWNLOAD_TIMED_OUT, record)
                 return
             prior = self.views.get(h)
             if not poll.observed:
@@ -692,15 +694,15 @@ class MonitorPass:
             )
             return
         if poll.outcome is WaitOutcome.MISSING:
-            self._terminal(Outcome.MISSING, h, label)
+            self._terminal(Outcome.MISSING, record)
             return
         if poll.outcome is WaitOutcome.ERRORED:
-            self._terminal(Outcome.DOWNLOAD_ERRORED, h, label)
+            self._terminal(Outcome.DOWNLOAD_ERRORED, record)
             return
         if not poll.content_path:
             # COMPLETE but qBittorrent reported no save path: its own outcome,
             # not a misleading "timed out" (the download finished fine).
-            self._terminal(Outcome.NO_CONTENT_PATH, h, label)
+            self._terminal(Outcome.NO_CONTENT_PATH, record)
             return
 
         # COMPLETE: drive / verify our import, gating `imported` on verified files.
@@ -713,15 +715,14 @@ class MonitorPass:
             at_deadline=at_deadline,
         )
         if probe.files_present:
-            self._terminal(Outcome.IMPORTED, h, label, files=probe.target_count or None)
+            self._terminal(Outcome.IMPORTED, record, files=probe.target_count or None)
         elif at_deadline:
             self._terminal(
                 Outcome.STILL_IMPORTING if probe.command_issued else Outcome.NOT_READY,
-                h,
-                label,
+                record,
             )
         elif probe.readiness is ImportReadiness.LEAVE:
-            self._terminal(Outcome.NOTHING_TO_IMPORT, h, label)
+            self._terminal(Outcome.NOTHING_TO_IMPORT, record)
         else:
             # RETRY / copy in flight: the command was accepted but the files
             # haven't landed yet (or Sonarr is still scanning). Seed the "files
@@ -770,9 +771,8 @@ class MonitorPass:
             # row to the heavy poll's repaired done-check.
             if not progress.determinate or progress.total <= 0:
                 continue
-            label = record.display_label
             if progress.done >= progress.total:
-                self._terminal(Outcome.IMPORTED, h, label, files=progress.total)
+                self._terminal(Outcome.IMPORTED, record, files=progress.total)
                 changed = True
             elif (progress.done, progress.total) != (view.import_done, view.import_total):
                 self.views[h] = replace(

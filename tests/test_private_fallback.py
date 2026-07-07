@@ -1059,7 +1059,7 @@ class TestModeSwitchResurfacesFallbackSatisfied:
             private_releases="warn",
         )
         assert warn_run.al_id_needs_scan(11) is True
-        assert warn_run.cached_entry_skip(11, entry, "u", lambda: "") is False
+        assert warn_run.cached_entry_skip(11, entry, lambda: "") is False
 
         # 3) the warn-mode reprocess warns and holds: the private pick is all
         # that's offered (the Arr owns the grabbed fallback's file), nothing is
@@ -1097,4 +1097,4 @@ class TestModeSwitchResurfacesFallbackSatisfied:
             private_releases="fallback",
         )
         assert fallback_run.al_id_needs_scan(11) is False
-        assert fallback_run.cached_entry_skip(11, entry, "u", lambda: "") is True
+        assert fallback_run.cached_entry_skip(11, entry, lambda: "") is True

@@ -545,7 +545,6 @@ def _real_reporter(logger: logging.Logger, log_fmt: LogFormatter, cache_store: A
     """
 
     return RunReporter(
-        logger=logger,
         log_fmt=log_fmt,
         cache_store=cache_store,
         anilist=AniListGateway(cache_store=cache_store, logger=logger),

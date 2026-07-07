@@ -197,10 +197,9 @@ class _FakeRunServices(RunServices):
         self,
         al_id: int,
         sd_entry: EntryRecord,
-        sd_url: str,
         coverage: Callable[[], str],
     ) -> bool:
-        del al_id, sd_entry, sd_url
+        del al_id, sd_entry
         self.cached_skip_coverages.append(coverage)
         return self._cached_skip
 
@@ -448,14 +447,14 @@ class TestProcessAlIdThreadsServices:
         run = _FakeRunServices()
         strat = make_bare_instance(RadarrSync, _services=run)
 
-        assert strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5)) is False
+        assert strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5)) is False
         assert run.al_id_prologue_calls == [5]
 
     def test_sonarr_no_seadex_entry_returns_false(self) -> None:
         run = _FakeRunServices()
         strat = make_bare_instance(SonarrSync, _services=run)
 
-        assert strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5)) is False
+        assert strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5)) is False
         assert run.al_id_prologue_calls == [5]
 
     def test_sonarr_no_episodes_resolved_skips_explicitly(self) -> None:
@@ -474,7 +473,7 @@ class TestProcessAlIdThreadsServices:
             logger=logger,
         )
 
-        result = strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5))
+        result = strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
 
         assert result is False
         assert run.log_entry_status_calls == [(EntryState.NO_EPISODES, "Title")]
@@ -501,8 +500,7 @@ class TestProcessAlIdThreadsServices:
         )
 
         result = strat.process_al_id(
-            _Item(id=1),
-            "Title",
+            _Item(id=1, title="Title"),
             5,
             MappingEntry(anilist_id=5, tvdb_mappings={}, source=MappingSource.ANIBRIDGE),
         )
@@ -535,7 +533,7 @@ class TestProcessAlIdThreadsServices:
             logger=make_logger(),
         )
 
-        result = strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5))
+        result = strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
 
         assert result is False
         assert run.invalid_selection_skips == 1
@@ -557,7 +555,7 @@ class TestProcessAlIdThreadsServices:
             logger=_capture_logger("seadexarr-seam-radarr-dedup")[0],
         )
 
-        result = strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5))
+        result = strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
 
         assert result is False
         assert run.check_al_id_in_cache_calls == [CheckAlIdInCacheCall(Arr.RADARR, 5, entry)]
@@ -1378,7 +1376,7 @@ class TestRadarrProcessAlIdSeam:
         run = _FakeRunServices(prologue_entry=make_entry_record(), cached_skip=True)
         strat, radarr = self._make_strat(run)
 
-        result = strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5))
+        result = strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
 
         assert result is False
         # Neither the SeaDex parse nor the movie files were reached.
@@ -1398,7 +1396,7 @@ class TestRadarrProcessAlIdSeam:
         )
         strat, _ = self._make_strat(run)
 
-        result = strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5))
+        result = strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
 
         assert result is True
         expected: CacheRecord = {
@@ -1424,7 +1422,7 @@ class TestRadarrProcessAlIdSeam:
         )
         strat, _ = self._make_strat(run, files=[MovieFile(release_group="OldGroup", size=100)])
 
-        result = strat.process_al_id(_Item(id=3), "Item Title", 5, MappingEntry(anilist_id=5))
+        result = strat.process_al_id(_Item(id=3, title="Item Title"), 5, MappingEntry(anilist_id=5))
 
         # grab_and_cache's scripted bool passes straight through.
         assert result is True
@@ -1450,7 +1448,7 @@ class TestRadarrProcessAlIdSeam:
         run = _FakeRunServices(prologue_entry=make_entry_record(), seadex_dict=seadex_dict)
         strat, _ = self._make_strat(run, interactive=interactive)
 
-        strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5))
+        strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
         return len(run.interactive_calls)
 
     def test_interactive_prompts_only_for_multi_release_interactive(self) -> None:

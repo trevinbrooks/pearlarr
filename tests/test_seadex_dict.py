@@ -554,7 +554,7 @@ class TestInteractivePick:
             return "42"  # out of range -> every token invalid -> empty pick
 
         monkeypatch.setattr("builtins.input", fake_input)
-        result = strat.process_al_id(_MovieItem(), "Movie", al_id, MappingEntry(anilist_id=al_id))
+        result = strat.process_al_id(_MovieItem(), al_id, MappingEntry(anilist_id=al_id))
         capsys.readouterr()  # drain the picker's terminal rows
 
         assert result is False

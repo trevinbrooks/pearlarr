@@ -106,7 +106,6 @@ class ArrSync[ItemT: ArrItem](ABC):
     def process_al_id(
         self,
         item: ItemT,
-        item_title: str,
         al_id: int,
         mapping: MappingEntry,
     ) -> bool:

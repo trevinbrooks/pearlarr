@@ -197,21 +197,20 @@ def is_preview(ctx: RunContext, qbit: qbittorrentapi.Client | None) -> bool:
 class RunReporter:
     """Owns the ``log_*`` presentation surface and the end-of-run summary.
 
-    Built once per arr instance with the stable collaborators it needs (logger,
-    log formatter, cache store, AniList gateway). The methods that touch run
-    state take the :class:`RunContext` as their first argument; the rest are
-    pure presentation.
+    Built once per arr instance with the stable collaborators it needs (log
+    formatter - whose logger it adopts - cache store, AniList gateway). The
+    methods that touch run state take the :class:`RunContext` as their first
+    argument; the rest are pure presentation.
     """
 
     def __init__(
         self,
         *,
-        logger: logging.Logger,
         log_fmt: LogFormatter,
         cache_store: AbstractCacheStore,
         anilist: AniListGateway,
     ) -> None:
-        self.logger = logger
+        self.logger = log_fmt.logger
         self.log_fmt = log_fmt
         self.cache_store = cache_store
         self.anilist = anilist

@@ -257,7 +257,6 @@ class SonarrSync(ArrSync[SonarrItem]):
     def process_al_id(
         self,
         item: SonarrItem,
-        item_title: str,
         al_id: int,
         mapping: MappingEntry,
     ) -> bool:
@@ -282,7 +281,6 @@ class SonarrSync(ArrSync[SonarrItem]):
         if run.cached_entry_skip(
             al_id,
             sd_entry,
-            sd_url,
             lambda: _coverage.coverage_string(
                 _coverage.episodes_from_ep_list(
                     self._episodes.get_ep_list(
@@ -467,7 +465,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         return run.grab_and_cache(
             GrabRequest(
                 al_id=al_id,
-                item_title=item_title,
+                item_title=item.title,
                 anilist_title=anilist_title,
                 sd_url=sd_url,
                 seadex_dict=seadex_dict,

@@ -137,10 +137,9 @@ class GrabPipeline:
         cap = self._config.advanced.max_torrents_to_add
 
         for srg, srg_item in torrent_dict.items():
-            for url, url_item in srg_item.urls.items():
+            for url_item in srg_item.urls.values():
                 add_result = self._add_one_url(
                     srg,
-                    url,
                     url_item,
                     pending_seeds=pending_seeds,
                 )
@@ -162,7 +161,6 @@ class GrabPipeline:
     def _add_one_url(
         self,
         srg: str,
-        url: str,
         url_item: SeadexUrlItem,
         pending_seeds: dict[str, PendingImport] | None = None,
     ) -> ReleaseOutcome | None:
@@ -183,6 +181,7 @@ class GrabPipeline:
         if not url_item.download:
             return None
 
+        url = url_item.url
         tracker = url_item.tracker
 
         if not url_item.is_public:

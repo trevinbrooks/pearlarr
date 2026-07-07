@@ -52,26 +52,26 @@ class TestCachedEntrySkip:
         cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         reporter = _RecordingReporter()
         run = make_services(cache_store=cache, _reporter=reporter)
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "u", lambda: "") is True
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
         assert len(reporter.calls) == 1
 
     def test_does_not_skip_when_entry_absent(self) -> None:
         run = self._run(FakeCacheStore())
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "u", lambda: "") is False
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
 
     def test_does_not_skip_when_timestamp_is_stale(self) -> None:
         cache = FakeCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = self._run(cache)
         # SeaDex entry now carries a newer updated_at -> stale -> re-process.
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2022, 6, 6)), "u", lambda: "") is False
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2022, 6, 6)), lambda: "") is False
 
     def test_backfills_url_and_coverage_when_url_missing(self) -> None:
         cache = FakeCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"updated_at": datetime(2021, 1, 1)})  # legacy: no url yet
         run = self._run(cache)
         assert (
-            run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "sd-url", lambda: "S01")
+            run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1), url="sd-url"), lambda: "S01")
             is True
         )
         backfilled = cache.get_entry(Arr.SONARR, 7)
@@ -87,7 +87,7 @@ class TestCachedEntrySkip:
             _reporter=_RecordingReporter(),
             ignore_seadex_update_times=True,
         )
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "u", lambda: "") is False
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
 
     def test_dirty_id_reprocesses_even_when_fresh(self) -> None:
         # An arr-side file change bypasses the skip despite a matching timestamp.
@@ -95,7 +95,7 @@ class TestCachedEntrySkip:
         cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = self._run(cache)
         run.mark_dirty([7])
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "u", lambda: "") is False
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
 
     def test_non_dirty_sibling_still_skips(self) -> None:
         # Marking one id dirty must not widen the bypass to other cached ids.
@@ -103,7 +103,7 @@ class TestCachedEntrySkip:
         cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
         run = self._run(cache)
         run.mark_dirty([8])
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "u", lambda: "") is True
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
 
     def test_begin_run_clears_the_dirty_set(self) -> None:
         # Dirty ids are per-run state: the next run's rebind must reset them.
@@ -117,7 +117,7 @@ class TestCachedEntrySkip:
         )
         run.mark_dirty([7])
         run.begin_run(run.ctx)
-        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "u", lambda: "") is True
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is True
 
 
 class TestFallbackSatisfiedResurfacing:
@@ -136,7 +136,7 @@ class TestFallbackSatisfiedResurfacing:
     @staticmethod
     def _skips(cache: FakeCacheStore, private_releases: str) -> bool:
         run = make_services(cache_store=cache, _reporter=_RecordingReporter(), private_releases=private_releases)
-        return run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), "u", lambda: "")
+        return run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "")
 
     def test_warn_mode_reprocesses_a_marked_entry(self) -> None:
         # Fresh timestamp, but the title was satisfied by a fallback: warn mode

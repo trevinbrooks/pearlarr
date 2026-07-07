@@ -107,7 +107,7 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         return self.history
 
     @override
-    def process_al_id(self, item: FakeArrItem, item_title: str, al_id: int, mapping: MappingEntry) -> bool:
+    def process_al_id(self, item: FakeArrItem, al_id: int, mapping: MappingEntry) -> bool:
         self.process_calls.append(al_id)
         if self._process_raises_on is not None and al_id == self._process_raises_on:
             raise ValueError(f"boom on al_id {al_id}")
