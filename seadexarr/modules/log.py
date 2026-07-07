@@ -413,7 +413,7 @@ def setup_logger(
     # Define the log message format for the log files
     logfile_formatter = logging.Formatter(
         fmt="%(asctime)s %(levelname)s: %(message)s",
-        datefmt="%m/%d/%y %I:%M %p",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
     # Create the file handler. Rotation is performed manually above (once per
