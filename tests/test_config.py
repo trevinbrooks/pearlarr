@@ -7,6 +7,7 @@ requirement, and the file lifecycle (template copy + checksum).
 """
 
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ from seadexarr.modules.config import (
     PrivateReleaseAction,
     QbittorrentSettings,
     SeadexSettings,
+    config_permissions_loose,
     secret_value,
 )
 from seadexarr.modules.manual_import import ImportWaitMode
@@ -39,6 +41,26 @@ class TestFileLifecycle:
         # The bundled (nested) template was copied into place for the user to edit.
         assert cfg_path.exists()
         assert "sonarr" in yaml.safe_load(cfg_path.read_text())
+
+    @pytest.mark.skipif(os.name != "posix", reason="mode bits are POSIX-only")
+    def test_template_copy_is_owner_only(self, tmp_path: Path) -> None:
+        # The config holds plaintext API keys: the first-run template copy must
+        # land 0600, not inherit the world-readable mode of the bundled template.
+        cfg_path = tmp_path / "config.yml"
+        with pytest.raises(FileNotFoundError):
+            AppConfig.load(str(cfg_path))
+        assert (cfg_path.stat().st_mode & 0o777) == 0o600
+
+    @pytest.mark.skipif(os.name != "posix", reason="mode bits are POSIX-only")
+    def test_loose_permissions_detected_and_600_accepted(self, tmp_path: Path) -> None:
+        cfg_path = tmp_path / "config.yml"
+        cfg_path.write_text("sonarr:\n  url: http://x\n")
+        cfg_path.chmod(0o644)
+        assert config_permissions_loose(str(cfg_path)) is True
+        cfg_path.chmod(0o600)
+        assert config_permissions_loose(str(cfg_path)) is False
+        # An unstatable path is not "loose" (the load path reports missing files itself).
+        assert config_permissions_loose(str(tmp_path / "absent.yml")) is False
 
     def test_load_preserves_user_values(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "config.yml"

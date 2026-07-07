@@ -13,6 +13,7 @@ point-of-use via :meth:`AppConfig.require_connection`, so a config filled in for
 one arr still validates and runs.
 """
 
+import contextlib
 import os
 import shutil
 from enum import StrEnum
@@ -94,6 +95,36 @@ def template_path() -> str:
     """Absolute path to the bundled config template shipped beside this module."""
 
     return os.path.join(os.path.dirname(__file__), CONFIG_TEMPLATE_FILE)
+
+
+def restrict_config_permissions(path: str) -> None:
+    """Best-effort ``chmod 0600``: the config carries plaintext API keys.
+
+    Both creation paths (the first-run template copy and ``config init``) call
+    this so a fresh config never lands group/other-readable. Best-effort because
+    a filesystem that doesn't support modes (or a race with a deleted file) must
+    not turn the write into a crash.
+    """
+
+    with contextlib.suppress(OSError):
+        os.chmod(path, 0o600)
+
+
+def config_permissions_loose(path: str) -> bool:
+    """True when the config file is accessible to group/other (POSIX only).
+
+    The load path warns on this: an existing config predating the 0600-on-create
+    hardening may still expose its credentials. Always False on non-POSIX
+    (Windows ACLs don't map onto the mode bits) and on an unstatable path.
+    """
+
+    if os.name != "posix":
+        return False
+    try:
+        mode = os.stat(path).st_mode
+    except OSError:
+        return False
+    return bool(mode & 0o077)
 
 
 def secret_value(secret: SecretStr | None) -> str | None:
@@ -402,6 +433,7 @@ class AppConfig(_ConfigBase):
 
         if not os.path.exists(path):
             shutil.copy(template_path(), path)
+            restrict_config_permissions(path)
             raise FileNotFoundError(f"No config file at {path}; a starter template was written - fill it in and re-run")
 
         with open(path, "rb") as f:

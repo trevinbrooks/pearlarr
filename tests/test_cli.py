@@ -334,6 +334,9 @@ class TestConfigInit:
 
         assert config_init() is True
         assert config.exists()
+        if os.name == "posix":
+            # The starter will be filled with API keys: it must land owner-only.
+            assert (config.stat().st_mode & 0o777) == 0o600
 
         # A filled-in config must survive an accidental re-run; the refusal is
         # a stderr line.

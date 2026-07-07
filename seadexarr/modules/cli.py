@@ -15,7 +15,7 @@ import yaml
 from pydantic import ValidationError
 
 from .boot_view import BootView, make_boot_view
-from .config import AppConfig, Arr, template_path
+from .config import AppConfig, Arr, config_permissions_loose, restrict_config_permissions, template_path
 from .log import LogLevel, apply_log_level, indent_string, log_styled, setup_logger
 from .manual_import import ImportWaitMode
 from .paths import AppPaths, ensure_data_dir, resolve_paths
@@ -188,7 +188,15 @@ def _load_shared_config(
 
     try:
         with boot.step("Reading config"):
-            return AppConfig.load(config)
+            loaded = AppConfig.load(config)
+        # An existing config predating the 0600-on-create hardening may still
+        # expose its API keys; warn (after the boot step closes) but keep running.
+        if config_permissions_loose(config):
+            logger.warning(
+                f"Config file {config} is readable by other users and holds API keys - "
+                f"tighten it with: chmod 600 {config}",
+            )
+        return loaded
     except FileNotFoundError:
         logger.error(
             f"No config file at {config} - a starter template was written; fill it in and re-run. Skipping this run{retry}.",
@@ -762,6 +770,7 @@ def config_init(
         return False
 
     shutil.copyfile(template_path(), paths.config)
+    restrict_config_permissions(paths.config)
     typer.echo(f"Wrote a starter config to {paths.config}.")
 
     return True
