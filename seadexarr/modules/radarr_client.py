@@ -121,7 +121,7 @@ class RadarrClient(AbstractRadarrClient):
 
         # Each element is an unvalidated MovieFileResource object: cast at the
         # parse boundary into the typed MovieFile view.
-        return [MovieFile.from_api(cast("dict[str, Any]", record)) for record in raw]
+        return [MovieFile.from_api(cast("dict[str, Any]", record)) for record in raw if isinstance(record, dict)]
 
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:

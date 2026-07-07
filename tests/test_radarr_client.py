@@ -48,7 +48,8 @@ def _make_client() -> RadarrClient:
 
 @respx.mock
 def test_movie_files_decodes_records_and_builds_request() -> None:
-    body: list[object] = [{"releaseGroup": "SubsPlease", "size": 123, "id": 9}]
+    # The junk non-dict element is skipped, like every other Arr list walk.
+    body: list[object] = [{"releaseGroup": "SubsPlease", "size": 123, "id": 9}, "junk"]
     route = respx.get(f"{_BASE}/moviefile").respond(json=body)
     files = _make_client().movie_files(7)
 
