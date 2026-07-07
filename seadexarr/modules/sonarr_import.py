@@ -45,6 +45,7 @@ from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import SonarrEpisodes
 from .sonarr_import_plan import (
     EpisodeFileStatus,
+    EpisodeSnapshot,
     ImportAction,
     ImportDecision,
     QueueVerdict,
@@ -198,8 +199,7 @@ class ImportExecutor:
         pending: PendingImport,
         content_path: str,
         *,
-        episodes_by_id: dict[int, SonarrEpisode],
-        recommended_groups: set[str],
+        snapshot: EpisodeSnapshot,
         at_deadline: bool = False,
     ) -> ImportProbe:
         """Drive our authoritative series-pinned manual import for one download.
@@ -224,8 +224,8 @@ class ImportExecutor:
             pending (PendingImport): The durable record for the completed torrent.
             content_path (str): The qBittorrent ``content_path`` to import from;
                 also the label for this download's log lines.
-            episodes_by_id (dict[int, SonarrEpisode]): Current series episodes by id.
-            recommended_groups (set[str]): Normalized recommended-group guard set.
+            snapshot (EpisodeSnapshot): The same-poll episode index + normalized
+                recommended-group guard set.
             at_deadline (bool): The final attempt - a still-missing intended file
                 is terminal, so warn loudly; otherwise it's an expected early-poll
                 gap and only logged at debug.
@@ -237,7 +237,7 @@ class ImportExecutor:
             return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         candidates_by_basename = self._mapper.candidate_files(candidates)
-        ep_id_map = build_episode_id_map(list(episodes_by_id.values()))
+        ep_id_map = build_episode_id_map(list(snapshot.episodes_by_id.values()))
         authoritative_map, unplaceable = self._mapper.assign(
             pending,
             candidates_by_basename,
@@ -254,7 +254,7 @@ class ImportExecutor:
 
         # Done-check against the COMPLETE (repaired) intended set, from the files.
         target_ids = sorted({i for ids in authoritative_map.values() for i in ids})
-        statuses = episode_file_statuses(target_ids, episodes_by_id, recommended_groups)
+        statuses = episode_file_statuses(target_ids, snapshot)
         if all_targets_done(statuses):
             self.logger.debug(
                 indent_string(f"{content_path}: already imported (recommended files present)"),
@@ -421,12 +421,11 @@ class ImportExecutor:
 class _SeedStatuses(NamedTuple):
     """The seed-gated import state both reconcile consumers read.
 
-    A fresh episode index, the series' recommended (overwrite-guard) groups, and
-    the per-target file statuses pinned to the seed set.
+    A same-poll episode snapshot (fresh index + recommended overwrite-guard
+    groups) and the per-target file statuses pinned to the seed set.
     """
 
-    episodes_by_id: dict[int, SonarrEpisode]
-    recommended: set[str]
+    snapshot: EpisodeSnapshot
     statuses: dict[int, EpisodeFileStatus]
 
 
@@ -651,8 +650,7 @@ class ImportReconciler:
         result = self._executor.run_manual_import(
             pending,
             content_path,
-            episodes_by_id=seed.episodes_by_id,
-            recommended_groups=seed.recommended,
+            snapshot=seed.snapshot,
             at_deadline=at_deadline,
         )
         return replace(result, imported_count=done, target_count=total)
@@ -682,13 +680,11 @@ class ImportReconciler:
         """
 
         episodes = self._episodes.episodes_for_series(pending.series_id)
-        episodes_by_id = {ep.id: ep for ep in episodes if ep.id}
-        recommended = self._recommended_groups(pending.series_id, pending.release_group)
-        return _SeedStatuses(
-            episodes_by_id,
-            recommended,
-            episode_file_statuses(targets, episodes_by_id, recommended),
+        snapshot = EpisodeSnapshot(
+            episodes_by_id={ep.id: ep for ep in episodes if ep.id},
+            recommended_groups=self._recommended_groups(pending.series_id, pending.release_group),
         )
+        return _SeedStatuses(snapshot, episode_file_statuses(targets, snapshot))
 
     @staticmethod
     def _recommended_count(statuses: dict[int, EpisodeFileStatus]) -> int:

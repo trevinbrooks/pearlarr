@@ -40,6 +40,7 @@ from seadexarr.modules.seadex_types import (
 from seadexarr.modules.sonarr_import_plan import (
     CandidateFile,
     EpisodeFileStatus,
+    EpisodeSnapshot,
     ParsedQuality,
     QueueVerdict,
     all_targets_done,
@@ -157,7 +158,7 @@ class TestEpisodeFileStatuses:
             3: _ep(ep_id=3, file_id=30, group="OtherGroup"),
             4: _ep(ep_id=4, file_id=40, group=None),
         }
-        statuses = episode_file_statuses([1, 2, 3, 4], episodes, {"subgroup"})
+        statuses = episode_file_statuses([1, 2, 3, 4], EpisodeSnapshot(episodes, {"subgroup"}))
         assert statuses == {
             1: EpisodeFileStatus.ABSENT,
             2: EpisodeFileStatus.RECOMMENDED,
@@ -166,14 +167,14 @@ class TestEpisodeFileStatuses:
         }
 
     def test_missing_episode_is_absent(self) -> None:
-        statuses = episode_file_statuses([99], {}, {"subgroup"})
+        statuses = episode_file_statuses([99], EpisodeSnapshot({}, {"subgroup"}))
         assert statuses == {99: EpisodeFileStatus.ABSENT}
 
     def test_dash_wrapped_group_counts_as_recommended(self) -> None:
         # Sonarr can report a file's group dash-wrapped ("-Aergia-"); the overwrite
         # guard must still match it against the recommended set built from "Aergia".
         episodes = {5: _ep(ep_id=5, file_id=50, group="-Aergia-")}
-        statuses = episode_file_statuses([5], episodes, {normalize_group("Aergia")})
+        statuses = episode_file_statuses([5], EpisodeSnapshot(episodes, {normalize_group("Aergia")}))
         assert statuses == {5: EpisodeFileStatus.RECOMMENDED}
 
     def test_all_targets_done_only_when_all_recommended(self) -> None:

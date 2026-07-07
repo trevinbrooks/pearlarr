@@ -17,7 +17,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum, StrEnum, auto
-from typing import Any
+from typing import Any, NamedTuple
 
 from .manual_import import normalize_group
 from .seadex_types import (
@@ -246,23 +246,30 @@ class EpisodeFileStatus(Enum):
     UNKNOWN_GROUP = auto()
 
 
+class EpisodeSnapshot(NamedTuple):
+    """One poll's coherent view of a series: the fresh episode index plus the
+    normalized recommended-group (overwrite-guard) set - fetched together, so
+    consumers never mix state from two different polls."""
+
+    episodes_by_id: dict[int, SonarrEpisode]
+    recommended_groups: set[str]
+
+
 def episode_file_statuses(
     target_ep_ids: list[int],
-    episodes_by_id: dict[int, SonarrEpisode],
-    recommended_groups: set[str],
+    snapshot: EpisodeSnapshot,
 ) -> dict[int, EpisodeFileStatus]:
     """Classify each intended target episode by its current on-disk file.
 
-    Pure: reads only the fetched episode list and the (normalized) set of
+    Pure: reads only the snapshot's episode list and (normalized) set of
     recommended release groups for the series (every group we grabbed). "Already
     imported" is decided HERE from the episode files - not from the queue, since
     Sonarr drops an imported item from its queue almost immediately.
 
     Args:
         target_ep_ids (list[int]): The episode ids our mapping intends to fill.
-        episodes_by_id (dict[int, SonarrEpisode]): Current episodes keyed by id.
-        recommended_groups (set[str]): Normalized recommended groups for the
-            series (via :func:`normalize_group`).
+        snapshot (EpisodeSnapshot): The same-poll episode index + recommended
+            groups (via :func:`normalize_group`).
 
     Returns:
         dict[int, EpisodeFileStatus]: One status per de-duplicated target id.
@@ -272,14 +279,14 @@ def episode_file_statuses(
     for ep_id in target_ep_ids:
         if ep_id in statuses:
             continue
-        ep = episodes_by_id.get(ep_id)
+        ep = snapshot.episodes_by_id.get(ep_id)
         if ep is None or not ep.episode_file_id:
             statuses[ep_id] = EpisodeFileStatus.ABSENT
             continue
         group = ep.episode_file.release_group if ep.episode_file else None
         if not group:
             statuses[ep_id] = EpisodeFileStatus.UNKNOWN_GROUP
-        elif normalize_group(group) in recommended_groups:
+        elif normalize_group(group) in snapshot.recommended_groups:
             statuses[ep_id] = EpisodeFileStatus.RECOMMENDED
         else:
             statuses[ep_id] = EpisodeFileStatus.OTHER_GROUP
