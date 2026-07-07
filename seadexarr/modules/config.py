@@ -404,6 +404,27 @@ class AppConfig(_ConfigBase):
 
         return self.sonarr if arr is Arr.SONARR else self.radarr
 
+    def is_configured(self, arr: Arr) -> bool:
+        """Whether the arr's connection pair (url + api_key) is filled in.
+
+        The CLI uses this to skip an unconfigured arr cleanly (a Sonarr-only
+        setup is normal) instead of tripping :meth:`require_connection`.
+        """
+
+        return not self.missing_arr_keys(arr)
+
+    def missing_arr_keys(self, arr: Arr) -> tuple[str, ...]:
+        """The unset halves of the arr's connection pair, as dotted config keys.
+
+        Empty when the arr is fully configured; exactly one key means a
+        half-configured arr (almost certainly a mistake, which the CLI warns
+        about by name rather than skipping silently).
+        """
+
+        sub = self.for_arr(arr)
+        pairs = (("url", sub.url), ("api_key", sub.api_key))
+        return tuple(f"{arr.value}.{field}" for field, value in pairs if not value)
+
     def require_connection(self, arr: Arr) -> tuple[str, str]:
         """The arr's ``(url, api_key)``, or raise naming the missing key + file.
 

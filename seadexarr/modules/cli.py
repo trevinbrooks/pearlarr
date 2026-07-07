@@ -8,7 +8,7 @@ import shutil
 import sqlite3
 import time
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
 import yaml
@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 from .boot_view import BootView, make_boot_view
 from .config import AppConfig, Arr, template_path
-from .log import setup_logger
+from .log import LogLevel, apply_log_level, indent_string, setup_logger
 from .manual_import import ImportWaitMode
 from .paths import AppPaths, ensure_data_dir, resolve_paths
 from .runlock import single_instance_lock
@@ -52,16 +52,28 @@ def _exit_on_failure(result: object, **_: object) -> None:
         raise typer.Exit(1)
 
 
-seadexarr_cli = typer.Typer(name="seadexarr_cli", result_callback=_exit_on_failure)
+seadexarr_cli = typer.Typer(
+    name="seadexarr",
+    context_settings={"help_option_names": ["-h", "--help"]},
+    epilog="Docs & issues: https://github.com/bbtufty/seadexarr",
+    result_callback=_exit_on_failure,
+)
 seadexarr_run = typer.Typer(
     name="run",
     help="Run SeaDexArr: a scheduled loop or a one-off single run.",
+    no_args_is_help=True,
     result_callback=_exit_on_failure,
 )
-seadexarr_config = typer.Typer(name="config", help="Manage the config file.", result_callback=_exit_on_failure)
+seadexarr_config = typer.Typer(
+    name="config",
+    help="Initialize, validate or inspect the config file.",
+    no_args_is_help=True,
+    result_callback=_exit_on_failure,
+)
 seadexarr_cache = typer.Typer(
     name="cache",
     help="Back up, restore, remove or inspect the cache database.",
+    no_args_is_help=True,
     result_callback=_exit_on_failure,
 )
 
@@ -125,56 +137,69 @@ def _open_cache_readonly(cache_path: str) -> Generator[CacheStore]:
         store.close()
 
 
-def _build_shared(
+def _format_validation_errors(e: ValidationError) -> str:
+    """The bad keys of a config ValidationError, one indented ``path: message`` line each."""
+
+    return "\n".join(f"  - {'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in e.errors())
+
+
+def _load_shared_config(
     config: str,
     logger: logging.Logger,
-    mappings_db: str,
     boot: BootView,
-    retry_note: str | None = None,
-) -> tuple[AppConfig, MappingResolver] | None:
-    """Load the config once and build the id-mapping resolver both arrs share.
+    retry: str,
+) -> AppConfig | None:
+    """Read + validate the config file, once per run (both arrs reuse it).
 
-    The config is read and validated a single time and returned so each arr
-    reuses it (one read+sync per run, not one per arr); the resolver settings are
-    arr-independent, so it's loaded as "sonarr" purely to read them. The resolver
-    downloads-if-stale and (only when a source's content changed) parses+indexes
-    the three large mapping sources into ``mappings.db``, then serves both arrs
-    from SQL; it is injected (by ``_run_arrs``) into both, so that work happens a
-    single time per run and is skipped entirely when the sources are unchanged.
-
-    Returns ``(app_config, resolver)``, or None - after logging the specific
-    cause - when the config is missing/unreadable or a mapping source can't be
-    fetched, so the caller skips this run and retries next cycle instead of
-    crashing. The failure cause is distinguished so the log says whether the user
-    needs to fix their config or a source endpoint was unreachable. ``retry_note``
-    (set in scheduled mode) is appended to the missing-config message so a first
-    run states when the loop retries.
+    Returns None - after logging the specific cause - when the file is missing
+    (``AppConfig.load`` writes the starter template first), invalid (the bad
+    keys are listed without a traceback) or unreadable, so the caller skips this
+    run and retries next cycle instead of crashing. ``retry`` is the
+    pre-formatted scheduled-mode note (empty for a single run) stating when the
+    loop retries.
     """
 
-    from .mappings import MappingResolver
-
-    # In scheduled mode retry_note states the loop's next move on every skip
-    # (a single run just exits, so there is nothing to append).
-    retry = f" - {retry_note}" if retry_note else ""
     try:
         with boot.step("Reading config"):
-            app_config = AppConfig.load(config)
+            return AppConfig.load(config)
     except FileNotFoundError:
         logger.error(
             f"No config file at {config} - a starter template was written; fill it in and re-run. Skipping this run{retry}.",
         )
-        return None
     except ValidationError as e:
         # Surface the specific bad keys (nested path -> message) without a traceback,
         # then skip + retry next cycle - same contract as the missing-file branch.
-        details = "\n".join(f"  - {'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in e.errors())
         logger.error(
-            f"Invalid configuration in {config}:\n{details}\nFix the listed keys and re-run. Skipping this run{retry}.",
+            f"Invalid configuration in {config}:\n{_format_validation_errors(e)}\n"
+            f"Fix the listed keys and re-run. Skipping this run{retry}.",
         )
-        return None
+    except yaml.YAMLError as e:
+        # Malformed YAML is a user-facing config problem like a failed validation:
+        # a clean report + retry, not the unexpected-error traceback arm below.
+        logger.error(f"Unreadable YAML in {config}:\n{e}\nFix the file and re-run. Skipping this run{retry}.")
     except Exception:
         logger.error(f"Could not load config {config}; skipping this run{retry}", exc_info=True)
-        return None
+    return None
+
+
+def _build_resolver(
+    app_config: AppConfig,
+    mappings_db: str,
+    logger: logging.Logger,
+    boot: BootView,
+    retry: str,
+) -> MappingResolver | None:
+    """Build the id-mapping resolver both arrs share (settings are arr-independent).
+
+    The resolver downloads-if-stale and (only when a source's content changed)
+    parses+indexes the three large mapping sources into ``mappings.db``, then
+    serves both arrs from SQL; it is injected (by ``_run_arrs``) into both, so
+    that work happens a single time per run and is skipped entirely when the
+    sources are unchanged. Returns None - after logging - when a source can't be
+    fetched, so the caller skips this run and retries next cycle.
+    """
+
+    from .mappings import MappingResolver
 
     try:
         with boot.step("Refreshing mappings") as mapping_step:
@@ -193,12 +218,68 @@ def _build_shared(
             mapping_step.note(resolver.sources_summary())
     except Exception:
         logger.error(
-            "Could not fetch/parse the id-mapping sources; skipping this run",
+            f"Could not fetch/parse the id-mapping sources; skipping this run{retry}",
             exc_info=True,
         )
         return None
 
-    return app_config, resolver
+    return resolver
+
+
+def _configured_arrs(
+    arrs: list[tuple[Arr, int | None]],
+    app_config: AppConfig,
+    *,
+    explicit: bool,
+    config_path: str,
+    logger: logging.Logger,
+) -> list[tuple[Arr, int | None]] | None:
+    """Drop unconfigured arrs, or refuse when one was explicitly requested.
+
+    A Sonarr-only (or Radarr-only) config is a normal setup: an implicit
+    selection (scheduled mode, a flagless ``run single``) skips the unconfigured
+    arr with a dim indented note (matching the boot ledger it lands in) instead
+    of tripping ``require_connection`` into an "unexpected error" traceback.
+    A half-configured arr (url without api_key, or vice versa) is almost
+    certainly a mistake, so its skip is a WARNING naming the missing key. An
+    explicit ``--radarr``/``--movie-id`` against an unconfigured radarr is a
+    config mistake: report it and run nothing. Returns the runnable pairs, or
+    None - after logging why - when nothing can run.
+    """
+
+    missing = {arr: keys for arr, _ in arrs if (keys := app_config.missing_arr_keys(arr))}
+    if explicit and missing:
+        for arr, keys in missing.items():
+            logger.error(f"{arr} was selected but is not configured - set {' and '.join(keys)} in {config_path}")
+        return None
+
+    for arr, keys in missing.items():
+        if len(keys) == 1:
+            other = f"{arr}.api_key" if keys[0] == f"{arr}.url" else f"{arr}.url"
+            logger.warning(f"{other} is set but {keys[0]} is not - skipping {arr}")
+        else:
+            logger.info(indent_string(f"{arr} not configured - skipped"), extra={"line_style": "grey50"})
+
+    kept = [(arr, item_id) for arr, item_id in arrs if arr not in missing]
+    if not kept:
+        logger.error(f"Neither sonarr nor radarr is configured - set url and api_key for at least one in {config_path}")
+        return None
+    return kept
+
+
+def _implicated_arrs(arr: Arr, app_config: AppConfig) -> list[Arr]:
+    """The arrs a run leg connects to, for attributing an arrapi failure.
+
+    A Sonarr leg also builds a Radarr client when ``ignore_movies_in_radarr``
+    is on (the specials cross-check), so a connection/auth failure there can
+    belong to either instance - the error handlers name every candidate key
+    instead of pinning a Radarr outage on Sonarr.
+    """
+
+    implicated = [arr]
+    if arr is Arr.SONARR and app_config.sonarr.ignore_movies_in_radarr and app_config.is_configured(Arr.RADARR):
+        implicated.append(Arr.RADARR)
+    return implicated
 
 
 def _run_arrs(
@@ -206,21 +287,31 @@ def _run_arrs(
     *,
     paths: AppPaths,
     logger: logging.Logger,
+    explicit_selection: bool = False,
     dry_run: bool = False,
     import_wait_mode: ImportWaitMode | None = None,
+    log_level: str | None = None,
     retry_note: str | None = None,
 ) -> bool:
     """Build the shared config + mappings once, then run each requested arr.
 
-    ``arrs`` is a list of ``(arr_name, item_id)`` pairs; each is delegated to
-    ``_run_arr`` (which logs and closes independently, so one crashing doesn't ruin
+    ``arrs`` is a list of ``(arr_name, item_id)`` pairs; unconfigured arrs are
+    dropped (or, when ``explicit_selection`` says the user asked for them by
+    flag, refused) via ``_configured_arrs``, and each survivor is run in its own
+    try block (which logs and closes independently, so one crashing doesn't ruin
     the other). The shared config read and mapping download/parse happen a single
-    time. Returns True when the run proceeded; False - after ``_build_shared`` logs
-    the cause - when the shared deps couldn't be built, so a caller can tell a
-    no-op-on-failure from a real run. An empty ``arrs`` is a defensive no-op
-    returning True (both callers guard against it). ``import_wait_mode`` is the
-    resolved CLI override threaded into each arr (None in scheduled mode);
-    ``retry_note`` is threaded into ``_build_shared`` (scheduled mode only).
+    time, in that order with the selection check in between, so a run with
+    nothing to do fails fast instead of fetching the mapping sources first.
+    Returns True when the run proceeded and every arr completed; False - after
+    the cause is logged - when the shared deps couldn't be built, nothing
+    runnable was selected, or an arr run failed (unreachable/unauthorized arr,
+    qBittorrent connection failure, or an unexpected error), so a scripted
+    ``run single`` exits non-zero on any failed leg. An empty ``arrs`` is a
+    defensive no-op returning True (both callers guard against it).
+    ``import_wait_mode`` is the resolved CLI override threaded into each arr
+    (None in scheduled mode); ``log_level`` is the CLI log-level override,
+    applied as soon as the config is readable (cli > config > INFO);
+    ``retry_note`` is the scheduled-mode retry message (None otherwise).
     """
 
     if not arrs:
@@ -247,20 +338,43 @@ def _run_arrs(
         # Pull the heavy run machinery now - after the instant title, before the
         # cockpit's first step - so this one-time import cost lands in the gap
         # between the banner and the spinner rather than stalling a live step.
+        # (arrapi is pulled transitively by the strategies, so importing its
+        # exceptions here adds nothing.)
+        from arrapi.exceptions import ConnectionFailure, Unauthorized
+
         from .run_loop import RunLoop
         from .run_services import QbitConnectionError, RunDeps, RunServices
         from .seadex_radarr import RadarrSync
         from .seadex_sonarr import SonarrSync
 
         try:
-            # The parsed/indexed mapping cache lives beside cache.db in the data dir.
-            shared = _build_shared(paths.config, logger, paths.mappings_db, boot, retry_note)
-            if shared is None:
+            # In scheduled mode retry_note states the loop's next move on every
+            # skip (a single run just exits, so there is nothing to append).
+            retry = f" - {retry_note}" if retry_note else ""
+            app_config = _load_shared_config(paths.config, logger, boot, retry)
+            if app_config is None:
+                return False
+            apply_log_level(logger, log_level or app_config.advanced.log_level)
+
+            # Selection is settled before the mapping fetch, so a refused or
+            # empty selection fails fast instead of downloading sources first.
+            runnable = _configured_arrs(
+                arrs,
+                app_config,
+                explicit=explicit_selection,
+                config_path=paths.config,
+                logger=logger,
+            )
+            if runnable is None:
                 return False
 
-            app_config, mappings = shared
+            # The parsed/indexed mapping cache lives beside cache.db in the data dir.
+            mappings = _build_resolver(app_config, paths.mappings_db, logger, boot, retry)
+            if mappings is None:
+                return False
+            all_arrs_completed = True
             try:
-                for arr_name, item_id in arrs:
+                for arr_name, item_id in runnable:
                     # Bound before the try so a RunDeps.build failure can't hit an
                     # UnboundLocalError in the finally's close.
                     deps: RunDeps | None = None
@@ -297,8 +411,32 @@ def _run_arrs(
                     except QbitConnectionError as e:
                         # A user-facing config problem (wrong host/credentials): a clean
                         # one-line message, not a stack trace under "unexpected error".
+                        # The two arrapi arms below get the same treatment.
+                        all_arrs_completed = False
                         logger.error(str(e))
+                    except ConnectionFailure as e:
+                        # arrapi's message names the URL it couldn't reach, which
+                        # disambiguates when this leg contacted more than one arr.
+                        all_arrs_completed = False
+                        keys = " / ".join(f"{a}.url" for a in _implicated_arrs(arr_name, app_config))
+                        logger.error(f"{arr_name.capitalize()} run failed: {e} - check {keys} in your config")
+                    except Unauthorized:
+                        all_arrs_completed = False
+                        implicated = _implicated_arrs(arr_name, app_config)
+                        if len(implicated) == 1:
+                            logger.error(
+                                f"{arr_name.capitalize()} rejected the API key - check {arr_name}.api_key in your config",
+                            )
+                        else:
+                            # arrapi doesn't say which instance rejected the key, and
+                            # this leg presented more than one - name every candidate.
+                            keys = " / ".join(f"{a}.api_key" for a in implicated)
+                            logger.error(
+                                f"An arr rejected the API key during the {arr_name.capitalize()} run - "
+                                f"check {keys} in your config",
+                            )
                     except Exception:
+                        all_arrs_completed = False
                         logger.error(f"Unexpected error during {arr_name.capitalize()} run", exc_info=True)
                     finally:
                         # Cap this arr's boot section so the next arr opens a fresh
@@ -314,7 +452,22 @@ def _run_arrs(
         finally:
             boot.close()
 
-        return True
+        return all_arrs_completed
+
+
+def _print_version(value: bool) -> None:
+    """Eager ``--version`` callback: print ``seadexarr <version>`` and exit."""
+
+    if not value:
+        return
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        resolved = version("seadexarr")
+    except PackageNotFoundError:  # pragma: no cover - only when run from a non-install
+        resolved = "unknown"
+    typer.echo(f"seadexarr {resolved}")
+    raise typer.Exit
 
 
 # Default command, schedule run
@@ -328,16 +481,29 @@ def main(
             "(default: SEADEX_ARR_DATA_DIR or the OS per-user data directory).",
         ),
     ] = None,
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            "-V",
+            callback=_print_version,
+            is_eager=True,
+            help="Print the installed version and exit.",
+        ),
+    ] = False,
 ) -> None:
     """SeaDexArr: sync the best SeaDex-tagged anime releases into Sonarr and Radarr.
 
-    Without a subcommand, runs in scheduled mode (both arrs, every few hours).
+    Without a subcommand, runs in scheduled mode (every configured arr, every
+    few hours).
 
     \f
     Args:
         data_dir: Override the data directory holding config, caches and logs
             (typer exposes this as ``--data-dir``). Defaults to None, which uses
             ``SEADEX_ARR_DATA_DIR`` or the OS-standard per-user data location.
+        version: Handled entirely by the eager ``_print_version`` callback
+            (typer exposes this as ``--version``/``-V``). Defaults to False.
     """
 
     # The flag is sugar over SEADEX_ARR_DATA_DIR: fold it into the env so every
@@ -373,8 +539,8 @@ def _schedule_hours(config_path: str) -> float:
     A valid positive finite SCHEDULE_TIME still wins (with a deprecation echo);
     an invalid one is reported with the value actually used instead. Config read
     failures - including a still-missing file - degrade to the default quietly:
-    ``_build_shared`` owns the user-facing config errors (and the first-run
-    template copy), so no load side effects happen here.
+    ``_load_shared_config`` owns the user-facing config errors (and the
+    first-run template copy), so no load side effects happen here.
     """
 
     raw = os.getenv("SCHEDULE_TIME")
@@ -399,8 +565,13 @@ def _schedule_hours(config_path: str) -> float:
 
 
 @seadexarr_run.command("scheduled")
-def run_scheduled() -> None:
-    """Run both arr modules on a loop (every schedule.interval_hours, default 6)."""
+def run_scheduled(
+    log_level: Annotated[
+        LogLevel | None,
+        typer.Option(case_sensitive=False, help="Override the configured advanced.log_level."),
+    ] = None,
+) -> None:
+    """Run every configured arr module on a loop (each schedule.interval_hours, default 6)."""
 
     # Resolve the data directory once and make sure it exists (config-template copy
     # + run lock both need it).
@@ -408,22 +579,23 @@ def run_scheduled() -> None:
     ensure_data_dir(paths)
 
     while True:
-        logger = setup_logger(log_level="INFO", log_dir=paths.log_dir)
+        logger = setup_logger(log_level=log_level or "INFO", log_dir=paths.log_dir)
 
         # Re-read the cadence each cycle so a config edit takes effect without a
         # restart.
         schedule_time = _schedule_hours(paths.config)
 
-        # Build the shared config + id-mapping resolver once and run both arrs
-        # (one config read + one download/parse per cycle, reused by both). On a
-        # config/source failure _build_shared logs the cause and the cycle is
-        # skipped, so it's retried next pass rather than crashing. No ad-hoc
-        # preamble here: the branded title (logged by _run_arrs) leads each cycle,
-        # so the scheduled path reads the same as a single run.
+        # Build the shared config + id-mapping resolver once and run every
+        # configured arr (one config read + one download/parse per cycle, reused
+        # by both). On a config/source failure _run_arrs logs the cause and the
+        # cycle is skipped, so it's retried next pass rather than crashing. No
+        # ad-hoc preamble here: the branded title (logged by _run_arrs) leads
+        # each cycle, so the scheduled path reads the same as a single run.
         _run_arrs(
             [(Arr.RADARR, None), (Arr.SONARR, None)],
             paths=paths,
             logger=logger,
+            log_level=log_level,
             retry_note=f"will retry in {schedule_time:g}h (Ctrl-C to stop)",
         )
 
@@ -435,32 +607,42 @@ def run_scheduled() -> None:
 
 # Single run. The user-facing help lives on the decorator; the docstring below
 # (with its Args block) is for API readers and never reaches --help.
-@seadexarr_run.command("single", help="Do a single SeaDexArr run for the selected arr modules.")
+@seadexarr_run.command(
+    "single",
+    help="Do a single SeaDexArr run (every configured arr, unless narrowed by the flags below).",
+)
 def run_single(
-    radarr: Annotated[bool, typer.Option(help="Run the Radarr module.")] = False,
-    sonarr: Annotated[bool, typer.Option(help="Run the Sonarr module.")] = False,
+    radarr: Annotated[bool, typer.Option("--radarr", help="Run the Radarr module.")] = False,
+    sonarr: Annotated[bool, typer.Option("--sonarr", help="Run the Sonarr module.")] = False,
     movie_id: Annotated[
         int | None,
-        typer.Option(help="Only process the movie with this TMDB ID (implies --radarr)."),
+        typer.Option(metavar="TMDB_ID", help="Only process the movie with this TMDB ID (implies --radarr)."),
     ] = None,
     series_id: Annotated[
         int | None,
-        typer.Option(help="Only process the series with this TVDB ID (implies --sonarr)."),
+        typer.Option(metavar="TVDB_ID", help="Only process the series with this TVDB ID (implies --sonarr)."),
     ] = None,
     dry_run: Annotated[
         bool,
-        typer.Option(help="Simulate the run: no grabs, no cache writes, no notifications."),
+        typer.Option("--dry-run", help="Simulate the run: no grabs, no cache writes, no notifications."),
     ] = False,
     import_wait_mode: Annotated[
         ImportWaitMode | None,
         typer.Option(help="Override the configured imports.wait_mode for this run."),
     ] = None,
+    log_level: Annotated[
+        LogLevel | None,
+        typer.Option(case_sensitive=False, help="Override the configured advanced.log_level for this run."),
+    ] = None,
 ) -> bool:
-    """Do a single SeaDexArr run for the selected arr modules.
+    """Do a single SeaDexArr run.
+
+    With no selection flag, every configured arr is run (like scheduled mode);
+    the flags narrow the run to one arr or one title.
 
     Args:
-        radarr: Do a Radarr run? Defaults to False
-        sonarr: Do a Sonarr run? Defaults to False
+        radarr: Only run the Radarr module. Defaults to False
+        sonarr: Only run the Sonarr module. Defaults to False
         movie_id: If set, only run Radarr for the movie with this TMDB ID.
             Implies a Radarr run. Defaults to None
         series_id: If set, only run Sonarr for the series with this TVDB ID.
@@ -470,36 +652,43 @@ def run_single(
         import_wait_mode: Override the configured wait-for-completion + Sonarr
             manual-import mode (off/deferred/blocking/hybrid) for this run. When
             unset the config's ``imports.wait_mode`` wins (cli > config > default).
+        log_level: Override the configured ``advanced.log_level`` for this run
+            (cli > config > INFO). Defaults to None (config wins).
     """
 
-    # Passing a movie/series ID implies running that arr.
+    # Passing a flag or a movie/series ID narrows the run to that arr; with no
+    # selection at all, run everything configured (mirrors scheduled mode). The
+    # distinction is remembered so _configured_arrs can refuse an explicit
+    # request for an unconfigured arr instead of silently skipping it.
     arrs: list[tuple[Arr, int | None]] = []
     if radarr or movie_id is not None:
         arrs.append((Arr.RADARR, movie_id))
     if sonarr or series_id is not None:
         arrs.append((Arr.SONARR, series_id))
 
-    # A usage mistake, caught before the logger rotates log files for a no-op.
+    explicit_selection = bool(arrs)
     if not arrs:
-        typer.echo("Nothing selected: pass --radarr and/or --sonarr (or --movie-id / --series-id).")
-        return False
+        arrs = [(Arr.RADARR, None), (Arr.SONARR, None)]
 
     # Resolve the data directory once and make sure it exists (config-template copy
     # + run lock both need it).
     paths = resolve_paths()
     ensure_data_dir(paths)
 
-    logger = setup_logger(log_level="INFO", log_dir=paths.log_dir)
+    logger = setup_logger(log_level=log_level or "INFO", log_dir=paths.log_dir)
 
-    # Build the shared config + mappings once and run each requested arr. True when
-    # the run proceeded; False when the shared config/mappings couldn't be built,
-    # so a programmatic caller can tell a no-op-on-failure from a real run.
+    # Build the shared config + mappings once and run each requested arr. True
+    # when the run proceeded and every arr completed; False (exit 1) when the
+    # shared config/mappings couldn't be built, the selection was refused, or an
+    # arr run failed.
     return _run_arrs(
         arrs,
         paths=paths,
         logger=logger,
+        explicit_selection=explicit_selection,
         dry_run=dry_run,
         import_wait_mode=import_wait_mode,
+        log_level=log_level,
     )
 
 
@@ -526,6 +715,135 @@ def config_init(
     shutil.copyfile(template_path(), paths.config)
     typer.echo(f"Wrote a starter config to {paths.config}.")
 
+    return True
+
+
+def _load_config_reporting(path: str) -> AppConfig | None:
+    """Load + validate the config for an inspection command, echoing why on failure.
+
+    Unlike the run path (where ``AppConfig.load`` copies the starter template on
+    a missing file), inspecting must not create files, so existence is checked
+    first. Every failure mode is a clean echo, never a traceback.
+    """
+
+    if not os.path.exists(path):
+        typer.echo(f"No config file at {path}; run `seadexarr config init` to write a starter template.")
+        return None
+    try:
+        return AppConfig.load(path)
+    except ValidationError as e:
+        typer.echo(f"Invalid configuration in {path}:\n{_format_validation_errors(e)}")
+        return None
+    except yaml.YAMLError as e:
+        typer.echo(f"Unreadable YAML in {path}: {e}")
+        return None
+    except OSError as e:
+        typer.echo(f"Could not read {path}: {e}")
+        return None
+
+
+@seadexarr_config.command("validate")
+def config_validate() -> bool:
+    """Check config.yml parses and validates, and report what a run would use.
+
+    The status lines call out the settings that silently change a run's shape:
+    an unconfigured arr is skipped, and unconfigured qBittorrent credentials
+    mean preview mode (nothing is grabbed).
+    """
+
+    paths = resolve_paths()
+    app_config = _load_config_reporting(paths.config)
+    if app_config is None:
+        return False
+
+    typer.echo(f"OK: {paths.config} is valid.")
+    for arr in (Arr.SONARR, Arr.RADARR):
+        keys = app_config.missing_arr_keys(arr)
+        if not keys:
+            status = "configured"
+        elif len(keys) == 1:
+            # Half-configured is almost certainly a mistake - name the gap here,
+            # where the user is actively checking, not just at run time.
+            status = f"not configured ({keys[0]} is not set; runs will skip it)"
+        else:
+            status = "not configured (runs will skip it)"
+        typer.echo(f"  {f'{arr}:':<13}{status}")
+    qbit_status = (
+        "configured" if app_config.qbittorrent.credentials() else "not configured (preview mode: nothing is grabbed)"
+    )
+    typer.echo(f"  {'qbittorrent:':<13}{qbit_status}")
+    return True
+
+
+# Values under these keys hold credentials (the webhook URLs embed tokens), so
+# ``config show`` masks them; matched case-insensitively as substrings of the
+# dumped key names.
+_SECRET_KEY_MARKERS = ("api_key", "password", "webhook", "discord", "username")
+
+# Free-form subtrees that can hide credentials anywhere in their values:
+# qbittorrent.options carries arbitrary qbittorrentapi.Client kwargs (proxy
+# URLs, auth headers under REQUESTS_ARGS, ...), so every value below one of
+# these keys is masked, keeping only the top-level key names.
+_MASK_ALL_SUBTREES = ("options",)
+
+
+def _strip_userinfo(value: str) -> str:
+    """Mask a ``user:pass@`` login embedded in a URL/host config value."""
+
+    scheme, sep, rest = value.partition("://")
+    if not sep:
+        scheme, rest = "", value
+    authority, slash, tail = rest.partition("/")
+    if "@" not in authority:
+        return value
+    prefix = f"{scheme}://" if sep else ""
+    return f"{prefix}REDACTED@{authority.rpartition('@')[2]}{slash}{tail}"
+
+
+def _redact_secrets(node: object, *, mask_values: bool = False) -> object:
+    """A deep copy of a dumped config with every set secret value masked.
+
+    Only non-None values are masked, so an unset secret still reads as ``null``
+    (the "is it even set?" question is usually why the dump is being shared).
+    URL/host values keep their host but mask any embedded ``user:pass@`` login;
+    ``mask_values`` (set inside a ``_MASK_ALL_SUBTREES`` subtree) masks every
+    value regardless of key name.
+    """
+
+    if isinstance(node, dict):
+        redacted: dict[str, object] = {}
+        for key, value in cast("dict[str, object]", node).items():
+            lowered = key.lower()
+            if value is not None and (mask_values or any(marker in lowered for marker in _SECRET_KEY_MARKERS)):
+                redacted[key] = "REDACTED"
+            elif isinstance(value, str) and ("url" in lowered or "host" in lowered):
+                redacted[key] = _strip_userinfo(value)
+            else:
+                redacted[key] = _redact_secrets(value, mask_values=mask_values or lowered in _MASK_ALL_SUBTREES)
+        return redacted
+    if isinstance(node, list):
+        return [_redact_secrets(item, mask_values=mask_values) for item in cast("list[object]", node)]
+    return node
+
+
+@seadexarr_config.command("show")
+def config_show() -> bool:
+    """Print the effective config (defaults applied) with secrets redacted.
+
+    Safe to paste into a bug report: values under secret-named keys (api keys,
+    passwords, usernames, webhook URLs) are masked, every value in the
+    free-form ``qbittorrent.options`` block is masked, a ``user:pass@`` login
+    embedded in a URL/host is masked, and unset secrets still show as ``null``.
+    """
+
+    paths = resolve_paths()
+    app_config = _load_config_reporting(paths.config)
+    if app_config is None:
+        return False
+
+    typer.echo(f"# Effective config from {paths.config} (defaults applied, secrets redacted)")
+    dump = _redact_secrets(app_config.model_dump(mode="json"))
+    typer.echo(yaml.safe_dump(dump, sort_keys=False).rstrip())
     return True
 
 
@@ -627,12 +945,16 @@ def cache_stats() -> bool:
             typer.echo(f"cache stats: unreadable database ({e})")
             return False
 
-    size_mib = s.size_bytes / (1024 * 1024)
-    typer.echo(
-        f"entries={s.entries}  torrent_hashes={s.torrent_hashes}  "
-        f"anilist_meta={s.anilist_meta}  sonarr_parse={s.sonarr_parse}  "
-        f"pending_imports={s.pending_imports}  size={size_mib:.2f} MiB",
-    )
+    rows = [
+        ("entries", str(s.entries)),
+        ("torrent_hashes", str(s.torrent_hashes)),
+        ("anilist_meta", str(s.anilist_meta)),
+        ("sonarr_parse", str(s.sonarr_parse)),
+        ("pending_imports", str(s.pending_imports)),
+        ("size", f"{s.size_bytes / (1024 * 1024):.2f} MiB"),
+    ]
+    for key, value in rows:
+        typer.echo(f"{f'{key}:':<17}{value}")
     return True
 
 

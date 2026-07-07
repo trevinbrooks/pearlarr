@@ -102,13 +102,18 @@ SeaDexArr features a command-line interface, with a number of modules. If runnin
 run them through your compose service, e.g. ``docker compose run seadexarr cache stats``
 (everything after the service name is passed to the ``seadexarr`` CLI).
 
+Every command answers ``--help`` (or ``-h``), and ``seadexarr --version`` prints the installed
+version. Only the arrs you've configured (``url`` + ``api_key``) are run: a Sonarr-only or
+Radarr-only setup just skips the other one. Tab completion for your shell is available via
+``seadexarr --install-completion``.
+
 ### ``seadexarr run``
 
 There are two options here, ``run scheduled`` and ``run single``. Scheduled is the default mode,
 and will run if you just enter ``seadexarr`` into the command line, which will run every few hours
-(default 6) to keep things up to date automatically. Single will just run once and be done. For
-the single run, pass --sonarr or --radarr to run the Sonarr or Radarr modules. Scheduled runs
-automatically for both
+(default 6) to keep things up to date automatically. Single will just run once and be done: on its
+own, ``run single`` runs every configured arr, and ``--sonarr``/``--radarr`` narrow it to one
+module.
 
 To run for just a single title, pass ``--movie-id`` with a movie's TMDB ID (runs Radarr) or
 ``--series-id`` with a series' TVDB ID (runs Sonarr), e.g. ``run single --movie-id 12345`` or
@@ -118,7 +123,8 @@ so you don't also need ``--radarr``/``--sonarr``.
 ``run single`` also accepts ``--dry-run``, which simulates the run without grabbing torrents,
 writing the cache, or sending notifications, and ``--import-wait-mode``, which overrides the
 configured ``imports.wait_mode`` (off/deferred/blocking/hybrid) for that run (see
-"Waiting for imports" below).
+"Waiting for imports" below). Both run commands accept ``--log-level``, which overrides the
+configured ``advanced.log_level`` (handy for a one-off ``--log-level debug`` run).
 
 ### ``seadexarr config``
 
@@ -126,6 +132,14 @@ To generate a blank config file, simply enter ``config init``. You can then popu
 to your liking. The file is written to the data directory (see above); run
 ``seadexarr paths`` to find it. An existing ``config.yml`` is never overwritten
 unless you pass ``--force``.
+
+``config validate`` checks the file parses and validates (listing exactly which keys are
+wrong otherwise) and reports what a run would use: whether each arr is configured, and
+whether qBittorrent credentials are set (without them runs are previews - nothing is
+grabbed). ``config show`` prints the effective configuration with every default applied
+and secrets redacted (API keys, passwords, usernames, webhook URLs, everything in the
+free-form ``qbittorrent.options`` block, and any login embedded in a URL), so it's safe
+to paste into a bug report.
 
 ### ``seadexarr paths``
 
@@ -148,9 +162,9 @@ There are five cache commands:
 
 ## Scripting
 
-The CLI is the primary interface — a one-off run is just ``seadexarr run single --sonarr --radarr``.
-Commands exit non-zero when they fail (a failed run, backup, or refused restore), so they compose
-with ``&&``, cron, and health checks.
+The CLI is the primary interface — a one-off run of everything configured is just
+``seadexarr run single``. Commands exit non-zero when they fail (a failed run, backup,
+invalid config, or refused restore), so they compose with ``&&``, cron, and health checks.
 The same composition is available programmatically: build the shared collaborators with
 ``RunDeps.build``, wrap them in a ``RunServices`` hub, inject both into the ``RunLoop``
 plus an Arr strategy, and drive ``run_sync``:

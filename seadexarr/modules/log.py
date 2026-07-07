@@ -279,6 +279,45 @@ _LOG_LEVELS = {
 }
 
 
+class LogLevel(StrEnum):
+    """The accepted log levels, as a choices-enum for the CLI's ``--log-level``."""
+
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+
+def _console_level(level: int) -> int:
+    """The console handler's threshold for a logger level.
+
+    The console always shows INFO+ so routine progress stays visible even when
+    the file logger is raised - except DEBUG, which lowers the threshold, and
+    CRITICAL, which raises it to match the file logger.
+    """
+
+    if level in (logging.DEBUG, logging.CRITICAL):
+        return level
+    return logging.INFO
+
+
+def apply_log_level(logger: logging.Logger, log_level: str) -> None:
+    """Re-point an already-built logger at ``log_level``.
+
+    The CLI bootstraps its logger before the config file can be read (config
+    errors must be loggable), then calls this once the config's
+    ``advanced.log_level`` is known. Unknown names fall back to INFO; the
+    config validates the level, so that arm only serves programmatic callers.
+    """
+
+    level = _LOG_LEVELS.get(log_level.upper(), logging.INFO)
+    logger.setLevel(level)
+    for handler in logger.handlers:
+        if isinstance(handler, RichConsoleHandler):
+            handler.setLevel(_console_level(level))
+
+
 def setup_logger(
     log_level: str,
     log_dir: str,
@@ -357,16 +396,7 @@ def setup_logger(
     # Docker logs) and drops ANSI styling there.
     console = Console(file=sys.stdout)
     console_handler = RichConsoleHandler(console)
-    # The console always shows INFO+ so routine progress stays visible even when
-    # the file logger is raised - except DEBUG, which lowers the threshold, and
-    # CRITICAL, which raises it to match the file logger. (The original
-    # DEBUG/CRITICAL/else split, preserved exactly.)
-    if level == logging.DEBUG:
-        console_handler.setLevel(logging.DEBUG)
-    elif level == logging.CRITICAL:
-        console_handler.setLevel(logging.CRITICAL)
-    else:
-        console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(_console_level(level))
 
     # Replace any handlers from a previous call, then attach file + console
     logger.handlers.clear()

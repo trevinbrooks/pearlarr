@@ -34,6 +34,12 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     * The ``RotatingFileHandler`` ``setup_logger`` attaches to the ``"SeaDexArr"``
       logger (only the e2e smoke drives the real logging path); left open, its
       file handle leaks.
+
+    The process-global ``"SeaDexArr"`` logger is also fully reset (all handlers
+    removed, level back to NOTSET): a test that ran ``setup_logger`` /
+    ``apply_log_level`` would otherwise leak a console handler bound to its own
+    captured stdout and a raised level into whichever test runs next under
+    randomized ordering.
     """
 
     opened: list[MappingStore] = []
@@ -50,9 +56,9 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         store.close()
     app_logger = logging.getLogger("SeaDexArr")
     for handler in list(app_logger.handlers):
-        if isinstance(handler, logging.FileHandler):
-            handler.close()
-            app_logger.removeHandler(handler)
+        handler.close()
+        app_logger.removeHandler(handler)
+    app_logger.setLevel(logging.NOTSET)
 
 
 @pytest.fixture(autouse=True)
