@@ -402,7 +402,7 @@ class AppConfig(_ConfigBase):
 
         if not os.path.exists(path):
             shutil.copy(template_path(), path)
-            raise FileNotFoundError(f"{path} not found. Copying template")
+            raise FileNotFoundError(f"No config file at {path}; a starter template was written - fill it in and re-run")
 
         with open(path, "rb") as f:
             raw = f.read()

@@ -90,17 +90,24 @@ def _remove_db_sidecars(db_path: str) -> None:
             os.remove(db_path + suffix)
 
 
-def _echo_missing(path: str) -> bool:
-    """True (after echoing why) when ``path`` doesn't exist.
+def _echo_missing(path: str, *, what: str, hint: str) -> bool:
+    """True (after echoing why, to stderr) when ``path`` doesn't exist.
 
-    The cache/config commands report a missing file as a one-line message plus a
-    failure exit, not a ``FileNotFoundError`` traceback.
+    The cache/config commands report a missing file as one line - naming the
+    missing ``what`` plus a ``hint`` on how to get one - and a failure exit,
+    not a ``FileNotFoundError`` traceback.
     """
 
     if os.path.exists(path):
         return False
-    typer.echo(f"No file at {path}.")
+    typer.echo(f"No {what} at {path} - {hint}.", err=True)
     return True
+
+
+def _echo_missing_cache(path: str) -> bool:
+    """``_echo_missing`` for cache.db, with the shared first-run hint."""
+
+    return _echo_missing(path, what="cache database", hint="it is created by the first run")
 
 
 def _refused_by_active_run(acquired: bool, data_dir: str) -> bool:
@@ -114,6 +121,7 @@ def _refused_by_active_run(acquired: bool, data_dir: str) -> bool:
         return False
     typer.echo(
         f"Another SeaDexArr run is active in {data_dir}; refusing to modify the cache.",
+        err=True,
     )
     return True
 
@@ -238,6 +246,14 @@ def _build_resolver(
             # Overwrite the per-MB download detail with the final "which sources"
             # note, so the graduated line reads e.g. "anime-ids · anidb · anibridge".
             mapping_step.note(resolver.sources_summary())
+    except OSError as e:
+        # A first-ever source download with no network lands here (a failed
+        # refresh of an existing copy falls open inside the resolver): a clean
+        # one-liner, not a traceback.
+        logger.error(
+            f"Could not download the id-mapping sources ({e}); check your network connection. Skipping this run{retry}",
+        )
+        return None
     except Exception:
         logger.error(
             f"Could not fetch/parse the id-mapping sources; skipping this run{retry}",
@@ -272,15 +288,17 @@ def _configured_arrs(
     missing = {arr: keys for arr, _ in arrs if (keys := app_config.missing_arr_keys(arr))}
     if explicit and missing:
         for arr, keys in missing.items():
-            logger.error(f"{arr} was selected but is not configured - set {' and '.join(keys)} in {config_path}")
+            logger.error(
+                f"{arr.capitalize()} was selected but is not configured - set {' and '.join(keys)} in {config_path}",
+            )
         return None
 
     for arr, keys in missing.items():
         if len(keys) == 1:
             other = f"{arr}.api_key" if keys[0] == f"{arr}.url" else f"{arr}.url"
-            logger.warning(f"{other} is set but {keys[0]} is not - skipping {arr}")
+            logger.warning(f"{other} is set but {keys[0]} is not - skipping {arr.capitalize()}")
         else:
-            logger.info(indent_string(f"{arr} not configured - skipped"), extra={"line_style": "grey50"})
+            logger.info(indent_string(f"{arr.capitalize()} not configured - skipped"), extra={"line_style": "grey50"})
 
     kept = [(arr, item_id) for arr, item_id in arrs if arr not in missing]
     if not kept:
@@ -555,14 +573,16 @@ def show_paths() -> bool:
 _DEFAULT_SCHEDULE_HOURS = 6.0
 
 
-def _schedule_hours(config_path: str) -> float:
+def _schedule_hours(config_path: str, logger: logging.Logger) -> float:
     """Hours between scheduled cycles: SCHEDULE_TIME env (deprecated) > config > 6.
 
-    A valid positive finite SCHEDULE_TIME still wins (with a deprecation echo);
-    an invalid one is reported with the value actually used instead. Config read
-    failures - including a still-missing file - degrade to the default quietly:
-    ``_load_shared_config`` owns the user-facing config errors (and the
-    first-run template copy), so no load side effects happen here.
+    A valid positive finite SCHEDULE_TIME still wins (with a deprecation
+    warning); an invalid one is reported with the value actually used instead.
+    Both notices go through the logger so they reach the log file and render
+    styled among the run's other lines. Config read failures - including a
+    still-missing file - degrade to the default quietly: ``_load_shared_config``
+    owns the user-facing config errors (and the first-run template copy), so no
+    load side effects happen here.
     """
 
     raw = os.getenv("SCHEDULE_TIME")
@@ -572,7 +592,7 @@ def _schedule_hours(config_path: str) -> float:
         except ValueError:
             hours = math.nan
         if math.isfinite(hours) and hours > 0:
-            typer.echo("SCHEDULE_TIME is deprecated; set schedule.interval_hours in the config instead.")
+            logger.warning("SCHEDULE_TIME is deprecated; set schedule.interval_hours in the config instead.")
             return hours
 
     fallback = _DEFAULT_SCHEDULE_HOURS
@@ -582,7 +602,7 @@ def _schedule_hours(config_path: str) -> float:
         if os.path.exists(config_path):
             fallback = AppConfig.load(config_path).schedule.interval_hours
     if raw is not None:
-        typer.echo(f"Invalid SCHEDULE_TIME {raw!r}; using {fallback:g} hours.")
+        logger.warning(f"Invalid SCHEDULE_TIME {raw!r}; using {fallback:g} hours.")
     return fallback
 
 
@@ -605,7 +625,7 @@ def run_scheduled(
 
         # Re-read the cadence each cycle so a config edit takes effect without a
         # restart.
-        schedule_time = _schedule_hours(paths.config)
+        schedule_time = _schedule_hours(paths.config, logger)
 
         # Build the shared config + id-mapping resolver once and run every
         # configured arr (one config read + one download/parse per cycle, reused
@@ -621,7 +641,9 @@ def run_scheduled(
             retry_note=f"will retry in {schedule_time:g}h (Ctrl-C to stop)",
         )
 
-        next_run_time = (datetime.now() + timedelta(hours=schedule_time)).strftime("%H:%M")
+        # Weekday included: interval_hours can exceed 24, so a bare HH:MM would
+        # be ambiguous about which day it means.
+        next_run_time = (datetime.now() + timedelta(hours=schedule_time)).strftime("%a %H:%M")
         logger.info(f"Next scheduled run at {next_run_time}")
 
         time.sleep(schedule_time * 3600)
@@ -731,7 +753,10 @@ def config_init(
     ensure_data_dir(paths)
 
     if os.path.exists(paths.config) and not force:
-        typer.echo(f"{paths.config} already exists; pass --force to overwrite it with the starter template.")
+        typer.echo(
+            f"{paths.config} already exists; pass --force to overwrite it with the starter template.",
+            err=True,
+        )
         return False
 
     shutil.copyfile(template_path(), paths.config)
@@ -745,22 +770,22 @@ def _load_config_reporting(path: str) -> AppConfig | None:
 
     Unlike the run path (where ``AppConfig.load`` copies the starter template on
     a missing file), inspecting must not create files, so existence is checked
-    first. Every failure mode is a clean echo, never a traceback.
+    first. Every failure mode is a clean echo to stderr, never a traceback.
     """
 
     if not os.path.exists(path):
-        typer.echo(f"No config file at {path}; run `seadexarr config init` to write a starter template.")
+        typer.echo(f"No config file at {path}; run `seadexarr config init` to write a starter template.", err=True)
         return None
     try:
         return AppConfig.load(path)
     except ValidationError as e:
-        typer.echo(f"Invalid configuration in {path}:\n{_format_validation_errors(e)}")
+        typer.echo(f"Invalid configuration in {path}:\n{_format_validation_errors(e)}", err=True)
         return None
     except yaml.YAMLError as e:
-        typer.echo(f"Unreadable YAML in {path}: {_format_yaml_error(e)}")
+        typer.echo(f"Unreadable YAML in {path}: {_format_yaml_error(e)}", err=True)
         return None
     except OSError as e:
-        typer.echo(f"Could not read {path}: {e}")
+        typer.echo(f"Could not read {path}: {e}", err=True)
         return None
 
 
@@ -882,7 +907,7 @@ def cache_backup() -> bool:
 
     paths = resolve_paths()
 
-    if _echo_missing(paths.cache):
+    if _echo_missing_cache(paths.cache):
         return False
 
     tmp_backup = paths.cache_backup + ".tmp"
@@ -898,12 +923,13 @@ def cache_backup() -> bool:
         # a previous good cache.backup.db is left untouched.
         with contextlib.suppress(OSError):
             os.remove(tmp_backup)
-        typer.echo(f"cache backup failed: {e}")
+        typer.echo(f"cache backup failed: {e}", err=True)
         return False
     finally:
         source.close()
 
     os.replace(tmp_backup, paths.cache_backup)
+    typer.echo(f"Backed up cache to {paths.cache_backup}.")
     return True
 
 
@@ -918,7 +944,7 @@ def cache_restore() -> bool:
 
     paths = resolve_paths()
 
-    if _echo_missing(paths.cache_backup):
+    if _echo_missing(paths.cache_backup, what="backup", hint="run 'seadexarr cache backup' first"):
         return False
 
     with single_instance_lock(paths.data_dir) as acquired:
@@ -930,6 +956,7 @@ def cache_restore() -> bool:
         _remove_db_sidecars(paths.cache)
         os.replace(tmp_restore, paths.cache)
 
+    typer.echo(f"Restored cache from {paths.cache_backup}.")
     return True
 
 
@@ -939,7 +966,7 @@ def cache_remove() -> bool:
 
     paths = resolve_paths()
 
-    if _echo_missing(paths.cache):
+    if _echo_missing(paths.cache, what="cache database", hint="nothing to remove"):
         return False
 
     with single_instance_lock(paths.data_dir) as acquired:
@@ -949,6 +976,7 @@ def cache_remove() -> bool:
         os.remove(paths.cache)
         _remove_db_sidecars(paths.cache)
 
+    typer.echo(f"Removed {paths.cache}.")
     return True
 
 
@@ -957,14 +985,14 @@ def cache_stats() -> bool:
     """Print cache health: per-block row counts and on-disk size."""
 
     paths = resolve_paths()
-    if _echo_missing(paths.cache):
+    if _echo_missing_cache(paths.cache):
         return False
 
     with _open_cache_readonly(paths.cache) as store:
         try:
             s = store.stats()
         except sqlite3.DatabaseError as e:
-            typer.echo(f"cache stats: unreadable database ({e})")
+            typer.echo(f"cache stats: unreadable database ({e})", err=True)
             return False
 
     rows = [
@@ -985,7 +1013,7 @@ def cache_check() -> bool:
     """Run a SQLite integrity check on the cache database and print the result."""
 
     paths = resolve_paths()
-    if _echo_missing(paths.cache):
+    if _echo_missing_cache(paths.cache):
         return False
 
     with _open_cache_readonly(paths.cache) as store:
@@ -993,8 +1021,8 @@ def cache_check() -> bool:
             result = store.integrity_check()
         except sqlite3.DatabaseError as e:
             # Reporting bad integrity IS this command's job: a result line, not
-            # a traceback.
-            typer.echo(f"integrity: {e}")
+            # a traceback. To stderr like every failure path (the command exits 1).
+            typer.echo(f"integrity: {e}", err=True)
             return False
 
     typer.echo(f"integrity: {result}")

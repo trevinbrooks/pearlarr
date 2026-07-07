@@ -32,7 +32,9 @@ from seadexarr.modules.manual_import import ImportWaitMode
 class TestFileLifecycle:
     def test_missing_config_copies_template_and_raises(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "config.yml"
-        with pytest.raises(FileNotFoundError):
+        # The message reflects that the copy already happened and says what to
+        # do next (standalone callers see it raw; the CLI logs its own version).
+        with pytest.raises(FileNotFoundError, match="starter template was written"):
             AppConfig.load(str(cfg_path))
         # The bundled (nested) template was copied into place for the user to edit.
         assert cfg_path.exists()

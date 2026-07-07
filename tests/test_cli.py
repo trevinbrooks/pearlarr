@@ -14,8 +14,10 @@ Pins the behaviours the commands must guarantee:
 * The destructive commands (``restore`` / ``remove``) take the single-instance run
   lock first and refuse while a run is active, so they never unlink or replace the
   live db out from under it (finding #5).
-* Failure paths report cleanly (missing files echo one line, not a traceback) and
-  a False return maps to exit code 1 through the Typer apps' result callback.
+* Failure paths report cleanly (missing files echo one hint line, not a traceback),
+  failure text goes to stderr (so `seadexarr config show > cfg.yml` stays clean)
+  while success output stays on stdout, and a False return maps to exit code 1
+  through the Typer apps' result callback.
 * ``config init`` never overwrites a filled-in config.yml without ``--force``.
 * ``run single`` with no selection flag runs every *configured* arr (scheduled-mode
   symmetry); an explicit flag for an unconfigured arr refuses cleanly, an implicit
@@ -35,6 +37,7 @@ tests go through ``CliRunner`` since the callback only runs inside typer.
 
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import NoReturn
 
@@ -80,18 +83,26 @@ def _build_cache(tmp_path: Path) -> None:
 
 
 class TestCacheRoundTrip:
-    def test_backup_then_restore_preserves_data(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_backup_then_restore_preserves_data(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
         monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
 
         assert cache_backup() is True
         assert (tmp_path / "cache.backup.db").exists()
+        # Success is confirmed out loud (on stdout), not silently.
+        assert f"Backed up cache to {tmp_path / 'cache.backup.db'}." in capsys.readouterr().out
 
         # A stale WAL left next to cache.db must not shadow the restored snapshot;
         # restore clears the sidecars before swapping the copy into place.
         (tmp_path / "cache.db-wal").write_text("stale")
 
         assert cache_restore() is True
+        assert f"Restored cache from {tmp_path / 'cache.backup.db'}." in capsys.readouterr().out
         # Copy-restore: the backup SURVIVES (a post-restore corruption can be
         # restored again) and no temp file is left behind.
         assert (tmp_path / "cache.backup.db").exists()
@@ -100,6 +111,7 @@ class TestCacheRoundTrip:
 
         # Restore is repeatable off the surviving backup.
         assert cache_restore() is True
+        capsys.readouterr()  # drain the second success echo (keeps it off the terminal under -s)
 
         # The restored db still holds the original entry.
         store = CacheStore.open_readonly(str(tmp_path / "cache.db"))
@@ -110,13 +122,19 @@ class TestCacheRoundTrip:
         finally:
             store.close()
 
-    def test_remove_deletes_db_and_sidecars(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_remove_deletes_db_and_sidecars(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
         monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
         (tmp_path / "cache.db-wal").write_text("stale")
         (tmp_path / "cache.db-shm").write_text("stale")
 
         assert cache_remove() is True
+        assert f"Removed {tmp_path / 'cache.db'}." in capsys.readouterr().out
         assert not (tmp_path / "cache.db").exists()
         assert not (tmp_path / "cache.db-wal").exists()
         assert not (tmp_path / "cache.db-shm").exists()
@@ -150,9 +168,9 @@ class TestCorruptDatabaseIsReportedNotCrashed:
         (tmp_path / "cache.db").write_text("not a database")
 
         # Reporting bad integrity is this command's whole job, so it must not crash
-        # on the very corruption it diagnoses.
+        # on the very corruption it diagnoses. The failure line goes to stderr.
         assert cache_check() is False
-        assert "integrity" in capsys.readouterr().out
+        assert "integrity" in capsys.readouterr().err
 
     def test_stats_on_corrupt_db_returns_false_without_raising(
         self,
@@ -164,7 +182,7 @@ class TestCorruptDatabaseIsReportedNotCrashed:
         (tmp_path / "cache.db").write_text("not a database")
 
         assert cache_stats() is False
-        assert "cache stats" in capsys.readouterr().out
+        assert "cache stats" in capsys.readouterr().err
 
     def test_backup_on_corrupt_db_returns_false_without_raising(
         self,
@@ -176,9 +194,9 @@ class TestCorruptDatabaseIsReportedNotCrashed:
         (tmp_path / "cache.db").write_text("not a database")
 
         # backup reads the source through the online-backup API, so a corrupt source
-        # surfaces as a clean failure line, not a traceback.
+        # surfaces as a clean failure line (on stderr), not a traceback.
         assert cache_backup() is False
-        assert "cache backup failed" in capsys.readouterr().out
+        assert "cache backup failed" in capsys.readouterr().err
 
 
 class TestActiveRunGuard:
@@ -198,9 +216,9 @@ class TestActiveRunGuard:
         with single_instance_lock(str(tmp_path)):
             assert cache_remove() is False
         assert (tmp_path / "cache.db").exists()
-        # The refusal is a user-facing line, not a silent no-op (capturing it also
-        # keeps it off the terminal under `-s`).
-        assert "another seadexarr run is active" in capsys.readouterr().out.lower()
+        # The refusal is a user-facing stderr line, not a silent no-op (capturing
+        # it also keeps it off the terminal under `-s`).
+        assert "another seadexarr run is active" in capsys.readouterr().err.lower()
 
     def test_restore_refuses_while_a_run_holds_the_lock(
         self,
@@ -217,15 +235,15 @@ class TestActiveRunGuard:
         # Refused before touching anything: the backup is still there to restore.
         assert (tmp_path / "cache.backup.db").exists()
         assert (tmp_path / "cache.db").exists()
-        # The refusal is a user-facing line, not a silent no-op (capturing it also
-        # keeps it off the terminal under `-s`).
-        assert "another seadexarr run is active" in capsys.readouterr().out.lower()
+        # The refusal is a user-facing stderr line, not a silent no-op (capturing
+        # it also keeps it off the terminal under `-s`).
+        assert "another seadexarr run is active" in capsys.readouterr().err.lower()
 
 
 class TestMissingFilesAreReportedNotRaised:
-    """A missing cache/backup file echoes one line and returns False, no traceback."""
+    """A missing cache/backup file echoes one hinting stderr line and returns False."""
 
-    def test_each_cache_command_reports_a_missing_file(
+    def test_each_cache_command_reports_a_missing_file_with_a_hint(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -233,9 +251,24 @@ class TestMissingFilesAreReportedNotRaised:
     ) -> None:
         monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
 
-        for command in (cache_backup, cache_remove, cache_stats, cache_check, cache_restore):
+        # Each message names what's missing and hints at how to get one, so a
+        # fresh install isn't met with a bare "No file at ...".
+        checks: list[tuple[Callable[[], bool], str]] = [
+            (cache_backup, "No cache database at"),
+            (cache_stats, "No cache database at"),
+            (cache_check, "No cache database at"),
+            (cache_backup, "it is created by the first run"),
+            (cache_remove, "nothing to remove"),
+            (cache_restore, "No backup at"),
+            (cache_restore, "run 'seadexarr cache backup' first"),
+        ]
+        for command, expected in checks:
             assert command() is False
-            assert capsys.readouterr().out.count("No file at") == 1
+            captured = capsys.readouterr()
+            # One stderr line, nothing on stdout (scripted use stays clean).
+            assert expected in captured.err
+            assert captured.err.count("\n") == 1
+            assert captured.out == ""
 
     def test_failed_backup_leaves_no_partial_snapshot(
         self,
@@ -249,7 +282,7 @@ class TestMissingFilesAreReportedNotRaised:
         # A torn snapshot must not survive a failed backup: a later restore would
         # move it over the live database.
         assert cache_backup() is False
-        assert "cache backup failed" in capsys.readouterr().out
+        assert "cache backup failed" in capsys.readouterr().err
         assert not (tmp_path / "cache.backup.db").exists()
         assert not (tmp_path / "cache.backup.db.tmp").exists()
 
@@ -295,11 +328,12 @@ class TestConfigInit:
         assert config_init() is True
         assert config.exists()
 
-        # A filled-in config must survive an accidental re-run.
+        # A filled-in config must survive an accidental re-run; the refusal is
+        # a stderr line.
         config.write_text("sonarr: {url: http://mine}")
         assert config_init() is False
         assert config.read_text() == "sonarr: {url: http://mine}"
-        assert "--force" in capsys.readouterr().out
+        assert "--force" in capsys.readouterr().err
 
         assert config_init(force=True) is True
         assert config.read_text() == Path(template_path()).read_text()
@@ -404,11 +438,12 @@ class TestConfiguredArrs:
             logger=logger,
         )
         assert kept == [(Arr.SONARR, None)]
-        skip = next(r for r in capture.records if "radarr" in r.getMessage())
+        skip = next(r for r in capture.records if "adarr" in r.getMessage())
         assert skip.levelno == logging.INFO  # a Sonarr-only setup is normal, not an error
         # The note is styled to sit inside the boot ledger it lands in: indented,
         # dimmed like the ledger's own secondary lines, not a bare column-0 line.
-        assert skip.getMessage() == "  radarr not configured - skipped"
+        # The arr name is capitalized prose, not a lowercase config key.
+        assert skip.getMessage() == "  Radarr not configured - skipped"
         assert getattr(skip, "line_style", None) == "grey50"
 
     def test_a_half_configured_arr_warns_by_name(
@@ -429,8 +464,9 @@ class TestConfiguredArrs:
         assert kept == [(Arr.SONARR, None)]
         # url XOR api_key is almost certainly an accident: the skip must be loud
         # and name the missing half, not read like an intentional single-arr setup.
+        # Dotted keys stay lowercase; the prose subject is capitalized.
         warning = next(r for r in capture.records if r.levelno == logging.WARNING)
-        assert warning.getMessage() == "radarr.url is set but radarr.api_key is not - skipping radarr"
+        assert warning.getMessage() == "radarr.url is set but radarr.api_key is not - skipping Radarr"
 
     def test_explicit_selection_of_a_half_configured_arr_names_only_the_missing_key(
         self,
@@ -458,6 +494,8 @@ class TestConfiguredArrs:
         assert kept is None
         error = next(r for r in capture.records if r.levelno == logging.ERROR)
         assert "radarr.url" in error.getMessage()
+        # Prose subject capitalized; the dotted keys above stay lowercase.
+        assert error.getMessage().startswith("Radarr was selected but is not configured")
 
     def test_nothing_configured_reports_and_refuses(
         self,
@@ -625,6 +663,31 @@ class TestRunFailuresAreCleanAndNonzero:
         assert run_single(sonarr=True) is False
         assert "Could not fetch/parse the id-mapping sources" in capsys.readouterr().out
 
+    def test_a_mapping_download_network_failure_reports_cleanly(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # A brand-new user with no network hits the FIRST-ever source download
+        # (the refresh path falls open to the cached copy; a first download has
+        # none): urlopen raises URLError (an OSError), which must surface as a
+        # one-line hint, not a ten-frame traceback.
+        from urllib.error import URLError
+
+        import seadexarr.modules.mappings as mappings_mod
+
+        def fail_resolver(*args: object, **kwargs: object) -> NoReturn:
+            raise URLError("no route to host")
+
+        monkeypatch.setattr(mappings_mod, "MappingResolver", fail_resolver)
+        _write_runnable_config()
+
+        assert run_single(sonarr=True) is False
+        out = capsys.readouterr().out
+        assert "Could not download the id-mapping sources" in out
+        assert "check your network connection" in out
+        assert "Traceback" not in out
+
     def test_an_invalid_config_fails_the_run_listing_the_keys(
         self,
         capsys: pytest.CaptureFixture[str],
@@ -667,7 +730,7 @@ class TestConfigInspection:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         assert config_validate() is False
-        assert "config init" in capsys.readouterr().out
+        assert "config init" in capsys.readouterr().err
         assert not os.path.exists(resolve_paths().config)
 
     def test_validate_lists_the_bad_keys(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -675,19 +738,19 @@ class TestConfigInspection:
         os.makedirs(paths.data_dir)
         Path(paths.config).write_text("sonar:\n  url: x\n")
         assert config_validate() is False
-        out = capsys.readouterr().out
-        assert "Invalid configuration" in out
-        assert "sonar" in out
+        err = capsys.readouterr().err
+        assert "Invalid configuration" in err
+        assert "sonar" in err
 
     def test_validate_reports_malformed_yaml_cleanly(self, capsys: pytest.CaptureFixture[str]) -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
         Path(paths.config).write_text('sonarr:\n  api_key: "hunter2\n')
         assert config_validate() is False
-        out = capsys.readouterr().out
-        assert "Unreadable YAML" in out
+        captured = capsys.readouterr()
+        assert "Unreadable YAML" in captured.err
         # Never str(e): its snippet quotes the offending (credential) line.
-        assert "hunter2" not in out
+        assert "hunter2" not in captured.err + captured.out
 
     def test_validate_reports_what_a_run_would_use(self, capsys: pytest.CaptureFixture[str]) -> None:
         paths = resolve_paths()
@@ -757,8 +820,12 @@ class TestConfigInspection:
         assert "url: http://REDACTED@sonarr:8989" in out
 
     def test_show_missing_file_fails_cleanly(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # The failure hint is stderr-only: `config show > cfg.yml` must not
+        # capture error text as if it were config.
         assert config_show() is False
-        assert "config init" in capsys.readouterr().out
+        captured = capsys.readouterr()
+        assert "config init" in captured.err
+        assert captured.out == ""
 
 
 class TestVersionAndHelp:
@@ -846,7 +913,18 @@ class TestLogLevelWiring:
 
 
 class TestScheduleHours:
-    """Cadence precedence: valid SCHEDULE_TIME env (deprecated) > config > 6."""
+    """Cadence precedence: valid SCHEDULE_TIME env (deprecated) > config > 6.
+
+    The SCHEDULE_TIME notices go through the logger (its only caller runs after
+    ``setup_logger``), so they reach the log file and render styled - pinned
+    here via a capture handler rather than stdout.
+    """
+
+    @pytest.fixture
+    def capture(self, logger: logging.Logger) -> CaptureHandler:
+        handler = CaptureHandler()
+        logger.addHandler(handler)
+        return handler
 
     @staticmethod
     def _write_config(tmp_path: Path, interval_hours: float | None = None) -> str:
@@ -859,40 +937,47 @@ class TestScheduleHours:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        logger: logging.Logger,
+        capture: CaptureHandler,
     ) -> None:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         missing = tmp_path / "config.yml"
-        assert _schedule_hours(str(missing)) == 6.0
+        assert _schedule_hours(str(missing), logger) == 6.0
         # No template-copy side effect: _load_shared_config owns the first-run copy.
         assert not missing.exists()
+        assert capture.records == []  # nothing to warn about without the env var
 
     def test_unset_env_reads_the_config_value(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        logger: logging.Logger,
     ) -> None:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
-        assert _schedule_hours(self._write_config(tmp_path, 2.5)) == 2.5
+        assert _schedule_hours(self._write_config(tmp_path, 2.5), logger) == 2.5
 
     def test_unreadable_config_falls_back_to_the_default(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        logger: logging.Logger,
     ) -> None:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         path = tmp_path / "config.yml"
         path.write_text("schedule:\n  interval_hours: -1\n")  # fails validation
-        assert _schedule_hours(str(path)) == 6.0
+        assert _schedule_hours(str(path), logger) == 6.0
 
-    def test_a_valid_env_value_wins_over_config_with_deprecation_echo(
+    def test_a_valid_env_value_wins_over_config_with_deprecation_warning(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
+        logger: logging.Logger,
+        capture: CaptureHandler,
     ) -> None:
         monkeypatch.setenv("SCHEDULE_TIME", "0.5")
-        assert _schedule_hours(self._write_config(tmp_path, 2.5)) == 0.5
-        assert "deprecated" in capsys.readouterr().out
+        assert _schedule_hours(self._write_config(tmp_path, 2.5), logger) == 0.5
+        notice = next(r for r in capture.records if "deprecated" in r.getMessage())
+        assert notice.levelno == logging.WARNING
 
     @pytest.mark.parametrize("raw", ["banana", "0", "-3", "inf", "nan"])
     def test_bad_env_values_fall_through_to_config(
@@ -900,34 +985,37 @@ class TestScheduleHours:
         raw: str,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
+        logger: logging.Logger,
+        capture: CaptureHandler,
     ) -> None:
         monkeypatch.setenv("SCHEDULE_TIME", raw)
-        assert _schedule_hours(self._write_config(tmp_path, 2.5)) == 2.5
-        out = capsys.readouterr().out
-        assert "Invalid SCHEDULE_TIME" in out
-        # The echo reports the value actually used, not a claim about its source.
-        assert "using 2.5 hours" in out
+        assert _schedule_hours(self._write_config(tmp_path, 2.5), logger) == 2.5
+        notice = next(r for r in capture.records if r.levelno == logging.WARNING)
+        assert "Invalid SCHEDULE_TIME" in notice.getMessage()
+        # The notice reports the value actually used, not a claim about its source.
+        assert "using 2.5 hours" in notice.getMessage()
 
     def test_bad_env_with_missing_config_reports_the_default(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
+        logger: logging.Logger,
+        capture: CaptureHandler,
     ) -> None:
         monkeypatch.setenv("SCHEDULE_TIME", "banana")
-        assert _schedule_hours(str(tmp_path / "config.yml")) == 6.0
-        assert "using 6 hours" in capsys.readouterr().out
+        assert _schedule_hours(str(tmp_path / "config.yml"), logger) == 6.0
+        assert any("using 6 hours" in r.getMessage() for r in capture.records)
 
     def test_malformed_yaml_falls_back_to_the_default(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        logger: logging.Logger,
     ) -> None:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         path = tmp_path / "config.yml"
         path.write_text("schedule: [unclosed\n")
-        assert _schedule_hours(str(path)) == 6.0
+        assert _schedule_hours(str(path), logger) == 6.0
 
 
 class TestExitCodes:
@@ -941,12 +1029,14 @@ class TestExitCodes:
         monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
         runner = CliRunner()
 
-        # No cache.db yet: the command reports the missing file and must exit 1.
+        # No cache.db yet: the command reports the missing file (on stderr,
+        # keeping stdout clean for scripts) and must exit 1.
         result = runner.invoke(seadexarr_cli, ["cache", "stats"])
         assert result.exit_code == 1
-        assert "No file at" in result.output
+        assert "No cache database at" in result.stderr
+        assert result.stdout == ""
 
         _build_cache(tmp_path)
         result = runner.invoke(seadexarr_cli, ["cache", "stats"])
         assert result.exit_code == 0
-        assert "entries:" in result.output
+        assert "entries:" in result.stdout
