@@ -31,7 +31,7 @@ from seadex import EntryRecord
 import seadexarr.modules.seadex_gateway as seadex_gateway
 import seadexarr.modules.torrents as torrents
 from seadexarr.modules.cli import run_single
-from seadexarr.modules.log import LogCounter
+from seadexarr.modules.log import log_counter
 from seadexarr.modules.manual_import import ImportWaitMode
 
 from .builders import make_config, make_entry_record, make_torrent_record
@@ -148,8 +148,7 @@ def test_sonarr_run_drives_real_composition_root(
     # The resolved entry's release reached the (preview) grab at the torrent source.
     assert nyaa_calls == [_NYAA_RELEASE_URL]
     # ...and the whole pass logged no error (a swallowed failure would tally here).
-    counter = getattr(logging.getLogger("SeaDexArr"), "seadex_counter", None)
-    assert isinstance(counter, LogCounter)
+    counter = log_counter(logging.getLogger("SeaDexArr"))
     assert counter.counts.get(logging.ERROR, 0) == 0
     assert counter.counts.get(logging.CRITICAL, 0) == 0
     # The reporter is actually wired into the run (test_reporter covers rendering in
@@ -280,8 +279,7 @@ def test_radarr_run_drives_real_composition_root(
     # The resolved entry's release reached the (preview) grab at the torrent source.
     assert nyaa_calls == [_NYAA_RELEASE_URL]
     # ...and the whole pass logged no error (a swallowed failure would tally here).
-    counter = getattr(logging.getLogger("SeaDexArr"), "seadex_counter", None)
-    assert isinstance(counter, LogCounter)
+    counter = log_counter(logging.getLogger("SeaDexArr"))
     assert counter.counts.get(logging.ERROR, 0) == 0
     assert counter.counts.get(logging.CRITICAL, 0) == 0
     # The reporter is actually wired into the run (test_reporter covers rendering in

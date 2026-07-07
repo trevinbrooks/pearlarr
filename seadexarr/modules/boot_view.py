@@ -45,7 +45,7 @@ from .console_caps import (
     make_live,
     spinner_name,
 )
-from .log import INDENT, LogFormatter, indent_string
+from .log import INDENT, format_elapsed, indent_string, log_styled, log_titled_rule
 from .manual_import import OutcomeCategory
 
 # Width of the live download bar (mapping refresh); only the live cockpit draws
@@ -155,12 +155,7 @@ class _DurableBootView(BootView):
     @override
     def banner(self) -> None:
         title = f"SeaDexArr {_app_version()}".rstrip()
-        self._safe(
-            lambda: self._logger.info(
-                title,
-                extra={"rule_title": title, "rule_style": "bold cyan", "rule_heavy": True},
-            ),
-        )
+        self._safe(lambda: log_titled_rule(self._logger, title, heavy=True))
         # A blank under the title gives the step ledger a gap below the header,
         # matching every other section. Printed before the Live spinner starts,
         # so it stays in durable scrollback above the transient spinner.
@@ -223,7 +218,7 @@ class _DurableBootView(BootView):
         if step.detail:
             text += f" · {step.detail}"
         text += f" · {_format_secs(elapsed)}"
-        self._logger.info(indent_string(f"{glyph} {text}"), extra=self._style(category.style))
+        log_styled(self._logger, indent_string(f"{glyph} {text}"), self._style(category.style))
 
     def _emit_capstone(self) -> None:
         # No "ready" line on an empty or failed section: the error log already
@@ -231,10 +226,10 @@ class _DurableBootView(BootView):
         if self._section_count == 0 or self._section_started is None or self._section_failed:
             return
         elapsed = self._time() - self._section_started
-        self._logger.info(indent_string(f"ready in {_format_secs(elapsed)}"), extra=self._style("grey50"))
+        log_styled(self._logger, indent_string(f"ready in {_format_secs(elapsed)}"), self._style("grey50"))
 
-    def _style(self, style: str) -> dict[str, str]:
-        return {"line_style": style} if self._caps.color else {}
+    def _style(self, style: str) -> str | None:
+        return style if self._caps.color else None
 
     def _safe(self, fn: Callable[[], object]) -> None:
         try:
@@ -416,4 +411,4 @@ def _format_secs(seconds: float) -> str:
         return f"{seconds:.2f}s"
     if seconds < 60:
         return f"{seconds:.1f}s"
-    return LogFormatter.format_elapsed(seconds)
+    return format_elapsed(seconds)

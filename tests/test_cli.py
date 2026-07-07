@@ -60,7 +60,14 @@ from seadexarr.modules.cli import (
     seadexarr_cli,
 )
 from seadexarr.modules.config import AppConfig, Arr, template_path
-from seadexarr.modules.log import LogLevel, RichConsoleHandler, apply_log_level, setup_logger
+from seadexarr.modules.log import (
+    LogLevel,
+    RichConsoleHandler,
+    StyledLine,
+    apply_log_level,
+    console_payload,
+    setup_logger,
+)
 from seadexarr.modules.manual_import import ImportWaitMode
 from seadexarr.modules.paths import AppPaths, resolve_paths
 from seadexarr.modules.runlock import single_instance_lock
@@ -444,7 +451,7 @@ class TestConfiguredArrs:
         # dimmed like the ledger's own secondary lines, not a bare column-0 line.
         # The arr name is capitalized prose, not a lowercase config key.
         assert skip.getMessage() == "  Radarr not configured - skipped"
-        assert getattr(skip, "line_style", None) == "grey50"
+        assert console_payload(skip) == StyledLine(style="grey50")
 
     def test_a_half_configured_arr_warns_by_name(
         self,

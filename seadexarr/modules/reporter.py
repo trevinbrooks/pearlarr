@@ -16,9 +16,13 @@ from .log import (
     arr_item_noun,
     count_noun,
     entry_string,
+    format_elapsed,
     group_highlight,
     indent_string,
-    rule_string,
+    log_counter,
+    log_section_rule,
+    log_styled,
+    log_titled_rule,
 )
 from .manual_import import ImportWaitMode, PendingImport, PendingState
 from .seadex_types import SeadexDict
@@ -237,8 +241,7 @@ class RunReporter:
 
         # Warning/error counts come from the logger-level counter, diffed
         # against the snapshot taken when the run started
-        counter = getattr(self.logger, "seadex_counter", None)
-        now_counts: dict[int, int] = counter.snapshot() if counter else {}
+        now_counts = log_counter(self.logger).snapshot()
         start_counts = ctx.log_counts_at_start
 
         def _delta(level: int) -> int:
@@ -250,7 +253,7 @@ class RunReporter:
         title = f"SeaDexArr ({arr.capitalize()}) run complete"
         # State dry-run once, here, scoping the whole summary - rather than also
         # tagging the "added" value (the same fact twice in one block). The file
-        # log keeps the plain title; the annotation rides the console rule_title.
+        # log keeps the plain title; the annotation rides the console title only.
         rule_title = title
         # A run grabs nothing when explicitly flagged dry, or when no client is
         # configured at all - annotate (and later dim) the summary either way.
@@ -260,14 +263,7 @@ class RunReporter:
             rule_title += f"   (DRY RUN — {note})"
         # A blank before the rule separates the last item from the summary.
         self.log_fmt.blank()
-        self.logger.info(
-            title,
-            extra={
-                "rule_title": rule_title,
-                "rule_style": "bold cyan",
-                "rule_heavy": True,
-            },
-        )
+        log_titled_rule(self.logger, rule_title, heavy=True, message=title)
         # A blank under the title gives the scoreboard a gap below the header.
         self.log_fmt.blank()
 
@@ -275,8 +271,8 @@ class RunReporter:
         # "needs action" (12) is the widest key here, vs. "missing episodes" (16)
         # in entry details. A heavy rule separates the two blocks, so the differing
         # colon columns never sit adjacent. Wrap the formatter to fix width at 12.
-        def summary_kv(key: str, value: str, *, value_style: str | None = None) -> bool:
-            return self.log_fmt.kv(key, value, key_width=12, value_style=value_style)
+        def summary_kv(key: str, value: str, *, value_style: str | None = None) -> None:
+            self.log_fmt.kv(key, value, key_width=12, value_style=value_style)
 
         # A needs-action entry in the summary, rendered with the same labeled
         # gutter as added_detail so the two blocks read alike: the title hangs at
@@ -294,10 +290,7 @@ class RunReporter:
             # at indent 2, then labeled gutter fields sit beneath it at indent 3,
             # their values landing in the same column as the live "checking"
             # block. Each row carries its already-resolved accent.
-            self.logger.info(
-                indent_string(title, level=2),
-                extra={"line_style": title_style},
-            )
+            log_styled(self.logger, indent_string(title, level=2), title_style)
             for label, value, accent in rows:
                 if not value:
                     continue
@@ -413,9 +406,7 @@ class RunReporter:
             value_style="bold red" if n_errors else ("yellow" if n_warnings else None),
         )
         if ctx.started_monotonic is not None:
-            elapsed = self.log_fmt.format_elapsed(
-                time.monotonic() - ctx.started_monotonic,
-            )
+            elapsed = format_elapsed(time.monotonic() - ctx.started_monotonic)
             summary_kv("elapsed", elapsed)
 
         # A single guidance line if anything was skipped purely for being
@@ -437,15 +428,9 @@ class RunReporter:
         else:
             tip = None
         if tip is not None:
-            self.logger.info(
-                indent_string(tip, level=1),
-                extra={"line_style": "grey50"},
-            )
+            log_styled(self.logger, indent_string(tip, level=1), "grey50")
 
-        self.logger.info(
-            rule_string(rule_char="=", total_length=self.log_fmt.line_length),
-            extra={"rule_char": "="},
-        )
+        log_section_rule(self.logger, "=", width=self.log_fmt.line_length)
 
         return True
 
@@ -503,14 +488,7 @@ class RunReporter:
         # the gap UNDER this title is supplied by the first log_arr_item_start.
         self.log_fmt.blank()
         banner = f"Starting SeaDexArr ({arr.capitalize()}) for {arr_item_noun(arr, n_items)}"
-        self.logger.info(
-            banner,
-            extra={
-                "rule_title": banner,
-                "rule_style": "bold cyan",
-                "rule_heavy": True,
-            },
-        )
+        log_titled_rule(self.logger, banner, heavy=True)
 
         return True
 
@@ -538,10 +516,7 @@ class RunReporter:
         # A blank line before each ledger row separates entries within a title
         # block (and the first entry from its header)
         self.log_fmt.blank()
-        self.logger.info(
-            indent_string(entry_string(state, label), level=1),
-            extra={"line_style": style},
-        )
+        log_styled(self.logger, indent_string(entry_string(state, label), level=1), style)
 
         return True
 
@@ -623,10 +598,7 @@ class RunReporter:
         # from the previous one (and from the run banner for the first item)
         self.log_fmt.blank()
         header = f"[{n_item}/{n_items}] {arr.capitalize()}: {item_title}"
-        self.logger.info(
-            header,
-            extra={"rule_title": header, "rule_style": "bold cyan"},
-        )
+        log_titled_rule(self.logger, header)
 
         return True
 
@@ -912,9 +884,10 @@ class RunReporter:
     def log_max_torrents_added(self) -> bool:
         """Produce a log message about hitting the maximum number of torrents added"""
 
-        self.logger.info(
+        log_styled(
+            self.logger,
             "Reached the maximum number of torrents for this run (advanced.max_torrents_to_add); stopping",
-            extra={"line_style": "yellow"},
+            "yellow",
         )
 
         return True

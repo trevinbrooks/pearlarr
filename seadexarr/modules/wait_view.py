@@ -46,10 +46,11 @@ from .console_caps import (
 from .log import (
     INDENT,
     STATE_WIDTH,
-    LogFormatter,
     count_noun,
+    format_elapsed,
     indent_string,
-    rule_string,
+    log_section_rule,
+    log_styled,
 )
 from .manual_import import Outcome, OutcomeCategory
 
@@ -247,7 +248,7 @@ def graduation_tail(torrent: TorrentView, outcome: Outcome) -> str:
         if torrent.import_total:
             parts.append(count_noun(torrent.import_total, "file"))
         if torrent.phase_elapsed_s >= 1.0:
-            parts.append(LogFormatter.format_elapsed(torrent.phase_elapsed_s))
+            parts.append(format_elapsed(torrent.phase_elapsed_s))
         return " · ".join(parts)
     if not outcome.dropped:
         return "retries next run"
@@ -348,7 +349,7 @@ def live_model(snapshot: WaitSnapshot, caps: Capabilities) -> LiveModel:
     counts = snapshot.counts()
     left = f"waiting {snapshot.done()}/{snapshot.total()}"
     arrow = "↓" if caps.unicode else "dl"
-    meta: list[str] = [LogFormatter.format_elapsed(snapshot.elapsed_s)]
+    meta: list[str] = [format_elapsed(snapshot.elapsed_s)]
     agg_speed = _aggregate_speed(snapshot)
     if agg_speed:
         meta.append(f"{arrow} {_human_bytes(agg_speed)}/s")
@@ -396,7 +397,7 @@ def _row_model(torrent: TorrentView, *, spark: bool) -> RowModel:
             show_bar=True,
         )
     if torrent.phase is Phase.IMPORTING:
-        elapsed = LogFormatter.format_elapsed(torrent.phase_elapsed_s)
+        elapsed = format_elapsed(torrent.phase_elapsed_s)
         if torrent.import_total:
             # Determinate "files inserted" bar (the speed column stays blank -
             # an import has no download rate).
@@ -579,8 +580,11 @@ class _DurableWaitView(WaitView):
             tail = graduation_tail(torrent, outcome)
             if tail:
                 line += f"  ({tail})"
-            extra = {"line_style": outcome.style} if self._caps.color else {}
-            self._logger.info(indent_string(line), extra=extra)
+            log_styled(
+                self._logger,
+                indent_string(line),
+                outcome.style if self._caps.color else None,
+            )
 
     def _log_summary(self) -> None:
         imported = self._tally[OutcomeCategory.SUCCESS]
@@ -593,8 +597,8 @@ class _DurableWaitView(WaitView):
             parts.append(f"{deferred} left")
         if failed:
             parts.append(f"{failed} failed")
-        parts.append(LogFormatter.format_elapsed(self._last_elapsed))
-        self._logger.info(rule_string("-"))
+        parts.append(format_elapsed(self._last_elapsed))
+        log_section_rule(self._logger, "-")
         self._logger.info(indent_string("wait complete · " + " · ".join(parts)))
 
     @abstractmethod
@@ -859,7 +863,7 @@ class LogWaitView(_DurableWaitView):
             indent_string(
                 f"still waiting · {counts[Phase.DOWNLOADING]} downloading · "
                 f"{counts[Phase.IMPORTING]} importing · {counts[Phase.QUEUED]} queued · "
-                f"{LogFormatter.format_elapsed(snapshot.elapsed_s)}",
+                f"{format_elapsed(snapshot.elapsed_s)}",
             ),
         )
 

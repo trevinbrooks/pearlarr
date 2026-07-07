@@ -1,10 +1,9 @@
 import logging
 import os
-import shutil
 import sys
+from dataclasses import dataclass
 from enum import StrEnum
-from logging.handlers import RotatingFileHandler
-from typing import Protocol, TypedDict, cast, override
+from typing import Final, override
 
 from rich.console import Console
 from rich.rule import Rule
@@ -14,23 +13,69 @@ from rich.traceback import Traceback
 from .config import Arr
 
 
-class KvRecord(TypedDict):
-    """Schema for the ``kv`` record carried on a LogRecord via ``extra=``.
+@dataclass(frozen=True, slots=True)
+class TitledRule:
+    """A titled section header: a full-width rule, then the bold title line.
+
+    ``heavy=True`` draws a heavy rule ("━", run boundaries); otherwise a light
+    rule ("─", per-title headers). Both the rule and the title take ``style``.
+    """
+
+    title: str
+    style: str = "cyan"
+    heavy: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SectionRule:
+    """A full-width separator rule: heavy cyan for "=", light gray for "-"."""
+
+    char: str = "-"
+
+
+@dataclass(frozen=True, slots=True)
+class KvLine:
+    """An aligned "key : value" (or gutter "key value") detail line.
 
     Locks the producer (``LogFormatter.kv``) and consumer
-    (``RichConsoleHandler._render_kv``) to the same key names and value types,
-    so the two sides can't silently drift. ``value`` is a plain string or a
-    pre-styled ``Text`` (the only non-str path, from ``group_highlight``).
+    (``RichConsoleHandler._render_kv``) to the same fields, so the two sides
+    can't silently drift. ``value`` is a plain string or a pre-styled ``Text``
+    (the only non-str path, from ``group_highlight``).
     """
 
     key: str
     value: str | Text
-    value_style: str | None
-    indent: int
     key_width: int
-    sep: str
-    tail: str | None
-    tail_style: str
+    value_style: str | None = None
+    indent: int = 1
+    sep: str = " :"
+    tail: str | None = None
+    tail_style: str = "yellow"
+
+
+@dataclass(frozen=True, slots=True)
+class StyledLine:
+    """A plain message with a console style and an optional emphasized tail."""
+
+    style: str = ""
+    tail: str | None = None
+    tail_style: str = "yellow"
+
+
+type ConsoleRender = TitledRule | SectionRule | KvLine | StyledLine
+"""The typed console payload a record carries under ``CONSOLE_EXTRA``."""
+
+# The single ``extra=`` key carrying a ConsoleRender to the console handler.
+CONSOLE_EXTRA: Final = "seadex_console"
+
+
+def console_payload(record: logging.LogRecord) -> ConsoleRender | None:
+    """The typed console payload carried on ``record``, or None for a plain line."""
+
+    payload: object = getattr(record, CONSOLE_EXTRA, None)
+    if isinstance(payload, TitledRule | SectionRule | KvLine | StyledLine):
+        return payload
+    return None
 
 
 class RichConsoleHandler(logging.Handler):
@@ -40,30 +85,28 @@ class RichConsoleHandler(logging.Handler):
     as clean text. Plain WARNING/ERROR messages get a colored level badge so
     problems stand out (aligned "key : value" lines never do - see ``kv``).
 
-    Presentation is driven by ``extra=`` attributes on the record, so the
-    plain message string (what the file log stores) stays clean while the
-    console gets the rich treatment:
+    Presentation is driven by one typed payload (a :data:`ConsoleRender`
+    dataclass under ``CONSOLE_EXTRA``, built by the ``log_*`` producers and
+    ``LogFormatter.kv``), so the plain message string (what the file log
+    stores) stays clean while the console gets the rich treatment:
 
-    * ``rule_title`` (+ optional ``rule_style``, ``rule_heavy``) -> a titled
-      section: a full-width rule, then the title text LEFT-ALIGNED on the next
-      line (both in ``rule_style``, default "cyan"; the title is bold). Pass
-      ``rule_heavy=True`` for a heavy rule ("━", run boundaries); otherwise a
-      light rule ("─", per-title headers) is drawn. Used for the run banner and
-      per-title headers.
-    * ``rule_char`` ("=" or "-") -> a full-width separator rule (heavy cyan for
+    * :class:`TitledRule` -> a titled section: a full-width rule, then the
+      title text LEFT-ALIGNED on the next line (both in its ``style``; the
+      title is bold). ``heavy=True`` draws a heavy rule ("━", run boundaries);
+      otherwise a light rule ("─", per-title headers). Used for the run banner
+      and per-title headers.
+    * :class:`SectionRule` -> a full-width separator rule (heavy cyan for
       "=", light gray for "-"), distinguishable without color. Unmarked ASCII
       separators (a message of only "=" / "-") are still detected as a fallback.
-    * ``kv`` (a dict with ``key`` / ``value`` and optional ``value_style`` /
-      ``indent`` / ``key_width``) -> an aligned, lightly colored "key : value"
-      detail line whose layout matches ``kv_string`` exactly. Labels are a fixed
-      dim grey, so the value reads first; pass ``value_style`` to accent an
-      outcome (e.g., green "added"). No level badge is drawn even for WARNING+ kv
-      lines, so the value stays in its aligned column; LogCounter still tallies
-      the severity for the run summary.
-    * ``line_style`` -> a style applied to an otherwise plain message, used to
-      dim no-op lines such as the collapsed "cached" one-liner.
-    * ``tail`` (+ optional ``tail_style``) -> an emphasized suffix appended to
-      the message, e.g., a "(marked incomplete)" note.
+    * :class:`KvLine` -> an aligned, lightly colored "key : value" detail line
+      whose layout matches ``kv_string`` exactly. Labels are a fixed dim grey,
+      so the value reads first; ``value_style`` accents an outcome (e.g., green
+      "added"). No level badge is drawn even for WARNING+ kv lines, so the
+      value stays in its aligned column; LogCounter still tallies the severity
+      for the run summary.
+    * :class:`StyledLine` -> a style applied to an otherwise plain message
+      (used to dim no-op lines such as the collapsed "cached" one-liner), plus
+      an optional emphasized ``tail`` suffix, e.g., a "(marked incomplete)" note.
 
     Messages are rendered as literal text rather than ``rich`` markup, so
     bracketed content such as "[1/1]" or "[MARKED INCOMPLETE]" is never
@@ -89,23 +132,17 @@ class RichConsoleHandler(logging.Handler):
         self.console = console
 
     @staticmethod
-    def _render_kv(kv: KvRecord) -> Text:
-        """Build a styled "key : value" (or gutter "key value") line from a kv record.
+    def _render_kv(kv: KvLine) -> Text:
+        """Build a styled "key : value" (or gutter "key value") line from a kv payload.
 
         The leading "<indent><key><sep>" segment comes from the shared _kv_prefix
         helper, so this matches kv_string (the file log) exactly. Labels are a
         fixed dim grey50 so the value reads first. An optional ``tail`` (e.g., a
-        "(marked incomplete)" note) is appended console-side only, mirroring the
-        plain-message tail.
+        "(marked incomplete)" note) is appended console-side only.
         """
-        prefix = _kv_prefix(
-            kv["indent"],
-            kv["key"],
-            kv["key_width"],
-            kv["sep"],
-        )
+        prefix = _kv_prefix(kv.indent, kv.key, kv.key_width, kv.sep)
         line = Text(prefix, style="grey50")
-        value = kv["value"]
+        value = kv.value
         if isinstance(value, Text):
             # A pre-styled value (e.g., a torrent name with its release group
             # highlighted) already carries its own spans, so append it as-is and
@@ -115,29 +152,54 @@ class RichConsoleHandler(logging.Handler):
                 line.append(value)
         elif value != "":
             line.append(" ")
-            line.append(Text(value, style=kv["value_style"] or ""))
-        tail = kv["tail"]
-        if tail:
+            line.append(Text(value, style=kv.value_style or ""))
+        if kv.tail:
             line.append(" ")
-            line.append(Text(tail, style=kv["tail_style"] or "yellow"))
+            line.append(Text(kv.tail, style=kv.tail_style or "yellow"))
         return line
+
+    def _print_rule(self, char: str) -> None:
+        """A full-width separator: heavy ("━") for section ("=") breaks, light
+        ("─") for sub ("-") breaks, so the two stay distinguishable without color."""
+        if "=" in char:
+            self.console.print(Rule(style="cyan", characters="━"))
+        else:
+            self.console.print(Rule(style="grey37", characters="─"))
+
+    def _print_line(self, record: logging.LogRecord, message: str, payload: StyledLine | None) -> None:
+        """A plain message: level badge for WARNING+, optional style and tail.
+
+        Emitted whole (soft_wrap) so the terminal handles any overflow, rather
+        than rich re-wrapping with unindented continuation lines.
+        """
+        badge = self.LEVEL_BADGES.get(record.levelno)
+        if badge is None:
+            line = Text(message, style=payload.style if payload is not None else "")
+        else:
+            label, style = badge
+            line = Text(f"{label:<8} ", style=style)
+            line.append(message)
+
+        # An optional emphasized suffix (e.g., an "incomplete" note)
+        if payload is not None and payload.tail is not None:
+            line.append(" ")
+            line.append(Text(payload.tail, style=payload.tail_style))
+
+        self.console.print(line, highlight=False, soft_wrap=True)
 
     @override
     def emit(self, record: logging.LogRecord) -> None:
         try:
+            payload = console_payload(record)
+
             # A titled section: a full-width rule, then the title text
-            # LEFT-ALIGNED on the next line (user directive). A heavy rule
-            # ("━") marks run boundaries; a light rule ("─") marks per-title
-            # headers (rule_heavy chooses).
-            rule_title = getattr(record, "rule_title", None)
-            if rule_title is not None:
-                rule_style = getattr(record, "rule_style", "cyan")
-                rule_heavy = getattr(record, "rule_heavy", False)
+            # LEFT-ALIGNED on the next line (user directive).
+            if isinstance(payload, TitledRule):
                 self.console.print(
-                    Rule(style=rule_style, characters="━" if rule_heavy else "─"),
+                    Rule(style=payload.style, characters="━" if payload.heavy else "─"),
                 )
                 self.console.print(
-                    Text(rule_title, style=f"{rule_style} bold"),
+                    Text(payload.title, style=f"{payload.style} bold"),
                     highlight=False,
                     soft_wrap=True,
                 )
@@ -172,60 +234,29 @@ class RichConsoleHandler(logging.Handler):
                     )
                 return
 
-            # A separator rule. The preferred form is an explicit "rule_char"
-            # marker; we also fall back to detecting a hand-drawn ASCII rule (a
-            # message of only "=" or "-"). A heavy line marks section ("=")
-            # breaks, and a light line marks sub ("-") breaks, so the two stay
-            # distinguishable even without color (piped to a file/Docker logs).
-            rule_char = getattr(record, "rule_char", None)
-            if rule_char is None:
-                stripped = message.strip()
-                if stripped and set(stripped) <= {"=", "-"}:
-                    rule_char = "=" if "=" in stripped else "-"
-            if rule_char is not None:
-                if "=" in rule_char:
-                    self.console.print(Rule(style="cyan", characters="━"))
-                else:
-                    self.console.print(Rule(style="grey37", characters="─"))
-                return
-
-            # A styled key/value detail line (deliberately no level badge even
-            # for WARNING+ - see below; LogCounter still tallies severity).
-            kv: KvRecord | None = getattr(record, "kv", None)
-            if kv is not None:
-                # No level badge here, even for WARNING+ kv lines: a col-0 badge
-                # would push the value past its aligned column and detach the
-                # line from the entry block it belongs under. Severity is still
-                # counted by LogCounter (a logger filter) and surfaced in the
-                # run summary's "issues" tally; here, position and value_style
-                # carry the meaning.
-                self.console.print(
-                    self._render_kv(kv),
-                    highlight=False,
-                    soft_wrap=True,
-                )
-                return
-
-            # Emit messages whole (soft_wrap) and let the terminal handle any
-            # overflow, rather than having rich re-wrap with unindented
-            # continuation lines, as the previous logger did.
-            badge = self.LEVEL_BADGES.get(record.levelno)
-            if badge is None:
-                line = Text(message, style=getattr(record, "line_style", "") or "")
-            else:
-                label, style = badge
-                line = Text(f"{label:<8} ", style=style)
-                line.append(message)
-
-            # An optional emphasized suffix (e.g., an "incomplete" note)
-            tail = getattr(record, "tail", None)
-            if tail is not None:
-                line.append(" ")
-                line.append(
-                    Text(str(tail), style=getattr(record, "tail_style", "yellow")),
-                )
-
-            self.console.print(line, highlight=False, soft_wrap=True)
+            match payload:
+                case SectionRule(char=char):
+                    self._print_rule(char)
+                case KvLine():
+                    # No level badge here, even for WARNING+ kv lines: a col-0
+                    # badge would push the value past its aligned column and
+                    # detach the line from the entry block it belongs under.
+                    # Severity is still counted by LogCounter (a logger filter)
+                    # and surfaced in the run summary's "issues" tally; here,
+                    # position and value_style carry the meaning.
+                    self.console.print(
+                        self._render_kv(payload),
+                        highlight=False,
+                        soft_wrap=True,
+                    )
+                case StyledLine() | None:
+                    # Fallback: a hand-drawn ASCII rule (a message of only "="
+                    # or "-") from a caller without the typed payload.
+                    stripped = message.strip()
+                    if payload is None and stripped and set(stripped) <= {"=", "-"}:
+                        self._print_rule("=" if "=" in stripped else "-")
+                    else:
+                        self._print_line(record, message, payload)
         except Exception:
             self.handleError(record)
 
@@ -256,16 +287,18 @@ class LogCounter(logging.Filter):
         return dict(self.counts)
 
 
-class _CountingLogger(Protocol):
-    """Structural view of a logger that carries a per-run :class:`LogCounter`.
+def log_counter(logger: logging.Logger) -> LogCounter:
+    """The per-run :class:`LogCounter` filter ``setup_logger`` attached to ``logger``.
 
-    ``setup_logger`` attaches ``seadex_counter`` dynamically; narrowing the
-    logger to this protocol lets the assignment type-check without a cast or a
-    Logger subclass, mirroring the ``getattr(..., "seadex_counter", None)`` reads
-    at the call sites.
+    Raises ``LookupError`` when absent: every logger the readers pass was built
+    by ``setup_logger`` (or is a test logger that attaches its own counter).
     """
 
-    seadex_counter: LogCounter
+    for log_filter in logger.filters:
+        if isinstance(log_filter, LogCounter):
+            return log_filter
+    msg = f"logger {logger.name!r} carries no LogCounter (was it built by setup_logger?)"
+    raise LookupError(msg)
 
 
 # The level names the file logger honors; any other value (a typo) warns and
@@ -345,22 +378,26 @@ def setup_logger(
 
     log_file = os.path.join(log_dir, f"{log_name}.log")
 
-    # Check if a log file already exists. Copy, then remove to avoid I/O errors
-    if os.path.isfile(log_file):
-        for i in range(max_logs - 1, 0, -1):
-            old_log = os.path.join(f"{log_dir}", f"{log_name}.log.{i}")
-            new_log = os.path.join(f"{log_dir}", f"{log_name}.log.{i + 1}")
-            if os.path.exists(old_log):
-                if os.path.exists(new_log):
-                    os.remove(new_log)
-                shutil.copy(old_log, new_log)
-                os.remove(old_log)
-
-        shutil.copy(log_file, os.path.join(log_dir, f"{log_name}.log.1"))
-        os.remove(log_file)
-
     logger = logging.getLogger(log_name)
     logger.propagate = False
+
+    # Close and detach any handlers from a previous call FIRST (scheduled mode
+    # re-runs this each cycle): the old file handler must release the log file
+    # before it is rotated, and an unclosed handler leaks its descriptor.
+    for old_handler in list(logger.handlers):
+        logger.removeHandler(old_handler)
+        old_handler.close()
+
+    # Rotate prior logs: .log -> .log.1 -> ... -> .log.<max_logs>. os.replace
+    # overwrites the oldest atomically, so no copy/remove dance is needed.
+    if os.path.isfile(log_file):
+        for i in range(max_logs - 1, 0, -1):
+            old_log = os.path.join(log_dir, f"{log_name}.log.{i}")
+            new_log = os.path.join(log_dir, f"{log_name}.log.{i + 1}")
+            if os.path.exists(old_log):
+                os.replace(old_log, new_log)
+
+        os.replace(log_file, os.path.join(log_dir, f"{log_name}.log.1"))
 
     # Resolve the configured level once through the name->constant table instead
     # of a hand-rolled string ladder. Only the five standard names are accepted;
@@ -379,11 +416,9 @@ def setup_logger(
         datefmt="%m/%d/%y %I:%M %p",
     )
 
-    # Create the file handler. Rotation is performed manually above (the
-    # copy/remove of prior logs), once per setup_logger() call; the handler
-    # opens a fresh file each run (mode="w"). maxBytes is intentionally unset,
-    # so size-based rollover never fires - hence no backupCount here.
-    handler = RotatingFileHandler(
+    # Create the file handler. Rotation is performed manually above (once per
+    # setup_logger() call); the handler opens a fresh file each run (mode="w").
+    handler = logging.FileHandler(
         log_file,
         delay=True,
         mode="w",
@@ -399,8 +434,6 @@ def setup_logger(
     console_handler = RichConsoleHandler(console)
     console_handler.setLevel(_console_level(level))
 
-    # Replace any handlers from a previous call, then attach file + console
-    logger.handlers.clear()
     logger.addHandler(handler)
     logger.addHandler(console_handler)
 
@@ -408,14 +441,13 @@ def setup_logger(
     if invalid_log_level is not None:
         logger.critical(f"Invalid log level '{invalid_log_level}', defaulting to 'INFO'")
 
-    # Tally records by level so a run can report its warning/error counts.
-    # Replace any counter from a previous call so counts don't carry over.
+    # Tally records by level so a run can report its warning/error counts (read
+    # back via log_counter). Replace any counter from a previous call so counts
+    # don't carry over.
     for existing_filter in list(logger.filters):
         if isinstance(existing_filter, LogCounter):
             logger.removeFilter(existing_filter)
-    counter = LogCounter()
-    logger.addFilter(counter)
-    cast(_CountingLogger, logger).seadex_counter = counter
+    logger.addFilter(LogCounter())
 
     return logger
 
@@ -556,6 +588,82 @@ def kv_string(
     return f"{line} {value}"
 
 
+def log_styled(
+    logger: logging.Logger,
+    message: str,
+    style: str | None,
+    *,
+    level: int = logging.INFO,
+    tail: str | None = None,
+    tail_style: str = "yellow",
+) -> None:
+    """Log a plain message that the console renders with a style
+
+    The file log stores the plain message; the console applies ``style`` (e.g.,
+    "grey50" to dim a no-op line) and appends the optional emphasized tail.
+
+    Args:
+        logger: Logger the line is emitted through
+        message: The message text (file log and console)
+        style: Rich style for the console line; None renders unstyled
+        level: Logging level. Defaults to logging.INFO
+        tail: Optional emphasized suffix (console only). Defaults to None
+        tail_style: Style for the tail. Defaults to "yellow"
+    """
+
+    logger.log(
+        level,
+        message,
+        extra={CONSOLE_EXTRA: StyledLine(style=style or "", tail=tail, tail_style=tail_style)},
+    )
+
+
+def log_titled_rule(
+    logger: logging.Logger,
+    title: str,
+    *,
+    heavy: bool = False,
+    style: str = "bold cyan",
+    message: str | None = None,
+) -> None:
+    """Log a titled section header: a full-width rule, then the bold title line
+
+    Args:
+        logger: Logger the line is emitted through
+        title: The section title the console renders under the rule
+        heavy: Draw a heavy rule ("━", run boundaries) instead of a light one
+            ("─", per-title headers). Defaults to False
+        style: Rich style for the rule and title. Defaults to "bold cyan"
+        message: The plain text the file log stores. Defaults to the title;
+            pass it when a console-only annotation rides the rendered title
+    """
+
+    logger.info(
+        message if message is not None else title,
+        extra={CONSOLE_EXTRA: TitledRule(title=title, style=style, heavy=heavy)},
+    )
+
+
+def log_section_rule(
+    logger: logging.Logger,
+    char: str = "-",
+    *,
+    width: int = 80,
+) -> None:
+    """Log a full-width separator rule: heavy cyan for "=", light gray for "-"
+
+    The file log stores the plain ``rule_string`` text; the console draws a
+    styled rich rule.
+
+    Args:
+        logger: Logger the line is emitted through
+        char: Rule character ("=" section break, "-" sub break). Defaults to "-"
+        width: Width of the file-log rule. Defaults to 80
+    """
+
+    logger.info(rule_string(char, width), extra={CONSOLE_EXTRA: SectionRule(char)})
+
+
 def group_highlight(
     name: str | None,
     group: str | None,
@@ -661,8 +769,8 @@ class LogFormatter:
     """Render aligned detail lines through a logger.
 
     Holds only the logger and the rule width - no run state - so the
-    presentation primitives (an aligned "key : value" line, a blank separator,
-    an elapsed-time string) live apart from the reporting layer that decides
+    presentation primitives (an aligned "key : value" line, a blank separator)
+    live apart from the reporting layer that decides
     *what* to report. The semantic ``log_*`` methods on ``RunReporter`` keep the
     run state (via ``RunContext``) and delegate their rendering here.
 
@@ -687,7 +795,7 @@ class LogFormatter:
         sep: str = " :",
         tail: str | None = None,
         tail_style: str = "yellow",
-    ) -> bool:
+    ) -> None:
         """Log an aligned "key : value" (or gutter "key value") detail line
 
         The file log stores the plain kv_string text; on the console the label
@@ -708,23 +816,21 @@ class LogFormatter:
             tail_style: Style for the tail. Defaults to "yellow"
         """
 
-        record: KvRecord = {
-            "key": key,
-            "value": value,
-            "value_style": value_style,
-            "indent": indent,
-            "key_width": key_width,
-            "sep": sep,
-            "tail": tail,
-            "tail_style": tail_style,
-        }
+        payload = KvLine(
+            key=key,
+            value=value,
+            key_width=key_width,
+            value_style=value_style,
+            indent=indent,
+            sep=sep,
+            tail=tail,
+            tail_style=tail_style,
+        )
         self.logger.log(
             level,
             kv_string(key, value, key_width=key_width, indent=indent, sep=sep),
-            extra={"kv": record},
+            extra={CONSOLE_EXTRA: payload},
         )
-
-        return True
 
     def detail(
         self,
@@ -734,7 +840,7 @@ class LogFormatter:
         level: int = logging.INFO,
         tail: str | None = None,
         tail_style: str = "yellow",
-    ) -> bool:
+    ) -> None:
         """Log an entry-detail line: dim gutter label, value at the title column
 
         The colon-less "<label> <value>" form is used for everything indented under
@@ -752,7 +858,7 @@ class LogFormatter:
             tail_style: Style for the tail. Defaults to "yellow"
         """
 
-        return self.kv(
+        self.kv(
             label,
             value,
             value_style=value_style,
@@ -764,21 +870,20 @@ class LogFormatter:
             tail_style=tail_style,
         )
 
-    def blank(self) -> bool:
+    def blank(self) -> None:
         """Emit a blank line to visually separate entries / item blocks"""
 
         self.logger.info("")
-        return True
 
-    @staticmethod
-    def format_elapsed(seconds: float) -> str:
-        """Format an elapsed number of seconds as e.g. "8s", "14m 03s" or "1h 02m 03s" """
 
-        total = int(seconds)
-        hours, rem = divmod(total, 3600)
-        minutes, seconds = divmod(rem, 60)
-        if hours:
-            return f"{hours}h {minutes:02d}m {seconds:02d}s"
-        if minutes:
-            return f"{minutes}m {seconds:02d}s"
-        return f"{seconds}s"
+def format_elapsed(seconds: float) -> str:
+    """Format an elapsed number of seconds as e.g. "8s", "14m 03s" or "1h 02m 03s" """
+
+    total = int(seconds)
+    hours, rem = divmod(total, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {seconds:02d}s"
+    if minutes:
+        return f"{minutes}m {seconds:02d}s"
+    return f"{seconds}s"

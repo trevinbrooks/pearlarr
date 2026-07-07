@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 from .boot_view import BootView, make_boot_view
 from .config import AppConfig, Arr, template_path
-from .log import LogLevel, apply_log_level, indent_string, setup_logger
+from .log import LogLevel, apply_log_level, indent_string, log_styled, setup_logger
 from .manual_import import ImportWaitMode
 from .paths import AppPaths, ensure_data_dir, resolve_paths
 from .runlock import single_instance_lock
@@ -298,7 +298,7 @@ def _configured_arrs(
             other = f"{arr}.api_key" if keys[0] == f"{arr}.url" else f"{arr}.url"
             logger.warning(f"{other} is set but {keys[0]} is not - skipping {arr.capitalize()}")
         else:
-            logger.info(indent_string(f"{arr.capitalize()} not configured - skipped"), extra={"line_style": "grey50"})
+            log_styled(logger, indent_string(f"{arr.capitalize()} not configured - skipped"), "grey50")
 
     kept = [(arr, item_id) for arr, item_id in arrs if arr not in missing]
     if not kept:

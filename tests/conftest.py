@@ -31,7 +31,7 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
       builder (they query ``deps.mappings`` after construction). Wrapping the
       ``open`` factory registers every store regardless of construction path;
       ``close()`` is idempotent, so stores that already close themselves are fine.
-    * The ``RotatingFileHandler`` ``setup_logger`` attaches to the ``"SeaDexArr"``
+    * The file handler ``setup_logger`` attaches to the ``"SeaDexArr"``
       logger (only the e2e smoke drives the real logging path); left open, its
       file handle leaks.
 

@@ -22,7 +22,7 @@ from .discord import (
     EmbedField,
     discord_push,
 )
-from .log import LogFormatter
+from .log import format_elapsed
 from .manual_import import OutcomeCategory
 from .seadex_types import SeadexDict
 from .wait_view import WaitResult
@@ -134,7 +134,7 @@ class Notifier:
 
         if result.waited == 0:
             return False
-        elapsed = LogFormatter.format_elapsed(result.elapsed_s)
+        elapsed = format_elapsed(result.elapsed_s)
         posted = self._push(
             DiscordEmbed(
                 author_name="SeaDexArr",

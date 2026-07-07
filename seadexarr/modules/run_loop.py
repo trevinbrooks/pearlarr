@@ -3,9 +3,8 @@ from typing import final
 
 from .arr_activity import ArrActivityMonitor
 from .boot_view import BootView, NullBootView
-from .config import Arr
 from .import_wait import ImportWaitManager
-from .log import count_noun
+from .log import arr_item_noun, count_noun, log_counter
 from .manual_import import (
     ImportWaitMode,
     resolve_wait_mode,
@@ -118,14 +117,13 @@ class RunLoop:
                 (cli > config > default), stamped onto the fresh context.
         """
 
-        counter = getattr(self.logger, "seadex_counter", None)
         self._ctx = RunContext(
             arr=self._services.arr,
             dry_run=dry_run,
             import_wait_mode=import_wait_mode,
             # Monotonic so a wall-clock step (NTP, DST) can't yield negative elapsed
             started_monotonic=time.monotonic(),
-            log_counts_at_start=counter.snapshot() if counter else {},
+            log_counts_at_start=log_counter(self.logger).snapshot(),
         )
         self.begin_run(self._ctx)
 
@@ -215,9 +213,7 @@ class RunLoop:
                 all_items = strategy.filter_to_single(all_items, item_id)
 
             n_items = len(all_items)
-            connecting.note(
-                count_noun(n_items, "movie") if arr is Arr.RADARR else count_noun(n_items, "series", "series"),
-            )
+            connecting.note(arr_item_noun(arr, n_items))
 
         # Arr-side activity scan: one /history/since poll marks items whose files
         # the arr changed since the last pass dirty, so the cached-entry skip
