@@ -784,15 +784,17 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
 def make_planner(**overrides: Any) -> DownloadPlanner:
     """Build a ``DownloadPlanner`` with test-friendly defaults.
 
-    The planner reads two config flags plus a logger; pass keyword overrides
-    to vary a single flag (e.g. ``make_planner(interactive=True)``). The logger
-    defaults to WARNING so the hot-path debug f-strings aren't formatted, mirroring
-    ``make_services``.
+    The planner reads its bound arr (default ``SONARR``; override with
+    ``arr=Arr.RADARR``) and two config flags plus a logger; pass keyword
+    overrides to vary a single flag (e.g. ``make_planner(interactive=True)``).
+    The logger defaults to WARNING so the hot-path debug f-strings aren't
+    formatted, mirroring ``make_services``.
     """
 
     logger = make_logger()
 
     defaults: dict[str, Any] = {
+        "arr": Arr.SONARR,
         "interactive": False,
         "use_torrent_hash_to_filter": False,
         "logger": logger,

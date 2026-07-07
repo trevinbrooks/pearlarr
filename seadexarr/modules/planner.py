@@ -256,20 +256,23 @@ def get_all_seadex_rgs_per_episode(
 class DownloadPlanner:
     """Decides which SeaDex releases to grab for one AniList entry.
 
-    Constructed once per run with the two config flags it consults; every
-    decision method takes the already-shaped ``seadex_dict`` plus the Arr's
-    release info as arguments and returns a :class:`PlanResult`. The planner
-    keeps a logger only for the per-release debug breadcrumbs; the user-facing
-    private-only skip is returned as a :class:`SkipNotice`, never logged here.
+    Constructed once per Arr run with the arr it plans for and the two config
+    flags it consults; every decision method takes the already-shaped
+    ``seadex_dict`` plus the Arr's release info as arguments and returns a
+    :class:`PlanResult`. The planner keeps a logger only for the per-release
+    debug breadcrumbs; the user-facing private-only skip is returned as a
+    :class:`SkipNotice`, never logged here.
     """
 
     def __init__(
         self,
         *,
+        arr: Arr,
         interactive: bool,
         use_torrent_hash_to_filter: bool,
         logger: logging.Logger,
     ) -> None:
+        self.arr = arr
         self.interactive = interactive
         self.use_torrent_hash_to_filter = use_torrent_hash_to_filter
         self.logger = logger
@@ -278,7 +281,6 @@ class DownloadPlanner:
         self,
         *,
         seadex_dict: SeadexDict,
-        arr: Arr,
         arr_release_dict: ArrReleaseDict,
         cached_hashes: list[str | None],
         ep_list: list[SonarrEpisode] | None = None,
@@ -291,7 +293,6 @@ class DownloadPlanner:
 
         Args:
             seadex_dict: Dictionary of SeaDex releases (annotated in place)
-            arr: Type of arr instance
             arr_release_dict: Dictionary of arr release properties
             cached_hashes: Torrent hashes already remembered for this entry
             ep_list: List of episodes. Defaults to None
@@ -305,7 +306,6 @@ class DownloadPlanner:
         else:
             result = self.filter_by_release_group(
                 seadex_dict=seadex_dict,
-                arr=arr,
                 arr_release_dict=arr_release_dict,
                 ep_list=ep_list,
             )
@@ -393,7 +393,6 @@ class DownloadPlanner:
     def filter_by_release_group(
         self,
         seadex_dict: SeadexDict,
-        arr: Arr,
         arr_release_dict: ArrReleaseDict,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
@@ -406,7 +405,6 @@ class DownloadPlanner:
 
         Args:
             seadex_dict: Dictionary of SeaDex releases
-            arr: Type of arr instance
             arr_release_dict: Dictionary of arr release properties
             ep_list: List of episodes. Defaults to None
         """
@@ -462,7 +460,6 @@ class DownloadPlanner:
                         seadex_rg=seadex_rg,
                         url=url,
                         url_item=url_item,
-                        arr=arr,
                         arr_release_dict=arr_release_dict,
                         arr_release_groups=arr_release_groups,
                         overlapping_results=overlapping_results,
@@ -473,7 +470,6 @@ class DownloadPlanner:
                     seadex_rg=seadex_rg,
                     url=url,
                     url_item=url_item,
-                    arr=arr,
                     seadex_episodes=seadex_episodes,
                     sonarr_by_key=sonarr_by_key,
                     all_seadex_rgs_per_episode=all_seadex_rgs_per_episode,
@@ -511,7 +507,6 @@ class DownloadPlanner:
         seadex_rg: str,
         url: str,
         url_item: SeadexUrlItem,
-        arr: Arr,
         arr_release_dict: ArrReleaseDict,
         arr_release_groups: Iterable[str | None],
         overlapping_results: bool,
@@ -539,7 +534,7 @@ class DownloadPlanner:
             if set(seadex_file_sizes).isdisjoint(arr_file_sizes):
                 self.logger.debug(
                     indent_string(
-                        f"SeaDex release group {seadex_rg} in {arr.capitalize()} releases: "
+                        f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
                         f"{_render_groups(arr_release_groups)}, but file sizes do not match - will download {url}",
                     ),
                 )
@@ -550,14 +545,14 @@ class DownloadPlanner:
             else:
                 self.logger.debug(
                     indent_string(
-                        f"SeaDex release group {seadex_rg} in {arr.capitalize()} releases: "
+                        f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
                         f"{_render_groups(arr_release_groups)}, and file sizes match",
                     ),
                 )
         elif not overlapping_results:
             self.logger.debug(
                 indent_string(
-                    f"SeaDex release group {seadex_rg} not in {arr.capitalize()} releases: "
+                    f"SeaDex release group {seadex_rg} not in {self.arr.capitalize()} releases: "
                     f"{_render_groups(arr_release_groups)} - will download {url}",
                 ),
             )
@@ -568,7 +563,7 @@ class DownloadPlanner:
             # group's release covering these files - nothing to flag.
             self.logger.debug(
                 indent_string(
-                    f"SeaDex release group {seadex_rg} not in {arr.capitalize()} releases, but another "
+                    f"SeaDex release group {seadex_rg} not in {self.arr.capitalize()} releases, but another "
                     f"SeaDex group already overlaps them - not flagging {url}",
                 ),
             )
@@ -579,7 +574,6 @@ class DownloadPlanner:
         seadex_rg: str,
         url: str,
         url_item: SeadexUrlItem,
-        arr: Arr,
         seadex_episodes: list[EpisodeRecord],
         sonarr_by_key: dict[tuple[int, int], SonarrEpisode],
         all_seadex_rgs_per_episode: dict[str, set[str | None]],
@@ -662,7 +656,7 @@ class DownloadPlanner:
                         self.logger.debug(
                             indent_string(
                                 f"SeaDex release group {seadex_rg} differs from "
-                                f"{arr.capitalize()} release for "
+                                f"{self.arr.capitalize()} release for "
                                 f"{season_ep_str} ({sonarr_rg or 'no group'}) and no other "
                                 f"recommended release covers it - will download {url}",
                             ),
@@ -674,7 +668,7 @@ class DownloadPlanner:
                 if debug_on:
                     self.logger.debug(
                         indent_string(
-                            f"Found SeaDex match to {arr.capitalize()} for {season_ep_str}.",
+                            f"Found SeaDex match to {self.arr.capitalize()} for {season_ep_str}.",
                         ),
                     )
                     if not size_match:

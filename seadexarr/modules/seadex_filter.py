@@ -287,12 +287,10 @@ class SeadexReleaseFilter:
             ep_list: List of episodes. Defaults to None
         """
 
-        arr = self._ctx.arr
         result = self._planner.plan(
             seadex_dict=seadex_dict,
-            arr=arr,
             arr_release_dict=arr_release_dict,
-            cached_hashes=self.cache_store.torrent_hashes(arr, al_id),
+            cached_hashes=self.cache_store.torrent_hashes(self._ctx.arr, al_id),
             ep_list=ep_list,
         )
 

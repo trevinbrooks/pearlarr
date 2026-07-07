@@ -479,7 +479,6 @@ class TestFilterByReleaseGroup:
         seadex = {"NewRG": rg_group({"u1": url_item(episodes=[], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr=Arr.SONARR,
             arr_release_dict={"OldRG": [100]},
             ep_list=None,
         )
@@ -491,7 +490,6 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr=Arr.SONARR,
             arr_release_dict={"RG": [100]},
             ep_list=None,
         )
@@ -503,7 +501,6 @@ class TestFilterByReleaseGroup:
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[200], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr=Arr.SONARR,
             arr_release_dict={"RG": [100]},
             ep_list=None,
         )
@@ -514,11 +511,10 @@ class TestFilterByReleaseGroup:
         # The no-episode path matches by normalized name like the per-episode
         # path: Radarr's "EMBER" is SeaDex's "Ember", so a size match must not
         # re-download (raw comparison used to re-grab owned content).
-        planner = make_planner()
+        planner = make_planner(arr=Arr.RADARR)
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr=Arr.RADARR,
             arr_release_dict={"EMBER": [100]},
             ep_list=None,
         )
@@ -530,11 +526,10 @@ class TestFilterByReleaseGroup:
         # This pins the membership + size-lookup normalization specifically:
         # the overlap-gate normalization alone would read the group as covered
         # and leave download False (a silently missed upgrade).
-        planner = make_planner()
+        planner = make_planner(arr=Arr.RADARR)
         seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[200], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr=Arr.RADARR,
             arr_release_dict={"EMBER": [100]},
             ep_list=None,
         )
@@ -553,7 +548,6 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr=Arr.SONARR,
             arr_release_dict={"Era-Raws": [100]},
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Era-Raws")],
         )
@@ -571,7 +565,6 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr=Arr.SONARR,
             arr_release_dict={"SubsPlease": [100]},
             ep_list=[sonarr_ep(1, 1, size=100, release_group="SubsPlease")],
         )
@@ -589,7 +582,6 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr=Arr.SONARR,
             arr_release_dict={"Era-Raws": [100]},
             ep_list=[sonarr_ep(1, 1, size=100, release_group="Era-Raws")],
         )
@@ -607,7 +599,6 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr=Arr.SONARR,
             arr_release_dict={},
             ep_list=None,
         )
@@ -618,11 +609,10 @@ class TestFilterByReleaseGroup:
         # Radarr's release dict carries an empty size list when the movie has no
         # file. as_size_list keeps that [], which is disjoint from the real
         # SeaDex sizes, so the group is grabbed.
-        planner = make_planner()
+        planner = make_planner(arr=Arr.RADARR)
         seadex = {"RG": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr=Arr.RADARR,
             arr_release_dict={"RG": []},
             ep_list=None,
         )
@@ -642,7 +632,6 @@ class TestFilterByReleaseGroup:
         }
         result = planner.filter_by_release_group(
             seadex_dict=seadex,
-            arr=Arr.SONARR,
             arr_release_dict={"SubsPlease": [100]},
             ep_list=[sonarr_ep(1, 1, size=100, release_group="SubsPlease")],
         )
