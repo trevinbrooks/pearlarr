@@ -9,7 +9,7 @@ the orchestrator's run state or its log formatter.
 """
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from itertools import compress
 
@@ -253,6 +253,26 @@ def get_all_seadex_rgs_per_episode(
     return all_seadex_rgs_per_episode
 
 
+@dataclass(frozen=True, slots=True)
+class _MatchContext:
+    """Per-entry invariants for the URL match loop.
+
+    Computed once per entry in ``filter_by_release_group`` and shared by both
+    per-URL matchers; nothing here changes inside the loop (only each
+    ``url_item``'s ``download``/``size_mismatch`` flags flip).
+    """
+
+    arr_release_dict: ArrReleaseDict
+    # The Arr's file sizes merged under normalized group names (loop-invariant,
+    # so it's built once per entry rather than per URL).
+    arr_sizes_by_norm: Mapping[str | None, list[int]]
+    overlapping_results: bool
+    sonarr_by_key: dict[tuple[int, int], SonarrEpisode]
+    all_seadex_rgs_per_episode: dict[str, set[str | None]]
+    has_ep_list: bool
+    debug_on: bool
+
+
 class DownloadPlanner:
     """Decides which SeaDex releases to grab for one AniList entry.
 
@@ -442,6 +462,23 @@ class DownloadPlanner:
         # normal INFO run instead of formatting them only to discard them.
         debug_on = self.logger.isEnabledFor(logging.DEBUG)
 
+        # The Arr's sizes merged under normalized group names (like the
+        # per-episode path's comparison). Loop-invariant - arr_release_dict is
+        # never mutated below - so build it once per entry, not per URL.
+        arr_sizes_by_norm: dict[str | None, list[int]] = {}
+        for arr_rg, sizes in arr_release_dict.items():
+            arr_sizes_by_norm.setdefault(normalize_rg(arr_rg), []).extend(as_size_list(sizes))
+
+        ctx = _MatchContext(
+            arr_release_dict=arr_release_dict,
+            arr_sizes_by_norm=arr_sizes_by_norm,
+            overlapping_results=overlapping_results,
+            sonarr_by_key=sonarr_by_key,
+            all_seadex_rgs_per_episode=all_seadex_rgs_per_episode,
+            has_ep_list=ep_list is not None,
+            debug_on=debug_on,
+        )
+
         for seadex_rg, seadex_rg_item in seadex_dict.items():
             self.logger.debug(
                 indent_string(
@@ -449,33 +486,14 @@ class DownloadPlanner:
                 ),
             )
 
-            seadex_urls = seadex_rg_item.urls
-            for url, url_item in seadex_urls.items():
-                seadex_episodes = url_item.episodes
-
+            for url_item in seadex_rg_item.urls.values():
                 # Simple case, we have no episode mappings, so
                 # just fall back to checking against release group
-                if not seadex_episodes:
-                    self._match_url_no_episodes(
-                        seadex_rg=seadex_rg,
-                        url=url,
-                        url_item=url_item,
-                        arr_release_dict=arr_release_dict,
-                        arr_release_groups=arr_release_groups,
-                        overlapping_results=overlapping_results,
-                    )
+                if not url_item.episodes:
+                    self._match_url_no_episodes(ctx, seadex_rg, url_item)
                     continue
 
-                self._match_url_episodes(
-                    seadex_rg=seadex_rg,
-                    url=url,
-                    url_item=url_item,
-                    seadex_episodes=seadex_episodes,
-                    sonarr_by_key=sonarr_by_key,
-                    all_seadex_rgs_per_episode=all_seadex_rgs_per_episode,
-                    has_ep_list=ep_list is not None,
-                    debug_on=debug_on,
-                )
+                self._match_url_episodes(ctx, seadex_rg, url_item)
 
         # Where multiple preferred release groups cover the same files and the
         # Arr has none of them, only grab one (preferring a public group)
@@ -503,13 +521,9 @@ class DownloadPlanner:
 
     def _match_url_no_episodes(
         self,
-        *,
+        ctx: _MatchContext,
         seadex_rg: str,
-        url: str,
         url_item: SeadexUrlItem,
-        arr_release_dict: ArrReleaseDict,
-        arr_release_groups: Iterable[str | None],
-        overlapping_results: bool,
     ) -> None:
         """Decide a single url with no parsed episodes, by release group + size.
 
@@ -519,16 +533,16 @@ class DownloadPlanner:
         sizes are disjoint.
         """
 
-        # Match by the normalized name (like the per-episode path), merging any
-        # raw Arr keys that normalize to the same group.
-        arr_sizes_by_norm: dict[str | None, list[int]] = {}
-        for arr_rg, sizes in arr_release_dict.items():
-            arr_sizes_by_norm.setdefault(normalize_rg(arr_rg), []).extend(as_size_list(sizes))
+        url = url_item.url
+        # The release-group names, for the debug lines (insertion order preserved).
+        arr_release_groups = ctx.arr_release_dict.keys()
 
-        if normalize_rg(seadex_rg) in arr_sizes_by_norm:
+        # Match by the normalized name (like the per-episode path); the merged
+        # size index was built once per entry (see _MatchContext).
+        if normalize_rg(seadex_rg) in ctx.arr_sizes_by_norm:
             # The group matches: fall through to a size comparison.
             seadex_file_sizes = url_item.size
-            arr_file_sizes = arr_sizes_by_norm[normalize_rg(seadex_rg)]
+            arr_file_sizes = ctx.arr_sizes_by_norm[normalize_rg(seadex_rg)]
 
             # If we have no overlaps at all, then add
             if set(seadex_file_sizes).isdisjoint(arr_file_sizes):
@@ -549,7 +563,7 @@ class DownloadPlanner:
                         f"{_render_groups(arr_release_groups)}, and file sizes match",
                     ),
                 )
-        elif not overlapping_results:
+        elif not ctx.overlapping_results:
             self.logger.debug(
                 indent_string(
                     f"SeaDex release group {seadex_rg} not in {self.arr.capitalize()} releases: "
@@ -570,15 +584,9 @@ class DownloadPlanner:
 
     def _match_url_episodes(
         self,
-        *,
+        ctx: _MatchContext,
         seadex_rg: str,
-        url: str,
         url_item: SeadexUrlItem,
-        seadex_episodes: list[EpisodeRecord],
-        sonarr_by_key: dict[tuple[int, int], SonarrEpisode],
-        all_seadex_rgs_per_episode: dict[str, set[str | None]],
-        has_ep_list: bool,
-        debug_on: bool,
     ) -> None:
         """Decide a single url against its parsed episodes, per episode.
 
@@ -591,11 +599,14 @@ class DownloadPlanner:
 
         # At this point, we need an episode list from Sonarr. A non-None but
         # empty list still runs the (no-op) loop below; only an absent list skips.
-        if not has_ep_list:
+        if not ctx.has_ep_list:
             self.logger.debug(
                 "Skipping per-episode check: no Sonarr episode list available",
             )
             return
+
+        url = url_item.url
+        seadex_episodes = url_item.episodes
 
         # For each episode we've parsed from the torrent, check if a) it exists in the Sonarr list, b) if
         # the release group matches, and c) if the file sizes match. If there's any mismatch between release
@@ -618,7 +629,7 @@ class DownloadPlanner:
 
             # O(1) lookup into the indexed Sonarr episodes instead of
             # re-scanning the whole list for every parsed episode
-            sonarr_ep = sonarr_by_key.get(
+            sonarr_ep = ctx.sonarr_by_key.get(
                 (seadex_ep_season, seadex_ep_episode),
             )
             if sonarr_ep is None:
@@ -643,16 +654,16 @@ class DownloadPlanner:
             # normalized name indexes all_seadex_rgs_per_episode, so compare the normalized name
             if (
                 sonarr_rg_normalized != seadex_rg_normalized
-                and sonarr_rg_normalized not in all_seadex_rgs_per_episode["all"]
+                and sonarr_rg_normalized not in ctx.all_seadex_rgs_per_episode["all"]
             ):
                 # Avoid duplicating when another release already covers it
-                all_seadex_rg = all_seadex_rgs_per_episode.get(
+                all_seadex_rg = ctx.all_seadex_rgs_per_episode.get(
                     season_ep_str,
                     (),
                 )
 
                 if sonarr_rg_normalized not in all_seadex_rg:
-                    if debug_on:
+                    if ctx.debug_on:
                         self.logger.debug(
                             indent_string(
                                 f"SeaDex release group {seadex_rg} differs from "
@@ -665,7 +676,7 @@ class DownloadPlanner:
                     url_item.download = True
 
             else:
-                if debug_on:
+                if ctx.debug_on:
                     self.logger.debug(
                         indent_string(
                             f"Found SeaDex match to {self.arr.capitalize()} for {season_ep_str}.",
