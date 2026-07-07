@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 import responses
+import respx
 import yaml
 from seadex import EntryRecord
 
@@ -254,13 +255,14 @@ def test_radarr_run_drives_real_composition_root(
     (tmp_path / "config.yml").write_text(yaml.safe_dump(config.model_dump(mode="json")))
 
     # The Radarr + AniList HTTP boundary. responses patches the requests adapter
-    # globally, so both the shared Session and arrapi's own Session are intercepted.
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        # arrapi's construction-time probe, the library fetch, and the per-movie
+    # globally (the shared Session and arrapi's own Session); respx covers the
+    # endpoints migrated onto the httpx-based ArrHttp (the movie-file read).
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps, respx.mock:
+        # arrapi's construction-time probe and the library fetch; the per-movie
         # file read (empty -> the {None: [None]} no-existing-file release dict).
         rsps.add(responses.GET, f"{_RADARR_BASE}/system/status", json={"version": "5.0.0"})
         rsps.add(responses.GET, f"{_RADARR_BASE}/movie", json=[_MOVIE_BODY])
-        rsps.add(responses.GET, f"{_RADARR_BASE}/moviefile", json=[])
+        moviefile_route = respx.get(f"{_RADARR_BASE}/moviefile").respond(json=[])
         rsps.add(responses.GET, f"{_RADARR_BASE}/history/since", json=[])
         rsps.add(responses.POST, _ANILIST_URL, json=_RADARR_ANILIST_BODY)
 
@@ -275,7 +277,7 @@ def test_radarr_run_drives_real_composition_root(
     assert any(str(_RADARR_ANILIST) in query for query in filter_calls)
     # The real Radarr client drove the library fetch + the movie-file read.
     assert f"GET {_RADARR_BASE}/movie" in fired
-    assert f"GET {_RADARR_BASE}/moviefile" in fired
+    assert moviefile_route.call_count == 1
     # The resolved entry's release reached the (preview) grab at the torrent source.
     assert nyaa_calls == [_NYAA_RELEASE_URL]
     # ...and the whole pass logged no error (a swallowed failure would tally here).

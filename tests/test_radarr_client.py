@@ -1,20 +1,26 @@
 # pyright: strict
+# pyright: reportPrivateUsage=false
+# _make_client stubs the bound ArrHttp's sleep so fail-open tests don't wait
+# out real retry backoffs; strict re-flags that private write.
 """Direct tests for the ``radarr_client`` module's contracts.
 
 Mirrors ``test_sonarr_client``: a REAL ``RadarrClient`` (whose ``__init__``
 constructs an ``arrapi`` client that probes ``GET /api/v3/system/status``) over a
-``responses``-mocked ``requests`` boundary. Pins the decode into the typed
-``MovieFile`` view and the degrade-to-empty guard (non-200 / transient request
-error -> ``[]`` + a warning), so a Radarr outage never unwinds the run; plus the
-``all_movies`` cast against arrapi drift and the ``collect_anime_movies`` wiring.
+``responses``-mocked ``requests`` boundary (respx mocks the endpoints migrated
+onto the httpx-based ``ArrHttp``). Pins the decode into the typed ``MovieFile``
+view and the degrade-to-empty guard (non-200 / transient request error -> ``[]``
++ a warning), so a Radarr outage never unwinds the run; plus the ``all_movies``
+cast against arrapi drift and the ``collect_anime_movies`` wiring.
 """
 
 import logging
 from collections.abc import Set as AbstractSet
 
+import httpx
 import pytest
 import requests
 import responses
+import respx
 
 from seadexarr.modules.radarr_client import RadarrClient, collect_anime_movies
 from seadexarr.modules.seadex_types import HistoryRecord, MovieFile, RadarrItem
@@ -30,52 +36,72 @@ def _make_client(rsps: responses.RequestsMock) -> RadarrClient:
     """Register arrapi's construction probe and build a real ``RadarrClient``."""
 
     rsps.add(responses.GET, f"{_BASE}/system/status", json={"version": "5.0.0"})
-    return RadarrClient(
+    client = RadarrClient(
         url=_URL,
         api_key=_KEY,
         session=requests.Session(),
+        http=httpx.Client(),
         logger=logging.getLogger("seadexarr.test"),
     )
+    client._http.sleep = lambda _s: None
+    return client
 
 
+@respx.mock
 def test_movie_files_decodes_records_and_builds_request() -> None:
     body: list[object] = [{"releaseGroup": "SubsPlease", "size": 123, "id": 9}]
+    route = respx.get(f"{_BASE}/moviefile").respond(json=body)
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
         client = _make_client(rsps)
-        rsps.add(responses.GET, f"{_BASE}/moviefile", json=body)
         files = client.movie_files(7)
-        request = rsps.calls[-1].request
 
     assert files == [MovieFile(release_group="SubsPlease", size=123)]
-    url = request.url
-    assert url is not None
+    request = route.calls.last.request
+    url = str(request.url)
     assert "movieId=7" in url
     # The key rides the X-Api-Key header, never the URL (it would leak via logs).
     assert "apikey" not in url
     assert request.headers["X-Api-Key"] == "testkey"
 
 
+@respx.mock
 def test_movie_files_non_200_returns_empty_and_warns(caplog: pytest.LogCaptureFixture) -> None:
-    """A Radarr 500 degrades to [] with a warning (was a JSONDecodeError mid-run)."""
+    """A Radarr 404 degrades to [] with a warning (was a JSONDecodeError mid-run)."""
 
+    respx.get(f"{_BASE}/moviefile").respond(status_code=404)
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
         client = _make_client(rsps)
-        rsps.add(responses.GET, f"{_BASE}/moviefile", status=500)
         with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
             files = client.movie_files(7)
 
     assert files == []
     warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
-    assert warning.getMessage() == "Could not fetch files for movie 7 from Radarr (status code 500); assuming none"
+    assert warning.getMessage() == "Could not fetch files for movie 7 from Radarr (status code 404); assuming none"
 
 
+@respx.mock
 def test_movie_files_request_error_returns_empty() -> None:
     """A transient request error (timeout / connection drop) degrades to []."""
 
+    respx.get(f"{_BASE}/moviefile").mock(side_effect=httpx.ConnectError("boom"))
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
         client = _make_client(rsps)
-        rsps.add(responses.GET, f"{_BASE}/moviefile", body=requests.exceptions.ConnectionError("boom"))
         assert client.movie_files(7) == []
+
+
+@respx.mock
+def test_movie_files_non_json_body_returns_empty_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """A 200 with an HTML body (reverse-proxy page) fails open to [] - never an abort."""
+
+    respx.get(f"{_BASE}/moviefile").respond(content=b"<html>login</html>", content_type="text/html")
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
+            files = client.movie_files(7)
+
+    assert files == []
+    warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
+    assert "non-JSON body" in warning.getMessage()
 
 
 def test_history_since_decodes_records_and_builds_request() -> None:
@@ -175,6 +201,7 @@ def test_trailing_slash_url_is_normalized() -> None:
             url=f"{_URL}/",
             api_key=_KEY,
             session=requests.Session(),
+            http=httpx.Client(),
             logger=logging.getLogger("seadexarr.test"),
         )
         rsps.add(responses.GET, f"{_BASE}/history/since", json=[])

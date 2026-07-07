@@ -1,18 +1,186 @@
 """Shared raw-endpoint HTTP for the arr clients.
 
-The clients wrap most of their API surface per endpoint; helpers here hold the
-request/parse/fail-open boilerplate one endpoint shares across both arrs
-(history today - a migration target for the older per-client endpoints).
+:class:`ArrHttp` is the httpx-native transport every raw arr endpoint is
+migrating onto: one bound helper per client holding the request/retry/parse/
+fail-open boilerplate that used to be copied per endpoint. The legacy
+``fetch_history_since`` (requests-based) folds onto it as the migration lands.
 """
 
 import logging
-from collections.abc import Mapping
+import random
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any, cast
 from urllib.parse import urlencode
 
+import httpx
 import requests
 
 from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord
+
+# Transient statuses worth another try on an idempotent GET - the same set the
+# retired urllib3 Retry policy on the requests session used.
+RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+GET_RETRIES = 3
+BACKOFF_BASE_S = 0.5
+
+
+def make_httpx_client(*, verify: bool = True) -> httpx.Client:
+    """The pinned httpx client the arr transports share (one per run).
+
+    - ``follow_redirects=False`` (httpx's default, pinned here on purpose): the
+      ``X-Api-Key`` header must never ride a cross-host redirect, so a 3xx from
+      an arr (a reverse-proxy login bounce) surfaces as a non-200 miss instead
+      of silently replaying credentials elsewhere.
+    - Client-level timeout mirroring ``ARR_REQUEST_TIMEOUT_S``, so no call site
+      can forget one.
+    - Pool sized to the episode sweep's fetch concurrency
+      (``SONARR_FETCH_WORKERS``), so parallel GETs don't queue.
+    """
+
+    connect_s, read_s = ARR_REQUEST_TIMEOUT_S
+    return httpx.Client(
+        timeout=httpx.Timeout(connect=connect_s, read=read_s, write=read_s, pool=connect_s),
+        follow_redirects=False,
+        limits=httpx.Limits(max_connections=16, max_keepalive_connections=16),
+        verify=verify,
+    )
+
+
+@dataclass
+class ArrHttp:
+    """One arr's bound HTTP surface: base url + auth header + fail-open policy.
+
+    Owns the boilerplate every raw endpoint used to copy: the auth header rides
+    each request (the client is shared across arrs, so never on the client),
+    transient GET failures retry with jittered backoff, EVERY body is parsed
+    behind a JSON guard (a 200 HTML proxy page reads as a miss, never an
+    abort), and each failure warns once through the caller's ``warn`` template
+    with the failure detail filled in.
+    """
+
+    client: httpx.Client
+    base_url: str  # no trailing slash (a "//api" join redirects to the login page)
+    label: str  # "Sonarr" / "Radarr", for warnings
+    logger: logging.Logger
+    headers: Mapping[str, str]
+    sleep: Callable[[float], None] = time.sleep  # injectable so tests don't wait out backoffs
+
+    @classmethod
+    def bind(
+        cls,
+        *,
+        client: httpx.Client,
+        url: str,
+        api_key: str,
+        label: str,
+        logger: logging.Logger,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> "ArrHttp":
+        """Bind the shared client to one arr's url + key.
+
+        The key becomes the ``X-Api-Key`` header (never a query param, so it
+        can't leak through URLs in logs/exceptions).
+        """
+
+        return cls(
+            client=client,
+            base_url=url.rstrip("/"),
+            label=label,
+            logger=logger,
+            headers={"X-Api-Key": api_key},
+            sleep=sleep,
+        )
+
+    def get_json(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, str] | None = None,
+        warn: str | None,
+    ) -> object | None:
+        """GET ``path`` and parse the JSON body; fail open to None with one warning.
+
+        Retries transient failures (connect/read errors, 429/5xx) up to
+        ``GET_RETRIES`` times with jittered exponential backoff - GETs only, so
+        this stays safe for idempotent reads. Any terminal failure (request
+        error, non-200, non-JSON body) warns via ``warn`` - a template whose
+        ``{detail}`` names the cause - and returns None; ``warn=None`` keeps a
+        deliberate quiet path silent.
+
+        Args:
+            path (str): Endpoint path (e.g. ``"/api/v3/queue"``).
+            params (Mapping[str, str] | None): Query params. Defaults to None.
+            warn (str | None): Warning template with a ``{detail}`` placeholder,
+                or None to fail open silently.
+        """
+
+        response: httpx.Response | None = None
+        detail = "request failed"
+        for attempt in range(GET_RETRIES + 1):
+            try:
+                response = self.client.get(f"{self.base_url}{path}", params=params, headers=self.headers)
+            except httpx.HTTPError as e:
+                # Name the failure type: "ConnectError" beats a bare "failed".
+                detail = f"request failed ({type(e).__name__})"
+                response = None
+            else:
+                if response.status_code == 200:
+                    break
+                detail = f"status code {response.status_code}"
+                if response.status_code not in RETRYABLE_STATUS:
+                    response = None
+                    break
+                response = None
+            if attempt < GET_RETRIES:
+                self.sleep(BACKOFF_BASE_S * 2**attempt + random.uniform(0, 0.25))
+
+        if response is None:
+            return self._fail(warn, detail)
+        try:
+            return cast("object", response.json())
+        except ValueError:
+            return self._fail(warn, "non-JSON body")
+
+    def get_json_list(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, str] | None = None,
+        warn: str | None,
+    ) -> list[object] | None:
+        """:meth:`get_json` narrowed to a JSON array (fails open on any other shape)."""
+
+        payload = self.get_json(path, params=params, warn=warn)
+        if payload is None:
+            return None
+        if not isinstance(payload, list):
+            return self._fail(warn, "unexpected payload")
+        return cast("list[object]", payload)
+
+    def get_json_dict(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, str] | None = None,
+        warn: str | None,
+    ) -> dict[str, object] | None:
+        """:meth:`get_json` narrowed to a JSON object (fails open on any other shape)."""
+
+        payload = self.get_json(path, params=params, warn=warn)
+        if payload is None:
+            return None
+        if not isinstance(payload, dict):
+            return self._fail(warn, "unexpected payload")
+        return cast("dict[str, object]", payload)
+
+    def _fail(self, warn: str | None, detail: str) -> None:
+        """The single fail-open tail: warn (when wanted) and return None."""
+
+        if warn is not None:
+            self.logger.warning(warn.format(detail=detail))
+        return None
 
 
 def fetch_history_since(

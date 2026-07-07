@@ -10,10 +10,11 @@ from abc import ABC, abstractmethod
 from typing import Any, cast, override
 from urllib.parse import urlencode
 
+import httpx
 import requests
 from arrapi import SonarrAPI
 
-from .arr_http import fetch_history_since
+from .arr_http import ArrHttp, fetch_history_since
 from .log import indent_string
 from .manual_import import PendingImport
 from .seadex_types import (
@@ -111,6 +112,7 @@ class SonarrClient(AbstractSonarrClient):
         url: str,
         api_key: str,
         session: requests.Session,
+        http: httpx.Client,
         logger: logging.Logger,
     ) -> None:
         """Instantiate the Sonarr API client.
@@ -120,8 +122,10 @@ class SonarrClient(AbstractSonarrClient):
             api_key (str): Sonarr API key, sent as the ``X-Api-Key`` header (never
                 a query param, so it can't leak through URLs in logs/exceptions).
             session (requests.Session): Shared keep-alive session for the raw
-                endpoints. ``parse`` fires one request per file, so reusing it
-                removes a per-file handshake.
+                endpoints still on requests. ``parse`` fires one request per file,
+                so reusing it removes a per-file handshake.
+            http (httpx.Client): Shared client for the endpoints migrated onto
+                :class:`~.arr_http.ArrHttp`.
             logger (logging.Logger): For request warnings.
         """
 
@@ -132,6 +136,7 @@ class SonarrClient(AbstractSonarrClient):
         # header rides each request rather than session.headers.
         self._headers = {"X-Api-Key": api_key}
         self._session = session
+        self._http = ArrHttp.bind(client=http, url=url, api_key=api_key, label="Sonarr", logger=logger)
         self._logger = logger
         self._api = SonarrAPI(url=url, apikey=api_key)
 
@@ -491,33 +496,23 @@ class SonarrClient(AbstractSonarrClient):
         records: list[QueueRecord] = []
         page = 1
         while True:
-            params = urlencode(
-                {
+            paged = self._http.get_json_dict(
+                "/api/v3/queue",
+                params={
                     "page": str(page),
                     "pageSize": "1000",
                     "includeUnknownSeriesItems": "true",
                 },
+                warn=indent_string("Could not fetch the Sonarr queue ({detail})"),
             )
-            queue_req_url = f"{self._url}/api/v3/queue?{params}"
-            try:
-                queue_req = self._session.get(queue_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
-            except requests.RequestException:
-                queue_req = None
-
-            if queue_req is None or queue_req.status_code != 200:
-                detail = "request failed" if queue_req is None else f"status code {queue_req.status_code}"
-                self._logger.warning(
-                    indent_string(f"Could not fetch the Sonarr queue ({detail})"),
-                )
+            if paged is None:
                 # A failed LATER page keeps what was fetched: partial beats empty
                 # for the caller's "not tracked -> fall back to own scan" logic.
                 return records
 
-            # response.json() is untyped; the queue endpoint returns a paged
-            # object whose "records" is the array of QueueResource objects, so
+            # The paged object's "records" is the array of QueueResource objects;
             # cast at the parse boundary, then narrow each to the fields the
             # wait reads via from_api.
-            paged = cast("dict[str, Any]", queue_req.json())
             raw_records = cast("list[dict[str, Any]]", paged.get("records", []))
             records.extend(QueueRecord.from_api(record) for record in raw_records)
 

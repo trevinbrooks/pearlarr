@@ -7,12 +7,13 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from typing import Any, Protocol, cast, override
 
+import httpx
 import requests
 from arrapi import RadarrAPI
 
 from .anibridge import AniBridge
-from .arr_http import fetch_history_since
-from .seadex_types import ARR_REQUEST_TIMEOUT_S, ArrItem, HistoryRecord, MovieFile, RadarrItem
+from .arr_http import ArrHttp, fetch_history_since
+from .seadex_types import ArrItem, HistoryRecord, MovieFile, RadarrItem
 
 
 def make_radarr_client(
@@ -20,6 +21,7 @@ def make_radarr_client(
     url: str,
     api_key: str,
     session: requests.Session,
+    http: httpx.Client,
     logger: logging.Logger,
 ) -> "RadarrClient":
     """Build a :class:`RadarrClient` from the shared session/logger and a url/key.
@@ -33,6 +35,7 @@ def make_radarr_client(
         url (str): Radarr base URL.
         api_key (str): Radarr API key.
         session (requests.Session): Shared keep-alive session.
+        http (httpx.Client): Shared client for the migrated raw endpoints.
         logger (logging.Logger): For request warnings.
     """
 
@@ -40,6 +43,7 @@ def make_radarr_client(
         url=url,
         api_key=api_key,
         session=session,
+        http=http,
         logger=logger,
     )
 
@@ -78,6 +82,7 @@ class RadarrClient(AbstractRadarrClient):
         url: str,
         api_key: str,
         session: requests.Session,
+        http: httpx.Client,
         logger: logging.Logger,
     ) -> None:
         """Instantiate the Radarr API client.
@@ -87,7 +92,9 @@ class RadarrClient(AbstractRadarrClient):
             api_key (str): Radarr API key, sent as the ``X-Api-Key`` header (never
                 a query param, so it can't leak through URLs in logs/exceptions).
             session (requests.Session): Shared keep-alive session for the raw
-                endpoints.
+                endpoints still on requests.
+            http (httpx.Client): Shared client for the endpoints migrated onto
+                :class:`~.arr_http.ArrHttp`.
             logger (logging.Logger): For request warnings.
         """
 
@@ -98,6 +105,7 @@ class RadarrClient(AbstractRadarrClient):
         # header rides each request rather than session.headers.
         self._headers = {"X-Api-Key": api_key}
         self._session = session
+        self._http = ArrHttp.bind(client=http, url=url, api_key=api_key, label="Radarr", logger=logger)
         self._logger = logger
         self._api = RadarrAPI(url=url, apikey=api_key)
 
@@ -125,24 +133,17 @@ class RadarrClient(AbstractRadarrClient):
             movie_id (int): ID for the movie in Radarr.
         """
 
-        mov_req_url = f"{self._url}/api/v3/moviefile?movieId={movie_id}"
-        try:
-            mov_req = self._session.get(mov_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
-        except requests.RequestException:
-            mov_req = None
-
-        if mov_req is None or mov_req.status_code != 200:
-            detail = "request failed" if mov_req is None else f"status code {mov_req.status_code}"
-            self._logger.warning(
-                f"Could not fetch files for movie {movie_id} from Radarr ({detail}); assuming none",
-            )
+        raw = self._http.get_json_list(
+            "/api/v3/moviefile",
+            params={"movieId": str(movie_id)},
+            warn=f"Could not fetch files for movie {movie_id} from Radarr ({{detail}}); assuming none",
+        )
+        if raw is None:
             return []
 
-        # response.json() is untyped; the moviefile endpoint returns a JSON
-        # array of objects, so cast at the parse boundary, then parse each raw
-        # record into the typed MovieFile view.
-        raw = cast("list[dict[str, Any]]", mov_req.json())
-        return [MovieFile.from_api(record) for record in raw]
+        # Each element is an unvalidated MovieFileResource object: cast at the
+        # parse boundary into the typed MovieFile view.
+        return [MovieFile.from_api(cast("dict[str, Any]", record)) for record in raw]
 
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:

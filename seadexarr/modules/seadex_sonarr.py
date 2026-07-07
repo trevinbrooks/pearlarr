@@ -124,6 +124,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 url=sonarr_url,
                 api_key=sonarr_api_key,
                 session=self.session,
+                http=deps.http,
                 logger=self.logger,
             )
 
@@ -175,6 +176,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                     url=radarr_url,
                     api_key=radarr_api_key,
                     session=self.session,
+                    http=deps.http,
                     logger=self.logger,
                 )
             if radarr_client is not None:

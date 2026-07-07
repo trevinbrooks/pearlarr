@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
+import httpx
 import qbittorrentapi
 import requests
 from requests.adapters import HTTPAdapter
@@ -22,6 +23,7 @@ from seadex import EntryRecord
 from urllib3.util.retry import Retry
 
 from .anilist_gateway import AniListGateway
+from .arr_http import make_httpx_client
 from .boot_view import BootView, NullBootView
 from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
 from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_value
@@ -69,6 +71,7 @@ class RunDeps:
     config: AppConfig
     arr_config: ArrSettings
     session: requests.Session
+    http: httpx.Client
     qbit: qbittorrentapi.Client | None
     mappings: MappingResolver
     logger: logging.Logger
@@ -152,6 +155,12 @@ class RunDeps:
         session.mount("http://", adapter)
         session.mount("https://", adapter)
 
+        # The httpx client the raw arr endpoints are migrating onto (ArrHttp
+        # binds it per arr); pinned timeouts / no-redirects / pool sizing live
+        # in its factory. The requests session above shrinks away as endpoints
+        # move over.
+        http = make_httpx_client()
+
         # qbit. None unless host/username/password are all set; with any unset, no
         # client is created and the app treats `qbit is None` as "no client ->
         # perpetual preview".
@@ -221,6 +230,7 @@ class RunDeps:
             config=app_config,
             arr_config=arr_config,
             session=session,
+            http=http,
             qbit=qbit,
             mappings=mappings,
             logger=logger,
@@ -260,8 +270,9 @@ class RunDeps:
         ``close`` rolls back anything not flushed by the end-of-run save point.
         """
         # self.session is a requests.Session (never None), so it can be closed
-        # unconditionally.
+        # unconditionally; likewise the httpx client.
         self.session.close()
+        self.http.close()
         self.cache_store.close()
 
 

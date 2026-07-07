@@ -60,6 +60,7 @@ class RadarrSync(ArrSync[RadarrItem]):
                 url=radarr_url,
                 api_key=radarr_api_key,
                 session=self.session,
+                http=deps.http,
                 logger=self.logger,
             )
 

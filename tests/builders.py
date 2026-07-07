@@ -18,6 +18,7 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Any, override
 
+import httpx
 import requests
 from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
@@ -621,6 +622,7 @@ def make_run_deps(
         config=config,
         arr_config=config.for_arr(Arr.SONARR),
         session=session,
+        http=httpx.Client(),
         qbit=None,
         # A real resolver over empty in-memory mappings (no network) - it carries a
         # real (empty) ``anibridge`` the strategy reads at construction.

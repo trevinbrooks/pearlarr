@@ -1,4 +1,7 @@
 # pyright: strict
+# pyright: reportPrivateUsage=false
+# _make_client stubs the bound ArrHttp's sleep so fail-open tests don't wait
+# out real retry backoffs; strict re-flags that private write.
 """Direct tests for ``SonarrClient``, the Sonarr REST adapter.
 
 Each test builds a REAL ``SonarrClient`` (whose ``__init__`` constructs an
@@ -14,9 +17,11 @@ shape is read off ``rsps.calls[-1].request.url``.
 
 import logging
 
+import httpx
 import pytest
 import requests
 import responses
+import respx
 from responses import matchers
 
 from seadexarr.modules.manual_import import PendingImport
@@ -41,16 +46,21 @@ def _make_client(rsps: responses.RequestsMock) -> SonarrClient:
 
     ``responses`` patches the global ``requests`` adapter, so both arrapi's own
     session (the ``system/status`` probe) and the shared session handed to the
-    client are intercepted.
+    client are intercepted; the endpoints migrated onto ``ArrHttp`` ride the
+    httpx client instead, mocked per test through ``respx``. The bound helper's
+    ``sleep`` is stubbed out so fail-open tests don't wait out real backoffs.
     """
 
     rsps.add(responses.GET, f"{_BASE}/system/status", json={"version": "3.0.10"})
-    return SonarrClient(
+    client = SonarrClient(
         url=_URL,
         api_key=_KEY,
         session=requests.Session(),
+        http=httpx.Client(),
         logger=logging.getLogger("seadexarr.test"),
     )
+    client._http.sleep = lambda _s: None
+    return client
 
 
 def _make_pending(*, infohash: str, title: str) -> PendingImport:
@@ -72,16 +82,16 @@ def _make_pending(*, infohash: str, title: str) -> PendingImport:
 # --- queue() ----------------------------------------------------------------
 
 
+@respx.mock
 def test_queue_decodes_records_and_builds_request() -> None:
     """``queue()`` pulls the whole queue in one paged request and narrows each
     record to a ``QueueRecord`` view.
     """
 
+    route = respx.get(f"{_BASE}/queue").respond(json=sonarr_fixture("queue.json"))
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
         client = _make_client(rsps)
-        rsps.add(responses.GET, f"{_BASE}/queue", json=sonarr_fixture("queue.json"))
         records = client.queue()
-        url = rsps.calls[-1].request.url
 
     assert len(records) == 3
     assert records[0] == QueueRecord(
@@ -89,9 +99,13 @@ def test_queue_decodes_records_and_builds_request() -> None:
         state="downloading",
         status="ok",
     )
-    assert url is not None
+    request = route.calls.last.request
+    url = str(request.url)
     assert "pageSize=1000" in url
     assert "includeUnknownSeriesItems=true" in url
+    # The key rides the X-Api-Key header, never the URL (it would leak via logs).
+    assert "apikey" not in url
+    assert request.headers["X-Api-Key"] == _KEY
 
 
 def _queue_page(total: int, hashes: list[str]) -> dict[str, object]:
@@ -105,56 +119,68 @@ def _queue_page(total: int, hashes: list[str]) -> dict[str, object]:
     }
 
 
+@respx.mock
 def test_queue_paginates_until_total_records_covered() -> None:
     """A queue larger than one page is fetched page by page until totalRecords
     is covered, never silently truncated at the first page.
     """
 
+    pages = [
+        httpx.Response(200, json=_queue_page(3, ["HASH0", "HASH1"])),
+        httpx.Response(200, json=_queue_page(3, ["HASH2"])),
+    ]
+    seen_urls: list[str] = []
+
+    def _serve(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        return pages.pop(0)
+
+    respx.get(f"{_BASE}/queue").mock(side_effect=_serve)
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
         client = _make_client(rsps)
-        rsps.add(responses.GET, f"{_BASE}/queue", json=_queue_page(3, ["HASH0", "HASH1"]))
-        rsps.add(responses.GET, f"{_BASE}/queue", json=_queue_page(3, ["HASH2"]))
         records = client.queue()
-        # calls[0] is the construction probe; the queue pages follow.
-        urls = [call.request.url for call in rsps.calls[1:]]
 
     assert [r.download_id for r in records] == ["HASH0", "HASH1", "HASH2"]
-    assert len(urls) == 2
-    assert urls[0] is not None and "page=1" in urls[0]
-    assert urls[1] is not None and "page=2" in urls[1]
+    assert len(seen_urls) == 2
+    assert "page=1" in seen_urls[0]
+    assert "page=2" in seen_urls[1]
 
 
+@respx.mock
 def test_queue_later_page_failure_keeps_fetched_records() -> None:
     """A failed LATER page returns what was already fetched (partial beats empty
     for the caller's "not tracked -> fall back to own scan" logic).
     """
 
+    route = respx.get(f"{_BASE}/queue")
+    # Page 1 succeeds; page 2 stays 500 through the transport retries.
+    route.side_effect = [httpx.Response(200, json=_queue_page(3, ["HASH0", "HASH1"]))] + [httpx.Response(500)] * 10
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
         client = _make_client(rsps)
-        rsps.add(responses.GET, f"{_BASE}/queue", json=_queue_page(3, ["HASH0", "HASH1"]))
-        rsps.add(responses.GET, f"{_BASE}/queue", status=500)
         records = client.queue()
 
     assert [r.download_id for r in records] == ["HASH0", "HASH1"]
 
 
+@respx.mock
 def test_queue_non_200_returns_empty() -> None:
     """A non-200 queue read falls back to an empty list (caller treats as untracked)."""
 
+    respx.get(f"{_BASE}/queue").respond(status_code=404)
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
         client = _make_client(rsps)
-        rsps.add(responses.GET, f"{_BASE}/queue", status=500)
         assert client.queue() == []
 
 
+@respx.mock
 def test_queue_request_error_returns_empty() -> None:
-    """A transient request error (a timeout raises RequestException) also falls
+    """A transient request error (a timeout raises an httpx error) also falls
     back to [] instead of unwinding the poll loop.
     """
 
+    respx.get(f"{_BASE}/queue").mock(side_effect=httpx.ConnectError("boom"))
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
         client = _make_client(rsps)
-        rsps.add(responses.GET, f"{_BASE}/queue", body=requests.exceptions.ConnectionError("boom"))
         assert client.queue() == []
 
 
@@ -703,6 +729,7 @@ def test_trailing_slash_url_is_normalized() -> None:
             url=f"{_URL}/",
             api_key=_KEY,
             session=requests.Session(),
+            http=httpx.Client(),
             logger=logging.getLogger("seadexarr.test"),
         )
         rsps.add(responses.GET, f"{_BASE}/history/since", json=[])
