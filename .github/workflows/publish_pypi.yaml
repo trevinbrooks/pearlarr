@@ -1,6 +1,10 @@
 name: Publish PyPI
 
-on: [push, pull_request]
+# Publishing is tag-driven only; the per-push/PR build smoke already lives in
+# build.yaml's build_sdist_and_wheel job.
+on:
+  push:
+    tags: ["v*"]
 
 jobs:
   build_sdist_and_wheel:
@@ -25,7 +29,6 @@ jobs:
     name: Upload to PyPI
     needs: [build_sdist_and_wheel]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v')
     steps:
       - uses: actions/download-artifact@v8
         with:
