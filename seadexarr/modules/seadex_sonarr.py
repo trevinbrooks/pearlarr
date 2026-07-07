@@ -2,6 +2,7 @@ import time
 from typing import override
 
 from . import coverage as _coverage
+from .arr_http import make_httpx_client
 from .cache import CacheRecord
 from .config import Arr, secret_value
 from .grab_pipeline import GrabRequest
@@ -169,19 +170,27 @@ class SonarrSync(ArrSync[SonarrItem]):
             # (this is a Sonarr run), so read them directly, not require_connection.
             radarr_url = self._config.radarr.url
             radarr_api_key = secret_value(self._config.radarr.api_key)
-            if radarr_client is None and radarr_url is not None and radarr_api_key is not None:
-                radarr_client = make_radarr_client(
-                    url=radarr_url,
-                    api_key=radarr_api_key,
-                    http=deps.http,
-                    logger=self.logger,
-                )
             if radarr_client is not None:
                 self.all_radarr_movies = collect_anime_movies(
                     radarr_client,
                     self._mappings,
                     self.anibridge,
                 )
+            elif radarr_url is not None and radarr_api_key is not None:
+                # The run's shared client is pinned to SONARR's verify_ssl; this
+                # one eager fetch talks to Radarr, so honor Radarr's own knob
+                # with a scoped client (closed as soon as the list is read).
+                with make_httpx_client(verify=self._config.radarr.verify_ssl) as radarr_http:
+                    self.all_radarr_movies = collect_anime_movies(
+                        make_radarr_client(
+                            url=radarr_url,
+                            api_key=radarr_api_key,
+                            http=radarr_http,
+                            logger=self.logger,
+                        ),
+                        self._mappings,
+                        self.anibridge,
+                    )
 
     # --- ArrSync hooks ------------------------------------------------------
 

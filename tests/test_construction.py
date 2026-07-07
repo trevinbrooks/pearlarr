@@ -11,13 +11,21 @@ The rest of the suite builds the hub/loop/strategy via ``make_bare_instance``
 have an in-suite guard (previously only an offline smoke).
 """
 
+import logging
+from pathlib import Path
+
+import httpx
+import pytest
+
+from seadexarr.modules import run_services
 from seadexarr.modules.config import Arr
+from seadexarr.modules.mappings import MappingResolver
 from seadexarr.modules.run_loop import RunLoop
-from seadexarr.modules.run_services import RunServices
+from seadexarr.modules.run_services import RunDeps, RunServices
 from seadexarr.modules.seadex_radarr import RadarrSync
 from seadexarr.modules.seadex_sonarr import SonarrSync
 
-from .builders import make_config, make_run_deps
+from .builders import make_bare_instance, make_config, make_run_deps
 from .fakes import FakeRadarrClient, FakeSonarrClient
 
 
@@ -90,6 +98,31 @@ def test_radarr_sync_init_builds_without_network_via_client_seam() -> None:
     assert strat.radarr is fake
     assert strat._mappings is deps.mappings
     assert strat.anibridge is deps.mappings.anibridge
+
+
+def test_rundeps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``RunDeps.build`` constructs the run's httpx client with THIS arr's
+    ``verify_ssl`` (the per-arr escape hatch for a self-signed HTTPS arr).
+    """
+
+    seen: list[bool] = []
+    real_factory = run_services.make_httpx_client
+
+    def _record(*, verify: bool = True) -> httpx.Client:
+        seen.append(verify)
+        return real_factory(verify=verify)
+
+    monkeypatch.setattr(run_services, "make_httpx_client", _record)
+    deps = RunDeps.build(
+        Arr.SONARR,
+        cache=str(tmp_path / "cache.db"),
+        logger=logging.getLogger("seadexarr.test"),
+        mappings=make_bare_instance(MappingResolver),
+        app_config=make_config(verify_ssl=False),
+    )
+    deps.close()
+
+    assert seen == [False]
 
 
 def test_sonarr_cross_check_builds_without_network_via_radarr_seam() -> None:

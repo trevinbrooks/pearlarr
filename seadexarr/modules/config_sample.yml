@@ -3,6 +3,7 @@
 sonarr:
   url:
   api_key:
+  verify_ssl: true                 # Set false ONLY for a self-signed HTTPS Sonarr whose CA can't be trusted via the OS store
   ignore_unmonitored: false        # If true, skip unmonitored series (or entries whose episodes are all unmonitored)
   torrent_category:                # qBittorrent category for Sonarr-added torrents
   ignore_movies_in_radarr: false   # If true, don't add movies to Sonarr that already exist in Radarr
@@ -11,6 +12,7 @@ sonarr:
 radarr:
   url:
   api_key:
+  verify_ssl: true                 # Set false ONLY for a self-signed HTTPS Radarr whose CA can't be trusted via the OS store
   ignore_unmonitored: false        # If true, skip unmonitored movies
   torrent_category:                # qBittorrent category for Radarr-added torrents
 

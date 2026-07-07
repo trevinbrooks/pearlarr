@@ -169,11 +169,14 @@ class ArrSettings(_ConfigBase):
 
     ``api_key`` is a :class:`SecretStr` so a dumped/logged model masks it;
     :meth:`AppConfig.require_connection` (and the Sonarr->Radarr cross-check)
-    unwrap it at the client-construction boundary.
+    unwrap it at the client-construction boundary. ``verify_ssl: false`` is the
+    last-resort escape hatch for a self-signed arr whose CA can't be trusted via
+    the OS store / ``SSL_CERT_FILE``.
     """
 
     url: str | None = None
     api_key: SecretStr | None = None
+    verify_ssl: bool = True
     ignore_unmonitored: bool = False
     torrent_category: str | None = None
 

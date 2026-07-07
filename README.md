@@ -273,6 +273,8 @@ below.
 
 - `sonarr.url`: URL for Sonarr. Required when running the Sonarr module
 - `sonarr.api_key`: API key for Sonarr (Settings/General/API Key). Required when running the Sonarr module
+- `sonarr.verify_ssl`: Verify the TLS certificate on an HTTPS Sonarr. Defaults to true; set false only as a
+  last resort for a self-signed instance whose CA can't be trusted via the OS store (see below)
 - `sonarr.ignore_unmonitored`: If true, will skip series unmonitored in Sonarr. Defaults to false
 - `sonarr.torrent_category`: Sonarr torrent import category, if you have one. Defaults to blank, which won't
   set a category
@@ -280,7 +282,22 @@ below.
   exist as movies in Radarr. Defaults to false
 
 The `radarr` group takes the same keys (minus `ignore_movies_in_radarr`): `radarr.url`,
-`radarr.api_key`, `radarr.ignore_unmonitored`, and `radarr.torrent_category`.
+`radarr.api_key`, `radarr.verify_ssl`, `radarr.ignore_unmonitored`, and `radarr.torrent_category`.
+
+#### TLS and custom certificate authorities
+
+SeaDexArr verifies TLS against the **operating-system trust store** (via
+[truststore](https://truststore.readthedocs.io)), not a bundled CA list. A corporate or homelab CA installed
+on the host — `update-ca-certificates` on Debian/Ubuntu, Keychain on macOS, certmgr on Windows — is picked up
+automatically. In a container the OS store is typically bare beyond the public CAs, so mount your CA and point
+OpenSSL at it instead of disabling verification:
+
+```yaml
+environment:
+  - SSL_CERT_FILE=/config/ca.pem
+```
+
+`verify_ssl: false` skips verification entirely for that arr and should be the last resort.
 
 ### qBittorrent settings
 

@@ -37,17 +37,20 @@ tests go through ``CliRunner`` since the callback only runs inside typer.
 
 import logging
 import os
+import ssl
 from collections.abc import Callable
 from pathlib import Path
 from typing import NoReturn
 
 import pytest
+import truststore
 from typer.testing import CliRunner
 
 from seadexarr.modules.cache import CacheStore
 from seadexarr.modules.cli import (
     _configured_arrs,
     _schedule_hours,
+    _trust_os_certificates,
     cache_backup,
     cache_check,
     cache_remove,
@@ -1032,6 +1035,18 @@ class TestScheduleHours:
         path = tmp_path / "config.yml"
         path.write_text("schedule: [unclosed\n")
         assert _schedule_hours(str(path), logger) == 6.0
+
+
+def test_trust_os_certificates_swaps_in_the_os_trust_store() -> None:
+    """The root callback's TLS hook swaps ``ssl.SSLContext`` for truststore's
+    OS-store-backed one, before any HTTP client builds a context.
+    """
+
+    try:
+        _trust_os_certificates()
+        assert ssl.SSLContext is truststore.SSLContext
+    finally:
+        truststore.extract_from_ssl()
 
 
 class TestExitCodes:

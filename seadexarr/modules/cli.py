@@ -502,6 +502,20 @@ def _run_arrs(
         return all_arrs_completed
 
 
+def _trust_os_certificates() -> None:
+    """Verify TLS against the OS trust store instead of the bundled certifi CAs.
+
+    ``inject_into_ssl`` swaps :class:`ssl.SSLContext` for truststore's here at
+    the root callback - before any HTTP client builds a context - so a CA
+    installed on the host (or handed to a bare container via ``SSL_CERT_FILE``)
+    is honored by every stack in the process (httpx, requests, urllib).
+    """
+
+    import truststore
+
+    truststore.inject_into_ssl()
+
+
 def _print_version(value: bool) -> None:
     """Eager ``--version`` callback: print ``seadexarr <version>`` and exit."""
 
@@ -552,6 +566,8 @@ def main(
         version: Handled entirely by the eager ``_print_version`` callback
             (typer exposes this as ``--version``/``-V``). Defaults to False.
     """
+
+    _trust_os_certificates()
 
     # The flag is sugar over SEADEX_ARR_DATA_DIR: fold it into the env so every
     # command's resolve_paths() sees it (commands are also called directly in tests,

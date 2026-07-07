@@ -156,7 +156,8 @@ class RunDeps:
 
         # The httpx client every raw arr endpoint rides (ArrHttp binds it per
         # arr); pinned timeouts / no-redirects / pool sizing live in its factory.
-        http = make_httpx_client()
+        # Verification follows THIS arr's knob (the client is per-run, per-arr).
+        http = make_httpx_client(verify=arr_config.verify_ssl)
 
         # qbit. None unless host/username/password are all set; with any unset, no
         # client is created and the app treats `qbit is None` as "no client ->

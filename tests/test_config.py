@@ -119,7 +119,14 @@ class TestDefaults:
         assert cfg.qbittorrent.tags is None
         assert cfg.qbittorrent.credentials() is None
         assert cfg.sonarr.torrent_category is None
+        assert cfg.sonarr.verify_ssl is True
+        assert cfg.radarr.verify_ssl is True
         assert cfg.mappings.anime_mappings is None
+
+    def test_verify_ssl_parses_per_arr(self) -> None:
+        cfg = AppConfig.model_validate({"radarr": {"verify_ssl": False}})
+        assert cfg.radarr.verify_ssl is False
+        assert cfg.sonarr.verify_ssl is True
 
     def test_schedule_interval_bounds(self) -> None:
         assert AppConfig.model_validate({"schedule": {"interval_hours": 0.5}}).schedule.interval_hours == 0.5
