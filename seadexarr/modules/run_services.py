@@ -29,7 +29,7 @@ from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_va
 from .grab_pipeline import GrabPipeline, GrabRequest
 from .log import EntryState, LogFormatter
 from .manual_import import ImportWaitMode
-from .mappings import MappingEntry, MappingResolver
+from .mappings import ExternalIds, MappingEntry, MappingResolver
 from .notify import Notifier
 from .planner import DownloadPlanner
 from .reporter import RunContext, RunReporter, is_preview
@@ -402,9 +402,7 @@ class RunServices:
 
     def get_anilist_ids(
         self,
-        tvdb_id: int | None = None,
-        tmdb_id: int | None = None,
-        imdb_id: str | None = None,
+        ids: ExternalIds,
         log_ignored: bool = True,
     ) -> dict[int, MappingEntry]:
         """Resolve external Arr ids to a {AniList id -> mapping} dict
@@ -414,19 +412,13 @@ class RunServices:
         presentation concern doesn't leak into the resolver.
 
         Args:
-            tvdb_id (int | None): TVDB ID
-            tmdb_id (int | None): TMDB (movie) ID
-            imdb_id (str | None): IMDb ID
+            ids (ExternalIds): The external Arr ids to resolve (at least one).
             log_ignored (bool): Log a ledger row for each ignored AniList ID.
                 Defaults to True; pass False from the prefetch pass so ignored
                 ids aren't logged twice (once there, once in the main loop)
         """
 
-        anilist_mappings, ids_to_drop = self._mappings.get_anilist_ids(
-            tvdb_id=tvdb_id,
-            tmdb_id=tmdb_id,
-            imdb_id=imdb_id,
-        )
+        anilist_mappings, ids_to_drop = self._mappings.get_anilist_ids(ids)
 
         # Log ignored ids per-call (not just on the cache-filling call), so the
         # main loop still logs every ignored id even after the prefetch pass ran

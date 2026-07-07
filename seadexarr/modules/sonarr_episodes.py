@@ -14,7 +14,7 @@ from collections.abc import Iterable
 
 from . import coverage as _coverage
 from .config import AppConfig
-from .mappings import MappingEntry, MappingMode, MappingSource
+from .mappings import ExternalIds, MappingEntry, MappingMode, MappingSource
 from .radarr_client import IdField, collect_anime_items
 from .run_services import RunDeps, RunServices
 from .seadex_types import (
@@ -230,7 +230,7 @@ class SonarrEpisodes:
                 continue
             if not item.monitored and self._config.sonarr.ignore_unmonitored:
                 continue
-            al_ids = run.get_anilist_ids(tvdb_id=item.tvdbId, imdb_id=item.imdbId, log_ignored=False)
+            al_ids = run.get_anilist_ids(ExternalIds(tvdb=item.tvdbId, imdb=item.imdbId), log_ignored=False)
             if not al_ids:
                 continue
             if not any(run.al_id_needs_scan(aid) for aid in al_ids):

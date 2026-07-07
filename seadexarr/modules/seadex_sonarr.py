@@ -13,7 +13,7 @@ from .manual_import import (
     ImportWaitMode,
     PendingImport,
 )
-from .mappings import MappingEntry, MappingSource
+from .mappings import ExternalIds, MappingEntry, MappingSource
 from .planner import get_episode_keys
 from .protocols import ArrSync
 from .radarr_client import (
@@ -227,8 +227,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         """Resolve AniList ids for a Sonarr series (by TVDB / IMDb id)."""
 
         return self._services.get_anilist_ids(
-            tvdb_id=item.tvdbId,
-            imdb_id=item.imdbId,
+            ExternalIds(tvdb=item.tvdbId, imdb=item.imdbId),
             log_ignored=log_ignored,
         )
 

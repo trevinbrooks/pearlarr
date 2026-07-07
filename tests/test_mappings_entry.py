@@ -14,7 +14,7 @@ import dataclasses
 import pytest
 
 from seadexarr.modules.anibridge import AniBridgeGraph
-from seadexarr.modules.mappings import AnimeIdsMap, MappingEntry, MappingMode, MappingResolver
+from seadexarr.modules.mappings import AnimeIdsMap, ExternalIds, MappingEntry, MappingMode, MappingResolver
 
 
 def _resolver(
@@ -50,7 +50,7 @@ class TestKometaPath:
             },
         )
 
-        mappings, dropped = resolver.get_anilist_ids(tvdb_id=200)
+        mappings, dropped = resolver.get_anilist_ids(ExternalIds(tvdb=200))
 
         assert dropped == []
         assert list(mappings) == [100]
@@ -67,7 +67,7 @@ class TestKometaPath:
             anime_mappings_cfg={"Minimal": {"anilist_id": 101, "tvdb_id": 201}},
         )
 
-        mappings, _ = resolver.get_anilist_ids(tvdb_id=201)
+        mappings, _ = resolver.get_anilist_ids(ExternalIds(tvdb=201))
 
         entry = mappings[101]
         # Exactly the former mapping.get("tvdb_season", -1) / ("tvdb_epoffset", 0)
@@ -94,7 +94,7 @@ class TestAniBridgePath:
         }
         resolver = _resolver(anibridge_mappings_cfg=graph)
 
-        mappings, _ = resolver.get_anilist_ids(tvdb_id=74796)
+        mappings, _ = resolver.get_anilist_ids(ExternalIds(tvdb=74796))
 
         entry = mappings[269]
         assert entry.mode is MappingMode.ANIBRIDGE

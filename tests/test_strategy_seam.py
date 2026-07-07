@@ -25,7 +25,7 @@ from seadexarr.modules.config import Arr
 from seadexarr.modules.grab_pipeline import GrabRequest
 from seadexarr.modules.log import EntryState
 from seadexarr.modules.manual_import import ImportProgress, ImportReadiness, ImportWaitMode, PendingImport
-from seadexarr.modules.mappings import MappingEntry, MappingSource
+from seadexarr.modules.mappings import ExternalIds, MappingEntry, MappingSource
 from seadexarr.modules.run_services import RunServices
 from seadexarr.modules.seadex_filter import FilterResult
 from seadexarr.modules.seadex_radarr import RadarrSync
@@ -83,15 +83,13 @@ class _Item:
 
 
 class GetAniListIdsCall(NamedTuple):
-    """One recorded ``get_anilist_ids`` call (the kwargs the strategy forwarded).
+    """One recorded ``get_anilist_ids`` call (the args the strategy forwarded).
 
     Defaults mirror the seam's own defaults, so a recorded call equals an expected
     one constructed with only the fields the strategy actually varied.
     """
 
-    tvdb_id: int | None = None
-    tmdb_id: int | None = None
-    imdb_id: str | None = None
+    ids: ExternalIds
     log_ignored: bool = True
 
 
@@ -177,13 +175,11 @@ class _FakeRunServices(RunServices):
     @override
     def get_anilist_ids(
         self,
-        tvdb_id: int | None = None,
-        tmdb_id: int | None = None,
-        imdb_id: str | None = None,
+        ids: ExternalIds,
         log_ignored: bool = True,
     ) -> dict[int, MappingEntry]:
         self.get_anilist_ids_calls.append(
-            GetAniListIdsCall(tvdb_id, tmdb_id, imdb_id, log_ignored),
+            GetAniListIdsCall(ids, log_ignored),
         )
         return self._anilist_ids
 
@@ -351,7 +347,7 @@ class TestItemAnilistIdsDelegates:
         result = strat.item_anilist_ids(_Item(tmdbId=42, imdbId="tt7"), log_ignored=False)
 
         assert result == {7: MappingEntry(anilist_id=7)}
-        assert run.get_anilist_ids_calls == [GetAniListIdsCall(tmdb_id=42, imdb_id="tt7", log_ignored=False)]
+        assert run.get_anilist_ids_calls == [GetAniListIdsCall(ExternalIds(tmdb=42, imdb="tt7"), log_ignored=False)]
 
     def test_sonarr_uses_tvdb_and_imdb(self) -> None:
         run = _FakeRunServices()
@@ -359,7 +355,7 @@ class TestItemAnilistIdsDelegates:
 
         strat.item_anilist_ids(_Item(tvdbId=99, imdbId="tt9"))
 
-        assert run.get_anilist_ids_calls == [GetAniListIdsCall(tvdb_id=99, imdb_id="tt9", log_ignored=True)]
+        assert run.get_anilist_ids_calls == [GetAniListIdsCall(ExternalIds(tvdb=99, imdb="tt9"), log_ignored=True)]
 
 
 class TestFilterToSingle:

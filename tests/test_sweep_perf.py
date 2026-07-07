@@ -14,7 +14,7 @@ from seadex import EntryRecord
 
 from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
 from seadexarr.modules.config import Arr
-from seadexarr.modules.mappings import MappingEntry
+from seadexarr.modules.mappings import ExternalIds, MappingEntry
 from seadexarr.modules.run_services import RunServices
 from seadexarr.modules.seadex_gateway import SeaDexMiss
 from seadexarr.modules.seadex_types import SeadexDict, SonarrEpisode
@@ -205,15 +205,14 @@ class _Services:
 
     def get_anilist_ids(
         self,
-        *,
-        tvdb_id: int,
-        imdb_id: str | None = None,
+        ids: ExternalIds,
         log_ignored: bool = True,
     ) -> dict[int, MappingEntry]:
-        del imdb_id, log_ignored
+        del log_ignored
+        assert ids.tvdb is not None  # the prefetch always keys on the series' tvdb id
         if self._identity:
-            return {tvdb_id: MappingEntry(anilist_id=tvdb_id)}
-        return self._mapping.get(tvdb_id, {})
+            return {ids.tvdb: MappingEntry(anilist_id=ids.tvdb)}
+        return self._mapping.get(ids.tvdb, {})
 
     def al_id_needs_scan(self, al_id: int) -> bool:
         if self._needs_scan is None:

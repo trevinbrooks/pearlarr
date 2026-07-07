@@ -5,7 +5,7 @@ from .config import Arr
 from .grab_pipeline import GrabRequest
 from .log import indent_string
 from .manual_import import ImportProbe, ImportProgress, ImportReadiness, PendingImport
-from .mappings import MappingEntry
+from .mappings import ExternalIds, MappingEntry
 from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, collect_anime_movies, make_radarr_client
 from .run_services import RunDeps, RunServices
@@ -94,8 +94,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         """Resolve AniList ids for a Radarr movie (by TMDB / IMDb id)."""
 
         return self._services.get_anilist_ids(
-            tmdb_id=item.tmdbId,
-            imdb_id=item.imdbId,
+            ExternalIds(tmdb=item.tmdbId, imdb=item.imdbId),
             log_ignored=log_ignored,
         )
 

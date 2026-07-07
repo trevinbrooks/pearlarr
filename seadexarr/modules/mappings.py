@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 
@@ -183,17 +183,20 @@ def _is_degraded_anibridge(entry: MappingEntry) -> bool:
     return entry.source is MappingSource.ANIBRIDGE and entry.tvdb_mappings is None
 
 
-def _validate_ids(
-    tvdb_id: int | None,
-    tmdb_id: int | None,
-    imdb_id: str | None,
-) -> None:
-    """Raise if no external id was supplied (at least one is required)."""
+class ExternalIds(NamedTuple):
+    """The external Arr ids one lookup keys on (a hashable memo key)."""
 
-    if (tvdb_id is None) and (tmdb_id is None) and (imdb_id is None):
-        raise ValueError(
-            "At least one of tvdb_id, tmdb_id, and imdb_id must be provided",
-        )
+    tvdb: int | None = None
+    tmdb: int | None = None
+    imdb: str | None = None
+
+    def require_any(self) -> None:
+        """Raise if no external id was supplied (at least one is required)."""
+
+        if (self.tvdb is None) and (self.tmdb is None) and (self.imdb is None):
+            raise ValueError(
+                "At least one of tvdb_id, tmdb_id, and imdb_id must be provided",
+            )
 
 
 ANIME_IDS_URL = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/refs/heads/master/anime_ids.json"
@@ -445,7 +448,7 @@ class MappingResolver:
         # Memoize get_anilist_ids per identifying key, so the prefetch pass and the
         # main loop don't recompute (and re-query) it twice per item.
         self._anilist_ids_cache: dict[
-            tuple[int | None, int | None, str | None],
+            ExternalIds,
             tuple[dict[int, MappingEntry], list[int]],
         ] = {}
 
@@ -680,16 +683,12 @@ class MappingResolver:
 
     def get_anilist_ids(
         self,
-        tvdb_id: int | None = None,
-        tmdb_id: int | None = None,
-        imdb_id: str | None = None,
+        ids: ExternalIds,
     ) -> tuple[dict[int, MappingEntry], list[int]]:
         """Resolve external ids to a sorted {AniList id -> mapping} dict.
 
         Args:
-            tvdb_id (int | None): TVDB ID
-            tmdb_id (int | None): TMDB (movie) ID
-            imdb_id (str | None): IMDb ID
+            ids (ExternalIds): The external Arr ids to resolve (at least one).
 
         Returns:
             tuple: (anilist_mappings, ids_to_drop), where anilist_mappings is a
@@ -698,13 +697,12 @@ class MappingResolver:
                 AniList ids removed from the result, for the caller to log.
         """
 
-        _validate_ids(tvdb_id, tmdb_id, imdb_id)
+        ids.require_any()
 
         # The mapping computation is deterministic for a given set of identifying
         # args, so memoize it and only redo the per-call logging.
-        key = (tvdb_id, tmdb_id, imdb_id)
-        if key in self._anilist_ids_cache:
-            anilist_mappings, ids_to_drop = self._anilist_ids_cache[key]
+        if ids in self._anilist_ids_cache:
+            anilist_mappings, ids_to_drop = self._anilist_ids_cache[ids]
         else:
             anilist_mappings: dict[int, MappingEntry] = {}
 
@@ -712,9 +710,7 @@ class MappingResolver:
             # offsets win, so query it first and key results by AniList ID.
             if self.anibridge:
                 anilist_mappings = self.get_mappings_from_anibridge_mappings(
-                    tvdb_id=tvdb_id,
-                    tmdb_id=tmdb_id,
-                    imdb_id=imdb_id,
+                    ids,
                     anilist_mappings=anilist_mappings,
                 )
 
@@ -722,9 +718,7 @@ class MappingResolver:
             # doesn't cover (it only adds AniList IDs not already present).
             if self._anime_enabled:
                 anilist_mappings = self.get_mappings_from_anime_mappings(
-                    tvdb_id=tvdb_id,
-                    tmdb_id=tmdb_id,
-                    imdb_id=imdb_id,
+                    ids,
                     anilist_mappings=anilist_mappings,
                 )
 
@@ -736,7 +730,7 @@ class MappingResolver:
             # Sort by AniList ID.
             anilist_mappings = dict(sorted(anilist_mappings.items()))
 
-            self._anilist_ids_cache[key] = (anilist_mappings, ids_to_drop)
+            self._anilist_ids_cache[ids] = (anilist_mappings, ids_to_drop)
 
         # Return fresh copies of BOTH so a caller mutating either can't corrupt the
         # memo (the entries are frozen, so a shallow dict/list copy is enough).
@@ -744,17 +738,13 @@ class MappingResolver:
 
     def get_mappings_from_anime_mappings(
         self,
-        tvdb_id: int | None = None,
-        tmdb_id: int | None = None,
-        imdb_id: str | None = None,
+        ids: ExternalIds,
         anilist_mappings: dict[int, MappingEntry] | None = None,
     ) -> dict[int, MappingEntry]:
         """Get mappings from the Anime ID mappings (served from SQL).
 
         Args:
-            tvdb_id (int | None): TVDB ID
-            tmdb_id (int | None): TMDB (movie) ID
-            imdb_id (str | None): IMDb ID
+            ids (ExternalIds): The external Arr ids to resolve (at least one).
             anilist_mappings (dict): Dictionary of AniList mappings.
                 Defaults to None, which will create a new dictionary.
         """
@@ -762,7 +752,7 @@ class MappingResolver:
         if anilist_mappings is None:
             anilist_mappings = {}
 
-        _validate_ids(tvdb_id, tmdb_id, imdb_id)
+        ids.require_any()
 
         if not self._anime_enabled:
             return anilist_mappings
@@ -770,39 +760,35 @@ class MappingResolver:
         # Add the first row seen for each AniList id (rows come back in first-seen
         # order), matching the previous "don't clobber an id another query already
         # produced" behaviour - EXCEPT a degraded AniBridge entry, which Kometa
-        # overrides in the Sonarr/tvdb context only (tvdb_id passed). There its
+        # overrides in the Sonarr/tvdb context only (tvdb id passed). There its
         # missing season ranges drive a wrong-episode grab, so Kometa's explicit
-        # season wins; Radarr (no tvdb_id) keeps AniBridge primary, since the entry
+        # season wins; Radarr (no tvdb id) keeps AniBridge primary, since the entry
         # value is unused for movies and overriding would silently flip the
         # documented "AniBridge is primary" precedence.
         def merge(column: str, value: object) -> None:
             for row in self._store.anime_ids_lookup(column, value):
                 existing = anilist_mappings.get(row.anilist_id)
-                if existing is None or (tvdb_id is not None and _is_degraded_anibridge(existing)):
+                if existing is None or (ids.tvdb is not None and _is_degraded_anibridge(existing)):
                     anilist_mappings[row.anilist_id] = _entry_from_anime_row(row)
 
-        if tvdb_id is not None:
-            merge("tvdb_id", tvdb_id)
-        if tmdb_id is not None:
-            merge("tmdb_movie_id", tmdb_id)
-        if imdb_id is not None:
-            merge("imdb_id", imdb_id)
+        if ids.tvdb is not None:
+            merge("tvdb_id", ids.tvdb)
+        if ids.tmdb is not None:
+            merge("tmdb_movie_id", ids.tmdb)
+        if ids.imdb is not None:
+            merge("imdb_id", ids.imdb)
 
         return anilist_mappings
 
     def get_mappings_from_anibridge_mappings(
         self,
-        tvdb_id: int | None = None,
-        tmdb_id: int | None = None,
-        imdb_id: str | None = None,
+        ids: ExternalIds,
         anilist_mappings: dict[int, MappingEntry] | None = None,
     ) -> dict[int, MappingEntry]:
         """Get mappings from the AniBridge mappings (served from SQL).
 
         Args:
-            tvdb_id (int | None): TVDB ID
-            tmdb_id (int | None): TMDB (movie) ID
-            imdb_id (str | None): IMDb ID
+            ids (ExternalIds): The external Arr ids to resolve (at least one).
             anilist_mappings (dict): Dictionary of AniList mappings.
                 Defaults to None, which will create a new dictionary.
         """
@@ -814,7 +800,7 @@ class MappingResolver:
         if not anibridge:
             return anilist_mappings
 
-        _validate_ids(tvdb_id, tmdb_id, imdb_id)
+        ids.require_any()
 
         # Add any AniList IDs the indexes resolve for the supplied ids, without
         # clobbering matches an earlier id already produced (tvdb > tmdb > imdb).
@@ -823,11 +809,11 @@ class MappingResolver:
                 if anilist_id not in anilist_mappings:
                     anilist_mappings[anilist_id] = _entry_from_raw(anilist_id, entry)
 
-        if tvdb_id is not None:
-            merge(anibridge.lookup_by_tvdb(tvdb_id))
-        if tmdb_id is not None:
-            merge(anibridge.lookup_by_tmdb(tmdb_id))
-        if imdb_id is not None:
-            merge(anibridge.lookup_by_imdb(imdb_id))
+        if ids.tvdb is not None:
+            merge(anibridge.lookup_by_tvdb(ids.tvdb))
+        if ids.tmdb is not None:
+            merge(anibridge.lookup_by_tmdb(ids.tmdb))
+        if ids.imdb is not None:
+            merge(anibridge.lookup_by_imdb(ids.imdb))
 
         return anilist_mappings
