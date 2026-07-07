@@ -36,6 +36,7 @@ from seadexarr.modules.mappings import (
     MappingMode,
     MappingResolver,
     MappingSource,
+    MappingSources,
     _entry_from_raw,
 )
 from seadexarr.modules.paths import resolve_paths
@@ -324,9 +325,11 @@ class TestAnimeIdsParity:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
-            anime_mappings_cfg=AMAP,
-            anidb_mappings_cfg=False,
-            anibridge_mappings_cfg=False,
+            sources=MappingSources(
+                anime=AMAP,
+                anidb=False,
+                anibridge=False,
+            ),
         )
         try:
             assert resolver.get_mappings_from_anime_mappings(ids) == _anime_oracle(AMAP, ids)
@@ -342,9 +345,11 @@ class TestAnimeIdsParity:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
-            anime_mappings_cfg=amap,
-            anidb_mappings_cfg=False,
-            anibridge_mappings_cfg=False,
+            sources=MappingSources(
+                anime=amap,
+                anidb=False,
+                anibridge=False,
+            ),
         )
         try:
             entry = resolver.get_mappings_from_anime_mappings(ExternalIds(tvdb=5000))[500]
@@ -359,9 +364,11 @@ class TestAnimeIdsParity:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
-            anime_mappings_cfg=AMAP,
-            anidb_mappings_cfg=False,
-            anibridge_mappings_cfg=False,
+            sources=MappingSources(
+                anime=AMAP,
+                anidb=False,
+                anibridge=False,
+            ),
         )
         try:
             assert resolver.anime_id_set("tvdb_id") == {200, 999}
@@ -381,9 +388,11 @@ class TestGetAnilistIdsMerge:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids={270},
-            anime_mappings_cfg=amap,
-            anidb_mappings_cfg=False,
-            anibridge_mappings_cfg=GRAPH,
+            sources=MappingSources(
+                anime=amap,
+                anidb=False,
+                anibridge=GRAPH,
+            ),
         )
         try:
             mappings, dropped = resolver.get_anilist_ids(ExternalIds(tvdb=74796))
@@ -410,9 +419,11 @@ class TestVu1DegradedAniBridge:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
-            anime_mappings_cfg={"k": {"anilist_id": 400, "tvdb_id": 555, "tvdb_season": 2, "imdb_id": "tt400"}},
-            anidb_mappings_cfg=False,
-            anibridge_mappings_cfg={"anilist:400": {"imdb_show:tt400": {}}},
+            sources=MappingSources(
+                anime={"k": {"anilist_id": 400, "tvdb_id": 555, "tvdb_season": 2, "imdb_id": "tt400"}},
+                anidb=False,
+                anibridge={"anilist:400": {"imdb_show:tt400": {}}},
+            ),
         )
         try:
             mappings, _dropped = resolver.get_anilist_ids(ExternalIds(tvdb=555, imdb="tt400"))
@@ -433,9 +444,11 @@ class TestVu1DegradedAniBridge:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
-            anime_mappings_cfg={"k": {"anilist_id": 600, "tvdb_id": 555, "tvdb_season": 0, "imdb_id": "tt600"}},
-            anidb_mappings_cfg=False,
-            anibridge_mappings_cfg={"anilist:600": {"imdb_movie:tt600": {}}},
+            sources=MappingSources(
+                anime={"k": {"anilist_id": 600, "tvdb_id": 555, "tvdb_season": 0, "imdb_id": "tt600"}},
+                anidb=False,
+                anibridge={"anilist:600": {"imdb_movie:tt600": {}}},
+            ),
         )
         try:
             mappings, _dropped = resolver.get_anilist_ids(ExternalIds(tvdb=555, imdb="tt600"))
@@ -452,9 +465,11 @@ class TestVu1DegradedAniBridge:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
-            anime_mappings_cfg={"k": {"anilist_id": 401, "tmdb_movie_id": 888, "imdb_id": "tt401"}},
-            anidb_mappings_cfg=False,
-            anibridge_mappings_cfg={"anilist:401": {"tmdb_movie:888": {}, "imdb_movie:tt401": {}}},
+            sources=MappingSources(
+                anime={"k": {"anilist_id": 401, "tmdb_movie_id": 888, "imdb_id": "tt401"}},
+                anidb=False,
+                anibridge={"anilist:401": {"tmdb_movie:888": {}, "imdb_movie:tt401": {}}},
+            ),
         )
         try:
             mappings, _dropped = resolver.get_anilist_ids(ExternalIds(tmdb=888, imdb="tt401"))
@@ -469,9 +484,11 @@ class TestVu1DegradedAniBridge:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
-            anime_mappings_cfg=False,  # no Kometa fallback
-            anidb_mappings_cfg=False,
-            anibridge_mappings_cfg={"anilist:500": {"imdb_show:tt500": {}}},
+            sources=MappingSources(
+                anime=False,  # no Kometa fallback
+                anidb=False,
+                anibridge={"anilist:500": {"imdb_show:tt500": {}}},
+            ),
         )
         try:
             mappings, _dropped = resolver.get_anilist_ids(ExternalIds(tvdb=777, imdb="tt500"))
@@ -513,9 +530,11 @@ def _anidb_resolver() -> MappingResolver:
     return MappingResolver(
         cache_time=1,
         ignore_anilist_ids=set(),
-        anime_mappings_cfg=False,
-        anidb_mappings_cfg=root,
-        anibridge_mappings_cfg=False,
+        sources=MappingSources(
+            anime=False,
+            anidb=root,
+            anibridge=False,
+        ),
     )
 
 
@@ -556,9 +575,11 @@ class TestAnidbMappingDict:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
-            anime_mappings_cfg=False,
-            anidb_mappings_cfg=False,
-            anibridge_mappings_cfg=False,
+            sources=MappingSources(
+                anime=False,
+                anidb=False,
+                anibridge=False,
+            ),
         )
         try:
             assert not resolver.has_anidb
@@ -597,9 +618,11 @@ class TestDigestGate:
             return MappingResolver(
                 cache_time=1,
                 ignore_anilist_ids=set(),
-                anime_mappings_cfg=None,
-                anidb_mappings_cfg=False,
-                anibridge_mappings_cfg=False,
+                sources=MappingSources(
+                    anime=None,
+                    anidb=False,
+                    anibridge=False,
+                ),
                 mappings_db=db,
             )
 
@@ -641,9 +664,11 @@ class TestConstructionFailureClosesStore:
             MappingResolver(
                 cache_time=1,
                 ignore_anilist_ids=set(),
-                anime_mappings_cfg={"x": {"anilist_id": 1}},
-                anidb_mappings_cfg=False,
-                anibridge_mappings_cfg=False,
+                sources=MappingSources(
+                    anime={"x": {"anilist_id": 1}},
+                    anidb=False,
+                    anibridge=False,
+                ),
             )
         assert closed["n"] >= 1
 
@@ -744,9 +769,11 @@ class TestRealDataParity:
         resolver = MappingResolver(
             cache_time=99999,
             ignore_anilist_ids=set(),
-            anime_mappings_cfg=amap,
-            anidb_mappings_cfg=False,
-            anibridge_mappings_cfg=False,
+            sources=MappingSources(
+                anime=amap,
+                anidb=False,
+                anibridge=False,
+            ),
         )
         try:
             tvdbs = [
@@ -771,9 +798,11 @@ class TestRealDataParity:
         resolver = MappingResolver(
             cache_time=99999,
             ignore_anilist_ids=set(),
-            anime_mappings_cfg=False,
-            anidb_mappings_cfg=root,
-            anibridge_mappings_cfg=False,
+            sources=MappingSources(
+                anime=False,
+                anidb=root,
+                anibridge=False,
+            ),
         )
         try:
             anidb_ids: list[int] = []

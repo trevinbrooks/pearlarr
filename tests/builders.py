@@ -38,7 +38,7 @@ from seadexarr.modules.grab_pipeline import GrabPipeline
 from seadexarr.modules.import_wait import ImportWaitManager
 from seadexarr.modules.log import LogCounter, LogFormatter
 from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport
-from seadexarr.modules.mappings import MappingResolver
+from seadexarr.modules.mappings import MappingResolver, MappingSources
 from seadexarr.modules.notify import Notifier
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.reporter import RunContext, RunReporter
@@ -629,9 +629,7 @@ def make_run_deps(
         mappings=MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
-            anime_mappings_cfg={},
-            anidb_mappings_cfg=False,
-            anibridge_mappings_cfg=False,
+            sources=MappingSources(anime={}, anidb=False, anibridge=False),
         ),
         logger=logger,
         # A typed, network-free SeaDex stand-in (the wiring tests never look one up);

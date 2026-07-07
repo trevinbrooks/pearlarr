@@ -14,22 +14,27 @@ import dataclasses
 import pytest
 
 from seadexarr.modules.anibridge import AniBridgeGraph
-from seadexarr.modules.mappings import AnimeIdsMap, ExternalIds, MappingEntry, MappingMode, MappingResolver
+from seadexarr.modules.mappings import (
+    AnimeIdsMap,
+    ExternalIds,
+    MappingEntry,
+    MappingMode,
+    MappingResolver,
+    MappingSources,
+)
 
 
 def _resolver(
     *,
-    anime_mappings_cfg: AnimeIdsMap | bool | None = False,
-    anibridge_mappings_cfg: AniBridgeGraph | bool | None = False,
+    anime: AnimeIdsMap | bool | None = False,
+    anibridge: AniBridgeGraph | bool | None = False,
 ) -> MappingResolver:
     """Build a resolver from in-memory configs, all on-disk sources disabled."""
 
     return MappingResolver(
         cache_time=1,
         ignore_anilist_ids=set(),
-        anime_mappings_cfg=anime_mappings_cfg,
-        anidb_mappings_cfg=False,
-        anibridge_mappings_cfg=anibridge_mappings_cfg,
+        sources=MappingSources(anime=anime, anidb=False, anibridge=anibridge),
     )
 
 
@@ -38,7 +43,7 @@ class TestKometaPath:
 
     def test_carries_flat_fields_and_no_tvdb_mappings(self) -> None:
         resolver = _resolver(
-            anime_mappings_cfg={
+            anime={
                 "Some Show": {
                     "anilist_id": 100,
                     "tvdb_id": 200,
@@ -64,7 +69,7 @@ class TestKometaPath:
 
     def test_absent_keys_fall_back_to_the_old_get_defaults(self) -> None:
         resolver = _resolver(
-            anime_mappings_cfg={"Minimal": {"anilist_id": 101, "tvdb_id": 201}},
+            anime={"Minimal": {"anilist_id": 101, "tvdb_id": 201}},
         )
 
         mappings, _ = resolver.get_anilist_ids(ExternalIds(tvdb=201))
@@ -92,7 +97,7 @@ class TestAniBridgePath:
                 "imdb_show:tt0269": {},
             },
         }
-        resolver = _resolver(anibridge_mappings_cfg=graph)
+        resolver = _resolver(anibridge=graph)
 
         mappings, _ = resolver.get_anilist_ids(ExternalIds(tvdb=74796))
 

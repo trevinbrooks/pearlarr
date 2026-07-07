@@ -237,16 +237,18 @@ def _build_resolver(
     fetched, so the caller skips this run and retries next cycle.
     """
 
-    from .mappings import MappingResolver
+    from .mappings import MappingResolver, MappingSources
 
     try:
         with boot.step("Refreshing mappings") as mapping_step:
             resolver = MappingResolver(
                 cache_time=app_config.advanced.cache_time,
                 ignore_anilist_ids=app_config.seadex.ignore_anilist_ids,
-                anime_mappings_cfg=app_config.mappings.anime_mappings,
-                anidb_mappings_cfg=app_config.mappings.anidb_mappings,
-                anibridge_mappings_cfg=app_config.mappings.anibridge_mappings,
+                sources=MappingSources(
+                    anime=app_config.mappings.anime_mappings,
+                    anidb=app_config.mappings.anidb_mappings,
+                    anibridge=app_config.mappings.anibridge_mappings,
+                ),
                 mappings_db=mappings_db,
                 logger=logger,
                 progress=mapping_step,

@@ -389,6 +389,19 @@ def _anidb_rows(root: ElementTree.Element) -> tuple[list[AnidbMappingRow], list[
     return rows, ambiguous
 
 
+@dataclass(frozen=True, slots=True)
+class MappingSources:
+    """The three mapping-source configs the resolver loads.
+
+    Each field is tri-state: ``False`` disables the source, ``None`` downloads
+    it, and a pre-parsed value is used inline (tests / standalone use).
+    """
+
+    anime: AnimeIdsMap | bool | None
+    anidb: ElementTree.Element | bool | None
+    anibridge: AniBridgeGraph | bool | None
+
+
 class MappingResolver:
     """Resolve external Arr ids to AniList ids via three SQL-backed sources.
 
@@ -404,9 +417,7 @@ class MappingResolver:
         *,
         cache_time: int,
         ignore_anilist_ids: set[int],
-        anime_mappings_cfg: AnimeIdsMap | bool | None,
-        anidb_mappings_cfg: ElementTree.Element | bool | None,
-        anibridge_mappings_cfg: AniBridgeGraph | bool | None,
+        sources: MappingSources,
         mappings_db: str = ":memory:",
         logger: logging.Logger | None = None,
         progress: ProgressSink | None = None,
@@ -417,12 +428,8 @@ class MappingResolver:
             cache_time (int): Days a downloaded source stays usable before it's
                 re-fetched.
             ignore_anilist_ids (set[int]): AniList ids to drop from every result.
-            anime_mappings_cfg: ``False`` to disable, ``None`` to download the
-                Kometa Anime-IDs map, or a pre-parsed map dict.
-            anidb_mappings_cfg: ``False`` to disable, ``None`` to download the
-                AniDB XML, or a pre-parsed root element.
-            anibridge_mappings_cfg: ``False`` to disable, ``None`` to download
-                the anibridge graph, or a raw anibridge graph dict.
+            sources (MappingSources): The three source configs, each tri-state
+                (disabled / download / pre-parsed inline).
             mappings_db (str): Path to the SQLite mapping cache; defaults to an
                 in-memory db (tests / pre-parsed configs).
             logger (logging.Logger | None): For download/parse visibility (DEBUG;
@@ -464,7 +471,7 @@ class MappingResolver:
         # download/parse failure (the old resolver held no resources).
         try:
             try:
-                self._build(anime_mappings_cfg, anidb_mappings_cfg, anibridge_mappings_cfg)
+                self._build(sources)
             except sqlite3.DatabaseError:
                 # A read/write error against the on-disk db (e.g. disk full
                 # mid-populate): the atomic replace already rolled back, so nothing
@@ -481,19 +488,14 @@ class MappingResolver:
                     self.logger.debug("Mapping cache rebuild cause:", exc_info=True)
                 self._store.close()
                 self._store = MappingStore.open(":memory:", logger=logger)
-                self._build(anime_mappings_cfg, anidb_mappings_cfg, anibridge_mappings_cfg)
+                self._build(sources)
         except BaseException:
             self._store.close()
             raise
 
     # -- construction --------------------------------------------------------
 
-    def _build(
-        self,
-        anime_cfg: AnimeIdsMap | bool | None,
-        anidb_cfg: ElementTree.Element | bool | None,
-        anibridge_cfg: AniBridgeGraph | bool | None,
-    ) -> None:
+    def _build(self, sources: MappingSources) -> None:
         """Load each source into the store per its config (download / inline / off).
 
         Safe to call twice (the fail-open retry does): each ``replace_*`` fully
@@ -501,34 +503,34 @@ class MappingResolver:
         simply re-set.
         """
 
-        if anime_cfg is False:
+        if sources.anime is False:
             self._anime_enabled = False
-        elif anime_cfg is None:
+        elif sources.anime is None:
             self._anime_enabled = True
             self._load_anime_ids()
         else:
-            assert isinstance(anime_cfg, dict)
+            assert isinstance(sources.anime, dict)
             self._anime_enabled = True
-            self._store.replace_anime_ids(INLINE_DIGEST, _anime_ids_rows(anime_cfg))
+            self._store.replace_anime_ids(INLINE_DIGEST, _anime_ids_rows(sources.anime))
 
-        if anidb_cfg is False:
+        if sources.anidb is False:
             self._anidb_enabled = False
-        elif anidb_cfg is None:
+        elif sources.anidb is None:
             self._anidb_enabled = True
             self._load_anidb()
         else:
-            assert isinstance(anidb_cfg, ElementTree.Element)
+            assert isinstance(sources.anidb, ElementTree.Element)
             self._anidb_enabled = True
-            rows, ambiguous = _anidb_rows(anidb_cfg)
+            rows, ambiguous = _anidb_rows(sources.anidb)
             self._store.replace_anidb(INLINE_DIGEST, rows, ambiguous)
 
-        if anibridge_cfg is False:
+        if sources.anibridge is False:
             self.anibridge = None
-        elif anibridge_cfg is None:
+        elif sources.anibridge is None:
             self._load_anibridge()
         else:
-            assert isinstance(anibridge_cfg, dict)
-            ab = AniBridge(anibridge_cfg, logger=self.logger)
+            assert isinstance(sources.anibridge, dict)
+            ab = AniBridge(sources.anibridge, logger=self.logger)
             self._store.replace_anibridge(INLINE_DIGEST, *ab.to_rows())
             self.anibridge = AniBridge.from_store(self._store)
 
