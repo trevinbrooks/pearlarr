@@ -132,6 +132,7 @@ class _FakeRunServices(RunServices):
         al_id_in_cache: bool = False,
         needs_scan: bool = True,
         seadex_dict: SeadexDict | None = None,
+        interactive_result: SeadexDict | None = None,
         filter_downloads_result: FilterResult | None = None,
         grab_result: bool = False,
         no_releases_result: bool = False,
@@ -144,6 +145,7 @@ class _FakeRunServices(RunServices):
         self._al_id_in_cache = al_id_in_cache
         self._needs_scan = needs_scan
         self._seadex_dict: SeadexDict = seadex_dict if seadex_dict is not None else {}
+        self._interactive_result = interactive_result
         self._filter_downloads_result = filter_downloads_result
         self._grab_result = grab_result
         self._no_releases_result = no_releases_result
@@ -220,7 +222,7 @@ class _FakeRunServices(RunServices):
     ) -> SeadexDict:
         del sd_entry
         self.interactive_calls.append(seadex_dict)
-        return seadex_dict
+        return seadex_dict if self._interactive_result is None else self._interactive_result
 
     @override
     def filter_seadex_downloads(
@@ -301,6 +303,8 @@ def test_fake_overrides_the_full_public_surface() -> None:
 class _FakeEpisodes:
     """Minimal episode collaborator: scripts ``get_ep_list``'s resolved episode list."""
 
+    series_fp = "fp"
+
     def __init__(self, *, ep_list: list[SonarrEpisode] | None) -> None:
         self._ep_list = ep_list
 
@@ -312,6 +316,18 @@ class _FakeEpisodes:
     ) -> list[SonarrEpisode] | None:
         del sonarr_series_id, al_id, mapping
         return self._ep_list
+
+    def get_sonarr_release_dict(self, ep_list: list[SonarrEpisode]) -> ArrReleaseDict:
+        del ep_list
+        return {}
+
+
+class _PassThroughParse:
+    """Parse collaborator that returns the dict unchanged (no Sonarr round-trip)."""
+
+    def parse_episodes_from_seadex(self, seadex_dict: SeadexDict, *, series_fp: str) -> SeadexDict:
+        del series_fp
+        return seadex_dict
 
 
 def _capture_logger(name: str) -> tuple[logging.Logger, CaptureHandler]:
@@ -496,6 +512,35 @@ class TestProcessAlIdThreadsServices:
         assert run.log_al_title_calls == []
         # AniBridge-specific notice surfaced.
         assert any(r.levelno >= logging.WARNING for r in capture.records)
+
+    def test_sonarr_all_invalid_selection_routes_to_shared_skip(self) -> None:
+        # The interactive pick rejected every token: the strategy must route to
+        # invalid_selection_skip (which persists nothing) and never reach the
+        # grab tail - the Sonarr twin of the Radarr guard in test_seadex_dict.
+        seadex_dict: SeadexDict = {}
+        for name in ("GroupA", "GroupB"):
+            seadex_dict.update(_one_group_dict(name))
+        run = _FakeRunServices(
+            prologue_entry=make_entry_record(),
+            seadex_dict=seadex_dict,
+            interactive_result={},
+        )
+        strat = make_bare_instance(
+            SonarrSync,
+            _services=run,
+            _episodes=_FakeEpisodes(ep_list=[sonarr_ep(1, 1)]),
+            _parse=_PassThroughParse(),
+            _config=make_config(interactive=True, sleep_time=0),
+            ignore_movies_in_radarr=False,
+            logger=make_logger(),
+        )
+
+        result = strat.process_al_id(_Item(id=1), "Title", 5, MappingEntry(anilist_id=5))
+
+        assert result is False
+        assert run.invalid_selection_skips == 1
+        assert run.grab_requests == []
+        assert run.no_releases_calls == []
 
     def test_sonarr_movie_in_radarr_cache_dedups_via_explicit_arr(self) -> None:
         # The Sonarr->Radarr dedup MUST pass an explicit Arr.RADARR to both the

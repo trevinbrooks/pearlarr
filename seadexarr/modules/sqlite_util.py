@@ -118,7 +118,12 @@ def open_or_quarantine(
             raise
         quarantine_corrupt(path, logger=logger, what=what, recovery=recovery)
         conn = connect_fn(":memory:")
-        ensure(conn)
+        try:
+            ensure(conn)
+        except BaseException:
+            with contextlib.suppress(sqlite3.Error):
+                conn.close()
+            raise
         return conn, True
     except BaseException:
         # A non-sqlite failure from ensure (e.g. a schema-version refusal) still
