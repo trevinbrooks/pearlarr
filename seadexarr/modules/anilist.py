@@ -1,5 +1,6 @@
 import contextlib
 import logging
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -7,8 +8,13 @@ from typing import Any, cast
 import requests
 
 from .seadex_types import AniListError, AniListMediaNode
+from .. import __version__
 
 API_URL = "https://graphql.anilist.co"
+
+# Identify ourselves to AniList (their API terms ask clients to be identifiable);
+# also what a maintainer would see if this client ever misbehaves.
+USER_AGENT = f"seadexarr/{__version__}"
 
 type AniListCache = dict[int, dict[str, dict[str, Any]]]
 """In-memory AniList cache: id -> raw GraphQL body ``{"data": {"Media": {...}}}``.
@@ -226,6 +232,7 @@ def _post_with_retry(
             resp = requests.post(
                 API_URL,
                 json={"query": query, "variables": variables},
+                headers={"User-Agent": USER_AGENT},
                 timeout=ANILIST_REQUEST_TIMEOUT_S,
             )
         except requests.RequestException as e:
@@ -234,7 +241,7 @@ def _post_with_retry(
                 if retry_log is not None:
                     retry_log.gave_up()
                 return {}
-            wait = min(2**attempt, MAX_BACKOFF)
+            wait = min(2**attempt + random.uniform(0, 1), MAX_BACKOFF)
             if retry_log is not None:
                 retry_log.waiting(
                     f"request failed ({type(e).__name__})",
@@ -261,9 +268,11 @@ def _post_with_retry(
             retryable = True
 
         if retryable and attempt < MAX_RETRIES:
-            # Prefer the server's Retry-After (seconds); otherwise exponential
+            # Prefer the server's Retry-After (seconds, honored exactly);
+            # otherwise exponential, jittered so concurrent clients that hit
+            # the same limit window don't retry in lockstep.
             retry_after = resp.headers.get("Retry-After")
-            wait = 2**attempt
+            wait = 2**attempt + random.uniform(0, 1)
             if retry_after is not None:
                 with contextlib.suppress(TypeError, ValueError):
                     wait = float(retry_after)
