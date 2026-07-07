@@ -94,13 +94,13 @@ class SonarrSync(ArrSync[SonarrItem]):
                 formatter they read.
             services (RunServices): The services hub the per-id hooks call into.
             sonarr_client (AbstractSonarrClient | None): A pre-built client to use
-                instead of constructing the real network-validating
-                :class:`SonarrClient`. Defaults to None (build the real one); tests
-                inject a scripted fake through this typed seam, so the real
-                ``__init__`` + collaborator wiring runs without a network.
+                instead of constructing the real :class:`SonarrClient` (which
+                needs the connection keys). Defaults to None (build the real
+                one); tests inject a scripted fake through this typed seam, so
+                the real ``__init__`` + collaborator wiring runs without keys.
             radarr_client (AbstractRadarrClient | None): Same seam for the
-                movies-in-Radarr cross-check client, whose real construction also
-                hits the network (only consulted when
+                movies-in-Radarr cross-check client, whose library is fetched
+                eagerly below (only consulted when
                 ``sonarr.ignore_movies_in_radarr`` is on). Defaults to None (build
                 the real one when the feature is on and the Radarr keys are set).
         """

@@ -5,7 +5,7 @@ from .modules import seadexarr_cli, setup_logger
 # ``__version__`` and the run-machinery re-exports are resolved LAZILY (PEP 562):
 # the ``seadexarr`` entry point imports this package only to reach
 # ``seadexarr_cli``, so it must not eagerly pay the ``importlib.metadata`` lookup
-# or pull the heavy run machinery (qBittorrent / arrapi / the SeaDex+httpx chain).
+# or pull the heavy run machinery (qBittorrent / the SeaDex+httpx chain).
 # ``from .. import __version__`` in cache.py and ``seadexarr.<Sync>`` for
 # programmatic use both still resolve through ``__getattr__``.
 _LAZY_EXPORTS = frozenset({"RadarrSync", "RunDeps", "RunLoop", "RunServices", "SonarrSync"})

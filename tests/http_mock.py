@@ -28,24 +28,23 @@ def register_sonarr_reads(
     rsps: responses.RequestsMock,
     base: str,
     *,
-    series: object,
     episodes: object,
     parse: object,
     quality_definitions: list[object] | None = None,
     languages: list[object] | None = None,
 ) -> None:
-    """Register the read endpoints a Sonarr sync hits on the OFF-mode preview path.
+    """Register the requests-based read endpoints a Sonarr sync hits on the
+    OFF-mode preview path.
 
-    ``base`` is the ``http://host/api/v3`` prefix. ``system/status`` is required by
-    arrapi's construction-time probe; ``series``/``episode`` drive the library
-    fetch; ``parse`` (matched on the base path, query ignored) replays a captured
-    parse for every SeaDex filename. ``qualitydefinition``/``language`` default to
-    empty (only touched when an import payload is built); ``history/since``
-    replays an empty window so the activity scan stays quiet.
+    ``base`` is the ``http://host/api/v3`` prefix. ``episode`` drives the
+    per-series fetch; ``parse`` (matched on the base path, query ignored)
+    replays a captured parse for every SeaDex filename.
+    ``qualitydefinition``/``language`` default to empty (only touched when an
+    import payload is built); ``history/since`` replays an empty window so the
+    activity scan stays quiet. The library fetch (``/series``) rides the
+    httpx-based ``ArrHttp``, so a test registers it through respx instead.
     """
 
-    rsps.add(responses.GET, f"{base}/system/status", json={"version": "3.0.10"})
-    rsps.add(responses.GET, f"{base}/series", json=series)
     rsps.add(responses.GET, f"{base}/episode", json=episodes)
     rsps.add(responses.GET, f"{base}/parse", json=parse)
     rsps.add(responses.GET, f"{base}/qualitydefinition", json=quality_definitions or [])

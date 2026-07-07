@@ -49,7 +49,6 @@ classifiers = [
 ]
 
 dependencies = [
-    "arrapi == 1.4.14",
     "beautifulsoup4 == 4.15.0",
     "filelock == 3.29.6",
     "httpx == 0.28.1",
@@ -120,11 +119,9 @@ packages = ["seadexarr"]
 # AND the tests are gated at strict (0 findings) - each test module carries a
 # ``# pyright: strict`` header, and the few that legitimately read a collaborator's
 # private members for a white-box assertion carry a local
-# ``# pyright: reportPrivateUsage=false`` with a justification. stubPath supplies
-# local stubs for the one un-stubbed dependency (arrapi).
+# ``# pyright: reportPrivateUsage=false`` with a justification.
 [tool.pyright]
 typeCheckingMode = "strict"
-stubPath = "stubs"
 venvPath = "."
 venv = ".venv"
 

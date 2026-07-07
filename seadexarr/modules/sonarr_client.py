@@ -1,8 +1,8 @@
 """Sonarr REST client: the HTTP surface the Sonarr syncer talks to.
 
-``SonarrClient`` wraps the high-level ``arrapi`` client (``all_series``)
-and the two raw endpoints the syncer needs
-(``/api/v3/episode`` and ``/api/v3/parse``)
+``SonarrClient`` speaks to the raw ``/api/v3`` endpoints directly: the
+library fetch and queue ride the httpx-based :class:`~.arr_http.ArrHttp`,
+the remaining endpoints the shared ``requests`` session.
 """
 
 import logging
@@ -12,7 +12,6 @@ from urllib.parse import urlencode
 
 import httpx
 import requests
-from arrapi import SonarrAPI
 
 from .arr_http import ArrHttp, fetch_history_since
 from .log import indent_string
@@ -32,6 +31,7 @@ from .seadex_types import (
     QueueRecord,
     SonarrEpisode,
     SonarrItem,
+    SonarrSeries,
 )
 
 # Per-request timeout (seconds) for the manual-import folder scan. Sonarr walks
@@ -104,7 +104,7 @@ class AbstractSonarrClient(ABC):
 
 
 class SonarrClient(AbstractSonarrClient):
-    """Thin wrapper over the Sonarr API (``arrapi`` + two raw endpoints)."""
+    """Thin client over the raw Sonarr v3 REST endpoints."""
 
     def __init__(
         self,
@@ -116,6 +116,10 @@ class SonarrClient(AbstractSonarrClient):
         logger: logging.Logger,
     ) -> None:
         """Instantiate the Sonarr API client.
+
+        Construction is network-free (no connection probe): the first request
+        happens on the first method call, so an unreachable Sonarr surfaces as
+        that call's typed error / fail-open path, never a constructor hang.
 
         Args:
             url (str): Sonarr base URL.
@@ -138,16 +142,20 @@ class SonarrClient(AbstractSonarrClient):
         self._session = session
         self._http = ArrHttp.bind(client=http, url=url, api_key=api_key, label="Sonarr", logger=logger)
         self._logger = logger
-        self._api = SonarrAPI(url=url, apikey=api_key)
 
     @override
     def all_series(self) -> list[SonarrItem]:
-        """Every series in Sonarr (unfiltered)."""
+        """Every series in Sonarr (``/api/v3/series``, unfiltered).
 
-        # arrapi ships no py.typed, so all_series() is Unknown; the series
-        # objects expose the attribute surface of SonarrItem, so cast at this
-        # client boundary into the project's typed shape.
-        return cast("list[SonarrItem]", self._api.all_series())
+        The one fail-CLOSED read: the library list is the run's ground truth
+        (an outage reading as an empty library would silently no-op the leg),
+        so a failure raises the typed :mod:`~.arr_http` errors for the CLI
+        containment arms instead of degrading to an empty list.
+        """
+
+        raw = self._http.get_json_list_strict("/api/v3/series")
+        # Element dicts are unvalidated JSON: cast at the parse boundary, skip strays.
+        return [SonarrSeries.from_api(cast("dict[str, Any]", record)) for record in raw if isinstance(record, dict)]
 
     @override
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:

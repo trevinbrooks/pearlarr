@@ -13,7 +13,7 @@ from .log import setup_logger
 # ``RunDeps``/``RunServices``/``RunLoop``/``RadarrSync``/``SonarrSync`` are
 # exported LAZILY (PEP 562): importing this package - which the ``seadexarr``
 # entry point does just to reach ``seadexarr_cli`` - must not pull the heavy run
-# machinery (qBittorrent / arrapi / the SeaDex+httpx chain), so the CLI starts
+# machinery (qBittorrent / the SeaDex+httpx chain), so the CLI starts
 # fast. They import on first attribute access.
 _LAZY: dict[str, str] = {
     "RunDeps": ".run_services",

@@ -9,11 +9,10 @@ from typing import Any, Protocol, cast, override
 
 import httpx
 import requests
-from arrapi import RadarrAPI
 
 from .anibridge import AniBridge
 from .arr_http import ArrHttp, fetch_history_since
-from .seadex_types import ArrItem, HistoryRecord, MovieFile, RadarrItem
+from .seadex_types import ArrItem, HistoryRecord, MovieFile, RadarrItem, RadarrMovie
 
 
 def make_radarr_client(
@@ -55,9 +54,7 @@ class AbstractRadarrClient(ABC):
     the strategy and ``collect_anime_movies`` take this type, so tests inject a
     subclassed fake that is statically checked against the real client's
     surface (a missing method is a ``reportAbstractUsage`` error, not a
-    silently-absorbed ``Any``). The real client's ``__init__`` hits the network
-    (arrapi fetches system status), which is exactly why construction needs an
-    injectable seam.
+    silently-absorbed ``Any``).
     """
 
     @abstractmethod
@@ -74,7 +71,7 @@ class AbstractRadarrClient(ABC):
 
 
 class RadarrClient(AbstractRadarrClient):
-    """Thin wrapper over the Radarr API (``arrapi`` + one raw endpoint)."""
+    """Thin client over the raw Radarr v3 REST endpoints."""
 
     def __init__(
         self,
@@ -86,6 +83,10 @@ class RadarrClient(AbstractRadarrClient):
         logger: logging.Logger,
     ) -> None:
         """Instantiate the Radarr API client.
+
+        Construction is network-free (no connection probe): the first request
+        happens on the first method call, so an unreachable Radarr surfaces as
+        that call's typed error / fail-open path, never a constructor hang.
 
         Args:
             url (str): Radarr base URL.
@@ -107,16 +108,20 @@ class RadarrClient(AbstractRadarrClient):
         self._session = session
         self._http = ArrHttp.bind(client=http, url=url, api_key=api_key, label="Radarr", logger=logger)
         self._logger = logger
-        self._api = RadarrAPI(url=url, apikey=api_key)
 
     @override
     def all_movies(self) -> list[RadarrItem]:
-        """Every movie in Radarr (unfiltered)."""
+        """Every movie in Radarr (``/api/v3/movie``, unfiltered).
 
-        # arrapi ships no py.typed, so all_movies() is Unknown; the movie
-        # objects expose the attribute surface of RadarrItem, so cast at this
-        # client boundary into the project's typed shape.
-        return cast("list[RadarrItem]", self._api.all_movies())
+        The one fail-CLOSED read: the library list is the run's ground truth
+        (an outage reading as an empty library would silently no-op the leg),
+        so a failure raises the typed :mod:`~.arr_http` errors for the CLI
+        containment arms instead of degrading to an empty list.
+        """
+
+        raw = self._http.get_json_list_strict("/api/v3/movie")
+        # Element dicts are unvalidated JSON: cast at the parse boundary, skip strays.
+        return [RadarrMovie.from_api(cast("dict[str, Any]", record)) for record in raw if isinstance(record, dict)]
 
     @override
     def movie_files(self, movie_id: int) -> list[MovieFile]:

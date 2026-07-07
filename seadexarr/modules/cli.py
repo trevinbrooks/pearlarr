@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from .mappings import MappingResolver
 
 
-# The heavy clients (qBittorrent / arrapi / the SeaDex+httpx chain via cache) are
+# The heavy clients (qBittorrent / the SeaDex+httpx chain via cache) are
 # imported lazily inside the functions that use them, NOT at module load, so the
 # CLI starts and prints its title without paying ~150ms+ for libraries a `--help`
 # or a config/cache subcommand never touches. ``ImportWaitMode`` stays eager: it
@@ -316,7 +316,7 @@ def _configured_arrs(
 
 
 def _implicated_arrs(arr: Arr, app_config: AppConfig) -> list[Arr]:
-    """The arrs a run leg connects to, for attributing an arrapi failure.
+    """The arrs a run leg connects to, for attributing a connection/auth failure.
 
     A Sonarr leg also builds a Radarr client when ``ignore_movies_in_radarr``
     is on (the specials cross-check), so a connection/auth failure there can
@@ -386,10 +386,7 @@ def _run_arrs(
         # Pull the heavy run machinery now - after the instant title, before the
         # cockpit's first step - so this one-time import cost lands in the gap
         # between the banner and the spinner rather than stalling a live step.
-        # (arrapi is pulled transitively by the strategies, so importing its
-        # exceptions here adds nothing.)
-        from arrapi.exceptions import ConnectionFailure, Unauthorized
-
+        from .arr_http import ArrAuthError, ArrConnectionError
         from .cache import CacheSchemaError
         from .run_loop import RunLoop
         from .run_services import QbitConnectionError, RunDeps, RunServices
@@ -460,17 +457,17 @@ def _run_arrs(
                     except (QbitConnectionError, CacheSchemaError) as e:
                         # A user-facing environment problem (wrong host/credentials, a
                         # cache.db from a newer release): a clean one-line message, not
-                        # a stack trace under "unexpected error". The two arrapi arms
-                        # below get the same treatment.
+                        # a stack trace under "unexpected error". The two arr-client
+                        # arms below get the same treatment.
                         all_arrs_completed = False
                         logger.error(str(e))
-                    except ConnectionFailure as e:
-                        # arrapi's message names the URL it couldn't reach, which
+                    except ArrConnectionError as e:
+                        # The error's message names the URL it couldn't reach, which
                         # disambiguates when this leg contacted more than one arr.
                         all_arrs_completed = False
                         keys = " / ".join(f"{a}.url" for a in _implicated_arrs(arr_name, app_config))
                         logger.error(f"{arr_name.capitalize()} run failed: {e} - check {keys} in your config")
-                    except Unauthorized:
+                    except ArrAuthError:
                         all_arrs_completed = False
                         implicated = _implicated_arrs(arr_name, app_config)
                         if len(implicated) == 1:
@@ -478,8 +475,8 @@ def _run_arrs(
                                 f"{arr_name.capitalize()} rejected the API key - check {arr_name}.api_key in your config",
                             )
                         else:
-                            # arrapi doesn't say which instance rejected the key, and
-                            # this leg presented more than one - name every candidate.
+                            # This leg presented more than one key - name every
+                            # candidate (the config keys are what the user edits).
                             keys = " / ".join(f"{a}.api_key" for a in implicated)
                             logger.error(
                                 f"An arr rejected the API key during the {arr_name.capitalize()} run - "

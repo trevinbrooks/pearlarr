@@ -2,7 +2,8 @@
 
 :class:`ArrHttp` is the httpx-native transport every raw arr endpoint is
 migrating onto: one bound helper per client holding the request/retry/parse/
-fail-open boilerplate that used to be copied per endpoint. The legacy
+fail-open boilerplate that used to be copied per endpoint (plus the strict,
+fail-closed library fetch and its typed errors). The legacy
 ``fetch_history_since`` (requests-based) folds onto it as the migration lands.
 """
 
@@ -24,6 +25,25 @@ from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 GET_RETRIES = 3
 BACKOFF_BASE_S = 0.5
+
+
+class ArrConnectionError(Exception):
+    """An arr's load-bearing library fetch could not produce a result.
+
+    Raised (instead of failing open) by :meth:`ArrHttp.get_json_list_strict`:
+    the library list is a run's ground truth, so an unreachable arr / non-200 /
+    non-JSON body / wrong payload shape aborts the leg with this clean,
+    user-facing message (the CLI containment arm renders it without a
+    traceback) rather than reading as an empty library.
+    """
+
+
+class ArrAuthError(Exception):
+    """An arr rejected the API key (401/403) on the load-bearing library fetch.
+
+    Split from :class:`ArrConnectionError` so the CLI containment arm can point
+    the user at ``<arr>.api_key`` specifically instead of the url.
+    """
 
 
 def make_httpx_client(*, verify: bool = True) -> httpx.Client:
@@ -57,7 +77,9 @@ class ArrHttp:
     transient GET failures retry with jittered backoff, EVERY body is parsed
     behind a JSON guard (a 200 HTML proxy page reads as a miss, never an
     abort), and each failure warns once through the caller's ``warn`` template
-    with the failure detail filled in.
+    with the failure detail filled in. The one fail-CLOSED read is
+    :meth:`get_json_list_strict`, which raises typed errors for the
+    load-bearing library fetch.
     """
 
     client: httpx.Client
@@ -93,27 +115,18 @@ class ArrHttp:
             sleep=sleep,
         )
 
-    def get_json(
+    def _get_with_retries(
         self,
         path: str,
-        *,
-        params: Mapping[str, str] | None = None,
-        warn: str | None,
-    ) -> object | None:
-        """GET ``path`` and parse the JSON body; fail open to None with one warning.
+        params: Mapping[str, str] | None,
+    ) -> tuple[httpx.Response | None, str]:
+        """The retrying GET core the fail-open and strict paths share.
 
         Retries transient failures (connect/read errors, 429/5xx) up to
         ``GET_RETRIES`` times with jittered exponential backoff - GETs only, so
-        this stays safe for idempotent reads. Any terminal failure (request
-        error, non-200, non-JSON body) warns via ``warn`` - a template whose
-        ``{detail}`` names the cause - and returns None; ``warn=None`` keeps a
-        deliberate quiet path silent.
-
-        Args:
-            path (str): Endpoint path (e.g. ``"/api/v3/queue"``).
-            params (Mapping[str, str] | None): Query params. Defaults to None.
-            warn (str | None): Warning template with a ``{detail}`` placeholder,
-                or None to fail open silently.
+        this stays safe for idempotent reads. Returns the final response (a
+        200, or the terminal / retry-exhausted non-200) paired with a detail
+        naming the failure, or ``(None, detail)`` when no request completed.
         """
 
         response: httpx.Response | None = None
@@ -129,16 +142,37 @@ class ArrHttp:
                 response = None
             else:
                 if response.status_code == 200:
-                    break
+                    return response, detail
                 detail = f"status code {response.status_code}"
                 if response.status_code not in RETRYABLE_STATUS:
-                    response = None
-                    break
-                response = None
+                    return response, detail
             if attempt < GET_RETRIES:
                 self.sleep(BACKOFF_BASE_S * 2**attempt + random.uniform(0, 0.25))
+        return response, detail
 
-        if response is None:
+    def get_json(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, str] | None = None,
+        warn: str | None,
+    ) -> object | None:
+        """GET ``path`` and parse the JSON body; fail open to None with one warning.
+
+        Rides :meth:`_get_with_retries` (transient failures retry with jittered
+        backoff). Any terminal failure (request error, non-200, non-JSON body)
+        warns via ``warn`` - a template whose ``{detail}`` names the cause - and
+        returns None; ``warn=None`` keeps a deliberate quiet path silent.
+
+        Args:
+            path (str): Endpoint path (e.g. ``"/api/v3/queue"``).
+            params (Mapping[str, str] | None): Query params. Defaults to None.
+            warn (str | None): Warning template with a ``{detail}`` placeholder,
+                or None to fail open silently.
+        """
+
+        response, detail = self._get_with_retries(path, params)
+        if response is None or response.status_code != 200:
             return self._fail(warn, detail)
         try:
             return cast("object", response.json())
@@ -176,6 +210,46 @@ class ArrHttp:
         if not isinstance(payload, dict):
             return self._fail(warn, "unexpected payload")
         return cast("dict[str, object]", payload)
+
+    def get_json_list_strict(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, str] | None = None,
+    ) -> list[object]:
+        """GET ``path`` and parse the JSON array body; RAISE instead of failing open.
+
+        The strict counterpart of :meth:`get_json_list`, for the load-bearing
+        library fetch where a failure must abort the leg rather than read as an
+        empty library. Shares the retry core (transient statuses still retry
+        first), then turns any terminal failure into a typed error: a 401/403
+        raises :class:`ArrAuthError`; a transport error, any other non-200, a
+        non-JSON body or a non-array payload raises
+        :class:`ArrConnectionError` - both with a clean message naming this
+        arr's base url and the failure detail.
+
+        Args:
+            path (str): Endpoint path (e.g. ``"/api/v3/series"``).
+            params (Mapping[str, str] | None): Query params. Defaults to None.
+        """
+
+        response, detail = self._get_with_retries(path, params)
+        if response is not None and response.status_code in (401, 403):
+            raise ArrAuthError(f"{self.label} at {self.base_url} rejected the API key ({detail})")
+        if response is None or response.status_code != 200:
+            raise self._strict_error(detail)
+        try:
+            payload = cast("object", response.json())
+        except ValueError:
+            raise self._strict_error("non-JSON body")
+        if not isinstance(payload, list):
+            raise self._strict_error("unexpected payload")
+        return cast("list[object]", payload)
+
+    def _strict_error(self, detail: str) -> ArrConnectionError:
+        """The strict path's uniform could-not-reach error, naming url + cause."""
+
+        return ArrConnectionError(f"Could not reach {self.label} at {self.base_url} ({detail})")
 
     def _fail(self, warn: str | None, detail: str) -> None:
         """The single fail-open tail: warn (when wanted) and return None.

@@ -188,26 +188,97 @@ class ProgressSink(Protocol):
 
 @runtime_checkable
 class ArrItem(Protocol):
-    """The attribute surface shared by a Sonarr series and a Radarr movie."""
+    """The attribute surface shared by a Sonarr series and a Radarr movie.
 
-    id: int
-    title: str
-    imdbId: str | None
-    monitored: bool
+    Read-only properties (nothing writes to an item), so the frozen dataclass
+    views (:class:`SonarrSeries` / :class:`RadarrMovie`) and mutable test
+    stand-ins both satisfy it structurally.
+    """
+
+    @property
+    def id(self) -> int: ...
+
+    @property
+    def title(self) -> str: ...
+
+    @property
+    def imdbId(self) -> str | None: ...
+
+    @property
+    def monitored(self) -> bool: ...
 
 
 @runtime_checkable
 class SonarrItem(ArrItem, Protocol):
     """A Sonarr series item: an :class:`ArrItem` keyed on ``tvdbId``."""
 
-    tvdbId: int
+    @property
+    def tvdbId(self) -> int: ...
 
 
 @runtime_checkable
 class RadarrItem(ArrItem, Protocol):
     """A Radarr movie item: an :class:`ArrItem` keyed on ``tmdbId``."""
 
-    tmdbId: int
+    @property
+    def tmdbId(self) -> int: ...
+
+
+@dataclass(frozen=True, slots=True)
+class SonarrSeries:
+    """One Sonarr ``/api/v3/series`` record, narrowed to the :class:`SonarrItem` surface.
+
+    The concrete item ``SonarrClient.all_series`` returns, parsed at the client
+    boundary via :meth:`from_api` like :class:`SonarrEpisode`. camelCase field
+    names on purpose: they satisfy the protocol directly, and the
+    ``IdField.item_attr`` strings (``"tvdbId"``/``"imdbId"``) keep working.
+    """
+
+    id: int = 0
+    title: str = ""
+    monitored: bool = True
+    tvdbId: int = 0
+    imdbId: str | None = None
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> Self:
+        """Build from one raw ``SeriesResource`` dict (filters unknown keys)."""
+
+        return cls(
+            id=raw.get("id", 0),
+            title=raw.get("title", ""),
+            monitored=raw.get("monitored", True),
+            tvdbId=raw.get("tvdbId", 0),
+            imdbId=raw.get("imdbId"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RadarrMovie:
+    """One Radarr ``/api/v3/movie`` record, narrowed to the :class:`RadarrItem` surface.
+
+    The concrete item ``RadarrClient.all_movies`` returns, parsed at the client
+    boundary via :meth:`from_api`, mirroring :class:`SonarrSeries` (camelCase
+    fields for the same reasons).
+    """
+
+    id: int = 0
+    title: str = ""
+    monitored: bool = True
+    tmdbId: int = 0
+    imdbId: str | None = None
+
+    @classmethod
+    def from_api(cls, raw: dict[str, Any]) -> Self:
+        """Build from one raw ``MovieResource`` dict (filters unknown keys)."""
+
+        return cls(
+            id=raw.get("id", 0),
+            title=raw.get("title", ""),
+            monitored=raw.get("monitored", True),
+            tmdbId=raw.get("tmdbId", 0),
+            imdbId=raw.get("imdbId"),
+        )
 
 
 # --- Sonarr episodes (``/api/v3/episode`` JSON) -----------------------------

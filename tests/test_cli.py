@@ -560,9 +560,10 @@ class TestRunFailuresAreCleanAndNonzero:
             pytest.param("qbit", "qBittorrent connection failed", id="qbit-connection"),
             pytest.param(
                 "unreachable",
-                # The failing URL (from arrapi's message) is surfaced, so the
+                # The failing URL (from the error's message) is surfaced, so the
                 # user sees which connection broke, not just which leg was running.
-                "Sonarr run failed: Failed to Connect to http://sonarr:8989 - check sonarr.url",
+                "Sonarr run failed: Could not reach Sonarr at http://sonarr:8989 "
+                "(request failed (ConnectError)) - check sonarr.url",
                 id="arr-unreachable",
             ),
             pytest.param("unauthorized", "Sonarr rejected the API key - check sonarr.api_key", id="arr-unauthorized"),
@@ -575,14 +576,15 @@ class TestRunFailuresAreCleanAndNonzero:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        from arrapi.exceptions import ConnectionFailure, Unauthorized
-
+        from seadexarr.modules.arr_http import ArrAuthError, ArrConnectionError
         from seadexarr.modules.run_services import QbitConnectionError, RunDeps
 
         exceptions: dict[str, Exception] = {
             "qbit": QbitConnectionError("qBittorrent connection failed - check the host and credentials"),
-            "unreachable": ConnectionFailure("Failed to Connect to http://sonarr:8989"),
-            "unauthorized": Unauthorized("Invalid apikey"),
+            "unreachable": ArrConnectionError(
+                "Could not reach Sonarr at http://sonarr:8989 (request failed (ConnectError))",
+            ),
+            "unauthorized": ArrAuthError("Sonarr at http://sonarr:8989 rejected the API key (status code 401)"),
         }
 
         def fail_build(*args: object, **kwargs: object) -> NoReturn:
@@ -615,15 +617,16 @@ class TestRunFailuresAreCleanAndNonzero:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         # Under ignore_movies_in_radarr a Sonarr leg also builds a Radarr client,
-        # so an arrapi failure there must not be pinned on Sonarr alone: a Radarr
-        # outage would otherwise read "check sonarr.url" - confidently wrong.
-        from arrapi.exceptions import ConnectionFailure, Unauthorized
-
+        # so a connection/auth failure there must not be pinned on Sonarr alone: a
+        # Radarr outage would otherwise read "check sonarr.url" - confidently wrong.
+        from seadexarr.modules.arr_http import ArrAuthError, ArrConnectionError
         from seadexarr.modules.run_services import RunDeps
 
         exceptions: dict[str, Exception] = {
-            "unreachable": ConnectionFailure("Failed to Connect to http://radarr:7878"),
-            "unauthorized": Unauthorized("Invalid apikey"),
+            "unreachable": ArrConnectionError(
+                "Could not reach Radarr at http://radarr:7878 (request failed (ConnectError))",
+            ),
+            "unauthorized": ArrAuthError("Radarr at http://radarr:7878 rejected the API key (status code 401)"),
         }
 
         def fail_build(*args: object, **kwargs: object) -> NoReturn:

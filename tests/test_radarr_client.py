@@ -4,13 +4,13 @@
 # out real retry backoffs; strict re-flags that private write.
 """Direct tests for the ``radarr_client`` module's contracts.
 
-Mirrors ``test_sonarr_client``: a REAL ``RadarrClient`` (whose ``__init__``
-constructs an ``arrapi`` client that probes ``GET /api/v3/system/status``) over a
-``responses``-mocked ``requests`` boundary (respx mocks the endpoints migrated
-onto the httpx-based ``ArrHttp``). Pins the decode into the typed ``MovieFile``
-view and the degrade-to-empty guard (non-200 / transient request error -> ``[]``
-+ a warning), so a Radarr outage never unwinds the run; plus the ``all_movies``
-cast against arrapi drift and the ``collect_anime_movies`` wiring.
+Mirrors ``test_sonarr_client``: a REAL ``RadarrClient`` (construction is
+network-free) with ``responses`` mocking the endpoints still on ``requests``
+and respx mocking the endpoints migrated onto the httpx-based ``ArrHttp``
+(library fetch / movie files). Pins the decode into the typed ``MovieFile`` /
+``RadarrMovie`` views and the degrade-to-empty guard (non-200 / transient
+request error -> ``[]`` + a warning), so a Radarr outage never unwinds the
+run; plus the ``collect_anime_movies`` wiring.
 """
 
 import logging
@@ -23,19 +23,22 @@ import responses
 import respx
 
 from seadexarr.modules.radarr_client import RadarrClient, collect_anime_movies
-from seadexarr.modules.seadex_types import HistoryRecord, MovieFile, RadarrItem
+from seadexarr.modules.seadex_types import HistoryRecord, MovieFile, RadarrItem, RadarrMovie
 
-from .builders import make_bare_instance
+from .fakes import FakeRadarrClient
 
 _URL = "http://radarr.test"
 _BASE = f"{_URL}/api/v3"
 _KEY = "testkey"
 
 
-def _make_client(rsps: responses.RequestsMock) -> RadarrClient:
-    """Register arrapi's construction probe and build a real ``RadarrClient``."""
+def _make_client() -> RadarrClient:
+    """Build a real ``RadarrClient`` (construction is network-free).
 
-    rsps.add(responses.GET, f"{_BASE}/system/status", json={"version": "5.0.0"})
+    The bound ``ArrHttp``'s ``sleep`` is stubbed out so fail-open tests don't
+    wait out real retry backoffs.
+    """
+
     client = RadarrClient(
         url=_URL,
         api_key=_KEY,
@@ -51,9 +54,7 @@ def _make_client(rsps: responses.RequestsMock) -> RadarrClient:
 def test_movie_files_decodes_records_and_builds_request() -> None:
     body: list[object] = [{"releaseGroup": "SubsPlease", "size": 123, "id": 9}]
     route = respx.get(f"{_BASE}/moviefile").respond(json=body)
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
-        files = client.movie_files(7)
+    files = _make_client().movie_files(7)
 
     assert files == [MovieFile(release_group="SubsPlease", size=123)]
     request = route.calls.last.request
@@ -69,10 +70,9 @@ def test_movie_files_non_200_returns_empty_and_warns(caplog: pytest.LogCaptureFi
     """A Radarr 404 degrades to [] with a warning (was a JSONDecodeError mid-run)."""
 
     respx.get(f"{_BASE}/moviefile").respond(status_code=404)
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
-        with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-            files = client.movie_files(7)
+    client = _make_client()
+    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
+        files = client.movie_files(7)
 
     assert files == []
     warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
@@ -84,9 +84,7 @@ def test_movie_files_request_error_returns_empty() -> None:
     """A transient request error (timeout / connection drop) degrades to []."""
 
     respx.get(f"{_BASE}/moviefile").mock(side_effect=httpx.ConnectError("boom"))
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
-        assert client.movie_files(7) == []
+    assert _make_client().movie_files(7) == []
 
 
 @respx.mock
@@ -94,10 +92,9 @@ def test_movie_files_non_json_body_returns_empty_and_warns(caplog: pytest.LogCap
     """A 200 with an HTML body (reverse-proxy page) fails open to [] - never an abort."""
 
     respx.get(f"{_BASE}/moviefile").respond(content=b"<html>login</html>", content_type="text/html")
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
-        with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-            files = client.movie_files(7)
+    client = _make_client()
+    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
+        files = client.movie_files(7)
 
     assert files == []
     warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
@@ -126,7 +123,7 @@ def test_history_since_decodes_records_and_builds_request() -> None:
         },
     ]
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/history/since", json=body)
         records = client.history_since("2026-06-30T08:00:00Z")
         request = rsps.calls[-1].request
@@ -161,7 +158,7 @@ def test_history_since_non_200_returns_none_and_warns(caplog: pytest.LogCaptureF
     """A non-200 history read returns None with a warning (fail-open)."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/history/since", status=500)
         with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
             result = client.history_since("2026-06-30T08:00:00Z")
@@ -174,7 +171,7 @@ def test_history_since_request_error_returns_none() -> None:
     """A transient request error is swallowed to None (fail-open)."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/history/since", body=requests.exceptions.ConnectionError("boom"))
         assert client.history_since("2026-06-30T08:00:00Z") is None
 
@@ -183,7 +180,7 @@ def test_history_since_non_json_body_returns_none_and_warns(caplog: pytest.LogCa
     """A 200 with a non-JSON body fails open to None (the shared-helper hardening)."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/history/since", body="<html>login</html>", content_type="text/html")
         with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
             result = client.history_since("2026-06-30T08:00:00Z")
@@ -195,65 +192,41 @@ def test_history_since_non_json_body_returns_none_and_warns(caplog: pytest.LogCa
 def test_trailing_slash_url_is_normalized() -> None:
     """A trailing-slash base url must not become a ``//api`` join (login redirect)."""
 
+    client = RadarrClient(
+        url=f"{_URL}/",
+        api_key=_KEY,
+        session=requests.Session(),
+        http=httpx.Client(),
+        logger=logging.getLogger("seadexarr.test"),
+    )
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        rsps.add(responses.GET, f"{_BASE}/system/status", json={"version": "5.0.0"})
-        client = RadarrClient(
-            url=f"{_URL}/",
-            api_key=_KEY,
-            session=requests.Session(),
-            http=httpx.Client(),
-            logger=logging.getLogger("seadexarr.test"),
-        )
         rsps.add(responses.GET, f"{_BASE}/history/since", json=[])
         assert client.history_since("2026-06-30T08:00:00Z") == []
 
 
-# A realistic Radarr v3 ``/api/v3/movie`` record. Every attribute the run READS
-# (id/title/tmdbId/imdbId/monitored) is non-None on purpose: arrapi's partial-
-# reload magic re-fetches ``/movie/{id}`` on any None attribute read.
+# A minimal ``/api/v3/movie`` record: the consumed item fields plus a couple of
+# extras proving unknown keys are ignored by ``RadarrMovie.from_api``.
 _MOVIE_BODY: dict[str, object] = {
     "id": 9,
     "title": "Your Name.",
-    "sortTitle": "your name",
-    "sizeOnDisk": 4_806_820_247,
-    "status": "released",
-    "overview": "Two strangers find themselves linked in a bizarre way.",
-    "inCinemas": "2016-08-26T00:00:00Z",
-    "images": [],
-    "year": 2016,
-    "hasFile": True,
-    "studio": "CoMix Wave Films",
-    "path": "/movies/Your Name (2016)",
     "monitored": True,
-    "minimumAvailability": "announced",
-    "isAvailable": True,
-    "runtime": 106,
-    "cleanTitle": "yourname",
     "imdbId": "tt5311514",
     "tmdbId": 372058,
-    "titleSlug": "372058",
-    "certification": "PG",
-    "genres": ["Animation", "Drama", "Romance"],
-    "tags": [],
-    "added": "2023-01-15T12:00:00Z",
-    "qualityProfileId": 1,
-    "originalTitle": "Kimi no Na wa.",
+    "sortTitle": "your name",
+    "year": 2016,
 }
 
 
+@respx.mock
 def test_all_movies_parses_into_radarr_item_shape() -> None:
-    """The arrapi movies satisfy ``RadarrItem`` with correctly-typed id fields.
-
-    ``all_movies`` casts arrapi's untyped objects to ``list[RadarrItem]``
-    unchecked, so this pins the runtime shape (via the ``@runtime_checkable``
-    protocol, checked from ``object`` since the static type is the cast's claim)
-    and the exact typed values against arrapi parse drift.
+    """``all_movies`` parses each raw record into a ``RadarrMovie`` satisfying
+    the ``RadarrItem`` protocol (checked from ``object``: the runtime
+    counterpart of the client's typed claim), with correctly-typed id fields.
     """
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
-        rsps.add(responses.GET, f"{_BASE}/movie", json=[_MOVIE_BODY])
-        movies: list[object] = list(client.all_movies())
+    route = respx.get(f"{_BASE}/movie").respond(json=[_MOVIE_BODY])
+    client = _make_client()
+    movies: list[object] = list(client.all_movies())
 
     [movie] = movies
     assert isinstance(movie, RadarrItem)
@@ -262,33 +235,20 @@ def test_all_movies_parses_into_radarr_item_shape() -> None:
     assert movie.tmdbId == 372058
     assert movie.imdbId == "tt5311514"
     assert movie.monitored is True
+    request = route.calls.last.request
+    # The key rides the X-Api-Key header, never the URL (it would leak via logs).
+    assert "apikey" not in str(request.url)
+    assert request.headers["X-Api-Key"] == _KEY
 
 
-class _Movie:
-    """A structural ``RadarrItem`` stand-in with the ids a test presets."""
+@respx.mock
+def test_all_movies_skips_non_dict_elements() -> None:
+    """A stray non-object element in the movie array is skipped, never crashed on."""
 
-    id: int
-    title: str
-    imdbId: str | None
-    monitored: bool
-    tmdbId: int
+    respx.get(f"{_BASE}/movie").respond(json=[_MOVIE_BODY, "stray", 42])
+    movies = _make_client().all_movies()
 
-    def __init__(self, movie_id: int, title: str, *, tmdb_id: int, imdb_id: str | None) -> None:
-        self.id = movie_id
-        self.title = title
-        self.tmdbId = tmdb_id
-        self.imdbId = imdb_id
-        self.monitored = True
-
-
-class _StubRadarrApi:
-    """Stands in for ``RadarrClient``'s ``_api`` leaf: a preset raw movie list."""
-
-    def __init__(self, movies: list[_Movie]) -> None:
-        self._movies = movies
-
-    def all_movies(self) -> list[_Movie]:
-        return list(self._movies)
+    assert [m.id for m in movies] == [9]
 
 
 class _RecordingIdSets:
@@ -307,11 +267,11 @@ def test_collect_anime_movies_wires_id_spaces() -> None:
     """The candidate sets are pulled for (tmdb_movie_id, imdb_id), in that order,
     an imdb-only match is kept, and ``anibridge=None`` degrades to empty sets."""
 
-    movies = [
-        _Movie(1, "Imdb Only", tmdb_id=111, imdb_id="tt1"),
-        _Movie(2, "Unmatched", tmdb_id=222, imdb_id="tt2"),
+    movies: list[RadarrItem] = [
+        RadarrMovie(id=1, title="Imdb Only", tmdbId=111, imdbId="tt1"),
+        RadarrMovie(id=2, title="Unmatched", tmdbId=222, imdbId="tt2"),
     ]
-    client = make_bare_instance(RadarrClient, _api=_StubRadarrApi(movies))
+    client = FakeRadarrClient(movies=movies)
     id_sets = _RecordingIdSets({"imdb_id": {"tt1"}})
 
     kept = collect_anime_movies(client, id_sets, None)

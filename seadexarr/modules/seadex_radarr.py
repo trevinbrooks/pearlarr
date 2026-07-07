@@ -36,9 +36,9 @@ class RadarrSync(ArrSync[RadarrItem]):
             services (RunServices): The services hub the per-id hooks call into.
             radarr_client (AbstractRadarrClient | None, optional): Injectable
                 replacement for the real :class:`~.radarr_client.RadarrClient`,
-                whose construction hits the network. Defaults to None (build the
+                which needs the connection keys. Defaults to None (build the
                 real one); tests inject a scripted fake through this typed seam,
-                so the real ``__init__`` runs without a network.
+                so the real ``__init__`` runs without keys.
         """
 
         self._services = services

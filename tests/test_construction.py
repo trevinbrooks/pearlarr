@@ -68,10 +68,10 @@ def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:
     # be visible to build_pending_seeds.
     deps = make_run_deps()
     services = RunServices(deps, Arr.SONARR)
-    # The real SonarrClient validates its connection on construction; inject a typed
-    # fake through the sonarr_client seam so the (network-independent) collaborator
-    # wiring runs off the REAL __init__ - an incomplete fake here is a pyright error
-    # and un-instantiable, unlike the old stringly-typed monkeypatch.
+    # Inject a typed fake through the sonarr_client seam so the collaborator wiring
+    # runs off the REAL __init__ without connection keys - an incomplete fake here
+    # is a pyright error and un-instantiable, unlike the old stringly-typed
+    # monkeypatch.
     strat = SonarrSync(deps, services, sonarr_client=FakeSonarrClient())
 
     assert strat._parse.cache_store is deps.cache_store
@@ -79,9 +79,8 @@ def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:
 
 
 def test_radarr_sync_init_builds_without_network_via_client_seam() -> None:
-    # The real RadarrClient hits the network on construction (arrapi fetches system
-    # status), so RadarrSync's REAL __init__ was untestable before the radarr_client
-    # seam; the injected fake also skips require_connection, so no keys are needed.
+    # The radarr_client seam lets RadarrSync's REAL __init__ run under test: the
+    # injected fake skips require_connection, so no config keys are needed.
     deps = make_run_deps()
     services = RunServices(deps, Arr.RADARR)
     fake = FakeRadarrClient()
@@ -95,8 +94,8 @@ def test_radarr_sync_init_builds_without_network_via_client_seam() -> None:
 
 def test_sonarr_cross_check_builds_without_network_via_radarr_seam() -> None:
     # With ignore_movies_in_radarr on, SonarrSync.__init__ used to hard-build a
-    # network-validating RadarrClient (eager, in the constructor) - the one arr
-    # client construction without a seam. The injected fake makes the REAL
+    # RadarrClient and eagerly fetch its library (in the constructor) - the one
+    # arr client construction without a seam. The injected fake makes the REAL
     # __init__ testable with the feature ON; empty mappings -> no movies collected.
     deps = make_run_deps(config=make_config(url="http://sonarr", api_key="key", ignore_movies_in_radarr=True))
     services = RunServices(deps, Arr.SONARR)

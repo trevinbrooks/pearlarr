@@ -41,7 +41,7 @@ jobs:
       # The type gate is vanilla pyright (pinned for reproducible CI). It reads
       # [tool.pyright] in pyproject.toml (typeCheckingMode = strict for BOTH the
       # package and tests/) and resolves imports against the .venv that `uv sync`
-      # just created, plus the local stubs/ for arrapi.
+      # just created.
       - name: Pyright (type check, strict)
         run: uvx pyright@1.1.411 seadexarr tests
       - name: Pyrefly (type check)

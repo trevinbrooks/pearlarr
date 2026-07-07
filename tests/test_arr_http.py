@@ -3,10 +3,12 @@
 
 The httpx-native transport the raw arr endpoints share. Pins the fail-open
 matrix (request error / non-200 / non-JSON / wrong shape -> None + ONE warning
-naming the cause), the GET retry policy (transient statuses retry with backoff,
-terminal ones don't), and the two security invariants: the API key rides the
-``X-Api-Key`` header (never the URL) and a redirect is NEVER followed (a 3xx
-must not replay the key at a new location).
+naming the cause), the strict library-fetch matrix (the same failures RAISE
+typed ``ArrConnectionError``/``ArrAuthError`` instead), the GET retry policy
+(transient statuses retry with backoff, terminal ones don't), and the two
+security invariants: the API key rides the ``X-Api-Key`` header (never the
+URL) and a redirect is NEVER followed (a 3xx must not replay the key at a new
+location).
 """
 
 import logging
@@ -15,7 +17,13 @@ import httpx
 import pytest
 import respx
 
-from seadexarr.modules.arr_http import GET_RETRIES, ArrHttp, make_httpx_client
+from seadexarr.modules.arr_http import (
+    GET_RETRIES,
+    ArrAuthError,
+    ArrConnectionError,
+    ArrHttp,
+    make_httpx_client,
+)
 
 from .fakes import CaptureHandler
 
@@ -154,6 +162,67 @@ def test_warn_none_fails_open_silently() -> None:
     http, capture = _bind("arr-http-quiet")
 
     assert http.get_json("/api/v3/thing", warn=None) is None
+    assert capture.records == []
+
+
+# --- get_json_list_strict() (the fail-CLOSED library fetch) ------------------
+
+
+@respx.mock
+def test_strict_get_401_raises_auth_error_without_retrying() -> None:
+    route = respx.get(f"{_URL}/api/v3/series").respond(status_code=401)
+    http, capture = _bind("arr-http-strict-401")
+
+    with pytest.raises(ArrAuthError) as excinfo:
+        http.get_json_list_strict("/api/v3/series")
+
+    assert str(excinfo.value) == f"Sonarr at {_URL} rejected the API key (status code 401)"
+    assert route.call_count == 1  # 401 is terminal: no retries
+    assert capture.records == []  # the raise IS the report; no fail-open warning
+
+
+@respx.mock
+def test_strict_get_connection_error_raises_naming_the_url() -> None:
+    route = respx.get(f"{_URL}/api/v3/series").mock(side_effect=httpx.ConnectError("boom"))
+    http, _ = _bind("arr-http-strict-conn")
+
+    with pytest.raises(ArrConnectionError) as excinfo:
+        http.get_json_list_strict("/api/v3/series")
+
+    assert str(excinfo.value) == f"Could not reach Sonarr at {_URL} (request failed (ConnectError))"
+    assert route.call_count == GET_RETRIES + 1  # transport errors still retry first
+
+
+@respx.mock
+def test_strict_get_non_json_200_raises() -> None:
+    respx.get(f"{_URL}/api/v3/series").respond(content=b"<html>login</html>", content_type="text/html")
+    http, _ = _bind("arr-http-strict-html")
+
+    with pytest.raises(ArrConnectionError) as excinfo:
+        http.get_json_list_strict("/api/v3/series")
+
+    assert str(excinfo.value) == f"Could not reach Sonarr at {_URL} (non-JSON body)"
+
+
+@respx.mock
+def test_strict_get_non_list_payload_raises() -> None:
+    respx.get(f"{_URL}/api/v3/series").respond(json={"message": "not an array"})
+    http, _ = _bind("arr-http-strict-shape")
+
+    with pytest.raises(ArrConnectionError) as excinfo:
+        http.get_json_list_strict("/api/v3/series")
+
+    assert str(excinfo.value) == f"Could not reach Sonarr at {_URL} (unexpected payload)"
+
+
+@respx.mock
+def test_strict_get_retryable_status_retries_then_succeeds() -> None:
+    route = respx.get(f"{_URL}/api/v3/series")
+    route.side_effect = [httpx.Response(503), httpx.Response(200, json=[{"id": 1}])]
+    http, capture = _bind("arr-http-strict-retry-ok")
+
+    assert http.get_json_list_strict("/api/v3/series") == [{"id": 1}]
+    assert route.call_count == 2
     assert capture.records == []
 
 

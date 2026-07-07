@@ -4,15 +4,16 @@
 # out real retry backoffs; strict re-flags that private write.
 """Direct tests for ``SonarrClient``, the Sonarr REST adapter.
 
-Each test builds a REAL ``SonarrClient`` (whose ``__init__`` constructs an
-``arrapi`` client that probes ``GET /api/v3/system/status``) over a
-``responses``-mocked ``requests`` boundary, then drives one method and asserts
-the request URL / body it builds AND the decoded return view its ``from_api``
-parsers produce. Bodies come from the captured ``tests/fixtures/sonarr`` JSON
-where one exists (queue / manual-import / command-list / quality-definitions),
-otherwise a minimal inline body. POST bodies are asserted via
-``responses``' ``json_params_matcher`` (no Any-typed body reads); GET request
-shape is read off ``rsps.calls[-1].request.url``.
+Each test builds a REAL ``SonarrClient`` (construction is network-free), then
+drives one method and asserts the request URL / body it builds AND the decoded
+return view its ``from_api`` parsers produce. The endpoints still on
+``requests`` are mocked via ``responses``; the endpoints migrated onto the
+httpx-based ``ArrHttp`` (library fetch / queue) via ``respx``. Bodies come
+from the captured ``tests/fixtures/sonarr`` JSON where one exists (queue /
+manual-import / command-list / quality-definitions), otherwise a minimal
+inline body. POST bodies are asserted via ``responses``'
+``json_params_matcher`` (no Any-typed body reads); GET request shape is read
+off ``rsps.calls[-1].request.url``.
 """
 
 import logging
@@ -31,6 +32,7 @@ from seadexarr.modules.seadex_types import (
     ManualImportFile,
     ParsedFileInfo,
     QueueRecord,
+    SonarrItem,
 )
 from seadexarr.modules.sonarr_client import SonarrClient
 
@@ -41,17 +43,15 @@ _BASE = f"{_URL}/api/v3"
 _KEY = "testkey"
 
 
-def _make_client(rsps: responses.RequestsMock) -> SonarrClient:
-    """Register arrapi's construction probe and build a real ``SonarrClient``.
+def _make_client() -> SonarrClient:
+    """Build a real ``SonarrClient`` (construction is network-free).
 
-    ``responses`` patches the global ``requests`` adapter, so both arrapi's own
-    session (the ``system/status`` probe) and the shared session handed to the
-    client are intercepted; the endpoints migrated onto ``ArrHttp`` ride the
-    httpx client instead, mocked per test through ``respx``. The bound helper's
-    ``sleep`` is stubbed out so fail-open tests don't wait out real backoffs.
+    The endpoints still on ``requests`` are mocked per test through
+    ``responses``; the endpoints migrated onto ``ArrHttp`` ride the httpx
+    client, mocked through ``respx``. The bound helper's ``sleep`` is stubbed
+    out so fail-open tests don't wait out real backoffs.
     """
 
-    rsps.add(responses.GET, f"{_BASE}/system/status", json={"version": "3.0.10"})
     client = SonarrClient(
         url=_URL,
         api_key=_KEY,
@@ -79,6 +79,55 @@ def _make_pending(*, infohash: str, title: str) -> PendingImport:
     )
 
 
+# --- all_series() -------------------------------------------------------------
+
+# A minimal ``/api/v3/series`` record: the consumed item fields plus a couple of
+# extras proving unknown keys are ignored by ``SonarrSeries.from_api``.
+_SERIES_BODY: dict[str, object] = {
+    "id": 228,
+    "title": "Undefeated Bahamut Chronicle",
+    "monitored": True,
+    "tvdbId": 299502,
+    "imdbId": "tt5311514",
+    "sortTitle": "undefeated bahamut chronicle",
+    "seasonFolder": True,
+}
+
+
+@respx.mock
+def test_all_series_parses_into_sonarr_item_shape() -> None:
+    """``all_series`` parses each raw record into a ``SonarrSeries`` satisfying
+    the ``SonarrItem`` protocol (checked from ``object``: the runtime
+    counterpart of the client's typed claim), with correctly-typed id fields.
+    """
+
+    route = respx.get(f"{_BASE}/series").respond(json=[_SERIES_BODY])
+    client = _make_client()
+    series: list[object] = list(client.all_series())
+
+    [show] = series
+    assert isinstance(show, SonarrItem)
+    assert show.id == 228
+    assert show.title == "Undefeated Bahamut Chronicle"
+    assert show.tvdbId == 299502
+    assert show.imdbId == "tt5311514"
+    assert show.monitored is True
+    request = route.calls.last.request
+    # The key rides the X-Api-Key header, never the URL (it would leak via logs).
+    assert "apikey" not in str(request.url)
+    assert request.headers["X-Api-Key"] == _KEY
+
+
+@respx.mock
+def test_all_series_skips_non_dict_elements() -> None:
+    """A stray non-object element in the series array is skipped, never crashed on."""
+
+    respx.get(f"{_BASE}/series").respond(json=[_SERIES_BODY, "stray", 42])
+    series = _make_client().all_series()
+
+    assert [s.id for s in series] == [228]
+
+
 # --- queue() ----------------------------------------------------------------
 
 
@@ -89,9 +138,8 @@ def test_queue_decodes_records_and_builds_request() -> None:
     """
 
     route = respx.get(f"{_BASE}/queue").respond(json=sonarr_fixture("queue.json"))
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
-        records = client.queue()
+    client = _make_client()
+    records = client.queue()
 
     assert len(records) == 3
     assert records[0] == QueueRecord(
@@ -136,9 +184,8 @@ def test_queue_paginates_until_total_records_covered() -> None:
         return pages.pop(0)
 
     respx.get(f"{_BASE}/queue").mock(side_effect=_serve)
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
-        records = client.queue()
+    client = _make_client()
+    records = client.queue()
 
     assert [r.download_id for r in records] == ["HASH0", "HASH1", "HASH2"]
     assert len(seen_urls) == 2
@@ -155,9 +202,8 @@ def test_queue_later_page_failure_keeps_fetched_records() -> None:
     route = respx.get(f"{_BASE}/queue")
     # Page 1 succeeds; page 2 stays 500 through the transport retries.
     route.side_effect = [httpx.Response(200, json=_queue_page(3, ["HASH0", "HASH1"]))] + [httpx.Response(500)] * 10
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
-        records = client.queue()
+    client = _make_client()
+    records = client.queue()
 
     assert [r.download_id for r in records] == ["HASH0", "HASH1"]
 
@@ -167,9 +213,7 @@ def test_queue_non_200_returns_empty() -> None:
     """A non-200 queue read falls back to an empty list (caller treats as untracked)."""
 
     respx.get(f"{_BASE}/queue").respond(status_code=404)
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
-        assert client.queue() == []
+    assert _make_client().queue() == []
 
 
 @respx.mock
@@ -179,9 +223,7 @@ def test_queue_request_error_returns_empty() -> None:
     """
 
     respx.get(f"{_BASE}/queue").mock(side_effect=httpx.ConnectError("boom"))
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
-        assert client.queue() == []
+    assert _make_client().queue() == []
 
 
 # --- episodes() -------------------------------------------------------------
@@ -193,7 +235,7 @@ def test_episodes_decodes_sorted_and_builds_request() -> None:
     """
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/episode", json=sonarr_fixture("episodes_228_bahamut.json"))
         episodes = client.episodes(228)
         request = rsps.calls[-1].request
@@ -224,7 +266,7 @@ def test_episodes_missing_numbers_sort_first_without_crashing() -> None:
         {"id": 1, "seasonNumber": 1, "episodeNumber": 1},
     ]
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/episode", json=body)
         episodes = client.episodes(228)
 
@@ -236,7 +278,7 @@ def test_episodes_non_200_returns_none_and_warns(caplog: pytest.LogCaptureFixtur
     """A non-200 episode read returns None and warns (the caller skips the id)."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/episode", status=500)
         with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
             result = client.episodes(228)
@@ -252,7 +294,7 @@ def test_episodes_quiet_suppresses_unreachable_warning(caplog: pytest.LogCapture
     """
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/episode", status=500)
         with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
             result = client.episodes(228, quiet=True)
@@ -265,7 +307,7 @@ def test_episodes_request_error_returns_none() -> None:
     """A transient request error (connection drop) is swallowed to None."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/episode", body=requests.exceptions.ConnectionError("boom"))
         assert client.episodes(228, quiet=True) is None
 
@@ -285,7 +327,7 @@ def test_parse_skips_entries_missing_season_or_episode() -> None:
         ],
     }
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/parse", json=body)
         parsed = client.parse("Cool.Anime.S01E01.mkv")
 
@@ -298,7 +340,7 @@ def test_parse_clean_no_match_returns_empty_list() -> None:
     """
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/parse", json={"episodes": []})
         assert client.parse("Unmatched.Release.mkv") == []
 
@@ -307,7 +349,7 @@ def test_parse_non_200_returns_none() -> None:
     """A non-200 parse returns None (a failure that must NOT be cached)."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/parse", status=500)
         assert client.parse("Cool.Anime.S01E01.mkv") is None
 
@@ -316,7 +358,7 @@ def test_parse_request_error_returns_none() -> None:
     """A transient request error returns None (also uncacheable)."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/parse", body=requests.exceptions.ConnectionError("boom"))
         assert client.parse("Cool.Anime.S01E01.mkv") is None
 
@@ -330,7 +372,7 @@ def test_parse_episode_info_decodes_season_episode() -> None:
     """
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/parse", json=sonarr_fixture("parse_bahamut_s01e01.json"))
         info = client.parse_episode_info("Bahamut.S01E01.mkv")
         request = rsps.calls[-1].request
@@ -354,7 +396,7 @@ def test_parse_episode_info_decodes_absolute() -> None:
     """
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/parse", json=sonarr_fixture("parse_toloveru_abs14.json"))
         info = client.parse_episode_info("ToLoveRu.-.14.mkv")
 
@@ -370,7 +412,7 @@ def test_parse_episode_info_non_200_returns_none() -> None:
     """A non-200 parse leaves the file for retry (returns None)."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/parse", status=500)
         assert client.parse_episode_info("Bahamut.S01E01.mkv") is None
 
@@ -379,7 +421,7 @@ def test_parse_episode_info_request_error_returns_none() -> None:
     """A transient request error leaves the file for retry (returns None)."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/parse", body=requests.exceptions.ConnectionError("boom"))
         assert client.parse_episode_info("Bahamut.S01E01.mkv") is None
 
@@ -397,7 +439,7 @@ def test_manual_import_candidates_decodes_and_uppercases_downloadid() -> None:
         title="Yamada-kun",
     )
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/manualimport", json=sonarr_fixture("manualimport_yamada.json"))
         candidates = client.manual_import_candidates(pending=pending)
         url = rsps.calls[-1].request.url
@@ -421,7 +463,7 @@ def test_manual_import_candidates_non_200_returns_none() -> None:
 
     pending = _make_pending(infohash="a" * 40, title="Yamada-kun")
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/manualimport", status=500)
         assert client.manual_import_candidates(pending=pending) is None
 
@@ -431,7 +473,7 @@ def test_manual_import_candidates_request_error_returns_none() -> None:
 
     pending = _make_pending(infohash="a" * 40, title="Yamada-kun")
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/manualimport", body=requests.exceptions.ConnectionError("boom"))
         assert client.manual_import_candidates(pending=pending) is None
 
@@ -458,7 +500,7 @@ def test_manual_import_execute_posts_body_and_returns_id() -> None:
         "files": [file],
     }
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(
             responses.POST,
             f"{_BASE}/command",
@@ -489,7 +531,7 @@ def test_manual_import_execute_non_2xx_returns_none() -> None:
         "languages": [{"id": 1, "name": "English"}],
     }
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.POST, f"{_BASE}/command", status=400, json={})
         assert client.manual_import_execute(files=[file]) is None
 
@@ -500,7 +542,7 @@ def test_post_command_request_error_returns_none() -> None:
     """
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.POST, f"{_BASE}/command", body=requests.exceptions.ConnectionError("boom"))
         assert client.refresh_monitored_downloads() is None
 
@@ -509,7 +551,7 @@ def test_refresh_monitored_downloads_posts_command_name() -> None:
     """``RefreshMonitoredDownloads`` POSTs only ``{name}`` and returns its id."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(
             responses.POST,
             f"{_BASE}/command",
@@ -528,7 +570,7 @@ def test_command_status_decodes() -> None:
     """A single-command GET narrows to a ``CommandResource`` with status/result."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(
             responses.GET,
             f"{_BASE}/command/55",
@@ -545,7 +587,7 @@ def test_command_status_non_200_returns_default() -> None:
     """A non-200 status read yields a default (status-None) ``CommandResource``."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/command/9", status=503)
         assert client.command_status(9) == CommandResource()
 
@@ -556,7 +598,7 @@ def test_command_status_request_error_returns_default() -> None:
     """
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/command/9", body=requests.exceptions.ConnectionError("boom"))
         assert client.command_status(9) == CommandResource()
 
@@ -567,7 +609,7 @@ def test_list_commands_decodes_with_nested_files() -> None:
     """
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/command", json=sonarr_fixture("command_list.json"))
         commands = client.list_commands()
 
@@ -585,7 +627,7 @@ def test_list_commands_non_200_returns_empty() -> None:
     """A non-200 command list reads as "nothing in flight" (empty list)."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/command", status=503)
         assert client.list_commands() == []
 
@@ -618,7 +660,7 @@ def test_history_since_decodes_records_and_builds_request() -> None:
         },
     ]
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/history/since", json=body)
         records = client.history_since("2026-06-30T08:00:00Z")
         request = rsps.calls[-1].request
@@ -654,7 +696,7 @@ def test_history_since_non_200_returns_none_and_warns(caplog: pytest.LogCaptureF
     """A non-200 history read returns None (the activity scan fails open)."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/history/since", status=500)
         with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
             result = client.history_since("2026-06-30T08:00:00Z")
@@ -671,7 +713,7 @@ def test_history_since_request_error_returns_none() -> None:
     """A transient request error is swallowed to None (fail-open)."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/history/since", body=requests.exceptions.ConnectionError("boom"))
         assert client.history_since("2026-06-30T08:00:00Z") is None
 
@@ -680,7 +722,7 @@ def test_history_since_non_json_body_returns_none_and_warns(caplog: pytest.LogCa
     """A 200 with a non-JSON body (e.g. a proxy login page) fails open to None."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/history/since", body="<html>login</html>", content_type="text/html")
         with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
             result = client.history_since("2026-06-30T08:00:00Z")
@@ -693,7 +735,7 @@ def test_history_since_non_array_payload_returns_none_and_warns(caplog: pytest.L
     """A JSON object (not the expected array) fails open to None."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/history/since", json={"message": "unauthorized"})
         with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
             result = client.history_since("2026-06-30T08:00:00Z")
@@ -711,7 +753,7 @@ def test_history_since_skips_non_dict_elements() -> None:
         42,
     ]
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/history/since", json=body)
         records = client.history_since("2026-06-30T08:00:00Z")
 
@@ -723,15 +765,14 @@ def test_trailing_slash_url_is_normalized() -> None:
     302s that to the login page, breaking every raw endpoint.
     """
 
+    client = SonarrClient(
+        url=f"{_URL}/",
+        api_key=_KEY,
+        session=requests.Session(),
+        http=httpx.Client(),
+        logger=logging.getLogger("seadexarr.test"),
+    )
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        rsps.add(responses.GET, f"{_BASE}/system/status", json={"version": "3.0.10"})
-        client = SonarrClient(
-            url=f"{_URL}/",
-            api_key=_KEY,
-            session=requests.Session(),
-            http=httpx.Client(),
-            logger=logging.getLogger("seadexarr.test"),
-        )
         rsps.add(responses.GET, f"{_BASE}/history/since", json=[])
         assert client.history_since("2026-06-30T08:00:00Z") == []
 
@@ -745,7 +786,7 @@ def test_quality_definitions_returns_raw_list() -> None:
     """
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/qualitydefinition", json=sonarr_fixture("qualitydefinitions.json"))
         defs = client.quality_definitions()
         request = rsps.calls[-1].request
@@ -762,7 +803,7 @@ def test_languages_returns_raw_list() -> None:
 
     body: list[object] = [{"id": 1, "name": "English"}, {"id": 8, "name": "Japanese"}]
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/language", json=body)
         result = client.languages()
 
@@ -773,7 +814,7 @@ def test_quality_definitions_non_200_returns_empty() -> None:
     """A non-200 quality-definitions read falls back to an empty list."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/qualitydefinition", status=500)
         assert client.quality_definitions() == []
 
@@ -782,6 +823,6 @@ def test_languages_non_200_returns_empty() -> None:
     """A non-200 languages read falls back to an empty list."""
 
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client(rsps)
+        client = _make_client()
         rsps.add(responses.GET, f"{_BASE}/language", status=500)
         assert client.languages() == []

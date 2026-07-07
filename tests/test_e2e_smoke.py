@@ -8,7 +8,9 @@ external network leaves faked:
 
 * the SeaDex library, faked at the gateway's httpx boundary (``SeaDexEntry``);
 * qBittorrent, left unconfigured so the whole run is a perpetual preview;
-* the Arr + AniList HTTP, mocked at the ``requests`` boundary via ``responses``;
+* the Arr + AniList HTTP, mocked at the ``requests`` boundary via ``responses``
+  (the arr endpoints migrated onto the httpx-based ``ArrHttp`` - the library
+  fetch and the movie-file read - via ``respx``);
 * the Nyaa source (``pynyaa``/httpx, which ``responses`` can't intercept), faked
   at ``torrents.get_nyaa_torrent``.
 
@@ -122,12 +124,13 @@ def test_sonarr_run_drives_real_composition_root(
     (tmp_path / "config.yml").write_text(yaml.safe_dump(config.model_dump(mode="json")))
 
     # The Sonarr + AniList HTTP boundary. responses patches the requests adapter
-    # globally, so both the shared Session and arrapi's own Session are intercepted.
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+    # globally (the shared Session); respx covers the endpoints migrated onto the
+    # httpx-based ArrHttp (the library fetch).
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps, respx.mock:
+        series_route = respx.get(f"{_BASE}/series").respond(json=sonarr_fixture("series_subset.json"))
         register_sonarr_reads(
             rsps,
             _BASE,
-            series=sonarr_fixture("series_subset.json"),
             episodes=sonarr_fixture("episodes_228_bahamut.json"),
             parse=sonarr_fixture("parse_bahamut_s01e01.json"),
         )
@@ -143,7 +146,7 @@ def test_sonarr_run_drives_real_composition_root(
     # for it - the anti-vacuity guard: a run that resolved nothing never gets here.
     assert any(str(_ANILIST) in query for query in filter_calls)
     # The real Sonarr adapters drove the library fetch + per-file parse over the wire.
-    assert f"GET {_BASE}/series" in fired
+    assert series_route.call_count == 1
     assert f"GET {_BASE}/episode" in fired
     assert f"GET {_BASE}/parse" in fired
     # The resolved entry's release reached the (preview) grab at the torrent source.
@@ -184,10 +187,9 @@ _RADARR_ANILIST_BODY: dict[str, object] = {
     },
 }
 
-# A minimal ``/api/v3/movie`` record arrapi can parse (no captured Radarr fixtures
-# exist; ``Movie._load`` defaults every absent key). Every attribute the run READS
-# (id/title/tmdbId/imdbId/monitored) is non-None on purpose: arrapi's partial-
-# reload magic re-fetches ``/movie/{id}`` on any None attribute read.
+# A minimal ``/api/v3/movie`` record: the item fields the run reads
+# (id/title/tmdbId/imdbId/monitored) plus a couple of extras proving
+# ``RadarrMovie.from_api`` ignores unknown keys.
 _MOVIE_BODY: dict[str, object] = {
     "id": 42,
     "title": "Your Name.",
@@ -255,20 +257,16 @@ def test_radarr_run_drives_real_composition_root(
     (tmp_path / "config.yml").write_text(yaml.safe_dump(config.model_dump(mode="json")))
 
     # The Radarr + AniList HTTP boundary. responses patches the requests adapter
-    # globally (the shared Session and arrapi's own Session); respx covers the
-    # endpoints migrated onto the httpx-based ArrHttp (the movie-file read).
+    # globally (the shared Session); respx covers the endpoints migrated onto the
+    # httpx-based ArrHttp (the library fetch and the per-movie file read, the
+    # latter empty -> the {None: [None]} no-existing-file release dict).
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps, respx.mock:
-        # arrapi's construction-time probe and the library fetch; the per-movie
-        # file read (empty -> the {None: [None]} no-existing-file release dict).
-        rsps.add(responses.GET, f"{_RADARR_BASE}/system/status", json={"version": "5.0.0"})
-        rsps.add(responses.GET, f"{_RADARR_BASE}/movie", json=[_MOVIE_BODY])
+        movie_route = respx.get(f"{_RADARR_BASE}/movie").respond(json=[_MOVIE_BODY])
         moviefile_route = respx.get(f"{_RADARR_BASE}/moviefile").respond(json=[])
         rsps.add(responses.GET, f"{_RADARR_BASE}/history/since", json=[])
         rsps.add(responses.POST, _ANILIST_URL, json=_RADARR_ANILIST_BODY)
 
         result = run_single(radarr=True, import_wait_mode=ImportWaitMode.OFF)
-
-        fired = {f"{call.request.method or ''} {(call.request.url or '').split('?')[0]}" for call in rsps.calls}
 
     # The real composition root ran one full Radarr pass with zero real network.
     assert result is True
@@ -276,7 +274,7 @@ def test_radarr_run_drives_real_composition_root(
     # for it - the anti-vacuity guard: a run that resolved nothing never gets here.
     assert any(str(_RADARR_ANILIST) in query for query in filter_calls)
     # The real Radarr client drove the library fetch + the movie-file read.
-    assert f"GET {_RADARR_BASE}/movie" in fired
+    assert movie_route.call_count == 1
     assert moviefile_route.call_count == 1
     # The resolved entry's release reached the (preview) grab at the torrent source.
     assert nyaa_calls == [_NYAA_RELEASE_URL]

@@ -33,18 +33,6 @@ wheels = [
 ]
 
 [[package]]
-name = "arrapi"
-version = "1.4.14"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/39/ac/e63b939dfbae528a656204adafb42c7d6b8c018511da958d1a54d9545c8c/arrapi-1.4.14.tar.gz", hash = "sha256:eef87d061c582b635d320a82e1bcbe2741cc952f75f37e74dfa4e2279a988d67", size = 28048, upload-time = "2025-08-15T18:27:07.958Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d0/95/8b2a59cccf0c4c926e41904441b120bd13453a67a342188c7ac7f9224441/arrapi-1.4.14-py3-none-any.whl", hash = "sha256:132088972036c1eb7bb3597d3b16776263aa1939b088152560a49d93ed61caea", size = 30452, upload-time = "2025-08-15T18:27:06.65Z" },
-]
-
-[[package]]
 name = "atomicwriter"
 version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -947,7 +935,6 @@ name = "seadexarr"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
-    { name = "arrapi" },
     { name = "beautifulsoup4" },
     { name = "filelock" },
     { name = "httpx" },
@@ -998,7 +985,6 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "arrapi", specifier = "==1.4.14" },
     { name = "beautifulsoup4", specifier = "==4.15.0" },
     { name = "filelock", specifier = "==3.29.6" },
     { name = "httpx", specifier = "==0.28.1" },
