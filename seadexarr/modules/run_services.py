@@ -209,6 +209,7 @@ class RunDeps:
             notifier=Notifier(
                 discord_url=secret_value(app_config.notifications.discord_url),
                 webhook_url=secret_value(app_config.notifications.wait_webhook_url),
+                web=web,
                 logger=logger,
             ),
             # Download-decision engine: flips each release's download flag.

@@ -10,7 +10,7 @@ import logging
 import time
 from collections.abc import Sequence
 
-import requests
+import httpx
 
 from .config import Arr
 from .discord import (
@@ -40,10 +40,10 @@ _PUSH_SPACING_S = 1.0
 _MAX_RETRY_AFTER_S = 5.0
 
 
-def _retry_after_seconds(exc: requests.RequestException) -> float:
+def _retry_after_seconds(exc: httpx.HTTPError) -> float:
     """The 429's Retry-After header in seconds (int or float string), default 1.0."""
 
-    header = exc.response.headers.get("Retry-After") if exc.response is not None else None
+    header = exc.response.headers.get("Retry-After") if isinstance(exc, httpx.HTTPStatusError) else None
     if header is None:
         return 1.0
     try:
@@ -52,15 +52,15 @@ def _retry_after_seconds(exc: requests.RequestException) -> float:
         return 1.0
 
 
-def _failure_detail(exc: requests.RequestException) -> str:
+def _failure_detail(exc: httpx.HTTPError) -> str:
     """Describe a request failure WITHOUT interpolating the exception.
 
-    A requests exception's str embeds the request URL - for a webhook that URL
-    IS the credential - so only the HTTP status (when a response exists) or the
-    exception type name is reported.
+    An httpx exception's str embeds the request URL - for a webhook that URL
+    IS the credential - so only the HTTP status (a status error is the one
+    kind carrying a response) or the exception type name is reported.
     """
 
-    if exc.response is not None:
+    if isinstance(exc, httpx.HTTPStatusError):
         return f"HTTP {exc.response.status_code}"
     return type(exc).__name__
 
@@ -83,6 +83,7 @@ class Notifier:
         *,
         discord_url: str | None,
         webhook_url: str | None = None,
+        web: httpx.Client,
         logger: logging.Logger,
     ) -> None:
         """Configure the notifier.
@@ -91,11 +92,13 @@ class Notifier:
             discord_url (str | None): Discord webhook url, or None to disable.
             webhook_url (str | None): A generic outbound webhook POSTed the
                 wait-complete report JSON (ntfy/gotify/Home-Assistant), or None.
+            web (httpx.Client): The shared web client every POST rides.
             logger (logging.Logger): For the failed-push warnings.
         """
 
         self.discord_url = discord_url
         self.webhook_url = webhook_url
+        self.web = web
         self.logger = logger
         # Monotonic instant of the last Discord POST, for burst pacing.
         self._last_push: float | None = None
@@ -204,8 +207,8 @@ class Notifier:
             "rows": [{"label": r.label, "outcome": r.outcome.name, "word": r.outcome.word} for r in result.rows],
         }
         try:
-            requests.post(url, json=payload, timeout=10)
-        except requests.RequestException as exc:
+            self.web.post(url, json=payload, timeout=10)
+        except httpx.HTTPError as exc:
             self.logger.warning(
                 f"Wait-report webhook POST failed ({_failure_detail(exc)}) - check notifications.wait_webhook_url",
             )
@@ -291,10 +294,10 @@ class Notifier:
 
         self._pace()
         try:
-            discord_push(url=self.discord_url, embed=embed)
-        except requests.RequestException as exc:
+            discord_push(url=self.discord_url, embed=embed, client=self.web)
+        except httpx.HTTPError as exc:
             detail = _failure_detail(exc)
-            status = exc.response.status_code if exc.response is not None else None
+            status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
             if status == 429:
                 return self._retry_rate_limited(url=self.discord_url, embed=embed, exc=exc)
             if status is not None and 400 <= status < 500:
@@ -308,7 +311,7 @@ class Notifier:
             return False
         return True
 
-    def _retry_rate_limited(self, *, url: str, embed: DiscordEmbed, exc: requests.RequestException) -> bool:
+    def _retry_rate_limited(self, *, url: str, embed: DiscordEmbed, exc: httpx.HTTPError) -> bool:
         """Honor a 429's Retry-After with one retry, or drop the push truthfully.
 
         A 429 is Discord throttling a healthy webhook, not a dead one, so pushes
@@ -321,8 +324,8 @@ class Notifier:
         if delay <= _MAX_RETRY_AFTER_S:
             time.sleep(delay)
             try:
-                discord_push(url=url, embed=embed)
-            except requests.RequestException as retry_exc:
+                discord_push(url=url, embed=embed, client=self.web)
+            except httpx.HTTPError as retry_exc:
                 exc = retry_exc
             else:
                 return True

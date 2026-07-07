@@ -10,15 +10,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import NamedTuple
 
-import requests
+import httpx
 
 from .paths import PROJECT_URL
 from .seadex_types import Json
 from .. import __version__
-
-# (connect, read) bound so a hung Discord webhook surfaces as a transient miss
-# instead of blocking the run; matches the Arr clients' timeout policy.
-DISCORD_TIMEOUT_S = (5, 30)
 
 # Embed accent colors (the strip Discord renders along the embed's left edge).
 COLOR_GRAB = 0x3498DB
@@ -104,12 +100,13 @@ class DiscordEmbed:
         return embed
 
 
-def discord_push(url: str, embed: DiscordEmbed) -> None:
+def discord_push(url: str, embed: DiscordEmbed, *, client: httpx.Client) -> None:
     """POST one embed to the webhook - a pure POST, pacing lives in the Notifier.
 
-    Raises ``requests.RequestException`` (incl. HTTP error statuses) so the
-    caller's containment decides; a webhook failure must never abort a grab.
+    Raises ``httpx.HTTPError`` (incl. HTTP error statuses) so the caller's
+    containment decides; a webhook failure must never abort a grab. The
+    hung-webhook bound is the shared web client's default timeout.
     """
 
-    response = requests.post(url, json={"embeds": [embed.to_payload()]}, timeout=DISCORD_TIMEOUT_S)
+    response = client.post(url, json={"embeds": [embed.to_payload()]})
     response.raise_for_status()

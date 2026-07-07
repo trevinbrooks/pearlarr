@@ -8,13 +8,16 @@ the no-url no-op, and the containment invariant: a notification failure warns
 and returns False, it must never abort a grab or the end-of-run cache save.
 """
 
+import json
 import logging
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
+from typing import cast
 
+import httpx
 import pytest
-import requests
+import respx
 
 from seadexarr.modules import notify
 from seadexarr.modules.config import Arr
@@ -40,8 +43,8 @@ def pushes(monkeypatch: pytest.MonkeyPatch) -> list[DiscordEmbed]:
 
     recorded: list[DiscordEmbed] = []
 
-    def fake_discord_push(*, url: str, embed: DiscordEmbed) -> None:
-        del url
+    def fake_discord_push(*, url: str, embed: DiscordEmbed, client: httpx.Client) -> None:
+        del url, client
         recorded.append(embed)
 
     monkeypatch.setattr(notify, "discord_push", fake_discord_push)
@@ -60,31 +63,31 @@ def _capture(logger: logging.Logger) -> Generator[CaptureHandler]:
         logger.removeHandler(handler)
 
 
-def _http_error(status: int, *, retry_after: str | None = None) -> requests.HTTPError:
-    """An ``HTTPError`` carrying a response, as ``raise_for_status`` raises it.
+def _http_error(status: int, *, retry_after: str | None = None) -> httpx.HTTPStatusError:
+    """An ``HTTPStatusError`` carrying a response, as ``raise_for_status`` raises it.
 
-    The response url stands in for the webhook credential: the containment
-    tests assert it never reaches a warning message. ``retry_after`` sets the
-    Retry-After header the 429 handling parses.
+    The url (in the message and on the request, as httpx builds both) stands in
+    for the webhook credential: the containment tests assert it never reaches a
+    warning message. ``retry_after`` sets the Retry-After header the 429
+    handling parses.
     """
 
-    response = requests.Response()
-    response.status_code = status
-    response.url = "https://discord.example/api/webhooks/1/secret-token"
-    if retry_after is not None:
-        response.headers["Retry-After"] = retry_after
-    return requests.HTTPError(response=response)
+    url = "https://discord.example/api/webhooks/1/secret-token"
+    request = httpx.Request("POST", url)
+    headers = {"Retry-After": retry_after} if retry_after is not None else {}
+    response = httpx.Response(status, headers=headers, request=request)
+    return httpx.HTTPStatusError(f"error '{status}' for url '{url}'", request=request, response=response)
 
 
 class _SequencedPush:
     """``discord_push`` stand-in: raises the queued errors in order, then succeeds."""
 
-    def __init__(self, *errors: requests.HTTPError) -> None:
+    def __init__(self, *errors: httpx.HTTPStatusError) -> None:
         self.errors = list(errors)
         self.posts: list[str] = []
 
-    def __call__(self, *, url: str, embed: DiscordEmbed) -> None:
-        del embed
+    def __call__(self, *, url: str, embed: DiscordEmbed, client: httpx.Client) -> None:
+        del embed, client
         self.posts.append(url)
         if self.errors:
             raise self.errors.pop(0)
@@ -111,44 +114,45 @@ def _result() -> WaitResult:
 
 
 def test_push_wait_summary_no_url_is_noop() -> None:
-    notifier = Notifier(discord_url=None, webhook_url=None, logger=make_logger())
+    notifier = Notifier(discord_url=None, webhook_url=None, web=httpx.Client(), logger=make_logger())
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=_result()) is False
 
 
 def test_push_wait_summary_empty_result_is_noop() -> None:
-    notifier = Notifier(discord_url="https://discord", webhook_url="https://hook", logger=make_logger())
+    notifier = Notifier(
+        discord_url="https://discord",
+        webhook_url="https://hook",
+        web=httpx.Client(),
+        logger=make_logger(),
+    )
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=WaitResult((), 0.0)) is False
 
 
-def test_push_wait_summary_posts_to_webhook(monkeypatch: pytest.MonkeyPatch) -> None:
-    posts: list[tuple[str, dict[str, object], int]] = []
-
-    def fake_post(url: str, *, json: dict[str, object], timeout: int) -> object:
-        posts.append((url, json, timeout))
-        return object()
-
-    monkeypatch.setattr(requests, "post", fake_post)
-    notifier = Notifier(discord_url=None, webhook_url="https://hook.example", logger=make_logger())
+@respx.mock
+def test_push_wait_summary_posts_to_webhook() -> None:
+    route = respx.post("https://hook.example").respond(json={})
+    notifier = Notifier(
+        discord_url=None,
+        webhook_url="https://hook.example",
+        web=httpx.Client(),
+        logger=make_logger(),
+    )
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=_result()) is True
-    url, payload, _timeout = posts[0]
-    assert url == "https://hook.example"
+    payload = cast("dict[str, object]", json.loads(route.calls.last.request.content))
     assert payload["imported"] == 2
     assert payload["failed"] == 1
 
 
-def test_push_wait_summary_webhook_failure_warns_and_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+@respx.mock
+def test_push_wait_summary_webhook_failure_warns_and_returns_false() -> None:
     # The generic-webhook twin of the Discord containment: a request failure is
     # warned about and swallowed, never propagated to the finalize tail.
-    def raising_post(url: str, *, json: dict[str, object], timeout: int) -> object:
-        del url, json, timeout
-        raise requests.ConnectionError("webhook down")
-
-    monkeypatch.setattr(requests, "post", raising_post)
+    respx.post("https://hook.example").mock(side_effect=httpx.ConnectError("webhook down"))
     logger = make_logger()
-    notifier = Notifier(discord_url=None, webhook_url="https://hook.example", logger=logger)
+    notifier = Notifier(discord_url=None, webhook_url="https://hook.example", web=httpx.Client(), logger=logger)
 
     with _capture(logger) as handler:
         posted = notifier.push_wait_summary(arr=Arr.SONARR, result=_result())  # must not raise
@@ -157,12 +161,12 @@ def test_push_wait_summary_webhook_failure_warns_and_returns_false(monkeypatch: 
     [warning] = [r.getMessage() for r in handler.records if r.levelno == logging.WARNING]
     # The exception is never interpolated: its str embeds the webhook URL,
     # which IS the credential. The config key points the user at the fix.
-    assert warning == "Wait-report webhook POST failed (ConnectionError) - check notifications.wait_webhook_url"
+    assert warning == "Wait-report webhook POST failed (ConnectError) - check notifications.wait_webhook_url"
     assert "hook.example" not in warning
 
 
 def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> None:
-    notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client(), logger=make_logger())
 
     assert notifier.push_wait_summary(arr=Arr.RADARR, result=_result()) is True
     embed = pushes[0]
@@ -177,7 +181,7 @@ def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> N
 
 
 def test_push_wait_summary_all_imported_is_green(pushes: list[DiscordEmbed]) -> None:
-    notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client(), logger=make_logger())
     result = WaitResult((WaitOutcomeRow("Frieren", Outcome.IMPORTED),), elapsed_s=60)
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=result) is True
@@ -185,7 +189,7 @@ def test_push_wait_summary_all_imported_is_green(pushes: list[DiscordEmbed]) -> 
 
 
 def test_push_wait_summary_deferred_only_is_orange(pushes: list[DiscordEmbed]) -> None:
-    notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client(), logger=make_logger())
     result = WaitResult((WaitOutcomeRow("Frieren", Outcome.STILL_IMPORTING),), elapsed_s=60)
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=result) is True
@@ -212,7 +216,7 @@ def test_pushes_are_paced_only_within_a_burst(
 
     monkeypatch.setattr(time, "monotonic", fake_monotonic)
     monkeypatch.setattr(time, "sleep", fake_sleep)
-    notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client(), logger=make_logger())
     result = WaitResult((WaitOutcomeRow("Frieren", Outcome.IMPORTED),), elapsed_s=60)
 
     assert notifier.push_wait_summary(arr=Arr.SONARR, result=result) is True
@@ -228,7 +232,7 @@ def test_pushes_are_paced_only_within_a_burst(
 
 
 def test_push_grab_builds_linked_embed(pushes: list[DiscordEmbed]) -> None:
-    notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client(), logger=make_logger())
 
     posted = notifier.push_grab(
         arr_title="Sousou no Frieren",
@@ -263,22 +267,22 @@ def _push_grab(notifier: Notifier) -> bool:
 def test_push_grab_discord_failure_warns_and_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
     # The invariant the engine relies on: a Discord failure is contained in
     # _push (warn, False) - it must never abort the grab that triggered it.
-    def raising_discord_push(*, url: str, embed: DiscordEmbed) -> None:
-        del url, embed
-        raise requests.ConnectionError("discord down")
+    def raising_discord_push(*, url: str, embed: DiscordEmbed, client: httpx.Client) -> None:
+        del url, embed, client
+        raise httpx.ConnectError("discord down")
 
     monkeypatch.setattr(notify, "discord_push", raising_discord_push)
     logger = make_logger()
-    notifier = Notifier(discord_url="https://discord.example", logger=logger)
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client(), logger=logger)
 
     with _capture(logger) as handler:
         posted = _push_grab(notifier)  # must not raise
 
     assert posted is False
     [warning] = [r.getMessage() for r in handler.records if r.levelno == logging.WARNING]
-    # The exception type only - a requests exception's str embeds the webhook
+    # The exception type only - an httpx exception's str embeds the webhook
     # URL (the credential) - and the config key to check.
-    assert warning == "Discord notification failed (ConnectionError) - check notifications.discord_url"
+    assert warning == "Discord notification failed (ConnectError) - check notifications.discord_url"
     assert "discord.example" not in warning
 
 
@@ -287,14 +291,14 @@ def test_push_grab_4xx_disables_discord_for_the_run(monkeypatch: pytest.MonkeyPa
     # then Discord pushes are disabled - no warn-per-grab retry storm.
     posts: list[str] = []
 
-    def raising_discord_push(*, url: str, embed: DiscordEmbed) -> None:
-        del embed
+    def raising_discord_push(*, url: str, embed: DiscordEmbed, client: httpx.Client) -> None:
+        del embed, client
         posts.append(url)
         raise _http_error(404)
 
     monkeypatch.setattr(notify, "discord_push", raising_discord_push)
     logger = make_logger()
-    notifier = Notifier(discord_url="https://discord.example", logger=logger)
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client(), logger=logger)
 
     with _capture(logger) as handler:
         assert _push_grab(notifier) is False
@@ -318,7 +322,7 @@ def test_push_grab_429_retry_delivers_after_default_delay(monkeypatch: pytest.Mo
     monkeypatch.setattr(notify, "discord_push", push)
     sleeps = _record_sleeps(monkeypatch)
     logger = make_logger()
-    notifier = Notifier(discord_url="https://discord.example", logger=logger)
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client(), logger=logger)
 
     with _capture(logger) as handler:
         assert _push_grab(notifier) is True
@@ -342,7 +346,7 @@ def test_push_grab_429_honors_retry_after(
     push = _SequencedPush(_http_error(429, retry_after=header))
     monkeypatch.setattr(notify, "discord_push", push)
     sleeps = _record_sleeps(monkeypatch)
-    notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client(), logger=make_logger())
 
     assert _push_grab(notifier) is True
     assert sleeps == [expected_delay]
@@ -355,15 +359,15 @@ def test_push_grab_429_retry_exhausted_drops_and_stays_enabled(monkeypatch: pyte
     # blamed, and a later push still attempts (and drops the same way).
     posts: list[str] = []
 
-    def always_429(*, url: str, embed: DiscordEmbed) -> None:
-        del embed
+    def always_429(*, url: str, embed: DiscordEmbed, client: httpx.Client) -> None:
+        del embed, client
         posts.append(url)
         raise _http_error(429, retry_after="0.1")
 
     monkeypatch.setattr(notify, "discord_push", always_429)
     _record_sleeps(monkeypatch)  # neutralize the retry delay + the 1s pacing
     logger = make_logger()
-    notifier = Notifier(discord_url="https://discord.example", logger=logger)
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client(), logger=logger)
 
     with _capture(logger) as handler:
         assert _push_grab(notifier) is False
@@ -389,7 +393,7 @@ def test_push_grab_429_long_retry_after_skips_the_retry(monkeypatch: pytest.Monk
     monkeypatch.setattr(notify, "discord_push", push)
     sleeps = _record_sleeps(monkeypatch)
     logger = make_logger()
-    notifier = Notifier(discord_url="https://discord.example", logger=logger)
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client(), logger=logger)
 
     with _capture(logger) as handler:
         assert _push_grab(notifier) is False
@@ -405,8 +409,8 @@ def test_push_grab_429_long_retry_after_skips_the_retry(monkeypatch: pytest.Monk
 
 def test_push_grab_5xx_stays_per_push(monkeypatch: pytest.MonkeyPatch) -> None:
     # A 5xx is transient (Discord hiccup): keep trying - and warning - per push.
-    def raising_discord_push(*, url: str, embed: DiscordEmbed) -> None:
-        del url, embed
+    def raising_discord_push(*, url: str, embed: DiscordEmbed, client: httpx.Client) -> None:
+        del url, embed, client
         raise _http_error(500)
 
     def no_sleep(seconds: float) -> None:
@@ -415,7 +419,7 @@ def test_push_grab_5xx_stays_per_push(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(notify, "discord_push", raising_discord_push)
     monkeypatch.setattr(time, "sleep", no_sleep)
     logger = make_logger()
-    notifier = Notifier(discord_url="https://discord.example", logger=logger)
+    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client(), logger=logger)
 
     with _capture(logger) as handler:
         assert _push_grab(notifier) is False

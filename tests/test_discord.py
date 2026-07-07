@@ -3,21 +3,22 @@
 
 ``DiscordEmbed.to_payload`` is the single JSON-shaped seam - these pin the
 omitted-when-unset optional keys and the clamping to Discord's hard limits -
-``discord_push`` is the pure POST that ships it (wire shape + timeout, errors
-propagate: containment lives in the Notifier), and ``Notifier.build_fields``
-shapes a grab's fields (markdown tracker links, the one-line tag list, the
+``discord_push`` is the pure POST that ships it (wire shape, errors propagate:
+containment lives in the Notifier), and ``Notifier.build_fields`` shapes a
+grab's fields (markdown tracker links, the one-line tag list, the
 release-group fallback).
 """
 
+import json
 from typing import cast
 
+import httpx
 import pytest
-import requests
+import respx
 from seadex import Tag, Tracker
 
 from seadexarr.modules.config import Arr
 from seadexarr.modules.discord import (
-    DISCORD_TIMEOUT_S,
     PROJECT_URL,
     DiscordEmbed,
     EmbedField,
@@ -30,7 +31,7 @@ from .builders import make_logger, rg_group, url_item
 
 
 def _notifier() -> Notifier:
-    return Notifier(discord_url=None, webhook_url=None, logger=make_logger())
+    return Notifier(discord_url=None, webhook_url=None, web=httpx.Client(), logger=make_logger())
 
 
 def _str_at(payload: dict[str, Json], key: str) -> str:
@@ -149,37 +150,14 @@ def test_to_payload_drops_fields_over_embed_total() -> None:
     assert total <= 6000
 
 
-class _FakeResponse:
-    """A minimal response scripting ``raise_for_status`` (all discord_push reads)."""
-
-    def __init__(self, error: requests.HTTPError | None = None) -> None:
-        self._error = error
-
-    def raise_for_status(self) -> None:
-        if self._error is not None:
-            raise self._error
-
-
-def test_discord_push_posts_the_wrapped_embed(monkeypatch: pytest.MonkeyPatch) -> None:
-    posts: list[tuple[str, dict[str, list[dict[str, Json]]], tuple[int, int]]] = []
-
-    def fake_post(
-        url: str,
-        *,
-        json: dict[str, list[dict[str, Json]]],
-        timeout: tuple[int, int],
-    ) -> _FakeResponse:
-        posts.append((url, json, timeout))
-        return _FakeResponse()
-
-    monkeypatch.setattr(requests, "post", fake_post)
+@respx.mock
+def test_discord_push_posts_the_wrapped_embed() -> None:
+    route = respx.post("https://discord.example/hook").respond(json={})
     embed = DiscordEmbed(author_name="Frieren", title="Sousou no Frieren", color=1)
 
-    discord_push(url="https://discord.example/hook", embed=embed)
+    discord_push(url="https://discord.example/hook", embed=embed, client=httpx.Client())
 
-    url, body, timeout = posts[0]
-    assert url == "https://discord.example/hook"
-    assert timeout == DISCORD_TIMEOUT_S  # the hung-webhook bound is actually passed
+    body = cast("dict[str, list[dict[str, Json]]]", json.loads(route.calls.last.request.content))
     (sent,) = body["embeds"]  # the wire shape: {"embeds": [to_payload()]}
     expected = embed.to_payload()
     # The timestamp is stamped at send time; everything else matches the boundary.
@@ -189,23 +167,15 @@ def test_discord_push_posts_the_wrapped_embed(monkeypatch: pytest.MonkeyPatch) -
     assert "timestamp" in sent
 
 
-def test_discord_push_propagates_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+@respx.mock
+def test_discord_push_propagates_http_errors() -> None:
     # A pure POST: an HTTP error status surfaces to the caller - the
     # warn-and-swallow containment lives in Notifier._push, not here.
-    def fake_post(
-        url: str,
-        *,
-        json: dict[str, list[dict[str, Json]]],
-        timeout: tuple[int, int],
-    ) -> _FakeResponse:
-        del url, json, timeout
-        return _FakeResponse(error=requests.HTTPError("400 Bad Request"))
-
-    monkeypatch.setattr(requests, "post", fake_post)
+    respx.post("https://discord.example/hook").respond(status_code=400)
     embed = DiscordEmbed(author_name="a", title="t", color=1)
 
-    with pytest.raises(requests.HTTPError):
-        discord_push(url="https://discord.example/hook", embed=embed)
+    with pytest.raises(httpx.HTTPStatusError):
+        discord_push(url="https://discord.example/hook", embed=embed, client=httpx.Client())
 
 
 def test_build_fields_tracker_links_and_tags() -> None:
