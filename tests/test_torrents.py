@@ -29,6 +29,7 @@ import seadexarr.modules.torrents as torrents
 from seadexarr.modules.config import Arr
 from seadexarr.modules.mappings import MappingResolver
 from seadexarr.modules.run_services import QbitConnectionError, RunDeps
+from seadexarr.modules.seadex_types import SeadexUrlItem
 from seadexarr.modules.torrent import TorrentParseError
 from seadexarr.modules.torrents import (
     GRAB_FAILURES,
@@ -130,7 +131,9 @@ def test_add_new_torrent_with_hash_prefers_qbit_name(monkeypatch: pytest.MonkeyP
     qbit = _FakeQbit(register_on_add=(_HASH, "Qbit Reported Name"))
     service = _service(qbit, category="anime", tags=["seadex"])
 
-    outcome, name = service.add(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH, preview=False)
+    outcome, name = service.add(
+        item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
+    )
 
     assert outcome is AddOutcome.ADDED
     assert name == "Qbit Reported Name"
@@ -148,7 +151,9 @@ def test_add_already_present_dedups_by_hash(monkeypatch: pytest.MonkeyPatch) -> 
     qbit = _FakeQbit(present={_HASH: "Existing Name"})
     service = _service(qbit)
 
-    outcome, name = service.add(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH, preview=False)
+    outcome, name = service.add(
+        item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=_HASH), preview=False
+    )
 
     assert outcome is AddOutcome.ALREADY_ADDED
     assert name == "Existing Name"
@@ -164,7 +169,9 @@ def test_add_hashless_falls_back_to_source_title(monkeypatch: pytest.MonkeyPatch
     qbit = _FakeQbit()
     service = _service(qbit)
 
-    outcome, name = service.add(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None, preview=False)
+    outcome, name = service.add(
+        item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None), preview=False
+    )
 
     assert outcome is AddOutcome.ADDED
     assert name == _SOURCE_TITLE
@@ -182,7 +189,9 @@ def test_add_qbit_rejects_add_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     # The message names the release URL and qBittorrent's response (it surfaces
     # verbatim in the pipeline's containment warning).
     with pytest.raises(TorrentAddError, match=r"rejected the torrent from https://nyaa.si/view/1 .*'Fails\.'"):
-        service.add(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None, preview=False)
+        service.add(
+            item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None), preview=False
+        )
 
 
 def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -197,7 +206,10 @@ def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     service = _service(qbit)
 
     with pytest.raises(TorrentParseError, match="Could not extract a torrent download link from"):
-        service.add(url="https://animetosho.org/view/1", tracker=Tracker.ANIMETOSHO, infohash=None, preview=False)
+        service.add(
+            item=SeadexUrlItem(url="https://animetosho.org/view/1", tracker=Tracker.ANIMETOSHO, infohash=None),
+            preview=False,
+        )
 
     assert qbit.add_calls == []
 
@@ -233,11 +245,13 @@ def test_add_raises_iff_tracker_unparseable(tracker: Tracker, monkeypatch: pytes
     service = _service(_FakeQbit())
 
     if tracker in PARSEABLE_TRACKERS:
-        outcome, _ = service.add(url="https://example/1", tracker=tracker, infohash=None, preview=True)
+        outcome, _ = service.add(
+            item=SeadexUrlItem(url="https://example/1", tracker=tracker, infohash=None), preview=True
+        )
         assert outcome is AddOutcome.ADDED
     else:
         with pytest.raises(ValueError, match="Unable to parse torrent links"):
-            service.add(url="https://example/1", tracker=tracker, infohash=None, preview=True)
+            service.add(item=SeadexUrlItem(url="https://example/1", tracker=tracker, infohash=None), preview=True)
 
 
 def test_grab_failures_covers_every_expected_boundary_error() -> None:

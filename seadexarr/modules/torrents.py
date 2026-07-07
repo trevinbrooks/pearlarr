@@ -13,6 +13,7 @@ import requests
 from seadex import Tracker
 
 from .log import indent_string
+from .seadex_types import SeadexUrlItem
 from .torrent import (
     TorrentParseError,
     get_animetosho_torrent,
@@ -141,18 +142,16 @@ class TorrentService:
     def add(
         self,
         *,
-        url: str,
-        tracker: Tracker,
-        infohash: str | None,
+        item: SeadexUrlItem,
         preview: bool,
     ) -> AddResult:
         """Parse a release URL by tracker and add it to qBittorrent.
 
         Args:
-            url (str): SeaDex release-page URL.
-            tracker (Tracker): SeaDex tracker (selects the parser).
-            infohash (str | None): Info hash, used to dedup / read the name
-                back (None for a private torrent with no hash).
+            item (SeadexUrlItem): The release to grab: its ``url`` is the SeaDex
+                release-page URL, ``tracker`` selects the parser, and
+                ``infohash`` dedups / reads the name back (None for a private
+                torrent with no hash).
             preview (bool): When True, simulate the add without touching the
                 client.
 
@@ -160,18 +159,17 @@ class TorrentService:
             AddResult: The outcome plus the best display name available.
         """
 
-        parser = _PARSERS.get(tracker)
+        parser = _PARSERS.get(item.tracker)
         if parser is None:
-            raise ValueError(f"Unable to parse torrent links from {tracker}")
-        parsed_url, source_name = parser(url, infohash, self.session)
+            raise ValueError(f"Unable to parse torrent links from {item.tracker}")
+        parsed_url, source_name = parser(item.url, item.infohash, self.session)
 
         if parsed_url is None:
-            raise TorrentParseError(f"Could not extract a torrent download link from {url}")
+            raise TorrentParseError(f"Could not extract a torrent download link from {item.url}")
 
         outcome, torrent_name = self._add_to_qbit(
-            url=url,
+            item=item,
             torrent_url=parsed_url,
-            infohash=infohash,
             preview=preview,
         )
 
@@ -182,23 +180,26 @@ class TorrentService:
     def _add_to_qbit(
         self,
         *,
-        url: str,
+        item: SeadexUrlItem,
         torrent_url: str,
-        infohash: str | None,
         preview: bool,
     ) -> AddResult:
         """Add a torrent to qBittorrent (dedup by hash, read the name back).
 
         Args:
-            url (str): SeaDex URL (for the "already added" debug line).
-            torrent_url (str): Torrent / magnet link to hand the client.
-            infohash (str | None): Info hash, or None for a hashless torrent.
+            item (SeadexUrlItem): The release being grabbed: its ``url`` labels
+                the debug/error lines, its ``infohash`` dedups (None for a
+                hashless torrent).
+            torrent_url (str): The resolved/scraped torrent / magnet link to
+                hand the client (distinct from ``item.url``).
             preview (bool): When True, report the add without touching the client.
 
         Returns:
             AddResult: The outcome plus the client-reported name (None when
                 there's no hash to look it up by).
         """
+
+        infohash = item.infohash
 
         # A private torrent has no info hash, so we can't look it up by hash to
         # dedup or to read its name back; just add it and let qBittorrent dedup
@@ -209,7 +210,7 @@ class TorrentService:
 
             if infohash in torr_hashes:
                 self.logger.debug(
-                    indent_string(f"Torrent {url} already in qBittorrent"),
+                    indent_string(f"Torrent {item.url} already in qBittorrent"),
                 )
                 return AddResult(AddOutcome.ALREADY_ADDED, torr_info[0].name)
 
@@ -233,7 +234,7 @@ class TorrentService:
             tags=self.tags,
         )
         if result != "Ok.":
-            raise TorrentAddError(f"qBittorrent rejected the torrent from {url} (response: {result!r})")
+            raise TorrentAddError(f"qBittorrent rejected the torrent from {item.url} (response: {result!r})")
 
         # Look the torrent back up by hash so we can report its name. A private
         # torrent has no info hash to look up, so leave the name unset and let

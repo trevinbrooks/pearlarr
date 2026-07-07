@@ -229,12 +229,7 @@ class GrabPipeline:
         # here to ONE warning - no traceback - so the loop moves on and
         # grab_and_cache leaves the title uncached for a retry next run.
         try:
-            result = self._torrents.add(
-                url=url,
-                tracker=tracker,
-                infohash=url_item.infohash,
-                preview=self._is_preview(),
-            )
+            result = self._torrents.add(item=url_item, preview=self._is_preview())
         except GRAB_FAILURES as e:
             self.log_fmt.detail(
                 "failed",

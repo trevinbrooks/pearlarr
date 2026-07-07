@@ -696,12 +696,11 @@ class FakeTorrents:
     def add(
         self,
         *,
-        url: str,
-        tracker: Tracker,
-        infohash: str | None,
+        item: SeadexUrlItem,
         preview: bool,
     ) -> AddResult:
-        del url, tracker, preview
+        del preview
+        infohash = item.infohash
         self.calls.append(infohash)
         if infohash in self._raises:
             raise self._raises[infohash]
