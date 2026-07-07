@@ -213,7 +213,10 @@ class SeadexReleaseFilter:
         console = console_of(self.logger) or Console(file=sys.stdout)
 
         def say(row: str) -> None:
-            console.print(row, highlight=False, soft_wrap=True)
+            # markup=False: the rows carry third-party text (SeaDex notes, group
+            # names) - a stray "[" would otherwise raise MarkupError and abort
+            # the whole arr run. Nothing here styles via markup anyway.
+            console.print(row, highlight=False, soft_wrap=True, markup=False)
 
         say("Multiple releases found - pick which to grab")
         say(indent_string("SeaDex notes:"))

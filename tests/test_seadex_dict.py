@@ -497,6 +497,27 @@ class TestInteractivePick:
         assert "invalid selection" in warnings[0]
         assert "No valid selection" in warnings[1]
 
+    def test_seadex_notes_with_markup_like_text_do_not_crash(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # SeaDex notes are third-party text: a bracketed fragment that parses as
+        # broken Rich markup (a closing tag that was never opened) used to raise
+        # MarkupError through console.print and abort the whole arr run. The rows
+        # must print literally instead.
+        filt = make_release_filter()
+        seadex_dict = {"GroupA": rg_group({}), "GroupB": rg_group({})}
+        sd_entry = make_entry_record(notes="[/Kaleido] mux is preferred [b")
+
+        def fake_input(prompt: str = "") -> str:
+            del prompt
+            return ""  # blank = keep all
+
+        monkeypatch.setattr("builtins.input", fake_input)
+        result = filt.interactive_pick(seadex_dict, sd_entry)
+
+        assert set(result) == {"GroupA", "GroupB"}
+        assert "[/Kaleido] mux is preferred [b" in capsys.readouterr().out
+
     def test_all_invalid_selection_skips_the_title_without_caching(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:

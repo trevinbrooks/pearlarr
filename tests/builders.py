@@ -468,6 +468,7 @@ def make_entry_record(
     updated_at: datetime | None = None,
     torrents: tuple[TorrentRecord, ...] = (),
     size: int = 0,
+    notes: str = "",
 ) -> EntryRecord:
     """A real ``seadex.EntryRecord`` with the 13 required fields defaulted.
 
@@ -486,7 +487,7 @@ def make_entry_record(
         created_at=stamp,
         id="entry1",
         is_incomplete=is_incomplete,
-        notes="",
+        notes=notes,
         theoretical_best=None,
         torrents=torrents,
         updated_at=stamp,
