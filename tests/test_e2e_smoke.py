@@ -66,7 +66,11 @@ _ANILIST_BODY: dict[str, object] = {
 }
 
 
-def test_sonarr_run_drives_real_composition_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sonarr_run_drives_real_composition_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     # The SeaDex entry the resolved id maps to: one grabbable Nyaa release whose
     # single file the Sonarr matching will parse (driving the real /parse adapter).
     entry = make_entry_record(
@@ -148,6 +152,10 @@ def test_sonarr_run_drives_real_composition_root(tmp_path: Path, monkeypatch: py
     assert isinstance(counter, LogCounter)
     assert counter.counts.get(logging.ERROR, 0) == 0
     assert counter.counts.get(logging.CRITICAL, 0) == 0
+    # The reporter is actually wired into the run (test_reporter covers rendering in
+    # isolation; only here does it run through run_single). Reading capsys also keeps
+    # the cockpit off the terminal under `-s`.
+    assert "run complete" in capsys.readouterr().out
 
 
 # Three-way id agreement for the Radarr pass: the inline movie body's tmdbId
@@ -191,7 +199,11 @@ _MOVIE_BODY: dict[str, object] = {
 }
 
 
-def test_radarr_run_drives_real_composition_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_radarr_run_drives_real_composition_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     # The SeaDex entry the resolved id maps to: one grabbable Nyaa release (a
     # movie is a single file; no episode parsing runs on the Radarr path).
     entry = make_entry_record(
@@ -272,3 +284,7 @@ def test_radarr_run_drives_real_composition_root(tmp_path: Path, monkeypatch: py
     assert isinstance(counter, LogCounter)
     assert counter.counts.get(logging.ERROR, 0) == 0
     assert counter.counts.get(logging.CRITICAL, 0) == 0
+    # The reporter is actually wired into the run (test_reporter covers rendering in
+    # isolation; only here does it run through run_single). Reading capsys also keeps
+    # the cockpit off the terminal under `-s`.
+    assert "run complete" in capsys.readouterr().out

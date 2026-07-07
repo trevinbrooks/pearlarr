@@ -431,7 +431,9 @@ class TestPrivateFallback:
 
 
 class TestInteractivePick:
-    def test_comma_separated_multi_pick_keeps_each_selection(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_comma_separated_multi_pick_keeps_each_selection(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         # MUTATION PIN: the comma-separated selection path was never exercised -
         # a mutated split/parse collapses "0, 2" to nothing. Both picked groups
         # (with the space-padded token) must survive, the unpicked one dropped.
@@ -445,6 +447,10 @@ class TestInteractivePick:
         monkeypatch.setattr("builtins.input", fake_input)
         result = filt.interactive_pick(seadex_dict, make_entry_record())
         assert list(result) == ["GroupA", "GroupC"]
+        # The picker prints its rows straight to the terminal (that contract is pinned
+        # by test_tolerates_non_numeric_input); here we only drain them so the prompt
+        # stays off the terminal under `-s`.
+        capsys.readouterr()
 
     def test_tolerates_non_numeric_input(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

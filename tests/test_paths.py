@@ -86,7 +86,9 @@ class TestPathsCommand:
 
 
 class TestLogRouting:
-    def test_logs_route_to_log_dir_not_cwd(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_logs_route_to_log_dir_not_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         # Run from an empty cwd so a stray "logs/" there would be unambiguous.
         monkeypatch.chdir(tmp_path)
         log_dir = str(tmp_path / "data" / "logs")
@@ -97,8 +99,11 @@ class TestLogRouting:
 
         assert os.path.isfile(os.path.join(log_dir, "SeaDexArr.log"))
         assert not os.path.exists(tmp_path / "logs")
+        # This test is about file routing; setup_logger also attaches a real console
+        # handler, so drain it to keep the line off the terminal under `-s`.
+        capsys.readouterr()
 
-    def test_error_level_is_honored(self, tmp_path: Path) -> None:
+    def test_error_level_is_honored(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         # ERROR is a first-class level now (it used to warn-and-default to INFO).
         log_dir = str(tmp_path / "logs")
 
@@ -111,8 +116,13 @@ class TestLogRouting:
         content = Path(log_dir, "SeaDexArr.log").read_text(encoding="utf-8")
         assert "Invalid log level" not in content
         assert "kept" in content
+        # This test is about the log file; drain setup_logger's console handler so its
+        # line stays off the terminal under `-s`.
+        capsys.readouterr()
 
-    def test_invalid_log_level_complaint_reaches_the_file_log(self, tmp_path: Path) -> None:
+    def test_invalid_log_level_complaint_reaches_the_file_log(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         # The complaint used to fire before the handlers were attached, so it only
         # reached logging.lastResort (stderr) - never the file log it warns about.
         log_dir = str(tmp_path / "logs")
@@ -124,3 +134,6 @@ class TestLogRouting:
             handler.flush()
         content = Path(log_dir, "SeaDexArr.log").read_text(encoding="utf-8")
         assert "Invalid log level 'BOGUS'" in content
+        # This test is about the log file; drain setup_logger's console handler so the
+        # complaint stays off the terminal under `-s`.
+        capsys.readouterr()
