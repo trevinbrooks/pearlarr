@@ -190,6 +190,11 @@ class RadarrSync(ArrSync[RadarrItem]):
                 seadex_dict=seadex_dict,
                 sd_entry=sd_entry,
             )
+            # Every token was invalid: skip WITHOUT caching (grab_and_cache would
+            # cache the title as done and suppress it forever) so it re-prompts
+            # next run.
+            if len(seadex_dict) == 0:
+                return run.invalid_selection_skip()
 
         torrent_hashes, seadex_dict = run.filter_seadex_downloads(
             al_id=al_id,

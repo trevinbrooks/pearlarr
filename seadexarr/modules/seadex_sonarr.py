@@ -421,6 +421,11 @@ class SonarrSync(ArrSync[SonarrItem]):
                 seadex_dict=seadex_dict,
                 sd_entry=sd_entry,
             )
+            # Every token was invalid: skip WITHOUT caching (grab_and_cache would
+            # cache the title as done and suppress it forever) so it re-prompts
+            # next run.
+            if len(seadex_dict) == 0:
+                return run.invalid_selection_skip()
 
         # Filter downloads by whether the episodes in each torrent match the release
         # group we have in Sonarr

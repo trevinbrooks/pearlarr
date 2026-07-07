@@ -13,9 +13,22 @@ import pytest
 from seadex import EntryRecord, Tag, TorrentRecord, Tracker
 
 from seadexarr.modules import seadex_filter
+from seadexarr.modules.config import Arr
+from seadexarr.modules.mappings import MappingEntry
+from seadexarr.modules.run_services import RunServices
+from seadexarr.modules.seadex_radarr import RadarrSync
 
-from .builders import make_entry_record, make_release_filter, make_torrent_record, rg_group
-from .fakes import CaptureHandler
+from .builders import (
+    FakeCacheStore,
+    FakeSeaDexSource,
+    make_config,
+    make_entry_record,
+    make_release_filter,
+    make_run_deps,
+    make_torrent_record,
+    rg_group,
+)
+from .fakes import CaptureHandler, FakeRadarrClient
 
 
 def _torrent(
@@ -483,3 +496,46 @@ class TestInteractivePick:
         assert len(warnings) == 2
         assert "invalid selection" in warnings[0]
         assert "No valid selection" in warnings[1]
+
+    def test_all_invalid_selection_skips_the_title_without_caching(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # An interactive pick where EVERY token is invalid returns {} - the
+        # strategy must then skip the title WITHOUT caching it. Caching would
+        # stamp the entry's updated_at, so the fumbled title would be treated as
+        # done and silently suppressed until SeaDex next updates the entry.
+        class _MovieItem:
+            def __init__(self) -> None:
+                self.id = 1
+                self.title = "Movie"
+                self.imdbId: str | None = None
+                self.monitored = True
+                self.tmdbId = 550
+
+        al_id = 99
+        entry = make_entry_record(
+            anilist_id=al_id,
+            torrents=(
+                make_torrent_record(release_group="A", tracker=Tracker.NYAA, url="a", infohash="a" * 40),
+                make_torrent_record(release_group="B", tracker=Tracker.NYAA, url="b", infohash="b" * 40),
+            ),
+        )
+        cache = FakeCacheStore()
+        config = make_config(url="http://sonarr", api_key="key", interactive=True, sleep_time=0)
+        deps = make_run_deps(config=config, cache_store=cache, seadex=FakeSeaDexSource({al_id: entry}))
+        services = RunServices(deps, Arr.RADARR)
+        strat = RadarrSync(deps, services, radarr_client=FakeRadarrClient())
+        # Serve the title from the gateway's in-memory cache so no AniList query runs.
+        deps.anilist.al_cache[al_id] = {"data": {"Media": {"title": {"english": "Movie", "romaji": None}}}}
+
+        def fake_input(prompt: str = "") -> str:
+            del prompt
+            return "42"  # out of range -> every token invalid -> empty pick
+
+        monkeypatch.setattr("builtins.input", fake_input)
+        result = strat.process_al_id(_MovieItem(), "Movie", al_id, MappingEntry(anilist_id=al_id))
+        capsys.readouterr()  # drain the picker's terminal rows
+
+        assert result is False
+        # Nothing persisted: the title must resurface (and re-prompt) next run.
+        assert cache.get_entry(Arr.RADARR, al_id) is None

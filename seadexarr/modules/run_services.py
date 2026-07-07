@@ -574,6 +574,21 @@ class RunServices:
         time.sleep(self._config.advanced.sleep_time)
         return False
 
+    def invalid_selection_skip(self) -> bool:
+        """Shared tail for an interactive pick that left zero valid selections.
+
+        Unlike :meth:`no_releases_skip` this deliberately persists NOTHING: caching
+        the title as done would suppress it forever, when the user only fumbled the
+        input - it must re-prompt on the next run. The picker already warned about
+        the empty selection; this just throttles and reports "not grabbed".
+
+        Returns:
+            bool: Always ``False`` (nothing was grabbed).
+        """
+
+        time.sleep(self._config.advanced.sleep_time)
+        return False
+
     def al_id_prologue(self, al_id: int) -> EntryRecord | None:
         """Shared per-AniList-id head: reset skip flags, tally, fetch SeaDex entry
 

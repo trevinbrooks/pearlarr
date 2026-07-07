@@ -160,6 +160,7 @@ class _FakeRunServices(RunServices):
         self.filter_downloads_calls: list[tuple[int, SeadexDict, ArrReleaseDict]] = []
         self.grab_requests: list[GrabRequest] = []
         self.no_releases_calls: list[tuple[int, CacheRecord]] = []
+        self.invalid_selection_skips = 0
 
     @override
     def check_al_id_in_cache(self, arr: Arr, al_id: int, seadex_entry: EntryRecord) -> bool:
@@ -244,6 +245,11 @@ class _FakeRunServices(RunServices):
     def no_releases_skip(self, al_id: int, cache_details: CacheRecord) -> bool:
         self.no_releases_calls.append((al_id, cache_details))
         return self._no_releases_result
+
+    @override
+    def invalid_selection_skip(self) -> bool:
+        self.invalid_selection_skips += 1
+        return False
 
     @override
     def grab_and_cache(self, req: GrabRequest) -> bool:
