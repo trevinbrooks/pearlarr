@@ -1,16 +1,13 @@
 import copy
-import logging
 import sys
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from rich.console import Console
 from seadex import EntryRecord, TorrentRecord
 
-from .cache import AbstractCacheStore
-from .config import PRIVATE_TRACKERS, AppConfig, PrivateReleaseAction
+from .config import PRIVATE_TRACKERS, PrivateReleaseAction
 from .console_caps import console_of
-from .log import LogFormatter, indent_string
-from .planner import DownloadPlanner
+from .log import indent_string
 from .reporter import RunContext
 from .seadex_types import (
     ArrReleaseDict,
@@ -19,6 +16,10 @@ from .seadex_types import (
     SeadexUrlItem,
     SonarrEpisode,
 )
+
+if TYPE_CHECKING:
+    # Annotation-only: run_services imports this module at runtime (cycle).
+    from .run_services import RunDeps
 
 
 class FilterResult(NamedTuple):
@@ -59,18 +60,14 @@ class SeadexReleaseFilter:
     def __init__(
         self,
         *,
-        config: AppConfig,
-        planner: DownloadPlanner,
-        cache_store: AbstractCacheStore,
-        logger: logging.Logger,
-        log_fmt: LogFormatter,
+        deps: "RunDeps",
         ctx: RunContext,
     ) -> None:
-        self._config = config
-        self._planner = planner
-        self.cache_store = cache_store
-        self.logger = logger
-        self.log_fmt = log_fmt
+        self._config = deps.config
+        self._planner = deps.planner
+        self.cache_store = deps.cache_store
+        self.logger = deps.logger
+        self.log_fmt = deps.log_fmt
         # Seeded with the services hub's placeholder ctx; rebound each run via
         # begin_run (the same object the hub holds, so a write here is seen by the
         # grab tail).

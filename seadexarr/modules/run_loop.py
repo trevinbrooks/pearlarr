@@ -70,14 +70,10 @@ class RunLoop:
         # safe no-op - so the object is usable before run_sync.
         self._ctx = services.ctx
 
-        # Loop-side per-run collaborator, built from the unpacked deps + the
-        # adopted placeholder ctx. begin_run rebinds its ctx at the top of each run.
+        # Loop-side per-run collaborator, built from the deps hub + the adopted
+        # placeholder ctx. begin_run rebinds its ctx at the top of each run.
         self._wait_manager = ImportWaitManager(
-            config=self._config,
-            cache_store=self.cache_store,
-            reporter=self._reporter,
-            logger=self.logger,
-            qbit=self.qbit,
+            deps=deps,
             ctx=self._ctx,
             strategy=self._active_strategy,
         )

@@ -12,6 +12,7 @@ here, and ``make_services`` builds a ``RunServices`` without running its heavy
 the attributes the methods under test actually read.
 """
 
+import dataclasses
 import logging
 from collections.abc import Iterable, Iterator
 from copy import deepcopy
@@ -647,26 +648,25 @@ def make_run_deps(
 
 
 def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
-    """Build a ``SeadexReleaseFilter`` with only what its methods read.
+    """Build a ``SeadexReleaseFilter`` over an assembled ``RunDeps``.
 
     Config-backed flags (e.g. ``want_best``, ``private_releases``) route through
-    an in-memory ``AppConfig``; the rest pass straight to the constructor. Mirrors
+    an in-memory ``AppConfig``; ``cache_store``/``planner`` override the deps
+    fields the real ctor unpacks and ``ctx`` the run context. Mirrors
     ``make_services``'s override routing so the ``build`` characterization tests
     read the same as the old ``get_seadex_dict`` ones.
     """
 
-    logger = make_logger()
     config = _split_config(overrides)
-    defaults: dict[str, Any] = {
-        "config": config,
-        "planner": make_planner(),
-        "cache_store": FakeCacheStore(),
-        "logger": logger,
-        "log_fmt": LogFormatter(logger),
-        "ctx": RunContext(arr=Arr.SONARR),
-    }
-    defaults.update(overrides)
-    return SeadexReleaseFilter(**defaults)
+    ctx = overrides.pop("ctx", None) or RunContext(arr=Arr.SONARR)
+    deps = make_run_deps(config=config, cache_store=overrides.pop("cache_store", None))
+    if "planner" in overrides:
+        deps = dataclasses.replace(deps, planner=overrides.pop("planner"))
+    if overrides:
+        # Preserve the old **kwargs ctor's fail-loud contract for unknown keys.
+        msg = f"unknown make_release_filter overrides: {sorted(overrides)}"
+        raise TypeError(msg)
+    return SeadexReleaseFilter(deps=deps, ctx=ctx)
 
 
 # A truthy stand-in for a logged-in qBittorrent client, so is_preview() is

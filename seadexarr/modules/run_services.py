@@ -313,28 +313,10 @@ class RunServices:
         # run loop's activity scan); they bypass the cached-entry skip once.
         self._dirty_al_ids: set[int] = set()
 
-        # The shared per-id collaborators, built from the unpacked deps + the
+        # The shared per-id collaborators, built from the deps hub + the
         # placeholder ctx. begin_run rebinds their ctx at the top of each run.
-        self._filter = SeadexReleaseFilter(
-            config=self._config,
-            planner=self._planner,
-            cache_store=self.cache_store,
-            logger=self.logger,
-            log_fmt=self.log_fmt,
-            ctx=self._ctx,
-        )
-        self._grab_pipeline = GrabPipeline(
-            config=self._config,
-            planner=self._planner,
-            cache_store=self.cache_store,
-            torrents=self._torrents,
-            anilist=self._anilist,
-            notifier=self._notifier,
-            reporter=self._reporter,
-            log_fmt=self.log_fmt,
-            qbit=self.qbit,
-            ctx=self._ctx,
-        )
+        self._filter = SeadexReleaseFilter(deps=deps, ctx=self._ctx)
+        self._grab_pipeline = GrabPipeline(deps=deps, ctx=self._ctx)
 
     @property
     def ctx(self) -> RunContext:

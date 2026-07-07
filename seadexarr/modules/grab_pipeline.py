@@ -15,27 +15,25 @@ run loop holds), so the grab bookkeeping the run summary reads stays in sync.
 import logging
 import time
 from dataclasses import dataclass
-
-import qbittorrentapi
+from typing import TYPE_CHECKING
 
 from . import coverage as _coverage
-from .anilist_gateway import AniListGateway
-from .cache import AbstractCacheStore, CacheRecord
-from .config import AppConfig, PrivateReleaseAction
-from .log import LogFormatter
+from .cache import CacheRecord
+from .config import PrivateReleaseAction
 from .manual_import import ImportWaitMode, PendingImport
-from .notify import Notifier
-from .planner import DownloadPlanner
 from .reporter import (
     GrabRecord,
     NeedsActionKind,
     NeedsActionRecord,
     RunContext,
-    RunReporter,
     is_preview,
 )
 from .seadex_types import SeadexDict, SeadexUrlItem
-from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddOutcome, ReleaseOutcome, TorrentService
+from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddOutcome, ReleaseOutcome
+
+if TYPE_CHECKING:
+    # Annotation-only: run_services imports this module at runtime (cycle).
+    from .run_services import RunDeps
 
 
 @dataclass(frozen=True)
@@ -62,34 +60,27 @@ class GrabPipeline:
     """Adds the recommended release(s), registers pending records, writes the cache.
 
     Constructed once per run in :class:`~.run_services.RunServices` from the
-    unpacked deps + the placeholder ctx; :meth:`begin_run` rebinds the ctx each
-    run. The hub's ``grab_and_cache`` delegates here; ``_grab`` returns a pure
-    bool (cap-reached) so the run loop owns the single finalize site.
+    deps hub + the placeholder ctx (unpacked to private attrs here);
+    :meth:`begin_run` rebinds the ctx each run. The hub's ``grab_and_cache``
+    delegates here; ``_grab`` returns a pure bool (cap-reached) so the run loop
+    owns the single finalize site.
     """
 
     def __init__(
         self,
         *,
-        config: AppConfig,
-        planner: DownloadPlanner,
-        cache_store: AbstractCacheStore,
-        torrents: TorrentService,
-        anilist: AniListGateway,
-        notifier: Notifier,
-        reporter: RunReporter,
-        log_fmt: LogFormatter,
-        qbit: qbittorrentapi.Client | None,
+        deps: "RunDeps",
         ctx: RunContext,
     ) -> None:
-        self._config = config
-        self._planner = planner
-        self.cache_store = cache_store
-        self._torrents = torrents
-        self._anilist = anilist
-        self._notifier = notifier
-        self._reporter = reporter
-        self.log_fmt = log_fmt
-        self.qbit = qbit
+        self._config = deps.config
+        self._planner = deps.planner
+        self.cache_store = deps.cache_store
+        self._torrents = deps.torrents
+        self._anilist = deps.anilist
+        self._notifier = deps.notifier
+        self._reporter = deps.reporter
+        self.log_fmt = deps.log_fmt
+        self.qbit = deps.qbit
         # Seeded with the engine's placeholder ctx; rebound each run via begin_run
         # (the same object the engine holds, so the grab bookkeeping stays in sync).
         self._ctx = ctx

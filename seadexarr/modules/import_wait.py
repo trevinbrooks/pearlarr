@@ -14,7 +14,6 @@ only thing the engine drives off the strategy, so the manager holds it under the
 narrow :class:`~.protocols.ImportCompleter` protocol.
 """
 
-import logging
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -22,8 +21,7 @@ from datetime import datetime, timedelta
 
 import qbittorrentapi
 
-from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore
-from .config import AppConfig
+from .cache import UPDATED_AT_STR_FORMAT
 from .log import count_noun
 from .manual_import import (
     ImportProbe,
@@ -40,7 +38,8 @@ from .manual_import import (
     sanitize_torrent_telemetry,
 )
 from .protocols import ImportCompleter
-from .reporter import RunContext, RunReporter
+from .reporter import RunContext
+from .run_services import RunDeps
 from .wait_view import (
     SPARK_SAMPLES,
     Phase,
@@ -85,19 +84,15 @@ class ImportWaitManager:
     def __init__(
         self,
         *,
-        config: AppConfig,
-        cache_store: AbstractCacheStore,
-        reporter: RunReporter,
-        logger: logging.Logger,
-        qbit: qbittorrentapi.Client | None,
+        deps: RunDeps,
         ctx: RunContext,
         strategy: ImportCompleter | None = None,
     ) -> None:
-        self._config = config
-        self.cache_store = cache_store
-        self._reporter = reporter
-        self.logger = logger
-        self.qbit = qbit
+        self._config = deps.config
+        self.cache_store = deps.cache_store
+        self._reporter = deps.reporter
+        self.logger = deps.logger
+        self.qbit = deps.qbit
         # Seeded with the engine's placeholder ctx + the (initially None) strategy;
         # both rebound each run via begin_run (the same objects the engine holds, so
         # the reconcile/monitor see this run's grabs + drive this run's strategy).
