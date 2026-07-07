@@ -207,6 +207,24 @@ def test_get_animetosho_torrent_non_json_feed_is_a_parse_error() -> None:
             get_animetosho_torrent(page_url, session=requests.Session())
 
 
+def test_get_animetosho_torrent_non_list_json_is_a_parse_error() -> None:
+    """A JSON error OBJECT from the feed (rate limit / API error) surfaces as a
+    ``TorrentParseError``, not an AttributeError from iterating its keys."""
+
+    page_url = "https://animetosho.org/view/cool-anime-01.123456"
+
+    with responses.RequestsMock() as rsps:
+        rsps.add(
+            responses.GET,
+            page_url,
+            body=_torrent_fixture("animetosho_page.html"),
+            content_type="text/html",
+        )
+        rsps.add(responses.GET, ANIMETOSHO_FEED_URL, json={"error": "rate limited"})
+        with pytest.raises(TorrentParseError, match="not a list"):
+            get_animetosho_torrent(page_url, session=requests.Session())
+
+
 # --- RuTracker (scrape the maintitle, build the magnet locally) --------------
 
 

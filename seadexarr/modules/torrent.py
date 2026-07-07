@@ -1,3 +1,4 @@
+from typing import Any, cast
 from urllib.parse import urlencode, urljoin
 
 import httpx
@@ -92,11 +93,20 @@ def get_animetosho_torrent(
         # An HTML error body (e.g. an interstitial) isn't JSON: a parse miss.
         raise TorrentParseError(f"AnimeTosho feed returned a non-JSON response from {query_url}") from e
 
-    # Find the feed entry whose link matches the page URL
-    parsed_url = None
-    for i in j:
-        if i.get("link", None) == url:
-            parsed_url = i.get("torrent_url", None)
+    # A JSON error object (rate limit / interstitial) instead of the expected
+    # feed array would otherwise iterate as its string keys and crash on .get.
+    if not isinstance(j, list):
+        raise TorrentParseError(f"AnimeTosho feed returned unexpected JSON (not a list) from {query_url}")
+
+    # Find the feed entry whose link matches the page URL. response.json() is
+    # untyped, so cast each entry at the parse boundary (skipping non-objects).
+    parsed_url: str | None = None
+    for entry in cast("list[Any]", j):
+        if not isinstance(entry, dict):
+            continue
+        item = cast("dict[str, Any]", entry)
+        if item.get("link") == url:
+            parsed_url = cast("str | None", item.get("torrent_url"))
             break
 
     return parsed_url, title
