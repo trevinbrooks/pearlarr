@@ -120,6 +120,13 @@ def open_or_quarantine(
         conn = connect_fn(":memory:")
         ensure(conn)
         return conn, True
+    except BaseException:
+        # A non-sqlite failure from ensure (e.g. a schema-version refusal) still
+        # owns an open handle - close it on the way out so it can't leak.
+        if conn is not None:
+            with contextlib.suppress(sqlite3.Error):
+                conn.close()
+        raise
     return conn, False
 
 

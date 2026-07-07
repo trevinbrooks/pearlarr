@@ -43,7 +43,7 @@ import logging
 import os
 import sqlite3
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, NamedTuple, TypedDict, cast, override
@@ -62,15 +62,13 @@ from .. import __version__
 UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # One statement per block; ``IF NOT EXISTS`` so it's a no-op on an existing db.
-# NOTE: there is NO schema-migration mechanism here - ``CREATE TABLE IF NOT EXISTS``
-# creates a missing table but silently does NOT alter an existing one. So changing a
-# column on a shipped table (e.g. relaxing a NOT NULL) won't reach an upgraded
-# cache.db and will diverge or crash; until real migrations land (pre-public), schema
-# changes are applied manually against live dbs (a one-off ``ALTER TABLE``), or - as
-# ``torrent_hashes`` does for its None marker - via a storage trick that leaves the
-# column type unchanged. anilist_meta / sonarr_parse store the record as a JSONB blob
-# and expose the fetch timestamp as a VIRTUAL generated column indexed for the TTL
-# sweep - the spike confirmed the index is used by ``DELETE ... WHERE fetched_at < ?``.
+# NOTE: ``CREATE TABLE IF NOT EXISTS`` creates a missing table but silently does NOT
+# alter an existing one. Changing a shipped table's shape therefore requires bumping
+# ``SCHEMA_VERSION`` and appending a step to ``_MIGRATIONS`` (see ``_ensure_schema``)
+# so an upgraded cache.db is brought current instead of diverging or crashing.
+# anilist_meta / sonarr_parse store the record as a JSONB blob and expose the fetch
+# timestamp as a VIRTUAL generated column indexed for the TTL sweep - the spike
+# confirmed the index is used by ``DELETE ... WHERE fetched_at < ?``.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
@@ -130,6 +128,82 @@ CREATE TABLE IF NOT EXISTS history_checkpoints (
     last_id    INTEGER NOT NULL
 );
 """
+
+# Current cache.db schema version, stored in ``PRAGMA user_version``. A fresh db is
+# stamped at this version on create (the :memory: db carries the stamp through the
+# promote backup); an older db is walked up through ``_MIGRATIONS`` one step at a
+# time. Bump it (and append a step) whenever a shipped table changes shape.
+SCHEMA_VERSION = 1
+
+
+class CacheSchemaError(RuntimeError):
+    """The cache db was written by a newer seadexarr; refuse to open it.
+
+    Deliberately NOT a ``sqlite3.DatabaseError``: the file is healthy, so the
+    quarantine path must never eat this - the run fails closed with a clear
+    message instead of destroying (or mangling) a newer schema.
+    """
+
+
+def _migrate_0_to_1(conn: sqlite3.Connection) -> None:
+    """v0 = any pre-versioning db; add the columns that shipped after the first cut.
+
+    Guarded per column because v0 is a vintage *range*, not one shape - a db may
+    already carry the manually applied ALTER that predates this gate.
+    """
+
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(entries)")}
+    if "fallback_satisfied" not in cols:
+        conn.execute("ALTER TABLE entries ADD COLUMN fallback_satisfied INTEGER NOT NULL DEFAULT 0")
+
+
+# Step ``n`` brings a version-n db to version n+1; ``_ensure_schema`` applies the
+# steps in order, one transaction per step, until SCHEMA_VERSION is reached.
+_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    0: _migrate_0_to_1,
+}
+
+
+def _ensure_schema(conn: sqlite3.Connection, path: str, logger: logging.Logger | None) -> None:
+    """Ensure the schema and bring an older db up to :data:`SCHEMA_VERSION`.
+
+    A brand-new db (no tables yet - the :memory: stand-in or the quarantine
+    fallback) gets the current schema and is stamped directly; migration steps are
+    only for dbs that lived through an older release. A db stamped *newer* than
+    this build is refused outright (fail closed - see :class:`CacheSchemaError`).
+    Runs at load time, before any staged write, so the migration commits never
+    interact with the preview gate.
+    """
+
+    version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if version > SCHEMA_VERSION:
+        raise CacheSchemaError(
+            f"Cache database at {path} uses schema v{version}, newer than this seadexarr understands "
+            f"(v{SCHEMA_VERSION}) - it was written by a newer release. Upgrade seadexarr, or move the "
+            "file away to start a fresh cache.",
+        )
+    fresh = conn.execute("SELECT count(*) FROM sqlite_master WHERE type = 'table'").fetchone()[0] == 0
+    # Creates any missing tables/indexes; never alters an existing table (that's
+    # what the steps below are for). Implicitly commits first - a no-op here, since
+    # nothing is staged this early in load.
+    conn.executescript(_SCHEMA)
+    if fresh:
+        conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        return
+    for step in range(version, SCHEMA_VERSION):
+        # One explicit transaction per step: SQLite DDL is transactional, so a
+        # failed step rolls back whole - including the stamp - and the db stays
+        # cleanly at its old version, never half-migrated.
+        conn.execute("BEGIN")
+        try:
+            _MIGRATIONS[step](conn)
+            conn.execute(f"PRAGMA user_version={step + 1}")
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        if logger is not None:
+            logger.info(f"Upgraded cache database schema v{step} -> v{step + 1}")
 
 
 def record_is_fresh(
@@ -422,7 +496,7 @@ class CacheStore(AbstractCacheStore):
         conn, fell_back = open_or_quarantine(
             path if exists else ":memory:",
             connect_fn=_connect,
-            ensure=lambda c: c.executescript(_SCHEMA),
+            ensure=lambda c: _ensure_schema(c, path, logger),
             logger=logger,
             what="Cache database",
             recovery="started a fresh cache (entries will be re-checked this run).",

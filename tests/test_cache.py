@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 import seadexarr
-from seadexarr.modules.cache import CacheStore, HistoryCheckpoint
+from seadexarr.modules.cache import SCHEMA_VERSION, CacheSchemaError, CacheStore, HistoryCheckpoint
 from seadexarr.modules.config import Arr
 from seadexarr.modules.sqlite_util import is_corruption
 
@@ -75,6 +75,90 @@ class TestSchemaAndDescriptor:
             raw.close()
         assert rows.get("seadexarr_version") == seadexarr.__version__
         assert rows.get("config_checksum") == CHECKSUM
+
+
+# The original (pre-versioning) shape of the per-entry tables: ``entries`` without
+# ``fallback_satisfied``, stamped ``user_version`` 0 by default. Pins the v0 -> v1
+# upgrade path (the shape a first-release cache.db still has on disk).
+_V0_SCHEMA = """
+CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE entries (
+    arr TEXT NOT NULL, al_id INTEGER NOT NULL,
+    name TEXT, url TEXT, coverage TEXT, updated_at TEXT,
+    PRIMARY KEY (arr, al_id));
+CREATE TABLE torrent_hashes (
+    arr TEXT NOT NULL, al_id INTEGER NOT NULL, infohash TEXT NOT NULL,
+    PRIMARY KEY (arr, al_id, infohash),
+    FOREIGN KEY (arr, al_id) REFERENCES entries (arr, al_id) ON DELETE CASCADE);
+"""
+
+
+def _user_version(db: Path) -> int:
+    raw = sqlite3.connect(str(db))
+    try:
+        return int(raw.execute("PRAGMA user_version").fetchone()[0])
+    finally:
+        raw.close()
+
+
+class TestSchemaVersionGate:
+    def test_fresh_db_is_stamped_through_promote(self, tmp_path: Path) -> None:
+        # The :memory: stand-in is stamped on create; the backup-API promote must
+        # carry that stamp into the file it writes, or every fresh install would
+        # look like a v0 db on its second run.
+        store = _open(tmp_path)
+        store.save(preview=False)
+        store.close()
+        assert _user_version(tmp_path / "cache.db") == SCHEMA_VERSION
+
+    def test_v0_db_is_upgraded_in_place(self, tmp_path: Path) -> None:
+        # The scenario the gate exists for: a db from before ``fallback_satisfied``
+        # shipped must be ALTERed current instead of crashing get_entry every run.
+        db = tmp_path / "cache.db"
+        raw = sqlite3.connect(str(db))
+        raw.executescript(_V0_SCHEMA)
+        raw.execute("INSERT INTO entries (arr, al_id, name) VALUES ('sonarr', 7, 'Frieren')")
+        raw.commit()
+        raw.close()
+
+        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        entry = store.get_entry(Arr.SONARR, 7)
+        assert entry is not None
+        assert entry.name == "Frieren"
+        assert entry.fallback_satisfied is False  # backfilled column default
+        store.close()
+        # The upgrade committed at load time - durable even though the run's own
+        # staged writes were rolled back by close().
+        assert _user_version(db) == SCHEMA_VERSION
+
+    def test_manually_altered_v0_db_upgrades_cleanly(self, tmp_path: Path) -> None:
+        # A v0 db that already got the ALTER by hand (the pre-gate bridge): the
+        # guarded migration step must not trip over the existing column.
+        db = tmp_path / "cache.db"
+        raw = sqlite3.connect(str(db))
+        raw.executescript(_V0_SCHEMA)
+        raw.execute("ALTER TABLE entries ADD COLUMN fallback_satisfied INTEGER NOT NULL DEFAULT 0")
+        raw.commit()
+        raw.close()
+
+        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        assert store.get_entry(Arr.SONARR, 7) is None  # reads work post-upgrade
+        store.close()
+        assert _user_version(db) == SCHEMA_VERSION
+
+    def test_newer_schema_is_refused_not_quarantined(self, tmp_path: Path) -> None:
+        db = tmp_path / "cache.db"
+        raw = sqlite3.connect(str(db))
+        raw.execute("CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT)")
+        raw.execute(f"PRAGMA user_version={SCHEMA_VERSION + 1}")
+        raw.commit()
+        raw.close()
+
+        with pytest.raises(CacheSchemaError):
+            CacheStore.load(str(db), config_checksum=CHECKSUM)
+        # Fail closed: the healthy newer db is left exactly where it was.
+        assert db.exists()
+        assert not list(tmp_path.glob("cache.db.corrupt-*"))
 
 
 class TestEntries:

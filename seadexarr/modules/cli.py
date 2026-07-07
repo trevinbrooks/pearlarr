@@ -382,6 +382,7 @@ def _run_arrs(
         # exceptions here adds nothing.)
         from arrapi.exceptions import ConnectionFailure, Unauthorized
 
+        from .cache import CacheSchemaError
         from .run_loop import RunLoop
         from .run_services import QbitConnectionError, RunDeps, RunServices
         from .seadex_radarr import RadarrSync
@@ -448,10 +449,11 @@ def _run_arrs(
                                     import_wait_mode=import_wait_mode,
                                     boot=boot,
                                 )
-                    except QbitConnectionError as e:
-                        # A user-facing config problem (wrong host/credentials): a clean
-                        # one-line message, not a stack trace under "unexpected error".
-                        # The two arrapi arms below get the same treatment.
+                    except (QbitConnectionError, CacheSchemaError) as e:
+                        # A user-facing environment problem (wrong host/credentials, a
+                        # cache.db from a newer release): a clean one-line message, not
+                        # a stack trace under "unexpected error". The two arrapi arms
+                        # below get the same treatment.
                         all_arrs_completed = False
                         logger.error(str(e))
                     except ConnectionFailure as e:
