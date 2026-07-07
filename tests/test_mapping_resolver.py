@@ -835,3 +835,20 @@ class TestMaybeDownloadFailOpen:
 
         with pytest.raises(OSError):
             resolver._maybe_download(str(tmp_path / "missing.json"), "https://example/x.json", "x")
+
+
+class TestDownloadFileSizeCap:
+    """An over-cap response aborts as OSError and leaves no partial file behind."""
+
+    def test_over_cap_download_aborts_and_cleans_up(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        source = tmp_path / "src.json"
+        source.write_bytes(b"x" * 4096)
+        dest = tmp_path / "out.json"
+        monkeypatch.setattr(m, "MAX_DOWNLOAD_BYTES", 1024)
+
+        with pytest.raises(OSError, match="download cap"):
+            m._download_file(source.as_uri(), str(dest), timeout=5, logger=None, label="src.json")
+
+        # Neither the destination nor the .part temp survives the abort.
+        assert not dest.exists()
+        assert not (tmp_path / "out.json.part").exists()

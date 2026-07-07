@@ -215,6 +215,10 @@ ANIBRIDGE_MAPPINGS_FILE = f"anibridge_mappings_{ANIBRIDGE_RELEASE}.json"
 # forever, which is the behaviour the previous timeout-less urlretrieve had.
 DOWNLOAD_TIMEOUT_S = 30
 
+# Hard cap on one source download: ~6x the largest real mapping file, so a
+# hostile/runaway response aborts instead of filling the disk.
+MAX_DOWNLOAD_BYTES = 128 << 20
+
 
 def _file_digest(path: str) -> str:
     """sha256 of a file's bytes - the content key that gates a re-parse."""
@@ -258,6 +262,11 @@ def _download_file(
                     break
                 out.write(chunk)
                 got += len(chunk)
+                if got > MAX_DOWNLOAD_BYTES:
+                    # A runaway/hostile response must not fill the disk; the
+                    # largest real source is a few tens of MB. OSError so the
+                    # refresh path's fall-open containment applies.
+                    raise OSError(f"{label} exceeded the {MAX_DOWNLOAD_BYTES >> 20} MB download cap; aborting")
                 if got >= next_mark:
                     if progress is not None and total:
                         progress.progress(got / total, f"{label} · {got >> 20}/{total >> 20} MB")
