@@ -21,13 +21,13 @@ jobs:
           "3.14",
         ]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: true
           # Full history so diff-cover can diff against the PR base branch.
           fetch-depth: 0
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.3.1
         with:
           enable-cache: true
       - name: Sync dependencies
@@ -43,7 +43,7 @@ jobs:
       # package and tests/) and resolves imports against the .venv that `uv sync`
       # just created, plus the local stubs/ for arrapi.
       - name: Pyright (type check, strict)
-        run: uvx pyright@1.1.410 seadexarr tests
+        run: uvx pyright@1.1.411 seadexarr tests
       - name: Pyrefly (type check)
         run: uv run pyrefly check seadexarr tests --preset strict
       # Branch coverage with the fail_under floor from [tool.coverage.report].
@@ -69,7 +69,7 @@ jobs:
           "3.14",
         ]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: true
       - name: Setup Python ${{ matrix.python-version }}
