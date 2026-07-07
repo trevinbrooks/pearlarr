@@ -510,6 +510,21 @@ class TestFilterByReleaseGroup:
         assert result.seadex_dict["RG"].urls["u1"].download is True
         assert result.torrent_hashes == ["h1"]
 
+    def test_matching_group_case_insensitive_no_download(self) -> None:
+        # The no-episode path matches by normalized name like the per-episode
+        # path: Radarr's "EMBER" is SeaDex's "Ember", so a size match must not
+        # re-download (raw comparison used to re-grab owned content).
+        planner = make_planner()
+        seadex = {"Ember": rg_group({"u1": url_item(episodes=[], size=[100], infohash="h1")})}
+        result = planner.filter_by_release_group(
+            seadex_dict=seadex,
+            arr=Arr.RADARR,
+            arr_release_dict={"EMBER": [100]},
+            ep_list=None,
+        )
+        assert result.seadex_dict["Ember"].urls["u1"].download is False
+        assert result.torrent_hashes == []
+
     def test_episode_match_same_rg_and_size_no_download(self) -> None:
         planner = make_planner()
         seadex = {

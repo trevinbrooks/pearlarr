@@ -416,10 +416,10 @@ class DownloadPlanner:
         # supports `in` in O(1), so there's no need to materialize a list.
         arr_release_groups = arr_release_dict.keys()
 
-        # And also just check if any release group matches
-        # any Arr release tag
-        seadex_keys = set(seadex_dict.keys())
-        overlapping_results = any(rg in seadex_keys for rg in arr_release_groups)
+        # And also just check if any release group matches any Arr release tag -
+        # by normalized name, matching the per-episode path's comparison.
+        seadex_keys = {normalize_rg(rg) for rg in seadex_dict}
+        overlapping_results = any(normalize_rg(rg) in seadex_keys for rg in arr_release_groups)
 
         # Index the Sonarr episodes by (season, episode) once, shared by both
         # the overlap map below and the per-episode match loop: looking up a
@@ -524,10 +524,16 @@ class DownloadPlanner:
         sizes are disjoint.
         """
 
-        if seadex_rg in arr_release_groups:
+        # Match by the normalized name (like the per-episode path), merging any
+        # raw Arr keys that normalize to the same group.
+        arr_sizes_by_norm: dict[str | None, list[int]] = {}
+        for arr_rg, sizes in arr_release_dict.items():
+            arr_sizes_by_norm.setdefault(normalize_rg(arr_rg), []).extend(as_size_list(sizes))
+
+        if normalize_rg(seadex_rg) in arr_sizes_by_norm:
             # The group matches: fall through to a size comparison.
             seadex_file_sizes = url_item.size
-            arr_file_sizes = as_size_list(arr_release_dict[seadex_rg])
+            arr_file_sizes = arr_sizes_by_norm[normalize_rg(seadex_rg)]
 
             # If we have no overlaps at all, then add
             if set(seadex_file_sizes).isdisjoint(arr_file_sizes):
