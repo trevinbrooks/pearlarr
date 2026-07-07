@@ -536,7 +536,12 @@ def make_torrent_record(
     )
 
 
-def _real_reporter(logger: logging.Logger, log_fmt: LogFormatter, cache_store: AbstractCacheStore) -> RunReporter:
+def _real_reporter(
+    logger: logging.Logger,
+    log_fmt: LogFormatter,
+    cache_store: AbstractCacheStore,
+    web: httpx.Client,
+) -> RunReporter:
     """A real ``RunReporter`` over the given cache store (composite-with-faked-leaf).
 
     The reporter is a presentation collaborator with a large surface; rather than
@@ -547,7 +552,7 @@ def _real_reporter(logger: logging.Logger, log_fmt: LogFormatter, cache_store: A
     return RunReporter(
         log_fmt=log_fmt,
         cache_store=cache_store,
-        anilist=AniListGateway(cache_store=cache_store, logger=logger),
+        anilist=AniListGateway(cache_store=cache_store, logger=logger, web=web),
     )
 
 
@@ -637,12 +642,12 @@ def make_run_deps(
         # retires the old make_bare_instance(SeaDexGateway) Any-launder.
         seadex=seadex or FakeSeaDexSource(),
         cache_store=cache_store,
-        anilist=AniListGateway(cache_store=cache_store, logger=logger),
+        anilist=AniListGateway(cache_store=cache_store, logger=logger, web=http),
         torrents=_real_torrents(logger, http),
         notifier=Notifier(discord_url=None, webhook_url=None, logger=logger),
         planner=make_planner(),
         log_fmt=log_fmt,
-        reporter=_real_reporter(logger, log_fmt, cache_store),
+        reporter=_real_reporter(logger, log_fmt, cache_store, http),
     )
 
 
@@ -738,10 +743,10 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         "_planner": make_planner(),
         "cache_store": cache_store,
         "_torrents": _real_torrents(logger, web),
-        "_anilist": AniListGateway(cache_store=cache_store, logger=logger),
+        "_anilist": AniListGateway(cache_store=cache_store, logger=logger, web=web),
         # No discord/webhook url -> a disabled, best-effort no-op notifier.
         "_notifier": Notifier(discord_url=None, webhook_url=None, logger=logger),
-        "_reporter": _real_reporter(logger, log_fmt, cache_store),
+        "_reporter": _real_reporter(logger, log_fmt, cache_store, web),
         "log_fmt": log_fmt,
         "qbit": CLIENT_SENTINEL,
         "_ctx": RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
@@ -768,7 +773,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     defaults: dict[str, Any] = {
         "_config": config,
         "cache_store": cache_store,
-        "_reporter": _real_reporter(logger, LogFormatter(logger), cache_store),
+        "_reporter": _real_reporter(logger, LogFormatter(logger), cache_store, httpx.Client()),
         "logger": logger,
         "qbit": None,
         "_ctx": RunContext(arr=Arr.SONARR),

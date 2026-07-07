@@ -17,6 +17,7 @@ composite, fake its leaves" seam - so the whole file type-checks at strict.
 import logging
 import time
 
+import httpx
 import pytest
 
 from seadexarr.modules.anilist import AniListCache, AniListRetryLog
@@ -44,7 +45,7 @@ def _make_reporter(cache_store: AbstractCacheStore | None = None) -> RunReporter
     store: AbstractCacheStore = cache_store if cache_store is not None else FakeCacheStore()
     # A real gateway with a faked cache store: the reporter only reads/updates
     # its ``al_cache`` dict, so the real wiring is exercised without a network.
-    anilist = AniListGateway(cache_store=FakeCacheStore(), logger=logger)
+    anilist = AniListGateway(cache_store=FakeCacheStore(), logger=logger, web=httpx.Client())
     return RunReporter(
         log_fmt=LogFormatter(logger),
         cache_store=store,
@@ -175,7 +176,10 @@ class _RecordingTitle:
         al_id: int,
         al_cache: AniListCache | None = None,
         retry_log: AniListRetryLog | None = None,
+        *,
+        client: httpx.Client,
     ) -> str:
+        del client
         self.retry_logs.append(retry_log)
         if al_cache is not None:
             al_cache[al_id] = {"data": {"Media": {"id": al_id}}}

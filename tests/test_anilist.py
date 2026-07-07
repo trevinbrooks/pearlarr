@@ -7,17 +7,17 @@
 
 These functions are otherwise only exercised incidentally. The classification /
 parsing / extraction helpers take plain ``dict`` bodies, so they are tested with
-no mocks at all; ``_post_with_retry`` is faked at the ``requests`` boundary with
-the ``responses`` library (no ``unittest.mock``).
+no mocks at all; ``_post_with_retry`` is faked at the ``httpx`` boundary with
+the ``respx`` library (no ``unittest.mock``).
 """
 
 import logging
 import re
 import time
 
+import httpx
 import pytest
-import requests
-import responses
+import respx
 
 from seadexarr.modules.anilist import (
     _MEDIA_FIELDS,
@@ -219,35 +219,43 @@ def test_retryable_constants() -> None:
     assert all(substring == substring.lower() for substring in RETRYABLE_ERROR_SUBSTRINGS)
 
 
-# --- _post_with_retry (responses-faked requests boundary) -------------------
+# --- _post_with_retry (respx-faked httpx boundary) --------------------------
 
 
+@respx.mock
 def test_post_with_retry_returns_valid_200_body(monkeypatch: pytest.MonkeyPatch) -> None:
     """A single 200 with a valid body is returned verbatim after one request."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     expected: dict[str, object] = {"data": {"Media": {"id": 1, "episodes": 12}}}
-    with responses.RequestsMock() as rsps:
-        rsps.add(responses.POST, API_URL, json=expected, status=200)
-        body = _post_with_retry(QUERY, {"id": 1})
-        assert len(rsps.calls) == 1
+    route = respx.post(API_URL).respond(json=expected)
+
+    body = _post_with_retry(QUERY, {"id": 1}, client=httpx.Client())
+
+    assert route.call_count == 1
     assert body == expected
     assert _media_from(body).episodes == 12
 
 
+@respx.mock
 def test_post_with_retry_retries_after_http_429(monkeypatch: pytest.MonkeyPatch) -> None:
     """A 429 is retried; the following 200 succeeds, for two total requests."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     success: dict[str, object] = {"data": {"Media": {"id": 2, "episodes": 24}}}
-    with responses.RequestsMock() as rsps:
-        rsps.add(responses.POST, API_URL, json={"data": None}, status=429)
-        rsps.add(responses.POST, API_URL, json=success, status=200)
-        body = _post_with_retry(QUERY, {"id": 2})
-        assert len(rsps.calls) == 2
+    route = respx.post(API_URL)
+    route.side_effect = [
+        httpx.Response(429, json={"data": None}),
+        httpx.Response(200, json=success),
+    ]
+
+    body = _post_with_retry(QUERY, {"id": 2}, client=httpx.Client())
+
+    assert route.call_count == 2
     assert body == success
 
 
+@respx.mock
 def test_post_with_retry_retries_on_throttle_error_body(monkeypatch: pytest.MonkeyPatch) -> None:
     """A soft-throttle (HTTP 200 + throttle error payload) takes the same retry path as a 429."""
 
@@ -257,11 +265,15 @@ def test_post_with_retry_retries_on_throttle_error_body(monkeypatch: pytest.Monk
         "errors": [{"message": "Too Many Requests", "status": 429}],
     }
     success: dict[str, object] = {"data": {"Media": {"id": 3, "episodes": 1}}}
-    with responses.RequestsMock() as rsps:
-        rsps.add(responses.POST, API_URL, json=throttled, status=200)
-        rsps.add(responses.POST, API_URL, json=success, status=200)
-        body = _post_with_retry(QUERY, {"id": 3})
-        assert len(rsps.calls) == 2
+    route = respx.post(API_URL)
+    route.side_effect = [
+        httpx.Response(200, json=throttled),
+        httpx.Response(200, json=success),
+    ]
+
+    body = _post_with_retry(QUERY, {"id": 3}, client=httpx.Client())
+
+    assert route.call_count == 2
     assert body == success
 
 
@@ -279,6 +291,7 @@ def _retry_log() -> tuple[AniListRetryLog, CaptureHandler]:
     return AniListRetryLog(logger=logger), handler
 
 
+@respx.mock
 def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
     """A 429 backoff logs the (Retry-After) wait at INFO - the run no longer
     looks hung - and a successful retry never fires the give-up warning."""
@@ -286,10 +299,13 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(time, "sleep", _no_sleep)
     retry_log, handler = _retry_log()
     success: dict[str, object] = {"data": {"Media": {"id": 2, "episodes": 24}}}
-    with responses.RequestsMock() as rsps:
-        rsps.add(responses.POST, API_URL, json={"data": None}, status=429, headers={"Retry-After": "42"})
-        rsps.add(responses.POST, API_URL, json=success, status=200)
-        body = _post_with_retry(QUERY, {"id": 2}, retry_log)
+    route = respx.post(API_URL)
+    route.side_effect = [
+        httpx.Response(429, json={"data": None}, headers={"Retry-After": "42"}),
+        httpx.Response(200, json=success),
+    ]
+
+    body = _post_with_retry(QUERY, {"id": 2}, retry_log, client=httpx.Client())
 
     assert body == success
     infos = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
@@ -297,34 +313,37 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
     assert [r for r in handler.records if r.levelno == logging.WARNING] == []
 
 
+@respx.mock
 def test_give_up_warns_once_per_run_not_per_title(monkeypatch: pytest.MonkeyPatch) -> None:
     """Exhausting the retries warns ONCE; a second exhausted request (another
     title, same run) stays quiet - the flag is per retry-log, i.e. per run."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     retry_log, handler = _retry_log()
-    with responses.RequestsMock() as rsps:
-        for _ in range(2 * (MAX_RETRIES + 1)):
-            rsps.add(responses.POST, API_URL, json={"data": None}, status=429)
-        _post_with_retry(QUERY, {"id": 1}, retry_log)
-        _post_with_retry(QUERY, {"id": 2}, retry_log)
+    route = respx.post(API_URL).respond(status_code=429, json={"data": None})
+    client = httpx.Client()
 
+    _post_with_retry(QUERY, {"id": 1}, retry_log, client=client)
+    _post_with_retry(QUERY, {"id": 2}, retry_log, client=client)
+
+    assert route.call_count == 2 * (MAX_RETRIES + 1)
     warnings = [r.getMessage() for r in handler.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert f"AniList request failed after {MAX_RETRIES} retries" in warnings[0]
 
 
+@respx.mock
 def test_network_give_up_returns_empty_and_warns(monkeypatch: pytest.MonkeyPatch) -> None:
     """A hard network outage still degrades to ``{}`` - but now with one warning
     instead of total silence."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     retry_log, handler = _retry_log()
-    with responses.RequestsMock() as rsps:
-        for _ in range(MAX_RETRIES + 1):
-            rsps.add(responses.POST, API_URL, body=requests.ConnectionError("down"))
-        body = _post_with_retry(QUERY, {"id": 1}, retry_log)
+    route = respx.post(API_URL).mock(side_effect=httpx.ConnectError("down"))
+
+    body = _post_with_retry(QUERY, {"id": 1}, retry_log, client=httpx.Client())
 
     assert body == {}
+    assert route.call_count == MAX_RETRIES + 1
     warnings = [r for r in handler.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1

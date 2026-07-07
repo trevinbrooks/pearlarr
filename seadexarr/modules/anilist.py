@@ -5,10 +5,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-import requests
+import httpx
 
 from .seadex_types import AniListError, AniListMediaNode
-from .web_client import USER_AGENT
 
 API_URL = "https://graphql.anilist.co"
 
@@ -28,10 +27,6 @@ out of it into an :class:`AniListMediaNode`.
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 MAX_RETRIES = 3
 MAX_BACKOFF = 60
-
-# (connect, read) timeout for the GraphQL POST, so a hung AniList surfaces as a
-# retryable RequestException instead of blocking the run.
-ANILIST_REQUEST_TIMEOUT_S = (5, 30)
 
 # AniList also soft-throttles by returning HTTP 200 with a GraphQL error payload
 # (``{"data": null, "errors": [{"message": "Too Many Requests", "status": 429}]}")
@@ -207,6 +202,8 @@ def _post_with_retry(
     query: str,
     variables: dict[str, Any],
     retry_log: AniListRetryLog | None = None,
+    *,
+    client: httpx.Client,
 ) -> dict[str, Any]:
     """POST a GraphQL query to AniList, retrying politely on rate-limits / 5xx
 
@@ -221,17 +218,15 @@ def _post_with_retry(
     error payload after the final attempt - or "{}" if the response body
     wasn't JSON. ``retry_log`` (when given) narrates the waits and warns once
     per run on a final give-up; without one the retries stay silent.
+    ``client`` is the shared web client (its defaults carry the identifying
+    User-Agent and the timeout bounds); this loop stays AniList's ONE retry
+    policy - the web client's generic GET helper is never involved.
     """
 
     for attempt in range(MAX_RETRIES + 1):
         try:
-            resp = requests.post(
-                API_URL,
-                json={"query": query, "variables": variables},
-                headers={"User-Agent": USER_AGENT},
-                timeout=ANILIST_REQUEST_TIMEOUT_S,
-            )
-        except requests.RequestException as e:
+            resp = client.post(API_URL, json={"query": query, "variables": variables})
+        except httpx.HTTPError as e:
             # Network blip: back off and retry, then give up with an empty result
             if attempt >= MAX_RETRIES:
                 if retry_log is not None:
@@ -295,19 +290,30 @@ def _post_with_retry(
     return {}
 
 
-def get_query(al_id: int, retry_log: AniListRetryLog | None = None) -> dict[str, Any]:
+def get_query(
+    al_id: int,
+    retry_log: AniListRetryLog | None = None,
+    *,
+    client: httpx.Client,
+) -> dict[str, Any]:
     """Fetch one AniList Media by id (see _post_with_retry for the retry policy)
 
     Args:
         al_id (int): Anilist ID
         retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
             None (silent)
+        client (httpx.Client): The shared web client the POST rides.
     """
 
-    return _post_with_retry(QUERY, {"id": al_id}, retry_log)
+    return _post_with_retry(QUERY, {"id": al_id}, retry_log, client=client)
 
 
-def get_query_batch(al_ids: list[int], retry_log: AniListRetryLog | None = None) -> AniListCache:
+def get_query_batch(
+    al_ids: list[int],
+    retry_log: AniListRetryLog | None = None,
+    *,
+    client: httpx.Client,
+) -> AniListCache:
     """Fetch up to ANILIST_BATCH_SIZE AniList Media in a single request via id_in
 
     Returns "{id: {"data": {"Media": {...}}}}" mirroring the single-id shape,
@@ -318,9 +324,10 @@ def get_query_batch(al_ids: list[int], retry_log: AniListRetryLog | None = None)
         al_ids (list[int]): Up to ANILIST_BATCH_SIZE AniList IDs
         retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
             None (silent)
+        client (httpx.Client): The shared web client the POST rides.
     """
 
-    j = _post_with_retry(BATCH_QUERY, {"ids": list(al_ids)}, retry_log)
+    j = _post_with_retry(BATCH_QUERY, {"ids": list(al_ids)}, retry_log, client=client)
     # response.json() is untyped and the cache stores each Media body verbatim
     # (re-parsed on read via AniListMediaNode.from_api). Keep each Media OBJECT
     # carrying an id, skipping any non-object entry in the array.
@@ -339,6 +346,8 @@ def _get_media(
     al_id: int,
     al_cache: AniListCache | None,
     retry_log: AniListRetryLog | None = None,
+    *,
+    client: httpx.Client,
 ) -> AniListMediaNode:
     """Fetch and parse the AniList Media node for an ID, caching successful lookups
 
@@ -355,6 +364,7 @@ def _get_media(
     Args:
         al_id (int): Anilist ID
         al_cache (AniListCache | None): Cache of prior AniList bodies, keyed by ID
+        client (httpx.Client): The shared web client a cache miss's query rides.
 
     Returns:
         AniListMediaNode: The parsed node; all-``None`` on a miss.
@@ -370,7 +380,7 @@ def _get_media(
 
     # Miss: query AniList. Extract the raw Media dict once to gate the cache
     # store, then parse it into the typed node for the return.
-    j = get_query(al_id, retry_log)
+    j = get_query(al_id, retry_log, client=client)
     raw_media = _extract(j, "data", "Media")
 
     # Only remember a response that actually carried Media, so a transient
@@ -386,6 +396,8 @@ def get_anilist_n_eps(
     al_id: int,
     al_cache: AniListCache | None = None,
     retry_log: AniListRetryLog | None = None,
+    *,
+    client: httpx.Client,
 ) -> int | None:
     """Query AniList to get the number of episodes for anime.
 
@@ -395,15 +407,18 @@ def get_anilist_n_eps(
             Defaults to None (no caching across calls)
         retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
             None (silent)
+        client (httpx.Client): The shared web client a cache miss's query rides.
     """
 
-    return _get_media(al_id, al_cache, retry_log).episodes
+    return _get_media(al_id, al_cache, retry_log, client=client).episodes
 
 
 def get_anilist_title(
     al_id: int,
     al_cache: AniListCache | None = None,
     retry_log: AniListRetryLog | None = None,
+    *,
+    client: httpx.Client,
 ) -> str | None:
     """Query AniList to get a title for anime.
 
@@ -413,9 +428,10 @@ def get_anilist_title(
             Defaults to None (no caching across calls)
         retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
             None (silent)
+        client (httpx.Client): The shared web client a cache miss's query rides.
     """
 
-    media = _get_media(al_id, al_cache, retry_log)
+    media = _get_media(al_id, al_cache, retry_log, client=client)
 
     # Prefer the English title, but fall back to romaji
     return media.title_english or media.title_romaji
@@ -425,6 +441,8 @@ def get_anilist_thumb(
     al_id: int,
     al_cache: AniListCache | None = None,
     retry_log: AniListRetryLog | None = None,
+    *,
+    client: httpx.Client,
 ) -> str | None:
     """Query AniList to get thumbnail URL for anime.
 
@@ -434,15 +452,18 @@ def get_anilist_thumb(
             Defaults to None (no caching across calls)
         retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
             None (silent)
+        client (httpx.Client): The shared web client a cache miss's query rides.
     """
 
-    return _get_media(al_id, al_cache, retry_log).cover_image
+    return _get_media(al_id, al_cache, retry_log, client=client).cover_image
 
 
 def get_anilist_format(
     al_id: int,
     al_cache: AniListCache | None = None,
     retry_log: AniListRetryLog | None = None,
+    *,
+    client: httpx.Client,
 ) -> str | None:
     """Query AniList to get format for anime.
 
@@ -452,6 +473,7 @@ def get_anilist_format(
             Defaults to None (no caching across calls)
         retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
             None (silent)
+        client (httpx.Client): The shared web client a cache miss's query rides.
     """
 
-    return _get_media(al_id, al_cache, retry_log).format
+    return _get_media(al_id, al_cache, retry_log, client=client).format

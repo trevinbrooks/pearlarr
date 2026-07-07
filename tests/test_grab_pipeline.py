@@ -95,6 +95,8 @@ class TestGrabReturnsPureBool:
             add_torrent=_stub_add_torrent,
         )
         pipeline._ctx.torrents_added = 1  # already at the cap of 1
+        # Warm the gateway cache so the embed's thumb lookup never hits AniList.
+        pipeline._anilist.al_cache.update({1: {}})
 
         req = GrabRequest(
             al_id=1,

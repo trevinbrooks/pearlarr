@@ -176,7 +176,7 @@ class RunDeps:
 
         # AniList client gateway: owns the in-memory meta cache (al_cache) and the
         # persisted anilist_meta block.
-        anilist = AniListGateway(cache_store=cache_store, logger=logger)
+        anilist = AniListGateway(cache_store=cache_store, logger=logger, web=web)
 
         # qBittorrent adapter: parses a release URL by tracker and adds it. A None
         # qbit is treated as a perpetual preview.

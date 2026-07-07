@@ -15,6 +15,8 @@ import logging
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
+import httpx
+
 from .anilist import (
     ANILIST_BATCH_SIZE,
     AniListCache,
@@ -43,17 +45,20 @@ class AniListGateway:
         *,
         cache_store: AbstractCacheStore,
         logger: logging.Logger,
+        web: httpx.Client,
     ) -> None:
-        """Wire the gateway to the cache store and logger.
+        """Wire the gateway to the cache store, logger and web client.
 
         Args:
             cache_store (AbstractCacheStore): Owns the on-disk ``anilist_meta``
                 block and the preview-gated save.
             logger (logging.Logger): For the prefetch / load progress lines.
+            web (httpx.Client): The shared web client every AniList POST rides.
         """
 
         self._cache = cache_store
         self.logger = logger
+        self._web = web
         self.al_cache: AniListCache = {}
         # Narrates AniList retry waits and warns once per run on a give-up; the
         # gateway is rebuilt per arr run, so "once" is per run, not per process.
@@ -165,7 +170,7 @@ class AniListGateway:
             chunk = missing[start : start + ANILIST_BATCH_SIZE]
             # Ids unknown to AniList are simply absent from the result; the
             # per-id helpers will try once more on demand and degrade gracefully
-            for al_id, data in get_query_batch(chunk, self.retry_log).items():
+            for al_id, data in get_query_batch(chunk, self.retry_log, client=self._web).items():
                 self.al_cache[al_id] = data
             done += len(chunk)
             if progress is not None:
@@ -186,7 +191,7 @@ class AniListGateway:
             al_id (int): AniList ID
         """
 
-        return get_anilist_title(al_id, al_cache=self.al_cache, retry_log=self.retry_log)
+        return get_anilist_title(al_id, al_cache=self.al_cache, retry_log=self.retry_log, client=self._web)
 
     def thumb(self, al_id: int) -> str | None:
         """Resolve the AniList cover thumbnail URL for an id, or None.
@@ -195,7 +200,7 @@ class AniListGateway:
             al_id (int): AniList ID
         """
 
-        return get_anilist_thumb(al_id, al_cache=self.al_cache, retry_log=self.retry_log)
+        return get_anilist_thumb(al_id, al_cache=self.al_cache, retry_log=self.retry_log, client=self._web)
 
     def media_format(self, al_id: int) -> str | None:
         """Resolve the AniList media format (TV / MOVIE / OVA / ...) for an id, or None.
@@ -204,7 +209,7 @@ class AniListGateway:
             al_id (int): AniList ID
         """
 
-        return get_anilist_format(al_id, al_cache=self.al_cache, retry_log=self.retry_log)
+        return get_anilist_format(al_id, al_cache=self.al_cache, retry_log=self.retry_log, client=self._web)
 
     def n_eps(self, al_id: int) -> int | None:
         """Resolve the AniList episode count for an id, or None.
@@ -213,4 +218,4 @@ class AniListGateway:
             al_id (int): AniList ID
         """
 
-        return get_anilist_n_eps(al_id, al_cache=self.al_cache, retry_log=self.retry_log)
+        return get_anilist_n_eps(al_id, al_cache=self.al_cache, retry_log=self.retry_log, client=self._web)

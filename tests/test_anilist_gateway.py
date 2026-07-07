@@ -10,6 +10,7 @@ import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
+import httpx
 import pytest
 
 import seadexarr.modules.anilist_gateway as anilist_gateway
@@ -33,9 +34,14 @@ def _media(al_id: int) -> dict[str, dict[str, object]]:
     return {"Media": {"id": al_id}}
 
 
+# The shared web client the gateways under test thread into the anilist
+# helpers; module-scoped so identity asserts can pin the threading.
+_WEB = httpx.Client()
+
+
 def _make_gateway() -> tuple[AniListGateway, FakeCacheStore]:
     store = FakeCacheStore()
-    return AniListGateway(cache_store=store, logger=make_logger()), store
+    return AniListGateway(cache_store=store, logger=make_logger(), web=_WEB), store
 
 
 class _BatchRecorder:
@@ -49,10 +55,18 @@ class _BatchRecorder:
         self._absent = absent
         self.calls: list[list[int]] = []
         self.retry_logs: list[AniListRetryLog | None] = []
+        self.clients: list[httpx.Client] = []
 
-    def __call__(self, al_ids: list[int], retry_log: AniListRetryLog | None = None) -> AniListCache:
+    def __call__(
+        self,
+        al_ids: list[int],
+        retry_log: AniListRetryLog | None = None,
+        *,
+        client: httpx.Client,
+    ) -> AniListCache:
         self.calls.append(list(al_ids))
         self.retry_logs.append(retry_log)
+        self.clients.append(client)
         return {i: {"data": _media(i)} for i in al_ids if i not in self._absent}
 
 
@@ -177,21 +191,25 @@ class TestPrefetch:
         assert sink.updates == [(50 / 51, "50/51"), (1.0, "51/51")]
         # The gateway's retry log rode along, so an outage mid-prefetch narrates.
         assert recorder.retry_logs == [gateway.retry_log, gateway.retry_log]
+        # ...and both batches rode the injected web client.
+        assert recorder.clients == [_WEB, _WEB]
 
 
 class _ResolverRecorder:
     """Recording stand-in for a per-id anilist helper: captures the threading."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[int, AniListCache | None, AniListRetryLog | None]] = []
+        self.calls: list[tuple[int, AniListCache | None, AniListRetryLog | None, httpx.Client]] = []
 
     def __call__(
         self,
         al_id: int,
         al_cache: AniListCache | None = None,
         retry_log: AniListRetryLog | None = None,
+        *,
+        client: httpx.Client,
     ) -> None:
-        self.calls.append((al_id, al_cache, retry_log))
+        self.calls.append((al_id, al_cache, retry_log, client))
 
 
 class TestResolverThreading:
@@ -199,7 +217,8 @@ class TestResolverThreading:
 
     The retry log is what makes an AniList backoff narrate (and the give-up warn
     once) instead of hanging silently - so each gateway wrapper must pass it, or
-    a call site routed through the gateway silently regresses.
+    a call site routed through the gateway silently regresses. The web client
+    rides the same seam (the transport a cache miss's POST needs).
     """
 
     def _assert_threads(
@@ -214,10 +233,11 @@ class TestResolverThreading:
 
         resolve(gateway)(42)
 
-        [(al_id, al_cache, retry_log)] = recorder.calls
+        [(al_id, al_cache, retry_log, client)] = recorder.calls
         assert al_id == 42
         assert al_cache is gateway.al_cache  # the gateway's own warm cache
         assert retry_log is gateway.retry_log  # the per-run narration log
+        assert client is _WEB  # the injected web client
 
     def test_title(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._assert_threads(monkeypatch, "get_anilist_title", lambda gateway: gateway.title)
