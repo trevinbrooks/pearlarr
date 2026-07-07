@@ -12,14 +12,13 @@ from typing import NamedTuple
 
 import requests
 
+from .paths import PROJECT_URL
 from .seadex_types import Json
 from .. import __version__
 
 # (connect, read) bound so a hung Discord webhook surfaces as a transient miss
 # instead of blocking the run; matches the Arr clients' timeout policy.
 DISCORD_TIMEOUT_S = (5, 30)
-
-PROJECT_URL = "https://github.com/bbtufty/seadexarr"
 
 # Embed accent colors (the strip Discord renders along the embed's left edge).
 COLOR_GRAB = 0x3498DB

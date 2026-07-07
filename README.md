@@ -2,7 +2,7 @@
 
 [![](https://img.shields.io/pypi/v/seadexarr.svg?label=PyPI&style=flat-square)](https://pypi.org/pypi/seadexarr/)
 [![](https://img.shields.io/pypi/pyversions/seadexarr.svg?label=Python&color=yellow&style=flat-square)](https://pypi.org/pypi/seadexarr/)
-[![Actions](https://img.shields.io/github/actions/workflow/status/bbtufty/seadexarr/build.yaml?branch=main&style=flat-square)](https://github.com/bbtufty/seadexarr/actions)
+[![Actions](https://img.shields.io/github/actions/workflow/status/trevinbrooks/seadexarr/build.yaml?branch=main&style=flat-square)](https://github.com/trevinbrooks/seadexarr/actions)
 [![License](https://img.shields.io/badge/license-GNUv3-blue.svg?label=License&style=flat-square)](LICENSE)
 
 ![SeaDexArr](example_post.png)
@@ -53,7 +53,7 @@ SeaDexArr is available as a Docker container. Into a Docker Compose file:
 services:
 
   seadexarr:
-    image: ghcr.io/bbtufty/seadexarr:latest  # or seadexarr:main for the cutting edge
+    image: ghcr.io/trevinbrooks/seadexarr:latest  # or seadexarr:main for the cutting edge
     container_name: seadexarr
     environment: 
       - SCHEDULE_TIME=6  # Deprecated: set schedule.interval_hours in config.yml instead (env still wins if set)
@@ -74,7 +74,7 @@ pip install seadexarr
 Or the cutting edge via GitHub:
 
 ```
-git clone https://github.com/bbtufty/seadexarr.git
+git clone https://github.com/trevinbrooks/seadexarr.git
 cd seadexarr
 pip install -e .
 ```

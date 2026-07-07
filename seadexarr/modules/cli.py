@@ -18,7 +18,7 @@ from .boot_view import BootView, make_boot_view
 from .config import AppConfig, Arr, config_permissions_loose, restrict_config_permissions, template_path
 from .log import LogLevel, apply_log_level, indent_string, log_styled, setup_logger
 from .manual_import import ImportWaitMode
-from .paths import AppPaths, ensure_data_dir, resolve_paths
+from .paths import PROJECT_URL, AppPaths, ensure_data_dir, resolve_paths
 from .runlock import single_instance_lock
 
 if TYPE_CHECKING:
@@ -55,7 +55,7 @@ def _exit_on_failure(result: object, **_: object) -> None:
 seadexarr_cli = typer.Typer(
     name="seadexarr",
     context_settings={"help_option_names": ["-h", "--help"]},
-    epilog="Docs & issues: https://github.com/bbtufty/seadexarr",
+    epilog=f"Docs & issues: {PROJECT_URL}",
     result_callback=_exit_on_failure,
 )
 seadexarr_run = typer.Typer(

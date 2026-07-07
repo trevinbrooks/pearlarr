@@ -15,7 +15,7 @@ authors = [
     {name = "bbtufty"},
 ]
 maintainers = [
-    {name = "bbtufty"},
+    {name = "trevinbrooks"},
 ]
 
 keywords = [
@@ -67,10 +67,11 @@ dependencies = [
 [project.scripts]
 seadexarr = "seadexarr:seadexarr_cli"
 
+# Keep in step with PROJECT_URL in seadexarr/modules/paths.py (TOML can't import it).
 [project.urls]
-Homepage = "https://github.com/bbtufty/seadexarr"
-Repository = "https://github.com/bbtufty/seadexarr"
-"Bug Reports" = "https://github.com/bbtufty/seadexarr/issues"
+Homepage = "https://github.com/trevinbrooks/seadexarr"
+Repository = "https://github.com/trevinbrooks/seadexarr"
+"Bug Reports" = "https://github.com/trevinbrooks/seadexarr/issues"
 
 # Dev tooling lives in PEP 735 dependency-groups (read natively by uv and pip),
 # so it never ships as a runtime extra. Install with e.g. `uv sync --group dev`.

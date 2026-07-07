@@ -10,6 +10,12 @@ from platformdirs import user_data_dir
 DATA_DIR_ENV = "SEADEX_ARR_DATA_DIR"
 APP_NAME = "seadexarr"
 
+# The single in-code source for the project's repository URL (the CLI epilog and
+# Discord embeds read it). pyproject.toml's [project.urls] can't import it, so
+# change the two together. NOTE for any future APP_NAME rename: APP_NAME is also
+# the platformdirs directory, so a rename must ship a data-dir migration.
+PROJECT_URL = "https://github.com/trevinbrooks/seadexarr"
+
 
 @dataclass(frozen=True, slots=True)
 class AppPaths:
