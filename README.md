@@ -85,11 +85,11 @@ SeaDexArr keeps everything — `config.yml`, the caches (`cache.db`, `mappings.d
 `logs/` — in a single data directory. By default this is the OS-standard per-user
 location:
 
-| OS      | Default data directory                          |
-|---------|-------------------------------------------------|
+| OS      | Default data directory                               |
+|---------|------------------------------------------------------|
 | Linux   | `~/.local/share/seadexarr` (honors `$XDG_DATA_HOME`) |
-| macOS   | `~/Library/Application Support/seadexarr`        |
-| Windows | `%LOCALAPPDATA%\seadexarr`                       |
+| macOS   | `~/Library/Application Support/seadexarr`            |
+| Windows | `%LOCALAPPDATA%\seadexarr`                           |
 
 Override the location with the `SEADEX_ARR_DATA_DIR` environment variable or the global
 `--data-dir` flag (the flag wins). Run `seadexarr paths` to print the resolved locations.
