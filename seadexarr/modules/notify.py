@@ -35,6 +35,22 @@ _MAX_FIELD_TITLES = 25
 # Minimum spacing between consecutive Discord pushes (webhook rate limiting).
 _PUSH_SPACING_S = 1.0
 
+# Longest 429 Retry-After worth blocking the run for; anything above skips the
+# retry and drops the notification instead.
+_MAX_RETRY_AFTER_S = 5.0
+
+
+def _retry_after_seconds(exc: requests.RequestException) -> float:
+    """The 429's Retry-After header in seconds (int or float string), default 1.0."""
+
+    header = exc.response.headers.get("Retry-After") if exc.response is not None else None
+    if header is None:
+        return 1.0
+    try:
+        return max(float(header), 0.0)
+    except ValueError:
+        return 1.0
+
 
 def _failure_detail(exc: requests.RequestException) -> str:
     """Describe a request failure WITHOUT interpolating the exception.
@@ -266,7 +282,8 @@ class Notifier:
         itself is bad (e.g. deleted -> 404), so Discord pushes are disabled for
         the rest of the run instead of warning once per grab - EXCEPT a 429,
         which is Discord throttling a healthy webhook (a burst can outrun the 1s
-        pacing), so it stays per-push like the transient 5xx / connection errors.
+        pacing): a short Retry-After is slept out and the push retried once, and
+        only a push dropped for real warns, per push, without disabling anything.
         """
 
         if self.discord_url is None:
@@ -279,13 +296,8 @@ class Notifier:
             detail = _failure_detail(exc)
             status = exc.response.status_code if exc.response is not None else None
             if status == 429:
-                # Rate-limited, not a dead webhook: this push is dropped, later
-                # ones still go out. Don't point at the config - it's fine.
-                self.logger.warning(
-                    f"Discord notification failed ({detail}) - rate limited by Discord; "
-                    f"later notifications will still be sent",
-                )
-            elif status is not None and 400 <= status < 500:
+                return self._retry_rate_limited(url=self.discord_url, embed=embed, exc=exc)
+            if status is not None and 400 <= status < 500:
                 self.discord_url = None
                 self.logger.warning(
                     f"Discord notification failed ({detail}) - disabling Discord notifications "
@@ -295,3 +307,27 @@ class Notifier:
                 self.logger.warning(f"Discord notification failed ({detail}) - check notifications.discord_url")
             return False
         return True
+
+    def _retry_rate_limited(self, *, url: str, embed: DiscordEmbed, exc: requests.RequestException) -> bool:
+        """Honor a 429's Retry-After with one retry, or drop the push truthfully.
+
+        A 429 is Discord throttling a healthy webhook, not a dead one, so pushes
+        stay enabled and the config is never blamed. A short Retry-After
+        (<= 5s) is slept out and the push retried once; a longer one - or a
+        retry that fails too - drops THIS notification and says so.
+        """
+
+        delay = _retry_after_seconds(exc)
+        if delay <= _MAX_RETRY_AFTER_S:
+            time.sleep(delay)
+            try:
+                discord_push(url=url, embed=embed)
+            except requests.RequestException as retry_exc:
+                exc = retry_exc
+            else:
+                return True
+        self.logger.warning(
+            f"Discord notification failed ({_failure_detail(exc)}) - rate limited by Discord; "
+            f"this notification was dropped",
+        )
+        return False

@@ -60,17 +60,42 @@ def _capture(logger: logging.Logger) -> Generator[CaptureHandler]:
         logger.removeHandler(handler)
 
 
-def _http_error(status: int) -> requests.HTTPError:
+def _http_error(status: int, *, retry_after: str | None = None) -> requests.HTTPError:
     """An ``HTTPError`` carrying a response, as ``raise_for_status`` raises it.
 
     The response url stands in for the webhook credential: the containment
-    tests assert it never reaches a warning message.
+    tests assert it never reaches a warning message. ``retry_after`` sets the
+    Retry-After header the 429 handling parses.
     """
 
     response = requests.Response()
     response.status_code = status
     response.url = "https://discord.example/api/webhooks/1/secret-token"
+    if retry_after is not None:
+        response.headers["Retry-After"] = retry_after
     return requests.HTTPError(response=response)
+
+
+class _SequencedPush:
+    """``discord_push`` stand-in: raises the queued errors in order, then succeeds."""
+
+    def __init__(self, *errors: requests.HTTPError) -> None:
+        self.errors = list(errors)
+        self.posts: list[str] = []
+
+    def __call__(self, *, url: str, embed: DiscordEmbed) -> None:
+        del embed
+        self.posts.append(url)
+        if self.errors:
+            raise self.errors.pop(0)
+
+
+def _record_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Route ``time.sleep`` (pacing + the 429 Retry-After) into a recording list."""
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(time, "sleep", sleeps.append)
+    return sleeps
 
 
 def _result() -> WaitResult:
@@ -285,41 +310,97 @@ def test_push_grab_4xx_disables_discord_for_the_run(monkeypatch: pytest.MonkeyPa
     assert all("secret-token" not in message for message in warnings)
 
 
-def test_push_grab_429_stays_per_push_and_names_the_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A 429 is Discord throttling a HEALTHY webhook (a first-sync burst can outrun
-    # the 1s pacing), not a dead one: it must NOT disable pushes for the run, and
-    # the warning must name the rate limit rather than blaming the config.
+def test_push_grab_429_retry_delivers_after_default_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A 429 without a Retry-After header sleeps the 1s default then retries
+    # once: the notification is DELIVERED, so the caller sees True and nothing
+    # warns - a rate-limited push that made it is not a failure.
+    push = _SequencedPush(_http_error(429))
+    monkeypatch.setattr(notify, "discord_push", push)
+    sleeps = _record_sleeps(monkeypatch)
+    logger = make_logger()
+    notifier = Notifier(discord_url="https://discord.example", logger=logger)
+
+    with _capture(logger) as handler:
+        assert _push_grab(notifier) is True
+
+    assert push.posts == ["https://discord.example"] * 2  # original + retry
+    assert sleeps == [1.0]  # missing header -> the 1s default
+    assert [r for r in handler.records if r.levelno == logging.WARNING] == []
+
+
+@pytest.mark.parametrize(
+    ("header", "expected_delay"),
+    [("3", 3.0), ("0.5", 0.5), ("soon", 1.0)],
+)
+def test_push_grab_429_honors_retry_after(
+    header: str,
+    expected_delay: float,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Discord's Retry-After (an int or float seconds string) is slept out
+    # before the retry; an unparseable value falls back to the 1s default.
+    push = _SequencedPush(_http_error(429, retry_after=header))
+    monkeypatch.setattr(notify, "discord_push", push)
+    sleeps = _record_sleeps(monkeypatch)
+    notifier = Notifier(discord_url="https://discord.example", logger=make_logger())
+
+    assert _push_grab(notifier) is True
+    assert sleeps == [expected_delay]
+
+
+def test_push_grab_429_retry_exhausted_drops_and_stays_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A 429 whose retry 429s again drops THIS notification with one truthful
+    # warning - never an optimistic "later notifications" claim. The webhook is
+    # healthy (throttled, not dead), so pushes stay enabled, the config is not
+    # blamed, and a later push still attempts (and drops the same way).
     posts: list[str] = []
 
-    def raising_discord_push(*, url: str, embed: DiscordEmbed) -> None:
+    def always_429(*, url: str, embed: DiscordEmbed) -> None:
         del embed
         posts.append(url)
-        raise _http_error(429)
+        raise _http_error(429, retry_after="0.1")
 
-    def no_sleep(seconds: float) -> None:
-        del seconds  # the second push would otherwise pay the real 1s pacing
-
-    monkeypatch.setattr(notify, "discord_push", raising_discord_push)
-    monkeypatch.setattr(time, "sleep", no_sleep)
+    monkeypatch.setattr(notify, "discord_push", always_429)
+    _record_sleeps(monkeypatch)  # neutralize the retry delay + the 1s pacing
     logger = make_logger()
     notifier = Notifier(discord_url="https://discord.example", logger=logger)
 
     with _capture(logger) as handler:
         assert _push_grab(notifier) is False
-        assert _push_grab(notifier) is False
+        first = [r.getMessage() for r in handler.records if r.levelno == logging.WARNING]
+        assert first == [
+            "Discord notification failed (HTTP 429) - rate limited by Discord; this notification was dropped",
+        ]
+        assert _push_grab(notifier) is False  # a later push still attempts
 
     assert notifier.enabled is True  # NOT disabled - later pushes still go out
-    assert posts == ["https://discord.example"] * 2  # both pushes were attempted
+    assert posts == ["https://discord.example"] * 4  # (original + retry) per push
     warnings = [r.getMessage() for r in handler.records if r.levelno == logging.WARNING]
-    assert (
-        warnings
-        == [
-            "Discord notification failed (HTTP 429) - rate limited by Discord; later notifications will still be sent",
-        ]
-        * 2
-    )
+    assert len(warnings) == 2  # one truthful warning per dropped push
     assert all("discord_url" not in message for message in warnings)  # config isn't at fault
     assert all("secret-token" not in message for message in warnings)
+
+
+def test_push_grab_429_long_retry_after_skips_the_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A Retry-After above the 5s cap isn't worth blocking the run for: no
+    # sleep, no retry - the push is dropped immediately with the same truthful
+    # warning, and pushes stay enabled for the rest of the run.
+    push = _SequencedPush(_http_error(429, retry_after="30"))
+    monkeypatch.setattr(notify, "discord_push", push)
+    sleeps = _record_sleeps(monkeypatch)
+    logger = make_logger()
+    notifier = Notifier(discord_url="https://discord.example", logger=logger)
+
+    with _capture(logger) as handler:
+        assert _push_grab(notifier) is False
+
+    assert push.posts == ["https://discord.example"]  # no retry POST
+    assert sleeps == []  # the 30s was NOT slept
+    assert notifier.enabled is True
+    warnings = [r.getMessage() for r in handler.records if r.levelno == logging.WARNING]
+    assert warnings == [
+        "Discord notification failed (HTTP 429) - rate limited by Discord; this notification was dropped",
+    ]
 
 
 def test_push_grab_5xx_stays_per_push(monkeypatch: pytest.MonkeyPatch) -> None:
