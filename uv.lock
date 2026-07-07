@@ -937,6 +937,7 @@ source = { editable = "." }
 dependencies = [
     { name = "arrapi" },
     { name = "beautifulsoup4" },
+    { name = "filelock" },
     { name = "httpx" },
     { name = "platformdirs" },
     { name = "pydantic" },
@@ -985,6 +986,7 @@ test = [
 requires-dist = [
     { name = "arrapi", specifier = "==1.4.14" },
     { name = "beautifulsoup4", specifier = "==4.15.0" },
+    { name = "filelock", specifier = "==3.29.6" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "platformdirs", specifier = "==4.10.0" },
     { name = "pydantic", specifier = "==2.13.4" },
