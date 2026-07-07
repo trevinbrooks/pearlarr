@@ -709,18 +709,20 @@ class MappingResolver:
             # AniBridge is the primary source: its richer per-season episode
             # offsets win, so query it first and key results by AniList ID.
             if self.anibridge:
-                anilist_mappings = self.get_mappings_from_anibridge_mappings(
-                    ids,
-                    anilist_mappings=anilist_mappings,
-                )
+                anilist_mappings = self.get_mappings_from_anibridge_mappings(ids)
 
             # Then fall back to the Kometa Anime IDs for anything AniBridge
-            # doesn't cover (it only adds AniList IDs not already present).
+            # doesn't cover - EXCEPT a degraded AniBridge entry, which Kometa
+            # overrides in the Sonarr/tvdb context only (tvdb id passed). There
+            # its missing season ranges drive a wrong-episode grab, so Kometa's
+            # explicit season wins; Radarr (no tvdb id) keeps AniBridge primary,
+            # since the entry value is unused for movies and overriding would
+            # silently flip the documented "AniBridge is primary" precedence.
             if self._anime_enabled:
-                anilist_mappings = self.get_mappings_from_anime_mappings(
-                    ids,
-                    anilist_mappings=anilist_mappings,
-                )
+                for al_id, entry in self.get_mappings_from_anime_mappings(ids).items():
+                    existing = anilist_mappings.get(al_id)
+                    if existing is None or (ids.tvdb is not None and _is_degraded_anibridge(existing)):
+                        anilist_mappings[al_id] = entry
 
             # Drop any AniList IDs the user has chosen to ignore.
             ids_to_drop = [al_id for al_id in self.ignore_anilist_ids if al_id in anilist_mappings]
@@ -739,18 +741,17 @@ class MappingResolver:
     def get_mappings_from_anime_mappings(
         self,
         ids: ExternalIds,
-        anilist_mappings: dict[int, MappingEntry] | None = None,
     ) -> dict[int, MappingEntry]:
         """Get mappings from the Anime ID mappings (served from SQL).
 
+        Returns a fresh {AniList id -> mapping} dict for this source alone;
+        cross-source precedence is ``get_anilist_ids``' merge to apply.
+
         Args:
             ids (ExternalIds): The external Arr ids to resolve (at least one).
-            anilist_mappings (dict): Dictionary of AniList mappings.
-                Defaults to None, which will create a new dictionary.
         """
 
-        if anilist_mappings is None:
-            anilist_mappings = {}
+        anilist_mappings: dict[int, MappingEntry] = {}
 
         ids.require_any()
 
@@ -759,16 +760,10 @@ class MappingResolver:
 
         # Add the first row seen for each AniList id (rows come back in first-seen
         # order), matching the previous "don't clobber an id another query already
-        # produced" behaviour - EXCEPT a degraded AniBridge entry, which Kometa
-        # overrides in the Sonarr/tvdb context only (tvdb id passed). There its
-        # missing season ranges drive a wrong-episode grab, so Kometa's explicit
-        # season wins; Radarr (no tvdb id) keeps AniBridge primary, since the entry
-        # value is unused for movies and overriding would silently flip the
-        # documented "AniBridge is primary" precedence.
+        # produced" behaviour.
         def merge(column: str, value: object) -> None:
             for row in self._store.anime_ids_lookup(column, value):
-                existing = anilist_mappings.get(row.anilist_id)
-                if existing is None or (ids.tvdb is not None and _is_degraded_anibridge(existing)):
+                if row.anilist_id not in anilist_mappings:
                     anilist_mappings[row.anilist_id] = _entry_from_anime_row(row)
 
         if ids.tvdb is not None:
@@ -783,18 +778,17 @@ class MappingResolver:
     def get_mappings_from_anibridge_mappings(
         self,
         ids: ExternalIds,
-        anilist_mappings: dict[int, MappingEntry] | None = None,
     ) -> dict[int, MappingEntry]:
         """Get mappings from the AniBridge mappings (served from SQL).
 
+        Returns a fresh {AniList id -> mapping} dict for this source alone;
+        cross-source precedence is ``get_anilist_ids``' merge to apply.
+
         Args:
             ids (ExternalIds): The external Arr ids to resolve (at least one).
-            anilist_mappings (dict): Dictionary of AniList mappings.
-                Defaults to None, which will create a new dictionary.
         """
 
-        if anilist_mappings is None:
-            anilist_mappings = {}
+        anilist_mappings: dict[int, MappingEntry] = {}
 
         anibridge = self.anibridge
         if not anibridge:
