@@ -7,6 +7,7 @@ so prefetch fakes it with a recording batch stub at the module attribute.
 """
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta
 
 import pytest
@@ -176,6 +177,59 @@ class TestPrefetch:
         assert sink.updates == [(50 / 51, "50/51"), (1.0, "51/51")]
         # The gateway's retry log rode along, so an outage mid-prefetch narrates.
         assert recorder.retry_logs == [gateway.retry_log, gateway.retry_log]
+
+
+class _ResolverRecorder:
+    """Recording stand-in for a per-id anilist helper: captures the threading."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, AniListCache | None, AniListRetryLog | None]] = []
+
+    def __call__(
+        self,
+        al_id: int,
+        al_cache: AniListCache | None = None,
+        retry_log: AniListRetryLog | None = None,
+    ) -> None:
+        self.calls.append((al_id, al_cache, retry_log))
+
+
+class TestResolverThreading:
+    """Every per-id resolver threads the gateway's al_cache AND its retry log.
+
+    The retry log is what makes an AniList backoff narrate (and the give-up warn
+    once) instead of hanging silently - so each gateway wrapper must pass it, or
+    a call site routed through the gateway silently regresses.
+    """
+
+    def _assert_threads(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        helper: str,
+        resolve: Callable[[AniListGateway], Callable[[int], object]],
+    ) -> None:
+        gateway, _ = _make_gateway()
+        recorder = _ResolverRecorder()
+        monkeypatch.setattr(anilist_gateway, helper, recorder)
+
+        resolve(gateway)(42)
+
+        [(al_id, al_cache, retry_log)] = recorder.calls
+        assert al_id == 42
+        assert al_cache is gateway.al_cache  # the gateway's own warm cache
+        assert retry_log is gateway.retry_log  # the per-run narration log
+
+    def test_title(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._assert_threads(monkeypatch, "get_anilist_title", lambda gateway: gateway.title)
+
+    def test_thumb(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._assert_threads(monkeypatch, "get_anilist_thumb", lambda gateway: gateway.thumb)
+
+    def test_media_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._assert_threads(monkeypatch, "get_anilist_format", lambda gateway: gateway.media_format)
+
+    def test_n_eps(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._assert_threads(monkeypatch, "get_anilist_n_eps", lambda gateway: gateway.n_eps)
 
 
 class TestLogPluralization:

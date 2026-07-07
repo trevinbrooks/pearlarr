@@ -6,6 +6,9 @@ empty dict (AniBridge registered the series' TVDB id but parsed no usable per-se
 ranges) resolves to ``[]`` instead of silently selecting episodes. The caller
 (``process_al_id``) surfaces the visible NO_EPISODES skip. The sibling ``{season: []}``
 whole-season-covered case must NOT be treated as empty.
+
+Also pins that the anime-ids path resolves the AniList format / episode count
+through the gateway (whose retry log narrates backoffs), never the bare helpers.
 """
 
 from seadexarr.modules.mappings import MappingEntry
@@ -29,6 +32,52 @@ class _FakeSonarr:
     def episodes(self, series_id: int) -> list[SonarrEpisode]:
         del series_id
         return self._ep_list
+
+
+class _RecordingAniList:
+    """Records the gateway resolver calls ``get_ep_list`` routes through."""
+
+    def __init__(self, *, media_format: str | None = None, n_eps: int | None = None) -> None:
+        self._media_format = media_format
+        self._n_eps = n_eps
+        self.format_calls: list[int] = []
+        self.n_eps_calls: list[int] = []
+
+    def media_format(self, al_id: int) -> str | None:
+        self.format_calls.append(al_id)
+        return self._media_format
+
+    def n_eps(self, al_id: int) -> int | None:
+        self.n_eps_calls.append(al_id)
+        return self._n_eps
+
+
+class _NoAniDbMappings:
+    """A mappings stand-in with no AniDB data (the anime-ids fast path)."""
+
+    has_anidb = False
+
+
+def test_anime_ids_lookups_route_through_the_gateway() -> None:
+    """Format + episode-count lookups go through the AniList gateway.
+
+    The gateway threads its warm cache and per-run retry log, so an AniList
+    backoff here narrates instead of hanging silently - the helpers must never
+    be called bare (retry_log=None) from this path again.
+    """
+
+    sonarr = _FakeSonarr([sonarr_ep(1, 1), sonarr_ep(1, 2)])
+    anilist = _RecordingAniList(n_eps=1)
+    episodes = make_sonarr_episodes(sonarr=sonarr, _anilist=anilist, _mappings=_NoAniDbMappings())
+
+    mapping = MappingEntry(anilist_id=123, tvdb_season=1)
+    result = episodes.get_ep_list(sonarr_series_id=10, al_id=123, mapping=mapping)
+
+    assert anilist.format_calls == [123]
+    assert anilist.n_eps_calls == [123]
+    # The gateway-resolved episode count drove the offset slice (2 eps -> 1).
+    assert result is not None
+    assert [ep.episode_number for ep in result] == [1]
 
 
 def test_empty_anibridge_season_map_resolves_to_no_episodes() -> None:

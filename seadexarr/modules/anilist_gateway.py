@@ -19,6 +19,8 @@ from .anilist import (
     ANILIST_BATCH_SIZE,
     AniListCache,
     AniListRetryLog,
+    get_anilist_format,
+    get_anilist_n_eps,
     get_anilist_thumb,
     get_anilist_title,
     get_query_batch,
@@ -196,3 +198,21 @@ class AniListGateway:
         """
 
         return get_anilist_thumb(al_id, al_cache=self.al_cache, retry_log=self.retry_log)
+
+    def media_format(self, al_id: int) -> str | None:
+        """Resolve the AniList media format (TV / MOVIE / OVA / ...) for an id, or None.
+
+        Args:
+            al_id (int): AniList ID
+        """
+
+        return get_anilist_format(al_id, al_cache=self.al_cache, retry_log=self.retry_log)
+
+    def n_eps(self, al_id: int) -> int | None:
+        """Resolve the AniList episode count for an id, or None.
+
+        Args:
+            al_id (int): AniList ID
+        """
+
+        return get_anilist_n_eps(al_id, al_cache=self.al_cache, retry_log=self.retry_log)

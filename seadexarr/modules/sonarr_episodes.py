@@ -13,7 +13,6 @@ import hashlib
 from collections.abc import Iterable
 
 from . import coverage as _coverage
-from .anilist import get_anilist_format, get_anilist_n_eps
 from .config import AppConfig
 from .mappings import MappingEntry, MappingMode, MappingSource
 from .radarr_client import IdField, collect_anime_items
@@ -141,10 +140,8 @@ class SonarrEpisodes:
         self._config = deps.config
         self._mappings = deps.mappings
         self.anibridge = deps.mappings.anibridge
-        # The AniList gateway owns al_cache; we read/reassign it directly through
-        # self._anilist.al_cache while resolving episode counts/formats. The
-        # gateway object is the single owner (shared with the engine, which never
-        # re-binds it), so reassigning .al_cache here stays visible everywhere.
+        # Episode counts / formats resolve through the gateway (shared with the
+        # engine), so its warm cache and retry narration apply here too.
         self._anilist = deps.anilist
         self.log_fmt = deps.log_fmt
 
@@ -351,7 +348,7 @@ class SonarrEpisodes:
 
         # For OVAs and movies, the offsets can often be wrong, so if we have specific mappings
         # then take that into account here
-        al_format = get_anilist_format(al_id, al_cache=self._anilist.al_cache)
+        al_format = self._anilist.media_format(al_id)
 
         # Potentially pull out a bunch of mappings from AniDB. These should
         # be for anything not marked as TV, and specials as marked by
@@ -415,7 +412,7 @@ class SonarrEpisodes:
 
         # Slice the list to get the correct episodes, so any potential offsets
         ep_offset = mapping.tvdb_epoffset
-        n_eps = get_anilist_n_eps(al_id, al_cache=self._anilist.al_cache)
+        n_eps = self._anilist.n_eps(al_id)
 
         # If we don't get a number of episodes, use them all
         if n_eps is None:
