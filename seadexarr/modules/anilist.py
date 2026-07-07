@@ -8,13 +8,9 @@ from typing import Any, cast
 import requests
 
 from .seadex_types import AniListError, AniListMediaNode
-from .. import __version__
+from .web_client import USER_AGENT
 
 API_URL = "https://graphql.anilist.co"
-
-# Identify ourselves to AniList (their API terms ask clients to be identifiable);
-# also what a maintainer would see if this client ever misbehaves.
-USER_AGENT = f"seadexarr/{__version__}"
 
 type AniListCache = dict[int, dict[str, dict[str, Any]]]
 """In-memory AniList cache: id -> raw GraphQL body ``{"data": {"Media": {...}}}``.
