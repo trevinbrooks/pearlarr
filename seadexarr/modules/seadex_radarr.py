@@ -31,7 +31,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         """Stand up the Radarr client from the injected shared collaborators.
 
         Args:
-            deps (RunDeps): The shared collaborators; the config/session/mappings
+            deps (RunDeps): The shared collaborators; the config/mappings
                 this strategy needs are read off it.
             services (RunServices): The services hub the per-id hooks call into.
             radarr_client (AbstractRadarrClient | None, optional): Injectable
@@ -43,7 +43,6 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         self._services = services
         self._config = deps.config
-        self.session = deps.session
         self.logger = deps.logger
         # The resolver supplies the Anime-IDs candidate id-sets (from SQL) that
         # ``collect_anime_movies`` filters with; the AniBridge view supplies its own.
@@ -59,7 +58,6 @@ class RadarrSync(ArrSync[RadarrItem]):
             self.radarr = make_radarr_client(
                 url=radarr_url,
                 api_key=radarr_api_key,
-                session=self.session,
                 http=deps.http,
                 logger=self.logger,
             )

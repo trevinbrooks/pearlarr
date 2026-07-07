@@ -17,7 +17,6 @@ from collections.abc import Set as AbstractSet
 
 import httpx
 import pytest
-import requests
 import respx
 
 from seadexarr.modules.radarr_client import RadarrClient, collect_anime_movies
@@ -40,7 +39,6 @@ def _make_client() -> RadarrClient:
     client = RadarrClient(
         url=_URL,
         api_key=_KEY,
-        session=requests.Session(),
         http=httpx.Client(),
         logger=logging.getLogger("seadexarr.test"),
     )
@@ -191,7 +189,6 @@ def test_trailing_slash_url_is_normalized() -> None:
     client = RadarrClient(
         url=f"{_URL}/",
         api_key=_KEY,
-        session=requests.Session(),
         http=httpx.Client(),
         logger=logging.getLogger("seadexarr.test"),
     )

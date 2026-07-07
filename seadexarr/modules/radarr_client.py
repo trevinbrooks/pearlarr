@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Any, Protocol, cast, override
 
 import httpx
-import requests
 
 from .anibridge import AniBridge
 from .arr_http import ArrHttp
@@ -19,11 +18,10 @@ def make_radarr_client(
     *,
     url: str,
     api_key: str,
-    session: requests.Session,
     http: httpx.Client,
     logger: logging.Logger,
 ) -> "RadarrClient":
-    """Build a :class:`RadarrClient` from the shared session/logger and a url/key.
+    """Build a :class:`RadarrClient` from the shared client/logger and a url/key.
 
     Hoisted so the two Arr strategies share one construction site. The url/key
     lookup policy stays with each caller (Radarr requires them, Sonarr reads them
@@ -33,15 +31,13 @@ def make_radarr_client(
     Args:
         url (str): Radarr base URL.
         api_key (str): Radarr API key.
-        session (requests.Session): Shared keep-alive session.
-        http (httpx.Client): Shared client for the migrated raw endpoints.
+        http (httpx.Client): The run's shared client for the raw endpoints.
         logger (logging.Logger): For request warnings.
     """
 
     return RadarrClient(
         url=url,
         api_key=api_key,
-        session=session,
         http=http,
         logger=logger,
     )
@@ -78,7 +74,6 @@ class RadarrClient(AbstractRadarrClient):
         *,
         url: str,
         api_key: str,
-        session: requests.Session,
         http: httpx.Client,
         logger: logging.Logger,
     ) -> None:
@@ -89,25 +84,17 @@ class RadarrClient(AbstractRadarrClient):
         that call's typed error / fail-open path, never a constructor hang.
 
         Args:
-            url (str): Radarr base URL.
+            url (str): Radarr base URL (a trailing slash is normalized away by
+                the bind - a "//api" join redirects to the login page).
             api_key (str): Radarr API key, sent as the ``X-Api-Key`` header (never
                 a query param, so it can't leak through URLs in logs/exceptions).
-            session (requests.Session): Shared keep-alive session for the raw
-                endpoints still on requests.
-            http (httpx.Client): Shared client for the endpoints migrated onto
-                :class:`~.arr_http.ArrHttp`.
+            http (httpx.Client): The run's shared client the bound
+                :class:`~.arr_http.ArrHttp` rides (shared across arrs, so the
+                key travels per request, never on the client).
             logger (logging.Logger): For request warnings.
         """
 
-        # Tolerate a trailing-slash config url: a "//api/..." join redirects to
-        # the login page instead of the API.
-        self._url = url.rstrip("/")
-        # The session is shared across clients (each with its own key), so the
-        # header rides each request rather than session.headers.
-        self._headers = {"X-Api-Key": api_key}
-        self._session = session
         self._http = ArrHttp.bind(client=http, url=url, api_key=api_key, label="Radarr", logger=logger)
-        self._logger = logger
 
     @override
     def all_movies(self) -> list[RadarrItem]:

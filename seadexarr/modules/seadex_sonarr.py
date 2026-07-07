@@ -88,7 +88,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         """Stand up the Sonarr client from the injected shared collaborators.
 
         Args:
-            deps (RunDeps): The shared collaborators; the config/session/mappings
+            deps (RunDeps): The shared collaborators; the config/mappings
                 this strategy reads directly are unpacked off it, and it's handed
                 to the Sonarr collaborators for the cache/AniList gateway/log
                 formatter they read.
@@ -107,15 +107,14 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         self._services = services
         self._config = deps.config
-        self.session = deps.session
         self.logger = deps.logger
         self._mappings = deps.mappings
         self.anibridge = deps.mappings.anibridge
 
         # Set up Sonarr. An injected client (tests) is used as-is; otherwise the
         # connection keys are required only now (when a Sonarr run runs) and the
-        # real client is built over the shared keep-alive session (parse fires one
-        # request per file, so reusing it removes a per-file handshake).
+        # real client is built over the run's shared httpx client (parse fires
+        # one request per file, so its keep-alive removes a per-file handshake).
         if sonarr_client is not None:
             self.sonarr: AbstractSonarrClient = sonarr_client
         else:
@@ -123,7 +122,6 @@ class SonarrSync(ArrSync[SonarrItem]):
             self.sonarr = SonarrClient(
                 url=sonarr_url,
                 api_key=sonarr_api_key,
-                session=self.session,
                 http=deps.http,
                 logger=self.logger,
             )
@@ -175,7 +173,6 @@ class SonarrSync(ArrSync[SonarrItem]):
                 radarr_client = make_radarr_client(
                     url=radarr_url,
                     api_key=radarr_api_key,
-                    session=self.session,
                     http=deps.http,
                     logger=self.logger,
                 )

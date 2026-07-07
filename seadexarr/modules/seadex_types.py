@@ -138,8 +138,9 @@ def as_size_list(size: int | list[int | None] | None) -> list[int]:
 
 # --- shared plumbing ----------------------------------------------------------
 
-# (connect, read) timeout for every plain Arr REST request, so a hung Sonarr /
-# Radarr surfaces as a transient miss instead of blocking the run.
+# (connect, read) timeout shared by the arr httpx client factory and the
+# qBittorrent adapter, so a hung service surfaces as a transient miss instead
+# of blocking the run.
 ARR_REQUEST_TIMEOUT_S = (5, 30)
 
 # Structural twin of requests' recursive ``JsonType`` (private module - importable,

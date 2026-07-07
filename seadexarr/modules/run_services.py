@@ -135,10 +135,9 @@ class RunDeps:
             log_dir = os.path.join(os.path.dirname(os.path.abspath(cache)), "logs")
             logger = setup_logger(log_level=app_config.advanced.log_level, log_dir=log_dir)
 
-        # Shared keep-alive session for the raw Sonarr/Radarr calls. Retries
-        # transient failures on idempotent GETs only (POSTs never retry, so a
-        # command can't double-fire); pool_maxsize must stay >= the sweep's fetch
-        # concurrency (SONARR_FETCH_WORKERS) so parallel GETs don't queue.
+        # Shared keep-alive session for the torrent machinery's tracker fetches
+        # (the arr clients are fully on the shared httpx client below). Retries
+        # transient failures on idempotent GETs only (POSTs never retry);
         # raise_on_status=False lets a still-5xx response return for the callers'
         # status checks. Per-request timeouts are at the call sites.
         session = requests.Session()
@@ -155,10 +154,8 @@ class RunDeps:
         session.mount("http://", adapter)
         session.mount("https://", adapter)
 
-        # The httpx client the raw arr endpoints are migrating onto (ArrHttp
-        # binds it per arr); pinned timeouts / no-redirects / pool sizing live
-        # in its factory. The requests session above shrinks away as endpoints
-        # move over.
+        # The httpx client every raw arr endpoint rides (ArrHttp binds it per
+        # arr); pinned timeouts / no-redirects / pool sizing live in its factory.
         http = make_httpx_client()
 
         # qbit. None unless host/username/password are all set; with any unset, no

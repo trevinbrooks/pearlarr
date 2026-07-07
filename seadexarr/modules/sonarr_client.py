@@ -1,8 +1,7 @@
 """Sonarr REST client: the HTTP surface the Sonarr syncer talks to.
 
-``SonarrClient`` speaks to the raw ``/api/v3`` endpoints directly: the
-library fetch and queue ride the httpx-based :class:`~.arr_http.ArrHttp`,
-the remaining endpoints the shared ``requests`` session.
+``SonarrClient`` speaks to the raw ``/api/v3`` endpoints directly, every one
+riding the httpx-based :class:`~.arr_http.ArrHttp` bound at construction.
 """
 
 import logging
@@ -10,7 +9,6 @@ from abc import ABC, abstractmethod
 from typing import Any, cast, override
 
 import httpx
-import requests
 
 from .arr_http import ArrHttp
 from .log import indent_string
@@ -109,7 +107,6 @@ class SonarrClient(AbstractSonarrClient):
         *,
         url: str,
         api_key: str,
-        session: requests.Session,
         http: httpx.Client,
         logger: logging.Logger,
     ) -> None:
@@ -120,24 +117,16 @@ class SonarrClient(AbstractSonarrClient):
         that call's typed error / fail-open path, never a constructor hang.
 
         Args:
-            url (str): Sonarr base URL.
+            url (str): Sonarr base URL (a trailing slash is normalized away by
+                the bind - a "//api" join redirects to the login page).
             api_key (str): Sonarr API key, sent as the ``X-Api-Key`` header (never
                 a query param, so it can't leak through URLs in logs/exceptions).
-            session (requests.Session): Shared keep-alive session for the raw
-                endpoints still on requests. ``parse`` fires one request per file,
-                so reusing it removes a per-file handshake.
-            http (httpx.Client): Shared client for the endpoints migrated onto
-                :class:`~.arr_http.ArrHttp`.
+            http (httpx.Client): The run's shared client the bound
+                :class:`~.arr_http.ArrHttp` rides (shared across arrs, so the
+                key travels per request, never on the client).
             logger (logging.Logger): For request warnings.
         """
 
-        # Tolerate a trailing-slash config url: a "//api/..." join redirects to
-        # the login page instead of the API.
-        self._url = url.rstrip("/")
-        # The session is shared across clients (each with its own key), so the
-        # header rides each request rather than session.headers.
-        self._headers = {"X-Api-Key": api_key}
-        self._session = session
         self._http = ArrHttp.bind(client=http, url=url, api_key=api_key, label="Sonarr", logger=logger)
         self._logger = logger
 
@@ -206,8 +195,8 @@ class SonarrClient(AbstractSonarrClient):
         Distinguishes a clean response from a transient failure so the caller can
         safely negative-cache the former without poisoning the latter: an empty
         list is a *confirmed* "Sonarr matched no episode" (200, cacheable),
-        whereas None is a request failure (non-200 / connection error after the
-        session's retries) that must NOT be cached.
+        whereas None is a request failure (non-200 / connection error after
+        ArrHttp's retries) that must NOT be cached.
 
         Args:
             filename (str): Filename to parse (basename, not full path).

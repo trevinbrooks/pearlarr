@@ -20,7 +20,6 @@ import logging
 
 import httpx
 import pytest
-import requests
 import respx
 
 from seadexarr.modules.manual_import import PendingImport
@@ -44,16 +43,14 @@ _KEY = "testkey"
 def _make_client() -> SonarrClient:
     """Build a real ``SonarrClient`` (construction is network-free).
 
-    The endpoints still on ``requests`` are mocked per test through
-    ``responses``; the endpoints migrated onto ``ArrHttp`` ride the httpx
-    client, mocked through ``respx``. The bound helper's ``sleep`` is stubbed
-    out so fail-open tests don't wait out real backoffs.
+    Every endpoint rides the bound ``ArrHttp`` over the httpx client, mocked
+    through ``respx``. The bound helper's ``sleep`` is stubbed out so fail-open
+    tests don't wait out real backoffs.
     """
 
     client = SonarrClient(
         url=_URL,
         api_key=_KEY,
-        session=requests.Session(),
         http=httpx.Client(),
         logger=logging.getLogger("seadexarr.test"),
     )
@@ -737,7 +734,6 @@ def test_trailing_slash_url_is_normalized() -> None:
     client = SonarrClient(
         url=f"{_URL}/",
         api_key=_KEY,
-        session=requests.Session(),
         http=httpx.Client(),
         logger=logging.getLogger("seadexarr.test"),
     )
