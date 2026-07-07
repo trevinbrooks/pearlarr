@@ -22,7 +22,7 @@ class TitledRule:
     """
 
     title: str
-    style: str = "cyan"
+    style: str = "bold cyan"
     heavy: bool = False
 
 
