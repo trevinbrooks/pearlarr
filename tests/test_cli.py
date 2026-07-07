@@ -687,14 +687,12 @@ class TestRunFailuresAreCleanAndNonzero:
     ) -> None:
         # A brand-new user with no network hits the FIRST-ever source download
         # (the refresh path falls open to the cached copy; a first download has
-        # none): urlopen raises URLError (an OSError), which must surface as a
-        # one-line hint, not a ten-frame traceback.
-        from urllib.error import URLError
-
+        # none): the downloader translates the httpx failure into an OSError,
+        # which must surface as a one-line hint, not a ten-frame traceback.
         import seadexarr.modules.mappings as mappings_mod
 
         def fail_resolver(*args: object, **kwargs: object) -> NoReturn:
-            raise URLError("no route to host")
+            raise OSError("download failed: ConnectError")
 
         monkeypatch.setattr(mappings_mod, "MappingResolver", fail_resolver)
         _write_runnable_config()

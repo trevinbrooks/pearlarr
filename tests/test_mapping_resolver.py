@@ -20,7 +20,9 @@ from types import SimpleNamespace
 from typing import NamedTuple
 from xml.etree import ElementTree
 
+import httpx
 import pytest
+import respx
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn
@@ -44,6 +46,9 @@ from seadexarr.modules.seadex_types import TvdbMappings
 from seadexarr.modules.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge
 
 from .builders import make_bare_instance, sonarr_ep
+
+# One inert shared client for the resolver ctors (inline sources: nothing downloads).
+_WEB = httpx.Client()
 
 # --------------------------------------------------------------------------- #
 # AniBridge: SQL backing must equal the graph backing (the oracle)
@@ -325,6 +330,7 @@ class TestAnimeIdsParity:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
+            web=_WEB,
             sources=MappingSources(
                 anime=AMAP,
                 anidb=False,
@@ -345,6 +351,7 @@ class TestAnimeIdsParity:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
+            web=_WEB,
             sources=MappingSources(
                 anime=amap,
                 anidb=False,
@@ -364,6 +371,7 @@ class TestAnimeIdsParity:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
+            web=_WEB,
             sources=MappingSources(
                 anime=AMAP,
                 anidb=False,
@@ -388,6 +396,7 @@ class TestGetAnilistIdsMerge:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids={270},
+            web=_WEB,
             sources=MappingSources(
                 anime=amap,
                 anidb=False,
@@ -419,6 +428,7 @@ class TestVu1DegradedAniBridge:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
+            web=_WEB,
             sources=MappingSources(
                 anime={"k": {"anilist_id": 400, "tvdb_id": 555, "tvdb_season": 2, "imdb_id": "tt400"}},
                 anidb=False,
@@ -444,6 +454,7 @@ class TestVu1DegradedAniBridge:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
+            web=_WEB,
             sources=MappingSources(
                 anime={"k": {"anilist_id": 600, "tvdb_id": 555, "tvdb_season": 0, "imdb_id": "tt600"}},
                 anidb=False,
@@ -465,6 +476,7 @@ class TestVu1DegradedAniBridge:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
+            web=_WEB,
             sources=MappingSources(
                 anime={"k": {"anilist_id": 401, "tmdb_movie_id": 888, "imdb_id": "tt401"}},
                 anidb=False,
@@ -484,6 +496,7 @@ class TestVu1DegradedAniBridge:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
+            web=_WEB,
             sources=MappingSources(
                 anime=False,  # no Kometa fallback
                 anidb=False,
@@ -530,6 +543,7 @@ def _anidb_resolver() -> MappingResolver:
     return MappingResolver(
         cache_time=1,
         ignore_anilist_ids=set(),
+        web=_WEB,
         sources=MappingSources(
             anime=False,
             anidb=root,
@@ -575,6 +589,7 @@ class TestAnidbMappingDict:
         resolver = MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
+            web=_WEB,
             sources=MappingSources(
                 anime=False,
                 anidb=False,
@@ -618,6 +633,7 @@ class TestDigestGate:
             return MappingResolver(
                 cache_time=1,
                 ignore_anilist_ids=set(),
+                web=_WEB,
                 sources=MappingSources(
                     anime=None,
                     anidb=False,
@@ -664,6 +680,7 @@ class TestConstructionFailureClosesStore:
             MappingResolver(
                 cache_time=1,
                 ignore_anilist_ids=set(),
+                web=_WEB,
                 sources=MappingSources(
                     anime={"x": {"anilist_id": 1}},
                     anidb=False,
@@ -769,6 +786,7 @@ class TestRealDataParity:
         resolver = MappingResolver(
             cache_time=99999,
             ignore_anilist_ids=set(),
+            web=_WEB,
             sources=MappingSources(
                 anime=amap,
                 anidb=False,
@@ -798,6 +816,7 @@ class TestRealDataParity:
         resolver = MappingResolver(
             cache_time=99999,
             ignore_anilist_ids=set(),
+            web=_WEB,
             sources=MappingSources(
                 anime=False,
                 anidb=root,
@@ -844,7 +863,7 @@ class TestMaybeDownloadFailOpen:
         monkeypatch.setattr(m, "_download_file", _boom)
 
         logger = logging.getLogger("seadexarr-test-maybe-download")
-        resolver = make_bare_instance(MappingResolver, logger=logger, _progress=None, cache_time=1)
+        resolver = make_bare_instance(MappingResolver, logger=logger, _progress=None, cache_time=1, _web=_WEB)
         with caplog.at_level(logging.WARNING, logger=logger.name):
             resolver._maybe_download(str(source), "https://example/anime_ids.json", "anime_ids.json")
 
@@ -857,7 +876,7 @@ class TestMaybeDownloadFailOpen:
         # With no file on disk there is nothing to fall open to, so a first-ever
         # download failure stays fatal (the run cannot proceed without the source).
         monkeypatch.setattr(m, "_download_file", _boom)
-        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, cache_time=1)
+        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, cache_time=1, _web=_WEB)
 
         with pytest.raises(OSError):
             resolver._maybe_download(str(tmp_path / "missing.json"), "https://example/x.json", "x")
@@ -866,14 +885,21 @@ class TestMaybeDownloadFailOpen:
 class TestDownloadFileSizeCap:
     """An over-cap response aborts as OSError and leaves no partial file behind."""
 
+    @respx.mock
     def test_over_cap_download_aborts_and_cleans_up(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        source = tmp_path / "src.json"
-        source.write_bytes(b"x" * 4096)
         dest = tmp_path / "out.json"
         monkeypatch.setattr(m, "MAX_DOWNLOAD_BYTES", 1024)
+        respx.get("https://example/src.json").respond(content=b"x" * 4096)
 
         with pytest.raises(OSError, match="download cap"):
-            m._download_file(source.as_uri(), str(dest), timeout=5, logger=None, label="src.json")
+            m._download_file(
+                "https://example/src.json",
+                str(dest),
+                client=httpx.Client(),
+                timeout=5,
+                logger=None,
+                label="src.json",
+            )
 
         # Neither the destination nor the .part temp survives the abort.
         assert not dest.exists()

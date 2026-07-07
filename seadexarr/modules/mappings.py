@@ -25,8 +25,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any, NamedTuple, cast
-from urllib.request import Request, urlopen
 from xml.etree import ElementTree
+
+import httpx
 
 from .anibridge import AniBridge, AniBridgeEntry, AniBridgeGraph, AniBridgeLookup
 from .mapping_store import (
@@ -237,46 +238,62 @@ def _download_file(
     url: str,
     dest: str,
     *,
+    client: httpx.Client,
     timeout: int,
     logger: logging.Logger | None,
     label: str,
     progress: ProgressSink | None = None,
 ) -> None:
-    """Stream ``url`` to ``dest`` with a socket timeout and throttled progress.
+    """Stream ``url`` to ``dest`` with a per-read timeout and throttled progress.
 
     Writes to a ``.part`` temp and atomically renames on success, so a failed or
     stalled download never leaves a truncated source file for the next run to
     digest and trust. A per-read timeout bounds a stall (the read raises rather
     than blocking forever). Progress is reported about once per MB - to the boot
     cockpit's live bar when a ``progress`` sink is given, else (standalone use) as
-    a throttled DEBUG line.
+    a throttled DEBUG line. Raises ``OSError`` on any failure (the callers'
+    containment contract).
     """
 
     tmp = dest + ".part"
     try:
-        req = Request(url, headers={"User-Agent": "seadexarr"})
-        with urlopen(req, timeout=timeout) as resp, open(tmp, "wb") as out:  # noqa: S310 (trusted https sources)
-            total = int(resp.headers.get("Content-Length") or 0)
-            got = 0
-            next_mark = 1 << 20
-            while True:
-                chunk = resp.read(1 << 16)
-                if not chunk:
-                    break
-                out.write(chunk)
-                got += len(chunk)
-                if got > MAX_DOWNLOAD_BYTES:
-                    # A runaway/hostile response must not fill the disk; the
-                    # largest real source is a few tens of MB. OSError so the
-                    # refresh path's fall-open containment applies.
-                    raise OSError(f"{label} exceeded the {MAX_DOWNLOAD_BYTES >> 20} MB download cap; aborting")
-                if got >= next_mark:
-                    if progress is not None and total:
-                        progress.progress(got / total, f"{label} · {got >> 20}/{total >> 20} MB")
-                    elif logger is not None:
-                        suffix = f"{got >> 20}/{total >> 20} MB ({got * 100 // total}%)" if total else f"{got >> 20} MB"
-                        logger.debug(f"  ...downloading {label}: {suffix}")
-                    next_mark = got + (1 << 20)
+        try:
+            # Pin identity encoding: httpx would transparently gunzip, making the
+            # counted (decoded) bytes disagree with the compressed Content-Length
+            # and the progress fraction/MB details read nonsense.
+            with client.stream("GET", url, timeout=timeout, headers={"Accept-Encoding": "identity"}) as resp:
+                resp.raise_for_status()
+                total = int(resp.headers.get("Content-Length") or 0)
+                got = 0
+                next_mark = 1 << 20
+                with open(tmp, "wb") as out:
+                    for chunk in resp.iter_bytes(1 << 16):
+                        out.write(chunk)
+                        got += len(chunk)
+                        if got > MAX_DOWNLOAD_BYTES:
+                            # A runaway/hostile response must not fill the disk; the
+                            # largest real source is a few tens of MB. OSError so the
+                            # refresh path's fall-open containment applies.
+                            raise OSError(
+                                f"{label} exceeded the {MAX_DOWNLOAD_BYTES >> 20} MB download cap; aborting",
+                            )
+                        if got >= next_mark:
+                            if progress is not None and total:
+                                progress.progress(got / total, f"{label} · {got >> 20}/{total >> 20} MB")
+                            elif logger is not None:
+                                suffix = (
+                                    f"{got >> 20}/{total >> 20} MB ({got * 100 // total}%)"
+                                    if total
+                                    else f"{got >> 20} MB"
+                                )
+                                logger.debug(f"  ...downloading {label}: {suffix}")
+                            next_mark = got + (1 << 20)
+        except httpx.HTTPStatusError as e:
+            # Callers contain OSError (urllib's URLError was one); translate at this
+            # boundary keeping the status but never the message (it embeds the URL).
+            raise OSError(f"download failed: HTTP {e.response.status_code}") from e
+        except httpx.HTTPError as e:
+            raise OSError(f"download failed: {type(e).__name__}") from e
         os.replace(tmp, dest)
     finally:
         with contextlib.suppress(OSError):
@@ -418,6 +435,7 @@ class MappingResolver:
         cache_time: int,
         ignore_anilist_ids: set[int],
         sources: MappingSources,
+        web: httpx.Client,
         mappings_db: str = ":memory:",
         logger: logging.Logger | None = None,
         progress: ProgressSink | None = None,
@@ -430,6 +448,7 @@ class MappingResolver:
             ignore_anilist_ids (set[int]): AniList ids to drop from every result.
             sources (MappingSources): The three source configs, each tri-state
                 (disabled / download / pre-parsed inline).
+            web (httpx.Client): The shared web client the source downloads ride.
             mappings_db (str): Path to the SQLite mapping cache; defaults to an
                 in-memory db (tests / pre-parsed configs).
             logger (logging.Logger | None): For download/parse visibility (DEBUG;
@@ -442,6 +461,7 @@ class MappingResolver:
         self.cache_time = cache_time
         self.ignore_anilist_ids = ignore_anilist_ids
         self.logger = logger
+        self._web = web
         self._progress = progress
 
         # The downloaded sources are cached next to mappings.db in the data dir; an
@@ -544,7 +564,13 @@ class MappingResolver:
         if not os.path.exists(file):
             self._log(f"Downloading {label}")
             _download_file(
-                url, file, timeout=DOWNLOAD_TIMEOUT_S, logger=self.logger, label=label, progress=self._progress
+                url,
+                file,
+                client=self._web,
+                timeout=DOWNLOAD_TIMEOUT_S,
+                logger=self.logger,
+                label=label,
+                progress=self._progress,
             )
             return
 
@@ -553,7 +579,13 @@ class MappingResolver:
             self._log(f"Refreshing {label} (cached {age.days}d >= {self.cache_time}d)")
             try:
                 _download_file(
-                    url, file, timeout=DOWNLOAD_TIMEOUT_S, logger=self.logger, label=label, progress=self._progress
+                    url,
+                    file,
+                    client=self._web,
+                    timeout=DOWNLOAD_TIMEOUT_S,
+                    logger=self.logger,
+                    label=label,
+                    progress=self._progress,
                 )
             except OSError as e:
                 # A transient blip refreshing a stale-but-valid cached source must not abort

@@ -11,6 +11,7 @@ former dict reads produced.
 
 import dataclasses
 
+import httpx
 import pytest
 
 from seadexarr.modules.anibridge import AniBridgeGraph
@@ -34,6 +35,7 @@ def _resolver(
     return MappingResolver(
         cache_time=1,
         ignore_anilist_ids=set(),
+        web=httpx.Client(),
         sources=MappingSources(anime=anime, anidb=False, anibridge=anibridge),
     )
 

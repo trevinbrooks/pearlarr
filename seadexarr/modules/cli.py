@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 
     # Imported only for annotations - the runtime imports live in the functions
     # that use them, so their deps aren't pulled at CLI module load (see below).
+    import httpx
+
     from .cache import CacheStore
     from .mappings import MappingResolver
 
@@ -226,6 +228,7 @@ def _build_resolver(
     logger: logging.Logger,
     boot: BootView,
     retry: str,
+    web: httpx.Client,
 ) -> MappingResolver | None:
     """Build the id-mapping resolver both arrs share (settings are arr-independent).
 
@@ -249,6 +252,7 @@ def _build_resolver(
                     anidb=app_config.mappings.anidb_mappings,
                     anibridge=app_config.mappings.anibridge_mappings,
                 ),
+                web=web,
                 mappings_db=mappings_db,
                 logger=logger,
                 progress=mapping_step,
@@ -421,7 +425,7 @@ def _run_arrs(
                 return False
 
             # The parsed/indexed mapping cache lives beside cache.db in the data dir.
-            mappings = _build_resolver(app_config, paths.mappings_db, logger, boot, retry)
+            mappings = _build_resolver(app_config, paths.mappings_db, logger, boot, retry, web)
             if mappings is None:
                 return False
             all_arrs_completed = True

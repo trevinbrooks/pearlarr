@@ -635,6 +635,7 @@ def make_run_deps(
         mappings=MappingResolver(
             cache_time=1,
             ignore_anilist_ids=set(),
+            web=http,
             sources=MappingSources(anime={}, anidb=False, anibridge=False),
         ),
         logger=logger,
