@@ -60,7 +60,7 @@ def sonarr_series_fingerprint(series_ids: Iterable[int]) -> str:
     """
 
     joined = ",".join(str(i) for i in sorted(set(series_ids)))
-    return hashlib.sha1(joined.encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha1(joined.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
 
 
 def check_ep_by_anime_ids(

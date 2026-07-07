@@ -443,7 +443,7 @@ class AppConfig(_ConfigBase):
         # type checkers don't read it as a frozen-field mutation (it isn't - these are
         # private attrs, set once here at load and never again).
         object.__setattr__(config, "_path", path)
-        object.__setattr__(config, "_checksum", md5(raw).hexdigest())
+        object.__setattr__(config, "_checksum", md5(raw, usedforsecurity=False).hexdigest())
         return config
 
     def checksum(self) -> str:
