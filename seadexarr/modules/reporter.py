@@ -415,7 +415,7 @@ class RunReporter:
         # (private_releases is run-wide); those two can, and the no-fallback tip
         # (which omits the fallback suggestion, already on) wins over the stale one.
         if any(item.kind is NeedsActionKind.PRIVATE_ONLY for item in needs):
-            tip = "Tip: set private_releases: fallback to grab a public alternative, or wait for a public release."
+            tip = "Tip: manually grab private releases or set private_releases: fallback to automatically grab public alternatives."
         elif any(item.kind is NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK for item in needs):
             tip = "Tip: no public alternative exists yet; the title is re-checked every run until one appears."
         elif any(item.kind is NeedsActionKind.PRIVATE_ONLY_STALE for item in needs):

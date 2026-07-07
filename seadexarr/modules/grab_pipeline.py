@@ -185,7 +185,7 @@ class GrabPipeline:
         if not url_item.is_public:
             self.log_fmt.detail(
                 "skipped",
-                f"{tracker} private-only (private releases not allowed)",
+                f"{tracker} private-only",
                 value_style="yellow",
                 level=logging.WARNING,
             )
@@ -392,7 +392,7 @@ class GrabPipeline:
         elif self._ctx.private_only_skipped:
             if self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK:
                 if self._config.advanced.interactive:
-                    reason = "hand-picked private release; private releases not allowed"
+                    reason = "hand-picked private release; private releases not supported"
                     kind = NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK
                 elif self._ctx.private_only_stale_held:
                     # One row per title: the stale bit wins over a coexisting
@@ -404,7 +404,7 @@ class GrabPipeline:
                     kind = NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK
             else:
                 reason, kind = (
-                    "private-only release; private releases not allowed",
+                    "private-only release; private releases not supported",
                     NeedsActionKind.PRIVATE_ONLY,
                 )
             self._ctx.stats.needs_action.append(

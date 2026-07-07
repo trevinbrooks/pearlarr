@@ -417,7 +417,7 @@ class TestUnsupportedTrackerSkip:
         assert pipeline._ctx.unsupported_tracker_skipped is True
         # ...but only the private-only reason is surfaced, and the title stays uncached.
         assert [r.reason for r in pipeline._ctx.stats.needs_action] == [
-            "private-only release; private releases not allowed"
+            "private-only release; private releases not supported"
         ]
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY]
         assert pipeline.cache_store.get_entry(Arr.SONARR, 7) is None
@@ -514,7 +514,7 @@ class TestUnsupportedTrackerSkip:
         pipeline.grab_and_cache(req)
 
         assert [r.reason for r in pipeline._ctx.stats.needs_action] == [
-            "hand-picked private release; private releases not allowed"
+            "hand-picked private release; private releases not supported"
         ]
         assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
 

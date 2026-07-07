@@ -591,7 +591,7 @@ class TestMixedGroupKeeperPreference:
             pipe.grab_and_cache(_grab_request(56, out, hashes, entry))
 
         warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
-        assert any("private-only (private releases not allowed)" in m for m in warnings), warnings
+        assert any("private-only" in m for m in warnings), warnings
         assert ctx.private_only_skipped is True
         assert ctx.private_only_groups == ["G"]
         assert torrents.calls == [PUB_HASH]
@@ -669,7 +669,7 @@ class TestSurvivingPrivateCoverage:
             pipe.grab_and_cache(_grab_request(33, out, hashes, entry))
 
         warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
-        assert any("private-only (private releases not allowed)" in m for m in warnings), warnings
+        assert any("private-only" in m for m in warnings), warnings
         assert ctx.private_only_skipped is True
         assert ctx.private_only_groups == ["A"]
         assert torrents.calls == [PUB_HASH]
@@ -979,7 +979,7 @@ class TestEqualUnionMixedGroups:
             # refused with a WARNING, and warn mode still caches the title.
             assert set(torrents.calls) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
             warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
-            assert any("private-only (private releases not allowed)" in m for m in warnings), warnings
+            assert any("private-only" in m for m in warnings), warnings
             assert ctx.private_only_skipped is True
             assert cache.check_al_id_in_cache(Arr.SONARR, al_id, entry) is True
 
