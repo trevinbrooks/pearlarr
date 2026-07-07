@@ -178,14 +178,17 @@ class SonarrClient(AbstractSonarrClient):
         raw_json = cast("list[dict[str, Any]]", eps_req.json())
 
         # Sort by season/episode number for slicing later, then parse each raw
-        # record into a SonarrEpisode at this client boundary.
-        raw_eps = sorted(
-            raw_json,
-            key=lambda x: (
-                x.get("seasonNumber", None),
-                x.get("episodeNumber", None),
-            ),
-        )
+        # record into a SonarrEpisode at this client boundary. A record missing
+        # either number sorts first (-1) instead of raising on a None<int compare.
+        def _ep_key(raw: dict[str, Any]) -> tuple[int, int]:
+            season = raw.get("seasonNumber")
+            episode = raw.get("episodeNumber")
+            return (
+                season if isinstance(season, int) else -1,
+                episode if isinstance(episode, int) else -1,
+            )
+
+        raw_eps = sorted(raw_json, key=_ep_key)
         return [SonarrEpisode.from_api(ep) for ep in raw_eps]
 
     @override
@@ -470,8 +473,9 @@ class SonarrClient(AbstractSonarrClient):
         case-insensitively) and ``trackedDownloadState``. A season pack has one
         record per episode sharing the ``downloadId``. ``includeUnknownSeriesItems``
         is on because an ``importBlocked`` item whose title didn't match a series
-        can surface as an unknown-series record. A large ``pageSize`` pulls the
-        whole queue in one request.
+        can surface as an unknown-series record. Pages of 1000 are fetched until
+        ``totalRecords`` is covered, so a very large queue is never silently
+        truncated.
 
         Each raw ``QueueResource`` is narrowed to a
         :class:`~.seadex_types.QueueRecord` (``download_id`` / ``state`` /
@@ -484,31 +488,43 @@ class SonarrClient(AbstractSonarrClient):
         Returns:
             list[QueueRecord]: The parsed queue records; empty on failure.
         """
-        params = urlencode(
-            {
-                "pageSize": "1000",
-                "includeUnknownSeriesItems": "true",
-            },
-        )
-        queue_req_url = f"{self._url}/api/v3/queue?{params}"
-        try:
-            queue_req = self._session.get(queue_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
-        except requests.RequestException:
-            queue_req = None
-
-        if queue_req is None or queue_req.status_code != 200:
-            detail = "request failed" if queue_req is None else f"status code {queue_req.status_code}"
-            self._logger.warning(
-                indent_string(f"Could not fetch the Sonarr queue ({detail})"),
+        records: list[QueueRecord] = []
+        page = 1
+        while True:
+            params = urlencode(
+                {
+                    "page": str(page),
+                    "pageSize": "1000",
+                    "includeUnknownSeriesItems": "true",
+                },
             )
-            return []
+            queue_req_url = f"{self._url}/api/v3/queue?{params}"
+            try:
+                queue_req = self._session.get(queue_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
+            except requests.RequestException:
+                queue_req = None
 
-        # response.json() is untyped; the queue endpoint returns a paged object
-        # whose "records" is the array of QueueResource objects, so cast at the
-        # parse boundary, then narrow each to the fields the wait reads via
-        # from_api.
-        paged = cast("dict[str, list[dict[str, Any]]]", queue_req.json())
-        return [QueueRecord.from_api(record) for record in paged.get("records", [])]
+            if queue_req is None or queue_req.status_code != 200:
+                detail = "request failed" if queue_req is None else f"status code {queue_req.status_code}"
+                self._logger.warning(
+                    indent_string(f"Could not fetch the Sonarr queue ({detail})"),
+                )
+                # A failed LATER page keeps what was fetched: partial beats empty
+                # for the caller's "not tracked -> fall back to own scan" logic.
+                return records
+
+            # response.json() is untyped; the queue endpoint returns a paged
+            # object whose "records" is the array of QueueResource objects, so
+            # cast at the parse boundary, then narrow each to the fields the
+            # wait reads via from_api.
+            paged = cast("dict[str, Any]", queue_req.json())
+            raw_records = cast("list[dict[str, Any]]", paged.get("records", []))
+            records.extend(QueueRecord.from_api(record) for record in raw_records)
+
+            total = paged.get("totalRecords")
+            if not raw_records or len(records) >= (total if isinstance(total, int) else 0):
+                return records
+            page += 1
 
     @override
     def quality_definitions(self) -> list[QualityDefinition]:

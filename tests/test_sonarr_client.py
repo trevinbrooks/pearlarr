@@ -94,6 +94,50 @@ def test_queue_decodes_records_and_builds_request() -> None:
     assert "includeUnknownSeriesItems=true" in url
 
 
+def _queue_page(total: int, hashes: list[str]) -> dict[str, object]:
+    """One raw paged ``/queue`` body carrying ``totalRecords`` and the records."""
+
+    return {
+        "totalRecords": total,
+        "records": [
+            {"downloadId": h, "trackedDownloadState": "downloading", "trackedDownloadStatus": "ok"} for h in hashes
+        ],
+    }
+
+
+def test_queue_paginates_until_total_records_covered() -> None:
+    """A queue larger than one page is fetched page by page until totalRecords
+    is covered, never silently truncated at the first page.
+    """
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/queue", json=_queue_page(3, ["HASH0", "HASH1"]))
+        rsps.add(responses.GET, f"{_BASE}/queue", json=_queue_page(3, ["HASH2"]))
+        records = client.queue()
+        # calls[0] is the construction probe; the queue pages follow.
+        urls = [call.request.url for call in rsps.calls[1:]]
+
+    assert [r.download_id for r in records] == ["HASH0", "HASH1", "HASH2"]
+    assert len(urls) == 2
+    assert urls[0] is not None and "page=1" in urls[0]
+    assert urls[1] is not None and "page=2" in urls[1]
+
+
+def test_queue_later_page_failure_keeps_fetched_records() -> None:
+    """A failed LATER page returns what was already fetched (partial beats empty
+    for the caller's "not tracked -> fall back to own scan" logic).
+    """
+
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/queue", json=_queue_page(3, ["HASH0", "HASH1"]))
+        rsps.add(responses.GET, f"{_BASE}/queue", status=500)
+        records = client.queue()
+
+    assert [r.download_id for r in records] == ["HASH0", "HASH1"]
+
+
 def test_queue_non_200_returns_empty() -> None:
     """A non-200 queue read falls back to an empty list (caller treats as untracked)."""
 
@@ -141,6 +185,25 @@ def test_episodes_decodes_sorted_and_builds_request() -> None:
     # The key rides the X-Api-Key header, never the URL (it would leak via logs).
     assert "apikey" not in url
     assert request.headers["X-Api-Key"] == "testkey"
+
+
+def test_episodes_missing_numbers_sort_first_without_crashing() -> None:
+    """A record missing seasonNumber/episodeNumber sorts first (as -1) instead
+    of raising a ``None < int`` TypeError and killing the whole fetch.
+    """
+
+    body = [
+        {"id": 2, "seasonNumber": 1, "episodeNumber": 2},
+        {"id": 9},
+        {"id": 1, "seasonNumber": 1, "episodeNumber": 1},
+    ]
+    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+        client = _make_client(rsps)
+        rsps.add(responses.GET, f"{_BASE}/episode", json=body)
+        episodes = client.episodes(228)
+
+    assert episodes is not None
+    assert [ep.id for ep in episodes] == [9, 1, 2]
 
 
 def test_episodes_non_200_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
