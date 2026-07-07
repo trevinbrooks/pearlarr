@@ -45,7 +45,7 @@ import sqlite3
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, NamedTuple, TypedDict, cast, override
 
 from seadex import EntryRecord
@@ -210,8 +210,7 @@ def record_is_fresh(
     record: dict[str, Any] | None,
     *,
     payload_key: str,
-    ttl_days: int,
-    cutoff: datetime | None = None,
+    cutoff: datetime,
 ) -> bool:
     """True if a persisted record has a payload and its ``fetched_at`` is within TTL.
 
@@ -225,11 +224,8 @@ def record_is_fresh(
             (treated as not fresh).
         payload_key (str): Key whose presence (and truthiness) marks a usable
             payload (e.g. ``"data"`` for AniList, ``"episodes"`` for Sonarr).
-        ttl_days (int): TTL window in days, used to derive ``cutoff`` when one
-            isn't supplied.
-        cutoff (datetime | None): Precomputed freshness cutoff. Pass this once per
-            loop so ``datetime.now()`` isn't recomputed per record; when None it's
-            derived from ``ttl_days`` against the current time.
+        cutoff (datetime): Freshness cutoff, computed once per loop by the caller
+            so ``datetime.now()`` isn't recomputed per record.
     """
 
     if not isinstance(record, dict):
@@ -240,8 +236,6 @@ def record_is_fresh(
         stamp = datetime.strptime(record.get("fetched_at", ""), UPDATED_AT_STR_FORMAT)
     except (TypeError, ValueError):
         return False
-    if cutoff is None:
-        cutoff = datetime.now() - timedelta(days=ttl_days)
     return stamp >= cutoff
 
 

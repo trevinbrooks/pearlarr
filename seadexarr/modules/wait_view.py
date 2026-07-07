@@ -622,6 +622,28 @@ class _FrameAnchor:
     pushed_at: float
 
 
+@dataclass(frozen=True, slots=True)
+class _TableLayout:
+    """The width-derived column plan for the cockpit table.
+
+    A pure function of the terminal width, so it's computed once at view
+    construction and read by both the column setup (``_body``) and the per-row
+    cell builder (``_row_cells``) - the two sides can't disagree per frame.
+    """
+
+    bar_width: int
+    show_speed: bool
+    show_size: bool
+
+    @classmethod
+    def for_width(cls, width: int) -> "_TableLayout":
+        return cls(
+            bar_width=16 if width >= 90 else (10 if width >= 70 else 0),
+            show_speed=width >= 64,
+            show_size=width >= 100,
+        )
+
+
 @final
 class LiveWaitView(_DurableWaitView):
     """The sticky terminal cockpit: a self-animating ``rich.Live`` region.
@@ -649,6 +671,7 @@ class LiveWaitView(_DurableWaitView):
         super().__init__(logger, caps)
         self._console = console
         self._time_source = time_source
+        self._layout = _TableLayout.for_width(caps.width)
         self._live: Live | None = None
         self._spinner: Spinner | None = None
         self._anchor: _FrameAnchor | None = None
@@ -726,52 +749,44 @@ class LiveWaitView(_DurableWaitView):
     def _body(self, model: LiveModel) -> Table | None:
         if not model.rows:
             return None
-        bar_width = 16 if self._caps.width >= 90 else (10 if self._caps.width >= 70 else 0)
-        show_speed = self._caps.width >= 64
-        show_size = self._caps.width >= 100
+        layout = self._layout
 
         table = Table.grid(padding=(0, 1, 0, 0), expand=True)
         table.add_column(justify="left", no_wrap=True)  # marker
         table.add_column(justify="left", no_wrap=True, ratio=1, overflow="ellipsis")  # label
-        if bar_width:
+        if layout.bar_width:
             table.add_column(justify="left", no_wrap=True)  # bar / status word
         table.add_column(justify="right", no_wrap=True)  # count (or degraded status)
-        if show_speed:
+        if layout.show_speed:
             table.add_column(justify="right", no_wrap=True)  # speed (+ sparkline)
             table.add_column(justify="right", no_wrap=True)  # time (ETA / import elapsed)
-        if show_size:
+        if layout.show_size:
             table.add_column(justify="right", no_wrap=True)  # total size
 
         for row in model.rows:
-            table.add_row(*self._row_cells(row, bar_width, show_speed=show_speed, show_size=show_size))
+            table.add_row(*self._row_cells(row))
         return table
 
-    def _row_cells(
-        self,
-        row: RowModel,
-        bar_width: int,
-        *,
-        show_speed: bool,
-        show_size: bool,
-    ) -> list[Text | Spinner]:
+    def _row_cells(self, row: RowModel) -> list[Text | Spinner]:
+        layout = self._layout
         # One shared spinner animates every importing row in sync; the static glyph
         # is the fallback (no live region, or any other phase).
         marker: Text | Spinner = (
             self._spinner if row.phase is Phase.IMPORTING and self._spinner is not None else self._marker(row.phase)
         )
         cells: list[Text | Spinner] = [marker, Text(row.label)]
-        if bar_width:
-            cells.append(self._bar_or_status(row, bar_width))
+        if layout.bar_width:
+            cells.append(self._bar_or_status(row, layout.bar_width))
             cells.append(Text(row.count))
         else:
             # No bar column on a narrow console: the status word degrades into
             # the count column so a barless row still says what it's doing.
             word = row.count or row.status
             cells.append(Text(word, style="" if row.count else self._status_style(row.phase)))
-        if show_speed:
+        if layout.show_speed:
             cells.append(Text(row.speed, style="grey50"))
             cells.append(Text(row.time, style="grey50"))
-        if show_size:
+        if layout.show_size:
             cells.append(Text(row.size, style="grey50"))
         return cells
 

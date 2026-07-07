@@ -252,7 +252,7 @@ def test_live_view_uses_a_spinner_for_importing_rows() -> None:
         row = live_model(
             WaitSnapshot((_importing("h", "Show", done=1, total=3, elapsed=5),), elapsed_s=5), view._caps
         ).rows[0]
-        cells = view._row_cells(row, 16, show_speed=True, show_size=True)
+        cells = view._row_cells(row)
         assert isinstance(cells[0], Spinner)
     finally:
         view.close()
@@ -267,7 +267,7 @@ def test_narrow_console_degrades_status_into_the_count_column() -> None:
     snap = WaitSnapshot((TorrentView("h", "Show", Phase.IMPORTING, command_issued=True),))
     row = live_model(snap, caps).rows[0]
 
-    cells = view._row_cells(row, 0, show_speed=False, show_size=False)
+    cells = view._row_cells(row)
 
     words = [cell.plain for cell in cells if isinstance(cell, Text)]
     assert "copying" in words

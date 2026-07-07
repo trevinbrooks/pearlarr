@@ -523,7 +523,6 @@ class RunReporter:
         self,
         coverage: str | None,
         url: str | None,
-        style: str | None = "grey50",
         incomplete: bool = False,
     ) -> bool:
         """Log the season/episode coverage and SeaDex URL beneath an entry
@@ -543,7 +542,6 @@ class RunReporter:
         Args:
             coverage (str): One-line coverage, e.g. "S04 E01-E12" (maybe "")
             url (str): Full SeaDex URL (maybe None/"")
-            style (str): Console style. Defaults to "grey50" (dim)
             incomplete (bool): Flag the SeaDex entry as incomplete. Defaults False
         """
 
@@ -555,7 +553,7 @@ class RunReporter:
             # The incomplete flag rides the last line so it reads once, next to
             # the URL when there is one
             tail = "(marked incomplete on SeaDex)" if incomplete and idx == len(rows) - 1 else None
-            self.log_fmt.detail(label, value, value_style=style, tail=tail)
+            self.log_fmt.detail(label, value, value_style="grey50", tail=tail)
 
         return True
 

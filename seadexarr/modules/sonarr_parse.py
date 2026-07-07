@@ -196,7 +196,6 @@ class SonarrParseCache:
             return record_is_fresh(
                 record,
                 payload_key="episodes",
-                ttl_days=SONARR_PARSE_CACHE_TTL_DAYS,
                 cutoff=window.cutoff,
             )
         if record.get("series_fp") != window.series_fp:

@@ -76,7 +76,6 @@ class AniListGateway:
             if not record_is_fresh(
                 record,
                 payload_key="data",
-                ttl_days=ANILIST_CACHE_TTL_DAYS,
                 cutoff=cutoff,
             ):
                 continue
@@ -110,7 +109,6 @@ class AniListGateway:
             if record_is_fresh(
                 self._cache.get_anilist_meta(al_id),
                 payload_key="data",
-                ttl_days=ANILIST_CACHE_TTL_DAYS,
                 cutoff=cutoff,
             ):
                 continue
