@@ -15,7 +15,7 @@ from collections.abc import Iterable
 from . import coverage as _coverage
 from .config import AppConfig
 from .mappings import ExternalIds, MappingEntry, MappingMode, MappingSource
-from .radarr_client import IdField, collect_anime_items
+from .radarr_client import IdField, IdFilter, collect_anime_items
 from .run_services import RunDeps, RunServices
 from .seadex_types import (
     ArrReleaseDict,
@@ -184,9 +184,14 @@ class SonarrEpisodes:
         fields = (IdField("tvdb_id", "tvdbId"), IdField("imdb_id", "imdbId"))
         return collect_anime_items(
             self.sonarr.all_series,
-            fields,
-            tuple(self._mappings.anime_id_set(f.mapping_key) for f in fields),
-            tuple(self.anibridge.id_set(f.mapping_key) if self.anibridge else set() for f in fields),
+            tuple(
+                IdFilter(
+                    field,
+                    anime_ids=self._mappings.anime_id_set(field.mapping_key),
+                    anibridge_ids=self.anibridge.id_set(field.mapping_key) if self.anibridge else set(),
+                )
+                for field in fields
+            ),
         )
 
     def prefetch(self, items: list[SonarrItem], *, progress: ProgressSink | None = None) -> int:

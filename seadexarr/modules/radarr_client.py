@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
-from typing import Any, Protocol, cast, override
+from typing import Any, NamedTuple, Protocol, cast, override
 
 import httpx
 
@@ -161,6 +161,19 @@ class IdField:
     item_attr: str  # e.g. "tmdbId" / "tvdbId"
 
 
+class IdFilter(NamedTuple):
+    """One id space with its two candidate sets, aligned by construction.
+
+    Replaces the former fields/anime-sets/anibridge-sets parallel tuples (which
+    could only be kept aligned by position): each filter carries the id space
+    AND the candidate sets built for it.
+    """
+
+    field: IdField
+    anime_ids: AbstractSet[int | str]
+    anibridge_ids: AbstractSet[int | str]
+
+
 class AnimeIdSets(Protocol):
     """The slice of ``MappingResolver`` the library filter needs.
 
@@ -173,16 +186,14 @@ class AnimeIdSets(Protocol):
 
 def collect_anime_items[ItemT: ArrItem](
     list_fn: Callable[[], list[ItemT]],
-    fields: tuple[IdField, ...],
-    anime_id_sets: tuple[AbstractSet[int | str], ...],
-    anibridge_id_sets: tuple[AbstractSet[int | str], ...],
+    filters: tuple[IdFilter, ...],
 ) -> list[ItemT]:
     """Arr library items that have an AniList mapping, sorted by title.
 
-    Per ``fields`` entry, unions the precomputed Anime-IDs and AniBridge candidate
-    sets, then keeps each item that matches at least one id space. Both id-set
-    tuples are aligned to ``fields`` by position (the Anime-IDs sets come from
-    ``MappingResolver.anime_id_set``, no longer a scan of the full map).
+    Per filter, unions the precomputed Anime-IDs and AniBridge candidate sets
+    (the Anime-IDs sets come from ``MappingResolver.anime_id_set``, no longer a
+    scan of the full map), then keeps each item that matches at least one id
+    space.
 
     Generic in ``ItemT`` (a :class:`~.seadex_types.SonarrItem` /
     :class:`~.seadex_types.RadarrItem`), so the filtered list returns the same
@@ -190,17 +201,13 @@ def collect_anime_items[ItemT: ArrItem](
 
     Args:
         list_fn (Callable[[], list[ItemT]]): Returns the unfiltered Arr item list.
-        fields (tuple[IdField, ...]): Id spaces to filter by, in order.
-        anime_id_sets (tuple[AbstractSet[int | str], ...]): Anime-IDs candidate
-            sets, one per ``fields`` entry in the same order.
-        anibridge_id_sets (tuple[AbstractSet[int | str], ...]): AniBridge candidate
-            sets, one per ``fields`` entry in the same order (pass ``set()`` when
-            disabled).
+        filters (tuple[IdFilter, ...]): Id spaces to filter by, in order, each
+            carrying its own candidate sets (pass ``set()`` for a disabled source).
     """
 
     # One candidate set per id space: the two sources' sets unioned.
-    matched_sets: list[AbstractSet[int | str]] = [
-        anime | bridge for anime, bridge in zip(anime_id_sets, anibridge_id_sets, strict=True)
+    matched_by_attr: list[tuple[str, AbstractSet[int | str]]] = [
+        (f.field.item_attr, f.anime_ids | f.anibridge_ids) for f in filters
     ]
 
     # Track kept item ids in a set: "item not in kept" on a growing list is O(n)
@@ -213,7 +220,7 @@ def collect_anime_items[ItemT: ArrItem](
             continue
 
         # Keep the item if it matches in any id space
-        if any(getattr(item, field.item_attr) in matched for field, matched in zip(fields, matched_sets, strict=True)):
+        if any(getattr(item, attr) in matched for attr, matched in matched_by_attr):
             kept.append(item)
             seen_ids.add(item.id)
 
@@ -245,7 +252,12 @@ def collect_anime_movies(
     fields = (IdField("tmdb_movie_id", "tmdbId"), IdField("imdb_id", "imdbId"))
     return collect_anime_items(
         radarr_client.all_movies,
-        fields,
-        tuple(mappings.anime_id_set(f.mapping_key) for f in fields),
-        tuple(anibridge.id_set(f.mapping_key) if anibridge else set() for f in fields),
+        tuple(
+            IdFilter(
+                field,
+                anime_ids=mappings.anime_id_set(field.mapping_key),
+                anibridge_ids=anibridge.id_set(field.mapping_key) if anibridge else set(),
+            )
+            for field in fields
+        ),
     )
