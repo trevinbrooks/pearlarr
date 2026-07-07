@@ -726,7 +726,7 @@ def _anidb_oracle(root: ElementTree.Element, anidb_id: int, tvdb_season: int) ->
 @pytest.mark.real_data_dir
 class TestRealDataParity:
     def test_anibridge_sql_matches_graph_over_all_ids(self, real_sources: _RealSources) -> None:
-        with open(real_sources.anibridge) as f:
+        with open(real_sources.anibridge, encoding="utf-8") as f:
             graph: AniBridgeGraph = json.load(f)
         graph_ab = AniBridge(graph)
         store = MappingStore.open(":memory:")

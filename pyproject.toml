@@ -164,6 +164,11 @@ exclude_also = [
 line-length = 120
 
 [tool.ruff.lint]
+# Preview is on ONLY to reach explicitly-selected preview rules (currently
+# PLW1514); explicit-preview-rules keeps the letter-prefix selects from
+# pulling in the whole unstable preview set.
+preview = true
+explicit-preview-rules = true
 ignore = [
     "E402",    # module-import-not-at-top-of-file
     "E501",    # line-too-long
@@ -236,6 +241,7 @@ select = [
     "PLC",    # Pylint Convention
     "PLE",    # Pylint Error
     "PLW",    # Pylint Warning
+    "PLW1514", # unspecified-encoding (preview): text I/O must pin utf-8, not the platform locale
     "RUF",    # Ruff-specific rules
 ]
 

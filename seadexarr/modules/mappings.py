@@ -274,7 +274,7 @@ def _download_file(
 def _parse_anime_mappings(path: str) -> AnimeIdsMap:
     """Load the Kometa Anime-IDs JSON map from disk."""
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         # Raw JSON boundary: json.load returns Any; narrow to the known map shape.
         return cast("AnimeIdsMap", json.load(f))
 
@@ -586,7 +586,7 @@ class MappingResolver:
         else:
             self._log("Parsing + indexing anibridge mappings ...")
             t0 = time.perf_counter()
-            with open(self._anibridge_path) as f:
+            with open(self._anibridge_path, encoding="utf-8") as f:
                 graph = json.load(f)
             ab = AniBridge(graph, logger=self.logger)
             self._store.replace_anibridge(digest, *ab.to_rows())

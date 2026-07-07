@@ -343,7 +343,7 @@ class TestConfigInit:
         assert "--force" in capsys.readouterr().err
 
         assert config_init(force=True) is True
-        assert config.read_text() == Path(template_path()).read_text()
+        assert config.read_text() == Path(template_path()).read_text(encoding="utf-8")
         # The write is proven by the file content above; drain the post-force echo so
         # it can't spill to the terminal under `-s` (output after a mid-test
         # readouterr() is flushed there at teardown when global capture is off).
@@ -545,7 +545,7 @@ def _write_runnable_config() -> None:
 
     paths = resolve_paths()
     os.makedirs(paths.data_dir)
-    Path(paths.config).write_text("sonarr:\n  url: http://sonarr:8989\n  api_key: k\n" + _NO_MAPPINGS)
+    Path(paths.config).write_text("sonarr:\n  url: http://sonarr:8989\n  api_key: k\n" + _NO_MAPPINGS, encoding="utf-8")
 
 
 class TestRunFailuresAreCleanAndNonzero:
@@ -632,6 +632,7 @@ class TestRunFailuresAreCleanAndNonzero:
         Path(paths.config).write_text(
             "sonarr:\n  url: http://sonarr:8989\n  api_key: k\n  ignore_movies_in_radarr: true\n"
             "radarr:\n  url: http://radarr:7878\n  api_key: k\n" + _NO_MAPPINGS,
+            encoding="utf-8",
         )
 
         assert run_single(sonarr=True) is False
@@ -645,7 +646,7 @@ class TestRunFailuresAreCleanAndNonzero:
         # snippet, which would quote the api key back to the console/log.
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text('sonarr:\n  api_key: "hunter2\n')
+        Path(paths.config).write_text('sonarr:\n  api_key: "hunter2\n', encoding="utf-8")
 
         assert run_single(sonarr=True) is False
         out = capsys.readouterr().out
@@ -701,7 +702,7 @@ class TestRunFailuresAreCleanAndNonzero:
     ) -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("sonar:\n  url: x\n")
+        Path(paths.config).write_text("sonar:\n  url: x\n", encoding="utf-8")
 
         assert run_single(sonarr=True) is False
         out = capsys.readouterr().out
@@ -723,7 +724,7 @@ class TestSelectionSettlesBeforeMappingFetch:
         monkeypatch.setattr("seadexarr.modules.cli._build_resolver", fail_build)
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("")  # valid config, neither arr configured
+        Path(paths.config).write_text("", encoding="utf-8")  # valid config, neither arr configured
 
         assert run_single() is False
         capsys.readouterr()  # swallow the boot banner + error line
@@ -743,7 +744,7 @@ class TestConfigInspection:
     def test_validate_lists_the_bad_keys(self, capsys: pytest.CaptureFixture[str]) -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("sonar:\n  url: x\n")
+        Path(paths.config).write_text("sonar:\n  url: x\n", encoding="utf-8")
         assert config_validate() is False
         err = capsys.readouterr().err
         assert "Invalid configuration" in err
@@ -752,7 +753,7 @@ class TestConfigInspection:
     def test_validate_reports_malformed_yaml_cleanly(self, capsys: pytest.CaptureFixture[str]) -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text('sonarr:\n  api_key: "hunter2\n')
+        Path(paths.config).write_text('sonarr:\n  api_key: "hunter2\n', encoding="utf-8")
         assert config_validate() is False
         captured = capsys.readouterr()
         assert "Unreadable YAML" in captured.err
@@ -762,7 +763,7 @@ class TestConfigInspection:
     def test_validate_reports_what_a_run_would_use(self, capsys: pytest.CaptureFixture[str]) -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("sonarr:\n  url: http://sonarr:8989\n  api_key: k\n")
+        Path(paths.config).write_text("sonarr:\n  url: http://sonarr:8989\n  api_key: k\n", encoding="utf-8")
         assert config_validate() is True
         out = capsys.readouterr().out
         assert "OK" in out
@@ -779,6 +780,7 @@ class TestConfigInspection:
         Path(paths.config).write_text(
             "sonarr:\n  url: http://sonarr:8989\n  api_key: hunter2\n"
             "notifications:\n  discord_url: https://discord.com/api/webhooks/1/tok\n",
+            encoding="utf-8",
         )
         assert config_show() is True
         out = capsys.readouterr().out
@@ -795,7 +797,7 @@ class TestConfigInspection:
     ) -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("radarr:\n  url: http://radarr:7878\n")
+        Path(paths.config).write_text("radarr:\n  url: http://radarr:7878\n", encoding="utf-8")
         assert config_validate() is True  # the file itself is valid
         assert "radarr.api_key is not set" in capsys.readouterr().out
 
@@ -812,6 +814,7 @@ class TestConfigInspection:
             "  username: admin\n"
             "  password: hunter2\n"
             "  options:\n    REQUESTS_ARGS:\n      headers:\n        Authorization: Bearer sekrit\n",
+            encoding="utf-8",
         )
         assert config_show() is True
         out = capsys.readouterr().out
@@ -894,7 +897,7 @@ class TestLogLevelWiring:
     def _write_config_with_level() -> None:
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
-        Path(paths.config).write_text("advanced:\n  log_level: ERROR\n")
+        Path(paths.config).write_text("advanced:\n  log_level: ERROR\n", encoding="utf-8")
 
     def test_the_config_level_is_applied_to_a_run(
         self,
