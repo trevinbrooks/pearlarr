@@ -18,12 +18,13 @@ from datetime import datetime, timedelta
 from .anilist import (
     ANILIST_BATCH_SIZE,
     AniListCache,
+    AniListRetryLog,
     get_anilist_thumb,
     get_anilist_title,
     get_query_batch,
 )
 from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, record_is_fresh
-from .log import indent_string
+from .log import count_noun, indent_string
 from .seadex_types import ProgressSink
 
 # How long a persisted AniList response stays usable before it's re-fetched.
@@ -52,6 +53,9 @@ class AniListGateway:
         self._cache = cache_store
         self.logger = logger
         self.al_cache: AniListCache = {}
+        # Narrates AniList retry waits and warns once per run on a give-up; the
+        # gateway is rebuilt per arr run, so "once" is per run, not per process.
+        self.retry_log = AniListRetryLog(logger=logger)
 
     def load_cache(self) -> None:
         """Seed the in-memory AniList cache from the persisted store
@@ -79,7 +83,7 @@ class AniListGateway:
 
         if loaded:
             self.logger.debug(
-                indent_string(f"Loaded {loaded} AniList entries from cache"),
+                indent_string(f"Loaded {count_noun(loaded, 'AniList entry', 'AniList entries')} from cache"),
             )
 
     def save_cache(self, *, preview: bool) -> None:
@@ -120,7 +124,7 @@ class AniListGateway:
             self._cache.save(preview=preview)
         if evicted:
             self.logger.debug(
-                indent_string(f"Evicted {evicted} stale AniList meta record(s)"),
+                indent_string(f"Evicted {count_noun(evicted, 'stale AniList meta record')}"),
             )
 
     def prefetch(
@@ -161,7 +165,7 @@ class AniListGateway:
             chunk = missing[start : start + ANILIST_BATCH_SIZE]
             # Ids unknown to AniList are simply absent from the result; the
             # per-id helpers will try once more on demand and degrade gracefully
-            for al_id, data in get_query_batch(chunk).items():
+            for al_id, data in get_query_batch(chunk, self.retry_log).items():
                 self.al_cache[al_id] = data
             done += len(chunk)
             if progress is not None:
@@ -182,7 +186,7 @@ class AniListGateway:
             al_id (int): AniList ID
         """
 
-        return get_anilist_title(al_id, al_cache=self.al_cache)
+        return get_anilist_title(al_id, al_cache=self.al_cache, retry_log=self.retry_log)
 
     def thumb(self, al_id: int) -> str | None:
         """Resolve the AniList cover thumbnail URL for an id, or None.
@@ -191,4 +195,4 @@ class AniListGateway:
             al_id (int): AniList ID
         """
 
-        return get_anilist_thumb(al_id, al_cache=self.al_cache)
+        return get_anilist_thumb(al_id, al_cache=self.al_cache, retry_log=self.retry_log)

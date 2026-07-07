@@ -6,16 +6,18 @@ layer (``get_query_batch``'s transport) is already pinned in ``test_anilist``,
 so prefetch fakes it with a recording batch stub at the module attribute.
 """
 
+import logging
 from datetime import datetime, timedelta
 
 import pytest
 
 import seadexarr.modules.anilist_gateway as anilist_gateway
-from seadexarr.modules.anilist import ANILIST_BATCH_SIZE, AniListCache
+from seadexarr.modules.anilist import ANILIST_BATCH_SIZE, AniListCache, AniListRetryLog
 from seadexarr.modules.anilist_gateway import ANILIST_CACHE_TTL_DAYS, AniListGateway
 from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
 
 from .builders import FakeCacheStore, make_logger
+from .fakes import CaptureHandler
 
 
 def _stamp(*, days_ago: int) -> str:
@@ -45,9 +47,11 @@ class _BatchRecorder:
     def __init__(self, absent: frozenset[int] = frozenset()) -> None:
         self._absent = absent
         self.calls: list[list[int]] = []
+        self.retry_logs: list[AniListRetryLog | None] = []
 
-    def __call__(self, al_ids: list[int]) -> AniListCache:
+    def __call__(self, al_ids: list[int], retry_log: AniListRetryLog | None = None) -> AniListCache:
         self.calls.append(list(al_ids))
+        self.retry_logs.append(retry_log)
         return {i: {"data": _media(i)} for i in al_ids if i not in self._absent}
 
 
@@ -170,3 +174,46 @@ class TestPrefetch:
         assert store.get_anilist_meta(7) is None
         # The cockpit sink saw one (fraction, "done/total") update per batch.
         assert sink.updates == [(50 / 51, "50/51"), (1.0, "51/51")]
+        # The gateway's retry log rode along, so an outage mid-prefetch narrates.
+        assert recorder.retry_logs == [gateway.retry_log, gateway.retry_log]
+
+
+class TestLogPluralization:
+    """The debug ledger lines pluralize by count (no "1 entries" / manual "(s)")."""
+
+    def _captured(self, gateway: AniListGateway) -> CaptureHandler:
+        handler = CaptureHandler()
+        gateway.logger.handlers = [handler]
+        gateway.logger.setLevel(logging.DEBUG)
+        return handler
+
+    def test_load_cache_singular(self) -> None:
+        gateway, store = _make_gateway()
+        store.put_anilist_meta(1, {"fetched_at": _stamp(days_ago=1), "data": _media(1)})
+        handler = self._captured(gateway)
+
+        gateway.load_cache()
+
+        assert [r.getMessage().strip() for r in handler.records] == ["Loaded 1 AniList entry from cache"]
+
+    def test_load_cache_plural(self) -> None:
+        gateway, store = _make_gateway()
+        for al_id in (1, 2):
+            store.put_anilist_meta(al_id, {"fetched_at": _stamp(days_ago=1), "data": _media(al_id)})
+        handler = self._captured(gateway)
+
+        gateway.load_cache()
+
+        assert [r.getMessage().strip() for r in handler.records] == ["Loaded 2 AniList entries from cache"]
+
+    def test_evict_singular(self) -> None:
+        gateway, store = _make_gateway()
+        store.put_anilist_meta(
+            1,
+            {"fetched_at": _stamp(days_ago=ANILIST_CACHE_TTL_DAYS + 1), "data": _media(1)},
+        )
+        handler = self._captured(gateway)
+
+        gateway.save_cache(preview=False)
+
+        assert [r.getMessage().strip() for r in handler.records] == ["Evicted 1 stale AniList meta record"]

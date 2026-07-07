@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import NamedTuple
 
+import httpx
+import pynyaa
 import qbittorrentapi
 import requests
 from seadex import Tracker
@@ -21,6 +23,19 @@ from .torrent import (
 
 class TorrentAddError(Exception):
     """qBittorrent rejected the add (a non-``"Ok."`` ``torrents_add`` result)."""
+
+
+# The expected external failures a grab can hit: the tracker scrape (requests /
+# pynyaa's httpx), the parse itself, and the qBittorrent add. The grab pipeline
+# contains these per release; anything else is a bug and propagates.
+GRAB_FAILURES: tuple[type[Exception], ...] = (
+    TorrentParseError,
+    TorrentAddError,
+    requests.RequestException,
+    httpx.HTTPError,
+    pynyaa.PyNyaaError,
+    qbittorrentapi.APIError,
+)
 
 
 # Uniform parser signature: (url, infohash, session) -> (download/magnet link,
@@ -151,7 +166,7 @@ class TorrentService:
         parsed_url, source_name = parser(url, infohash, self.session)
 
         if parsed_url is None:
-            raise TorrentParseError("Have not managed to parse the torrent URL")
+            raise TorrentParseError(f"Could not extract a torrent download link from {url}")
 
         outcome, torrent_name = self._add_to_qbit(
             url=url,
@@ -218,7 +233,7 @@ class TorrentService:
             tags=self.tags,
         )
         if result != "Ok.":
-            raise TorrentAddError("Failed to add torrent")
+            raise TorrentAddError(f"qBittorrent rejected the torrent from {url} (response: {result!r})")
 
         # Look the torrent back up by hash so we can report its name. A private
         # torrent has no info hash to look up, so leave the name unset and let

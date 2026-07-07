@@ -11,8 +11,13 @@ Built bare (``object.__new__`` via ``make_bare_instance``) so no live qBittorren
 login happens; the client ``add`` is faked by ``FakeTorrents``.
 """
 
+import logging
 from collections.abc import Mapping
 
+import httpx
+import pytest
+import qbittorrentapi
+import requests
 from seadex import Tracker
 
 from seadexarr.modules.config import Arr
@@ -20,7 +25,8 @@ from seadexarr.modules.grab_pipeline import GrabPipeline, GrabRequest
 from seadexarr.modules.manual_import import ImportWaitMode, PendingImport
 from seadexarr.modules.reporter import NeedsActionKind, RunContext
 from seadexarr.modules.seadex_types import SeadexDict, SeadexUrlItem
-from seadexarr.modules.torrents import ReleaseOutcome
+from seadexarr.modules.torrent import TorrentParseError
+from seadexarr.modules.torrents import ReleaseOutcome, TorrentAddError
 
 from .builders import (
     CLIENT_SENTINEL,
@@ -32,6 +38,7 @@ from .builders import (
     rg_group,
     url_item,
 )
+from .fakes import CaptureHandler
 
 
 def _stub_add_torrent(
@@ -657,6 +664,134 @@ class TestUnsupportedTrackerSkip:
 
         assert pipeline._ctx.private_only_skipped is True
         assert set(pipeline.cache_store.torrent_hashes(Arr.SONARR, 7)) == {"hN", "hP"}
+
+
+class TestGrabFailureContainment:
+    """An expected external failure (tracker or qBittorrent down/erroring) is
+    contained at the add: ONE clean warning (no traceback), the url loop moves
+    on, the title stays uncached (retried next run), and the summary carries a
+    GRAB_FAILED needs-action row instead of the title silently vanishing."""
+
+    def _request(self, al_id: int, seadex_dict: SeadexDict, hashes: list[str | None]) -> GrabRequest:
+        return GrabRequest(
+            al_id=al_id,
+            item_title="Show",
+            anilist_title="Show",
+            sd_url=f"https://seadex.example/{al_id}",
+            seadex_dict=seadex_dict,
+            torrent_hashes=hashes,
+            cache_details={"updated_at": "2026-01-01 00:00:00"},
+            release_group=None,
+        )
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            TorrentParseError("Could not find the torrent title on https://nyaa.si/view/1"),
+            TorrentAddError("qBittorrent rejected the torrent"),
+            requests.ConnectionError("tracker down"),
+            httpx.ConnectError("nyaa down"),
+            qbittorrentapi.APIConnectionError("qbit died mid-run"),
+        ],
+        ids=["parse", "add", "requests", "httpx", "qbit"],
+    )
+    def test_failure_is_one_clean_warning_no_traceback(self, error: Exception) -> None:
+        # Every boundary failure mode lands as a single WARNING with no exc_info
+        # (the old path fell through to run_loop's per-id traceback arm).
+        torrents = FakeTorrents({}, raises={"h1": error})
+        pipeline = _pipeline(torrents=torrents)
+        handler = CaptureHandler()
+        pipeline.log_fmt.logger.addHandler(handler)
+
+        n_added, results = pipeline.add_torrent(
+            one_release_dict(srg="NAN0", infohash="h1"),
+            pending_seeds=None,
+        )
+
+        assert n_added == 0
+        assert results == []
+        warnings = [r for r in handler.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        message = warnings[0].getMessage()
+        assert "could not grab https://nyaa.si/view/1" in message
+        assert "will retry next run" in message
+        assert warnings[0].exc_info is None
+
+    def test_failed_release_does_not_drop_the_next_one(self) -> None:
+        # Containment is per release: the sibling url after the failure still grabs.
+        bad = _nyaa_release(url="https://nyaa.si/view/1", infohash="hBad")
+        good = _nyaa_release(url="https://nyaa.si/view/2", infohash="hGood")
+        seadex_dict: SeadexDict = {"RG": rg_group({bad.url: bad, good.url: good})}
+        torrents = FakeTorrents(
+            {"hGood": (AddOutcome.ADDED, "Show-RG")},
+            raises={"hBad": requests.ConnectionError("nyaa down")},
+        )
+        pipeline = _pipeline(torrents=torrents)
+
+        n_added, results = pipeline.add_torrent(seadex_dict, pending_seeds=None)
+
+        assert torrents.calls == ["hBad", "hGood"]
+        assert n_added == 1
+        assert [r.outcome for r in results] == [AddOutcome.ADDED]
+        assert pipeline._grab_failed_groups == ["RG"]
+
+    def test_failed_only_title_stays_uncached_with_a_retry_row(self) -> None:
+        nyaa = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
+        seadex_dict: SeadexDict = {"RG": rg_group({nyaa.url: nyaa})}
+        torrents = FakeTorrents({}, raises={"h1": httpx.ConnectError("nyaa down")})
+        pipeline = _pipeline(torrents=torrents, sleep_time=0)
+        pipeline._anilist.al_cache.update({42: {}})
+        pipeline._ctx.current_title = "Show S1"
+
+        stop = pipeline.grab_and_cache(self._request(42, seadex_dict, ["h1"]))
+
+        assert stop is False
+        assert pipeline._ctx.torrents_added == 0
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
+        rows = pipeline._ctx.stats.needs_action
+        assert [r.kind for r in rows] == [NeedsActionKind.GRAB_FAILED]
+        assert rows[0].reason == "grab failed; will retry next run"
+        assert rows[0].group == "RG"
+
+    def test_partial_grab_with_a_failure_stays_uncached(self) -> None:
+        # Like fallback_hold: a failure blocks the cache even when a sibling
+        # grabbed, so the failed release retries next run (the add dedups).
+        bad = _nyaa_release(url="https://nyaa.si/view/1", infohash="hBad")
+        good = _nyaa_release(url="https://nyaa.si/view/2", infohash="hGood")
+        seadex_dict: SeadexDict = {"RG": rg_group({bad.url: bad, good.url: good})}
+        torrents = FakeTorrents(
+            {"hGood": (AddOutcome.ADDED, "Show-RG")},
+            raises={"hBad": qbittorrentapi.APIConnectionError("qbit died")},
+        )
+        pipeline = _pipeline(torrents=torrents, sleep_time=0)
+        pipeline._anilist.al_cache.update({42: {}})
+        pipeline._ctx.current_title = "Show S1"
+
+        stop = pipeline.grab_and_cache(self._request(42, seadex_dict, ["hBad", "hGood"]))
+
+        assert stop is False
+        assert pipeline._ctx.torrents_added == 1
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
+        assert [r.kind for r in pipeline._ctx.stats.needs_action] == [NeedsActionKind.GRAB_FAILED]
+
+    def test_next_clean_title_caches_after_a_failed_one(self) -> None:
+        # The per-title failure note resets: title 1's failure must not hold
+        # title 2's cache write hostage.
+        bad = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
+        good = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
+        torrents = FakeTorrents(
+            {"h2": (AddOutcome.ADDED, "Show-RG")},
+            raises={"h1": httpx.ConnectError("nyaa down")},
+        )
+        pipeline = _pipeline(torrents=torrents, sleep_time=0)
+        pipeline._anilist.al_cache.update({1: {}, 2: {}})
+        pipeline._ctx.current_title = "Show S1"
+
+        pipeline.grab_and_cache(self._request(1, {"RG": rg_group({bad.url: bad})}, ["h1"]))
+        pipeline.grab_and_cache(self._request(2, {"RG": rg_group({good.url: good})}, ["h2"]))
+
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 1) is None
+        assert pipeline.cache_store.get_entry(Arr.SONARR, 2) is not None
 
 
 class TestFallbackHoldNeverCaches:

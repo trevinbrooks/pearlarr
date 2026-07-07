@@ -9,6 +9,7 @@ can't intercept), so its module-level session is swapped for a typed stub. The
 documented error raises are exercised alongside the success paths.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -151,7 +152,7 @@ def test_get_animetosho_torrent_missing_title_raises() -> None:
             body="<html><body><p>no title here</p></body></html>",
             content_type="text/html",
         )
-        with pytest.raises(TorrentParseError, match="Could not find torrent name"):
+        with pytest.raises(TorrentParseError, match=f"Could not find the torrent title on {re.escape(page_url)}"):
             get_animetosho_torrent(page_url, session=requests.Session())
 
 
@@ -167,7 +168,42 @@ def test_get_animetosho_torrent_two_titles_raises() -> None:
             body='<html><body><h2 id="title">First</h2><h2 id="title">Second</h2></body></html>',
             content_type="text/html",
         )
-        with pytest.raises(TorrentParseError, match="More than one torrent title"):
+        with pytest.raises(TorrentParseError, match="more than one torrent title"):
+            get_animetosho_torrent(page_url, session=requests.Session())
+
+
+def test_get_animetosho_torrent_http_500_raises_http_error() -> None:
+    """A 5xx page raises ``HTTPError`` (a contained grab failure) instead of
+    scraping the error body into a misleading "no title" parse error."""
+
+    page_url = "https://animetosho.org/view/down.1"
+
+    with responses.RequestsMock() as rsps:
+        rsps.add(responses.GET, page_url, body="<html>Server Error</html>", status=500)
+        with pytest.raises(requests.HTTPError):
+            get_animetosho_torrent(page_url, session=requests.Session())
+
+
+def test_get_animetosho_torrent_non_json_feed_is_a_parse_error() -> None:
+    """An HTML error body from the feed (HTTP 200 but not JSON) surfaces as a
+    ``TorrentParseError`` naming the feed URL, not a raw ``JSONDecodeError``."""
+
+    page_url = "https://animetosho.org/view/cool-anime-01.123456"
+
+    with responses.RequestsMock() as rsps:
+        rsps.add(
+            responses.GET,
+            page_url,
+            body=_torrent_fixture("animetosho_page.html"),
+            content_type="text/html",
+        )
+        rsps.add(
+            responses.GET,
+            ANIMETOSHO_FEED_URL,
+            body="<html>interstitial</html>",
+            content_type="text/html",
+        )
+        with pytest.raises(TorrentParseError, match="non-JSON response"):
             get_animetosho_torrent(page_url, session=requests.Session())
 
 
@@ -209,7 +245,18 @@ def test_get_rutracker_torrent_missing_title_raises() -> None:
             body="<html><body><div>no maintitle</div></body></html>",
             content_type="text/html",
         )
-        with pytest.raises(TorrentParseError, match="Could not find torrent title"):
+        with pytest.raises(TorrentParseError, match=f"Could not find the torrent title on {re.escape(url)}"):
+            get_rutracker_torrent(url, "deadbeef", session=requests.Session())
+
+
+def test_get_rutracker_torrent_http_500_raises_http_error() -> None:
+    """A 5xx topic page raises ``HTTPError`` rather than a misleading parse error."""
+
+    url = "https://rutracker.org/forum/viewtopic.php?t=1234567"
+
+    with responses.RequestsMock() as rsps:
+        rsps.add(responses.GET, url, body="<html>Server Error</html>", status=500)
+        with pytest.raises(requests.HTTPError):
             get_rutracker_torrent(url, "deadbeef", session=requests.Session())
 
 

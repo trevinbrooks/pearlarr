@@ -1,5 +1,7 @@
 import contextlib
+import logging
 import time
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 import requests
@@ -87,6 +89,35 @@ query ($ids: [Int]) {
 )
 
 
+@dataclass
+class AniListRetryLog:
+    """Voices ``_post_with_retry``'s waits and give-ups through the run logger.
+
+    Without it a rate-limit backoff sleeps up to 60s with zero output (the run
+    looks hung) and a final give-up returns ``{}`` silently. One instance per
+    run (``AniListGateway`` owns it), so the give-up warning fires once per run
+    rather than once per title; callers without one stay silent as before.
+    """
+
+    logger: logging.Logger
+    _gave_up: bool = field(default=False, init=False)
+
+    def waiting(self, reason: str, wait: float, retry: int, *, level: int = logging.INFO) -> None:
+        """One backoff notice, so a long Retry-After wait doesn't look like a hang."""
+
+        self.logger.log(level, f"AniList {reason}; waiting {wait:.0f}s (retry {retry}/{MAX_RETRIES})")
+
+    def gave_up(self) -> None:
+        """Warn ONCE per run that AniList lookups are degraded, then stay quiet."""
+
+        if not self._gave_up:
+            self.logger.warning(
+                f"AniList request failed after {MAX_RETRIES} retries; "
+                "some titles/episode counts may be missing this run",
+            )
+        self._gave_up = True
+
+
 def _errors_are_retryable(body: dict[str, Any] | None) -> bool:
     """True if a GraphQL body carries a throttle/rate-limit or 5xx-style error
 
@@ -170,7 +201,11 @@ def _media_from(body: dict[str, Any] | None) -> AniListMediaNode:
     return AniListMediaNode.from_api(_extract(body, "data", "Media"))
 
 
-def _post_with_retry(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+def _post_with_retry(
+    query: str,
+    variables: dict[str, Any],
+    retry_log: AniListRetryLog | None = None,
+) -> dict[str, Any]:
     """POST a GraphQL query to AniList, retrying politely on rate-limits / 5xx
 
     On a rate-limit (HTTP 429) or a transient 5xx, AniList returns
@@ -182,7 +217,8 @@ def _post_with_retry(query: str, variables: dict[str, Any]) -> dict[str, Any]:
     in quick succession, so we wait (honoring Retry-After when present) and
     retry before giving up. Returns the parsed JSON - which may still be an
     error payload after the final attempt - or "{}" if the response body
-    wasn't JSON.
+    wasn't JSON. ``retry_log`` (when given) narrates the waits and warns once
+    per run on a final give-up; without one the retries stay silent.
     """
 
     for attempt in range(MAX_RETRIES + 1):
@@ -192,11 +228,21 @@ def _post_with_retry(query: str, variables: dict[str, Any]) -> dict[str, Any]:
                 json={"query": query, "variables": variables},
                 timeout=ANILIST_REQUEST_TIMEOUT_S,
             )
-        except requests.RequestException:
+        except requests.RequestException as e:
             # Network blip: back off and retry, then give up with an empty result
             if attempt >= MAX_RETRIES:
+                if retry_log is not None:
+                    retry_log.gave_up()
                 return {}
-            time.sleep(min(2**attempt, MAX_BACKOFF))
+            wait = min(2**attempt, MAX_BACKOFF)
+            if retry_log is not None:
+                retry_log.waiting(
+                    f"request failed ({type(e).__name__})",
+                    wait,
+                    attempt + 1,
+                    level=logging.DEBUG,
+                )
+            time.sleep(wait)
             continue
 
         retryable = resp.status_code in RETRYABLE_STATUS
@@ -222,27 +268,41 @@ def _post_with_retry(query: str, variables: dict[str, Any]) -> dict[str, Any]:
                 with contextlib.suppress(TypeError, ValueError):
                     wait = float(retry_after)
 
-            time.sleep(min(max(wait, 1), MAX_BACKOFF))
+            wait = min(max(wait, 1), MAX_BACKOFF)
+            if retry_log is not None:
+                # A 429 / soft-throttle reads as a rate limit; a 5xx names itself.
+                reason = (
+                    f"returned HTTP {resp.status_code}"
+                    if resp.status_code in RETRYABLE_STATUS and resp.status_code != 429
+                    else "rate-limited"
+                )
+                retry_log.waiting(reason, wait, attempt + 1)
+            time.sleep(wait)
             continue
 
         # Final attempt (or a non-retryable response): return the parsed body,
         # or {} when the body wasn't JSON, so the caller degrades gracefully.
+        # Running out of attempts on a retryable response is a give-up too.
+        if retryable and retry_log is not None:
+            retry_log.gave_up()
         return body if body is not None else {}
 
     return {}
 
 
-def get_query(al_id: int) -> dict[str, Any]:
+def get_query(al_id: int, retry_log: AniListRetryLog | None = None) -> dict[str, Any]:
     """Fetch one AniList Media by id (see _post_with_retry for the retry policy)
 
     Args:
         al_id (int): Anilist ID
+        retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
+            None (silent)
     """
 
-    return _post_with_retry(QUERY, {"id": al_id})
+    return _post_with_retry(QUERY, {"id": al_id}, retry_log)
 
 
-def get_query_batch(al_ids: list[int]) -> AniListCache:
+def get_query_batch(al_ids: list[int], retry_log: AniListRetryLog | None = None) -> AniListCache:
     """Fetch up to ANILIST_BATCH_SIZE AniList Media in a single request via id_in
 
     Returns "{id: {"data": {"Media": {...}}}}" mirroring the single-id shape,
@@ -251,9 +311,11 @@ def get_query_batch(al_ids: list[int]) -> AniListCache:
 
     Args:
         al_ids (list[int]): Up to ANILIST_BATCH_SIZE AniList IDs
+        retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
+            None (silent)
     """
 
-    j = _post_with_retry(BATCH_QUERY, {"ids": list(al_ids)})
+    j = _post_with_retry(BATCH_QUERY, {"ids": list(al_ids)}, retry_log)
     # response.json() is untyped and the cache stores each Media body verbatim
     # (re-parsed on read via AniListMediaNode.from_api). Keep each Media OBJECT
     # carrying an id, skipping any non-object entry in the array.
@@ -271,6 +333,7 @@ def get_query_batch(al_ids: list[int]) -> AniListCache:
 def _get_media(
     al_id: int,
     al_cache: AniListCache | None,
+    retry_log: AniListRetryLog | None = None,
 ) -> AniListMediaNode:
     """Fetch and parse the AniList Media node for an ID, caching successful lookups
 
@@ -302,7 +365,7 @@ def _get_media(
 
     # Miss: query AniList. Extract the raw Media dict once to gate the cache
     # store, then parse it into the typed node for the return.
-    j = get_query(al_id)
+    j = get_query(al_id, retry_log)
     raw_media = _extract(j, "data", "Media")
 
     # Only remember a response that actually carried Media, so a transient
@@ -317,6 +380,7 @@ def _get_media(
 def get_anilist_n_eps(
     al_id: int,
     al_cache: AniListCache | None = None,
+    retry_log: AniListRetryLog | None = None,
 ) -> int | None:
     """Query AniList to get the number of episodes for anime.
 
@@ -324,14 +388,17 @@ def get_anilist_n_eps(
         al_id (int): Anilist ID
         al_cache (AniListCache): Cached Anilist bodies, updated in place.
             Defaults to None (no caching across calls)
+        retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
+            None (silent)
     """
 
-    return _get_media(al_id, al_cache).episodes
+    return _get_media(al_id, al_cache, retry_log).episodes
 
 
 def get_anilist_title(
     al_id: int,
     al_cache: AniListCache | None = None,
+    retry_log: AniListRetryLog | None = None,
 ) -> str | None:
     """Query AniList to get a title for anime.
 
@@ -339,9 +406,11 @@ def get_anilist_title(
         al_id (int): Anilist ID
         al_cache (AniListCache): Cached Anilist bodies, updated in place.
             Defaults to None (no caching across calls)
+        retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
+            None (silent)
     """
 
-    media = _get_media(al_id, al_cache)
+    media = _get_media(al_id, al_cache, retry_log)
 
     # Prefer the English title, but fall back to romaji
     return media.title_english or media.title_romaji
@@ -350,6 +419,7 @@ def get_anilist_title(
 def get_anilist_thumb(
     al_id: int,
     al_cache: AniListCache | None = None,
+    retry_log: AniListRetryLog | None = None,
 ) -> str | None:
     """Query AniList to get thumbnail URL for anime.
 
@@ -357,14 +427,17 @@ def get_anilist_thumb(
         al_id (int): Anilist ID
         al_cache (AniListCache): Cached Anilist bodies, updated in place.
             Defaults to None (no caching across calls)
+        retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
+            None (silent)
     """
 
-    return _get_media(al_id, al_cache).cover_image
+    return _get_media(al_id, al_cache, retry_log).cover_image
 
 
 def get_anilist_format(
     al_id: int,
     al_cache: AniListCache | None = None,
+    retry_log: AniListRetryLog | None = None,
 ) -> str | None:
     """Query AniList to get format for anime.
 
@@ -372,6 +445,8 @@ def get_anilist_format(
         al_id (int): Anilist ID
         al_cache (AniListCache): Cached Anilist bodies, updated in place.
             Defaults to None (no caching across calls)
+        retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
+            None (silent)
     """
 
-    return _get_media(al_id, al_cache).format
+    return _get_media(al_id, al_cache, retry_log).format

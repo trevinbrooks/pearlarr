@@ -35,7 +35,7 @@ from .reporter import (
     is_preview,
 )
 from .seadex_types import SeadexDict, SeadexUrlItem
-from .torrents import PARSEABLE_TRACKERS, AddOutcome, ReleaseOutcome, TorrentService
+from .torrents import GRAB_FAILURES, PARSEABLE_TRACKERS, AddOutcome, ReleaseOutcome, TorrentService
 
 
 @dataclass(frozen=True)
@@ -93,6 +93,9 @@ class GrabPipeline:
         # Seeded with the engine's placeholder ctx; rebound each run via begin_run
         # (the same object the engine holds, so the grab bookkeeping stays in sync).
         self._ctx = ctx
+        # Groups whose release hit a contained grab failure (tracker/client down)
+        # this title; set in _add_one_url, read + reset in grab_and_cache.
+        self._grab_failed_groups: list[str] = []
 
     def begin_run(self, ctx: RunContext) -> None:
         """Bind the run context the grab bookkeeping reads/writes."""
@@ -222,13 +225,26 @@ class GrabPipeline:
         # The service parses the release URL by tracker and adds it to
         # qBittorrent, returning the add status and a display name (the
         # client's name, or the release title scraped from the source
-        # page as a fallback). A preview run simulates the add.
-        result = self._torrents.add(
-            url=url,
-            tracker=tracker,
-            infohash=url_item.infohash,
-            preview=self._is_preview(),
-        )
+        # page as a fallback). A preview run simulates the add. An expected
+        # external failure (tracker or qBittorrent down/erroring) is contained
+        # here to ONE warning - no traceback - so the loop moves on and
+        # grab_and_cache leaves the title uncached for a retry next run.
+        try:
+            result = self._torrents.add(
+                url=url,
+                tracker=tracker,
+                infohash=url_item.infohash,
+                preview=self._is_preview(),
+            )
+        except GRAB_FAILURES as e:
+            self.log_fmt.detail(
+                "failed",
+                f"could not grab {url}: {e}; will retry next run",
+                value_style="yellow",
+                level=logging.WARNING,
+            )
+            self._grab_failed_groups.append(srg)
+            return None
 
         if result.outcome is AddOutcome.ADDED:
             # Record the grab for the end-of-run summary. Prefer the
@@ -320,6 +336,9 @@ class GrabPipeline:
         next id).
         """
 
+        # Reset the per-title grab-failure note (set in _add_one_url, read below).
+        self._grab_failed_groups = []
+
         # Check the release groups are matching, and get a bespoke list of torrents
         any_to_download = self._planner.get_any_to_download(req.seadex_dict)
 
@@ -354,12 +373,19 @@ class GrabPipeline:
             and not self._config.advanced.interactive
         )
 
+        # A contained grab failure (tracker/client down) means a release this
+        # title should have is missing: like fallback_hold, never cache - even on
+        # a partial grab - so the next run retries (the completed add dedups).
+        grab_failed = bool(self._grab_failed_groups)
+
         # Cache the title as done only when something was grabbed, or nothing was
         # skipped. A private-only OR unsupported-tracker skip that left nothing
         # grabbed keeps it uncached, so it's re-checked once a public release /
         # parser / config change lands.
-        if not fallback_hold and (
-            added_this_title > 0 or not (self._ctx.private_only_skipped or self._ctx.unsupported_tracker_skipped)
+        if (
+            not fallback_hold
+            and not grab_failed
+            and (added_this_title > 0 or not (self._ctx.private_only_skipped or self._ctx.unsupported_tracker_skipped))
         ):
             # A mixed title (grabbed + unsupported-tracker skip) is cached, but the
             # skipped hashes are excluded so the release is re-considered on the
@@ -382,9 +408,9 @@ class GrabPipeline:
                 req.cache_details,
             )
         # A release was skipped for a reason outside the user's control (and either
-        # nothing was added or a fallback hold blocks the cache): surface ONE
-        # needs-action reason for the title (private-only wins) so it shows in the
-        # summary. In fallback mode the hold is a fallback that couldn't (no public
+        # nothing was added or a fallback hold / grab failure blocks the cache):
+        # surface ONE needs-action reason for the title (private-only wins) so it
+        # shows in the summary. In fallback mode the hold is a fallback that couldn't (no public
         # alternative covered the missing files) or wouldn't (the user's own
         # interactive private pick, or an owned-at-stale-size pick a fallback must
         # not replace) fall back - either way the tip must not suggest the
@@ -416,6 +442,17 @@ class GrabPipeline:
                     self._ctx.unsupported_tracker_groups,
                     "unsupported tracker; no parser yet",
                     NeedsActionKind.UNSUPPORTED_TRACKER,
+                ),
+            )
+        elif grab_failed:
+            # No user action needed - the warning named the failure and the
+            # uncached title retries next run - but the summary must say why the
+            # title is neither added nor up to date.
+            self._ctx.stats.needs_action.append(
+                self._needs_action(
+                    self._grab_failed_groups,
+                    "grab failed; will retry next run",
+                    NeedsActionKind.GRAB_FAILED,
                 ),
             )
 

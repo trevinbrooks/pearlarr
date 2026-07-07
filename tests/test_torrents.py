@@ -18,6 +18,8 @@ import logging
 from dataclasses import dataclass
 from typing import cast
 
+import httpx
+import pynyaa
 import pytest
 import qbittorrentapi
 import requests
@@ -28,7 +30,13 @@ from seadexarr.modules.config import Arr
 from seadexarr.modules.mappings import MappingResolver
 from seadexarr.modules.run_services import QbitConnectionError, RunDeps
 from seadexarr.modules.torrent import TorrentParseError
-from seadexarr.modules.torrents import PARSEABLE_TRACKERS, AddOutcome, TorrentAddError, TorrentService
+from seadexarr.modules.torrents import (
+    GRAB_FAILURES,
+    PARSEABLE_TRACKERS,
+    AddOutcome,
+    TorrentAddError,
+    TorrentService,
+)
 
 from .builders import make_bare_instance, make_config
 
@@ -171,7 +179,9 @@ def test_add_qbit_rejects_add_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     qbit = _FakeQbit(add_result="Fails.")
     service = _service(qbit)
 
-    with pytest.raises(TorrentAddError, match="Failed to add torrent"):
+    # The message names the release URL and qBittorrent's response (it surfaces
+    # verbatim in the pipeline's containment warning).
+    with pytest.raises(TorrentAddError, match=r"rejected the torrent from https://nyaa.si/view/1 .*'Fails\.'"):
         service.add(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=None, preview=False)
 
 
@@ -186,7 +196,7 @@ def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     qbit = _FakeQbit()
     service = _service(qbit)
 
-    with pytest.raises(TorrentParseError, match="Have not managed to parse the torrent URL"):
+    with pytest.raises(TorrentParseError, match="Could not extract a torrent download link from"):
         service.add(url="https://animetosho.org/view/1", tracker=Tracker.ANIMETOSHO, infohash=None, preview=False)
 
     assert qbit.add_calls == []
@@ -228,6 +238,25 @@ def test_add_raises_iff_tracker_unparseable(tracker: Tracker, monkeypatch: pytes
     else:
         with pytest.raises(ValueError, match="Unable to parse torrent links"):
             service.add(url="https://example/1", tracker=tracker, infohash=None, preview=True)
+
+
+def test_grab_failures_covers_every_expected_boundary_error() -> None:
+    """Drift guard: the containment tuple catches each boundary's failure mode -
+    the parse/add raises, a requests blip (tracker scrape), an httpx blip
+    (pynyaa / seadex transport), a pynyaa error, and any qbittorrentapi error."""
+
+    expected = (
+        TorrentParseError("x"),
+        TorrentAddError("x"),
+        requests.ConnectionError("x"),
+        httpx.ConnectError("x"),
+        pynyaa.PyNyaaError("x"),
+        qbittorrentapi.APIConnectionError("x"),
+    )
+    for exc in expected:
+        assert isinstance(exc, GRAB_FAILURES), f"{type(exc).__name__} not contained"
+    # A ValueError (the unhandled-tracker defensive raise) must NOT be contained.
+    assert not isinstance(ValueError("x"), GRAB_FAILURES)
 
 
 # --- QbitConnectionError mapping (RunDeps.build login path) ------------------

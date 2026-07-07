@@ -66,16 +66,18 @@ def get_animetosho_torrent(
 
     session = session or _DEFAULT_SESSION
 
-    # Start by getting the webpage, so we can get a title
+    # Start by getting the webpage, so we can get a title. A 5xx/Cloudflare page
+    # would otherwise scrape as a misleading "no title" parse error.
     r = session.get(url, timeout=TRACKER_REQUEST_TIMEOUT_S)
+    r.raise_for_status()
     soup = BeautifulSoup(r.content, "html.parser")
     titles = soup.find_all("h2", attrs={"id": "title"})
 
     if len(titles) == 0:
-        raise TorrentParseError("Could not find torrent name in AnimeTosho webpage")
+        raise TorrentParseError(f"Could not find the torrent title on {url}")
 
     if len(titles) > 1:
-        raise TorrentParseError("More than one torrent title in AnimeTosho webpage")
+        raise TorrentParseError(f"Found more than one torrent title on {url}")
 
     title = titles[0].text
 
@@ -83,7 +85,12 @@ def get_animetosho_torrent(
     # characters in it don't malform the query string)
     query_url = urljoin(ANIMETOSHO_FEED_URL, "?" + urlencode({"t": "search", "q": title}))
     r = session.get(query_url, timeout=TRACKER_REQUEST_TIMEOUT_S)
-    j = r.json()
+    r.raise_for_status()
+    try:
+        j = r.json()
+    except ValueError as e:
+        # An HTML error body (e.g. an interstitial) isn't JSON: a parse miss.
+        raise TorrentParseError(f"AnimeTosho feed returned a non-JSON response from {query_url}") from e
 
     # Find the feed entry whose link matches the page URL
     parsed_url = None
@@ -128,10 +135,11 @@ def get_rutracker_torrent(
     # (as the AnimeTosho scraper does) - lxml is not a dependency, and the page
     # only needs a single class lookup, so the built-in parser is plenty.
     r = session.get(url, timeout=TRACKER_REQUEST_TIMEOUT_S)
+    r.raise_for_status()
     soup = BeautifulSoup(r.content, "html.parser")
     main_title = soup.find("h1", attrs={"class": "maintitle"})
     if main_title is None:
-        raise TorrentParseError("Could not find torrent title in RuTracker webpage")
+        raise TorrentParseError(f"Could not find the torrent title on {url}")
     torrent_title = main_title.text
 
     params = {

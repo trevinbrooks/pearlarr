@@ -661,11 +661,19 @@ class FakeTorrents:
     """Mimics ``TorrentService.add``: a per-hash scripted ``(outcome, name)``.
 
     Keyed by infohash (not call order) so a multi-release add can return a
-    different outcome per release regardless of dict iteration order.
+    different outcome per release regardless of dict iteration order. A hash
+    scripted in ``raises`` raises its exception instead (a tracker/client
+    failure the pipeline's containment must absorb).
     """
 
-    def __init__(self, by_hash: dict[str | None, tuple[AddOutcome, str | None]]) -> None:
+    def __init__(
+        self,
+        by_hash: dict[str | None, tuple[AddOutcome, str | None]],
+        *,
+        raises: dict[str | None, Exception] | None = None,
+    ) -> None:
         self._by_hash = by_hash
+        self._raises = raises or {}
         self.calls: list[str | None] = []
 
     def add(
@@ -678,6 +686,8 @@ class FakeTorrents:
     ) -> AddResult:
         del url, tracker, preview
         self.calls.append(infohash)
+        if infohash in self._raises:
+            raise self._raises[infohash]
         return AddResult(*self._by_hash[infohash])
 
 
@@ -720,6 +730,8 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         "log_fmt": log_fmt,
         "qbit": CLIENT_SENTINEL,
         "_ctx": RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
+        # __init__-seeded per-title state the bare instance must also carry.
+        "_grab_failed_groups": [],
     }
     defaults.update(overrides)
     return make_bare_instance(GrabPipeline, **defaults)

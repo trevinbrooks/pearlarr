@@ -61,13 +61,16 @@ class NeedsActionKind(Enum):
     pick) fall back, so its tip must not suggest turning fallback on.
     PRIVATE_ONLY_STALE is fallback mode refusing to replace an owned stale
     copy of the preferred private release (an alternative exists; the
-    fallback-never-supersedes rule holds it).
+    fallback-never-supersedes rule holds it). GRAB_FAILED is a contained
+    transient failure (tracker/qBittorrent down); the title stays uncached and
+    retries next run, so it gets no tip.
     """
 
     PRIVATE_ONLY = auto()
     PRIVATE_ONLY_NO_FALLBACK = auto()
     PRIVATE_ONLY_STALE = auto()
     UNSUPPORTED_TRACKER = auto()
+    GRAB_FAILED = auto()
 
 
 @dataclass(frozen=True, slots=True)

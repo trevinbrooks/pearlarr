@@ -70,7 +70,17 @@ def _gateway(fake: FakeSeaDex) -> SeaDexGateway:
         seadex=fake,
         _entry_cache={},
         _prefetched=set(),
+        _outage=False,
     )
+
+
+def _capture_warnings(gateway: SeaDexGateway) -> CaptureHandler:
+    """Attach a recording handler at WARNING to the gateway's logger."""
+
+    handler = CaptureHandler()
+    gateway.logger.handlers = [handler]
+    gateway.logger.setLevel(logging.WARNING)
+    return handler
 
 
 class TestSeaDexPrefetch:
@@ -122,25 +132,61 @@ class TestSeaDexPrefetch:
         assert gateway.entry(123) is None  # from_id raises EntryNotFound -> None
         assert fake.from_id_calls == [123]
 
-    def test_batch_outage_falls_back_per_id(self) -> None:
+    def test_batch_outage_warns_once_and_short_circuits(self) -> None:
+        # A failed batch used to warn per batch AND leave every id to re-attempt
+        # (and re-time-out) individually. Now the FIRST failure warns once, later
+        # batches never hit the network, and every entry() degrades straight to
+        # None with zero from_id calls.
+        ids = list(range(1, SEADEX_BATCH_SIZE * 2 + 6))  # three batches
+        fake = FakeSeaDex({i: _rec(i) for i in ids}, fail_filter=True)
+        gateway = _gateway(fake)
+        handler = _capture_warnings(gateway)
+
+        gateway.prefetch(ids)
+
+        assert len(fake.filter_calls) == 1  # batches 2+3 short-circuited
+        warnings = [r for r in handler.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "SeaDex request failed (ConnectError)" in warnings[0].getMessage()
+        # The per-id fallback is muted too: no fresh timeout per title.
+        assert gateway.entry(ids[0]) is None
+        assert fake.from_id_calls == []
+        assert len(warnings) == 1  # still just the one
+
+    def test_outage_prefetch_still_drives_progress_to_completion(self) -> None:
+        # The cockpit sink must not hang on a mid-prefetch outage: every chunk
+        # still reports, ending at 1.0.
+        ids = list(range(1, SEADEX_BATCH_SIZE + 6))  # two batches
+        fake = FakeSeaDex({}, fail_filter=True)
+        gateway = _gateway(fake)
+        rec = _Recorder()
+
+        assert gateway.prefetch(ids, progress=rec) == len(ids)
+        assert rec.calls[-1] == (1.0, f"{len(ids)}/{len(ids)}")
+
+    def test_failed_chunk_ids_are_not_marked_absent(self) -> None:
+        # An id in a failed chunk is a transient skip, never a remembered
+        # "no entry": a later prefetch still counts it as missing work (it
+        # stays out of the prefetched set) rather than returning 0.
         fake = FakeSeaDex({1: _rec(1)}, fail_filter=True)
         gateway = _gateway(fake)
-        gateway.prefetch([1])  # the batch raises -> chunk left unprefetched
-        assert gateway.entry(1) is fake.entries[1]  # fell back to from_id
-        assert fake.from_id_calls == [1]
+        gateway.prefetch([1])
+        assert gateway.prefetch([1]) == 1
 
-    def test_single_lookup_timeout_degrades_to_none_and_warns(self) -> None:
+    def test_single_lookup_timeout_degrades_to_none_and_warns_once(self) -> None:
         # The module contract: a SeaDex outage degrades to None. A ReadTimeout on
         # the per-id fallback (httpx.HTTPError, not just ConnectError) must not
-        # unwind the run.
-        fake = FakeSeaDex({1: _rec(1)}, fail_from_id=True)
+        # unwind the run - and a SECOND lookup short-circuits without another
+        # network attempt or warning.
+        fake = FakeSeaDex({1: _rec(1), 2: _rec(2)}, fail_from_id=True)
         gateway = _gateway(fake)
-        handler = CaptureHandler()
-        gateway.logger.handlers = [handler]
-        gateway.logger.setLevel(logging.WARNING)
+        handler = _capture_warnings(gateway)
 
         assert gateway.entry(1) is None
-        assert any(r.levelno == logging.WARNING for r in handler.records)
+        assert gateway.entry(2) is None
+        assert fake.from_id_calls == [1]  # id 2 never hit the network
+        warnings = [r for r in handler.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
 
     def test_batches_respect_batch_size(self) -> None:
         ids = list(range(1, SEADEX_BATCH_SIZE * 2 + 6))  # two full batches + a partial

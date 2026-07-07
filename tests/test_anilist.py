@@ -11,18 +11,22 @@ no mocks at all; ``_post_with_retry`` is faked at the ``requests`` boundary with
 the ``responses`` library (no ``unittest.mock``).
 """
 
+import logging
 import re
 import time
 
 import pytest
+import requests
 import responses
 
 from seadexarr.modules.anilist import (
     _MEDIA_FIELDS,
     API_URL,
+    MAX_RETRIES,
     QUERY,
     RETRYABLE_ERROR_SUBSTRINGS,
     RETRYABLE_STATUS,
+    AniListRetryLog,
     _errors_are_retryable,
     _extract,
     _media_from,
@@ -30,6 +34,8 @@ from seadexarr.modules.anilist import (
     _post_with_retry,
 )
 from seadexarr.modules.seadex_types import AniListError, AniListMediaNode
+
+from .fakes import CaptureHandler
 
 
 def _no_sleep(_seconds: float) -> None:
@@ -257,3 +263,68 @@ def test_post_with_retry_retries_on_throttle_error_body(monkeypatch: pytest.Monk
         body = _post_with_retry(QUERY, {"id": 3})
         assert len(rsps.calls) == 2
     assert body == success
+
+
+# --- AniListRetryLog (backoff narration + the once-per-run give-up warning) --
+
+
+def _retry_log() -> tuple[AniListRetryLog, CaptureHandler]:
+    """A retry log over a captured logger (DEBUG so every narration records)."""
+
+    logger = logging.getLogger("test_anilist_retry")
+    handler = CaptureHandler()
+    logger.handlers = [handler]
+    logger.propagate = False
+    logger.setLevel(logging.DEBUG)
+    return AniListRetryLog(logger=logger), handler
+
+
+def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 429 backoff logs the (Retry-After) wait at INFO - the run no longer
+    looks hung - and a successful retry never fires the give-up warning."""
+
+    monkeypatch.setattr(time, "sleep", _no_sleep)
+    retry_log, handler = _retry_log()
+    success: dict[str, object] = {"data": {"Media": {"id": 2, "episodes": 24}}}
+    with responses.RequestsMock() as rsps:
+        rsps.add(responses.POST, API_URL, json={"data": None}, status=429, headers={"Retry-After": "42"})
+        rsps.add(responses.POST, API_URL, json=success, status=200)
+        body = _post_with_retry(QUERY, {"id": 2}, retry_log)
+
+    assert body == success
+    infos = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
+    assert infos == [f"AniList rate-limited; waiting 42s (retry 1/{MAX_RETRIES})"]
+    assert [r for r in handler.records if r.levelno == logging.WARNING] == []
+
+
+def test_give_up_warns_once_per_run_not_per_title(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exhausting the retries warns ONCE; a second exhausted request (another
+    title, same run) stays quiet - the flag is per retry-log, i.e. per run."""
+
+    monkeypatch.setattr(time, "sleep", _no_sleep)
+    retry_log, handler = _retry_log()
+    with responses.RequestsMock() as rsps:
+        for _ in range(2 * (MAX_RETRIES + 1)):
+            rsps.add(responses.POST, API_URL, json={"data": None}, status=429)
+        _post_with_retry(QUERY, {"id": 1}, retry_log)
+        _post_with_retry(QUERY, {"id": 2}, retry_log)
+
+    warnings = [r.getMessage() for r in handler.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert f"AniList request failed after {MAX_RETRIES} retries" in warnings[0]
+
+
+def test_network_give_up_returns_empty_and_warns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hard network outage still degrades to ``{}`` - but now with one warning
+    instead of total silence."""
+
+    monkeypatch.setattr(time, "sleep", _no_sleep)
+    retry_log, handler = _retry_log()
+    with responses.RequestsMock() as rsps:
+        for _ in range(MAX_RETRIES + 1):
+            rsps.add(responses.POST, API_URL, body=requests.ConnectionError("down"))
+        body = _post_with_retry(QUERY, {"id": 1}, retry_log)
+
+    assert body == {}
+    warnings = [r for r in handler.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1

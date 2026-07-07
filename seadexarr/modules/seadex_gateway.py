@@ -65,6 +65,18 @@ class SeaDexGateway(SeaDexSource):
         # is known-absent and ``entry`` can skip the per-id fallback call.
         self._entry_cache: dict[int, EntryRecord] = {}
         self._prefetched: set[int] = set()
+        # Set on the first failed request: SeaDex is down for this run, so every
+        # later batch/lookup short-circuits instead of re-timing-out per id.
+        self._outage = False
+
+    def _note_outage(self, e: httpx.HTTPError) -> None:
+        """Warn ONCE that SeaDex is unreachable; the flag mutes every later call."""
+
+        if not self._outage:
+            self.logger.warning(
+                f"SeaDex request failed ({type(e).__name__}); affected titles will be skipped this run",
+            )
+        self._outage = True
 
     @override
     def prefetch(self, al_ids: Iterable[int], *, progress: ProgressSink | None = None) -> int:
@@ -73,9 +85,10 @@ class SeaDexGateway(SeaDexSource):
         Populates the per-run entry cache so the per-item loop's :meth:`entry`
         calls are cache hits instead of one ``from_id`` round-trip each. Ids in a
         successfully-fetched batch that SeaDex didn't return are remembered as
-        absent (so :meth:`entry` returns None for them without a call). A batch that
-        fails (outage) is left out of the prefetched set, so those ids fall through
-        to the per-id fallback (which warns and degrades to None) on demand.
+        absent (so :meth:`entry` returns None for them without a call). The first
+        batch that fails (outage) warns once and flips the outage flag: the
+        remaining batches - and every later :meth:`entry` fallback - short-circuit
+        to None instead of re-timing-out per id.
 
         Args:
             al_ids (Iterable[int]): Candidate AniList IDs for this run.
@@ -95,15 +108,16 @@ class SeaDexGateway(SeaDexSource):
         done = 0
         for chunk in batched(missing, SEADEX_BATCH_SIZE, strict=False):
             chunk = list(chunk)
-            try:
-                fetched = self._fetch_batch(chunk)
-            except httpx.HTTPError:
-                # Leave this chunk for the per-id fallback rather than treating its
-                # ids as absent; the fallback warns + degrades to None.
-                self.logger.warning("Could not connect to SeaDex. Website may be down")
-            else:
-                self._entry_cache.update(fetched)
-                self._prefetched.update(chunk)
+            # A failed chunk's ids are NOT marked prefetched (never "absent"), so a
+            # transient miss stays a skip, not a remembered no-entry.
+            if not self._outage:
+                try:
+                    fetched = self._fetch_batch(chunk)
+                except httpx.HTTPError as e:
+                    self._note_outage(e)
+                else:
+                    self._entry_cache.update(fetched)
+                    self._prefetched.update(chunk)
             done += len(chunk)
             if progress is not None:
                 progress.progress(done / total, f"{done}/{total}")
@@ -122,7 +136,8 @@ class SeaDexGateway(SeaDexSource):
 
         Served from the bulk-prefetch cache when warm; a prefetched-but-absent id
         returns None without a call; an id that wasn't prefetched (e.g. a single-id
-        run) falls back to a single ``from_id``.
+        run) falls back to a single ``from_id`` - unless the outage flag is set, in
+        which case it degrades straight to None without another network attempt.
 
         Args:
             al_id (int): AniList ID.
@@ -131,7 +146,7 @@ class SeaDexGateway(SeaDexSource):
         cached = self._entry_cache.get(al_id)
         if cached is not None:
             return cached
-        if al_id in self._prefetched:
+        if al_id in self._prefetched or self._outage:
             return None
         return self._entry_single(al_id)
 
@@ -141,7 +156,7 @@ class SeaDexGateway(SeaDexSource):
         A missing entry (``EntryNotFoundError``) and a SeaDex outage (any
         ``httpx.HTTPError`` - connection failure, timeout, HTTP error status; the
         same breadth :meth:`prefetch` catches) both return None so the caller can
-        skip the id; the outage is surfaced as a warning.
+        skip the id; the first outage warns once and mutes later lookups.
         """
 
         sd_entry = None
@@ -149,7 +164,7 @@ class SeaDexGateway(SeaDexSource):
             sd_entry = self.seadex.from_id(al_id)
         except EntryNotFoundError:
             pass
-        except httpx.HTTPError:
-            self.logger.warning("Could not connect to SeaDex. Website may be down")
+        except httpx.HTTPError as e:
+            self._note_outage(e)
 
         return sd_entry
