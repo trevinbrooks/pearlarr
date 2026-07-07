@@ -6,16 +6,17 @@
 
 Each test builds a REAL ``SonarrClient`` (construction is network-free), then
 drives one method and asserts the request URL / body it builds AND the decoded
-return view its ``from_api`` parsers produce. The endpoints still on
-``requests`` are mocked via ``responses``; the endpoints migrated onto the
-httpx-based ``ArrHttp`` (library fetch / queue) via ``respx``. Bodies come
-from the captured ``tests/fixtures/sonarr`` JSON where one exists (queue /
+return view its ``from_api`` parsers produce. The endpoints ride the
+httpx-based ``ArrHttp`` and are mocked via ``respx``; the one still on
+``requests`` (``history_since``) via ``responses``. Bodies come from the
+captured ``tests/fixtures/sonarr`` JSON where one exists (queue /
 manual-import / command-list / quality-definitions), otherwise a minimal
-inline body. POST bodies are asserted via ``responses``'
-``json_params_matcher`` (no Any-typed body reads); GET request shape is read
-off ``rsps.calls[-1].request.url``.
+inline body. POST bodies are asserted by decoding the captured request content
+(no Any-typed body reads); GET request shape is read off
+``route.calls.last.request.url``.
 """
 
+import json
 import logging
 
 import httpx
@@ -23,7 +24,6 @@ import pytest
 import requests
 import responses
 import respx
-from responses import matchers
 
 from seadexarr.modules.manual_import import PendingImport
 from seadexarr.modules.seadex_types import (
@@ -476,6 +476,7 @@ def test_manual_import_candidates_request_error_returns_none() -> None:
 # --- manual_import_execute() / refresh_monitored_downloads() (POST /command) -
 
 
+@respx.mock
 def test_manual_import_execute_posts_body_and_returns_id() -> None:
     """The ``ManualImport`` command POSTs ``{name, importMode, files}`` and returns
     the queued command id; ``import_mode`` threads straight into the body.
@@ -494,26 +495,20 @@ def test_manual_import_execute_posts_body_and_returns_id() -> None:
         "importMode": "move",
         "files": [file],
     }
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(
-            responses.POST,
-            f"{_BASE}/command",
-            json={"id": 4242},
-            match=[matchers.json_params_matcher(expected_body)],
-        )
-        command_id = client.manual_import_execute(files=[file], import_mode="move")
-        request = rsps.calls[-1].request
+    route = respx.post(f"{_BASE}/command").respond(json={"id": 4242})
+    command_id = _make_client().manual_import_execute(files=[file], import_mode="move")
 
     assert command_id == 4242
-    url = request.url
-    assert url is not None
+    request = route.calls.last.request
+    assert json.loads(request.content) == expected_body
+    url = str(request.url)
     assert url.startswith(f"{_BASE}/command")
     # The POST authenticates through the header too, never the query string.
     assert "apikey" not in url
     assert request.headers["X-Api-Key"] == "testkey"
 
 
+@respx.mock
 def test_manual_import_execute_non_2xx_returns_none() -> None:
     """A non-2xx command POST leaves the import pending (returns ``None``)."""
 
@@ -525,37 +520,30 @@ def test_manual_import_execute_non_2xx_returns_none() -> None:
         "downloadId": "A" * 40,
         "languages": [{"id": 1, "name": "English"}],
     }
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.POST, f"{_BASE}/command", status=400, json={})
-        assert client.manual_import_execute(files=[file]) is None
+    respx.post(f"{_BASE}/command").respond(status_code=400, json={})
+    assert _make_client().manual_import_execute(files=[file]) is None
 
 
+@respx.mock
 def test_post_command_request_error_returns_none() -> None:
-    """A transient error on the command POST (now timeout-bounded) returns None
-    rather than raising through the import path.
+    """A transient error on the command POST (never retried - not idempotent)
+    returns None rather than raising through the import path.
     """
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.POST, f"{_BASE}/command", body=requests.exceptions.ConnectionError("boom"))
-        assert client.refresh_monitored_downloads() is None
+    route = respx.post(f"{_BASE}/command").mock(side_effect=httpx.ConnectError("boom"))
+    assert _make_client().refresh_monitored_downloads() is None
+    assert route.call_count == 1  # ONE attempt: a retry could double-queue
 
 
+@respx.mock
 def test_refresh_monitored_downloads_posts_command_name() -> None:
     """``RefreshMonitoredDownloads`` POSTs only ``{name}`` and returns its id."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(
-            responses.POST,
-            f"{_BASE}/command",
-            json={"id": 77},
-            match=[matchers.json_params_matcher({"name": "RefreshMonitoredDownloads"})],
-        )
-        command_id = client.refresh_monitored_downloads()
+    route = respx.post(f"{_BASE}/command").respond(json={"id": 77})
+    command_id = _make_client().refresh_monitored_downloads()
 
     assert command_id == 77
+    assert json.loads(route.calls.last.request.content) == {"name": "RefreshMonitoredDownloads"}
 
 
 # --- command_status() / list_commands() -------------------------------------

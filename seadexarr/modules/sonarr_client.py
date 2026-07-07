@@ -16,7 +16,6 @@ from .arr_http import ArrHttp, fetch_history_since
 from .log import indent_string
 from .manual_import import PendingImport
 from .seadex_types import (
-    ARR_REQUEST_TIMEOUT_S,
     CommandBody,
     CommandResource,
     HistoryRecord,
@@ -394,37 +393,27 @@ class SonarrClient(AbstractSonarrClient):
 
         Shared by :meth:`manual_import_execute` and
         :meth:`refresh_monitored_downloads`. Returns the command ``id`` or None
-        (with a warning) on a non-2xx.
+        (with a warning) on a non-2xx; the POST rides :meth:`~.arr_http.ArrHttp.post_json`,
+        so it is never retried (a retry could double-queue the command).
 
         Args:
             body (CommandBody): The outgoing command body (must carry ``name``).
         """
 
-        command_req_url = f"{self._url}/api/v3/command"
-        try:
-            # CommandBody is JSON-safe but a non-closed TypedDict can never be
-            # proven against the recursive alias, so cast at the wire boundary.
-            command_req = self._session.post(
-                command_req_url,
-                json=cast("Json", body),
-                headers=self._headers,
-                timeout=ARR_REQUEST_TIMEOUT_S,
-            )
-        except requests.RequestException:
-            command_req = None
-
-        if command_req is None or command_req.status_code not in (200, 201):
-            detail = "request failed" if command_req is None else f"status code {command_req.status_code}"
-            self._logger.warning(
-                indent_string(f"Could not queue {body['name']} command ({detail})"),
-            )
+        # CommandBody is JSON-safe but a non-closed TypedDict can never be
+        # proven against the recursive alias, so cast at the wire boundary.
+        payload = self._http.post_json(
+            "/api/v3/command",
+            json=cast("Json", body),
+            warn=indent_string(f"Could not queue {body['name']} command ({{detail}})"),
+        )
+        if not isinstance(payload, dict):
+            # None already warned; a 2xx non-object body carries no id to read.
             return None
 
-        # response.json() is untyped; the command POST returns a CommandResource
-        # JSON object whose "id" is the queued command id (0 when absent), so cast
-        # at the parse boundary and narrow it to the consumed fields.
-        command = CommandResource.from_api(cast("dict[str, Any]", command_req.json()))
-        return command.id or None
+        # The returned CommandResource's "id" is the queued command id (0 when
+        # absent): cast at the parse boundary and narrow to the consumed fields.
+        return CommandResource.from_api(cast("dict[str, Any]", payload)).id or None
 
     @override
     def queue(self) -> list[QueueRecord]:
