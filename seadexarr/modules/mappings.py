@@ -531,7 +531,7 @@ class MappingResolver:
         else:
             assert isinstance(sources.anibridge, dict)
             ab = AniBridge(sources.anibridge, logger=self.logger)
-            self._store.replace_anibridge(INLINE_DIGEST, *ab.to_rows())
+            self._store.replace_anibridge(INLINE_DIGEST, ab.to_rows())
             self.anibridge = AniBridge.from_store(self._store)
 
     def _maybe_download(self, file: str, url: str, label: str) -> None:
@@ -603,7 +603,7 @@ class MappingResolver:
             with open(self._anibridge_path, encoding="utf-8") as f:
                 graph = json.load(f)
             ab = AniBridge(graph, logger=self.logger)
-            self._store.replace_anibridge(digest, *ab.to_rows())
+            self._store.replace_anibridge(digest, ab.to_rows())
             self._log(f"Indexed anibridge mappings ({len(ab)} AniList ids, {time.perf_counter() - t0:.2f}s)")
         self.anibridge = AniBridge.from_store(self._store)
 

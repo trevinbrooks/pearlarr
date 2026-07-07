@@ -217,6 +217,14 @@ class AniBridgeRangeRow(NamedTuple):
     end_ep: int | None
 
 
+class AniBridgeRows(NamedTuple):
+    """The three anibridge row tables one graph flattens to (``AniBridge.to_rows``)."""
+
+    entries: list[AniBridgeEntryRow]
+    xrefs: list[AniBridgeXrefRow]
+    ranges: list[AniBridgeRangeRow]
+
+
 class AniBridgeRangeHit(NamedTuple):
     """One :meth:`MappingStore.anibridge_ranges_for` result row (tvdb-scoped)."""
 
@@ -327,33 +335,30 @@ class MappingStore:
     def replace_anibridge(
         self,
         digest: str,
-        entries: Iterable[AniBridgeEntryRow],
-        xrefs: Iterable[AniBridgeXrefRow],
-        ranges: Iterable[AniBridgeRangeRow],
+        rows: AniBridgeRows,
     ) -> None:
         """Atomically replace the anibridge tables.
 
         Args:
             digest (str): sha256 of the source file (or :data:`INLINE_DIGEST`).
-            entries: :class:`AniBridgeEntryRow` tuples (the computed consumer picks).
-            xrefs: :class:`AniBridgeXrefRow` reverse-index tuples.
-            ranges: :class:`AniBridgeRangeRow` tuples; ``start_ep`` NULL marks a
-                present-but-empty season.
+            rows (AniBridgeRows): The three row tables one graph flattens to
+                (a ``range`` row's ``start_ep`` NULL marks a present-but-empty
+                season).
         """
 
         def write(conn: sqlite3.Connection) -> None:
             conn.executemany(
                 "INSERT INTO anibridge_entry (anilist_id, anidb_id, imdb_id, tmdb_movie_id) VALUES (?, ?, ?, ?)",
-                entries,
+                rows.entries,
             )
             conn.executemany(
                 "INSERT INTO anibridge_xref (axis, ext_id, anilist_id) VALUES (?, ?, ?)",
-                xrefs,
+                rows.xrefs,
             )
             conn.executemany(
                 "INSERT INTO anibridge_tvdb_range (anilist_id, tvdb_id, season, start_ep, end_ep) "
                 "VALUES (?, ?, ?, ?, ?)",
-                ranges,
+                rows.ranges,
             )
 
         self._replace(SOURCE_ANIBRIDGE, digest, write)

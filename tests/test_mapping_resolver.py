@@ -79,7 +79,7 @@ def _ab_pair(graph: AniBridgeGraph) -> tuple[AniBridge, AniBridge, MappingStore]
 
     graph_ab = AniBridge(graph)
     store = MappingStore.open(":memory:")
-    store.replace_anibridge("d", *graph_ab.to_rows())
+    store.replace_anibridge("d", graph_ab.to_rows())
     return graph_ab, AniBridge.from_store(store), store
 
 
@@ -211,7 +211,7 @@ class TestAniBridgeParityProperty:
         graph_ab = AniBridge(graph)
         store = MappingStore.open(":memory:")
         try:
-            store.replace_anibridge("d", *graph_ab.to_rows())
+            store.replace_anibridge("d", graph_ab.to_rows())
             sql_ab = AniBridge.from_store(store)
 
             assert sql_ab.all_tvdb_ids == graph_ab.all_tvdb_ids
@@ -748,7 +748,7 @@ class TestRealDataParity:
             graph: AniBridgeGraph = json.load(f)
         graph_ab = AniBridge(graph)
         store = MappingStore.open(":memory:")
-        store.replace_anibridge("d", *graph_ab.to_rows())
+        store.replace_anibridge("d", graph_ab.to_rows())
         sql_ab = AniBridge.from_store(store)
         try:
             assert sql_ab.all_tvdb_ids == graph_ab.all_tvdb_ids

@@ -24,6 +24,7 @@ from typing import Any, cast
 from .mapping_store import (
     AniBridgeEntryRow,
     AniBridgeRangeRow,
+    AniBridgeRows,
     AniBridgeXrefRow,
     MappingStore,
 )
@@ -225,21 +226,14 @@ class AniBridge:
         self._len = store.anibridge_len()
         return self
 
-    def to_rows(
-        self,
-    ) -> tuple[
-        list[AniBridgeEntryRow],
-        list[AniBridgeXrefRow],
-        list[AniBridgeRangeRow],
-    ]:
+    def to_rows(self) -> AniBridgeRows:
         """Flatten this (graph-backed) view into store row tuples.
 
         Persists the *computed* consumer-entry picks (``_first``) so the SQL
         backing reproduces :meth:`_consumer_entry` with zero re-derivation.
 
         Returns:
-            tuple: ``(entries, xrefs, ranges)`` row lists for
-                :meth:`MappingStore.replace_anibridge`.
+            AniBridgeRows: The row lists for :meth:`MappingStore.replace_anibridge`.
         """
 
         entries: list[AniBridgeEntryRow] = []
@@ -274,7 +268,7 @@ class AniBridge:
                 for anilist_id in anilist_ids:
                     xrefs.append(AniBridgeXrefRow(axis, ext_id, anilist_id))
 
-        return entries, xrefs, ranges
+        return AniBridgeRows(entries, xrefs, ranges)
 
     def __bool__(self) -> bool:
         return self._len > 0
