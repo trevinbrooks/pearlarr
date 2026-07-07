@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 
 import responses
+import respx
 
 _SONARR_FIXTURES = Path(__file__).parent / "fixtures" / "sonarr"
 
@@ -33,19 +34,19 @@ def register_sonarr_reads(
     quality_definitions: list[object] | None = None,
     languages: list[object] | None = None,
 ) -> None:
-    """Register the requests-based read endpoints a Sonarr sync hits on the
-    OFF-mode preview path.
+    """Register the read endpoints a Sonarr sync hits on the OFF-mode preview path.
 
-    ``base`` is the ``http://host/api/v3`` prefix. ``episode`` drives the
-    per-series fetch; ``parse`` (matched on the base path, query ignored)
-    replays a captured parse for every SeaDex filename.
+    ``base`` is the ``http://host/api/v3`` prefix. ``episode`` (registered on
+    the ambient respx router, like every endpoint migrated onto the httpx-based
+    ``ArrHttp``) drives the per-series fetch; ``parse`` (matched on the base
+    path, query ignored) replays a captured parse for every SeaDex filename.
     ``qualitydefinition``/``language`` default to empty (only touched when an
     import payload is built); ``history/since`` replays an empty window so the
-    activity scan stays quiet. The library fetch (``/series``) rides the
-    httpx-based ``ArrHttp``, so a test registers it through respx instead.
+    activity scan stays quiet. The library fetch (``/series``) also rides
+    ``ArrHttp``, so a test registers it through respx itself.
     """
 
-    rsps.add(responses.GET, f"{base}/episode", json=episodes)
+    respx.get(f"{base}/episode").respond(json=episodes)
     rsps.add(responses.GET, f"{base}/parse", json=parse)
     rsps.add(responses.GET, f"{base}/qualitydefinition", json=quality_definitions or [])
     rsps.add(responses.GET, f"{base}/language", json=languages or [])

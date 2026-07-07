@@ -24,11 +24,13 @@ still return True - the recorded calls are what make this non-hollow).
 
 import logging
 from pathlib import Path
+from typing import cast
 
 import pytest
 import responses
 import respx
 import yaml
+from respx.models import Call
 from seadex import EntryRecord
 
 import seadexarr.modules.seadex_gateway as seadex_gateway
@@ -139,6 +141,10 @@ def test_sonarr_run_drives_real_composition_root(
         result = run_single(sonarr=True, import_wait_mode=ImportWaitMode.OFF)
 
         fired = {f"{call.request.method or ''} {(call.request.url or '').split('?')[0]}" for call in rsps.calls}
+        # respx's CallList extends bare list, so name the element type here.
+        respx_fired = {
+            f"{call.request.method} {str(call.request.url).split('?')[0]}" for call in cast("list[Call]", respx.calls)
+        }
 
     # The real composition root ran one full Sonarr pass with zero real network.
     assert result is True
@@ -147,7 +153,7 @@ def test_sonarr_run_drives_real_composition_root(
     assert any(str(_ANILIST) in query for query in filter_calls)
     # The real Sonarr adapters drove the library fetch + per-file parse over the wire.
     assert series_route.call_count == 1
-    assert f"GET {_BASE}/episode" in fired
+    assert f"GET {_BASE}/episode" in respx_fired
     assert f"GET {_BASE}/parse" in fired
     # The resolved entry's release reached the (preview) grab at the torrent source.
     assert nyaa_calls == [_NYAA_RELEASE_URL]

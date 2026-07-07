@@ -229,24 +229,22 @@ def test_queue_request_error_returns_empty() -> None:
 # --- episodes() -------------------------------------------------------------
 
 
+@respx.mock
 def test_episodes_decodes_sorted_and_builds_request() -> None:
     """``episodes()`` pulls one series' episodes season/episode-sorted, narrowing
     each to a ``SonarrEpisode``; the request pins seriesId + the include flags.
     """
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/episode", json=sonarr_fixture("episodes_228_bahamut.json"))
-        episodes = client.episodes(228)
-        request = rsps.calls[-1].request
+    route = respx.get(f"{_BASE}/episode").respond(json=sonarr_fixture("episodes_228_bahamut.json"))
+    episodes = _make_client().episodes(228)
 
     assert episodes is not None
     assert len(episodes) == 13
     # sorted: the lone S00 special leads, S01E12 trails (decode + order in one).
     assert (episodes[0].season_number, episodes[0].episode_number, episodes[0].id) == (0, 1, 8475)
     assert (episodes[-1].season_number, episodes[-1].episode_number, episodes[-1].id) == (1, 12, 8487)
-    url = request.url
-    assert url is not None
+    request = route.calls.last.request
+    url = str(request.url)
     assert "seriesId=228" in url
     assert "includeImages=false" in url
     assert "includeEpisodeFile=true" in url
@@ -255,6 +253,7 @@ def test_episodes_decodes_sorted_and_builds_request() -> None:
     assert request.headers["X-Api-Key"] == "testkey"
 
 
+@respx.mock
 def test_episodes_missing_numbers_sort_first_without_crashing() -> None:
     """A record missing seasonNumber/episodeNumber sorts first (as -1) instead
     of raising a ``None < int`` TypeError and killing the whole fetch.
@@ -265,51 +264,61 @@ def test_episodes_missing_numbers_sort_first_without_crashing() -> None:
         {"id": 9},
         {"id": 1, "seasonNumber": 1, "episodeNumber": 1},
     ]
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/episode", json=body)
-        episodes = client.episodes(228)
+    respx.get(f"{_BASE}/episode").respond(json=body)
+    episodes = _make_client().episodes(228)
 
     assert episodes is not None
     assert [ep.id for ep in episodes] == [9, 1, 2]
 
 
+@respx.mock
+def test_episodes_skips_non_dict_elements() -> None:
+    """A stray non-object element in the episode array is skipped, never crashed on."""
+
+    respx.get(f"{_BASE}/episode").respond(
+        json=[{"id": 1, "seasonNumber": 1, "episodeNumber": 1}, "stray", 42],
+    )
+    episodes = _make_client().episodes(228)
+
+    assert episodes is not None
+    assert [ep.id for ep in episodes] == [1]
+
+
+@respx.mock
 def test_episodes_non_200_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
     """A non-200 episode read returns None and warns (the caller skips the id)."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/episode", status=500)
-        with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-            result = client.episodes(228)
+    respx.get(f"{_BASE}/episode").respond(status_code=500)
+    client = _make_client()
+    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
+        result = client.episodes(228)
 
     assert result is None
     warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
     assert warning.getMessage() == "Could not fetch episodes for series 228 from Sonarr (status code 500); skipping"
 
 
+@respx.mock
 def test_episodes_quiet_suppresses_unreachable_warning(caplog: pytest.LogCaptureFixture) -> None:
     """``quiet=True`` still returns None on a non-200 but emits NO warning - the
     concurrent prefetch path, retried/logged on the main thread instead.
     """
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/episode", status=500)
-        with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-            result = client.episodes(228, quiet=True)
+    respx.get(f"{_BASE}/episode").respond(status_code=500)
+    client = _make_client()
+    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
+        result = client.episodes(228, quiet=True)
 
     assert result is None
     assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
 
 
+@respx.mock
 def test_episodes_request_error_returns_none() -> None:
     """A transient request error (connection drop) is swallowed to None."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/episode", body=requests.exceptions.ConnectionError("boom"))
-        assert client.episodes(228, quiet=True) is None
+    respx.get(f"{_BASE}/episode").mock(side_effect=httpx.ConnectError("boom"))
+    assert _make_client().episodes(228, quiet=True) is None
 
 
 # --- parse() ----------------------------------------------------------------

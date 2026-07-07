@@ -162,7 +162,8 @@ class SonarrClient(AbstractSonarrClient):
         """All episodes for a series, season/episode-sorted (``/api/v3/episode``).
 
         Returns None (with a warning) if Sonarr is unreachable, so the caller can
-        skip the id gracefully.
+        skip the id gracefully. Stateless over the shared httpx client, so the
+        concurrent prefetch can call it from worker threads.
 
         Args:
             series_id (int): Series ID in Sonarr.
@@ -172,36 +173,28 @@ class SonarrClient(AbstractSonarrClient):
                 fails, on the main thread when ``get_ep_list`` re-fetches.
         """
 
-        eps_req_url = f"{self._url}/api/v3/episode?seriesId={series_id}&includeImages=false&includeEpisodeFile=true"
-        try:
-            eps_req = self._session.get(eps_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
-        except requests.RequestException:
-            eps_req = None
-
-        if eps_req is None or eps_req.status_code != 200:
-            if not quiet:
-                detail = "request failed" if eps_req is None else f"status code {eps_req.status_code}"
-                self._logger.warning(
-                    f"Could not fetch episodes for series {series_id} from Sonarr ({detail}); skipping",
-                )
+        warn = f"Could not fetch episodes for series {series_id} from Sonarr ({{detail}}); skipping"
+        raw = self._http.get_json_list(
+            "/api/v3/episode",
+            params={"seriesId": str(series_id), "includeImages": "false", "includeEpisodeFile": "true"},
+            warn=None if quiet else warn,
+        )
+        if raw is None:
             return None
-
-        # response.json() is untyped; the episode endpoint returns a JSON array
-        # of objects, so cast at the parse boundary before sorting/parsing.
-        raw_json = cast("list[dict[str, Any]]", eps_req.json())
 
         # Sort by season/episode number for slicing later, then parse each raw
         # record into a SonarrEpisode at this client boundary. A record missing
         # either number sorts first (-1) instead of raising on a None<int compare.
-        def _ep_key(raw: dict[str, Any]) -> tuple[int, int]:
-            season = raw.get("seasonNumber")
-            episode = raw.get("episodeNumber")
+        def _ep_key(record: dict[str, Any]) -> tuple[int, int]:
+            season = record.get("seasonNumber")
+            episode = record.get("episodeNumber")
             return (
                 season if isinstance(season, int) else -1,
                 episode if isinstance(episode, int) else -1,
             )
 
-        raw_eps = sorted(raw_json, key=_ep_key)
+        # Element dicts are unvalidated JSON: cast at the parse boundary, skip strays.
+        raw_eps = sorted((cast("dict[str, Any]", ep) for ep in raw if isinstance(ep, dict)), key=_ep_key)
         return [SonarrEpisode.from_api(ep) for ep in raw_eps]
 
     @override
