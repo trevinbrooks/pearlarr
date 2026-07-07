@@ -31,7 +31,7 @@ from seadexarr.modules.boot_view import (
     make_boot_view,
 )
 from seadexarr.modules.config import Arr
-from seadexarr.modules.console_caps import Capabilities
+from seadexarr.modules.console_caps import Capabilities, TerminalEnv
 from seadexarr.modules.log import RichConsoleHandler
 from seadexarr.modules.mappings import MappingResolver
 from seadexarr.modules.run_services import RunDeps
@@ -263,10 +263,12 @@ def test_rundeps_build_warns_deferred_when_qbit_unconfigured(tmp_path: Path) -> 
 def test_live_frame_text_draws_a_bar_with_percent() -> None:
     caps = Capabilities(live=True, color=True, unicode=True, width=100, height=40)
     view = LiveBootView(
-        Console(file=io.StringIO(), force_terminal=True),
-        caps,
-        logging.getLogger("boot-frame"),
-        time_source=_FakeClock(),
+        TerminalEnv(
+            Console(file=io.StringIO(), force_terminal=True),
+            caps,
+            logging.getLogger("boot-frame"),
+            time_source=_FakeClock(),
+        ),
     )
     step = BootStep(lambda _s: None, "Refreshing mappings")
     step.progress(0.5, "anime_ids.json")
@@ -280,10 +282,12 @@ def test_live_frame_text_draws_a_bar_with_percent() -> None:
 def test_live_frame_text_ascii_bar_without_unicode() -> None:
     caps = Capabilities(live=True, color=True, unicode=False, width=100, height=40)
     view = LiveBootView(
-        Console(file=io.StringIO(), force_terminal=True),
-        caps,
-        logging.getLogger("boot-frame-ascii"),
-        time_source=_FakeClock(),
+        TerminalEnv(
+            Console(file=io.StringIO(), force_terminal=True),
+            caps,
+            logging.getLogger("boot-frame-ascii"),
+            time_source=_FakeClock(),
+        ),
     )
     step = BootStep(lambda _s: None, "Refreshing mappings")
     step.progress(0.5)
@@ -298,10 +302,12 @@ def test_live_frame_text_ascii_ellipsis_without_unicode() -> None:
     # to ASCII dots on a console that can't encode "…", like the glyphs do.
     caps = Capabilities(live=True, color=True, unicode=False, width=100, height=40)
     view = LiveBootView(
-        Console(file=io.StringIO(), force_terminal=True),
-        caps,
-        logging.getLogger("boot-frame-ellipsis"),
-        time_source=_FakeClock(),
+        TerminalEnv(
+            Console(file=io.StringIO(), force_terminal=True),
+            caps,
+            logging.getLogger("boot-frame-ellipsis"),
+            time_source=_FakeClock(),
+        ),
     )
     step = BootStep(lambda _s: None, "Reading config")
 

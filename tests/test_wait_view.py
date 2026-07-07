@@ -15,13 +15,14 @@ writing to a buffer, so no real terminal is needed.
 import io
 import logging
 import re
+import time
 from typing import override
 
 from rich.console import Console
 from rich.spinner import Spinner
 from rich.text import Text
 
-from seadexarr.modules.console_caps import Capabilities
+from seadexarr.modules.console_caps import Capabilities, TerminalEnv
 from seadexarr.modules.log import RichConsoleHandler
 from seadexarr.modules.manual_import import Outcome, OutcomeCategory
 from seadexarr.modules.wait_view import (
@@ -215,7 +216,7 @@ def test_live_frame_ticks_timer_between_polls() -> None:
     logger, _ = _logger_with_console(force_terminal=True)
     caps = Capabilities(live=True, color=False, unicode=True, width=100, height=40)
     now = [0.0]
-    view = LiveWaitView(Console(file=io.StringIO()), caps, logger, time_source=lambda: now[0])
+    view = LiveWaitView(TerminalEnv(Console(file=io.StringIO()), caps, logger, time_source=lambda: now[0]))
     snap = WaitSnapshot((_importing("h", "Show", done=2, total=12, elapsed=64),), elapsed_s=64)
     view._anchor = _FrameAnchor(snap, 0.0)  # pushed at t0=0
 
@@ -230,7 +231,7 @@ def test_live_frame_ticks_timer_between_polls() -> None:
 def test_live_frame_renders_the_import_bar_and_count() -> None:
     logger, _ = _logger_with_console(force_terminal=True)
     caps = Capabilities(live=True, color=False, unicode=True, width=100, height=40)
-    view = LiveWaitView(Console(file=io.StringIO()), caps, logger)
+    view = LiveWaitView(TerminalEnv(Console(file=io.StringIO()), caps, logger, time_source=time.monotonic))
     snap = WaitSnapshot((_importing("h", "Show", done=8, total=12, elapsed=64),), elapsed_s=64)
     view._anchor = _FrameAnchor(snap, 0.0)
 
@@ -263,7 +264,7 @@ def test_narrow_console_degrades_status_into_the_count_column() -> None:
     # status word moves into the count column so it still says what it's doing.
     logger, _ = _logger_with_console(force_terminal=True)
     caps = Capabilities(live=True, color=False, unicode=True, width=60, height=40)
-    view = LiveWaitView(Console(file=io.StringIO()), caps, logger)
+    view = LiveWaitView(TerminalEnv(Console(file=io.StringIO()), caps, logger, time_source=time.monotonic))
     snap = WaitSnapshot((TorrentView("h", "Show", Phase.IMPORTING, command_issued=True),))
     row = live_model(snap, caps).rows[0]
 
@@ -282,7 +283,7 @@ def test_spinner_frame_advances_in_a_table_cell() -> None:
     console = Console(file=io.StringIO(), force_terminal=True, width=100, get_time=lambda: now[0])
     caps = Capabilities(live=True, color=False, unicode=True, width=100, height=40)
     logger, _ = _logger_with_console(force_terminal=True)
-    view = LiveWaitView(Console(file=io.StringIO()), caps, logger, time_source=lambda: 0.0)
+    view = LiveWaitView(TerminalEnv(Console(file=io.StringIO()), caps, logger, time_source=lambda: 0.0))
     view._spinner = Spinner("dots", style="yellow")
     snap = WaitSnapshot((_importing("h", "Show", done=1, total=3, elapsed=5),), elapsed_s=5)
     view._anchor = _FrameAnchor(snap, 0.0)

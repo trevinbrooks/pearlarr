@@ -37,6 +37,7 @@ from rich.text import Text
 
 from .console_caps import (
     Capabilities,
+    TerminalEnv,
     block_bar,
     console_of,
     detect_capabilities,
@@ -317,7 +318,7 @@ def make_wait_view(
     console = console_of(logger)
     caps = detect_capabilities(console)
     if console is not None and caps.live:
-        return LiveWaitView(console, caps, logger, time_source=time_source)
+        return LiveWaitView(TerminalEnv(console, caps, logger, time_source))
     return LogWaitView(
         logger,
         caps,
@@ -660,18 +661,11 @@ class LiveWaitView(_DurableWaitView):
     erases the box on close, leaving the durable ledger + summary.
     """
 
-    def __init__(
-        self,
-        console: Console,
-        caps: Capabilities,
-        logger: logging.Logger,
-        *,
-        time_source: Callable[[], float] = time.monotonic,
-    ) -> None:
-        super().__init__(logger, caps)
-        self._console = console
-        self._time_source = time_source
-        self._layout = _TableLayout.for_width(caps.width)
+    def __init__(self, env: TerminalEnv) -> None:
+        super().__init__(env.logger, env.caps)
+        self._console = env.console
+        self._time_source = env.time_source
+        self._layout = _TableLayout.for_width(env.caps.width)
         self._live: Live | None = None
         self._spinner: Spinner | None = None
         self._anchor: _FrameAnchor | None = None

@@ -10,6 +10,7 @@ branch on.
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from rich.console import Console
@@ -43,6 +44,20 @@ class Capabilities:
     unicode: bool
     width: int
     height: int
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalEnv:
+    """The render environment a live (sticky-region) view binds at construction.
+
+    Built only on the factories' live branch, so ``console`` is non-None by
+    construction (a capable TTY was already detected).
+    """
+
+    console: Console
+    caps: Capabilities
+    logger: logging.Logger
+    time_source: Callable[[], float]
 
 
 def console_of(logger: logging.Logger) -> Console | None:

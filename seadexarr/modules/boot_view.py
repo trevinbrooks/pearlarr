@@ -31,7 +31,6 @@ from collections.abc import Callable, Generator
 from importlib.metadata import PackageNotFoundError, version
 from typing import final, override
 
-from rich.console import Console
 from rich.live import Live
 from rich.padding import Padding
 from rich.spinner import Spinner
@@ -39,6 +38,7 @@ from rich.text import Text
 
 from .console_caps import (
     Capabilities,
+    TerminalEnv,
     block_bar,
     console_of,
     detect_capabilities,
@@ -261,19 +261,12 @@ class LiveBootView(_DurableBootView):
     erases the spinner on :meth:`end_section`, leaving only the durable ledger.
     """
 
-    def __init__(
-        self,
-        console: Console,
-        caps: Capabilities,
-        logger: logging.Logger,
-        *,
-        time_source: Callable[[], float],
-    ) -> None:
-        super().__init__(logger, caps, time_source=time_source)
-        self._console = console
+    def __init__(self, env: TerminalEnv) -> None:
+        super().__init__(env.logger, env.caps, time_source=env.time_source)
+        self._console = env.console
         self._live: Live | None = None
         self._spinner: Spinner | None = None
-        self._spinner_name = spinner_name(caps)
+        self._spinner_name = spinner_name(env.caps)
 
     @override
     def _begin(self, step: BootStep) -> None:
@@ -391,7 +384,7 @@ def make_boot_view(
     console = console_of(logger)
     caps = detect_capabilities(console)
     if console is not None and caps.live:
-        return LiveBootView(console, caps, logger, time_source=time_source)
+        return LiveBootView(TerminalEnv(console, caps, logger, time_source))
     return LogBootView(logger, caps, time_source=time_source)
 
 
