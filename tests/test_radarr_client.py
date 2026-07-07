@@ -34,17 +34,15 @@ def _make_client() -> RadarrClient:
     retry backoffs.
     """
 
-    logger = logging.getLogger("seadexarr.test")
     return RadarrClient(
         http=ArrHttp.bind(
             client=httpx.Client(),
             url=_URL,
             api_key=_KEY,
             label="Radarr",
-            logger=logger,
+            logger=logging.getLogger("seadexarr.test"),
             sleep=lambda _s: None,
         ),
-        logger=logger,
     )
 
 
@@ -191,7 +189,6 @@ def test_trailing_slash_url_is_normalized() -> None:
     logger = logging.getLogger("seadexarr.test")
     client = RadarrClient(
         http=ArrHttp.bind(client=httpx.Client(), url=f"{_URL}/", api_key=_KEY, label="Radarr", logger=logger),
-        logger=logger,
     )
     respx.get(f"{_BASE}/history/since").respond(json=[])
     assert client.history_since("2026-06-30T08:00:00Z") == []

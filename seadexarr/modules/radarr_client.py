@@ -37,7 +37,6 @@ def make_radarr_client(
 
     return RadarrClient(
         http=ArrHttp.bind(client=http, url=url, api_key=api_key, label="Radarr", logger=logger),
-        logger=logger,
     )
 
 
@@ -67,27 +66,21 @@ class AbstractRadarrClient(ABC):
 class RadarrClient(AbstractRadarrClient):
     """Thin client over the raw Radarr v3 REST endpoints."""
 
-    def __init__(
-        self,
-        *,
-        http: ArrHttp,
-        logger: logging.Logger,
-    ) -> None:
+    def __init__(self, *, http: ArrHttp) -> None:
         """Instantiate the Radarr API client.
 
         Construction is network-free (no connection probe): the first request
         happens on the first method call, so an unreachable Radarr surfaces as
         that call's typed error / fail-open path, never a constructor hang.
+        All logging happens in the bound transport, which carries its own
+        logger — unlike Sonarr, this client emits no non-transport lines.
 
         Args:
             http (ArrHttp): The transport already bound to Radarr's url + key
                 (:func:`make_radarr_client` does the ``label="Radarr"`` bind).
-            logger (logging.Logger): For the client's own non-transport warnings
-                (the bound transport carries its own logger for request lines).
         """
 
         self._http = http
-        self._logger = logger
 
     @override
     def all_movies(self) -> list[RadarrItem]:
