@@ -324,6 +324,7 @@ def test_episodes_request_error_returns_none() -> None:
 # --- parse() ----------------------------------------------------------------
 
 
+@respx.mock
 def test_parse_skips_entries_missing_season_or_episode() -> None:
     """``parse()`` drops any parsed entry missing a season OR episode number,
     keeping only the fully-resolved ``{season, episode}`` mappings.
@@ -335,56 +336,48 @@ def test_parse_skips_entries_missing_season_or_episode() -> None:
             {"episodeNumber": 5},  # no seasonNumber -> dropped
         ],
     }
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/parse", json=body)
-        parsed = client.parse("Cool.Anime.S01E01.mkv")
+    respx.get(f"{_BASE}/parse").respond(json=body)
 
-    assert parsed == [{"season": 1, "episode": 1}]
+    assert _make_client().parse("Cool.Anime.S01E01.mkv") == [{"season": 1, "episode": 1}]
 
 
+@respx.mock
 def test_parse_clean_no_match_returns_empty_list() -> None:
     """A clean 200 where Sonarr matched no episode returns ``[]`` (a *confirmed*
     no-match the caller may negative-cache) - distinct from a failure's None.
     """
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/parse", json={"episodes": []})
-        assert client.parse("Unmatched.Release.mkv") == []
+    respx.get(f"{_BASE}/parse").respond(json={"episodes": []})
+    assert _make_client().parse("Unmatched.Release.mkv") == []
 
 
+@respx.mock
 def test_parse_non_200_returns_none() -> None:
     """A non-200 parse returns None (a failure that must NOT be cached)."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/parse", status=500)
-        assert client.parse("Cool.Anime.S01E01.mkv") is None
+    respx.get(f"{_BASE}/parse").respond(status_code=500)
+    assert _make_client().parse("Cool.Anime.S01E01.mkv") is None
 
 
+@respx.mock
 def test_parse_request_error_returns_none() -> None:
     """A transient request error returns None (also uncacheable)."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/parse", body=requests.exceptions.ConnectionError("boom"))
-        assert client.parse("Cool.Anime.S01E01.mkv") is None
+    respx.get(f"{_BASE}/parse").mock(side_effect=httpx.ConnectError("boom"))
+    assert _make_client().parse("Cool.Anime.S01E01.mkv") is None
 
 
 # --- parse_episode_info() (series-AGNOSTIC parsedEpisodeInfo) ----------------
 
 
+@respx.mock
 def test_parse_episode_info_decodes_season_episode() -> None:
     """An ``SxxExx`` release decodes to its season + episode numbers; the request
     carries the title in the URL and the api key in the X-Api-Key header.
     """
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/parse", json=sonarr_fixture("parse_bahamut_s01e01.json"))
-        info = client.parse_episode_info("Bahamut.S01E01.mkv")
-        request = rsps.calls[-1].request
+    route = respx.get(f"{_BASE}/parse").respond(json=sonarr_fixture("parse_bahamut_s01e01.json"))
+    info = _make_client().parse_episode_info("Bahamut.S01E01.mkv")
 
     assert info == ParsedFileInfo(
         season_number=1,
@@ -392,22 +385,21 @@ def test_parse_episode_info_decodes_season_episode() -> None:
         absolute_episode_numbers=(),
         special=False,
     )
-    url = request.url
-    assert url is not None
+    request = route.calls.last.request
+    url = str(request.url)
     assert "title=" in url
     assert "apikey" not in url
     assert request.headers["X-Api-Key"] == "testkey"
 
 
+@respx.mock
 def test_parse_episode_info_decodes_absolute() -> None:
     """An absolute-numbered release decodes to its absolute numbers (season 0, no
     SxxExx episode numbers) - the case Sonarr's series-matched parse misses.
     """
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/parse", json=sonarr_fixture("parse_toloveru_abs14.json"))
-        info = client.parse_episode_info("ToLoveRu.-.14.mkv")
+    respx.get(f"{_BASE}/parse").respond(json=sonarr_fixture("parse_toloveru_abs14.json"))
+    info = _make_client().parse_episode_info("ToLoveRu.-.14.mkv")
 
     assert info == ParsedFileInfo(
         season_number=0,
@@ -417,27 +409,26 @@ def test_parse_episode_info_decodes_absolute() -> None:
     )
 
 
+@respx.mock
 def test_parse_episode_info_non_200_returns_none() -> None:
     """A non-200 parse leaves the file for retry (returns None)."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/parse", status=500)
-        assert client.parse_episode_info("Bahamut.S01E01.mkv") is None
+    respx.get(f"{_BASE}/parse").respond(status_code=500)
+    assert _make_client().parse_episode_info("Bahamut.S01E01.mkv") is None
 
 
+@respx.mock
 def test_parse_episode_info_request_error_returns_none() -> None:
     """A transient request error leaves the file for retry (returns None)."""
 
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/parse", body=requests.exceptions.ConnectionError("boom"))
-        assert client.parse_episode_info("Bahamut.S01E01.mkv") is None
+    respx.get(f"{_BASE}/parse").mock(side_effect=httpx.ConnectError("boom"))
+    assert _make_client().parse_episode_info("Bahamut.S01E01.mkv") is None
 
 
 # --- manual_import_candidates() ---------------------------------------------
 
 
+@respx.mock
 def test_manual_import_candidates_decodes_and_uppercases_downloadid() -> None:
     """The scan keys on the UPPERCASED infohash (no ``seriesId``) and narrows
     each candidate to its ``path`` / ``quality`` / ``rejections``.
@@ -447,11 +438,8 @@ def test_manual_import_candidates_decodes_and_uppercases_downloadid() -> None:
         infohash="abcdef0123456789abcdef0123456789abcdef01",
         title="Yamada-kun",
     )
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/manualimport", json=sonarr_fixture("manualimport_yamada.json"))
-        candidates = client.manual_import_candidates(pending=pending)
-        url = rsps.calls[-1].request.url
+    route = respx.get(f"{_BASE}/manualimport").respond(json=sonarr_fixture("manualimport_yamada.json"))
+    candidates = _make_client().manual_import_candidates(pending=pending)
 
     assert candidates is not None
     assert len(candidates) == 2
@@ -462,29 +450,27 @@ def test_manual_import_candidates_decodes_and_uppercases_downloadid() -> None:
     )
     assert first.quality is not None
     assert first.rejections[0].reason == "Unknown Series"
-    assert url is not None
+    url = str(route.calls.last.request.url)
     assert "downloadId=ABCDEF0123456789ABCDEF0123456789ABCDEF01" in url
     assert "filterExistingFiles=false" in url
 
 
+@respx.mock
 def test_manual_import_candidates_non_200_returns_none() -> None:
     """A non-200 scan returns None (caller keeps waiting / re-asks)."""
 
     pending = _make_pending(infohash="a" * 40, title="Yamada-kun")
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/manualimport", status=500)
-        assert client.manual_import_candidates(pending=pending) is None
+    respx.get(f"{_BASE}/manualimport").respond(status_code=500)
+    assert _make_client().manual_import_candidates(pending=pending) is None
 
 
+@respx.mock
 def test_manual_import_candidates_request_error_returns_none() -> None:
     """A transient request error (slow mount / drop) returns None, not []."""
 
     pending = _make_pending(infohash="a" * 40, title="Yamada-kun")
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        client = _make_client()
-        rsps.add(responses.GET, f"{_BASE}/manualimport", body=requests.exceptions.ConnectionError("boom"))
-        assert client.manual_import_candidates(pending=pending) is None
+    respx.get(f"{_BASE}/manualimport").mock(side_effect=httpx.ConnectError("boom"))
+    assert _make_client().manual_import_candidates(pending=pending) is None
 
 
 # --- manual_import_execute() / refresh_monitored_downloads() (POST /command) -

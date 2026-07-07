@@ -8,7 +8,6 @@ the remaining endpoints the shared ``requests`` session.
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, cast, override
-from urllib.parse import urlencode
 
 import httpx
 import requests
@@ -220,33 +219,21 @@ class SonarrClient(AbstractSonarrClient):
                 the request failed.
         """
 
-        d_enc = urlencode({"title": filename})
-
-        # Parse through Sonarr
-        parse_req_url = f"{self._url}/api/v3/parse?{d_enc}"
-        try:
-            parse_req = self._session.get(parse_req_url, headers=self._headers, timeout=ARR_REQUEST_TIMEOUT_S)
-        except requests.RequestException:
-            self._logger.warning(
-                indent_string(
-                    f"Could not parse {filename} via Sonarr (request failed); skipping file",
-                ),
-            )
+        payload = self._http.get_json_dict(
+            "/api/v3/parse",
+            params={"title": filename},
+            warn=indent_string(f"Could not parse {filename} via Sonarr ({{detail}}); skipping file"),
+        )
+        if payload is None:
             return None
 
-        if parse_req.status_code != 200:
-            self._logger.warning(
-                indent_string(
-                    f"Could not parse {filename} via Sonarr (status code {parse_req.status_code}); skipping file",
-                ),
-            )
-            return None
-
-        # response.json() is untyped; the parse endpoint returns a ParseResource
-        # JSON object whose "episodes" is an array of EpisodeResource objects, so
-        # cast at the parse boundary before reading their season/episode numbers.
-        parse_body = cast("dict[str, list[ParsedEpisode]]", parse_req.json())
-        episode_info: list[ParsedEpisode] = parse_body.get("episodes", [])
+        # The ParseResource's "episodes" is an array of EpisodeResource objects:
+        # cast each at the parse boundary (skipping strays) before reading their
+        # season/episode numbers.
+        raw_eps = payload.get("episodes")
+        episode_info: list[ParsedEpisode] = []
+        if isinstance(raw_eps, list):
+            episode_info = [cast("ParsedEpisode", ep) for ep in cast("list[object]", raw_eps) if isinstance(ep, dict)]
 
         parsed: list[dict[str, int]] = []
         for ep in episode_info:
@@ -284,30 +271,18 @@ class SonarrClient(AbstractSonarrClient):
             filename (str): Filename to parse (basename, not full path).
         """
 
-        d_enc = urlencode({"title": filename})
-        parse_req_url = f"{self._url}/api/v3/parse?{d_enc}"
-        try:
-            parse_req = self._session.get(parse_req_url, headers=self._headers, timeout=MANUAL_IMPORT_TIMEOUT_S)
-        except requests.RequestException as e:
-            # The type name only: a requests exception's str can embed the URL.
-            self._logger.warning(
-                indent_string(f"Could not parse {filename} via Sonarr ({type(e).__name__}); will retry"),
-            )
+        payload = self._http.get_json_dict(
+            "/api/v3/parse",
+            params={"title": filename},
+            warn=indent_string(f"Could not parse {filename} via Sonarr ({{detail}}); will retry"),
+            timeout=MANUAL_IMPORT_TIMEOUT_S,
+        )
+        if payload is None:
             return None
 
-        if parse_req.status_code != 200:
-            self._logger.warning(
-                indent_string(
-                    f"Could not parse {filename} via Sonarr (status code {parse_req.status_code}); will retry",
-                ),
-            )
-            return None
-
-        # response.json() is untyped; the parse endpoint returns a ParseResource
-        # whose parsedEpisodeInfo carries the series-agnostic numbers - narrow it
-        # to ParsedFileInfo at this client boundary.
-        parse_body = cast("dict[str, Any]", parse_req.json())
-        return ParsedFileInfo.from_parse_resource(parse_body)
+        # The ParseResource's parsedEpisodeInfo carries the series-agnostic
+        # numbers - narrow it to ParsedFileInfo at this client boundary.
+        return ParsedFileInfo.from_parse_resource(cast("dict[str, Any]", payload))
 
     @override
     def manual_import_candidates(
@@ -345,44 +320,25 @@ class SonarrClient(AbstractSonarrClient):
                 a transient failure.
         """
 
-        params: dict[str, str] = {
-            "downloadId": pending.infohash.upper(),
-            # Never filter existing files: our import may replace an episode's
-            # non-recommended file, whose candidate a filtered scan would drop.
-            "filterExistingFiles": "false",
-        }
-        params_enc = urlencode(params)
-
-        candidates_req_url = f"{self._url}/api/v3/manualimport?{params_enc}"
-        try:
-            candidates_req = self._session.get(
-                candidates_req_url,
-                headers=self._headers,
-                timeout=MANUAL_IMPORT_TIMEOUT_S,
-            )
-        except requests.RequestException as e:
-            self._logger.warning(
-                indent_string(
-                    f"Manual-import scan of {pending.title} did not respond ({type(e).__name__}); will retry",
-                ),
-            )
+        raw = self._http.get_json_list(
+            "/api/v3/manualimport",
+            params={
+                "downloadId": pending.infohash.upper(),
+                # Never filter existing files: our import may replace an episode's
+                # non-recommended file, whose candidate a filtered scan would drop.
+                "filterExistingFiles": "false",
+            },
+            warn=indent_string(
+                f"Could not fetch manual-import candidates for {pending.title} ({{detail}}); will retry"
+            ),
+            timeout=MANUAL_IMPORT_TIMEOUT_S,
+        )
+        if raw is None:
             return None
 
-        if candidates_req.status_code != 200:
-            self._logger.warning(
-                indent_string(
-                    f"Could not fetch manual-import candidates for "
-                    f"{pending.title} (status code {candidates_req.status_code}); "
-                    f"will retry",
-                ),
-            )
-            return None
-
-        # response.json() is untyped; the manualimport endpoint returns a JSON
-        # array of ManualImportResource objects, so cast at the parse boundary,
-        # then narrow each to the fields planning reads via from_api.
-        raw_candidates = cast("list[dict[str, Any]]", candidates_req.json())
-        return [ManualImportCandidate.from_api(c) for c in raw_candidates]
+        # Each element is an unvalidated ManualImportResource: cast at the parse
+        # boundary (skipping strays), then narrow to the fields planning reads.
+        return [ManualImportCandidate.from_api(cast("dict[str, Any]", c)) for c in raw if isinstance(c, dict)]
 
     @override
     def manual_import_execute(

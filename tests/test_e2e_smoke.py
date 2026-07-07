@@ -140,7 +140,6 @@ def test_sonarr_run_drives_real_composition_root(
 
         result = run_single(sonarr=True, import_wait_mode=ImportWaitMode.OFF)
 
-        fired = {f"{call.request.method or ''} {(call.request.url or '').split('?')[0]}" for call in rsps.calls}
         # respx's CallList extends bare list, so name the element type here.
         respx_fired = {
             f"{call.request.method} {str(call.request.url).split('?')[0]}" for call in cast("list[Call]", respx.calls)
@@ -154,7 +153,7 @@ def test_sonarr_run_drives_real_composition_root(
     # The real Sonarr adapters drove the library fetch + per-file parse over the wire.
     assert series_route.call_count == 1
     assert f"GET {_BASE}/episode" in respx_fired
-    assert f"GET {_BASE}/parse" in fired
+    assert f"GET {_BASE}/parse" in respx_fired
     # The resolved entry's release reached the (preview) grab at the torrent source.
     assert nyaa_calls == [_NYAA_RELEASE_URL]
     # ...and the whole pass logged no error (a swallowed failure would tally here).

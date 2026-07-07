@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-import requests
 from seadex import EntryRecord
 
 from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
@@ -19,7 +18,6 @@ from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.run_services import RunServices
 from seadexarr.modules.seadex_gateway import SeaDexMiss
 from seadexarr.modules.seadex_types import SeadexDict, SonarrEpisode
-from seadexarr.modules.sonarr_client import SonarrClient
 from seadexarr.modules.sonarr_episodes import (
     SONARR_FETCH_WORKERS,
     SonarrEpisodes,
@@ -35,7 +33,6 @@ from seadexarr.modules.sonarr_parse import (
 
 from .builders import (
     FakeCacheStore,
-    make_bare_instance,
     make_config,
     make_entry_record,
     make_logger,
@@ -105,74 +102,6 @@ class TestSonarrParseIsFresh:
     def test_legacy_empty_without_fp_is_stale(self) -> None:
         # The migrated empty rows: re-parsed once, then re-stamped with a fp.
         assert not _fresh({"fetched_at": _stamp(1), "episodes": []})
-
-
-class _FakeResponse:
-    """A minimal ``requests``-style response: ``status_code`` + a JSON body."""
-
-    def __init__(self, status_code: int, body: dict[str, list[dict[str, int]]]) -> None:
-        self.status_code = status_code
-        self._body = body
-
-    def json(self) -> dict[str, list[dict[str, int]]]:
-        return self._body
-
-
-class _FakeSession:
-    """A ``requests.Session`` stand-in scripting one ``get`` outcome.
-
-    ``boom`` raises a ``ConnectionError`` (the transient path ``parse`` swallows);
-    otherwise ``get`` returns the scripted status + body.
-    """
-
-    def __init__(self, *, status: int, body: dict[str, list[dict[str, int]]], boom: bool) -> None:
-        self._status = status
-        self._body = body
-        self._boom = boom
-
-    def get(
-        self,
-        url: str,
-        headers: dict[str, str] | None = None,
-        timeout: tuple[int, int] | None = None,
-    ) -> _FakeResponse:
-        del url, headers, timeout
-        if self._boom:
-            raise requests.ConnectionError("down")
-        return _FakeResponse(self._status, self._body)
-
-
-class TestParseClientTransientVsEmpty:
-    def _client(
-        self,
-        *,
-        status: int,
-        body: dict[str, list[dict[str, int]]] | None = None,
-        boom: bool = False,
-    ) -> SonarrClient:
-        session = _FakeSession(status=status, body=body or {}, boom=boom)
-        return make_bare_instance(
-            SonarrClient,
-            _url="http://sonarr",
-            _headers={"X-Api-Key": "k"},
-            _session=session,
-            _logger=make_logger(),
-        )
-
-    def test_clean_200_with_episodes_returns_list(self) -> None:
-        body = {"episodes": [{"seasonNumber": 1, "episodeNumber": 2}]}
-        assert self._client(status=200, body=body).parse("f.mkv") == [{"season": 1, "episode": 2}]
-
-    def test_clean_200_no_episodes_returns_empty_not_none(self) -> None:
-        # Genuine no-match: cacheable as a negative.
-        assert self._client(status=200, body={"episodes": []}).parse("f.mkv") == []
-
-    def test_non_200_returns_none(self) -> None:
-        # Transient: must NOT be cached as a negative.
-        assert self._client(status=503).parse("f.mkv") is None
-
-    def test_connection_error_returns_none(self) -> None:
-        assert self._client(status=200, boom=True).parse("f.mkv") is None
 
 
 class TestFetchWorkers:

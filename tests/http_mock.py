@@ -36,10 +36,11 @@ def register_sonarr_reads(
 ) -> None:
     """Register the read endpoints a Sonarr sync hits on the OFF-mode preview path.
 
-    ``base`` is the ``http://host/api/v3`` prefix. ``episode`` (registered on
-    the ambient respx router, like every endpoint migrated onto the httpx-based
-    ``ArrHttp``) drives the per-series fetch; ``parse`` (matched on the base
-    path, query ignored) replays a captured parse for every SeaDex filename.
+    ``base`` is the ``http://host/api/v3`` prefix. ``episode``/``parse``
+    (registered on the ambient respx router, like every endpoint migrated onto
+    the httpx-based ``ArrHttp``) drive the per-series fetch and replay a
+    captured parse for every SeaDex filename (matched on the base path, query
+    ignored).
     ``qualitydefinition``/``language`` default to empty (only touched when an
     import payload is built); ``history/since`` replays an empty window so the
     activity scan stays quiet. The library fetch (``/series``) also rides
@@ -47,7 +48,7 @@ def register_sonarr_reads(
     """
 
     respx.get(f"{base}/episode").respond(json=episodes)
-    rsps.add(responses.GET, f"{base}/parse", json=parse)
+    respx.get(f"{base}/parse").respond(json=parse)
     rsps.add(responses.GET, f"{base}/qualitydefinition", json=quality_definitions or [])
     rsps.add(responses.GET, f"{base}/language", json=languages or [])
     rsps.add(responses.GET, f"{base}/history/since", json=[])
