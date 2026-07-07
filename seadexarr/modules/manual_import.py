@@ -256,6 +256,12 @@ class Outcome(Enum):
     MISSING = ("gone", "gone from qBittorrent", OutcomeCategory.FAILED, True)
     DOWNLOAD_ERRORED = ("errored", "download errored; left pending", OutcomeCategory.FAILED, False)
     DOWNLOAD_TIMED_OUT = ("timed out", "download timed out; left pending", OutcomeCategory.DEFERRED, False)
+    NO_CONTENT_PATH = (
+        "no path",
+        "complete but no content path reported; left pending",
+        OutcomeCategory.DEFERRED,
+        False,
+    )
     STILL_IMPORTING = ("unfinished", "still importing; left pending", OutcomeCategory.DEFERRED, False)
     NOT_READY = ("not ready", "import not ready; left pending", OutcomeCategory.DEFERRED, False)
     NOTHING_TO_IMPORT = ("no files", "nothing to import; left pending", OutcomeCategory.DEFERRED, False)

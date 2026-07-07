@@ -698,7 +698,9 @@ class MonitorPass:
             self._terminal(Outcome.DOWNLOAD_ERRORED, h, label)
             return
         if not poll.content_path:
-            self._terminal(Outcome.DOWNLOAD_TIMED_OUT, h, label)
+            # COMPLETE but qBittorrent reported no save path: its own outcome,
+            # not a misleading "timed out" (the download finished fine).
+            self._terminal(Outcome.NO_CONTENT_PATH, h, label)
             return
 
         # COMPLETE: drive / verify our import, gating `imported` on verified files.

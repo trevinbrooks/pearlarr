@@ -1076,9 +1076,10 @@ class TestRunMonitor:
         assert set(mgr._pending_records()) == {"h"}  # left pending, not dropped
         assert qbit.set_category_calls == []  # only a verified import moves category
 
-    def test_complete_without_content_path_times_out(self) -> None:
+    def test_complete_without_content_path_gets_its_own_outcome(self) -> None:
         # qBittorrent reports COMPLETE but hands back no content_path to import
-        # from: terminal DOWNLOAD_TIMED_OUT, never an import attempt, record kept.
+        # from: terminal NO_CONTENT_PATH (not a misleading "timed out" - the
+        # download finished fine), never an import attempt, record kept.
         strategy = _RecordingStrategy()
         pending = pending_import(infohash="h", added_at=_FRESH)
         mgr = make_orchestration_manager(
@@ -1096,7 +1097,7 @@ class TestRunMonitor:
         mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert strategy.import_calls == []
-        assert view.final("h").outcome is Outcome.DOWNLOAD_TIMED_OUT
+        assert view.final("h").outcome is Outcome.NO_CONTENT_PATH
         assert set(mgr._pending_records()) == {"h"}
 
     def test_tier2_progress_poll_error_is_contained(self) -> None:
