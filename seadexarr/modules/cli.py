@@ -443,7 +443,6 @@ def _run_arrs(
                             mappings=mappings,
                             app_config=app_config,
                             web=web,
-                            cache_legacy=paths.cache_legacy,
                             boot=boot,
                         )
                         services = RunServices(deps, arr_name)

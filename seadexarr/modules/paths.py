@@ -29,9 +29,6 @@ class AppPaths:
     config: str
     cache: str
     cache_backup: str
-    # Legacy JSON cache, seeded into cache.db on the first real run then retired to
-    # cache.json.migrated.
-    cache_legacy: str
     mappings_db: str
     log_dir: str
 
@@ -52,7 +49,6 @@ def resolve_paths(data_dir: str | None = None) -> AppPaths:
         config=os.path.join(base, "config.yml"),
         cache=os.path.join(base, "cache.db"),
         cache_backup=os.path.join(base, "cache.backup.db"),
-        cache_legacy=os.path.join(base, "cache.json"),
         mappings_db=os.path.join(base, "mappings.db"),
         log_dir=os.path.join(base, "logs"),
     )

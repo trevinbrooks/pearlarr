@@ -91,7 +91,6 @@ class RunDeps:
         mappings: MappingResolver,
         app_config: AppConfig,
         web: httpx.Client,
-        cache_legacy: str | None = None,
         boot: BootView | None = None,
     ) -> "RunDeps":
         """Construct the shared collaborators in dependency order.
@@ -109,8 +108,6 @@ class RunDeps:
             web (httpx.Client): The shared non-arr web client (tracker scrapes,
                 AniList, webhooks), built once by the CLI per cycle and owned
                 there - ``close`` deliberately leaves it open.
-            cache_legacy (str | None, optional): Path to a legacy ``cache.json`` to
-                migrate into ``cache.db`` when no db exists yet. Defaults to None.
             boot (BootView | None, optional): The startup cockpit; the qBittorrent
                 login and cache open graduate into it as steps. Defaults to None (a
                 no-op view), so the standalone path runs without a cockpit.
@@ -165,13 +162,11 @@ class RunDeps:
         # Load the cache (or create its schema) and reconcile the descriptor against
         # the current package version + config checksum. Each arr builds its own
         # store that reads the file fresh, so a scheduled Radarr->Sonarr cycle hands
-        # off through cache.db rather than shared memory. A legacy cache.json (if
-        # present and there's no db yet) is migrated on the first real save.
+        # off through cache.db rather than shared memory.
         with boot.step("Opening cache"):
             cache_store = CacheStore.load(
                 cache,
                 config_checksum=app_config.checksum(),
-                migrate_from=cache_legacy,
                 logger=logger,
             )
 

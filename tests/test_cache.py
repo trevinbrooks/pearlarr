@@ -8,7 +8,6 @@ the in-memory -> file promotion for a missing cache.
 """
 
 import contextlib
-import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -466,87 +465,13 @@ class TestHistoryCheckpoints:
         store.close()
 
 
-class TestLegacyMigration:
-    @staticmethod
-    def _legacy() -> dict[str, object]:
-        return {
-            "description": {"seadexarr_version": "0.0.0", "config_checksum": "old"},
-            "anilist_entries": {
-                "sonarr": {
-                    "7": {
-                        "name": "T",
-                        "url": "u",
-                        "coverage": "S01",
-                        "updated_at": "2021-06-05 04:03:02",
-                        "torrent_hashes": ["aaa", None, "bbb"],
-                    },
-                },
-            },
-            "anilist_meta": {
-                "7": {"fetched_at": "2026-06-26 12:00:00", "data": {"Media": {"id": 7}}},
-            },
-            "sonarr_parse_cache": {
-                "file.mkv": {"fetched_at": "2026-06-26 12:00:00", "episodes": [{"season": 1, "episode": 2}]},
-                "legacy.mkv": [{"season": 1, "episode": 1}],  # pre-TTL bare-list -> skipped
-            },
-            "pending_imports": {
-                "sonarr": {"h1": {"infohash": "h1", "series_id": 5}},
-            },
-        }
-
-    def test_migration_seeds_all_blocks_and_retires_legacy(self, tmp_path: Path) -> None:
-        legacy = tmp_path / "cache.json"
-        legacy.write_text(json.dumps(self._legacy()))
-        db = str(tmp_path / "cache.db")
-
-        store = CacheStore.load(db, config_checksum=CHECKSUM, migrate_from=str(legacy))
-        # Seeded rows are visible before promotion (staged in the in-memory db).
-        assert _entry_name(store, 7) == "T"
-        store.save(preview=False)  # promote -> create cache.db + retire legacy
-        store.close()
-
-        assert (tmp_path / "cache.db").exists()
-        assert not legacy.exists()
-        assert (tmp_path / "cache.json.migrated").exists()
-
-        reopened = CacheStore.load(db, config_checksum=CHECKSUM)
-        entry = reopened.get_entry(Arr.SONARR, 7)
-        assert entry is not None
-        assert (entry.url, entry.coverage) == ("u", "S01")
-        # legacy ["aaa", None, "bbb"] -> None marker preserved (de-duped, order-free)
-        assert set(reopened.torrent_hashes(Arr.SONARR, 7)) == {"aaa", "bbb", None}
-        assert reopened.check_al_id_in_cache(Arr.SONARR, 7, make_entry_record(updated_at=datetime(2021, 6, 5, 4, 3, 2)))
-        meta = reopened.get_anilist_meta(7)
-        assert meta is not None and meta["data"] == {"Media": {"id": 7}}
-        parse = reopened.get_sonarr_parse("file.mkv")
-        assert parse is not None and parse["episodes"] == [{"season": 1, "episode": 2}]
-        assert reopened.get_sonarr_parse("legacy.mkv") is None  # bare-list skipped
-        assert reopened.get_pending(Arr.SONARR) == {"h1": {"infohash": "h1", "series_id": 5}}
-        reopened.close()
-
-    def test_preview_migration_persists_nothing(self, tmp_path: Path) -> None:
-        legacy = tmp_path / "cache.json"
-        legacy.write_text(json.dumps(self._legacy()))
-        db = str(tmp_path / "cache.db")
-
-        store = CacheStore.load(db, config_checksum=CHECKSUM, migrate_from=str(legacy))
-        store.save(preview=True)
-        store.close()
-
-        # A preview never promotes: no db written, the legacy file left untouched.
-        assert not (tmp_path / "cache.db").exists()
-        assert legacy.exists()
-
-    def test_failed_promote_does_not_orphan_migration(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+class TestPromoteFailure:
+    def test_failed_promote_leaves_no_partial_db(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # If the promote rename fails (disk full / killed mid-copy), it must leave NO
-        # partial cache.db and must NOT retire the legacy file - else the next load
-        # sees an (empty) db, skips migrate_from, and silently abandons the legacy
-        # cache + its pending imports.
-        legacy = tmp_path / "cache.json"
-        legacy.write_text(json.dumps(self._legacy()))
-        db = str(tmp_path / "cache.db")
-
-        store = CacheStore.load(db, config_checksum=CHECKSUM, migrate_from=str(legacy))
+        # partial cache.db - else the next run mistakes the torn file for a real
+        # (empty) cache.
+        store = _open(tmp_path)
+        store.update_cache(Arr.SONARR, 7, {"name": "T"})
         # Scope the patch to this save only: the later ``again.save`` must promote for real.
         with monkeypatch.context() as mp, contextlib.suppress(OSError):
             mp.setattr("seadexarr.modules.cache.os.replace", _raise_os_replace)
@@ -554,17 +479,18 @@ class TestLegacyMigration:
         store.close()
 
         assert not (tmp_path / "cache.db").exists()  # no 0-byte orphan
-        assert legacy.exists()  # legacy not retired
         assert not list(tmp_path.glob("cache.db.promote*"))  # temp cleaned up
 
-        # A subsequent real run re-migrates everything (the data was never lost).
-        again = CacheStore.load(db, config_checksum=CHECKSUM, migrate_from=str(legacy))
-        assert _entry_name(again, 7) == "T"
-        assert again.get_pending(Arr.SONARR) == {"h1": {"infohash": "h1", "series_id": 5}}
+        # A fresh run promotes for real (the failed attempt left nothing torn behind).
+        again = _open(tmp_path)
+        again.update_cache(Arr.SONARR, 7, {"name": "T"})
         again.save(preview=False)
         again.close()
         assert (tmp_path / "cache.db").exists()
-        assert (tmp_path / "cache.json.migrated").exists()
+
+        reopened = _open(tmp_path)
+        assert _entry_name(reopened, 7) == "T"
+        reopened.close()
 
 
 class TestRunLifecycle:

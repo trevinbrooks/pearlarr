@@ -51,7 +51,6 @@ from typing import Any, NamedTuple, TypedDict, cast, override
 from seadex import EntryRecord
 
 from .config import Arr
-from .seadex_types import coerce_int
 from .sqlite_util import connect as _sqlite_connect
 from .sqlite_util import open_or_quarantine, rollback_and_close
 from .. import __version__
@@ -340,26 +339,6 @@ def _arr_key(arr: Arr) -> str:
     return str(arr)
 
 
-def _coerce_arr(value: object) -> Arr | None:
-    """Parse a legacy arr key (``"sonarr"`` / ``"radarr"``) to an ``Arr``, or None."""
-
-    try:
-        return Arr(value)
-    except ValueError:
-        return None
-
-
-def _as_dict(value: object) -> dict[str, Any] | None:
-    """Narrow a value read from untyped legacy JSON to a dict, or None.
-
-    The boundary cast for migration: a hand-edited / legacy ``cache.json`` carries
-    ``Any``-typed values, so each level is checked and pinned to ``dict[str, Any]``
-    before the typed facade writers touch it.
-    """
-
-    return cast("dict[str, Any]", value) if isinstance(value, dict) else None
-
-
 def _connect(path: str, *, ensure_wal: bool = True) -> sqlite3.Connection:
     """Open a cache-db connection (see :func:`sqlite_util.connect`).
 
@@ -444,9 +423,6 @@ class CacheStore(AbstractCacheStore):
         # True while backed by an in-memory db (the file didn't exist at load); the
         # first non-preview save promotes it to ``path``.
         self._on_memory = on_memory
-        # Set to the legacy ``cache.json`` path when this run seeded itself from it,
-        # so the promotion that creates ``cache.db`` also retires the old file.
-        self._migrated_from: str | None = None
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -456,7 +432,6 @@ class CacheStore(AbstractCacheStore):
         path: str,
         *,
         config_checksum: str,
-        migrate_from: str | None = None,
         logger: logging.Logger | None = None,
     ) -> "CacheStore":
         """Open the cache db (or an in-memory stand-in) and reconcile the descriptor.
@@ -466,20 +441,12 @@ class CacheStore(AbstractCacheStore):
         way the schema is ensured and the version/checksum descriptor is staged
         (committed at the first non-preview save).
 
-        When there is no db yet but a legacy ``cache.json`` is present
-        (``migrate_from``), its contents are seeded into the in-memory db; the
-        normal promote-on-first-real-save then writes ``cache.db`` and retires the
-        old file. A preview run seeds but never promotes, so it migrates nothing -
-        the legacy file is left untouched for the next real run.
-
         Args:
             path (str): Path to the cache database file.
             config_checksum (str): Current config-file checksum, stamped into the
                 descriptor so a changed config is recorded (informational; not used
                 to invalidate records - entries are freshness-keyed already).
-            migrate_from (str | None): Path to a legacy ``cache.json`` to seed from
-                when no db exists yet. Defaults to None (no migration).
-            logger (logging.Logger | None): For the one-line migration notice.
+            logger (logging.Logger | None): For the quarantine-recovery notice.
         """
 
         exists = os.path.exists(path)
@@ -498,8 +465,6 @@ class CacheStore(AbstractCacheStore):
         if fell_back:
             exists = False
         store = cls(conn, path, on_memory=not exists)
-        if not exists and migrate_from and os.path.exists(migrate_from):
-            store._seed_from_legacy_json(migrate_from, logger=logger)
         store._reconcile(config_checksum)
         return store
 
@@ -523,81 +488,6 @@ class CacheStore(AbstractCacheStore):
 
         self._set_kv("seadexarr_version", __version__)
         self._set_kv("config_checksum", config_checksum)
-
-    def _seed_from_legacy_json(
-        self,
-        json_path: str,
-        *,
-        logger: logging.Logger | None,
-    ) -> None:
-        """One-time import of a legacy ``cache.json`` into the (in-memory) db.
-
-        Reads the five legacy blocks and stages them through the normal facade
-        writers, so a corrupt or partial old file degrades to "import what's
-        readable" rather than crashing. Records are validated defensively because
-        the old file was hand-editable JSON. ``description`` is skipped (the
-        descriptor is re-stamped by :meth:`_reconcile`); legacy bare-list Sonarr
-        parse records (the pre-TTL form) are skipped as stale.
-        """
-
-        try:
-            with open(json_path, encoding="utf-8") as f:
-                raw = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            if logger is not None:
-                logger.warning(
-                    f"Legacy cache at {json_path} is unreadable; starting fresh",
-                )
-            return
-        data = _as_dict(raw)
-        if data is None:
-            return
-
-        entries = _as_dict(data.get("anilist_entries"))
-        for arr_str, recs_raw in (entries or {}).items():
-            arr = _coerce_arr(arr_str)
-            recs = _as_dict(recs_raw)
-            if arr is None or recs is None:
-                continue
-            for al_id_str, rec_raw in recs.items():
-                al_id = coerce_int(al_id_str)
-                rec = _as_dict(rec_raw)
-                if al_id is None or rec is None:
-                    continue
-                details: dict[str, Any] = {c: rec[c] for c in _ENTRY_SCALAR_COLUMNS if c in rec}
-                hashes = rec.get("torrent_hashes")
-                if isinstance(hashes, list):
-                    details["torrent_hashes"] = cast("list[str | None]", hashes)
-                self.update_cache(arr, al_id, cast("CacheRecord", details))
-
-        meta = _as_dict(data.get("anilist_meta"))
-        for al_id_str, rec_raw in (meta or {}).items():
-            al_id = coerce_int(al_id_str)
-            rec = _as_dict(rec_raw)
-            if al_id is not None and rec is not None:
-                self.put_anilist_meta(al_id, rec)
-
-        parse = _as_dict(data.get("sonarr_parse_cache"))
-        for filename, rec_raw in (parse or {}).items():
-            # dict form only; the pre-TTL bare-list form is treated as stale.
-            rec = _as_dict(rec_raw)
-            if rec is not None:
-                self.put_sonarr_parse(filename, rec)
-
-        pending = _as_dict(data.get("pending_imports"))
-        for arr_str, recs_raw in (pending or {}).items():
-            arr = _coerce_arr(arr_str)
-            recs = _as_dict(recs_raw)
-            if arr is None or recs is None:
-                continue
-            for infohash, rec_raw in recs.items():
-                rec = _as_dict(rec_raw)
-                if rec is not None:
-                    self.put_pending(arr, infohash, rec)
-
-        self._migrated_from = json_path
-        if logger is not None:
-            logger.info(f"Migrating legacy cache {json_path} -> {self._path}")
 
     @override
     def save(self, *, preview: bool) -> None:
@@ -627,7 +517,7 @@ class CacheStore(AbstractCacheStore):
         the file-backed connection through :func:`_connect`. Backing up to a temp +
         atomic rename means ``cache.db`` is only ever created from a COMPLETE copy: a
         crash or I/O error mid-copy leaves no 0-byte / partial ``cache.db`` for the
-        next run to mistake for a real (empty) cache and skip the migration over.
+        next run to mistake for a real (empty) cache.
         """
 
         self._conn.commit()
@@ -654,13 +544,6 @@ class CacheStore(AbstractCacheStore):
         self._conn.close()
         self._conn = _connect(self._path)
         self._on_memory = False
-
-        # If this db was seeded from a legacy cache.json, retire it now that the
-        # real db exists (kept as a ``.migrated`` backup, and no longer re-seeded).
-        if self._migrated_from and os.path.exists(self._migrated_from):
-            with contextlib.suppress(OSError):
-                os.replace(self._migrated_from, self._migrated_from + ".migrated")
-            self._migrated_from = None
 
     @override
     def close(self) -> None:
