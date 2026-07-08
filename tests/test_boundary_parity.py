@@ -415,3 +415,23 @@ def test_rejections_fold_strings_and_dicts_and_skip_other_shapes() -> None:
         ImportRejection(reason="Episode already imported"),
         ImportRejection(reason=None),
     )
+
+
+@respx.mock
+def test_junk_path_drops_the_candidate_but_keeps_siblings() -> None:
+    """A candidate whose ``path`` is a type lie (non-str) fails validation and
+    is dropped whole (skip + warn); well-formed siblings survive. The old dict
+    walk passed the lie through and crashed later at ``os.path.basename``.
+    """
+
+    respx.get(f"{_BASE}/manualimport").respond(
+        json=[
+            {"path": 42, "rejections": []},
+            {"path": "/d/kept.mkv", "rejections": []},
+        ],
+    )
+
+    candidates = _make_sonarr_client().manual_import_candidates(pending=pending_import())
+    assert candidates is not None
+    [candidate] = candidates
+    assert candidate.path == "/d/kept.mkv"

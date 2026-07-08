@@ -312,10 +312,10 @@ class SonarrClient(AbstractSonarrClient):
         on its mount yet). The caller treats both as keep-waiting, but the
         distinction keeps the intent clear.
 
-        Each raw ManualImportResource is narrowed to a
+        Each raw ManualImportResource is validated into a
         :class:`~.seadex_types.ManualImportCandidate` (``path`` / ``quality`` /
-        ``rejections``) via its ``from_api`` at this client boundary, so the
-        decision path never touches the raw DTO.
+        ``rejections``) at this client boundary, so the decision path never
+        touches the raw DTO.
 
         Args:
             pending (PendingImport): The pending import record to scan for
@@ -440,10 +440,10 @@ class SonarrClient(AbstractSonarrClient):
         ``totalRecords`` is covered, so a very large queue is never silently
         truncated.
 
-        Each raw ``QueueResource`` is narrowed to a
+        Each raw ``QueueResource`` is validated into a
         :class:`~.seadex_types.QueueRecord` (``download_id`` / ``state`` /
-        ``status``) via its ``from_api`` at this client boundary, so the wait
-        decision never touches the raw DTO.
+        ``status``) at this client boundary, so the wait decision never
+        touches the raw DTO.
 
         Returns an empty list (with a warning) on a non-200, so the caller treats
         "couldn't read the queue" as "not tracked" and falls back to its own scan.
@@ -580,8 +580,8 @@ class SonarrClient(AbstractSonarrClient):
         Used by the in-flight ManualImport guard to see whether a ManualImport we
         (or a prior run) POSTed for a download is still ``queued``/``started`` -
         so we don't stack a duplicate while Sonarr is already importing it. Each
-        raw ``CommandResource`` is narrowed via its
-        :meth:`~.seadex_types.CommandResource.from_api` (``name`` / ``status`` /
+        raw command is validated into a
+        :class:`~.seadex_types.CommandResource` (``name`` / ``status`` /
         ``message`` / ``body.files``) at this client boundary, mirroring
         :meth:`queue`.
 
