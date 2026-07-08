@@ -17,7 +17,9 @@ from .seadex_types import Json
 from .. import __version__
 
 # Embed accent colors (the strip Discord renders along the embed's left edge).
-COLOR_GRAB = 0x3498DB
+# Grab amber follows the *arr ecosystem convention (grabbed = amber "in
+# flight"; green = imported) in the flat-UI shade matching its siblings below.
+COLOR_GRAB = 0xF1C40F
 COLOR_SUCCESS = 0x2ECC71
 COLOR_DEFERRED = 0xE67E22
 COLOR_FAILED = 0xE74C3C
@@ -33,10 +35,15 @@ _MAX_TOTAL_LEN = 6000
 
 
 class EmbedField(NamedTuple):
-    """One Discord embed field (name/value), typed until the payload boundary."""
+    """One Discord embed field (name/value), typed until the payload boundary.
+
+    ``inline`` fields render side by side (up to three per row), which the grab
+    embed uses to pair the replaced release with the SeaDex pick(s).
+    """
 
     name: str
     value: str
+    inline: bool = False
 
 
 def _clamp(text: str, limit: int) -> str:
@@ -49,9 +56,10 @@ def _clamp(text: str, limit: int) -> str:
 class DiscordEmbed:
     """One webhook embed, held as typed data until :meth:`to_payload`.
 
-    ``url`` makes the title a link (the SeaDex entry page for a grab) and
-    ``thumb_url`` is the AniList cover; both are omitted from the payload when
-    unset rather than sent as nulls.
+    ``url`` makes the title a link (the SeaDex entry page for a grab),
+    ``thumb_url`` is the AniList cover and ``image_url`` the wide AniList
+    banner; each is omitted from the payload when unset rather than sent as a
+    null.
     """
 
     author_name: str
@@ -61,6 +69,8 @@ class DiscordEmbed:
     description: str = ""
     fields: tuple[EmbedField, ...] = ()
     thumb_url: str | None = None
+    image_url: str | None = None
+    author_icon_url: str | None = None
 
     def to_payload(self) -> dict[str, Json]:
         """The ``embeds[0]`` object Discord expects, clamped to its hard limits."""
@@ -81,10 +91,13 @@ class DiscordEmbed:
             if total + len(name) + len(value) > _MAX_TOTAL_LEN:
                 break
             total += len(name) + len(value)
-            fields.append({"name": name, "value": value})
+            fields.append({"name": name, "value": value, "inline": f.inline})
 
+        author_obj: dict[str, Json] = {"name": author, "url": PROJECT_URL}
+        if self.author_icon_url:
+            author_obj["icon_url"] = self.author_icon_url
         embed: dict[str, Json] = {
-            "author": {"name": author, "url": PROJECT_URL},
+            "author": author_obj,
             "title": title,
             "color": self.color,
             "fields": fields,
@@ -97,6 +110,8 @@ class DiscordEmbed:
             embed["url"] = self.url
         if self.thumb_url:
             embed["thumbnail"] = {"url": self.thumb_url}
+        if self.image_url:
+            embed["image"] = {"url": self.image_url}
         return embed
 
 

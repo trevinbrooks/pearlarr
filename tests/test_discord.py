@@ -1,12 +1,10 @@
 # pyright: strict
-"""Tests for the Discord embed boundary and the grab-embed fields.
+"""Tests for the Discord embed boundary.
 
 ``DiscordEmbed.to_payload`` is the single JSON-shaped seam - these pin the
-omitted-when-unset optional keys and the clamping to Discord's hard limits -
-``discord_push`` is the pure POST that ships it (wire shape, errors propagate:
-containment lives in the Notifier), and ``Notifier.build_fields`` shapes a
-grab's fields (markdown tracker links, the one-line tag list, the
-release-group fallback).
+omitted-when-unset optional keys, the field ``inline`` flag, and the clamping
+to Discord's hard limits - and ``discord_push`` is the pure POST that ships it
+(wire shape, errors propagate: containment lives in the Notifier).
 """
 
 import json
@@ -15,23 +13,14 @@ from typing import cast
 import httpx
 import pytest
 import respx
-from seadex import Tag, Tracker
 
-from seadexarr.modules.config import Arr
 from seadexarr.modules.discord import (
     PROJECT_URL,
     DiscordEmbed,
     EmbedField,
     discord_push,
 )
-from seadexarr.modules.notify import Notifier
 from seadexarr.modules.seadex_types import Json
-
-from .builders import make_logger, rg_group, url_item
-
-
-def _notifier() -> Notifier:
-    return Notifier(discord_url=None, webhook_url=None, web=httpx.Client(), logger=make_logger())
 
 
 def _str_at(payload: dict[str, Json], key: str) -> str:
@@ -50,12 +39,21 @@ def _obj_at(payload: dict[str, Json], key: str) -> dict[str, str]:
     return cast("dict[str, str]", value)
 
 
-def _fields_of(payload: dict[str, Json]) -> list[dict[str, str]]:
-    """The payload's fields list, narrowed to its name/value rows."""
+def _fields_of(payload: dict[str, Json]) -> list[dict[str, Json]]:
+    """The payload's fields list, narrowed to its row objects."""
 
     value = payload["fields"]
     assert isinstance(value, list)
-    return cast("list[dict[str, str]]", value)
+    return cast("list[dict[str, Json]]", value)
+
+
+def _name_value(field: dict[str, Json]) -> tuple[str, str]:
+    """A field row's name/value pair, narrowed for the length asserts."""
+
+    name, value = field["name"], field["value"]
+    assert isinstance(name, str)
+    assert isinstance(value, str)
+    return name, value
 
 
 def test_to_payload_omits_unset_optional_keys() -> None:
@@ -69,6 +67,7 @@ def test_to_payload_omits_unset_optional_keys() -> None:
     assert "url" not in payload
     assert "description" not in payload
     assert "thumbnail" not in payload
+    assert "image" not in payload
 
 
 def test_to_payload_carries_optional_keys_and_stamp() -> None:
@@ -78,8 +77,10 @@ def test_to_payload_carries_optional_keys_and_stamp() -> None:
         color=1,
         url="https://releases.moe/1",
         description="all imported",
-        fields=(EmbedField(name="n", value="v"),),
+        fields=(EmbedField(name="n", value="v"), EmbedField(name="i", value="w", inline=True)),
         thumb_url="https://img.anili.st/cover.png",
+        image_url="https://img.anili.st/banner.png",
+        author_icon_url="https://releases.moe/favicon.png",
     )
 
     payload = embed.to_payload()
@@ -87,7 +88,17 @@ def test_to_payload_carries_optional_keys_and_stamp() -> None:
     assert payload["url"] == "https://releases.moe/1"
     assert payload["description"] == "all imported"
     assert payload["thumbnail"] == {"url": "https://img.anili.st/cover.png"}
-    assert payload["fields"] == [{"name": "n", "value": "v"}]
+    assert payload["image"] == {"url": "https://img.anili.st/banner.png"}
+    assert payload["author"] == {
+        "name": "Frieren",
+        "url": PROJECT_URL,
+        "icon_url": "https://releases.moe/favicon.png",
+    }
+    # The inline flag rides each field row to the wire.
+    assert payload["fields"] == [
+        {"name": "n", "value": "v", "inline": False},
+        {"name": "i", "value": "w", "inline": True},
+    ]
     assert "timestamp" in payload
     assert _obj_at(payload, "footer")["text"].startswith("SeaDexArr v")
 
@@ -108,10 +119,10 @@ def test_to_payload_clamps_item_limits() -> None:
     assert title.endswith("…")
     assert len(_obj_at(payload, "author")["name"]) == 256
     assert len(_str_at(payload, "description")) == 4096
-    fields = _fields_of(payload)
-    assert len(fields[0]["name"]) == 256
-    assert len(fields[0]["value"]) == 1024
-    assert fields[0]["value"].endswith("…")
+    name, value = _name_value(_fields_of(payload)[0])
+    assert len(name) == 256
+    assert len(value) == 1024
+    assert value.endswith("…")
 
 
 def test_to_payload_caps_field_count() -> None:
@@ -145,9 +156,26 @@ def test_to_payload_drops_fields_over_embed_total() -> None:
         len(_str_at(payload, "title"))
         + len(_obj_at(payload, "author")["name"])
         + len(_obj_at(payload, "footer")["text"])
-        + sum(len(f["name"]) + len(f["value"]) for f in fields)
+        + sum(len(f[0]) + len(f[1]) for f in map(_name_value, fields))
     )
     assert total <= 6000
+
+
+def test_to_payload_counts_description_in_embed_total() -> None:
+    # The description is part of Discord's 6000 total: a fat one (the notes
+    # blockquote can be long) must eat field budget, not overflow the embed.
+    embed = DiscordEmbed(
+        author_name="a",
+        title="t",
+        color=1,
+        description="d" * 4000,
+        fields=tuple(EmbedField(name=f"f{i}", value="x" * 1024) for i in range(10)),
+    )
+
+    fields = _fields_of(embed.to_payload())
+
+    # 4000 + author/title/footer leaves room for exactly one ~1027-char field.
+    assert len(fields) == 1
 
 
 @respx.mock
@@ -176,30 +204,3 @@ def test_discord_push_propagates_http_errors() -> None:
 
     with pytest.raises(httpx.HTTPStatusError):
         discord_push(url="https://discord.example/hook", embed=embed, client=httpx.Client())
-
-
-def test_build_fields_tracker_links_and_tags() -> None:
-    seadex_dict = {
-        "SubsPlease": rg_group(
-            {
-                "https://nyaa.si/view/1": url_item(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, download=True),
-                "https://skipped.example": url_item(url="https://skipped.example", download=False),
-            },
-            tags=frozenset({Tag.VFR, Tag.HDR}),
-        ),
-        "NotFlagged": rg_group({"https://nyaa.si/view/2": url_item(url="https://nyaa.si/view/2", download=False)}),
-    }
-
-    fields = _notifier().build_fields(arr=Arr.SONARR, release_group=["OldGroup"], seadex_dict=seadex_dict)
-
-    # A group with nothing flagged for download contributes no field.
-    assert fields == [
-        EmbedField(name="Sonarr Release:", value="OldGroup"),
-        EmbedField(name="SeaDex recommendation: SubsPlease", value="Tags: HDR, VFR\n[Nyaa](https://nyaa.si/view/1)"),
-    ]
-
-
-def test_build_fields_release_group_falls_back_to_none() -> None:
-    fields = _notifier().build_fields(arr=Arr.RADARR, release_group=[None, ""], seadex_dict={})
-
-    assert fields == [EmbedField(name="Radarr Release:", value="None")]
