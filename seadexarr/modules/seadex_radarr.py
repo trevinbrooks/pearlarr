@@ -161,11 +161,11 @@ class RadarrSync(ArrSync[RadarrItem]):
         radarr_release_dict = self.get_radarr_release_dict(
             radarr_movie_id=item.id,
         )
-        radarr_release_group = next(iter(radarr_release_dict))
+        radarr_release_groups = list(radarr_release_dict)
 
         self.logger.debug(
             indent_string(
-                f"Radarr release group: {radarr_release_group or '(none)'}",
+                f"Radarr release group(s): {', '.join(rg or '(none)' for rg in radarr_release_groups)}",
             ),
         )
 
@@ -208,7 +208,9 @@ class RadarrSync(ArrSync[RadarrItem]):
                 seadex_dict=seadex_dict,
                 torrent_hashes=torrent_hashes,
                 cache_details=cache_details,
-                release_group=[radarr_release_group],
+                # The full ordered group list, mirroring Sonarr - the notifier
+                # renders every edition's group, not just the first file's.
+                release_group=radarr_release_groups,
             ),
         )
 
