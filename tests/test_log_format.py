@@ -208,5 +208,7 @@ class TestRichExcInfoRender:
         assert sentinel not in out  # the frame local's value must never render
         # The branch returns after the traceback: exactly one badged message line
         # ("sync failed" also shows up as traceback source context, so count the
-        # badge+message pair, which only the handler's own render produces).
+        # badge+message pair, which only the handler's own render produces). This
+        # assert stays out of that context only because it sits past rich's
+        # 3-line window around the raise - keep the distance.
         assert out.count("ERROR    sync failed") == 1
