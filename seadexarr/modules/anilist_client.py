@@ -8,8 +8,9 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 import httpx
+from pydantic import ValidationError
 
-from .seadex_types import AniListError, AniListMediaNode
+from .seadex_types import AniListError, AniListMediaNode, validation_summary
 
 API_URL = "https://graphql.anilist.co"
 
@@ -157,14 +158,16 @@ def _parse_errors(body: dict[str, Any] | None) -> list[AniListError]:
     raw_errors = (body or {}).get("errors")
     if not isinstance(raw_errors, list):
         return []
-    # response.json() is untyped; map each GraphQL error OBJECT into the typed
-    # AniListError, skipping any non-object entry (a soft-throttle or malformed
+    # response.json() is untyped; validate each GraphQL error entry into the
+    # typed AniListError, dropping the junk ones (a soft-throttle or malformed
     # body can carry non-dict junk in the errors array).
-    return [
-        AniListError.from_api(cast("dict[str, Any]", err))
-        for err in cast("list[Any]", raw_errors)
-        if isinstance(err, dict)
-    ]
+    errors: list[AniListError] = []
+    for err in cast("list[object]", raw_errors):
+        try:
+            errors.append(AniListError.model_validate(err))
+        except ValidationError:
+            continue
+    return errors
 
 
 def extract_path(body: dict[str, Any] | None, *path: str) -> dict[str, Any]:
@@ -186,18 +189,40 @@ def extract_path(body: dict[str, Any] | None, *path: str) -> dict[str, Any]:
     return node
 
 
-def media_from(body: dict[str, Any] | None) -> AniListMediaNode:
+def media_node_from(raw: dict[str, Any], *, logger: logging.Logger | None = None) -> AniListMediaNode:
+    """Validate a raw ``Media`` dict into the typed node (single-object fail-open).
+
+    A miss (``{}``) validates to the all-``None`` node; a malformed node
+    degrades to the same all-``None`` miss with one scrubbed warning (when a
+    logger is provided - the production callers always pass one).
+
+    Args:
+        raw (dict[str, Any]): The raw ``Media`` dict (``{}`` on a miss).
+        logger (logging.Logger | None): Voices the malformed-node warning.
+    """
+
+    try:
+        return AniListMediaNode.model_validate(raw)
+    except ValidationError as e:
+        if logger is not None:
+            logger.warning(f"Ignoring malformed AniList Media node ({validation_summary(e)})")
+        return AniListMediaNode()
+
+
+def media_from(body: dict[str, Any] | None, *, logger: logging.Logger | None = None) -> AniListMediaNode:
     """Parse the Media node from a single-id body into an AniListMediaNode
 
     The raw ``{"data": {"Media": {...}}}`` body is the dynamic GraphQL boundary;
     this is where it crosses into the typed domain. A miss (``data``/``Media``
-    null) yields an all-``None`` node via ``from_api({})``.
+    null) yields an all-``None`` node; so does a malformed node (see
+    :func:`media_node_from`).
 
     Args:
         body (dict[str, Any] | None): The parsed JSON response body
+        logger (logging.Logger | None): Voices the malformed-node warning.
     """
 
-    return AniListMediaNode.from_api(extract_path(body, "data", "Media"))
+    return media_node_from(extract_path(body, "data", "Media"), logger=logger)
 
 
 class AniListClient:

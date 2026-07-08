@@ -15,7 +15,7 @@ import logging
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
-from .anilist_client import ANILIST_BATCH_SIZE, AniListCache, AniListClient, extract_path, media_from
+from .anilist_client import ANILIST_BATCH_SIZE, AniListCache, AniListClient, extract_path, media_from, media_node_from
 from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, record_is_fresh
 from .log import count_noun, indent_string
 from .seadex_types import AniListMediaNode, ProgressSink
@@ -188,7 +188,7 @@ class AniListGateway:
         # Cache hit: parse the stored body's Media node.
         body = self.al_cache.get(al_id)
         if body is not None:
-            return media_from(body)
+            return media_from(body, logger=self.logger)
 
         # Miss: query AniList. Extract the raw Media dict once to gate the cache
         # store, then parse it into the typed node for the return. The cached
@@ -198,7 +198,7 @@ class AniListGateway:
         if raw_media:
             self.al_cache[al_id] = fetched
 
-        return AniListMediaNode.from_api(raw_media)
+        return media_node_from(raw_media, logger=self.logger)
 
     def title(self, al_id: int) -> str | None:
         """Resolve the AniList title for an id (cache or live query), or None.

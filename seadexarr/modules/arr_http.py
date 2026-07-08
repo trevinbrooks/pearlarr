@@ -12,11 +12,11 @@ import random
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import cast
 
 import httpx
 
-from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord, Json
+from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord, Json, validate_each
 
 # Transient statuses worth another try on an idempotent GET - shared with the
 # web client's ``get_with_retries`` so the two stacks retry the same set.
@@ -297,20 +297,19 @@ class ArrHttp:
         date: str,
         *,
         include_flags: Mapping[str, str],
-        item_key: str,
     ) -> list[HistoryRecord] | None:
         """History records since ``date`` (``/api/v3/history/since``, ascending), or None.
 
         One unfiltered call (``eventType`` is single-valued server-side; the
-        activity scan filters client-side), shared by both arr clients. Fails
-        open to None through :meth:`get_json_list`'s matrix with a warning that
-        states the consequence too: this read only feeds activity detection,
-        and the caller (``ArrActivityMonitor.scan``) doesn't re-warn.
+        activity scan filters client-side), shared by both arr clients - the
+        record's ``seriesId``/``movieId`` fold into one ``item_id`` at the
+        model. Fails open to None through :meth:`get_json_list`'s matrix with a
+        warning that states the consequence too: this read only feeds activity
+        detection, and the caller (``ArrActivityMonitor.scan``) doesn't re-warn.
 
         Args:
             date (str): ISO8601 lower bound (arr-clock, inclusive).
             include_flags (Mapping[str, str]): The arr's include-* query params.
-            item_key (str): The record's item-id field (``seriesId``/``movieId``).
         """
 
         raw = self.get_json_list(
@@ -321,12 +320,8 @@ class ArrHttp:
         if raw is None:
             return None
 
-        # Element dicts are unvalidated JSON: cast at the parse boundary, skip strays.
-        return [
-            HistoryRecord.from_api(cast("dict[str, Any]", record), item_key=item_key)
-            for record in raw
-            if isinstance(record, dict)
-        ]
+        # Every field folds junk independently, so only a non-object stray skips.
+        return validate_each(HistoryRecord, raw, logger=self.logger)
 
     def _strict_error(self, detail: str) -> ArrConnectionError:
         """The strict path's uniform could-not-reach error, naming url + cause."""

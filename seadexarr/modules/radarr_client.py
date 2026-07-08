@@ -11,7 +11,7 @@ import httpx
 
 from .anibridge import AniBridge
 from .arr_http import ArrHttp
-from .seadex_types import ArrItem, HistoryRecord, MovieFile, RadarrItem, RadarrMovie
+from .seadex_types import ArrItem, HistoryRecord, MovieFile, RadarrItem, RadarrMovie, validate_each
 
 
 def make_radarr_client(
@@ -119,9 +119,8 @@ class RadarrClient(AbstractRadarrClient):
         if raw is None:
             return []
 
-        # Each element is an unvalidated MovieFileResource object: cast at the
-        # parse boundary into the typed MovieFile view.
-        return [MovieFile.from_api(cast("dict[str, Any]", record)) for record in raw if isinstance(record, dict)]
+        # Validate each record at this boundary (junk records skip with a warning).
+        return validate_each(MovieFile, raw, logger=self._http.logger)
 
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:
@@ -130,7 +129,6 @@ class RadarrClient(AbstractRadarrClient):
         return self._http.history_since(
             date,
             include_flags={"includeMovie": "false"},
-            item_key="movieId",
         )
 
 

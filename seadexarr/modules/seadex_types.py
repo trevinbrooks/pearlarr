@@ -20,11 +20,13 @@ The defaults also encode one load-bearing distinction:
 ``get_same_files_groups`` keys off exactly that difference.
 """
 
+import logging
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import (
+    Annotated,
     Any,
     NotRequired,
     Protocol,
@@ -34,6 +36,17 @@ from typing import (
     runtime_checkable,
 )
 
+from pydantic import (
+    AliasChoices,
+    AliasPath,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from seadex import Tag, Tracker
 
 
@@ -170,6 +183,123 @@ def coerce_int(value: object) -> int | None:
     return None
 
 
+# --- pydantic boundary plumbing ----------------------------------------------
+#
+# Every arr/AniList READ model below subclasses ``_ApiModel`` and is validated
+# at the client boundary - list reads via :func:`validate_each` (skip + scrubbed
+# warn per bad record; ``strict=True`` for the load-bearing library fetches),
+# single-object reads via ``model_validate`` in the owning client's fail-open
+# try/except. Warnings NEVER embed payload values (only field locs + error
+# types), so a malformed record can't leak titles/paths/keys into logs.
+
+
+class _ApiModel(BaseModel):
+    """Frozen boundary read model: unknown keys ignored, field-name kwargs allowed.
+
+    ``validate_by_name`` is required: aliased fields are also constructed by
+    field name across the tests/fakes, which would otherwise silently no-op to
+    defaults. Bool policy: pydantic's lax coercion already preserves True -> 1
+    on int fields, so no model rejects bools; :func:`coerce_int` survives only
+    as :class:`HistoryRecord`'s fold validator.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="ignore", validate_by_name=True)
+
+
+class BoundaryContractError(RuntimeError):
+    """A strict library read got a non-empty payload with zero valid records.
+
+    Raised only by ``validate_each(..., strict=True)`` (the fail-CLOSED library
+    fetches): an all-invalid library payload must abort the leg rather than
+    read as an empty library. The CLI renders it via the same one-line
+    containment arm as the typed :mod:`~.arr_http` connection errors.
+    """
+
+
+def validation_summary(e: ValidationError) -> str:
+    """A log-safe summary of a validation failure: field locs + error types only.
+
+    Deliberately built from ``errors(include_input=False)`` - never ``str(e)``,
+    which embeds the raw input values (payload data must not reach the logs).
+    """
+
+    return "; ".join(
+        f"{'.'.join(str(loc) for loc in err['loc']) or '<record>'}: {err['type']}"
+        for err in e.errors(include_url=False, include_input=False)
+    )
+
+
+def validate_each[ModelT: _ApiModel](
+    model: type[ModelT],
+    raw: list[object],
+    *,
+    logger: logging.Logger,
+    strict: bool = False,
+) -> list[ModelT]:
+    """Validate each raw record into ``model``, skipping the ones that fail.
+
+    The fail-open list read: every skipped record logs one scrubbed warning
+    (index + field locs + error types; never the payload). With ``strict=True``
+    a non-empty ``raw`` that validates to NOTHING raises
+    :class:`BoundaryContractError` instead of degrading to an empty list - the
+    posture for the load-bearing library fetches, where "all records malformed"
+    means the endpoint contract is broken, not that the library is empty.
+
+    Args:
+        model (type[ModelT]): The ``_ApiModel`` subclass to validate into.
+        raw (list[object]): The unvalidated JSON array elements.
+        logger (logging.Logger): The owning client's logger for the skip warnings.
+        strict (bool): Raise on a non-empty-but-zero-valid payload.
+    """
+
+    validated: list[ModelT] = []
+    for index, record in enumerate(raw):
+        try:
+            validated.append(model.model_validate(record))
+        except ValidationError as e:
+            logger.warning(f"Skipping malformed {model.__name__} record [{index}] ({validation_summary(e)})")
+    if strict and raw and not validated:
+        msg = f"none of the {len(raw)} {model.__name__} records validated; refusing to treat it as empty"
+        raise BoundaryContractError(msg)
+    return validated
+
+
+def _str_or_none(value: object) -> str | None:
+    """Per-field lenient fold: keep a str, fold any other shape to None."""
+
+    return value if isinstance(value, str) else None
+
+
+def _str_or_blank(value: object) -> str:
+    """Per-field lenient fold: keep a str, fold any other shape to ""."""
+
+    return value if isinstance(value, str) else ""
+
+
+def _int_or_zero(value: object) -> int:
+    """Per-field lenient fold: best-effort int, folding junk/None to 0."""
+
+    return coerce_int(value) or 0
+
+
+def _stringified(value: object) -> str:
+    """Per-field lenient fold: ``str(value or "")`` (a falsy value reads as "")."""
+
+    return str(value or "")
+
+
+def _none_if_falsy(value: object) -> object:
+    """Fold a falsy value (``{}``/None) to None before nested validation."""
+
+    return value or None
+
+
+# Reusable lenient field shapes (the per-field folding regime).
+type _LenientStr = Annotated[str | None, BeforeValidator(_str_or_none)]
+type _BlankStr = Annotated[str, BeforeValidator(_str_or_blank)]
+type _ZeroInt = Annotated[int, BeforeValidator(_int_or_zero)]
+
+
 # --- shared progress sink ----------------------------------------------------
 
 
@@ -285,44 +415,37 @@ class RadarrMovie:
 # --- Sonarr episodes (``/api/v3/episode`` JSON) -----------------------------
 
 
-@dataclass(frozen=True, slots=True)
-class SonarrEpisodeFile:
+class SonarrEpisodeFile(_ApiModel):
     """The ``episodeFile`` sub-record of a Sonarr episode."""
 
-    release_group: str | None = None
+    release_group: str | None = Field(default=None, validation_alias="releaseGroup")
     size: int | None = None
 
-    @classmethod
-    def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Build from one raw Sonarr ``episodeFile`` dict."""
 
-        return cls(release_group=raw.get("releaseGroup"), size=raw.get("size"))
+class SonarrEpisode(_ApiModel):
+    """One Sonarr ``/api/v3/episode`` record, validated at the client boundary.
 
-
-@dataclass(frozen=True, slots=True)
-class SonarrEpisode:
-    """One Sonarr ``/api/v3/episode`` record, parsed at the client boundary."""
+    Fail-open list read: a record with junk in a typed field (its own or the
+    nested ``episodeFile``'s) is skipped with a warning by ``validate_each``
+    rather than flowing as a type lie.
+    """
 
     id: int = 0
-    season_number: int | None = None
-    episode_number: int | None = None
-    episode_file_id: int = 0
+    season_number: int | None = Field(default=None, validation_alias="seasonNumber")
+    episode_number: int | None = Field(default=None, validation_alias="episodeNumber")
+    episode_file_id: int = Field(default=0, validation_alias="episodeFileId")
     monitored: bool = True
-    episode_file: SonarrEpisodeFile | None = None
+    # An empty/null episodeFile folds to None (the historical `if raw_file` gate).
+    episode_file: Annotated[SonarrEpisodeFile | None, BeforeValidator(_none_if_falsy)] = Field(
+        default=None,
+        validation_alias="episodeFile",
+    )
 
     @classmethod
     def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Build from one raw Sonarr episode dict (filters unknown keys)."""
+        """Thin shim over ``model_validate`` (the historical parse entrypoint)."""
 
-        raw_file: dict[str, Any] | None = raw.get("episodeFile")
-        return cls(
-            id=raw.get("id", 0),
-            season_number=raw.get("seasonNumber"),
-            episode_number=raw.get("episodeNumber"),
-            episode_file_id=raw.get("episodeFileId", 0),
-            monitored=raw.get("monitored", True),
-            episode_file=SonarrEpisodeFile.from_api(raw_file) if raw_file else None,
-        )
+        return cls.model_validate(raw)
 
 
 type ArrReleaseDict = dict[str | None, list[int | None]]
@@ -341,63 +464,39 @@ type TvdbMappings = dict[int, list[tuple[int, int | None]]]
 # --- AniList GraphQL errors (the ``errors`` array of a response body) --------
 
 
-@dataclass(frozen=True, slots=True)
-class AniListError:
-    """One entry of an AniList GraphQL ``errors`` array, parsed at the boundary.
+class AniListError(_ApiModel):
+    """One entry of an AniList GraphQL ``errors`` array, validated at the boundary.
 
     AniList follows the GraphQL error shape and adds a numeric ``status`` (an
     HTTP-style code, e.g. ``429`` when soft-throttling). Only ``status`` and
     ``message`` drive the retry decision, so those are the fields modeled here.
+    An entry with junk in either field fails validation and is dropped by
+    ``_parse_errors`` (worst case a soft-throttle reads as non-retryable).
     """
 
     message: str = ""
     status: int | None = None
 
-    @classmethod
-    def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Build from one raw GraphQL error dict (missing keys default)."""
-
-        status = raw.get("status")
-        return cls(
-            message=str(raw.get("message") or ""),
-            status=status if isinstance(status, int) else None,
-        )
-
 
 # --- AniList Media node (cached GraphQL ``Media`` record) --------------------
 
 
-@dataclass(frozen=True, slots=True)
-class AniListMediaNode:
-    """One AniList ``Media`` node, parsed once at the cache read boundary."""
+class AniListMediaNode(_ApiModel):
+    """One AniList ``Media`` node, validated once at the cache read boundary.
+
+    Every field defaults to None and an EMPTY DICT must validate to the
+    all-None miss node (the ``{"data": {"Media": null}}`` miss shape reduces to
+    ``{}`` before parsing). The nested ``title``/``coverImage`` reads are
+    ``AliasPath``s, which yield the default through a null/absent intermediate
+    - the model equivalent of the former chained ``.get(...) or {}`` walks.
+    """
 
     id: int | None = None
-    title_english: str | None = None
-    title_romaji: str | None = None
+    title_english: str | None = Field(default=None, validation_alias=AliasPath("title", "english"))
+    title_romaji: str | None = Field(default=None, validation_alias=AliasPath("title", "romaji"))
     episodes: int | None = None
-    cover_image: str | None = None
+    cover_image: str | None = Field(default=None, validation_alias=AliasPath("coverImage", "large"))
     format: str | None = None
-
-    @classmethod
-    def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Build from a raw AniList ``Media`` dict (``{}`` on a miss).
-
-        Reads the nested ``title``/``coverImage`` sub-objects null-safely,
-        mirroring the former chained ``.get(...) or {}`` walks: an English title
-        is preferred with a romaji fallback handled by the caller, and the
-        ``large`` cover variant is the one downstream reads.
-        """
-
-        title: dict[str, Any] = raw.get("title") or {}
-        cover: dict[str, Any] = raw.get("coverImage") or {}
-        return cls(
-            id=raw.get("id"),
-            title_english=title.get("english"),
-            title_romaji=title.get("romaji"),
-            episodes=raw.get("episodes"),
-            cover_image=cover.get("large"),
-            format=raw.get("format"),
-        )
 
 
 # --- Sonarr manual-import (candidate read views + outgoing file payload) -----
@@ -521,21 +620,16 @@ class Language(TypedDict):
     name: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class ImportRejection:
+class ImportRejection(_ApiModel):
     """One entry of a candidate's ``rejections`` array (schema ``ImportRejectionResource``).
 
     Only ``reason`` (``string | null``) is read - it carries the human text the
-    sample / already-imported classifier matches against.
+    sample / already-imported classifier matches against. A junk (non-str,
+    non-null) reason fails validation and the entry is skipped, so the
+    classifier's ``.casefold()`` can never crash on a type lie.
     """
 
     reason: str | None = None
-
-    @classmethod
-    def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Build from one raw ``ImportRejectionResource`` dict."""
-
-        return cls(reason=raw.get("reason"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -570,9 +664,10 @@ class ManualImportCandidate:
             if isinstance(rejection, str):
                 rejections.append(ImportRejection(reason=rejection))
             elif isinstance(rejection, dict):
-                rejections.append(
-                    ImportRejection.from_api(cast("dict[str, Any]", rejection)),
-                )
+                try:
+                    rejections.append(ImportRejection.model_validate(rejection))
+                except ValidationError:
+                    continue  # junk reason: skip the entry, keep the candidate
 
         # The candidate's in-context QualityModel is re-emitted verbatim into the
         # outgoing payload, so it is passed through as the raw mapping; narrow it
@@ -610,8 +705,7 @@ class ManualImportFile(TypedDict):
 # records under a wrapper object's ``records`` array.
 
 
-@dataclass(frozen=True, slots=True)
-class QueueRecord:
+class QueueRecord(_ApiModel):
     """One Sonarr ``QueueResource`` record, reduced to the fields the wait reads.
 
     The wait/import decision consults only ``download_id`` (the infohash Sonarr
@@ -620,26 +714,20 @@ class QueueRecord:
     (``trackedDownloadState``: ``downloading`` / ``importPending`` / ...) and
     ``status`` (``trackedDownloadStatus``: ``ok`` / ``warning`` / ``error``).
     ``state``/``status`` are the ``string | null`` rendering of their schema
-    enums. Parsed at the client boundary via :meth:`from_api`, mirroring
-    :class:`SonarrEpisode`.
+    enums. Every field folds junk to None INDEPENDENTLY, so a queue record is
+    never dropped over one bad field (a dropped record could route a wait to a
+    double-importing step-in).
     """
 
-    download_id: str | None = None
-    state: str | None = None
-    status: str | None = None
+    download_id: _LenientStr = Field(default=None, validation_alias="downloadId")
+    state: _LenientStr = Field(default=None, validation_alias="trackedDownloadState")
+    status: _LenientStr = Field(default=None, validation_alias="trackedDownloadStatus")
 
     @classmethod
     def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Build from one raw ``QueueResource`` dict (filters unknown keys)."""
+        """Thin shim over ``model_validate`` (the historical parse entrypoint)."""
 
-        download_id = raw.get("downloadId")
-        state = raw.get("trackedDownloadState")
-        status = raw.get("trackedDownloadStatus")
-        return cls(
-            download_id=download_id if isinstance(download_id, str) else None,
-            state=state if isinstance(state, str) else None,
-            status=status if isinstance(status, str) else None,
-        )
+        return cls.model_validate(raw)
 
 
 # --- Arr history (``/api/v3/history/since`` records) -------------------------
@@ -649,51 +737,43 @@ class QueueRecord:
 # it doubles as a monotone cursor.
 
 
-@dataclass(frozen=True, slots=True)
-class HistoryRecord:
+class HistoryRecord(_ApiModel):
     """One arr ``HistoryResource`` record, reduced to what the activity scan reads.
 
     ``id`` is the monotone cursor; ``date`` the raw ISO8601 arr-clock stamp;
-    ``item_id`` the ``seriesId``/``movieId`` (0 when absent); ``download_id``
-    the infohash (``string | null``; Sonarr uppercases, so compare casefolded);
+    ``item_id`` the ``seriesId``/``movieId`` (0 when absent - no record carries
+    both, so one ``AliasChoices`` serves both arrs); ``download_id`` the
+    infohash (``string | null``; Sonarr uppercases, so compare casefolded);
     ``event_type`` the camelCase event name; ``reason`` the ``data`` map's
-    reason value (key read case-insensitively). Parsed at the client boundary
-    via :meth:`from_api`, mirroring :class:`QueueRecord`.
+    reason value (key read case-insensitively by the before-validator - an
+    alias cannot do case-insensitivity). Every field folds junk INDEPENDENTLY,
+    so a record is never dropped: a dropped record would be a missed dirty-mark
+    and a lagging checkpoint. A junk item id folds to 0 and the record is KEPT
+    (arr_activity's ``item_id <= 0`` drop applies downstream).
     """
 
-    id: int = 0
-    date: str = ""
-    item_id: int = 0
-    event_type: str = ""
-    download_id: str | None = None
-    reason: str | None = None
+    id: _ZeroInt = 0
+    date: Annotated[str, BeforeValidator(_stringified)] = ""
+    item_id: _ZeroInt = Field(default=0, validation_alias=AliasChoices("seriesId", "movieId"))
+    event_type: _BlankStr = Field(default="", validation_alias="eventType")
+    download_id: _LenientStr = Field(default=None, validation_alias="downloadId")
+    reason: _LenientStr = None
 
+    @model_validator(mode="before")
     @classmethod
-    def from_api(cls, raw: dict[str, Any], *, item_key: str) -> Self:
-        """Build from one raw ``HistoryResource`` dict.
+    def _lift_reason(cls, data: object) -> object:
+        """Lift the ``data`` map's reason value, matching its key case-insensitively."""
 
-        Args:
-            raw (dict[str, Any]): The raw record.
-            item_key (str): The arr's item-id field (``seriesId``/``movieId``).
-        """
-
-        download_id = raw.get("downloadId")
-        event_type = raw.get("eventType")
-        data = raw.get("data")
-        reason: str | None = None
-        if isinstance(data, dict):
-            for key, value in cast("dict[str, Any]", data).items():
-                if key.casefold() == "reason" and isinstance(value, str):
-                    reason = value
-                    break
-        return cls(
-            id=coerce_int(raw.get("id")) or 0,
-            date=str(raw.get("date") or ""),
-            item_id=coerce_int(raw.get(item_key)) or 0,
-            event_type=event_type if isinstance(event_type, str) else "",
-            download_id=download_id if isinstance(download_id, str) else None,
-            reason=reason,
-        )
+        if not isinstance(data, dict):
+            return data
+        record = cast("dict[str, Any]", data)
+        raw_data = record.get("data")
+        if "reason" in record or not isinstance(raw_data, dict):
+            return record
+        for key, value in cast("dict[str, Any]", raw_data).items():
+            if key.casefold() == "reason" and isinstance(value, str):
+                return {**record, "reason": value}
+        return record
 
 
 # --- Sonarr quality definitions (``/api/v3/qualitydefinition``) --------------
@@ -731,41 +811,35 @@ class CommandBody(TypedDict):
     files: NotRequired[list[ManualImportFile]]
 
 
-@dataclass(frozen=True, slots=True)
-class CommandFile:
+def _int_entries(value: object) -> object:
+    """Fold an episode-id array: keep the int entries, fold junk/None to ()."""
+
+    if isinstance(value, list):
+        return [i for i in cast("list[object]", value) if isinstance(i, int)]
+    return ()
+
+
+class CommandFile(_ApiModel):
     """One file of a ``ManualImport`` command's ``body.files[]`` (read back).
 
     Surfaced from the ``/api/v3/command`` list so the in-flight guard can tell
     whether an accepted-but-still-running ManualImport already covers a download:
     ``download_id`` is the primary match key (the infohash a queue-driven import
     carries, ``string | null`` in the schema - absent for a folder/season-pack
-    import), with ``path`` and ``episode_ids`` as the fallback signals. Parsed at
-    the client boundary via :meth:`from_api`.
+    import), with ``path`` and ``episode_ids`` as the fallback signals. Every
+    field folds junk independently, so a dict entry never fails validation.
     """
 
-    path: str | None = None
-    download_id: str | None = None
-    series_id: int = 0
-    episode_ids: tuple[int, ...] = ()
-
-    @classmethod
-    def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Build from one raw command ``body.files[]`` entry (filters unknown keys)."""
-
-        path = raw.get("path")
-        download_id = raw.get("downloadId")
-        raw_ids: list[Any] = raw.get("episodeIds") or []
-        episode_ids = tuple(i for i in raw_ids if isinstance(i, int))
-        return cls(
-            path=path if isinstance(path, str) else None,
-            download_id=download_id if isinstance(download_id, str) else None,
-            series_id=raw.get("seriesId", 0),
-            episode_ids=episode_ids,
-        )
+    path: _LenientStr = None
+    download_id: _LenientStr = Field(default=None, validation_alias="downloadId")
+    series_id: _ZeroInt = Field(default=0, validation_alias="seriesId")
+    episode_ids: Annotated[tuple[int, ...], BeforeValidator(_int_entries)] = Field(
+        default=(),
+        validation_alias="episodeIds",
+    )
 
 
-@dataclass(frozen=True, slots=True)
-class CommandResource:
+class CommandResource(_ApiModel):
     """A Sonarr ``CommandResource`` (schema), reduced to the fields read back.
 
     A command POST returns this with the queued command ``id``, and the status
@@ -781,41 +855,41 @@ class CommandResource:
     ``files`` (the per-file rows from ``body.files``, each a :class:`CommandFile`
     carrying the download id / path / episode ids that say which download a
     still-running import covers). All default to empty so the POST/status callers
-    that only read ``id``/``status``/``result`` are unaffected. Parsed at the
-    client boundary via :meth:`from_api`, mirroring :class:`SonarrEpisode`.
+    that only read ``id``/``status``/``result`` are unaffected. Every field folds
+    junk independently and a junk ``files[]`` entry is skipped WITHOUT dropping
+    the command - a dropped CommandResource would blind the in-flight guard
+    (the double-import direction).
     """
 
-    id: int = 0
-    status: str | None = None
-    result: str | None = None
-    name: str | None = None
-    message: str | None = None
-    files: tuple[CommandFile, ...] = ()
+    id: _ZeroInt = 0
+    status: _LenientStr = None
+    result: _LenientStr = None
+    name: _LenientStr = None
+    message: _LenientStr = None
+    # ``files`` lives under the nested ``body`` object (the original command
+    # request Sonarr echoes back); the POST/status responses omit it.
+    files: tuple[CommandFile, ...] = Field(default=(), validation_alias=AliasPath("body", "files"))
+
+    @field_validator("files", mode="before")
+    @classmethod
+    def _lenient_files(cls, value: object) -> object:
+        """Skip junk ``files[]`` entries; never fail the whole command over one."""
+
+        if not isinstance(value, list):
+            return ()
+        kept: list[CommandFile] = []
+        for entry in cast("list[object]", value):
+            try:
+                kept.append(CommandFile.model_validate(entry))
+            except ValidationError:
+                continue
+        return kept
 
     @classmethod
     def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Build from one raw ``CommandResource`` dict (filters unknown keys).
+        """Thin shim over ``model_validate`` (the historical parse entrypoint)."""
 
-        ``files`` lives under the nested ``body`` object (the original command
-        request Sonarr echoes back), so it is read from ``body.files`` when present;
-        the POST/status responses omit it, leaving ``files`` empty.
-        """
-
-        status = raw.get("status")
-        result = raw.get("result")
-        name = raw.get("name")
-        message = raw.get("message")
-        body: dict[str, Any] = raw.get("body") or {}
-        raw_files: list[Any] = body.get("files") or []
-        files = tuple(CommandFile.from_api(cast("dict[str, Any]", f)) for f in raw_files if isinstance(f, dict))
-        return cls(
-            id=raw.get("id", 0),
-            status=status if isinstance(status, str) else None,
-            result=result if isinstance(result, str) else None,
-            name=name if isinstance(name, str) else None,
-            message=message if isinstance(message, str) else None,
-            files=files,
-        )
+        return cls.model_validate(raw)
 
 
 # --- Radarr movie files (``/api/v3/moviefile`` records) ----------------------
@@ -825,30 +899,26 @@ class CommandResource:
 # schema exactly (a schema ``string | null`` field -> ``str | None``).
 
 
-@dataclass(frozen=True, slots=True)
-class MovieFile:
+class MovieFile(_ApiModel):
     """A Radarr ``MovieFileResource``, reduced to the fields the syncer reads.
 
     ``get_radarr_release_dict`` reads each movie file into the shared
     :data:`ArrReleaseDict` decision (release group -> existing-file sizes), so a
     movie file is READ into a decision, not re-emitted: it follows the
-    :class:`SonarrEpisode` precedent (a frozen dataclass VIEW with a defensive
-    :meth:`from_api`). Only ``release_group`` (``string | null`` in the schema)
-    and ``size`` (a non-null ``int64``) are consumed. Parsed at the client
-    boundary.
+    :class:`SonarrEpisode` precedent (a fail-open list read - a record with
+    junk in a typed field is skipped with a warning). Only ``release_group``
+    (``string | null`` in the schema) and ``size`` (a non-null ``int64``) are
+    consumed. Validated at the client boundary.
     """
 
-    release_group: str | None = None
+    release_group: str | None = Field(default=None, validation_alias="releaseGroup")
     size: int | None = None
 
     @classmethod
     def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Build from one raw ``MovieFileResource`` dict (filters unknown keys)."""
+        """Thin shim over ``model_validate`` (the historical parse entrypoint)."""
 
-        return cls(
-            release_group=raw.get("releaseGroup"),
-            size=raw.get("size"),
-        )
+        return cls.model_validate(raw)
 
 
 # --- Sonarr parse (``/api/v3/parse`` ``episodes`` array) ---------------------

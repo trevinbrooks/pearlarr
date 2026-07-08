@@ -274,6 +274,6 @@ def test_collect_anime_movies_wires_id_spaces() -> None:
 def test_movie_file_from_api_nullability() -> None:
     """Missing releaseGroup/size parse to None; unknown keys are ignored."""
 
-    assert MovieFile.from_api({}) == MovieFile(None, None)
+    assert MovieFile.from_api({}) == MovieFile(release_group=None, size=None)
     parsed = MovieFile.from_api({"releaseGroup": "SubsPlease", "size": 123, "id": 9, "unknown": True})
     assert parsed == MovieFile(release_group="SubsPlease", size=123)

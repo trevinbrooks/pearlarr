@@ -8,6 +8,8 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, cast, override
 
+from pydantic import ValidationError
+
 from .arr_http import ArrHttp
 from .log import indent_string
 from .manual_import import PendingImport
@@ -26,6 +28,8 @@ from .seadex_types import (
     SonarrEpisode,
     SonarrItem,
     SonarrSeries,
+    validate_each,
+    validation_summary,
 )
 
 # Per-request timeout (seconds) for the manual-import folder scan. Sonarr walks
@@ -161,20 +165,17 @@ class SonarrClient(AbstractSonarrClient):
         if raw is None:
             return None
 
-        # Sort by season/episode number for slicing later, then parse each raw
-        # record into a SonarrEpisode at this client boundary. A record missing
-        # either number sorts first (-1) instead of raising on a None<int compare.
-        def _ep_key(record: dict[str, Any]) -> tuple[int, int]:
-            season = record.get("seasonNumber")
-            episode = record.get("episodeNumber")
-            return (
-                season if isinstance(season, int) else -1,
-                episode if isinstance(episode, int) else -1,
-            )
-
-        # Element dicts are unvalidated JSON: cast at the parse boundary, skip strays.
-        raw_eps = sorted((cast("dict[str, Any]", ep) for ep in raw if isinstance(ep, dict)), key=_ep_key)
-        return [SonarrEpisode.from_api(ep) for ep in raw_eps]
+        # Validate each record at this client boundary (junk records skip with a
+        # warning), then sort by season/episode for slicing later. A record
+        # missing either number sorts first (-1), never a None<int TypeError.
+        episodes = validate_each(SonarrEpisode, raw, logger=self._logger)
+        episodes.sort(
+            key=lambda ep: (
+                ep.season_number if ep.season_number is not None else -1,
+                ep.episode_number if ep.episode_number is not None else -1,
+            ),
+        )
+        return episodes
 
     @override
     def parse(self, filename: str) -> list[dict[str, int]] | None:
@@ -398,8 +399,15 @@ class SonarrClient(AbstractSonarrClient):
             return None
 
         # The returned CommandResource's "id" is the queued command id (0 when
-        # absent): cast at the parse boundary and narrow to the consumed fields.
-        return CommandResource.from_api(cast("dict[str, Any]", payload)).id or None
+        # absent, so the caller drops it); a malformed body fails open to None.
+        try:
+            command = CommandResource.model_validate(payload)
+        except ValidationError as e:
+            self._logger.warning(
+                indent_string(f"Could not queue {body['name']} command (malformed response: {validation_summary(e)})"),
+            )
+            return None
+        return command.id or None
 
     @override
     def queue(self) -> list[QueueRecord]:
@@ -443,18 +451,18 @@ class SonarrClient(AbstractSonarrClient):
                 return records
 
             # The paged object's "records" is the array of QueueResource objects;
-            # guard the element shape too (a stray non-object entry is skipped,
-            # never crashed on), then narrow each to the fields the wait reads.
+            # validate each at this boundary (a stray non-object entry is skipped
+            # with a warning, never crashed on).
             raw = paged.get("records")
-            raw_records: list[dict[str, Any]] = []
-            if isinstance(raw, list):
-                raw_records = [
-                    cast("dict[str, Any]", record) for record in cast("list[object]", raw) if isinstance(record, dict)
-                ]
-            records.extend(QueueRecord.from_api(record) for record in raw_records)
+            page_records = (
+                validate_each(QueueRecord, cast("list[object]", raw), logger=self._logger)
+                if isinstance(raw, list)
+                else []
+            )
+            records.extend(page_records)
 
             total = paged.get("totalRecords")
-            if not raw_records or len(records) >= (total if isinstance(total, int) else 0):
+            if not page_records or len(records) >= (total if isinstance(total, int) else 0):
                 return records
             page += 1
 
@@ -537,9 +545,15 @@ class SonarrClient(AbstractSonarrClient):
         if payload is None:
             return CommandResource()
 
-        # The single CommandResource object is unvalidated JSON: cast at the
-        # parse boundary and narrow it to the consumed fields.
-        return CommandResource.from_api(cast("dict[str, Any]", payload))
+        # A malformed body fails open to the same default (status None) the
+        # transport miss takes - the refresh poll loop depends on it.
+        try:
+            return CommandResource.model_validate(payload)
+        except ValidationError as e:
+            self._logger.warning(
+                indent_string(f"Could not read status for command {command_id} ({validation_summary(e)})"),
+            )
+            return CommandResource()
 
     @override
     def list_commands(self) -> list[CommandResource]:
@@ -569,11 +583,8 @@ class SonarrClient(AbstractSonarrClient):
         if raw is None:
             return []
 
-        # Element dicts are unvalidated CommandResource objects: cast at the parse
-        # boundary (skipping strays), then narrow each to the fields the guard reads.
-        return [
-            CommandResource.from_api(cast("dict[str, Any]", command)) for command in raw if isinstance(command, dict)
-        ]
+        # Validate each command at this boundary (strays skip with a warning).
+        return validate_each(CommandResource, raw, logger=self._logger)
 
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:
@@ -582,5 +593,4 @@ class SonarrClient(AbstractSonarrClient):
         return self._http.history_since(
             date,
             include_flags={"includeSeries": "false", "includeEpisode": "false"},
-            item_key="seriesId",
         )
