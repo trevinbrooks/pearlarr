@@ -1094,11 +1094,15 @@ class TestScheduledLifecycle:
         # Call the handler directly - never deliver a real signal in-process.
         app_logger = logging.getLogger("SeaDexArr")
         capture = CaptureHandler()
+        prior_level = app_logger.level
         app_logger.addHandler(capture)
         app_logger.setLevel(logging.INFO)
-
-        with pytest.raises(SystemExit) as excinfo:
-            _handle_sigterm(signal.SIGTERM, None)
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                _handle_sigterm(signal.SIGTERM, None)
+        finally:
+            app_logger.removeHandler(capture)
+            app_logger.setLevel(prior_level)
 
         assert excinfo.value.code == 0
         assert [r.getMessage() for r in capture.records] == ["Received SIGTERM; exiting."]
