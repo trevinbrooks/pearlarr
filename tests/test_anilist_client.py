@@ -5,10 +5,10 @@
 # strict directive above re-enables it, so restore the repo's test policy here.
 """Direct unit tests for the pure helpers and retry path in ``anilist_client``.
 
-These functions are otherwise only exercised incidentally. The classification /
-parsing / extraction helpers take plain ``dict`` bodies, so they are tested with
-no mocks at all; ``_post_with_retry`` is faked at the ``httpx`` boundary with
-the ``respx`` library (no ``unittest.mock``).
+These are otherwise only exercised incidentally. The classification / parsing /
+extraction helpers take plain ``dict`` bodies, so they are tested with no mocks
+at all; ``AniListClient``'s retry loop is exercised through its public queries,
+faked at the ``httpx`` boundary with the ``respx`` library (no ``unittest.mock``).
 """
 
 import logging
@@ -23,23 +23,28 @@ from seadexarr.modules.anilist_client import (
     _MEDIA_FIELDS,
     API_URL,
     MAX_RETRIES,
-    QUERY,
     RETRYABLE_ERROR_SUBSTRINGS,
     RETRYABLE_STATUS,
-    AniListRetryLog,
+    AniListClient,
     _errors_are_retryable,
-    _extract,
-    _media_from,
     _parse_errors,
-    _post_with_retry,
+    extract_path,
+    media_from,
 )
 from seadexarr.modules.seadex_types import AniListError, AniListMediaNode
 
+from .builders import make_logger
 from .fakes import CaptureHandler
 
 
 def _no_sleep(_seconds: float) -> None:
     """Replace ``time.sleep`` so the retry backoffs don't actually wait."""
+
+
+def _client() -> AniListClient:
+    """A wire client over a quiet logger, for tests with no narration asserts."""
+
+    return AniListClient(client=httpx.Client(), logger=make_logger())
 
 
 # --- _errors_are_retryable --------------------------------------------------
@@ -126,32 +131,32 @@ def test_parse_errors_skips_malformed_entries() -> None:
     ]
 
 
-# --- _extract ---------------------------------------------------------------
+# --- extract_path ---------------------------------------------------------------
 
 
 def test_extract_present_path() -> None:
     """A fully present path returns the leaf dict node verbatim."""
 
     body: dict[str, object] = {"data": {"Media": {"id": 5, "episodes": 12}}}
-    assert _extract(body, "data", "Media") == {"id": 5, "episodes": 12}
+    assert extract_path(body, "data", "Media") == {"id": 5, "episodes": 12}
 
 
 def test_extract_missing_key_yields_empty() -> None:
     """A key missing at the final hop yields ``{}`` rather than ``None``."""
 
     body: dict[str, object] = {"data": {}}
-    assert _extract(body, "data", "Media") == {}
+    assert extract_path(body, "data", "Media") == {}
 
 
 def test_extract_null_intermediate_yields_empty() -> None:
     """A null intermediate level (``{"data": null}``) is coerced to ``{}`` and walked safely."""
 
     body: dict[str, object] = {"data": None}
-    assert _extract(body, "data", "Media") == {}
-    assert _extract(None, "data", "Media") == {}
+    assert extract_path(body, "data", "Media") == {}
+    assert extract_path(None, "data", "Media") == {}
 
 
-# --- _media_from ------------------------------------------------------------
+# --- media_from ------------------------------------------------------------
 
 
 def test_media_from_full_body() -> None:
@@ -168,7 +173,7 @@ def test_media_from_full_body() -> None:
             },
         },
     }
-    assert _media_from(body) == AniListMediaNode(
+    assert media_from(body) == AniListMediaNode(
         id=5,
         title_english="English Title",
         title_romaji="Romaji Title",
@@ -182,13 +187,13 @@ def test_media_from_missing_fields_defaults() -> None:
     """Absent nested ``title``/``coverImage`` and scalar fields default to ``None``."""
 
     body: dict[str, object] = {"data": {"Media": {"id": 7}}}
-    assert _media_from(body) == AniListMediaNode(id=7)
+    assert media_from(body) == AniListMediaNode(id=7)
 
 
 def test_media_from_none_body_is_all_none() -> None:
     """A ``None`` body (a miss) parses to an all-``None`` node, not a crash."""
 
-    assert _media_from(None) == AniListMediaNode()
+    assert media_from(None) == AniListMediaNode()
 
 
 # --- constants sanity -------------------------------------------------------
@@ -219,26 +224,26 @@ def test_retryable_constants() -> None:
     assert all(substring == substring.lower() for substring in RETRYABLE_ERROR_SUBSTRINGS)
 
 
-# --- _post_with_retry (respx-faked httpx boundary) --------------------------
+# --- AniListClient.query / query_batch (respx-faked httpx boundary) --------------------------
 
 
 @respx.mock
-def test_post_with_retry_returns_valid_200_body(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_query_returns_valid_200_body(monkeypatch: pytest.MonkeyPatch) -> None:
     """A single 200 with a valid body is returned verbatim after one request."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     expected: dict[str, object] = {"data": {"Media": {"id": 1, "episodes": 12}}}
     route = respx.post(API_URL).respond(json=expected)
 
-    body = _post_with_retry(QUERY, {"id": 1}, client=httpx.Client())
+    body = _client().query(1)
 
     assert route.call_count == 1
     assert body == expected
-    assert _media_from(body).episodes == 12
+    assert media_from(body).episodes == 12
 
 
 @respx.mock
-def test_post_with_retry_retries_after_http_429(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_query_retries_after_http_429(monkeypatch: pytest.MonkeyPatch) -> None:
     """A 429 is retried; the following 200 succeeds, for two total requests."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
@@ -249,14 +254,14 @@ def test_post_with_retry_retries_after_http_429(monkeypatch: pytest.MonkeyPatch)
         httpx.Response(200, json=success),
     ]
 
-    body = _post_with_retry(QUERY, {"id": 2}, client=httpx.Client())
+    body = _client().query(2)
 
     assert route.call_count == 2
     assert body == success
 
 
 @respx.mock
-def test_post_with_retry_retries_on_throttle_error_body(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_query_retries_on_throttle_error_body(monkeypatch: pytest.MonkeyPatch) -> None:
     """A soft-throttle (HTTP 200 + throttle error payload) takes the same retry path as a 429."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
@@ -271,24 +276,42 @@ def test_post_with_retry_retries_on_throttle_error_body(monkeypatch: pytest.Monk
         httpx.Response(200, json=success),
     ]
 
-    body = _post_with_retry(QUERY, {"id": 3}, client=httpx.Client())
+    body = _client().query(3)
 
     assert route.call_count == 2
     assert body == success
 
 
-# --- AniListRetryLog (backoff narration + the once-per-run give-up warning) --
+@respx.mock
+def test_query_batch_reshapes_page_media_by_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Page body is re-keyed to {id: single-id-shaped body}, so the results can
+    seed the run cache directly; junk and id-less entries in the media array are
+    skipped (an id unknown to AniList is simply absent, never an error)."""
+
+    monkeypatch.setattr(time, "sleep", _no_sleep)
+    page: dict[str, object] = {
+        "data": {"Page": {"media": [{"id": 1, "episodes": 12}, "junk", {"episodes": 9}]}},
+    }
+    route = respx.post(API_URL).respond(json=page)
+
+    out = _client().query_batch([1, 2])
+
+    assert route.call_count == 1
+    assert out == {1: {"data": {"Media": {"id": 1, "episodes": 12}}}}
 
 
-def _retry_log() -> tuple[AniListRetryLog, CaptureHandler]:
-    """A retry log over a captured logger (DEBUG so every narration records)."""
+# --- retry narration (backoff waits + the once-per-run give-up warning) ------
+
+
+def _narrated_client() -> tuple[AniListClient, CaptureHandler]:
+    """A wire client over a captured logger (DEBUG so every narration records)."""
 
     logger = logging.getLogger("test_anilist_retry")
     handler = CaptureHandler()
     logger.handlers = [handler]
     logger.propagate = False
     logger.setLevel(logging.DEBUG)
-    return AniListRetryLog(logger=logger), handler
+    return AniListClient(client=httpx.Client(), logger=logger), handler
 
 
 @respx.mock
@@ -297,7 +320,7 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
     looks hung - and a successful retry never fires the give-up warning."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
-    retry_log, handler = _retry_log()
+    client, handler = _narrated_client()
     success: dict[str, object] = {"data": {"Media": {"id": 2, "episodes": 24}}}
     route = respx.post(API_URL)
     route.side_effect = [
@@ -305,7 +328,7 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
         httpx.Response(200, json=success),
     ]
 
-    body = _post_with_retry(QUERY, {"id": 2}, retry_log, client=httpx.Client())
+    body = client.query(2)
 
     assert body == success
     infos = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
@@ -316,15 +339,14 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
 @respx.mock
 def test_give_up_warns_once_per_run_not_per_title(monkeypatch: pytest.MonkeyPatch) -> None:
     """Exhausting the retries warns ONCE; a second exhausted request (another
-    title, same run) stays quiet - the flag is per retry-log, i.e. per run."""
+    title, same run) stays quiet - the flag is per client, i.e. per run."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
-    retry_log, handler = _retry_log()
+    client, handler = _narrated_client()
     route = respx.post(API_URL).respond(status_code=429, json={"data": None})
-    client = httpx.Client()
 
-    _post_with_retry(QUERY, {"id": 1}, retry_log, client=client)
-    _post_with_retry(QUERY, {"id": 2}, retry_log, client=client)
+    client.query(1)
+    client.query(2)
 
     assert route.call_count == 2 * (MAX_RETRIES + 1)
     warnings = [r.getMessage() for r in handler.records if r.levelno == logging.WARNING]
@@ -338,10 +360,10 @@ def test_network_give_up_returns_empty_and_warns(monkeypatch: pytest.MonkeyPatch
     instead of total silence."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
-    retry_log, handler = _retry_log()
+    client, handler = _narrated_client()
     route = respx.post(API_URL).mock(side_effect=httpx.ConnectError("down"))
 
-    body = _post_with_retry(QUERY, {"id": 1}, retry_log, client=httpx.Client())
+    body = client.query(1)
 
     assert body == {}
     assert route.call_count == MAX_RETRIES + 1

@@ -1,3 +1,5 @@
+"""AniList GraphQL wire layer: the bound client, retry policy, and parse helpers."""
+
 import contextlib
 import logging
 import random
@@ -14,10 +16,10 @@ API_URL = "https://graphql.anilist.co"
 type AniListCache = dict[int, dict[str, dict[str, Any]]]
 """In-memory AniList cache: id -> raw GraphQL body ``{"data": {"Media": {...}}}``.
 
-The cached value is the *whole* response body (what ``get_query`` /
-``get_query_batch`` return), so it round-trips verbatim through the persisted
-``anilist_meta`` block. ``_get_media`` extracts and parses the ``Media`` node
-out of it into an :class:`AniListMediaNode`.
+The cached value is the *whole* response body (what :meth:`AniListClient.query`
+/ :meth:`AniListClient.query_batch` return), so it round-trips verbatim through
+the persisted ``anilist_meta`` block. The gateway extracts and parses the
+``Media`` node out of it into an :class:`AniListMediaNode`.
 """
 
 # AniList rate-limits (HTTP 429) and occasionally returns a transient 5xx. Retry
@@ -92,8 +94,8 @@ class AniListRetryLog:
 
     Without it a rate-limit backoff sleeps up to 60s with zero output (the run
     looks hung) and a final give-up returns ``{}`` silently. One instance per
-    run (``AniListGateway`` owns it), so the give-up warning fires once per run
-    rather than once per title; callers without one stay silent as before.
+    :class:`AniListClient` - which is built once per arr run - so the give-up
+    warning fires once per run rather than once per title.
     """
 
     logger: logging.Logger
@@ -165,7 +167,7 @@ def _parse_errors(body: dict[str, Any] | None) -> list[AniListError]:
     ]
 
 
-def _extract(body: dict[str, Any] | None, *path: str) -> dict[str, Any]:
+def extract_path(body: dict[str, Any] | None, *path: str) -> dict[str, Any]:
     """Walk a null-safe key path through a GraphQL body, yielding {} on any miss
 
     AniList returns {"data": null} or {"data": {"Media": null}} for an unknown
@@ -184,7 +186,7 @@ def _extract(body: dict[str, Any] | None, *path: str) -> dict[str, Any]:
     return node
 
 
-def _media_from(body: dict[str, Any] | None) -> AniListMediaNode:
+def media_from(body: dict[str, Any] | None) -> AniListMediaNode:
     """Parse the Media node from a single-id body into an AniListMediaNode
 
     The raw ``{"data": {"Media": {...}}}`` body is the dynamic GraphQL boundary;
@@ -195,285 +197,144 @@ def _media_from(body: dict[str, Any] | None) -> AniListMediaNode:
         body (dict[str, Any] | None): The parsed JSON response body
     """
 
-    return AniListMediaNode.from_api(_extract(body, "data", "Media"))
+    return AniListMediaNode.from_api(extract_path(body, "data", "Media"))
 
 
-def _post_with_retry(
-    query: str,
-    variables: dict[str, Any],
-    retry_log: AniListRetryLog | None = None,
-    *,
-    client: httpx.Client,
-) -> dict[str, Any]:
-    """POST a GraphQL query to AniList, retrying politely on rate-limits / 5xx
+class AniListClient:
+    """AniList GraphQL wire client: the POST + retry policy, bound once.
 
-    On a rate-limit (HTTP 429) or a transient 5xx, AniList returns
-    "{"data": null, ...}". It can also soft-throttle with HTTP 200 and a
-    throttle/rate-limit error in the "errors" array (see
-    ``_errors_are_retryable``); both take the same backoff path. Returning a
-    throttled response untried is what surfaced downstream as
-    "'NoneType' object has no attribute 'get'" when a run made many requests
-    in quick succession, so we wait (honoring Retry-After when present) and
-    retry before giving up. Returns the parsed JSON - which may still be an
-    error payload after the final attempt - or "{}" if the response body
-    wasn't JSON. ``retry_log`` (when given) narrates the waits and warns once
-    per run on a final give-up; without one the retries stay silent.
-    ``client`` is the shared web client (its defaults carry the identifying
-    User-Agent and the timeout bounds); this loop stays AniList's ONE retry
-    policy - the web client's generic GET helper is never involved.
+    The AniList analog of :class:`~.arr_http.ArrHttp`: the shared web client
+    and the per-run retry narration are bound at construction, so callers ask
+    for bodies by id instead of threading ``(client, retry_log)`` through
+    every call. Construction is network-free. The gateway layers the run cache
+    on top; this class is deliberately cache-blind.
     """
 
-    for attempt in range(MAX_RETRIES + 1):
-        try:
-            resp = client.post(API_URL, json={"query": query, "variables": variables})
-        except httpx.HTTPError as e:
-            # Network blip: back off and retry, then give up with an empty result
-            if attempt >= MAX_RETRIES:
-                if retry_log is not None:
-                    retry_log.gave_up()
-                return {}
-            wait = min(2**attempt + random.uniform(0, 1), MAX_BACKOFF)
-            if retry_log is not None:
-                retry_log.waiting(
+    def __init__(self, *, client: httpx.Client, logger: logging.Logger) -> None:
+        """Bind the wire client to the shared web client and run logger.
+
+        Args:
+            client (httpx.Client): The shared web client every POST rides (its
+                defaults carry the identifying User-Agent and timeout bounds).
+            logger (logging.Logger): Voices the retry waits / give-ups via the
+                bound :class:`AniListRetryLog` (one give-up warning per run).
+        """
+
+        self._client = client
+        self._retry_log = AniListRetryLog(logger=logger)
+
+    def query(self, al_id: int) -> dict[str, Any]:
+        """Fetch one AniList Media by id (see _post_with_retry for the retry policy)
+
+        Args:
+            al_id (int): Anilist ID
+        """
+
+        return self._post_with_retry(QUERY, {"id": al_id})
+
+    def query_batch(self, al_ids: list[int]) -> AniListCache:
+        """Fetch up to ANILIST_BATCH_SIZE AniList Media in a single request via id_in
+
+        Returns "{id: {"data": {"Media": {...}}}}" mirroring the single-id shape,
+        so the results can seed the same cache directly. Ids unknown to AniList are
+        simply absent from the result.
+
+        Args:
+            al_ids (list[int]): Up to ANILIST_BATCH_SIZE AniList IDs
+        """
+
+        j = self._post_with_retry(BATCH_QUERY, {"ids": list(al_ids)})
+        # response.json() is untyped and the cache stores each Media body verbatim
+        # (re-parsed on read via AniListMediaNode.from_api). Keep each Media OBJECT
+        # carrying an id, skipping any non-object entry in the array.
+        out: AniListCache = {}
+        for raw in cast("list[Any]", extract_path(j, "data", "Page").get("media") or []):
+            if not isinstance(raw, dict):
+                continue
+            media = cast("dict[str, Any]", raw)
+            media_id = media.get("id")
+            if media_id is not None:
+                out[media_id] = {"data": {"Media": media}}
+        return out
+
+    def _post_with_retry(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+        """POST a GraphQL query to AniList, retrying politely on rate-limits / 5xx
+
+        On a rate-limit (HTTP 429) or a transient 5xx, AniList returns
+        "{"data": null, ...}". It can also soft-throttle with HTTP 200 and a
+        throttle/rate-limit error in the "errors" array (see
+        ``_errors_are_retryable``); both take the same backoff path. Returning a
+        throttled response untried is what surfaced downstream as
+        "'NoneType' object has no attribute 'get'" when a run made many requests
+        in quick succession, so we wait (honoring Retry-After when present) and
+        retry before giving up. Returns the parsed JSON - which may still be an
+        error payload after the final attempt - or "{}" if the response body
+        wasn't JSON. The bound retry log narrates the waits and warns once per
+        run on a final give-up. The bound client is the shared web client (its
+        defaults carry the identifying User-Agent and the timeout bounds); this
+        loop stays AniList's ONE retry policy - the web client's generic GET
+        helper is never involved.
+        """
+
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                resp = self._client.post(API_URL, json={"query": query, "variables": variables})
+            except httpx.HTTPError as e:
+                # Network blip: back off and retry, then give up with an empty result
+                if attempt >= MAX_RETRIES:
+                    self._retry_log.gave_up()
+                    return {}
+                wait = min(2**attempt + random.uniform(0, 1), MAX_BACKOFF)
+                self._retry_log.waiting(
                     f"request failed ({type(e).__name__})",
                     wait,
                     attempt + 1,
                     level=logging.DEBUG,
                 )
-            time.sleep(wait)
-            continue
+                time.sleep(wait)
+                continue
 
-        retryable = resp.status_code in RETRYABLE_STATUS
+            retryable = resp.status_code in RETRYABLE_STATUS
 
-        # Parse the body so a soft-throttle (HTTP 200 + throttle error payload)
-        # can take the same retry path as a 429 status. A non-JSON body yields
-        # {} here and falls through to the return below. response.json() is
-        # untyped (the GraphQL body is an open JSON object), so cast at the parse
-        # boundary; a non-dict body is rejected by the isinstance guards below.
-        try:
-            body: dict[str, Any] | None = cast("dict[str, Any]", resp.json())
-        except ValueError:
-            body = None
+            # Parse the body so a soft-throttle (HTTP 200 + throttle error payload)
+            # can take the same retry path as a 429 status. A non-JSON body yields
+            # {} here and falls through to the return below. response.json() is
+            # untyped (the GraphQL body is an open JSON object), so cast at the parse
+            # boundary; a non-dict body is rejected by the isinstance guards below.
+            try:
+                body: dict[str, Any] | None = cast("dict[str, Any]", resp.json())
+            except ValueError:
+                body = None
 
-        if not retryable and isinstance(body, dict) and _errors_are_retryable(body):
-            retryable = True
+            if not retryable and isinstance(body, dict) and _errors_are_retryable(body):
+                retryable = True
 
-        if retryable and attempt < MAX_RETRIES:
-            # Prefer the server's Retry-After (seconds, honored exactly);
-            # otherwise exponential, jittered so concurrent clients that hit
-            # the same limit window don't retry in lockstep.
-            retry_after = resp.headers.get("Retry-After")
-            wait = 2**attempt + random.uniform(0, 1)
-            if retry_after is not None:
-                with contextlib.suppress(TypeError, ValueError):
-                    wait = float(retry_after)
+            if retryable and attempt < MAX_RETRIES:
+                # Prefer the server's Retry-After (seconds, honored exactly);
+                # otherwise exponential, jittered so concurrent clients that hit
+                # the same limit window don't retry in lockstep.
+                retry_after = resp.headers.get("Retry-After")
+                wait = 2**attempt + random.uniform(0, 1)
+                if retry_after is not None:
+                    with contextlib.suppress(TypeError, ValueError):
+                        wait = float(retry_after)
 
-            wait = min(max(wait, 1), MAX_BACKOFF)
-            if retry_log is not None:
+                wait = min(max(wait, 1), MAX_BACKOFF)
                 # A 429 / soft-throttle reads as a rate limit; a 5xx names itself.
                 reason = (
                     f"returned HTTP {resp.status_code}"
                     if resp.status_code in RETRYABLE_STATUS and resp.status_code != 429
                     else "rate-limited"
                 )
-                retry_log.waiting(reason, wait, attempt + 1)
-            time.sleep(wait)
-            continue
+                self._retry_log.waiting(reason, wait, attempt + 1)
+                time.sleep(wait)
+                continue
 
-        # Final attempt (or a non-retryable response): return the parsed body,
-        # or {} when the body wasn't JSON, so the caller degrades gracefully.
-        # Running out of attempts on a retryable response is a give-up too.
-        if retryable and retry_log is not None:
-            retry_log.gave_up()
-        return body if body is not None else {}
+            # Final attempt (or a non-retryable response): return the parsed body,
+            # or {} when the body wasn't JSON, so the caller degrades gracefully.
+            # Running out of attempts on a retryable response is a give-up too.
+            if retryable:
+                self._retry_log.gave_up()
+            return body if body is not None else {}
 
-    return {}
-
-
-def get_query(
-    al_id: int,
-    retry_log: AniListRetryLog | None = None,
-    *,
-    client: httpx.Client,
-) -> dict[str, Any]:
-    """Fetch one AniList Media by id (see _post_with_retry for the retry policy)
-
-    Args:
-        al_id (int): Anilist ID
-        retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
-            None (silent)
-        client (httpx.Client): The shared web client the POST rides.
-    """
-
-    return _post_with_retry(QUERY, {"id": al_id}, retry_log, client=client)
-
-
-def get_query_batch(
-    al_ids: list[int],
-    retry_log: AniListRetryLog | None = None,
-    *,
-    client: httpx.Client,
-) -> AniListCache:
-    """Fetch up to ANILIST_BATCH_SIZE AniList Media in a single request via id_in
-
-    Returns "{id: {"data": {"Media": {...}}}}" mirroring the single-id shape,
-    so the results can seed the same cache directly. Ids unknown to AniList are
-    simply absent from the result.
-
-    Args:
-        al_ids (list[int]): Up to ANILIST_BATCH_SIZE AniList IDs
-        retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
-            None (silent)
-        client (httpx.Client): The shared web client the POST rides.
-    """
-
-    j = _post_with_retry(BATCH_QUERY, {"ids": list(al_ids)}, retry_log, client=client)
-    # response.json() is untyped and the cache stores each Media body verbatim
-    # (re-parsed on read via AniListMediaNode.from_api). Keep each Media OBJECT
-    # carrying an id, skipping any non-object entry in the array.
-    out: AniListCache = {}
-    for raw in cast("list[Any]", _extract(j, "data", "Page").get("media") or []):
-        if not isinstance(raw, dict):
-            continue
-        media = cast("dict[str, Any]", raw)
-        media_id = media.get("id")
-        if media_id is not None:
-            out[media_id] = {"data": {"Media": media}}
-    return out
-
-
-def _get_media(
-    al_id: int,
-    al_cache: AniListCache | None,
-    retry_log: AniListRetryLog | None = None,
-    *,
-    client: httpx.Client,
-) -> AniListMediaNode:
-    """Fetch and parse the AniList Media node for an ID, caching successful lookups
-
-    Centralizes the cache lookup and the once-only parse the public helpers
-    share: the raw ``{"data": {"Media": {...}}}`` body is the cached value
-    (a successful lookup is stored into the caller's ``al_cache`` in place), but
-    callers receive a typed :class:`AniListMediaNode`. AniList returns
-    {"data": {"Media": null}} (or "{"data": null}") for an unknown ID or a
-    rate-limit, so a miss yields an all-``None`` node rather than raising. A miss
-    is deliberately not cached, so a transient rate-limit isn't remembered as a
-    permanent "unknown" for the rest of the run - the next call gets a fresh
-    chance.
-
-    Args:
-        al_id (int): Anilist ID
-        al_cache (AniListCache | None): Cache of prior AniList bodies, keyed by ID
-        client (httpx.Client): The shared web client a cache miss's query rides.
-
-    Returns:
-        AniListMediaNode: The parsed node; all-``None`` on a miss.
-    """
-
-    if al_cache is None:
-        al_cache = {}
-
-    # Cache hit: parse the stored body's Media node.
-    j = al_cache.get(al_id)
-    if j is not None:
-        return _media_from(j)
-
-    # Miss: query AniList. Extract the raw Media dict once to gate the cache
-    # store, then parse it into the typed node for the return.
-    j = get_query(al_id, retry_log, client=client)
-    raw_media = _extract(j, "data", "Media")
-
-    # Only remember a response that actually carried Media, so a transient
-    # failure (rate-limit, network) isn't cached as a permanent miss. The
-    # cached body is only ever read, so store it directly rather than copying.
-    if raw_media:
-        al_cache[al_id] = j
-
-    return AniListMediaNode.from_api(raw_media)
-
-
-def get_anilist_n_eps(
-    al_id: int,
-    al_cache: AniListCache | None = None,
-    retry_log: AniListRetryLog | None = None,
-    *,
-    client: httpx.Client,
-) -> int | None:
-    """Query AniList to get the number of episodes for anime.
-
-    Args:
-        al_id (int): Anilist ID
-        al_cache (AniListCache): Cached Anilist bodies, updated in place.
-            Defaults to None (no caching across calls)
-        retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
-            None (silent)
-        client (httpx.Client): The shared web client a cache miss's query rides.
-    """
-
-    return _get_media(al_id, al_cache, retry_log, client=client).episodes
-
-
-def get_anilist_title(
-    al_id: int,
-    al_cache: AniListCache | None = None,
-    retry_log: AniListRetryLog | None = None,
-    *,
-    client: httpx.Client,
-) -> str | None:
-    """Query AniList to get a title for anime.
-
-    Args:
-        al_id (int): Anilist ID
-        al_cache (AniListCache): Cached Anilist bodies, updated in place.
-            Defaults to None (no caching across calls)
-        retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
-            None (silent)
-        client (httpx.Client): The shared web client a cache miss's query rides.
-    """
-
-    media = _get_media(al_id, al_cache, retry_log, client=client)
-
-    # Prefer the English title, but fall back to romaji
-    return media.title_english or media.title_romaji
-
-
-def get_anilist_thumb(
-    al_id: int,
-    al_cache: AniListCache | None = None,
-    retry_log: AniListRetryLog | None = None,
-    *,
-    client: httpx.Client,
-) -> str | None:
-    """Query AniList to get thumbnail URL for anime.
-
-    Args:
-        al_id (int): Anilist ID
-        al_cache (AniListCache): Cached Anilist bodies, updated in place.
-            Defaults to None (no caching across calls)
-        retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
-            None (silent)
-        client (httpx.Client): The shared web client a cache miss's query rides.
-    """
-
-    return _get_media(al_id, al_cache, retry_log, client=client).cover_image
-
-
-def get_anilist_format(
-    al_id: int,
-    al_cache: AniListCache | None = None,
-    retry_log: AniListRetryLog | None = None,
-    *,
-    client: httpx.Client,
-) -> str | None:
-    """Query AniList to get format for anime.
-
-    Args:
-        al_id (int): Anilist ID
-        al_cache (AniListCache): Cached Anilist bodies, updated in place.
-            Defaults to None (no caching across calls)
-        retry_log (AniListRetryLog): Narrates retries/give-ups. Defaults to
-            None (silent)
-        client (httpx.Client): The shared web client a cache miss's query rides.
-    """
-
-    return _get_media(al_id, al_cache, retry_log, client=client).format
+        return {}

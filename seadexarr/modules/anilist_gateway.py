@@ -15,21 +15,10 @@ import logging
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
-import httpx
-
-from .anilist_client import (
-    ANILIST_BATCH_SIZE,
-    AniListCache,
-    AniListRetryLog,
-    get_anilist_format,
-    get_anilist_n_eps,
-    get_anilist_thumb,
-    get_anilist_title,
-    get_query_batch,
-)
+from .anilist_client import ANILIST_BATCH_SIZE, AniListCache, AniListClient, extract_path, media_from
 from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, record_is_fresh
 from .log import count_noun, indent_string
-from .seadex_types import ProgressSink
+from .seadex_types import AniListMediaNode, ProgressSink
 
 # How long a persisted AniList response stays usable before it's re-fetched.
 # title/format/coverImage are effectively static; episodes for a currently airing
@@ -45,24 +34,23 @@ class AniListGateway:
         *,
         cache_store: AbstractCacheStore,
         logger: logging.Logger,
-        web: httpx.Client,
+        client: AniListClient,
     ) -> None:
-        """Wire the gateway to the cache store, logger and web client.
+        """Wire the gateway to the cache store, logger and wire client.
 
         Args:
             cache_store (AbstractCacheStore): Owns the on-disk ``anilist_meta``
                 block and the preview-gated save.
             logger (logging.Logger): For the prefetch / load progress lines.
-            web (httpx.Client): The shared web client every AniList POST rides.
+            client (AniListClient): The bound AniList wire client every lookup
+                rides (it carries the shared web client and the per-run retry
+                narration).
         """
 
         self._cache = cache_store
         self.logger = logger
-        self._web = web
+        self._client = client
         self.al_cache: AniListCache = {}
-        # Narrates AniList retry waits and warns once per run on a give-up; the
-        # gateway is rebuilt per arr run, so "once" is per run, not per process.
-        self.retry_log = AniListRetryLog(logger=logger)
 
     def load_cache(self) -> None:
         """Seed the in-memory AniList cache from the persisted store
@@ -170,7 +158,7 @@ class AniListGateway:
             chunk = missing[start : start + ANILIST_BATCH_SIZE]
             # Ids unknown to AniList are simply absent from the result; the
             # per-id helpers will try once more on demand and degrade gracefully
-            for al_id, data in get_query_batch(chunk, self.retry_log, client=self._web).items():
+            for al_id, data in self._client.query_batch(chunk).items():
                 self.al_cache[al_id] = data
             done += len(chunk)
             if progress is not None:
@@ -181,17 +169,49 @@ class AniListGateway:
         self.save_cache(preview=preview)
         return total
 
+    def _media(self, al_id: int) -> AniListMediaNode:
+        """Resolve the typed Media node for an id: the run cache, then the wire.
+
+        The get-or-fetch policy lives here, beside the cache it manages: a hit
+        parses the stored body; a miss queries AniList and stores the raw body
+        ONLY if it actually carried Media, so a transient failure (rate-limit,
+        network) isn't cached as a permanent miss - the next call gets a fresh
+        chance.
+
+        Args:
+            al_id (int): AniList ID
+
+        Returns:
+            AniListMediaNode: The parsed node; all-``None`` on a miss.
+        """
+
+        # Cache hit: parse the stored body's Media node.
+        body = self.al_cache.get(al_id)
+        if body is not None:
+            return media_from(body)
+
+        # Miss: query AniList. Extract the raw Media dict once to gate the cache
+        # store, then parse it into the typed node for the return. The cached
+        # body is only ever read, so store it directly rather than copying.
+        fetched = self._client.query(al_id)
+        raw_media = extract_path(fetched, "data", "Media")
+        if raw_media:
+            self.al_cache[al_id] = fetched
+
+        return AniListMediaNode.from_api(raw_media)
+
     def title(self, al_id: int) -> str | None:
         """Resolve the AniList title for an id (cache or live query), or None.
 
-        Side-effect-free: the caller owns any fallback and the ``current_title``
-        attribution.
+        Prefers the English title, falling back to romaji. Side-effect-free: the
+        caller owns any fallback and the ``current_title`` attribution.
 
         Args:
             al_id (int): AniList ID
         """
 
-        return get_anilist_title(al_id, al_cache=self.al_cache, retry_log=self.retry_log, client=self._web)
+        media = self._media(al_id)
+        return media.title_english or media.title_romaji
 
     def thumb(self, al_id: int) -> str | None:
         """Resolve the AniList cover thumbnail URL for an id, or None.
@@ -200,7 +220,7 @@ class AniListGateway:
             al_id (int): AniList ID
         """
 
-        return get_anilist_thumb(al_id, al_cache=self.al_cache, retry_log=self.retry_log, client=self._web)
+        return self._media(al_id).cover_image
 
     def media_format(self, al_id: int) -> str | None:
         """Resolve the AniList media format (TV / MOVIE / OVA / ...) for an id, or None.
@@ -209,7 +229,7 @@ class AniListGateway:
             al_id (int): AniList ID
         """
 
-        return get_anilist_format(al_id, al_cache=self.al_cache, retry_log=self.retry_log, client=self._web)
+        return self._media(al_id).format
 
     def n_eps(self, al_id: int) -> int | None:
         """Resolve the AniList episode count for an id, or None.
@@ -218,4 +238,4 @@ class AniListGateway:
             al_id (int): AniList ID
         """
 
-        return get_anilist_n_eps(al_id, al_cache=self.al_cache, retry_log=self.retry_log, client=self._web)
+        return self._media(al_id).episodes

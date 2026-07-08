@@ -61,9 +61,9 @@ class _NoAniDbMappings:
 def test_anime_ids_lookups_route_through_the_gateway() -> None:
     """Format + episode-count lookups go through the AniList gateway.
 
-    The gateway threads its warm cache and per-run retry log, so an AniList
-    backoff here narrates instead of hanging silently - the helpers must never
-    be called bare (retry_log=None) from this path again.
+    The gateway carries the warm run cache and the bound wire client (with its
+    per-run retry narration), so an AniList backoff here narrates instead of
+    hanging silently - these lookups must never bypass it to the bare wire.
     """
 
     sonarr = _FakeSonarr([sonarr_ep(1, 1), sonarr_ep(1, 2)])

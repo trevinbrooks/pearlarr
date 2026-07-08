@@ -16,11 +16,11 @@ composite, fake its leaves" seam - so the whole file type-checks at strict.
 
 import logging
 import time
+from typing import Any, override
 
 import httpx
-import pytest
 
-from seadexarr.modules.anilist_client import AniListCache, AniListRetryLog
+from seadexarr.modules.anilist_client import AniListClient
 from seadexarr.modules.anilist_gateway import AniListGateway
 from seadexarr.modules.cache import AbstractCacheStore, CacheRecord
 from seadexarr.modules.config import Arr
@@ -40,12 +40,19 @@ from .builders import FakeCacheStore, make_entry_record, make_logger, pending_im
 from .fakes import CaptureHandler
 
 
-def _make_reporter(cache_store: AbstractCacheStore | None = None) -> RunReporter:
+def _make_reporter(
+    cache_store: AbstractCacheStore | None = None,
+    client: AniListClient | None = None,
+) -> RunReporter:
     logger = make_logger()
     store: AbstractCacheStore = cache_store if cache_store is not None else FakeCacheStore()
     # A real gateway with a faked cache store: the reporter only reads/updates
     # its ``al_cache`` dict, so the real wiring is exercised without a network.
-    anilist = AniListGateway(cache_store=FakeCacheStore(), logger=logger, web=httpx.Client())
+    anilist = AniListGateway(
+        cache_store=FakeCacheStore(),
+        logger=logger,
+        client=client if client is not None else AniListClient(client=httpx.Client(), logger=logger),
+    )
     return RunReporter(
         log_fmt=LogFormatter(logger),
         cache_store=store,
@@ -92,36 +99,36 @@ class TestStatsCounters:
         reporter.log_cached_entry(ctx, Arr.SONARR, 1)
         assert ctx.stats.cached == 1
 
-    def test_no_sd_entry_increments_and_caches_title(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        reporter = _make_reporter()
-        recorder = _patch_title(monkeypatch)
+    def test_no_sd_entry_increments_and_caches_title(self) -> None:
+        client = _ScriptedTitleClient()
+        reporter = _make_reporter(client=client)
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_no_sd_entry(ctx, 42)
         assert ctx.stats.no_seadex_entry == 1
-        # Routed through the gateway: its al_cache is warmed in place and its
-        # per-run retry log rides along, so a rate-limit backoff narrates instead
-        # of hanging silently.
+        # Routed through the gateway: its al_cache is warmed in place and the
+        # lookup rode its bound wire client (which carries the transport and the
+        # per-run retry narration by construction).
         assert 42 in reporter.anilist.al_cache
-        assert recorder.retry_logs == [reporter.anilist.retry_log]
+        assert client.query_calls == [42]
 
-    def test_cached_without_stored_name_falls_back_to_gateway_title(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_cached_without_stored_name_falls_back_to_gateway_title(self) -> None:
         # A legacy record predating name storage: the title fallback routes
-        # through the gateway too (retry log threaded), never the bare helper.
+        # through the gateway too, never a bare wire query.
         store = FakeCacheStore()
         store.update_cache(Arr.SONARR, 1, CacheRecord(coverage="S01", url="u"))
-        reporter = _make_reporter(store)
-        recorder = _patch_title(monkeypatch)
+        client = _ScriptedTitleClient()
+        reporter = _make_reporter(store, client=client)
         ctx = RunContext(arr=Arr.SONARR)
         reporter.log_cached_entry(ctx, Arr.SONARR, 1)
         assert ctx.stats.cached == 1
-        assert recorder.retry_logs == [reporter.anilist.retry_log]
+        assert client.query_calls == [1]
 
-    def test_outage_skip_tallies_and_renders_distinctly(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_outage_skip_tallies_and_renders_distinctly(self) -> None:
         # A SeaDex-unreachable skip lands in its own counter and its ledger row
         # reads "skipped" with the reason - never "no entry". An UNCACHED id has
         # no stored name, so the title still comes from the gateway lookup.
-        reporter = _make_reporter()
-        recorder = _patch_title(monkeypatch)
+        client = _ScriptedTitleClient()
+        reporter = _make_reporter(client=client)
         ctx = RunContext(arr=Arr.SONARR)
         handler = CaptureHandler()
         reporter.logger.addHandler(handler)
@@ -137,14 +144,14 @@ class TestStatsCounters:
         assert "skipped" in joined and "Resolved" in joined
         assert "lookup skipped (SeaDex unreachable)" in joined
         assert "no entry" not in joined
-        assert recorder.retry_logs == [reporter.anilist.retry_log]
+        assert client.query_calls == [42]
 
-    def test_outage_skip_prefers_cached_name_over_anilist(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_outage_skip_prefers_cached_name_over_anilist(self) -> None:
         # A previously-processed title's name sits in the cache row: the outage
         # skip must render it from there with NO AniList lookup - in a compound
         # SeaDex+AniList outage a lookup would pay retry backoff per title.
-        reporter = _make_reporter(_seeded_store(name="Stored Title", coverage="S01", url="u"))
-        recorder = _patch_title(monkeypatch)
+        client = _ScriptedTitleClient()
+        reporter = _make_reporter(_seeded_store(name="Stored Title", coverage="S01", url="u"), client=client)
         ctx = RunContext(arr=Arr.SONARR)
         handler = CaptureHandler()
         reporter.logger.addHandler(handler)
@@ -158,40 +165,24 @@ class TestStatsCounters:
         joined = "\n".join(r.getMessage() for r in handler.records)
         assert "Stored Title" in joined
         assert "lookup skipped (SeaDex unreachable)" in joined
-        assert recorder.retry_logs == []  # the stored name spared the lookup
+        assert client.query_calls == []  # the stored name spared the lookup
 
 
-class _RecordingTitle:
-    """Recording stand-in for the gateway's ``get_anilist_title``.
+class _ScriptedTitleClient(AniListClient):
+    """Checked scripted ``AniListClient``: a fixed resolvable title, queries recorded.
 
-    Captures the threaded retry log (the narration seam under test) and caches a
-    fixed title body in place, like the real helper.
+    Injected into the gateway under the reporter, so a title lookup exercises
+    the REAL gateway get-or-fetch (cache warm + store) over a canned wire body.
     """
 
     def __init__(self) -> None:
-        self.retry_logs: list[AniListRetryLog | None] = []
+        super().__init__(client=httpx.Client(), logger=make_logger())
+        self.query_calls: list[int] = []
 
-    def __call__(
-        self,
-        al_id: int,
-        al_cache: AniListCache | None = None,
-        retry_log: AniListRetryLog | None = None,
-        *,
-        client: httpx.Client,
-    ) -> str:
-        del client
-        self.retry_logs.append(retry_log)
-        if al_cache is not None:
-            al_cache[al_id] = {"data": {"Media": {"id": al_id}}}
-        return "Resolved"
-
-
-def _patch_title(monkeypatch: pytest.MonkeyPatch) -> _RecordingTitle:
-    """Route the gateway's title resolution into a recording stand-in."""
-
-    recorder = _RecordingTitle()
-    monkeypatch.setattr("seadexarr.modules.anilist_gateway.get_anilist_title", recorder)
-    return recorder
+    @override
+    def query(self, al_id: int) -> dict[str, Any]:
+        self.query_calls.append(al_id)
+        return {"data": {"Media": {"id": al_id, "title": {"english": "Resolved"}}}}
 
 
 class TestActiveTitle:

@@ -22,6 +22,7 @@ from typing import Any, override
 import httpx
 from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
+from seadexarr.modules.anilist_client import AniListClient
 from seadexarr.modules.anilist_gateway import AniListGateway
 from seadexarr.modules.cache import (
     _ENTRY_SCALAR_COLUMNS,
@@ -552,7 +553,7 @@ def _real_reporter(
     return RunReporter(
         log_fmt=log_fmt,
         cache_store=cache_store,
-        anilist=AniListGateway(cache_store=cache_store, logger=logger, web=web),
+        anilist=AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=web, logger=logger)),
     )
 
 
@@ -643,7 +644,9 @@ def make_run_deps(
         # retires the old make_bare_instance(SeaDexGateway) Any-launder.
         seadex=seadex or FakeSeaDexSource(),
         cache_store=cache_store,
-        anilist=AniListGateway(cache_store=cache_store, logger=logger, web=http),
+        anilist=AniListGateway(
+            cache_store=cache_store, logger=logger, client=AniListClient(client=http, logger=logger)
+        ),
         torrents=_real_torrents(logger, http),
         notifier=Notifier(discord_url=None, webhook_url=None, web=http, logger=logger),
         planner=make_planner(),
@@ -744,7 +747,9 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         "_planner": make_planner(),
         "cache_store": cache_store,
         "_torrents": _real_torrents(logger, web),
-        "_anilist": AniListGateway(cache_store=cache_store, logger=logger, web=web),
+        "_anilist": AniListGateway(
+            cache_store=cache_store, logger=logger, client=AniListClient(client=web, logger=logger)
+        ),
         # No discord/webhook url -> a disabled, best-effort no-op notifier.
         "_notifier": Notifier(discord_url=None, webhook_url=None, web=web, logger=logger),
         "_reporter": _real_reporter(logger, log_fmt, cache_store, web),

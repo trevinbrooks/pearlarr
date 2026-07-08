@@ -18,6 +18,7 @@ import httpx
 import qbittorrentapi
 from seadex import EntryRecord
 
+from .anilist_client import AniListClient
 from .anilist_gateway import AniListGateway
 from .arr_http import make_httpx_client
 from .boot_view import BootView, NullBootView
@@ -175,8 +176,12 @@ class RunDeps:
             )
 
         # AniList client gateway: owns the in-memory meta cache (al_cache) and the
-        # persisted anilist_meta block.
-        anilist = AniListGateway(cache_store=cache_store, logger=logger, web=web)
+        # persisted anilist_meta block, over the bound wire client.
+        anilist = AniListGateway(
+            cache_store=cache_store,
+            logger=logger,
+            client=AniListClient(client=web, logger=logger),
+        )
 
         # qBittorrent adapter: parses a release URL by tracker and adds it. A None
         # qbit is treated as a perpetual preview.

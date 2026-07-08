@@ -1,20 +1,19 @@
 # pyright: strict
-"""Contract tests for ``AniListGateway``: the TTL gates, eviction, and prefetch.
+"""Contract tests for ``AniListGateway``: the TTL gates, eviction, prefetch, and
+the per-id get-or-fetch resolvers.
 
 The gateway is driven over the in-memory :class:`FakeCacheStore`; the HTTP/retry
-layer (``get_query_batch``'s transport) is already pinned in ``test_anilist_client``,
-so prefetch fakes it with a recording batch stub at the module attribute.
+layer is already pinned in ``test_anilist_client``, so the wire is faked with a
+checked scripted :class:`AniListClient` subclass injected at construction.
 """
 
 import logging
-from collections.abc import Callable
 from datetime import datetime, timedelta
+from typing import Any, override
 
 import httpx
-import pytest
 
-import seadexarr.modules.anilist_gateway as anilist_gateway
-from seadexarr.modules.anilist_client import ANILIST_BATCH_SIZE, AniListCache, AniListRetryLog
+from seadexarr.modules.anilist_client import ANILIST_BATCH_SIZE, AniListCache, AniListClient
 from seadexarr.modules.anilist_gateway import ANILIST_CACHE_TTL_DAYS, AniListGateway
 from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
 
@@ -34,40 +33,52 @@ def _media(al_id: int) -> dict[str, dict[str, object]]:
     return {"Media": {"id": al_id}}
 
 
-# The shared web client the gateways under test thread into the anilist
-# helpers; module-scoped so identity asserts can pin the threading.
-_WEB = httpx.Client()
+def _full_media(al_id: int) -> dict[str, dict[str, object]]:
+    """A fully-populated Media payload, for the per-id field-resolution tests."""
+
+    return {
+        "Media": {
+            "id": al_id,
+            "title": {"english": "English Title", "romaji": "Romaji Title"},
+            "coverImage": {"large": "https://img/large"},
+            "episodes": 12,
+            "format": "TV",
+        },
+    }
 
 
-def _make_gateway() -> tuple[AniListGateway, FakeCacheStore]:
-    store = FakeCacheStore()
-    return AniListGateway(cache_store=store, logger=make_logger(), web=_WEB), store
+class _ScriptedClient(AniListClient):
+    """Checked scripted ``AniListClient``: canned bodies, calls recorded, no HTTP.
 
-
-class _BatchRecorder:
-    """Recording stand-in for ``get_query_batch``: scripted per-id bodies, no HTTP.
-
-    Ids listed in ``absent`` are omitted from the result, mirroring AniList's
-    behaviour for ids it doesn't know (simply missing, never an error).
+    Ids listed in ``absent`` are unknown to AniList: omitted from batch results
+    and answered with a Media-less single-id body (a miss, never an error).
+    ``full`` scripts fully-populated Media bodies instead of id-only ones.
     """
 
-    def __init__(self, absent: frozenset[int] = frozenset()) -> None:
+    def __init__(self, absent: frozenset[int] = frozenset(), *, full: bool = False) -> None:
+        # The real ctor is network-free: it just binds the client and logger.
+        super().__init__(client=httpx.Client(), logger=make_logger())
         self._absent = absent
-        self.calls: list[list[int]] = []
-        self.retry_logs: list[AniListRetryLog | None] = []
-        self.clients: list[httpx.Client] = []
+        self._full = full
+        self.query_calls: list[int] = []
+        self.batch_calls: list[list[int]] = []
 
-    def __call__(
-        self,
-        al_ids: list[int],
-        retry_log: AniListRetryLog | None = None,
-        *,
-        client: httpx.Client,
-    ) -> AniListCache:
-        self.calls.append(list(al_ids))
-        self.retry_logs.append(retry_log)
-        self.clients.append(client)
+    @override
+    def query(self, al_id: int) -> dict[str, Any]:
+        self.query_calls.append(al_id)
+        if al_id in self._absent:
+            return {"data": {"Media": None}}
+        return {"data": _full_media(al_id) if self._full else _media(al_id)}
+
+    @override
+    def query_batch(self, al_ids: list[int]) -> AniListCache:
+        self.batch_calls.append(list(al_ids))
         return {i: {"data": _media(i)} for i in al_ids if i not in self._absent}
+
+
+def _make_gateway(client: AniListClient | None = None) -> tuple[AniListGateway, FakeCacheStore]:
+    store = FakeCacheStore()
+    return AniListGateway(cache_store=store, logger=make_logger(), client=client or _ScriptedClient()), store
 
 
 class _RecordingSink:
@@ -157,21 +168,19 @@ class TestSaveCachePreviewGate:
 class TestPrefetch:
     """prefetch batches only the missing ids, merges, persists, and reports."""
 
-    def test_all_cached_fetches_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        gateway, _ = _make_gateway()
-        recorder = _BatchRecorder()
-        monkeypatch.setattr(anilist_gateway, "get_query_batch", recorder)
+    def test_all_cached_fetches_nothing(self) -> None:
+        client = _ScriptedClient()
+        gateway, _ = _make_gateway(client)
         gateway.al_cache = {1: _media(1), 2: _media(2)}
 
         assert gateway.prefetch([1, 2], preview=True) == 0
-        assert recorder.calls == []
+        assert client.batch_calls == []
 
-    def test_51_missing_chunks_merges_persists_and_reports(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_51_missing_chunks_merges_persists_and_reports(self) -> None:
         # 51 missing ids -> two id_in pages ([50, 1]); id 7 is unknown to AniList
         # (absent from the batch result), which is just a miss, never a raise.
-        gateway, store = _make_gateway()
-        recorder = _BatchRecorder(absent=frozenset({7}))
-        monkeypatch.setattr(anilist_gateway, "get_query_batch", recorder)
+        client = _ScriptedClient(absent=frozenset({7}))
+        gateway, store = _make_gateway(client)
         sink = _RecordingSink()
         ids = list(range(1, ANILIST_BATCH_SIZE + 2))
 
@@ -179,7 +188,9 @@ class TestPrefetch:
 
         # Returns how many NEEDED fetching (the absent id still counted as work).
         assert fetched == len(ids)
-        assert recorder.calls == [ids[:ANILIST_BATCH_SIZE], ids[ANILIST_BATCH_SIZE:]]
+        # Both pages rode the injected wire client (which binds the transport and
+        # the retry narration itself - no per-call threading left to mis-wire).
+        assert client.batch_calls == [ids[:ANILIST_BATCH_SIZE], ids[ANILIST_BATCH_SIZE:]]
         # Both pages merged into the run cache; the absent id is simply absent.
         assert set(gateway.al_cache) == set(ids) - {7}
         # Persisted (via put_anilist_meta) before returning, so the batch's work
@@ -189,67 +200,53 @@ class TestPrefetch:
         assert store.get_anilist_meta(7) is None
         # The cockpit sink saw one (fraction, "done/total") update per batch.
         assert sink.updates == [(50 / 51, "50/51"), (1.0, "51/51")]
-        # The gateway's retry log rode along, so an outage mid-prefetch narrates.
-        assert recorder.retry_logs == [gateway.retry_log, gateway.retry_log]
-        # ...and both batches rode the injected web client.
-        assert recorder.clients == [_WEB, _WEB]
 
 
-class _ResolverRecorder:
-    """Recording stand-in for a per-id anilist helper: captures the threading."""
+class TestMediaResolution:
+    """The per-id resolvers: get-or-fetch against the run cache, typed reads.
 
-    def __init__(self) -> None:
-        self.calls: list[tuple[int, AniListCache | None, AniListRetryLog | None, httpx.Client]] = []
-
-    def __call__(
-        self,
-        al_id: int,
-        al_cache: AniListCache | None = None,
-        retry_log: AniListRetryLog | None = None,
-        *,
-        client: httpx.Client,
-    ) -> None:
-        self.calls.append((al_id, al_cache, retry_log, client))
-
-
-class TestResolverThreading:
-    """Every per-id resolver threads the gateway's al_cache AND its retry log.
-
-    The retry log is what makes an AniList backoff narrate (and the give-up warn
-    once) instead of hanging silently - so each gateway wrapper must pass it, or
-    a call site routed through the gateway silently regresses. The web client
-    rides the same seam (the transport a cache miss's POST needs).
+    This is the policy that moved up from the old free-function layer to live
+    beside the cache: check the run cache first, store a fetched body only when
+    it actually carried Media, and read each resolver's field off the parsed
+    node.
     """
 
-    def _assert_threads(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        helper: str,
-        resolve: Callable[[AniListGateway], Callable[[int], object]],
-    ) -> None:
+    def test_resolvers_read_typed_fields_and_cache_the_fetch(self) -> None:
+        client = _ScriptedClient(full=True)
+        gateway, _ = _make_gateway(client)
+
+        assert gateway.title(42) == "English Title"
+        assert gateway.thumb(42) == "https://img/large"
+        assert gateway.media_format(42) == "TV"
+        assert gateway.n_eps(42) == 12
+        # The first resolver fetched and stored the raw body; the other three
+        # were cache hits, so the wire saw exactly one query.
+        assert client.query_calls == [42]
+        assert 42 in gateway.al_cache
+
+    def test_title_prefers_english_then_romaji(self) -> None:
         gateway, _ = _make_gateway()
-        recorder = _ResolverRecorder()
-        monkeypatch.setattr(anilist_gateway, helper, recorder)
+        gateway.al_cache = {
+            1: {"data": {"Media": {"id": 1, "title": {"english": "E", "romaji": "R"}}}},
+            2: {"data": {"Media": {"id": 2, "title": {"romaji": "R"}}}},
+            3: {"data": {"Media": {"id": 3}}},
+        }
 
-        resolve(gateway)(42)
+        assert gateway.title(1) == "E"
+        assert gateway.title(2) == "R"
+        assert gateway.title(3) is None
 
-        [(al_id, al_cache, retry_log, client)] = recorder.calls
-        assert al_id == 42
-        assert al_cache is gateway.al_cache  # the gateway's own warm cache
-        assert retry_log is gateway.retry_log  # the per-run narration log
-        assert client is _WEB  # the injected web client
+    def test_transient_miss_not_cached_and_retried_next_call(self) -> None:
+        # A Media-less body (unknown id, or a rate-limit that exhausted its
+        # retries) must not be remembered as a permanent miss for the run.
+        client = _ScriptedClient(absent=frozenset({7}))
+        gateway, _ = _make_gateway(client)
 
-    def test_title(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        self._assert_threads(monkeypatch, "get_anilist_title", lambda gateway: gateway.title)
-
-    def test_thumb(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        self._assert_threads(monkeypatch, "get_anilist_thumb", lambda gateway: gateway.thumb)
-
-    def test_media_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        self._assert_threads(monkeypatch, "get_anilist_format", lambda gateway: gateway.media_format)
-
-    def test_n_eps(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        self._assert_threads(monkeypatch, "get_anilist_n_eps", lambda gateway: gateway.n_eps)
+        assert gateway.title(7) is None
+        assert 7 not in gateway.al_cache
+        assert gateway.n_eps(7) is None
+        # The second resolver queried again - the miss got a fresh chance.
+        assert client.query_calls == [7, 7]
 
 
 class TestLogPluralization:
