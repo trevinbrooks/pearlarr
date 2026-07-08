@@ -57,11 +57,11 @@ dependencies = [
     "pynyaa == 3.0.0",
     "PyYAML == 6.0.3",
     "qbittorrent-api == 2026.6.1",
-    "requests == 2.34.2",
     "rich == 15.0.0",
     "seadex == 0.7.2",
     "truststore == 0.10.4",
     "typer == 0.26.8",
+    # Transitive (qbittorrent-api -> requests -> urllib3); floored for CVE currency.
     "urllib3>=2.7.0",
 ]
 
@@ -92,7 +92,6 @@ test = [
     "pytest~=9.0",
     "pytest-cov>=7.1.0",
     "pytest-randomly>=4.1.0",
-    "responses>=0.26.1",
     "respx>=0.23.1",
 ]
 dev = [
@@ -245,6 +244,12 @@ select = [
     "PLW1514", # unspecified-encoding (preview): text I/O must pin utf-8, not the platform locale
     "RUF",    # Ruff-specific rules
 ]
+
+# Owned HTTP rides the two shared httpx clients (arr_http / web_client); a
+# fresh requests or urllib.request import would silently fork the stack again.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"requests" = { msg = "owned HTTP is httpx-only via the shared clients (Tier 2.6)" }
+"urllib.request" = { msg = "use the shared web client (Tier 2.6)" }
 
 [tool.ruff.lint.isort]
 known-first-party = [
