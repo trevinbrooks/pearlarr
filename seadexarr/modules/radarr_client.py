@@ -11,6 +11,7 @@ import httpx
 
 from .anibridge import AniBridge
 from .arr_http import ArrHttp
+from .mapping_store import AnimeIdColumn
 from .seadex_types import ArrItem, HistoryRecord, MovieFile, RadarrItem, RadarrMovie, validate_each
 
 
@@ -142,7 +143,7 @@ class IdField:
     candidate set built for that id space.
     """
 
-    mapping_key: str  # e.g. "tmdb_movie_id" / "tvdb_id"
+    mapping_key: AnimeIdColumn  # e.g. "tmdb_movie_id" / "tvdb_id"
     item_attr: str  # e.g. "tmdbId" / "tvdbId"
 
 
@@ -166,7 +167,7 @@ class AnimeIdSets(Protocol):
     imports this one). Supplies the DISTINCT Anime-IDs id set for a given column.
     """
 
-    def anime_id_set(self, column: str) -> AbstractSet[int | str]: ...
+    def anime_id_set(self, column: AnimeIdColumn) -> AbstractSet[int | str]: ...
 
 
 def collect_anime_items[ItemT: ArrItem](

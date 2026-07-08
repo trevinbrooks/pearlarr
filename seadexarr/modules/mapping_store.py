@@ -38,7 +38,7 @@ not shared across threads.
 import logging
 import sqlite3
 from collections.abc import Callable, Iterable
-from typing import NamedTuple, cast
+from typing import Literal, NamedTuple, overload
 
 from .sqlite_util import connect, open_or_quarantine, rollback_and_close
 
@@ -57,9 +57,15 @@ SOURCE_ANIDB = "anidb"
 # against a real file digest, so it is always repopulated.
 INLINE_DIGEST = "<inline>"
 
-# anime_ids query columns the resolver may filter / DISTINCT on. An allowlist
-# because a column name cannot be a bound parameter; only these reach an f-string.
+# anime_ids query columns the resolver may filter / DISTINCT on. The Literal is
+# the checker-facing vocabulary; the tuple is the runtime allowlist guarding the
+# f-string interpolation (a column name cannot be a bound parameter). Keep in sync.
+type AnimeIdColumn = Literal["tvdb_id", "tmdb_movie_id", "imdb_id"]
 _ANIME_ID_COLUMNS = ("tvdb_id", "tmdb_movie_id", "imdb_id")
+
+# anibridge xref axes - a DIFFERENT vocabulary from the anime_ids columns above
+# ("tvdb", not "tvdb_id"). tvdb/tmdb ext ids are ints; imdb ids are strs.
+type AniBridgeAxis = Literal["tvdb", "tmdb_movie", "imdb"]
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -243,6 +249,18 @@ class AnidbMappingRow(NamedTuple):
     anidb_ep: int
 
 
+def _ext_id_as[T: (int, str)](value: object, kind: type[T], axis: str) -> T:
+    """Pin a stored anibridge ext id to the type its axis owns.
+
+    The write path coerced these, so a mismatch means the db is corrupt - raise
+    (with the type names only, never the value) instead of folding.
+    """
+
+    if not isinstance(value, kind):
+        raise TypeError(f"anibridge xref {axis!r} ext_id holds {type(value).__name__}, expected {kind.__name__}")
+    return value
+
+
 class MappingStore:
     """Owns ``mappings.db``: schema, per-source freshness, atomic populate, queries."""
 
@@ -391,7 +409,7 @@ class MappingStore:
 
     # -- anime_ids queries ---------------------------------------------------
 
-    def anime_ids_lookup(self, column: str, value: object) -> list[AnimeIdRow]:
+    def anime_ids_lookup(self, column: AnimeIdColumn, value: object) -> list[AnimeIdRow]:
         """:class:`AnimeIdRow`s matching ``column == value``, in first-seen (rowid) order.
 
         Returns the full row so the caller can build a ``MappingEntry``. Rows with no
@@ -410,10 +428,17 @@ class MappingStore:
         ).fetchall()
         return [AnimeIdRow(*row) for row in rows]
 
-    def anime_ids_distinct(self, column: str) -> set[int | str]:
+    @overload
+    def anime_ids_distinct(self, column: Literal["tvdb_id", "tmdb_movie_id"]) -> set[int]: ...
+    @overload
+    def anime_ids_distinct(self, column: Literal["imdb_id"]) -> set[str]: ...
+    def anime_ids_distinct(self, column: AnimeIdColumn) -> set[int] | set[str]:
         """The set of DISTINCT non-null ``column`` values in anime_ids.
 
         Used to build the library-filter candidate sets without scanning the map.
+        Third-party Kometa JSON reaches these columns un-coerced, so a junk-typed
+        value is possible: it is SKIPPED (junk in a candidate set never matched an
+        arr id anyway).
         """
 
         if column not in _ANIME_ID_COLUMNS:
@@ -421,8 +446,9 @@ class MappingStore:
         rows = self._conn.execute(
             f"SELECT DISTINCT {column} FROM anime_ids WHERE {column} IS NOT NULL",
         ).fetchall()
-        # Untyped SQL boundary: each id column is an int (tvdb/tmdb) or str (imdb).
-        return cast("set[int | str]", {r[0] for r in rows})
+        if column == "imdb_id":
+            return {v for r in rows if isinstance(v := r[0], str)}
+        return {v for r in rows if isinstance(v := r[0], int)}
 
     # -- anibridge queries ---------------------------------------------------
 
@@ -468,15 +494,25 @@ class MappingStore:
         ).fetchall()
         return [AniBridgeRangeHit(*row) for row in rows]
 
-    def anibridge_distinct(self, axis: str) -> set[int | str]:
-        """The set of all ext ids on ``axis`` (for the library-filter id sets)."""
+    @overload
+    def anibridge_distinct(self, axis: Literal["tvdb", "tmdb_movie"]) -> set[int]: ...
+    @overload
+    def anibridge_distinct(self, axis: Literal["imdb"]) -> set[str]: ...
+    def anibridge_distinct(self, axis: AniBridgeAxis) -> set[int] | set[str]:
+        """The set of all ext ids on ``axis`` (for the library-filter id sets).
+
+        Unlike the anime_ids columns, the AniBridge write path coerces every ext
+        id per axis before it reaches the store, so a mismatched stored type is
+        corruption: it RAISES rather than being skipped.
+        """
 
         rows = self._conn.execute(
             "SELECT DISTINCT ext_id FROM anibridge_xref WHERE axis = ?",
             (axis,),
         ).fetchall()
-        # Untyped SQL boundary: ext_id is an int (tvdb/tmdb) or str (imdb).
-        return cast("set[int | str]", {r[0] for r in rows})
+        if axis == "imdb":
+            return {_ext_id_as(r[0], str, axis) for r in rows}
+        return {_ext_id_as(r[0], int, axis) for r in rows}
 
     def anibridge_len(self) -> int:
         """Number of AniList entries (backs ``AniBridge.__len__`` / ``__bool__``)."""

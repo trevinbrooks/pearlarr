@@ -19,13 +19,14 @@ filtering in Sonarr needs.
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any
 
 from .mapping_store import (
     AniBridgeEntryRow,
     AniBridgeRangeRow,
     AniBridgeRows,
     AniBridgeXrefRow,
+    AnimeIdColumn,
     MappingStore,
 )
 from .seadex_types import TvdbMappings, coerce_int
@@ -215,11 +216,11 @@ class AniBridge:
         self.tvdb_index = defaultdict(set)
         self.tmdb_movie_index = defaultdict(set)
         self.imdb_index = defaultdict(set)
-        # anibridge_distinct returns the union set[int | str]; each axis is known
-        # to carry one concrete type (tvdb/tmdb ints, imdb strs), so narrow per axis.
-        self.all_tvdb_ids = cast("set[int]", store.anibridge_distinct("tvdb"))
-        self.all_tmdb_movie_ids = cast("set[int]", store.anibridge_distinct("tmdb_movie"))
-        self.all_imdb_ids = cast("set[str]", store.anibridge_distinct("imdb"))
+        # anibridge_distinct's per-axis overloads type each set (tvdb/tmdb ints,
+        # imdb strs); the store raises on a mismatched stored type.
+        self.all_tvdb_ids = store.anibridge_distinct("tvdb")
+        self.all_tmdb_movie_ids = store.anibridge_distinct("tmdb_movie")
+        self.all_imdb_ids = store.anibridge_distinct("imdb")
         # Entry count, fetched once: the store is immutable for this view's lifetime
         # (populated before from_store, read-only after), so a per-call COUNT(*) - an
         # O(rows) scan that get_anilist_ids would trigger twice per item - is wasteful.
@@ -276,7 +277,7 @@ class AniBridge:
     def __len__(self) -> int:
         return self._len
 
-    def id_set(self, mapping_key: str) -> set[int] | set[str]:
+    def id_set(self, mapping_key: AnimeIdColumn) -> set[int] | set[str]:
         """The precomputed candidate id set for a Kometa ``mapping_key`` axis.
 
         Mirrors :meth:`MappingResolver.anime_id_set` so ``collect_anime_items`` can

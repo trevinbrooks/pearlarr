@@ -21,6 +21,7 @@ import logging
 import os
 import sqlite3
 import time
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -36,6 +37,7 @@ from .mapping_store import (
     SOURCE_ANIDB,
     SOURCE_ANIME_IDS,
     AnidbMappingRow,
+    AnimeIdColumn,
     AnimeIdRow,
     MappingStore,
 )
@@ -645,16 +647,18 @@ class MappingResolver:
 
     # -- library-filter id sets ---------------------------------------------
 
-    def anime_id_set(self, column: str) -> set[int | str]:
+    def anime_id_set(self, column: AnimeIdColumn) -> AbstractSet[int | str]:
         """DISTINCT external ids the Anime-IDs source carries for ``column``.
 
         Backs the library-filter candidate sets (symmetric with AniBridge's
         ``all_*`` sets), so ``collect_anime_items`` no longer scans the full map.
-        Returns an empty set when the source is disabled.
+        Returns an empty set when the source is disabled. The covariant
+        ``AbstractSet`` return absorbs the store's per-column ``set[int]`` /
+        ``set[str]`` overloads.
         """
 
         if not self._anime_enabled:
-            return set[int | str]()
+            return set()
         return self._store.anime_ids_distinct(column)
 
     @property
@@ -771,7 +775,7 @@ class MappingResolver:
         # Add the first row seen for each AniList id (rows come back in first-seen
         # order), matching the previous "don't clobber an id another query already
         # produced" behaviour.
-        def merge(column: str, value: object) -> None:
+        def merge(column: AnimeIdColumn, value: object) -> None:
             for row in self._store.anime_ids_lookup(column, value):
                 if row.anilist_id not in anilist_mappings:
                     anilist_mappings[row.anilist_id] = _entry_from_anime_row(row)
