@@ -66,6 +66,11 @@ jobs:
   checks_windows:
     name: Checks (windows, py 3.13)
     runs-on: windows-latest
+    env:
+      # .python-version pins 3.14 (the dev version), and `uv run` RE-SYNCS the
+      # venv against it - a --python flag on sync alone gets silently undone on
+      # the next step. The job-level env holds every uv step on the floor.
+      UV_PYTHON: "3.13"
     steps:
       - uses: actions/checkout@v7
         with:
@@ -75,11 +80,9 @@ jobs:
         with:
           enable-cache: true
       - name: Sync dependencies
-        # .python-version pins 3.14 (the dev version), so an unpinned sync would
-        # silently test 3.14 here; --python 3.13 keeps this leg on the floor.
-        run: uv sync --group dev --python 3.13
-      - name: Python version (sanity)
-        run: uv run python -V
+        run: uv sync --group dev
+      - name: Python version (must be the 3.13 floor)
+        run: uv run python -c "import sys; assert sys.version_info[:2] == (3, 13), sys.version"
       - name: Pytest
         run: uv run pytest tests/ -q
 
