@@ -215,8 +215,9 @@ __marimo__/
 # uv lockfile
 # uv.lock
 
-# SeaDexArr runtime / user files
-config.yml
+# SeaDexArr runtime / user files (root-anchored: .github/ISSUE_TEMPLATE/config.yml
+# is a tracked GitHub file, not a runtime config)
+/config.yml
 cache.json
 cache.json.migrated
 cache.db

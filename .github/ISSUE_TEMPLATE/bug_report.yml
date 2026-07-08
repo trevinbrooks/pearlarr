@@ -1,0 +1,42 @@
+name: Bug report
+description: Something broke or behaved wrong
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What went wrong, and what you were doing when it did.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version and install method
+      description: "`seadexarr --version`, plus how it's installed (Docker / pip / source)."
+    validations:
+      required: true
+  - type: textarea
+    id: paths
+    attributes:
+      label: seadexarr paths output
+      description: "Paste the output of `seadexarr paths` (Docker: `docker compose run --rm seadexarr paths`)."
+      render: text
+  - type: textarea
+    id: config
+    attributes:
+      label: Config
+      description: Paste the output of `seadexarr config show` — it redacts API keys, passwords and webhook URLs, so it is safe to share. Never paste a raw config.yml.
+      render: yaml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log excerpt
+      description: The relevant lines from `logs/` in the data directory (see the paths output above). Redact anything sensitive.
+      render: text
