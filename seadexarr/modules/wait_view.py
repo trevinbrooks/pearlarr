@@ -49,6 +49,7 @@ from .log import (
     STATE_WIDTH,
     count_noun,
     format_elapsed,
+    human_bytes,
     indent_string,
     log_section_rule,
     log_styled,
@@ -353,7 +354,7 @@ def live_model(snapshot: WaitSnapshot, caps: Capabilities) -> LiveModel:
     meta: list[str] = [format_elapsed(snapshot.elapsed_s)]
     agg_speed = _aggregate_speed(snapshot)
     if agg_speed:
-        meta.append(f"{arrow} {_human_bytes(agg_speed)}/s")
+        meta.append(f"{arrow} {human_bytes(agg_speed)}/s")
     agg_eta = _aggregate_eta(snapshot, agg_speed)
     if agg_eta is not None:
         meta.append(f"{_compact_eta(agg_eta)} left")
@@ -384,7 +385,7 @@ def _row_model(torrent: TorrentView, *, spark: bool) -> RowModel:
     """Format one in-flight torrent's cells for the cockpit."""
 
     if torrent.phase is Phase.DOWNLOADING:
-        rate = "stalled" if torrent.speed_bps is None else f"{_human_bytes(torrent.speed_bps)}/s"
+        rate = "stalled" if torrent.speed_bps is None else f"{human_bytes(torrent.speed_bps)}/s"
         if spark and len(torrent.speed_history) >= 2:
             rate = f"{sparkline(torrent.speed_history)} {rate}"
         return RowModel(
@@ -394,7 +395,7 @@ def _row_model(torrent: TorrentView, *, spark: bool) -> RowModel:
             count=f"{round(torrent.fraction * 100)}%",
             speed=rate,
             time="" if torrent.eta_s is None else _compact_eta(torrent.eta_s),
-            size="" if torrent.bytes_total is None else _human_bytes(torrent.bytes_total),
+            size="" if torrent.bytes_total is None else human_bytes(torrent.bytes_total),
             show_bar=True,
         )
     if torrent.phase is Phase.IMPORTING:
@@ -481,17 +482,6 @@ def sparkline(samples: tuple[int, ...]) -> str:
     if peak <= 0:
         return _SPARK_CHARS[0] * len(samples)
     return "".join(_SPARK_CHARS[round(sample / peak * top)] for sample in samples)
-
-
-def _human_bytes(num: float) -> str:
-    """A compact human byte size, e.g. ``"3.2 MB"`` / ``"1.8 GB"``."""
-
-    val = num
-    for unit in ("B", "KB", "MB", "GB"):
-        if val < 1024:
-            return f"{val:.0f} {unit}" if unit == "B" else f"{val:.1f} {unit}"
-        val /= 1024
-    return f"{val:.1f} TB"
 
 
 def _compact_eta(seconds: float) -> str:

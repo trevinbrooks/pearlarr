@@ -910,3 +910,14 @@ def format_elapsed(seconds: float) -> str:
     if minutes:
         return f"{minutes}m {seconds:02d}s"
     return f"{seconds}s"
+
+
+def human_bytes(num: float) -> str:
+    """A compact human byte size, e.g. ``"3.2 MB"`` / ``"1.8 GB"``."""
+
+    val = num
+    for unit in ("B", "KB", "MB", "GB"):
+        if val < 1024:
+            return f"{val:.0f} {unit}" if unit == "B" else f"{val:.1f} {unit}"
+        val /= 1024
+    return f"{val:.1f} TB"
