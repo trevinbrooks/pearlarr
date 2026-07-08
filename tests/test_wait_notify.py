@@ -292,9 +292,10 @@ def test_push_grab_builds_linked_embed(pushes: list[DiscordEmbed]) -> None:
     assert embed.thumb_url == "https://img.anili.st/cover.png"
     assert embed.image_url == "https://img.anili.st/banner.png"
     # A genuinely different Arr title becomes the muted subtext byline, riding
-    # the Notes field (the description stays empty).
+    # the trailing nameless notes field (an empty field name renders as no
+    # header at all - verified live against the webhook API).
     assert embed.description == ""
-    assert embed.fields == (EmbedField(name="Notes", value="-# Sousou no Frieren"),)
+    assert embed.fields == (EmbedField(name="", value="-# Sousou no Frieren"),)
 
 
 def test_push_grab_radarr_wears_the_radarr_logo(pushes: list[DiscordEmbed]) -> None:
@@ -311,7 +312,7 @@ class TestGrabNotes:
     def _notes(self, pushes: list[DiscordEmbed], notice: GrabNotice) -> str:
         assert _grab_notifier().push_grab(notice) is True
         fields = pushes[-1].fields
-        return fields[-1].value if fields and fields[-1].name == "Notes" else ""
+        return fields[-1].value if fields and fields[-1].name == "" else ""
 
     def test_near_duplicate_titles_render_no_subtitle(self, pushes: list[DiscordEmbed]) -> None:
         # Apostrophe style and case are not information: Sonarr's ASCII title
@@ -386,18 +387,18 @@ class TestGrabNotes:
             _notice(entry=make_entry_record(notes="Best available", is_incomplete=True)),
         )
 
-        # Pieces stack with blank lines between them.
-        assert notes == "> Best available\n\n*Entry marked incomplete on SeaDex*"
+        # Pieces stack line by line, no blank spacers.
+        assert notes == "> Best available\n*Entry marked incomplete on SeaDex*"
 
 
-class TestGrabFields:
-    """The full-width field stack: outcome-labelled pick(s), episodes, replacing."""
+class TestGrabLayout:
+    """The pick layout: single-group grabs ride the description, several stack fields."""
 
-    def _fields(self, pushes: list[DiscordEmbed], notice: GrabNotice) -> tuple[EmbedField, ...]:
+    def _embed(self, pushes: list[DiscordEmbed], notice: GrabNotice) -> DiscordEmbed:
         assert _grab_notifier().push_grab(notice) is True
-        return pushes[0].fields
+        return pushes[0]
 
-    def test_pick_episodes_and_replacing_stack(self, pushes: list[DiscordEmbed]) -> None:
+    def test_single_group_rides_the_description(self, pushes: list[DiscordEmbed]) -> None:
         seadex_dict = {
             "PMR": rg_group(
                 {
@@ -416,7 +417,7 @@ class TestGrabFields:
             ),
         }
 
-        fields = self._fields(
+        embed = self._embed(
             pushes,
             _notice(
                 release_group=["Erai_raws", None, ""],
@@ -426,19 +427,20 @@ class TestGrabFields:
             ),
         )
 
-        # The pick's release line carries the tracker link + size/files/audio/
-        # provenance markers; tags trail as muted subtext; episodes and the
-        # replaced groups follow as their own rows; empty/None current groups drop.
-        assert fields == (
-            EmbedField(
-                name="Grabbed · PMR",
-                value="[Nyaa](https://nyaa.si/view/1) · 1.0 GB · 2 files · dual audio · fallback · upgrade\n-# HDR · VFR",
-            ),
-            EmbedField(name="Episodes", value="S01 E01-E12"),
-            EmbedField(name="Replacing", value="Erai_raws"),
+        # The lone pick hoists into the description (bold label, group as a code
+        # span, then the release line + tags subtext); episodes and the replaced
+        # groups pair up as side-by-side inline fields; empty/None groups drop.
+        assert embed.description == (
+            "**Grabbed · `PMR`**\n"
+            "[Nyaa](https://nyaa.si/view/1) · 1.0 GB · 2 files · dual audio · fallback · upgrade\n"
+            "-# HDR · VFR"
+        )
+        assert embed.fields == (
+            EmbedField(name="Episodes", value="S01 E01-E12", inline=True),
+            EmbedField(name="Replacing", value="Erai_raws", inline=True),
         )
 
-    def test_group_label_reflects_client_outcome(self, pushes: list[DiscordEmbed]) -> None:
+    def test_multiple_groups_keep_the_field_stack(self, pushes: list[DiscordEmbed]) -> None:
         # "Grabbed" only when the client actually added something; a pick already
         # mid-download says so; a contained add failure (no outcome) reads
         # "Failed"; a group whose releases were never attempted reads "Skipped".
@@ -447,7 +449,7 @@ class TestGrabFields:
             for i, srg in enumerate(("Fresh", "InFlight", "Errored", "Held"))
         }
 
-        fields = self._fields(
+        embed = self._embed(
             pushes,
             _notice(
                 seadex_dict=seadex_dict,
@@ -456,31 +458,34 @@ class TestGrabFields:
                     ReleaseOutcome(AddOutcome.ALREADY_ADDED, None, "InFlight"),
                 ],
                 failed_groups=frozenset({"Errored"}),
+                release_group=["Erai_raws"],
             ),
         )
 
-        assert [f.name for f in fields] == [
+        # No description hoist with several groups - and "Replacing" appears
+        # exactly once, after the group stack.
+        assert embed.description == ""
+        assert [f.name for f in embed.fields] == [
             "Grabbed · Fresh",
             "Already downloading · InFlight",
             "Failed · Errored",
             "Skipped · Held",
+            "Replacing",
         ]
 
-    def test_unflagged_group_contributes_no_field(self, pushes: list[DiscordEmbed]) -> None:
+    def test_unflagged_group_contributes_nothing(self, pushes: list[DiscordEmbed]) -> None:
         seadex_dict = {"Quiet": rg_group({"https://nyaa.si/view/9": url_item(url="https://nyaa.si/view/9")})}
 
-        fields = self._fields(pushes, _notice(seadex_dict=seadex_dict))
+        embed = self._embed(pushes, _notice(seadex_dict=seadex_dict))
 
-        assert fields == ()
+        assert embed.description == ""
+        assert embed.fields == ()
 
     def test_replacing_collapses_beyond_cap(self, pushes: list[DiscordEmbed]) -> None:
-        fields = self._fields(pushes, _notice(release_group=[f"Group{i:02d}" for i in range(12)]))
+        embed = self._embed(pushes, _notice(release_group=[f"Group{i:02d}" for i in range(12)]))
 
-        [replacing] = fields
-        lines = replacing.value.splitlines()
-        assert lines[:2] == ["Group00", "Group01"]
-        assert len(lines) == 11  # 10 groups + the collapse line
-        assert lines[-1] == "… +2 more"
+        [replacing] = embed.fields
+        assert replacing.value == "Group00, Group01, Group02, … +9 more"
 
 
 def _push_grab(notifier: Notifier) -> bool:

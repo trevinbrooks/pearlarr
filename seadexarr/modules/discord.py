@@ -41,8 +41,8 @@ _MAX_TOTAL_LEN = 6000
 class EmbedField(NamedTuple):
     """One Discord embed field (name/value), typed until the payload boundary.
 
-    ``inline`` fields render side by side (up to three per row); the current
-    embeds stack full-width fields, so it stays at its False default.
+    ``inline`` fields render side by side (up to three per row); the grab
+    embed pairs its short metadata fields, everything else stays full-width.
     """
 
     name: str

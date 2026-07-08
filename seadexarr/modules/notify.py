@@ -10,6 +10,7 @@ import logging
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import httpx
 from seadex import EntryRecord
@@ -40,9 +41,9 @@ _MAX_FIELD_TITLES = 25
 _SONARR_ICON = "https://raw.githubusercontent.com/Sonarr/Sonarr/develop/Logo/512.png"
 _RADARR_ICON = "https://raw.githubusercontent.com/Radarr/Radarr/develop/Logo/512.png"
 
-# Cap the "Replacing" list well below the payload clamp so a many-group season
-# stays readable; the remainder collapses into a "… +N more" line.
-_MAX_REPLACING = 10
+# Cap the comma-separated "Replacing" list so its inline field stays one short
+# row; the remainder collapses into a "… +N more" tail.
+_MAX_REPLACING = 3
 
 # Taste limit for the SeaDex notes blockquote (the 1024 field-value clamp is
 # the hard backstop); truncation lands on a word boundary.
@@ -162,7 +163,7 @@ def _notes_block(notes: str) -> str:
 
 
 def _grab_notes(notice: GrabNotice) -> str:
-    """The "Notes" field stack: subtitle, entry notes, comparison links, caveats.
+    """The trailing notes stack: subtitle, entry notes, comparison links, caveats.
 
     The Arr's own title appears as a muted ``-#`` subtext byline only when it
     differs from the AniList one; each piece is omitted when it has nothing to
@@ -183,7 +184,7 @@ def _grab_notes(notice: GrabNotice) -> str:
         )
     if notice.entry.is_incomplete:
         parts.append("*Entry marked incomplete on SeaDex*")
-    return "\n\n".join(parts)
+    return "\n".join(parts)
 
 
 def _release_line(item: SeadexUrlItem) -> str:
@@ -203,23 +204,32 @@ def _release_line(item: SeadexUrlItem) -> str:
     return " · ".join(parts)
 
 
-def _grab_fields(notice: GrabNotice) -> tuple[EmbedField, ...]:
-    """The full-width field stack: SeaDex pick(s), episodes, replaced, notes.
+class _GroupBlock(NamedTuple):
+    """One group's rendered pick: the outcome label, the group name, the release lines."""
 
-    A group with nothing flagged for download contributes no field. The group
-    label reflects what actually happened at the torrent client: "Grabbed" when
-    anything was added, "Already downloading" when every acted release was
+    label: str
+    group: str
+    body: str
+
+
+def _group_blocks(notice: GrabNotice) -> list[_GroupBlock]:
+    """One block per group with anything flagged for download.
+
+    The label reflects what actually happened at the torrent client: "Grabbed"
+    when anything was added, "Already downloading" when every acted release was
     already there, "Failed" when an add errored (contained; retried next run),
-    "Skipped" when none of its releases were attempted.
+    "Skipped" when none of its releases were attempted. Tags trail the release
+    lines as muted subtext.
     """
 
-    fields: list[EmbedField] = []
-
     outcome_by_group = {r.group: r.outcome for r in notice.results}
+    blocks: list[_GroupBlock] = []
     for srg, srg_item in notice.seadex_dict.items():
-        links = [_release_line(u) for u in srg_item.urls.values() if u.download]
-        if not links:
+        release_lines = [_release_line(u) for u in srg_item.urls.values() if u.download]
+        if not release_lines:
             continue
+        if srg_item.tags:
+            release_lines.append("-# " + " · ".join(sorted(str(tag) for tag in srg_item.tags)))
 
         add_outcome = outcome_by_group.get(srg)
         if add_outcome is AddOutcome.ADDED:
@@ -230,26 +240,55 @@ def _grab_fields(notice: GrabNotice) -> tuple[EmbedField, ...]:
             label = "Failed"
         else:
             label = "Skipped"
+        blocks.append(_GroupBlock(label, srg, "\n".join(release_lines)))
+    return blocks
 
-        lines = list(links)
-        if srg_item.tags:
-            lines.append("-# " + " · ".join(sorted(str(tag) for tag in srg_item.tags)))
-        fields.append(EmbedField(name=f"{label} · {srg}", value="\n".join(lines)))
 
+def _meta_fields(notice: GrabNotice) -> list[EmbedField]:
+    """The short metadata pair, rendered side by side: coverage + replaced groups."""
+
+    fields: list[EmbedField] = []
     if notice.coverage:
-        fields.append(EmbedField(name="Episodes", value=notice.coverage))
-
-    current = [group for group in (notice.release_group or []) if group]
-    if current:
-        replaced = list(current[:_MAX_REPLACING])
+        fields.append(EmbedField(name="Episodes", value=notice.coverage, inline=True))
+    if current := [group for group in (notice.release_group or []) if group]:
+        replaced = current[:_MAX_REPLACING]
         if len(current) > _MAX_REPLACING:
             replaced.append(f"… +{len(current) - _MAX_REPLACING} more")
-        fields.append(EmbedField(name="Replacing", value="\n".join(replaced)))
+        fields.append(EmbedField(name="Replacing", value=", ".join(replaced), inline=True))
+    return fields
 
+
+def _grab_embed(notice: GrabNotice) -> DiscordEmbed:
+    """The grab embed: the AniList title/art framing the outcome-labelled pick(s).
+
+    A single-group grab (the common case) reads as one compact card: its pick
+    rides the description directly under the title, markdown intact. Several
+    groups each keep a full-width field. Either way the episodes/replacing
+    pair follows side by side and the notes stack trails headerless.
+    """
+
+    blocks = _group_blocks(notice)
+    description = ""
+    fields: list[EmbedField] = []
+    if len(blocks) == 1:
+        [block] = blocks
+        description = f"**{block.label} · `{block.group}`**\n{block.body}"
+    else:
+        fields += (EmbedField(name=f"{b.label} · {b.group}", value=b.body) for b in blocks)
+    fields += _meta_fields(notice)
     if notes := _grab_notes(notice):
-        fields.append(EmbedField(name="Notes", value=notes))
-
-    return tuple(fields)
+        fields.append(EmbedField(name="", value=notes))
+    return DiscordEmbed(
+        author_name=f"{notice.arr.capitalize()} · SeaDex grab",
+        title=notice.al_title,
+        color=COLOR_GRAB,
+        url=notice.entry.url or None,
+        description=description,
+        fields=tuple(fields),
+        thumb_url=notice.thumb_url,
+        image_url=notice.banner_url,
+        author_icon_url=_SONARR_ICON if notice.arr is Arr.SONARR else _RADARR_ICON,
+    )
 
 
 class Notifier:
@@ -290,26 +329,15 @@ class Notifier:
         """Post a grab notification: the AniList title linking to the SeaDex entry.
 
         The author line names the event ("Sonarr · SeaDex grab") under the
-        arr's own logo; the fields stack the picks, coverage, replaced groups
-        and the entry's notes; the AniList art frames it (cover thumbnail +
-        wide banner).
+        arr's own logo; a single-group grab carries its pick in the
+        description, a multi-group grab stacks one field per group; the
+        AniList art frames it (cover thumbnail + wide banner).
 
         Args:
             notice (GrabNotice): The grab's resolved notification payload.
         """
 
-        return self._push(
-            DiscordEmbed(
-                author_name=f"{notice.arr.capitalize()} · SeaDex grab",
-                title=notice.al_title,
-                color=COLOR_GRAB,
-                url=notice.entry.url or None,
-                fields=_grab_fields(notice),
-                thumb_url=notice.thumb_url,
-                image_url=notice.banner_url,
-                author_icon_url=_SONARR_ICON if notice.arr is Arr.SONARR else _RADARR_ICON,
-            ),
-        )
+        return self._push(_grab_embed(notice))
 
     def push_wait_summary(self, *, arr: Arr, result: WaitResult) -> bool:
         """Post the wait-pass outcome to Discord and/or the generic webhook.
