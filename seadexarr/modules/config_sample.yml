@@ -80,10 +80,10 @@ mappings:
 
 # Advanced
 advanced:
-  sleep_time: 2                    # Seconds to sleep between API queries (rate limiting)
+  sleep_time: 2                    # Seconds to sleep between API queries (rate limiting; 0 disables)
   cache_time: 1                    # Days to cache the downloaded mapping sources
   interactive: false               # Prompt when multiple torrent options match
-  max_torrents_to_add:             # Cap torrents added per run (default: unlimited)
+  max_torrents_to_add:             # Cap torrents added per run (min 1; default: unlimited)
   detect_arr_activity: true        # Re-check entries whose files Sonarr/Radarr changed since the last pass
   log_level: "INFO"                # DEBUG / INFO / WARNING / ERROR / CRITICAL (case-insensitive)
   log_format: "auto"               # auto (rich on a terminal, plain timestamps+levels when piped/Docker) / rich / plain / json - plain and json also disable the live progress views (expected)

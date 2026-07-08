@@ -275,16 +275,18 @@ class ImportsSettings(_ConfigBase):
     # off (disabled, default) / deferred / blocking / hybrid. An unrecognized value
     # raises ValidationError like any other bad config (surfaced cleanly by the cli).
     wait_mode: ImportWaitMode = ImportWaitMode.OFF
-    wait_timeout: int = 3600
-    ready_timeout: int = 600
-    poll_interval: int = 30
+    # ge=1: a zero timeout/poll cadence is a degenerate busy-loop, never a
+    # documented disable (that's ``wait_mode: off``).
+    wait_timeout: int = Field(default=3600, ge=1)
+    ready_timeout: int = Field(default=600, ge=1)
+    poll_interval: int = Field(default=30, ge=1)
     # Fast-lane cockpit refresh cadence (seconds), between heavy polls: re-reads
     # /api/v3/episode for in-flight imports ("files inserted" bar) and does one
     # batched qBittorrent info read for in-flight downloads (bar/speed/ETA) -
     # NEVER the heavy RefreshMonitoredDownloads/queue. 0 disables it: rows then
     # advance once per ``poll_interval`` (spinner/timer still animate). A value
     # >= ``poll_interval`` is the same as disabled.
-    progress_poll_interval: int = 5
+    progress_poll_interval: int = Field(default=5, ge=0)
     # Sonarr importMode, forwarded verbatim (sonarr_client.manual_import_execute).
     # Constrained so a typo is a clean ValidationError at load, not a Sonarr API error.
     mode: Literal["auto", "move", "copy"] = "auto"
@@ -296,8 +298,11 @@ class ImportsSettings(_ConfigBase):
     default_quality: str | None = None
     languages_dual: list[str] = Field(default_factory=lambda: list(_LANGUAGES_DUAL_DEFAULT))
     languages_single: list[str] = Field(default_factory=lambda: list(_LANGUAGES_SINGLE_DEFAULT))
-    pending_max_age_days: int = 14
-    digest_interval: int = 300
+    # ge=1: 0 would expire every pending-import record immediately, silently
+    # defeating the deferred-import carry.
+    pending_max_age_days: int = Field(default=14, ge=1)
+    # ge=1: 0 is degenerate (the wait view floors the cadence to the poll interval).
+    digest_interval: int = Field(default=300, ge=1)
 
     @field_validator("wait_mode", mode="before")
     @classmethod
@@ -380,10 +385,14 @@ type LogFormat = Literal["auto", "rich", "plain", "json"]
 class AdvancedSettings(_ConfigBase):
     """Advanced knobs (rate limiting, caching, run cap, logging)."""
 
-    sleep_time: int = 2
-    cache_time: int = 1
+    # ge=0: 0 disables the rate-limit sleep (load-bearing for the concurrent
+    # episode fetch); a negative value would crash time.sleep mid-run.
+    sleep_time: int = Field(default=2, ge=0)
+    # ge=0: 0 = always re-download the mapping sources (a valid dev choice).
+    cache_time: int = Field(default=1, ge=0)
     interactive: bool = False
-    max_torrents_to_add: int | None = None
+    # ge=1 when set: a cap of 0 would silently grab nothing (None = unlimited).
+    max_torrents_to_add: int | None = Field(default=None, ge=1)
     # Poll each arr's history at run start and re-check entries whose files the
     # arr changed since the last pass. Opt-out: the re-check can re-grab a
     # release the user deliberately replaced arr-side.

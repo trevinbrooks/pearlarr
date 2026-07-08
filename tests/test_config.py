@@ -136,6 +136,56 @@ class TestDefaults:
             with pytest.raises(ValidationError):
                 AppConfig.model_validate({"schedule": {"interval_hours": bad}})
 
+    def test_wait_timeout_bounds(self) -> None:
+        # ge=1: a zero wait window is a degenerate busy-loop, not a disable.
+        assert ImportsSettings.model_validate({"wait_timeout": 1}).wait_timeout == 1
+        with pytest.raises(ValidationError):
+            ImportsSettings.model_validate({"wait_timeout": 0})
+
+    def test_ready_timeout_bounds(self) -> None:
+        assert ImportsSettings.model_validate({"ready_timeout": 1}).ready_timeout == 1
+        with pytest.raises(ValidationError):
+            ImportsSettings.model_validate({"ready_timeout": 0})
+
+    def test_poll_interval_bounds(self) -> None:
+        assert ImportsSettings.model_validate({"poll_interval": 1}).poll_interval == 1
+        with pytest.raises(ValidationError):
+            ImportsSettings.model_validate({"poll_interval": 0})
+
+    def test_progress_poll_interval_bounds(self) -> None:
+        # 0 stays valid (the documented disable, pinned separately); negatives reject.
+        with pytest.raises(ValidationError):
+            ImportsSettings.model_validate({"progress_poll_interval": -1})
+
+    def test_pending_max_age_days_bounds(self) -> None:
+        # ge=1: 0 would expire every pending-import record immediately.
+        assert ImportsSettings.model_validate({"pending_max_age_days": 1}).pending_max_age_days == 1
+        with pytest.raises(ValidationError):
+            ImportsSettings.model_validate({"pending_max_age_days": 0})
+
+    def test_digest_interval_bounds(self) -> None:
+        assert ImportsSettings.model_validate({"digest_interval": 1}).digest_interval == 1
+        with pytest.raises(ValidationError):
+            ImportsSettings.model_validate({"digest_interval": 0})
+
+    def test_sleep_time_bounds(self) -> None:
+        # 0 disables rate limiting (valid); a negative would crash time.sleep mid-run.
+        assert AdvancedSettings.model_validate({"sleep_time": 0}).sleep_time == 0
+        with pytest.raises(ValidationError):
+            AdvancedSettings.model_validate({"sleep_time": -1})
+
+    def test_cache_time_bounds(self) -> None:
+        assert AdvancedSettings.model_validate({"cache_time": 0}).cache_time == 0
+        with pytest.raises(ValidationError):
+            AdvancedSettings.model_validate({"cache_time": -1})
+
+    def test_max_torrents_to_add_bounds(self) -> None:
+        # A cap of 0 would silently grab nothing; None stays the unlimited default.
+        assert AdvancedSettings.model_validate({"max_torrents_to_add": 1}).max_torrents_to_add == 1
+        assert AdvancedSettings.model_validate({"max_torrents_to_add": None}).max_torrents_to_add is None
+        with pytest.raises(ValidationError):
+            AdvancedSettings.model_validate({"max_torrents_to_add": 0})
+
     def test_import_defaults_when_absent(self) -> None:
         imp = ImportsSettings()
         assert imp.wait_mode is ImportWaitMode.OFF
