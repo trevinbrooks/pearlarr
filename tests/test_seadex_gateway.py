@@ -8,7 +8,7 @@ from seadex import EntryNotFoundError, EntryRecord
 
 from seadexarr.modules.seadex_gateway import SEADEX_BATCH_SIZE, SeaDexGateway, SeaDexMiss
 
-from .builders import make_bare_instance, make_entry_record
+from .builders import make_entry_record
 from .fakes import CaptureHandler
 
 
@@ -77,16 +77,8 @@ def _gateway(fake: FakeSeaDex) -> SeaDexGateway:
     logger = logging.getLogger("test_seadex_gateway")
     logger.handlers = [logging.NullHandler()]
     logger.setLevel(logging.CRITICAL)
-    # Bypass __init__ (which would build a real SeaDexEntry client) and inject the
-    # fake + the per-run cache fields directly.
-    return make_bare_instance(
-        SeaDexGateway,
-        logger=logger,
-        seadex=fake,
-        _entry_cache={},
-        _prefetched=set(),
-        _outage=False,
-    )
+    # The fake satisfies SeaDexEntryApi structurally, so the real ctor applies.
+    return SeaDexGateway(client=fake, logger=logger)
 
 
 def _capture_warnings(gateway: SeaDexGateway) -> CaptureHandler:

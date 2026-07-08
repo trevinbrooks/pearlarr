@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 import httpx
 import qbittorrentapi
-from seadex import EntryRecord
+from seadex import EntryRecord, SeaDexEntry
 
 from .anilist_client import AniListClient
 from .anilist_gateway import AniListGateway
@@ -205,7 +205,7 @@ class RunDeps:
             mappings=mappings,
             logger=logger,
             # SeaDex API gateway (entry lookups, with connection-error handling)
-            seadex=SeaDexGateway(logger=logger),
+            seadex=SeaDexGateway(client=SeaDexEntry(), logger=logger),
             cache_store=cache_store,
             anilist=anilist,
             torrents=torrents,

@@ -6,7 +6,7 @@ These are the tests that prove ``cli.run_single`` -> ``_run_arrs`` ->
 / ``RadarrSync`` hooks actually run a sync wired together, with ONLY the
 external network leaves faked:
 
-* the SeaDex library, faked at the gateway's httpx boundary (``SeaDexEntry``);
+* the SeaDex library, faked at the composition root's ``SeaDexEntry`` leaf;
 * qBittorrent, left unconfigured so the whole run is a perpetual preview;
 * the Arr HTTP (every raw endpoint rides the httpx-based ``ArrHttp``) and the
   AniList POST (on the shared web client), both mocked via ``respx``;
@@ -31,7 +31,7 @@ import yaml
 from respx.models import Call
 from seadex import EntryRecord
 
-import seadexarr.modules.seadex_gateway as seadex_gateway
+import seadexarr.modules.run_services as run_services
 import seadexarr.modules.torrents as torrents
 from seadexarr.modules.cli import run_single
 from seadexarr.modules.log import log_counter
@@ -91,7 +91,7 @@ def test_sonarr_run_drives_real_composition_root(
     nyaa_calls: list[str] = []
 
     class _FakeSeaDexEntry:
-        """Stand-in for the SeaDex lib's ``SeaDexEntry`` (the gateway's httpx leaf)."""
+        """Stand-in for the SeaDex lib's ``SeaDexEntry`` (injected into the gateway)."""
 
         def __init__(self) -> None: ...
 
@@ -107,7 +107,7 @@ def test_sonarr_run_drives_real_composition_root(
         nyaa_calls.append(url)
         return ("magnet:?xt=urn:btih:" + "a" * 40, "Undefeated Bahamut Chronicle - S01E01 [1080p]")
 
-    monkeypatch.setattr(seadex_gateway, "SeaDexEntry", _FakeSeaDexEntry)
+    monkeypatch.setattr(run_services, "SeaDexEntry", _FakeSeaDexEntry)
     monkeypatch.setattr(torrents, "get_nyaa_torrent", _fake_get_nyaa_torrent)
 
     # A real config.yml on disk (run_single reads it via resolve_paths): Sonarr creds,
@@ -225,7 +225,7 @@ def test_radarr_run_drives_real_composition_root(
     nyaa_calls: list[str] = []
 
     class _FakeSeaDexEntry:
-        """Stand-in for the SeaDex lib's ``SeaDexEntry`` (the gateway's httpx leaf)."""
+        """Stand-in for the SeaDex lib's ``SeaDexEntry`` (injected into the gateway)."""
 
         def __init__(self) -> None: ...
 
@@ -241,7 +241,7 @@ def test_radarr_run_drives_real_composition_root(
         nyaa_calls.append(url)
         return ("magnet:?xt=urn:btih:" + "b" * 40, "Your Name (2016) [BD 1080p]")
 
-    monkeypatch.setattr(seadex_gateway, "SeaDexEntry", _FakeSeaDexEntry)
+    monkeypatch.setattr(run_services, "SeaDexEntry", _FakeSeaDexEntry)
     monkeypatch.setattr(torrents, "get_nyaa_torrent", _fake_get_nyaa_torrent)
 
     # A real config.yml on disk: Radarr creds, qBittorrent unset -> preview, and

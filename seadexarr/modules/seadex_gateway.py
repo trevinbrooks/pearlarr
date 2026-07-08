@@ -18,10 +18,10 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from enum import Enum, auto
 from itertools import batched
-from typing import override
+from typing import Protocol, override
 
 import httpx
-from seadex import EntryNotFoundError, EntryRecord, SeaDexEntry
+from seadex import EntryNotFoundError, EntryRecord
 
 from .seadex_types import ProgressSink
 
@@ -66,19 +66,33 @@ class SeaDexSource(ABC):
     def outage(self) -> bool: ...
 
 
+class SeaDexEntryApi(Protocol):
+    """The slice of the ``seadex`` lib's ``SeaDexEntry`` client the gateway consumes.
+
+    Structural, so tests inject a network-free stand-in through the real
+    constructor instead of bypassing it. Positional-only params mirror the lib's
+    actual signatures (its ``from_id`` accepts ``int | str``, wider is fine).
+    """
+
+    def from_filter(self, filter_str: str, /) -> Iterable[EntryRecord]: ...
+
+    def from_id(self, al_id: int, /) -> EntryRecord: ...
+
+
 class SeaDexGateway(SeaDexSource):
     """Thin wrapper over the SeaDex client: bulk prefetch + by-id lookups."""
 
-    def __init__(self, *, logger: logging.Logger) -> None:
-        """Instantiate the SeaDex API client.
+    def __init__(self, *, client: SeaDexEntryApi, logger: logging.Logger) -> None:
+        """Wire the gateway to the SeaDex client it decorates.
 
         Args:
+            client (SeaDexEntryApi): The SeaDex API client every lookup rides.
             logger (logging.Logger): For the prefetch notice and the
                 connection-error warning.
         """
 
         self.logger = logger
-        self.seadex = SeaDexEntry()
+        self._client = client
         # Per-run bulk-fetch cache: entries keyed by AniList id, plus the set of ids
         # we successfully prefetched - so an id that was requested but not returned
         # is known-absent and ``entry`` can skip the per-id fallback call.
@@ -170,7 +184,7 @@ class SeaDexGateway(SeaDexSource):
         """Fetch one batch via an OR-ed ``alID`` filter, keyed by AniList id."""
 
         filter_str = " || ".join(f"alID={al_id}" for al_id in al_ids)
-        return {record.anilist_id: record for record in self.seadex.from_filter(filter_str)}
+        return {record.anilist_id: record for record in self._client.from_filter(filter_str)}
 
     @override
     def entry(self, al_id: int) -> EntryRecord | SeaDexMiss:
@@ -207,13 +221,13 @@ class SeaDexGateway(SeaDexSource):
         """
 
         try:
-            return self.seadex.from_id(al_id)
+            return self._client.from_id(al_id)
         except EntryNotFoundError:
             return SeaDexMiss.NO_ENTRY
         except httpx.HTTPError:
             pass
         try:
-            return self.seadex.from_id(al_id)
+            return self._client.from_id(al_id)
         except EntryNotFoundError:
             return SeaDexMiss.NO_ENTRY
         except httpx.HTTPError as e:
