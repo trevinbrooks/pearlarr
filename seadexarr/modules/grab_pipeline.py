@@ -311,6 +311,33 @@ class GrabPipeline:
             kind=kind,
         )
 
+    def _should_cache_as_done(self, *, cap_reached: bool, added_this_title: int, grab_failed: bool) -> bool:
+        """Whether this title's outcome may be cached as done.
+
+        Cache only when something was grabbed, or nothing was skipped: a
+        private-only OR unsupported-tracker skip that left nothing grabbed keeps
+        the title uncached, so it's re-checked once a public release / parser /
+        config change lands. Three vetoes block the cache even on a partial
+        grab: the run-wide cap (it can leave this title's later urls
+        unattempted), a fallback hold, and a contained grab failure (so the
+        next run retries).
+        """
+
+        # A non-interactive fallback-mode private hold means the fallback COULDN'T
+        # cover these files: never cache the title so every run re-checks and
+        # resurfaces it. Warn mode and interactive picks keep the plain gate.
+        fallback_hold = (
+            self._ctx.private_only_skipped
+            and self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK
+            and not self._config.advanced.interactive
+        )
+        return (
+            not cap_reached
+            and not fallback_hold
+            and not grab_failed
+            and (added_this_title > 0 or not (self._ctx.private_only_skipped or self._ctx.unsupported_tracker_skipped))
+        )
+
     def grab_and_cache(self, req: GrabRequest) -> bool:
         """Shared per-id tail: add torrents, notify, then cache the outcome
 
@@ -353,32 +380,18 @@ class GrabPipeline:
         # Work out whether THIS title actually grabbed anything
         added_this_title = self._ctx.torrents_added - torrents_before
 
-        # A non-interactive fallback-mode private hold means the fallback COULDN'T
-        # cover these files: never cache the title (even on a partial grab) so
-        # every run re-checks and resurfaces it. Warn mode and interactive picks
-        # keep the plain gate below.
-        fallback_hold = (
-            self._ctx.private_only_skipped
-            and self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK
-            and not self._config.advanced.interactive
-        )
-
         # A contained grab failure (tracker/client down) means a release this
-        # title should have is missing: like fallback_hold, never cache - even on
-        # a partial grab - so the next run retries (the completed add dedups).
+        # title should have is missing: never cache - even on a partial grab - so
+        # the next run retries (the completed add dedups). Also read by the
+        # needs-action chain below.
         grab_failed = bool(self._grab_failed_groups)
 
-        # Cache the title as done only when something was grabbed, or nothing was
-        # skipped. A private-only OR unsupported-tracker skip that left nothing
-        # grabbed keeps it uncached, so it's re-checked once a public release /
-        # parser / config change lands. A cap-reached title is never cached (the
-        # cap can leave its later urls unattempted), but still falls through to
-        # the needs-action classification below.
-        if (
-            not cap_reached
-            and not fallback_hold
-            and not grab_failed
-            and (added_this_title > 0 or not (self._ctx.private_only_skipped or self._ctx.unsupported_tracker_skipped))
+        # A cap-reached or veto-held title is never cached, but still falls
+        # through to the needs-action classification below.
+        if self._should_cache_as_done(
+            cap_reached=cap_reached,
+            added_this_title=added_this_title,
+            grab_failed=grab_failed,
         ):
             # A mixed title (grabbed + unsupported-tracker skip) is cached, but the
             # skipped hashes are excluded so the release is re-considered on the

@@ -881,3 +881,81 @@ class TestFallbackHoldNeverCaches:
         assert pipeline._ctx.private_only_skipped is True
         assert pipeline.cache_store.get_entry(Arr.SONARR, 43) is not None
         assert pipeline._ctx.stats.needs_action == []
+
+
+class TestShouldCacheAsDone:
+    """The extracted cache-as-done predicate, pinned as a truth table.
+
+    White-box: the ctx skip flags are set directly and the predicate is called
+    with explicit gate inputs, so every veto axis is pinned in isolation (the
+    end-to-end grab_and_cache integration is pinned in the classes above).
+    """
+
+    @staticmethod
+    def _predicate(
+        *,
+        private_releases: str = "warn",
+        interactive: bool = False,
+        private_only_skipped: bool = False,
+        unsupported_tracker_skipped: bool = False,
+        cap_reached: bool = False,
+        added_this_title: int = 0,
+        grab_failed: bool = False,
+    ) -> bool:
+        """One truth-table row; every keyword is one axis of the predicate."""
+
+        pipeline = make_grab_pipeline(private_releases=private_releases, interactive=interactive)
+        pipeline._ctx.private_only_skipped = private_only_skipped
+        pipeline._ctx.unsupported_tracker_skipped = unsupported_tracker_skipped
+        return pipeline._should_cache_as_done(
+            cap_reached=cap_reached,
+            added_this_title=added_this_title,
+            grab_failed=grab_failed,
+        )
+
+    def test_plain_grab_caches(self) -> None:
+        assert self._predicate(added_this_title=1) is True
+
+    def test_zero_added_with_nothing_skipped_caches(self) -> None:
+        # The up-to-date case: nothing grabbed because nothing was needed.
+        assert self._predicate() is True
+
+    def test_cap_vetoes_an_otherwise_cacheable_grab(self) -> None:
+        # The cap can stop the url loop mid-title, leaving later urls unattempted.
+        assert self._predicate(added_this_title=1, cap_reached=True) is False
+
+    def test_fallback_hold_vetoes_despite_a_partial_grab(self) -> None:
+        # The documented-surprising row: fallback mode + non-interactive + a
+        # private skip vetoes caching even though something WAS grabbed - the
+        # fallback couldn't cover the private files, so every run re-checks.
+        assert self._predicate(private_releases="fallback", private_only_skipped=True, added_this_title=1) is False
+
+    def test_grab_failure_vetoes_despite_a_partial_grab(self) -> None:
+        assert self._predicate(added_this_title=1, grab_failed=True) is False
+
+    def test_warn_mode_private_skip_forms_no_hold(self) -> None:
+        # A mixed grab in warn mode caches (private hashes stay quietly excluded).
+        assert self._predicate(private_only_skipped=True, added_this_title=1) is True
+
+    def test_interactive_defuses_the_fallback_hold(self) -> None:
+        # The hold is the user's own hand-picked private release: plain gate stands.
+        assert (
+            self._predicate(
+                private_releases="fallback",
+                interactive=True,
+                private_only_skipped=True,
+                added_this_title=1,
+            )
+            is True
+        )
+
+    def test_zero_added_with_a_private_skip_stays_uncached(self) -> None:
+        # Warn mode so no hold forms: the skip clause alone keeps it uncached.
+        assert self._predicate(private_only_skipped=True) is False
+
+    def test_zero_added_with_an_unsupported_tracker_skip_stays_uncached(self) -> None:
+        assert self._predicate(unsupported_tracker_skipped=True) is False
+
+    def test_mixed_unsupported_tracker_grab_caches(self) -> None:
+        # The skipped hashes are excluded from the cache write, not the caching.
+        assert self._predicate(unsupported_tracker_skipped=True, added_this_title=1) is True
