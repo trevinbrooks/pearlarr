@@ -5,10 +5,11 @@ import logging
 import math
 import os
 import shutil
+import signal
 import sqlite3
 import time
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import typer
 import yaml
@@ -17,13 +18,14 @@ from pydantic import ValidationError
 from .boot_view import BootView, make_boot_view
 from .config import AppConfig, Arr, LogFormat, config_permissions_loose, restrict_config_permissions, template_path
 from .json_narrow import is_json_list, is_json_obj
-from .log import LogLevel, apply_log_level, indent_string, log_styled, setup_logger
+from .log import LOG_NAME, LogLevel, apply_log_level, indent_string, log_styled, setup_logger
 from .manual_import import ImportWaitMode
 from .paths import PROJECT_URL, AppPaths, ensure_data_dir, resolve_paths
 from .runlock import single_instance_lock
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+    from types import FrameType
 
     # Imported only for annotations - the runtime imports live in the functions
     # that use them, so their deps aren't pulled at CLI module load (see below).
@@ -181,12 +183,14 @@ def _load_shared_config(
 ) -> AppConfig | None:
     """Read + validate the config file, once per run (both arrs reuse it).
 
-    Returns None - after logging the specific cause - when the file is missing
-    (``AppConfig.load`` writes the starter template first), invalid (the bad
-    keys are listed without a traceback) or unreadable, so the caller skips this
-    run and retries next cycle instead of crashing. ``retry`` is the
-    pre-formatted scheduled-mode note (empty for a single run) stating when the
-    loop retries.
+    Returns None - after logging the specific cause - when the file is invalid
+    (the bad keys are listed without a traceback) or unreadable, so the caller
+    skips this run and retries next cycle instead of crashing (the user may be
+    mid-edit). A MISSING file instead writes the starter template (inside
+    ``AppConfig.load``) and exits 1: no retry can succeed until the user fills
+    it in, so a scheduled/container run must stop and say so rather than sleep
+    on it. ``retry`` is the pre-formatted scheduled-mode note (empty for a
+    single run) stating when the loop retries.
     """
 
     try:
@@ -202,8 +206,13 @@ def _load_shared_config(
         return loaded
     except FileNotFoundError:
         logger.error(
-            f"No config file at {config} - a starter template was written; fill it in and re-run. Skipping this run{retry}.",
+            f"No config file at {config} - a starter template was written; fill it in and re-run.",
         )
+        # typer.Exit is an Exception subclass, but it escapes cleanly: sibling
+        # arms can't catch a raise from THIS arm, and _run_arrs wraps this call
+        # in try/FINALLY only - so the boot view, web client and run lock all
+        # release on the way out to typer (exit code 1).
+        raise typer.Exit(1) from None
     except ValidationError as e:
         # Surface the specific bad keys (nested path -> message) without a traceback,
         # then skip + retry next cycle - same contract as the missing-file branch.
@@ -361,7 +370,9 @@ def _run_arrs(
     the cause is logged - when the shared deps couldn't be built, nothing
     runnable was selected, or an arr run failed (unreachable/unauthorized arr,
     qBittorrent connection failure, or an unexpected error), so a scripted
-    ``run single`` exits non-zero on any failed leg. An empty ``arrs`` is a
+    ``run single`` exits non-zero on any failed leg. A MISSING config doesn't
+    return at all: ``_load_shared_config`` writes the starter template and
+    raises ``typer.Exit(1)`` (see its docstring). An empty ``arrs`` is a
     defensive no-op returning True (both callers guard against it).
     ``import_wait_mode`` is the resolved CLI override threaded into each arr
     (None in scheduled mode); ``log_level`` is the CLI log-level override,
@@ -666,6 +677,17 @@ def _schedule_hours(config_path: str, logger: logging.Logger) -> float:
     return fallback
 
 
+def _handle_sigterm(signum: int, frame: FrameType | None) -> NoReturn:
+    """Scheduled mode's SIGTERM handler: log, then exit 0 (a clean stop).
+
+    Docker stop / systemd deliver SIGTERM; the raise interrupts even the
+    inter-cycle ``time.sleep``, so shutdown is prompt at any point in the loop.
+    """
+
+    logging.getLogger(LOG_NAME).info("Received SIGTERM; exiting.")
+    raise SystemExit(0)
+
+
 @seadexarr_run.command("scheduled")
 def run_scheduled(
     log_level: Annotated[
@@ -673,12 +695,20 @@ def run_scheduled(
         typer.Option(case_sensitive=False, help="Override the configured advanced.log_level."),
     ] = None,
 ) -> None:
-    """Run every configured arr module on a loop (each schedule.interval_hours, default 6)."""
+    """Run every configured arr module on a loop (each schedule.interval_hours, default 6).
+
+    This is the bare-metal fallback scheduler; containers should use the
+    image's built-in scheduler instead.
+    """
 
     # Resolve the data directory once and make sure it exists (config-template copy
     # + run lock both need it).
     paths = resolve_paths()
     ensure_data_dir(paths)
+
+    # A stopping container/service must exit promptly and cleanly (code 0), not
+    # die mid-sleep with SIGTERM's default nonzero status.
+    signal.signal(signal.SIGTERM, _handle_sigterm)
 
     while True:
         # The config's console format is peeked each cycle (like the cadence
@@ -695,10 +725,12 @@ def run_scheduled(
 
         # Build the shared config + id-mapping resolver once and run every
         # configured arr (one config read + one download/parse per cycle, reused
-        # by both). On a config/source failure _run_arrs logs the cause and the
-        # cycle is skipped, so it's retried next pass rather than crashing. No
-        # ad-hoc preamble here: the branded title (logged by _run_arrs) leads
-        # each cycle, so the scheduled path reads the same as a single run.
+        # by both). On an invalid-config/source failure _run_arrs logs the cause
+        # and the cycle is skipped, so it's retried next pass rather than
+        # crashing; a MISSING config instead exits 1 (typer.Exit from
+        # _load_shared_config) - retrying can't fill the template in. No ad-hoc
+        # preamble here: the branded title (logged by _run_arrs) leads each
+        # cycle, so the scheduled path reads the same as a single run.
         _run_arrs(
             [(Arr.RADARR, None), (Arr.SONARR, None)],
             paths=paths,

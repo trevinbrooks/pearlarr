@@ -29,6 +29,9 @@ Pins the behaviours the commands must guarantee:
   ones ``null``.
 * ``advanced.log_level`` is applied to CLI runs as soon as the config is read,
   and ``--log-level`` overrides it (cli > config).
+* A missing config exits 1 with the starter template written (no silent
+  skip-and-retry); an invalid config keeps the skip+retry contract in scheduled
+  mode; SIGTERM stops the scheduled loop with exit code 0.
 
 Each test points ``resolve_paths()`` at its own ``tmp_path`` via ``SEADEX_ARR_DATA_DIR``
 and calls the command functions directly (they return ``bool``); the exit-code
@@ -37,6 +40,7 @@ tests go through ``CliRunner`` since the callback only runs inside typer.
 
 import logging
 import os
+import signal
 import ssl
 from collections.abc import Callable
 from pathlib import Path
@@ -50,6 +54,8 @@ from seadexarr.modules.cache import CacheStore
 from seadexarr.modules.cli import (
     _configured_arrs,
     _console_format,
+    _handle_sigterm,
+    _run_arrs,
     _schedule_hours,
     _trust_os_certificates,
     cache_backup,
@@ -960,6 +966,17 @@ class _StopScheduledLoop(Exception):
     """Breaks ``run_scheduled``'s infinite loop from a faked ``_run_arrs``."""
 
 
+def _stop_loop(*args: object, **kwargs: object) -> NoReturn:
+    """A ``_run_arrs`` stand-in that breaks ``run_scheduled``'s loop."""
+
+    raise _StopScheduledLoop
+
+
+def _swallow_signal(signum: int, handler: object) -> None:
+    """A no-op ``signal.signal``: a test must never re-point the pytest process's
+    real SIGTERM disposition (the registration itself is pinned separately)."""
+
+
 class TestLogFormatWiring:
     """``advanced.log_format`` reaches ``setup_logger`` on both run commands.
 
@@ -995,11 +1012,9 @@ class TestLogFormatWiring:
         setup_recorder: _SetupLoggerRecorder,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        def stop_loop(*args: object, **kwargs: object) -> NoReturn:
-            raise _StopScheduledLoop
-
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
-        monkeypatch.setattr("seadexarr.modules.cli._run_arrs", stop_loop)
+        monkeypatch.setattr(signal, "signal", _swallow_signal)
+        monkeypatch.setattr("seadexarr.modules.cli._run_arrs", _stop_loop)
         self._write_config_with_format()
         with pytest.raises(_StopScheduledLoop):
             run_scheduled()
@@ -1030,6 +1045,84 @@ class TestConsoleFormat:
         path = tmp_path / "config.yml"
         path.write_text("advanced: [unclosed\n", encoding="utf-8")
         assert _console_format(str(path)) == "auto"
+
+
+class TestMissingConfigExitsNonzero:
+    """A virgin data dir: exit 1 with the starter template written, never a silent retry.
+
+    Driven end-to-end through CliRunner: the ``typer.Exit`` raised inside
+    ``_load_shared_config``'s FileNotFoundError arm must escape ``_run_arrs``'
+    finallys (boot view, web client, run lock all release) and reach typer as
+    exit code 1 - pinning the whole propagation path, not just the helper.
+    """
+
+    def test_run_single_writes_the_template_and_exits_one(self) -> None:
+        result = CliRunner().invoke(seadexarr_cli, ["run", "single"])
+        assert result.exit_code == 1
+
+        config = Path(resolve_paths().config)
+        assert config.read_text(encoding="utf-8") == Path(template_path()).read_text(encoding="utf-8")
+        assert "starter template was written" in result.output
+        # This arm exits now; the skip-and-retry wording belongs to the others.
+        assert "Skipping this run" not in result.output
+
+
+class TestScheduledLifecycle:
+    """Scheduled mode: invalid configs retry, SIGTERM exits 0, help names the fallback."""
+
+    def test_invalid_config_still_skips_and_retries(self, logger: logging.Logger) -> None:
+        # Only the MISSING file exits: an invalid config is likely mid-edit, so
+        # scheduled mode must keep skipping + retrying, never raise out of the loop.
+        capture = CaptureHandler()
+        logger.addHandler(capture)
+        paths = resolve_paths()
+        os.makedirs(paths.data_dir)
+        Path(paths.config).write_text("sonar:\n  url: x\n", encoding="utf-8")
+
+        result = _run_arrs(
+            [(Arr.SONARR, None)],
+            paths=paths,
+            logger=logger,
+            retry_note="will retry in 6h (Ctrl-C to stop)",
+        )
+
+        assert result is False
+        error = next(r for r in capture.records if r.levelno == logging.ERROR)
+        assert "will retry in 6h" in error.getMessage()
+
+    def test_sigterm_handler_logs_and_exits_zero(self) -> None:
+        # Call the handler directly - never deliver a real signal in-process.
+        app_logger = logging.getLogger("SeaDexArr")
+        capture = CaptureHandler()
+        app_logger.addHandler(capture)
+        app_logger.setLevel(logging.INFO)
+
+        with pytest.raises(SystemExit) as excinfo:
+            _handle_sigterm(signal.SIGTERM, None)
+
+        assert excinfo.value.code == 0
+        assert [r.getMessage() for r in capture.records] == ["Received SIGTERM; exiting."]
+
+    def test_run_scheduled_registers_the_sigterm_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        registered: list[tuple[int, object]] = []
+
+        def record_signal(signum: int, handler: object) -> None:
+            registered.append((signum, handler))
+
+        monkeypatch.setattr(signal, "signal", record_signal)
+        monkeypatch.setattr("seadexarr.modules.cli.setup_logger", _SetupLoggerRecorder())
+        monkeypatch.setattr("seadexarr.modules.cli._run_arrs", _stop_loop)
+        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
+
+        with pytest.raises(_StopScheduledLoop):
+            run_scheduled()
+
+        assert registered == [(signal.SIGTERM, _handle_sigterm)]
+
+    def test_scheduled_help_names_the_bare_metal_fallback(self) -> None:
+        result = CliRunner().invoke(seadexarr_cli, ["run", "scheduled", "--help"])
+        assert result.exit_code == 0
+        assert "bare-metal" in result.output
 
 
 class TestScheduleHours:
