@@ -398,6 +398,7 @@ def _run_arrs(
         from .run_services import QbitConnectionError, RunDeps, RunServices
         from .seadex_radarr import RadarrSync
         from .seadex_sonarr import SonarrSync
+        from .seadex_types import BoundaryContractError
         from .web_client import make_web_client
 
         # One shared client for all non-arr web traffic this cycle (tracker
@@ -477,6 +478,11 @@ def _run_arrs(
                         all_arrs_completed = False
                         keys = " / ".join(f"{a}.url" for a in _implicated_arrs(arr_name, app_config))
                         logger.error(f"{arr_name.capitalize()} run failed: {e} - check {keys} in your config")
+                    except BoundaryContractError as e:
+                        # The arr answered but its library payload validated to
+                        # nothing: a one-line contract error, never a traceback.
+                        all_arrs_completed = False
+                        logger.error(f"{arr_name.capitalize()} run failed: {e}")
                     except ArrAuthError:
                         all_arrs_completed = False
                         implicated = _implicated_arrs(arr_name, app_config)

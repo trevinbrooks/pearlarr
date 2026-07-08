@@ -8,7 +8,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, cast, override
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .arr_http import ArrHttp
 from .log import indent_string
@@ -21,7 +21,6 @@ from .seadex_types import (
     Language,
     ManualImportCandidate,
     ManualImportFile,
-    ParsedEpisode,
     ParsedFileInfo,
     QualityDefinition,
     QueueRecord,
@@ -38,6 +37,19 @@ from .seadex_types import (
 # instead of blocking the whole run. Generous so a legitimately slow first scan
 # (uncached remote files) still completes.
 MANUAL_IMPORT_TIMEOUT_S = 120
+
+
+class _ParsedEpisode(BaseModel):
+    """One ``ParseResource.episodes[]`` entry, reduced to the two numbers read.
+
+    Private to :meth:`SonarrClient.parse` - the only consumer of the
+    series-matched array (the file size comes from the SeaDex file list).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    seasonNumber: int | None = None
+    episodeNumber: int | None = None
 
 
 class AbstractSonarrClient(ABC):
@@ -137,8 +149,9 @@ class SonarrClient(AbstractSonarrClient):
         """
 
         raw = self._http.get_json_list_strict("/api/v3/series")
-        # Element dicts are unvalidated JSON: cast at the parse boundary, skip strays.
-        return [SonarrSeries.from_api(cast("dict[str, Any]", record)) for record in raw if isinstance(record, dict)]
+        # Strict validation to match: a non-empty payload with zero valid
+        # records raises BoundaryContractError instead of reading as empty.
+        return list[SonarrItem](validate_each(SonarrSeries, raw, logger=self._logger, strict=True))
 
     @override
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
@@ -208,21 +221,26 @@ class SonarrClient(AbstractSonarrClient):
         if payload is None:
             return None
 
-        # The ParseResource's "episodes" is an array of EpisodeResource objects:
-        # cast each at the parse boundary (skipping strays) before reading their
-        # season/episode numbers. A present-but-non-list "episodes" is a mangled
-        # response, not a confirmed no-match: fail open to the uncacheable None.
+        # The ParseResource's "episodes" is an array of EpisodeResource objects,
+        # validated per entry at this boundary. A present-but-non-list
+        # "episodes" is a mangled response, not a confirmed no-match: fail open
+        # to the uncacheable None.
         raw_eps = payload.get("episodes", [])
         if not isinstance(raw_eps, list):
             return None
-        episode_info = [cast("ParsedEpisode", ep) for ep in cast("list[object]", raw_eps) if isinstance(ep, dict)]
 
         parsed: list[dict[str, int]] = []
-        for ep in episode_info:
-            season = ep.get("seasonNumber", None)
-            episode = ep.get("episodeNumber", None)
+        for ep in cast("list[object]", raw_eps):
+            try:
+                record = _ParsedEpisode.model_validate(ep)
+            except ValidationError:
+                # A junk-typed entry skips like a missing-number one below.
+                self._logger.debug(
+                    indent_string(f"Sonarr's parse returned a malformed episode entry for {filename}; skipping it"),
+                )
+                continue
 
-            if season is None or episode is None:
+            if record.seasonNumber is None or record.episodeNumber is None:
                 self._logger.debug(
                     indent_string(
                         f"Sonarr's parse returned no season/episode number for {filename}; skipping it",
@@ -230,7 +248,7 @@ class SonarrClient(AbstractSonarrClient):
                 )
                 continue
 
-            parsed.append({"season": season, "episode": episode})
+            parsed.append({"season": record.seasonNumber, "episode": record.episodeNumber})
 
         return parsed
 
@@ -263,8 +281,14 @@ class SonarrClient(AbstractSonarrClient):
             return None
 
         # The ParseResource's parsedEpisodeInfo carries the series-agnostic
-        # numbers - narrow it to ParsedFileInfo at this client boundary.
-        return ParsedFileInfo.from_parse_resource(cast("dict[str, Any]", payload))
+        # numbers; a malformed body fails open to the same retryable None.
+        try:
+            return ParsedFileInfo.model_validate(payload)
+        except ValidationError as e:
+            self._logger.warning(
+                indent_string(f"Could not parse {filename} via Sonarr (malformed response: {validation_summary(e)})"),
+            )
+            return None
 
     @override
     def manual_import_candidates(

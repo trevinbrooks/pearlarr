@@ -570,6 +570,13 @@ class TestRunFailuresAreCleanAndNonzero:
                 id="arr-unreachable",
             ),
             pytest.param("unauthorized", "Sonarr rejected the API key - check sonarr.api_key", id="arr-unauthorized"),
+            pytest.param(
+                "contract",
+                # The library answered but validated to nothing: the one-line
+                # contract arm, never the traceback arm.
+                "Sonarr run failed: none of the 3 SonarrSeries records validated",
+                id="arr-contract",
+            ),
         ],
     )
     def test_a_failed_arr_leg_reports_cleanly_and_returns_false(
@@ -581,6 +588,7 @@ class TestRunFailuresAreCleanAndNonzero:
     ) -> None:
         from seadexarr.modules.arr_http import ArrAuthError, ArrConnectionError
         from seadexarr.modules.run_services import QbitConnectionError, RunDeps
+        from seadexarr.modules.seadex_types import BoundaryContractError
 
         exceptions: dict[str, Exception] = {
             "qbit": QbitConnectionError("qBittorrent connection failed - check the host and credentials"),
@@ -588,6 +596,9 @@ class TestRunFailuresAreCleanAndNonzero:
                 "Could not reach Sonarr at http://sonarr:8989 (request failed (ConnectError))",
             ),
             "unauthorized": ArrAuthError("Sonarr at http://sonarr:8989 rejected the API key (status code 401)"),
+            "contract": BoundaryContractError(
+                "none of the 3 SonarrSeries records validated; refusing to treat it as empty",
+            ),
         }
 
         def fail_build(*args: object, **kwargs: object) -> NoReturn:

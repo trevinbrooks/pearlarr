@@ -15,10 +15,13 @@ from pydantic import ValidationError
 
 from seadexarr.modules.seadex_types import (
     AniListMediaNode,
+    BoundaryContractError,
     CommandResource,
     HistoryRecord,
     MovieFile,
+    ParsedFileInfo,
     QueueRecord,
+    SonarrSeries,
     validate_each,
 )
 
@@ -67,6 +70,32 @@ def test_validate_each_empty_list_is_empty() -> None:
     assert capture.records == []
 
 
+def test_validate_each_strict_raises_when_nothing_validates() -> None:
+    """strict=True: a non-empty payload with ZERO valid records raises
+    BoundaryContractError - an all-invalid library must never read as empty.
+    """
+
+    logger, _ = _capture_logger("seadexarr.test.validate-each-strict")
+    with pytest.raises(BoundaryContractError):
+        validate_each(SonarrSeries, ["junk", 42], logger=logger, strict=True)
+
+
+def test_validate_each_strict_accepts_empty_and_partial_payloads() -> None:
+    """strict=True still reads an EMPTY payload as [] (a legitimate empty
+    library) and keeps the valid records of a partially-junk one.
+    """
+
+    logger, _ = _capture_logger("seadexarr.test.validate-each-partial")
+    assert validate_each(SonarrSeries, [], logger=logger, strict=True) == []
+    records = validate_each(
+        SonarrSeries,
+        [{"id": 1, "title": "Show", "tvdbId": 7}, {"id": None, "title": "Null id"}],
+        logger=logger,
+        strict=True,
+    )
+    assert records == [SonarrSeries(id=1, title="Show", tvdbId=7)]
+
+
 # --- model contracts ----------------------------------------------------------
 
 
@@ -109,6 +138,15 @@ def test_command_resource_junk_file_entry_skips_without_dropping_the_command() -
     [file] = command.files
     assert file.download_id == "ABC"
     assert file.episode_ids == (1, 2)
+
+
+def test_parsed_file_info_null_number_arrays_fold_to_empty() -> None:
+    """Sonarr nulls empty number arrays; they fold to () like the absent case."""
+
+    info = ParsedFileInfo.model_validate(
+        {"parsedEpisodeInfo": {"seasonNumber": 1, "episodeNumbers": None, "absoluteEpisodeNumbers": None}},
+    )
+    assert info == ParsedFileInfo(season_number=1)
 
 
 def test_history_record_field_name_construction_matches_alias_parse() -> None:

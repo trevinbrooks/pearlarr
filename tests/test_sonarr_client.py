@@ -23,6 +23,7 @@ import respx
 from seadexarr.modules.arr_http import ArrHttp
 from seadexarr.modules.manual_import import PendingImport
 from seadexarr.modules.seadex_types import (
+    BoundaryContractError,
     CommandResource,
     HistoryRecord,
     ManualImportFile,
@@ -125,6 +126,17 @@ def test_all_series_skips_non_dict_elements() -> None:
     series = _make_client().all_series()
 
     assert [s.id for s in series] == [228]
+
+
+@respx.mock
+def test_all_series_all_invalid_payload_raises_contract_error() -> None:
+    """A non-empty series payload validating to NOTHING raises the typed
+    contract error (fail-closed) instead of reading as an empty library.
+    """
+
+    respx.get(f"{_BASE}/series").respond(json=["junk", 42])
+    with pytest.raises(BoundaryContractError):
+        _make_client().all_series()
 
 
 # --- queue() ----------------------------------------------------------------

@@ -355,14 +355,16 @@ class RadarrItem(ArrItem, Protocol):
     def tmdbId(self) -> int: ...
 
 
-@dataclass(frozen=True, slots=True)
-class SonarrSeries:
+class SonarrSeries(_ApiModel):
     """One Sonarr ``/api/v3/series`` record, narrowed to the :class:`SonarrItem` surface.
 
-    The concrete item ``SonarrClient.all_series`` returns, parsed at the client
-    boundary via :meth:`from_api` like :class:`SonarrEpisode`. camelCase field
+    The concrete item ``SonarrClient.all_series`` returns. camelCase field
     names on purpose: they satisfy the protocol directly, and the
     ``IdField.item_attr`` strings (``"tvdbId"``/``"imdbId"``) keep working.
+    The STRICT library read (``validate_each(..., strict=True)``): a record
+    with junk (or an explicit null) in a typed field is skipped with a warning,
+    and an all-invalid non-empty payload raises :class:`BoundaryContractError`
+    rather than reading as an empty library.
     """
 
     id: int = 0
@@ -371,26 +373,13 @@ class SonarrSeries:
     tvdbId: int = 0
     imdbId: str | None = None
 
-    @classmethod
-    def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Build from one raw ``SeriesResource`` dict (filters unknown keys)."""
 
-        return cls(
-            id=raw.get("id", 0),
-            title=raw.get("title", ""),
-            monitored=raw.get("monitored", True),
-            tvdbId=raw.get("tvdbId", 0),
-            imdbId=raw.get("imdbId"),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RadarrMovie:
+class RadarrMovie(_ApiModel):
     """One Radarr ``/api/v3/movie`` record, narrowed to the :class:`RadarrItem` surface.
 
-    The concrete item ``RadarrClient.all_movies`` returns, parsed at the client
-    boundary via :meth:`from_api`, mirroring :class:`SonarrSeries` (camelCase
-    fields for the same reasons).
+    The concrete item ``RadarrClient.all_movies`` returns, mirroring
+    :class:`SonarrSeries` (camelCase fields and the same strict library-read
+    posture, for the same reasons).
     """
 
     id: int = 0
@@ -398,18 +387,6 @@ class RadarrMovie:
     monitored: bool = True
     tmdbId: int = 0
     imdbId: str | None = None
-
-    @classmethod
-    def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Build from one raw ``MovieResource`` dict (filters unknown keys)."""
-
-        return cls(
-            id=raw.get("id", 0),
-            title=raw.get("title", ""),
-            monitored=raw.get("monitored", True),
-            tmdbId=raw.get("tmdbId", 0),
-            imdbId=raw.get("imdbId"),
-        )
 
 
 # --- Sonarr episodes (``/api/v3/episode`` JSON) -----------------------------
@@ -921,68 +898,52 @@ class MovieFile(_ApiModel):
         return cls.model_validate(raw)
 
 
-# --- Sonarr parse (``/api/v3/parse`` ``episodes`` array) ---------------------
+# --- Sonarr parse (``/api/v3/parse`` ``parsedEpisodeInfo``) -------------------
 
 
-class ParsedEpisode(TypedDict):
-    """One entry of a Sonarr ``ParseResource`` ``episodes`` array (schema ``EpisodeResource``).
+def _tuple_or_empty(value: object) -> object:
+    """Fold a null/absent number array to () (Sonarr nulls empty arrays)."""
 
-    The ``/api/v3/parse`` response nests an ``episodes`` array; only the
-    season/episode numbers are read out of each entry (the file size comes from
-    the SeaDex file list, not Sonarr). Both are ``NotRequired`` because a parse
-    that couldn't resolve an entry may omit them (the reader drops such entries).
-    """
-
-    seasonNumber: NotRequired[int]
-    episodeNumber: NotRequired[int]
+    return value or ()
 
 
-class ParsedEpisodeInfo(TypedDict):
-    """The ``parsedEpisodeInfo`` object of a Sonarr ``/api/v3/parse`` response.
-
-    Unlike the response's ``episodes`` array (Sonarr's *series-matched* episodes,
-    which is empty whenever the release title can't be matched to a series in the
-    library), this object carries the numbers Sonarr parsed straight from the
-    release NAME, independent of any series match: the season + episode numbers
-    for an ``SxxExx`` name, and the absolute episode numbers for an
-    absolute-numbered anime release. Every field is ``NotRequired`` because a name
-    Sonarr couldn't parse may omit them.
-    """
-
-    seasonNumber: NotRequired[int]
-    episodeNumbers: NotRequired[list[int]]
-    absoluteEpisodeNumbers: NotRequired[list[int]]
-    special: NotRequired[bool]
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedFileInfo:
+class ParsedFileInfo(_ApiModel):
     """Sonarr's series-AGNOSTIC parse of one filename, narrowed to what assignment reads.
 
-    Built from a ``/api/v3/parse`` ``parsedEpisodeInfo`` at the Sonarr client
-    boundary. ``episode_numbers`` (paired with ``season_number``) drives the exact
-    ``(season, episode)`` assignment; ``absolute_episode_numbers`` drives the
-    absolute-index fallback. Both are read straight from the release name, so they
-    are populated even when Sonarr can't match the title to a series - which is
-    exactly the case (specials, alias titles) the old series-matched parse failed.
+    Validated from a raw ``/api/v3/parse`` response body: every field reads
+    through an ``AliasPath`` into the nested ``parsedEpisodeInfo`` object - NOT
+    the response's ``episodes`` array (Sonarr's *series-matched* episodes,
+    which is empty whenever the release title can't be matched to a series in
+    the library). ``episode_numbers`` (paired with ``season_number``) drives
+    the exact ``(season, episode)`` assignment; ``absolute_episode_numbers``
+    drives the absolute-index fallback. Both are read straight from the
+    release name, so they are populated even when Sonarr can't match the title
+    to a series - which is exactly the case (specials, alias titles) the old
+    series-matched parse failed.
 
     ``season_number`` is whatever Sonarr reported and is meaningful only when
     ``episode_numbers`` is non-empty (an absolute-numbered name reports season 0).
     """
 
-    season_number: int | None = None
-    episode_numbers: tuple[int, ...] = ()
-    absolute_episode_numbers: tuple[int, ...] = ()
-    special: bool = False
+    season_number: int | None = Field(
+        default=None,
+        validation_alias=AliasPath("parsedEpisodeInfo", "seasonNumber"),
+    )
+    episode_numbers: Annotated[tuple[int, ...], BeforeValidator(_tuple_or_empty)] = Field(
+        default=(),
+        validation_alias=AliasPath("parsedEpisodeInfo", "episodeNumbers"),
+    )
+    absolute_episode_numbers: Annotated[tuple[int, ...], BeforeValidator(_tuple_or_empty)] = Field(
+        default=(),
+        validation_alias=AliasPath("parsedEpisodeInfo", "absoluteEpisodeNumbers"),
+    )
+    special: Annotated[bool, BeforeValidator(bool)] = Field(
+        default=False,
+        validation_alias=AliasPath("parsedEpisodeInfo", "special"),
+    )
 
     @classmethod
     def from_parse_resource(cls, body: dict[str, Any]) -> Self:
-        """Build from a raw ``/api/v3/parse`` response body (``parsedEpisodeInfo``)."""
+        """Thin shim over ``model_validate`` (the historical parse entrypoint)."""
 
-        info = cast("ParsedEpisodeInfo", body.get("parsedEpisodeInfo") or {})
-        return cls(
-            season_number=info.get("seasonNumber"),
-            episode_numbers=tuple(info.get("episodeNumbers") or ()),
-            absolute_episode_numbers=tuple(info.get("absoluteEpisodeNumbers") or ()),
-            special=bool(info.get("special", False)),
-        )
+        return cls.model_validate(body)

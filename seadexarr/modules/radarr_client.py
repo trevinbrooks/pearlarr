@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
-from typing import Any, NamedTuple, Protocol, cast, override
+from typing import NamedTuple, Protocol, override
 
 import httpx
 
@@ -93,8 +93,9 @@ class RadarrClient(AbstractRadarrClient):
         """
 
         raw = self._http.get_json_list_strict("/api/v3/movie")
-        # Element dicts are unvalidated JSON: cast at the parse boundary, skip strays.
-        return [RadarrMovie.from_api(cast("dict[str, Any]", record)) for record in raw if isinstance(record, dict)]
+        # Strict validation to match: a non-empty payload with zero valid
+        # records raises BoundaryContractError instead of reading as empty.
+        return list[RadarrItem](validate_each(RadarrMovie, raw, logger=self._http.logger, strict=True))
 
     @override
     def movie_files(self, movie_id: int) -> list[MovieFile]:
