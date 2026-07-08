@@ -282,76 +282,87 @@ def test_push_grab_builds_linked_embed(pushes: list[DiscordEmbed]) -> None:
 
     assert posted is True
     embed = pushes[0]
-    # The author line names the event, with SeaDex's icon beside it; the title
-    # is the AniList title linking to the entry page.
+    # The author line names the event, with the arr's own logo beside it; the
+    # title is the AniList title linking to the entry page.
     assert embed.author_name == "Sonarr · SeaDex grab"
-    assert embed.author_icon_url == "https://i.imgur.com/vV0olYs.png"
+    assert embed.author_icon_url == "https://raw.githubusercontent.com/Sonarr/Sonarr/develop/Logo/512.png"
     assert embed.title == "Frieren: Beyond Journey's End"
     assert embed.url == "https://releases.moe/154587/"
     assert embed.color == COLOR_GRAB
     assert embed.thumb_url == "https://img.anili.st/cover.png"
     assert embed.image_url == "https://img.anili.st/banner.png"
-    # A genuinely different Arr title becomes the muted subtext byline.
-    assert embed.description == "-# Sousou no Frieren"
+    # A genuinely different Arr title becomes the muted subtext byline, riding
+    # the Notes field (the description stays empty).
+    assert embed.description == ""
+    assert embed.fields == (EmbedField(name="Notes", value="-# Sousou no Frieren"),)
 
 
-class TestGrabDescription:
-    """The description stack: subtitle dedupe, notes blockquote, comparisons, caveat."""
+def test_push_grab_radarr_wears_the_radarr_logo(pushes: list[DiscordEmbed]) -> None:
+    assert _grab_notifier().push_grab(_notice(arr=Arr.RADARR)) is True
 
-    def _description(self, pushes: list[DiscordEmbed], notice: GrabNotice) -> str:
+    embed = pushes[0]
+    assert embed.author_name == "Radarr · SeaDex grab"
+    assert embed.author_icon_url == "https://raw.githubusercontent.com/Radarr/Radarr/develop/Logo/512.png"
+
+
+class TestGrabNotes:
+    """The Notes field stack: subtitle dedupe, notes blockquote, comparisons, caveat."""
+
+    def _notes(self, pushes: list[DiscordEmbed], notice: GrabNotice) -> str:
         assert _grab_notifier().push_grab(notice) is True
-        return pushes[-1].description
+        fields = pushes[-1].fields
+        return fields[-1].value if fields and fields[-1].name == "Notes" else ""
 
     def test_near_duplicate_titles_render_no_subtitle(self, pushes: list[DiscordEmbed]) -> None:
         # Apostrophe style and case are not information: Sonarr's ASCII title
         # vs AniList's typographic one must not produce a duplicate byline.
-        description = self._description(
+        notes = self._notes(
             pushes,
             _notice(arr_title="frieren: beyond journey's end", al_title="Frieren: Beyond Journey’s End"),
         )
 
-        assert description == ""
+        assert notes == ""
 
     def test_subtitle_escapes_markdown(self, pushes: list[DiscordEmbed]) -> None:
-        description = self._description(pushes, _notice(arr_title="K-ON! *Special*", al_title="K-ON!"))
+        notes = self._notes(pushes, _notice(arr_title="K-ON! *Special*", al_title="K-ON!"))
 
-        assert description == "-# K-ON! \\*Special\\*"
+        assert notes == "-# K-ON! \\*Special\\*"
 
     def test_notes_render_as_one_blockquote(self, pushes: list[DiscordEmbed]) -> None:
         # Blank lines drop so the notes stay one quote block.
-        description = self._description(
+        notes = self._notes(
             pushes,
             _notice(entry=make_entry_record(notes="PMR is the JPN BD Remux\n\nLostYears has the dub")),
         )
 
-        assert description == "> PMR is the JPN BD Remux\n> LostYears has the dub"
+        assert notes == "> PMR is the JPN BD Remux\n> LostYears has the dub"
 
     def test_long_notes_truncate_on_a_word_boundary(self, pushes: list[DiscordEmbed]) -> None:
-        description = self._description(
+        notes = self._notes(
             pushes,
             _notice(entry=make_entry_record(notes="alpha " * 80 + "OMEGA")),
         )
 
-        assert description.endswith("alpha …")
-        assert "OMEGA" not in description
+        assert notes.endswith("alpha …")
+        assert "OMEGA" not in notes
 
     def test_cut_landing_on_whitespace_keeps_the_whole_word(self, pushes: list[DiscordEmbed]) -> None:
         # 400 chars of complete 5-char words: the cut lands ON the separator, so
         # no word is sacrificed.
-        description = self._description(
+        notes = self._notes(
             pushes,
             _notice(entry=make_entry_record(notes="word " * 81)),
         )
 
-        assert description == "> " + " ".join(["word"] * 80) + " …"
+        assert notes == "> " + " ".join(["word"] * 80) + " …"
 
     def test_comparison_links(self, pushes: list[DiscordEmbed]) -> None:
         # A single link needs no number; several are numbered on one line.
-        single = self._description(
+        single = self._notes(
             pushes,
             _notice(entry=make_entry_record(comparisons=("https://slow.pics/c/one",))),
         )
-        multi = self._description(
+        multi = self._notes(
             pushes,
             _notice(entry=make_entry_record(comparisons=("https://slow.pics/c/1", "https://slow.pics/c/2"))),
         )
@@ -362,31 +373,31 @@ class TestGrabDescription:
     def test_blank_comparison_segments_are_dropped(self, pushes: list[DiscordEmbed]) -> None:
         # The lib's lax parse can yield an empty segment (sorted first); it must
         # not render a broken [Comparison N]() link - nor inflate the numbering.
-        description = self._description(
+        notes = self._notes(
             pushes,
             _notice(entry=make_entry_record(comparisons=("", "https://slow.pics/c/only"))),
         )
 
-        assert description == "[Comparison](https://slow.pics/c/only)"
+        assert notes == "[Comparison](https://slow.pics/c/only)"
 
     def test_incomplete_entry_renders_caveat(self, pushes: list[DiscordEmbed]) -> None:
-        description = self._description(
+        notes = self._notes(
             pushes,
             _notice(entry=make_entry_record(notes="Best available", is_incomplete=True)),
         )
 
         # Pieces stack with blank lines between them.
-        assert description == "> Best available\n\n*Entry marked incomplete on SeaDex*"
+        assert notes == "> Best available\n\n*Entry marked incomplete on SeaDex*"
 
 
 class TestGrabFields:
-    """The inline field row: Replacing beside the outcome-labelled pick(s) + coverage."""
+    """The full-width field stack: outcome-labelled pick(s), episodes, replacing."""
 
     def _fields(self, pushes: list[DiscordEmbed], notice: GrabNotice) -> tuple[EmbedField, ...]:
         assert _grab_notifier().push_grab(notice) is True
         return pushes[0].fields
 
-    def test_replacing_pick_and_coverage_row(self, pushes: list[DiscordEmbed]) -> None:
+    def test_pick_episodes_and_replacing_stack(self, pushes: list[DiscordEmbed]) -> None:
         seadex_dict = {
             "PMR": rg_group(
                 {
@@ -415,17 +426,16 @@ class TestGrabFields:
             ),
         )
 
-        # Group names render as code spans (markdown-proof); the release line
-        # carries the tracker link + size/files/audio/provenance markers; tags
-        # trail as muted subtext; empty/None current groups drop.
+        # The pick's release line carries the tracker link + size/files/audio/
+        # provenance markers; tags trail as muted subtext; episodes and the
+        # replaced groups follow as their own rows; empty/None current groups drop.
         assert fields == (
-            EmbedField(name="Replacing", value="`Erai_raws`", inline=True),
             EmbedField(
                 name="Grabbed · PMR",
                 value="[Nyaa](https://nyaa.si/view/1) · 1.0 GB · 2 files · dual audio · fallback · upgrade\n-# HDR · VFR",
-                inline=True,
             ),
-            EmbedField(name="Coverage", value="S01 E01-E12", inline=True),
+            EmbedField(name="Episodes", value="S01 E01-E12"),
+            EmbedField(name="Replacing", value="Erai_raws"),
         )
 
     def test_group_label_reflects_client_outcome(self, pushes: list[DiscordEmbed]) -> None:
@@ -468,7 +478,7 @@ class TestGrabFields:
 
         [replacing] = fields
         lines = replacing.value.splitlines()
-        assert lines[:2] == ["`Group00`", "`Group01`"]
+        assert lines[:2] == ["Group00", "Group01"]
         assert len(lines) == 11  # 10 groups + the collapse line
         assert lines[-1] == "… +2 more"
 

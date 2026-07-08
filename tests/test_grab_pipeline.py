@@ -181,8 +181,10 @@ class TestGrabPushesNotice:
         assert embed.url == "https://releases.moe/7"
         assert embed.thumb_url == "https://img/cover"
         assert embed.image_url == "https://img/banner"
-        assert embed.description == "-# Show\n\n> the why"
-        assert [f.name for f in embed.fields] == ["Replacing", "Grabbed · PMR", "Coverage"]
+        # The subtitle/notes stack rides the trailing Notes field, not the description.
+        assert embed.description == ""
+        assert [f.name for f in embed.fields] == ["Grabbed · PMR", "Episodes", "Replacing", "Notes"]
+        assert embed.fields[-1].value == "-# Show\n\n> the why"
 
     def test_nothing_added_pushes_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         assert self._grab(monkeypatch, outcome=AddOutcome.ALREADY_ADDED) == []

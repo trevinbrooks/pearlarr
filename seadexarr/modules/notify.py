@@ -27,7 +27,7 @@ from .discord import (
 from .log import count_noun, format_elapsed, human_bytes
 from .manual_import import OutcomeCategory
 from .seadex_types import SeadexDict, SeadexUrlItem
-from .torrents import ReleaseOutcome
+from .torrents import AddOutcome, ReleaseOutcome
 from .wait_view import WaitResult
 
 # Cap how many titles a single notification field lists before collapsing the
@@ -35,16 +35,17 @@ from .wait_view import WaitResult
 # the payload boundary's char clamps are the hard limit guarantee.
 _MAX_FIELD_TITLES = 25
 
-# The SeaDex logo, shown beside the grab embed's author line (the
-# professional-embed convention: an icon marks who the event is from).
-_SEADEX_ICON = "https://i.imgur.com/vV0olYs.png"
+# Arr logos for the grab embed's author line: the icon marks which arr the
+# grab ran for (the webhook's own avatar already carries the SeaDex identity).
+_SONARR_ICON = "https://raw.githubusercontent.com/Sonarr/Sonarr/develop/Logo/512.png"
+_RADARR_ICON = "https://raw.githubusercontent.com/Radarr/Radarr/develop/Logo/512.png"
 
 # Cap the "Replacing" list well below the payload clamp so a many-group season
 # stays readable; the remainder collapses into a "… +N more" line.
 _MAX_REPLACING = 10
 
-# Taste limit for the SeaDex notes blockquote (the 4096 payload clamp is the
-# hard backstop); truncation lands on a word boundary.
+# Taste limit for the SeaDex notes blockquote (the 1024 field-value clamp is
+# the hard backstop); truncation lands on a word boundary.
 _MAX_NOTES_LEN = 400
 
 # Minimum spacing between consecutive Discord pushes (webhook rate limiting).
@@ -126,16 +127,6 @@ def _md_escape(text: str) -> str:
     return text
 
 
-def _code_span(text: str) -> str:
-    """A release-group name as an inline code span, the *arr convention for
-    technical strings (monospace, immune to markdown-mangling underscores).
-
-    A backtick inside would break out of the span, so it degrades to a quote.
-    """
-
-    return "`" + text.replace("`", "'") + "`"
-
-
 def _titles_match(a: str, b: str) -> bool:
     """True when two titles differ only by case or apostrophe style.
 
@@ -170,8 +161,8 @@ def _notes_block(notes: str) -> str:
     return "\n".join("> " + line for line in text.splitlines() if line.strip())
 
 
-def _grab_description(notice: GrabNotice) -> str:
-    """The description stack: subtitle, entry notes, comparison links, caveats.
+def _grab_notes(notice: GrabNotice) -> str:
+    """The "Notes" field stack: subtitle, entry notes, comparison links, caveats.
 
     The Arr's own title appears as a muted ``-#`` subtext byline only when it
     differs from the AniList one; each piece is omitted when it has nothing to
@@ -213,46 +204,51 @@ def _release_line(item: SeadexUrlItem) -> str:
 
 
 def _grab_fields(notice: GrabNotice) -> tuple[EmbedField, ...]:
-    """The inline row: the release(s) being replaced beside the SeaDex pick(s).
+    """The full-width field stack: SeaDex pick(s), episodes, replaced, notes.
 
     A group with nothing flagged for download contributes no field. The group
     label reflects what actually happened at the torrent client: "Grabbed" when
     anything was added, "Already downloading" when every acted release was
     already there, "Failed" when an add errored (contained; retried next run),
-    "Skipped" when none of its releases were attempted. Sonarr's episode
-    coverage joins the row as a trailing field when known.
+    "Skipped" when none of its releases were attempted.
     """
 
     fields: list[EmbedField] = []
 
-    current = [group for group in (notice.release_group or []) if group]
-    if current:
-        replaced = [_code_span(group) for group in current[:_MAX_REPLACING]]
-        if len(current) > _MAX_REPLACING:
-            replaced.append(f"… +{len(current) - _MAX_REPLACING} more")
-        fields.append(EmbedField(name="Replacing", value="\n".join(replaced), inline=True))
-
-    grabbed = {r.group for r in notice.results if r.added}
-    acted = {r.group for r in notice.results}
+    outcome_by_group = {r.group: r.outcome for r in notice.results}
     for srg, srg_item in notice.seadex_dict.items():
         links = [_release_line(u) for u in srg_item.urls.values() if u.download]
         if not links:
             continue
-        lines = list(links)
-        if srg_item.tags:
-            lines.append("-# " + " · ".join(sorted(str(tag) for tag in srg_item.tags)))
-        if srg in grabbed:
+
+        add_outcome = outcome_by_group.get(srg)
+        if add_outcome is AddOutcome.ADDED:
             label = "Grabbed"
-        elif srg in acted:
+        elif add_outcome is AddOutcome.ALREADY_ADDED:
             label = "Already downloading"
         elif srg in notice.failed_groups:
             label = "Failed"
         else:
             label = "Skipped"
-        fields.append(EmbedField(name=f"{label} · {srg}", value="\n".join(lines), inline=True))
+
+        lines = list(links)
+        if srg_item.tags:
+            lines.append("-# " + " · ".join(sorted(str(tag) for tag in srg_item.tags)))
+        fields.append(EmbedField(name=f"{label} · {srg}", value="\n".join(lines)))
 
     if notice.coverage:
-        fields.append(EmbedField(name="Coverage", value=notice.coverage, inline=True))
+        fields.append(EmbedField(name="Episodes", value=notice.coverage))
+
+    current = [group for group in (notice.release_group or []) if group]
+    if current:
+        replaced = list(current[:_MAX_REPLACING])
+        if len(current) > _MAX_REPLACING:
+            replaced.append(f"… +{len(current) - _MAX_REPLACING} more")
+        fields.append(EmbedField(name="Replacing", value="\n".join(replaced)))
+
+    if notes := _grab_notes(notice):
+        fields.append(EmbedField(name="Notes", value=notes))
+
     return tuple(fields)
 
 
@@ -293,10 +289,10 @@ class Notifier:
     def push_grab(self, notice: GrabNotice) -> bool:
         """Post a grab notification: the AniList title linking to the SeaDex entry.
 
-        The author line names the event ("Sonarr · SeaDex grab") rather than
-        repeating a title; the description stacks the Arr's own title (when it
-        differs), the entry's notes and comparison links; the AniList art
-        frames it (cover thumbnail + wide banner).
+        The author line names the event ("Sonarr · SeaDex grab") under the
+        arr's own logo; the fields stack the picks, coverage, replaced groups
+        and the entry's notes; the AniList art frames it (cover thumbnail +
+        wide banner).
 
         Args:
             notice (GrabNotice): The grab's resolved notification payload.
@@ -308,11 +304,10 @@ class Notifier:
                 title=notice.al_title,
                 color=COLOR_GRAB,
                 url=notice.entry.url or None,
-                description=_grab_description(notice),
                 fields=_grab_fields(notice),
                 thumb_url=notice.thumb_url,
                 image_url=notice.banner_url,
-                author_icon_url=_SEADEX_ICON,
+                author_icon_url=_SONARR_ICON if notice.arr is Arr.SONARR else _RADARR_ICON,
             ),
         )
 
