@@ -213,6 +213,15 @@ def _load_shared_config(
         # in try/FINALLY only - so the boot view, web client and run lock all
         # release on the way out to typer (exit code 1).
         raise typer.Exit(1) from None
+    except OSError as e:
+        # A permissions/FS problem (unreadable file, read-only data dir failing
+        # the template copy): report + skip like the invalid-config arms below -
+        # exiting would kill a scheduled daemon over a possibly transient error.
+        # Must sit after FileNotFoundError (its subclass) and before Exception.
+        logger.error(
+            f"Could not access config {config} ({e}); check permissions on it and the data directory. "
+            f"Skipping this run{retry}.",
+        )
     except ValidationError as e:
         # Surface the specific bad keys (nested path -> message) without a traceback,
         # then skip + retry next cycle - same contract as the missing-file branch.
@@ -401,6 +410,10 @@ def _run_arrs(
         # restored even on an early failure.
         boot = make_boot_view(logger)
         boot.banner()
+        # Name the resolved data dir in every cycle's log - scheduled mode rotates
+        # a fresh log file each cycle, and "which config/cache is this actually
+        # using?" is the first support question.
+        log_styled(logger, indent_string(f"Data directory: {paths.data_dir}"), "grey50")
         # Pull the heavy run machinery now - after the instant title, before the
         # cockpit's first step - so this one-time import cost lands in the gap
         # between the banner and the spinner rather than stalling a live step.
@@ -650,6 +663,48 @@ def _console_format(config_path: str) -> LogFormat:
     return peeked.advanced.log_format if peeked is not None else "auto"
 
 
+def _data_dir_unwritable(data_dir: str, e: OSError) -> NoReturn:
+    """Report an unwritable data directory as one actionable stderr line, exit 1.
+
+    These failures strike before a logger exists (``ensure_data_dir`` and
+    ``setup_logger`` run first), so the report goes straight to stderr - never
+    a traceback.
+    """
+
+    typer.echo(
+        f"Cannot write to the data directory {data_dir} ({e}). "
+        f"Fix its permissions, or point --data-dir / SEADEX_ARR_DATA_DIR at a writable location.",
+        err=True,
+    )
+    raise typer.Exit(1) from None
+
+
+def _prepare_data_dir(paths: AppPaths) -> None:
+    """``ensure_data_dir``, degrading an unwritable location to a clean exit 1."""
+
+    try:
+        ensure_data_dir(paths)
+    except OSError as e:
+        _data_dir_unwritable(paths.data_dir, e)
+
+
+def _setup_run_logger(paths: AppPaths, log_level: LogLevel | None) -> logging.Logger:
+    """``setup_logger`` for a run command, with the unwritable-dir treatment.
+
+    The log-dir makedirs and the rotation renames run before any handler exists,
+    so an OSError here gets the same clean stderr line as ``ensure_data_dir``.
+    """
+
+    try:
+        return setup_logger(
+            log_level=log_level or "INFO",
+            log_dir=paths.log_dir,
+            console_format=_console_format(paths.config),
+        )
+    except OSError as e:
+        _data_dir_unwritable(paths.data_dir, e)
+
+
 def _schedule_hours(config_path: str, logger: logging.Logger) -> float:
     """Hours between scheduled cycles: SCHEDULE_TIME env (deprecated) > config > 6.
 
@@ -704,7 +759,7 @@ def run_scheduled(
     # Resolve the data directory once and make sure it exists (config-template copy
     # + run lock both need it).
     paths = resolve_paths()
-    ensure_data_dir(paths)
+    _prepare_data_dir(paths)
 
     # A stopping container/service must exit promptly and cleanly (code 0), not
     # die mid-sleep with SIGTERM's default nonzero status.
@@ -713,11 +768,7 @@ def run_scheduled(
     while True:
         # The config's console format is peeked each cycle (like the cadence
         # below), so a config edit takes effect without a restart.
-        logger = setup_logger(
-            log_level=log_level or "INFO",
-            log_dir=paths.log_dir,
-            console_format=_console_format(paths.config),
-        )
+        logger = _setup_run_logger(paths, log_level)
 
         # Re-read the cadence each cycle so a config edit takes effect without a
         # restart.
@@ -815,13 +866,9 @@ def run_single(
     # Resolve the data directory once and make sure it exists (config-template copy
     # + run lock both need it).
     paths = resolve_paths()
-    ensure_data_dir(paths)
+    _prepare_data_dir(paths)
 
-    logger = setup_logger(
-        log_level=log_level or "INFO",
-        log_dir=paths.log_dir,
-        console_format=_console_format(paths.config),
-    )
+    logger = _setup_run_logger(paths, log_level)
 
     # Build the shared config + mappings once and run each requested arr. True
     # when the run proceeded and every arr completed; False (exit 1) when the
@@ -852,7 +899,7 @@ def config_init(
     """
 
     paths = resolve_paths()
-    ensure_data_dir(paths)
+    _prepare_data_dir(paths)
 
     if os.path.exists(paths.config) and not force:
         typer.echo(
@@ -861,8 +908,13 @@ def config_init(
         )
         return False
 
-    shutil.copyfile(template_path(), paths.config)
-    restrict_config_permissions(paths.config)
+    try:
+        shutil.copyfile(template_path(), paths.config)
+        restrict_config_permissions(paths.config)
+    except OSError as e:
+        # A pre-existing data dir gone read-only passes _prepare_data_dir
+        # (makedirs is a no-op) and fails here instead.
+        _data_dir_unwritable(paths.data_dir, e)
     typer.echo(f"Wrote a starter config to {paths.config}.")
 
     return True
@@ -1031,7 +1083,11 @@ def cache_backup() -> bool:
     finally:
         source.close()
 
-    os.replace(tmp_backup, paths.cache_backup)
+    try:
+        os.replace(tmp_backup, paths.cache_backup)
+    except OSError as e:
+        typer.echo(f"cache backup failed: {e}", err=True)
+        return False
     typer.echo(f"Backed up cache to {paths.cache_backup}.")
     return True
 
@@ -1055,9 +1111,14 @@ def cache_restore() -> bool:
             return False
 
         tmp_restore = paths.cache + ".tmp"
-        shutil.copyfile(paths.cache_backup, tmp_restore)
-        _remove_db_sidecars(paths.cache)
-        os.replace(tmp_restore, paths.cache)
+        try:
+            shutil.copyfile(paths.cache_backup, tmp_restore)
+            _remove_db_sidecars(paths.cache)
+            os.replace(tmp_restore, paths.cache)
+        except OSError as e:
+            # A read-only data dir / vanished backup: one clean line, no traceback.
+            typer.echo(f"cache restore failed: {e}", err=True)
+            return False
 
     typer.echo(f"Restored cache from {paths.cache_backup}.")
     return True

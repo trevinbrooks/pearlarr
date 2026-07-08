@@ -1067,6 +1067,89 @@ class TestMissingConfigExitsNonzero:
         assert "Skipping this run" not in result.output
 
 
+class TestUnwritableDataDir:
+    """An unwritable data directory: one actionable stderr line + exit 1, no traceback.
+
+    ``ensure_data_dir``/``setup_logger`` run before any logger exists, so the
+    report must go straight to stderr; ``config init``'s template copy gets the
+    same treatment. An unreadable CONFIG in a healthy dir instead keeps the
+    skip+retry contract - exiting would kill the scheduled daemon.
+    """
+
+    def test_run_single_reports_and_exits_one(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ro_parent = tmp_path / "ro"
+        ro_parent.mkdir()
+        data_dir = ro_parent / "data"
+        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(data_dir))
+        ro_parent.chmod(0o500)
+        try:
+            result = CliRunner().invoke(seadexarr_cli, ["run", "single"])
+        finally:
+            ro_parent.chmod(0o755)
+
+        assert result.exit_code == 1
+        assert f"Cannot write to the data directory {data_dir}" in result.stderr
+        assert "SEADEX_ARR_DATA_DIR" in result.stderr  # the remedy is named
+        assert "Traceback" not in result.output
+
+    def test_config_init_into_a_readonly_dir_reports_cleanly(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The dir EXISTS read-only: makedirs(exist_ok=True) passes and the
+        # template copy is what fails - it needs the same one-line treatment.
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(data_dir))
+        data_dir.chmod(0o500)
+        try:
+            result = CliRunner().invoke(seadexarr_cli, ["config", "init"])
+        finally:
+            data_dir.chmod(0o755)
+
+        assert result.exit_code == 1
+        assert f"Cannot write to the data directory {data_dir}" in result.stderr
+        assert "Traceback" not in result.output
+
+    def test_an_unreadable_config_skips_the_run_instead_of_exiting(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Arm order in _load_shared_config matters twice: FileNotFoundError
+        # (exit 1) must not swallow this OSError, and the OSError arm must
+        # catch it before the traceback arm. Skip + retry, never exit.
+        paths = resolve_paths()
+        os.makedirs(paths.data_dir)
+        config = Path(paths.config)
+        config.write_text("sonarr:\n  url: http://s\n  api_key: k\n", encoding="utf-8")
+        config.chmod(0o000)
+        try:
+            assert run_single(sonarr=True) is False
+        finally:
+            config.chmod(0o644)
+
+        out = capsys.readouterr().out
+        assert "Could not access config" in out
+        assert "Skipping this run" in out
+        assert "Traceback" not in out
+
+
+class TestDataDirLine:
+    """Every run logs the resolved data directory right after the banner."""
+
+    def test_run_single_logs_the_resolved_data_dir(self) -> None:
+        # Virgin data dir: the run exits 1 writing the template, but the
+        # data-dir line lands FIRST (after the banner, before the config read).
+        result = CliRunner().invoke(seadexarr_cli, ["run", "single"])
+        assert result.exit_code == 1
+        assert f"Data directory: {resolve_paths().data_dir}" in result.output
+
+
 class TestScheduledLifecycle:
     """Scheduled mode: invalid configs retry, SIGTERM exits 0, help names the fallback."""
 
