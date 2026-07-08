@@ -204,7 +204,7 @@ class RadarrSync(ArrSync[RadarrItem]):
                 al_id=al_id,
                 item_title=item.title,
                 anilist_title=anilist_title,
-                sd_url=sd_url,
+                entry=sd_entry,
                 seadex_dict=seadex_dict,
                 torrent_hashes=torrent_hashes,
                 cache_details=cache_details,

@@ -11,13 +11,14 @@ and returns False, it must never abort a grab or the end-of-run cache save.
 import json
 import logging
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from typing import cast
 
 import httpx
 import pytest
 import respx
+from seadex import EntryRecord, Tag, Tracker
 
 from seadexarr.modules import notify
 from seadexarr.modules.config import Arr
@@ -30,10 +31,12 @@ from seadexarr.modules.discord import (
     EmbedField,
 )
 from seadexarr.modules.manual_import import Outcome
-from seadexarr.modules.notify import Notifier
+from seadexarr.modules.notify import GrabNotice, Notifier
+from seadexarr.modules.seadex_types import SeadexDict
+from seadexarr.modules.torrents import AddOutcome, ReleaseOutcome
 from seadexarr.modules.wait_view import WaitOutcomeRow, WaitResult
 
-from .builders import SEP, make_logger
+from .builders import SEP, make_entry_record, make_logger, rg_group, url_item
 from .fakes import CaptureHandler
 
 
@@ -231,37 +234,249 @@ def test_pushes_are_paced_only_within_a_burst(
     assert sleeps == [0.75]
 
 
-def test_push_grab_builds_linked_embed(pushes: list[DiscordEmbed]) -> None:
-    notifier = Notifier(discord_url="https://discord.example", web=httpx.Client(), logger=make_logger())
+def _notice(
+    *,
+    arr: Arr = Arr.SONARR,
+    arr_title: str = "Show",
+    al_title: str = "Show",
+    entry: EntryRecord | None = None,
+    thumb_url: str | None = None,
+    banner_url: str | None = None,
+    release_group: list[str | None] | None = None,
+    seadex_dict: SeadexDict | None = None,
+    results: Sequence[ReleaseOutcome] = (),
+    failed_groups: frozenset[str] = frozenset(),
+    coverage: str = "",
+) -> GrabNotice:
+    """One grab notice with everything defaulted to the quiet minimum."""
 
-    posted = notifier.push_grab(
-        arr_title="Sousou no Frieren",
-        al_title="Frieren: Beyond Journey's End",
-        seadex_url="https://releases.moe/154587/",
-        fields=[EmbedField(name="n", value="v")],
-        thumb_url="https://img.anili.st/cover.png",
+    return GrabNotice(
+        arr=arr,
+        arr_title=arr_title,
+        al_title=al_title,
+        entry=entry if entry is not None else make_entry_record(),
+        thumb_url=thumb_url,
+        banner_url=banner_url,
+        release_group=release_group,
+        seadex_dict=seadex_dict or {},
+        results=results,
+        failed_groups=failed_groups,
+        coverage=coverage,
+    )
+
+
+def _grab_notifier() -> Notifier:
+    return Notifier(discord_url="https://discord.example", web=httpx.Client(), logger=make_logger())
+
+
+def test_push_grab_builds_linked_embed(pushes: list[DiscordEmbed]) -> None:
+    posted = _grab_notifier().push_grab(
+        _notice(
+            arr_title="Sousou no Frieren",
+            al_title="Frieren: Beyond Journey's End",
+            entry=make_entry_record(url="https://releases.moe/154587/"),
+            thumb_url="https://img.anili.st/cover.png",
+            banner_url="https://img.anili.st/banner.png",
+        ),
     )
 
     assert posted is True
     embed = pushes[0]
-    assert embed.author_name == "Sousou no Frieren"
+    # The author line names the event, with SeaDex's icon beside it; the title
+    # is the AniList title linking to the entry page.
+    assert embed.author_name == "Sonarr · SeaDex grab"
+    assert embed.author_icon_url == "https://i.imgur.com/vV0olYs.png"
     assert embed.title == "Frieren: Beyond Journey's End"
     assert embed.url == "https://releases.moe/154587/"
     assert embed.color == COLOR_GRAB
-    assert embed.fields == (EmbedField(name="n", value="v"),)
     assert embed.thumb_url == "https://img.anili.st/cover.png"
+    assert embed.image_url == "https://img.anili.st/banner.png"
+    # A genuinely different Arr title becomes the muted subtext byline.
+    assert embed.description == "-# Sousou no Frieren"
+
+
+class TestGrabDescription:
+    """The description stack: subtitle dedupe, notes blockquote, comparisons, caveat."""
+
+    def _description(self, pushes: list[DiscordEmbed], notice: GrabNotice) -> str:
+        assert _grab_notifier().push_grab(notice) is True
+        return pushes[-1].description
+
+    def test_near_duplicate_titles_render_no_subtitle(self, pushes: list[DiscordEmbed]) -> None:
+        # Apostrophe style and case are not information: Sonarr's ASCII title
+        # vs AniList's typographic one must not produce a duplicate byline.
+        description = self._description(
+            pushes,
+            _notice(arr_title="frieren: beyond journey's end", al_title="Frieren: Beyond Journey’s End"),
+        )
+
+        assert description == ""
+
+    def test_subtitle_escapes_markdown(self, pushes: list[DiscordEmbed]) -> None:
+        description = self._description(pushes, _notice(arr_title="K-ON! *Special*", al_title="K-ON!"))
+
+        assert description == "-# K-ON! \\*Special\\*"
+
+    def test_notes_render_as_one_blockquote(self, pushes: list[DiscordEmbed]) -> None:
+        # Blank lines drop so the notes stay one quote block.
+        description = self._description(
+            pushes,
+            _notice(entry=make_entry_record(notes="PMR is the JPN BD Remux\n\nLostYears has the dub")),
+        )
+
+        assert description == "> PMR is the JPN BD Remux\n> LostYears has the dub"
+
+    def test_long_notes_truncate_on_a_word_boundary(self, pushes: list[DiscordEmbed]) -> None:
+        description = self._description(
+            pushes,
+            _notice(entry=make_entry_record(notes="alpha " * 80 + "OMEGA")),
+        )
+
+        assert description.endswith("alpha …")
+        assert "OMEGA" not in description
+
+    def test_cut_landing_on_whitespace_keeps_the_whole_word(self, pushes: list[DiscordEmbed]) -> None:
+        # 400 chars of complete 5-char words: the cut lands ON the separator, so
+        # no word is sacrificed.
+        description = self._description(
+            pushes,
+            _notice(entry=make_entry_record(notes="word " * 81)),
+        )
+
+        assert description == "> " + " ".join(["word"] * 80) + " …"
+
+    def test_comparison_links(self, pushes: list[DiscordEmbed]) -> None:
+        # A single link needs no number; several are numbered on one line.
+        single = self._description(
+            pushes,
+            _notice(entry=make_entry_record(comparisons=("https://slow.pics/c/one",))),
+        )
+        multi = self._description(
+            pushes,
+            _notice(entry=make_entry_record(comparisons=("https://slow.pics/c/1", "https://slow.pics/c/2"))),
+        )
+
+        assert single == "[Comparison](https://slow.pics/c/one)"
+        assert multi == "[Comparison 1](https://slow.pics/c/1) · [Comparison 2](https://slow.pics/c/2)"
+
+    def test_blank_comparison_segments_are_dropped(self, pushes: list[DiscordEmbed]) -> None:
+        # The lib's lax parse can yield an empty segment (sorted first); it must
+        # not render a broken [Comparison N]() link - nor inflate the numbering.
+        description = self._description(
+            pushes,
+            _notice(entry=make_entry_record(comparisons=("", "https://slow.pics/c/only"))),
+        )
+
+        assert description == "[Comparison](https://slow.pics/c/only)"
+
+    def test_incomplete_entry_renders_caveat(self, pushes: list[DiscordEmbed]) -> None:
+        description = self._description(
+            pushes,
+            _notice(entry=make_entry_record(notes="Best available", is_incomplete=True)),
+        )
+
+        # Pieces stack with blank lines between them.
+        assert description == "> Best available\n\n*Entry marked incomplete on SeaDex*"
+
+
+class TestGrabFields:
+    """The inline field row: Replacing beside the outcome-labelled pick(s) + coverage."""
+
+    def _fields(self, pushes: list[DiscordEmbed], notice: GrabNotice) -> tuple[EmbedField, ...]:
+        assert _grab_notifier().push_grab(notice) is True
+        return pushes[0].fields
+
+    def test_replacing_pick_and_coverage_row(self, pushes: list[DiscordEmbed]) -> None:
+        seadex_dict = {
+            "PMR": rg_group(
+                {
+                    "https://nyaa.si/view/1": url_item(
+                        url="https://nyaa.si/view/1",
+                        tracker=Tracker.NYAA,
+                        download=True,
+                        size=[536870912, 536870912],
+                        files=["e1.mkv", "e2.mkv"],
+                        is_dual_audio=True,
+                        is_fallback=True,
+                        size_mismatch=True,
+                    ),
+                },
+                tags=frozenset({Tag.VFR, Tag.HDR}),
+            ),
+        }
+
+        fields = self._fields(
+            pushes,
+            _notice(
+                release_group=["Erai_raws", None, ""],
+                seadex_dict=seadex_dict,
+                results=[ReleaseOutcome(AddOutcome.ADDED, "PMR release", "PMR")],
+                coverage="S01 E01-E12",
+            ),
+        )
+
+        # Group names render as code spans (markdown-proof); the release line
+        # carries the tracker link + size/files/audio/provenance markers; tags
+        # trail as muted subtext; empty/None current groups drop.
+        assert fields == (
+            EmbedField(name="Replacing", value="`Erai_raws`", inline=True),
+            EmbedField(
+                name="Grabbed · PMR",
+                value="[Nyaa](https://nyaa.si/view/1) · 1.0 GB · 2 files · dual audio · fallback · upgrade\n-# HDR · VFR",
+                inline=True,
+            ),
+            EmbedField(name="Coverage", value="S01 E01-E12", inline=True),
+        )
+
+    def test_group_label_reflects_client_outcome(self, pushes: list[DiscordEmbed]) -> None:
+        # "Grabbed" only when the client actually added something; a pick already
+        # mid-download says so; a contained add failure (no outcome) reads
+        # "Failed"; a group whose releases were never attempted reads "Skipped".
+        seadex_dict = {
+            srg: rg_group({f"https://nyaa.si/view/{i}": url_item(url=f"https://nyaa.si/view/{i}", download=True)})
+            for i, srg in enumerate(("Fresh", "InFlight", "Errored", "Held"))
+        }
+
+        fields = self._fields(
+            pushes,
+            _notice(
+                seadex_dict=seadex_dict,
+                results=[
+                    ReleaseOutcome(AddOutcome.ADDED, None, "Fresh"),
+                    ReleaseOutcome(AddOutcome.ALREADY_ADDED, None, "InFlight"),
+                ],
+                failed_groups=frozenset({"Errored"}),
+            ),
+        )
+
+        assert [f.name for f in fields] == [
+            "Grabbed · Fresh",
+            "Already downloading · InFlight",
+            "Failed · Errored",
+            "Skipped · Held",
+        ]
+
+    def test_unflagged_group_contributes_no_field(self, pushes: list[DiscordEmbed]) -> None:
+        seadex_dict = {"Quiet": rg_group({"https://nyaa.si/view/9": url_item(url="https://nyaa.si/view/9")})}
+
+        fields = self._fields(pushes, _notice(seadex_dict=seadex_dict))
+
+        assert fields == ()
+
+    def test_replacing_collapses_beyond_cap(self, pushes: list[DiscordEmbed]) -> None:
+        fields = self._fields(pushes, _notice(release_group=[f"Group{i:02d}" for i in range(12)]))
+
+        [replacing] = fields
+        lines = replacing.value.splitlines()
+        assert lines[:2] == ["`Group00`", "`Group01`"]
+        assert len(lines) == 11  # 10 groups + the collapse line
+        assert lines[-1] == "… +2 more"
 
 
 def _push_grab(notifier: Notifier) -> bool:
     """Drive one grab push with minimal embed data (the containment tests' focus)."""
 
-    return notifier.push_grab(
-        arr_title="Show",
-        al_title="Show",
-        seadex_url="https://releases.moe/1",
-        fields=[],
-        thumb_url=None,
-    )
+    return notifier.push_grab(_notice())
 
 
 def test_push_grab_discord_failure_warns_and_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -17,10 +17,13 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from seadex import EntryRecord
+
 from . import coverage as _coverage
 from .cache import CacheRecord
 from .config import PrivateReleaseAction
 from .manual_import import ImportWaitMode, PendingImport
+from .notify import GrabNotice
 from .reporter import (
     GrabRecord,
     NeedsActionKind,
@@ -48,11 +51,15 @@ class GrabRequest:
     al_id: int
     item_title: str
     anilist_title: str
-    sd_url: str
+    # The SeaDex entry whole: the notification renders its url / notes /
+    # comparison links / incomplete flag.
+    entry: EntryRecord
     seadex_dict: SeadexDict
     torrent_hashes: list[str | None]
     cache_details: CacheRecord
     release_group: list[str | None] | None
+    # Sonarr's episode coverage string ("" for Radarr - movies have none).
+    coverage: str = ""
     pending_seeds: dict[str, PendingImport] | None = None
 
 
@@ -484,15 +491,12 @@ class GrabPipeline:
         run; otherwise False.
         """
 
-        # Resolve the AniList cover thumbnail (via the gateway) and build the
-        # Discord embed fields for the grab. The thumb lookup is done up front
-        # to preserve ordering even though it's only used in the push below.
+        # Resolve the AniList art (cover thumbnail + wide banner, the same
+        # media node once cached) up front so the network call keeps its
+        # position in the run's request ordering, even though it's only used
+        # in the push below.
         anilist_thumb = self._anilist.thumb(req.al_id)
-        fields = self._notifier.build_fields(
-            arr=self._ctx.arr,
-            release_group=req.release_group,
-            seadex_dict=req.seadex_dict,
-        )
+        anilist_banner = self._anilist.banner(req.al_id)
 
         # Add torrents to qBittorrent. add_torrent runs even in a preview
         # (no client / dry run): the service simulates the add, while the
@@ -514,14 +518,23 @@ class GrabPipeline:
         )
 
         # Push a message to Discord if we've added anything (never on a
-        # preview - it's an outward notification)
+        # preview - it's an outward notification). Built after the add so the
+        # embed can label each group with what actually happened.
         if self._notifier.enabled and n_torrents_added > 0 and not self._is_preview():
             self._notifier.push_grab(
-                arr_title=req.item_title,
-                al_title=req.anilist_title,
-                seadex_url=req.sd_url,
-                fields=fields,
-                thumb_url=anilist_thumb,
+                GrabNotice(
+                    arr=self._ctx.arr,
+                    arr_title=req.item_title,
+                    al_title=req.anilist_title,
+                    entry=req.entry,
+                    thumb_url=anilist_thumb,
+                    banner_url=anilist_banner,
+                    release_group=req.release_group,
+                    seadex_dict=req.seadex_dict,
+                    results=results,
+                    failed_groups=frozenset(self._grab_failed_groups),
+                    coverage=req.coverage,
+                ),
             )
 
         cap = self._config.advanced.max_torrents_to_add

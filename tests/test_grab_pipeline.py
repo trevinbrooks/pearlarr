@@ -19,9 +19,12 @@ import pytest
 import qbittorrentapi
 from seadex import Tracker
 
+from seadexarr.modules import notify
 from seadexarr.modules.config import Arr
+from seadexarr.modules.discord import DiscordEmbed
 from seadexarr.modules.grab_pipeline import GrabPipeline, GrabRequest
 from seadexarr.modules.manual_import import ImportWaitMode, PendingImport
+from seadexarr.modules.notify import Notifier
 from seadexarr.modules.reporter import NeedsActionKind, RunContext
 from seadexarr.modules.seadex_types import SeadexDict, SeadexUrlItem
 from seadexarr.modules.torrent import TorrentParseError
@@ -31,7 +34,9 @@ from .builders import (
     CLIENT_SENTINEL,
     AddOutcome,
     FakeTorrents,
+    make_entry_record,
     make_grab_pipeline,
+    make_logger,
     one_release_dict,
     pending_import,
     rg_group,
@@ -102,7 +107,7 @@ class TestGrabReturnsPureBool:
             al_id=1,
             item_title="Show",
             anilist_title="Show",
-            sd_url="https://seadex.example/1",
+            entry=make_entry_record(url="https://seadex.example/1"),
             seadex_dict={},
             torrent_hashes=[],
             cache_details={},
@@ -110,6 +115,82 @@ class TestGrabReturnsPureBool:
         )
 
         assert pipeline._grab(req) is True
+
+
+class TestGrabPushesNotice:
+    """_grab builds the GrabNotice from the request + add outcomes and pushes it
+    - but never on a preview run, and never when nothing was actually added."""
+
+    def _grab(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        outcome: AddOutcome = AddOutcome.ADDED,
+        qbit: object = CLIENT_SENTINEL,
+    ) -> list[DiscordEmbed]:
+        embeds: list[DiscordEmbed] = []
+
+        def record(*, url: str, embed: DiscordEmbed, client: httpx.Client) -> None:
+            del url, client
+            embeds.append(embed)
+
+        monkeypatch.setattr(notify, "discord_push", record)
+        pipeline = _pipeline(
+            torrents=FakeTorrents({"h1": (outcome, "Show-PMR")}),
+            qbit=qbit,
+            _notifier=Notifier(
+                discord_url="https://discord.example",
+                webhook_url=None,
+                web=httpx.Client(),
+                logger=make_logger(),
+            ),
+        )
+        # Warm the gateway cache so the art lookups never hit AniList.
+        pipeline._anilist.al_cache.update(
+            {
+                7: {
+                    "data": {
+                        "Media": {
+                            "coverImage": {"large": "https://img/cover"},
+                            "bannerImage": "https://img/banner",
+                        },
+                    },
+                },
+            },
+        )
+        pipeline._grab(
+            GrabRequest(
+                al_id=7,
+                item_title="Show",
+                anilist_title="Show Title",
+                entry=make_entry_record(url="https://releases.moe/7", notes="the why"),
+                seadex_dict=one_release_dict(srg="PMR", infohash="h1"),
+                torrent_hashes=["h1"],
+                cache_details={},
+                release_group=["OldGroup"],
+                coverage="S01 E01-E12",
+            ),
+        )
+        return embeds
+
+    def test_added_pushes_the_resolved_notice(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        [embed] = self._grab(monkeypatch)
+
+        # The request's entry/coverage and the gateway's art all reached the embed.
+        assert embed.title == "Show Title"
+        assert embed.url == "https://releases.moe/7"
+        assert embed.thumb_url == "https://img/cover"
+        assert embed.image_url == "https://img/banner"
+        assert embed.description == "-# Show\n\n> the why"
+        assert [f.name for f in embed.fields] == ["Replacing", "Grabbed · PMR", "Coverage"]
+
+    def test_nothing_added_pushes_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        assert self._grab(monkeypatch, outcome=AddOutcome.ALREADY_ADDED) == []
+
+    def test_preview_never_pushes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A preview simulates the add (so the count is non-zero) but the push is
+        # an outward notification and must stay silent.
+        assert self._grab(monkeypatch, qbit=None) == []
 
 
 class TestAddOneUrlRegistersPending:
@@ -289,7 +370,7 @@ class TestGrabAndCacheCapStop:
             al_id=42,
             item_title="Show",
             anilist_title="Show",
-            sd_url="https://seadex.example/42",
+            entry=make_entry_record(url="https://seadex.example/42"),
             seadex_dict=one_release_dict(srg="RG", infohash="h1"),
             torrent_hashes=["h1"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
@@ -319,7 +400,7 @@ class TestUpToDateTally:
                 al_id=al_id,
                 item_title="Show",
                 anilist_title="Show",
-                sd_url=f"https://seadex.example/{al_id}",
+                entry=make_entry_record(url=f"https://seadex.example/{al_id}"),
                 seadex_dict={},
                 torrent_hashes=[],
                 cache_details={},
@@ -381,7 +462,7 @@ class TestUnsupportedTrackerSkip:
             al_id=42,
             item_title="Show",
             anilist_title="Show",
-            sd_url="https://seadex.example/42",
+            entry=make_entry_record(url="https://seadex.example/42"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hA"],
             cache_details={},
@@ -413,7 +494,7 @@ class TestUnsupportedTrackerSkip:
             al_id=7,
             item_title="Show",
             anilist_title="Show",
-            sd_url="https://seadex.example/7",
+            entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hP", "hA"],
             cache_details={},
@@ -449,7 +530,7 @@ class TestUnsupportedTrackerSkip:
             al_id=7,
             item_title="Show",
             anilist_title="Show",
-            sd_url="https://seadex.example/7",
+            entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hP"],
             cache_details={},
@@ -482,7 +563,7 @@ class TestUnsupportedTrackerSkip:
             al_id=7,
             item_title="Show",
             anilist_title="Show",
-            sd_url="https://seadex.example/7",
+            entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hP"],
             cache_details={},
@@ -515,7 +596,7 @@ class TestUnsupportedTrackerSkip:
             al_id=7,
             item_title="Show",
             anilist_title="Show",
-            sd_url="https://seadex.example/7",
+            entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hP"],
             cache_details={},
@@ -551,7 +632,7 @@ class TestUnsupportedTrackerSkip:
             al_id=42,
             item_title="Show",
             anilist_title="Show",
-            sd_url="https://seadex.example/42",
+            entry=make_entry_record(url="https://seadex.example/42"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hF"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
@@ -589,7 +670,7 @@ class TestUnsupportedTrackerSkip:
             al_id=42,
             item_title="Show",
             anilist_title="Show",
-            sd_url="https://seadex.example/42",
+            entry=make_entry_record(url="https://seadex.example/42"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hN", "hA"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
@@ -625,7 +706,7 @@ class TestUnsupportedTrackerSkip:
             al_id=7,
             item_title="Show",
             anilist_title="Show",
-            sd_url="https://seadex.example/7",
+            entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hN"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
@@ -657,7 +738,7 @@ class TestUnsupportedTrackerSkip:
             al_id=7,
             item_title="Show",
             anilist_title="Show",
-            sd_url="https://seadex.example/7",
+            entry=make_entry_record(url="https://seadex.example/7"),
             seadex_dict=seadex_dict,
             torrent_hashes=["hN", "hP"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
@@ -681,7 +762,7 @@ class TestGrabFailureContainment:
             al_id=al_id,
             item_title="Show",
             anilist_title="Show",
-            sd_url=f"https://seadex.example/{al_id}",
+            entry=make_entry_record(url=f"https://seadex.example/{al_id}"),
             seadex_dict=seadex_dict,
             torrent_hashes=hashes,
             cache_details={"updated_at": "2026-01-01 00:00:00"},
@@ -841,7 +922,7 @@ class TestFallbackHoldNeverCaches:
             al_id=al_id,
             item_title="Show",
             anilist_title="Show",
-            sd_url=f"https://seadex.example/{al_id}",
+            entry=make_entry_record(url=f"https://seadex.example/{al_id}"),
             seadex_dict=self._mixed_seadex_dict(),
             torrent_hashes=["hN"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},

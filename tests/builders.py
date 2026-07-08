@@ -470,6 +470,7 @@ def make_entry_record(
     torrents: tuple[TorrentRecord, ...] = (),
     size: int = 0,
     notes: str = "",
+    comparisons: tuple[str, ...] = (),
 ) -> EntryRecord:
     """A real ``seadex.EntryRecord`` with the 13 required fields defaulted.
 
@@ -484,7 +485,7 @@ def make_entry_record(
         anilist_id=anilist_id,
         collection_id="col",
         collection_name="col-name",
-        comparisons=(),
+        comparisons=comparisons,
         created_at=stamp,
         id="entry1",
         is_incomplete=is_incomplete,
@@ -819,6 +820,7 @@ def url_item(
     size: list[int] | None = None,
     tracker: Tracker = Tracker.OTHER,
     is_public: bool = True,
+    is_dual_audio: bool = False,
     infohash: str | None = "hash1",
     download: bool = False,
     is_fallback: bool = False,
@@ -833,6 +835,7 @@ def url_item(
         size=size or [],
         tracker=tracker,
         is_public=is_public,
+        is_dual_audio=is_dual_audio,
         infohash=infohash,
         download=download,
         is_fallback=is_fallback,

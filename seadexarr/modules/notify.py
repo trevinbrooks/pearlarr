@@ -1,16 +1,18 @@
 """Discord notifier: build the typed embeds and post the notifications.
 
-``Notifier`` owns the Discord webhook - building the per-release grab embed
-from a shaped ``seadex_dict`` and the wait-complete summary embed (plus a
-generic outbound webhook POST of the wait report). It's gated on a configured
-url; with none, every push is a no-op.
+``Notifier`` owns the Discord webhook - building the grab embed from a
+:class:`GrabNotice` and the wait-complete summary embed (plus a generic
+outbound webhook POST of the wait report). It's gated on a configured url;
+with none, every push is a no-op.
 """
 
 import logging
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import httpx
+from seadex import EntryRecord
 
 from .config import Arr
 from .discord import (
@@ -22,15 +24,28 @@ from .discord import (
     EmbedField,
     discord_push,
 )
-from .log import format_elapsed
+from .log import count_noun, format_elapsed, human_bytes
 from .manual_import import OutcomeCategory
-from .seadex_types import SeadexDict
+from .seadex_types import SeadexDict, SeadexUrlItem
+from .torrents import ReleaseOutcome
 from .wait_view import WaitResult
 
 # Cap how many titles a single notification field lists before collapsing the
 # remainder into a "… +N more" line, keeping a big carried-over backlog readable;
 # the payload boundary's char clamps are the hard limit guarantee.
 _MAX_FIELD_TITLES = 25
+
+# The SeaDex logo, shown beside the grab embed's author line (the
+# professional-embed convention: an icon marks who the event is from).
+_SEADEX_ICON = "https://i.imgur.com/vV0olYs.png"
+
+# Cap the "Replacing" list well below the payload clamp so a many-group season
+# stays readable; the remainder collapses into a "… +N more" line.
+_MAX_REPLACING = 10
+
+# Taste limit for the SeaDex notes blockquote (the 4096 payload clamp is the
+# hard backstop); truncation lands on a word boundary.
+_MAX_NOTES_LEN = 400
 
 # Minimum spacing between consecutive Discord pushes (webhook rate limiting).
 _PUSH_SPACING_S = 1.0
@@ -75,6 +90,172 @@ def _wait_color(result: WaitResult) -> int:
     return COLOR_SUCCESS
 
 
+@dataclass(frozen=True, slots=True)
+class GrabNotice:
+    """Everything one grab notification renders, resolved by the grab pipeline.
+
+    ``entry`` is the SeaDex entry whole (url / notes / comparisons / incomplete
+    flag). ``results`` are the torrent-client add outcomes, so the embed can
+    label a group whose releases were already in the client accordingly rather
+    than claiming a fresh grab.
+    """
+
+    arr: Arr
+    arr_title: str
+    al_title: str
+    entry: EntryRecord
+    thumb_url: str | None
+    banner_url: str | None
+    release_group: list[str | None] | None
+    seadex_dict: SeadexDict
+    results: Sequence[ReleaseOutcome]
+    # Groups whose add failed at the client (contained; retried next run) - a
+    # failed add produces no outcome, so the label needs the explicit note.
+    failed_groups: frozenset[str]
+    coverage: str
+
+
+def _md_escape(text: str) -> str:
+    """Backslash-escape Discord markdown so free-form text renders literally.
+
+    The backslash escapes first so the escapes just added aren't re-escaped.
+    """
+
+    for ch in "\\`*_~|>[]":
+        text = text.replace(ch, "\\" + ch)
+    return text
+
+
+def _code_span(text: str) -> str:
+    """A release-group name as an inline code span, the *arr convention for
+    technical strings (monospace, immune to markdown-mangling underscores).
+
+    A backtick inside would break out of the span, so it degrades to a quote.
+    """
+
+    return "`" + text.replace("`", "'") + "`"
+
+
+def _titles_match(a: str, b: str) -> bool:
+    """True when two titles differ only by case or apostrophe style.
+
+    The Arr and AniList titles are near-duplicates for most entries; the embed
+    shows the Arr's own title only when it adds information.
+    """
+
+    def norm(title: str) -> str:
+        return title.replace("’", "'").replace("‘", "'").casefold().strip()
+
+    return norm(a) == norm(b)
+
+
+def _notes_block(notes: str) -> str:
+    """The SeaDex entry notes as one blockquote — the "why this pick" line.
+
+    Notes are plain text; they are NOT markdown-escaped (a stray emphasis is
+    cosmetic, mangled escape backslashes are worse). Blank lines drop so the
+    quote stays one block; overlong notes truncate on a word boundary.
+    """
+
+    text = notes.strip()
+    if not text:
+        return ""
+    if len(text) > _MAX_NOTES_LEN:
+        cut = text[:_MAX_NOTES_LEN]
+        if not text[_MAX_NOTES_LEN].isspace() and not cut[-1].isspace():
+            # A word straddles the cut: drop the partial word (a whitespace-free
+            # prefix has nothing to split and stays whole).
+            cut = cut.rsplit(maxsplit=1)[0]
+        text = cut.rstrip() + " …"
+    return "\n".join("> " + line for line in text.splitlines() if line.strip())
+
+
+def _grab_description(notice: GrabNotice) -> str:
+    """The description stack: subtitle, entry notes, comparison links, caveats.
+
+    The Arr's own title appears as a muted ``-#`` subtext byline only when it
+    differs from the AniList one; each piece is omitted when it has nothing to
+    say.
+    """
+
+    parts: list[str] = []
+    if not _titles_match(notice.arr_title, notice.al_title):
+        parts.append(f"-# {_md_escape(notice.arr_title)}")
+    if notes := _notes_block(notice.entry.notes):
+        parts.append(notes)
+    # The lib's lax comparison parse can yield an empty segment; a blank url
+    # would render a broken [Comparison N]() link, so filter falsy first.
+    if comparisons := tuple(c for c in notice.entry.comparisons if c):
+        single = len(comparisons) == 1
+        parts.append(
+            " · ".join(f"[Comparison{'' if single else f' {i}'}]({url})" for i, url in enumerate(comparisons, start=1)),
+        )
+    if notice.entry.is_incomplete:
+        parts.append("*Entry marked incomplete on SeaDex*")
+    return "\n\n".join(parts)
+
+
+def _release_line(item: SeadexUrlItem) -> str:
+    """One release's line: the tracker link plus size/audio/provenance markers."""
+
+    parts = [f"[{item.tracker.value}]({item.url})"]
+    if item.size:
+        parts.append(human_bytes(sum(item.size)))
+    if item.files:
+        parts.append(count_noun(len(item.files), "file"))
+    if item.is_dual_audio:
+        parts.append("dual audio")
+    if item.is_fallback:
+        parts.append("fallback")
+    if item.size_mismatch:
+        parts.append("upgrade")
+    return " · ".join(parts)
+
+
+def _grab_fields(notice: GrabNotice) -> tuple[EmbedField, ...]:
+    """The inline row: the release(s) being replaced beside the SeaDex pick(s).
+
+    A group with nothing flagged for download contributes no field. The group
+    label reflects what actually happened at the torrent client: "Grabbed" when
+    anything was added, "Already downloading" when every acted release was
+    already there, "Failed" when an add errored (contained; retried next run),
+    "Skipped" when none of its releases were attempted. Sonarr's episode
+    coverage joins the row as a trailing field when known.
+    """
+
+    fields: list[EmbedField] = []
+
+    current = [group for group in (notice.release_group or []) if group]
+    if current:
+        replaced = [_code_span(group) for group in current[:_MAX_REPLACING]]
+        if len(current) > _MAX_REPLACING:
+            replaced.append(f"… +{len(current) - _MAX_REPLACING} more")
+        fields.append(EmbedField(name="Replacing", value="\n".join(replaced), inline=True))
+
+    grabbed = {r.group for r in notice.results if r.added}
+    acted = {r.group for r in notice.results}
+    for srg, srg_item in notice.seadex_dict.items():
+        links = [_release_line(u) for u in srg_item.urls.values() if u.download]
+        if not links:
+            continue
+        lines = list(links)
+        if srg_item.tags:
+            lines.append("-# " + " · ".join(sorted(str(tag) for tag in srg_item.tags)))
+        if srg in grabbed:
+            label = "Grabbed"
+        elif srg in acted:
+            label = "Already downloading"
+        elif srg in notice.failed_groups:
+            label = "Failed"
+        else:
+            label = "Skipped"
+        fields.append(EmbedField(name=f"{label} · {srg}", value="\n".join(lines), inline=True))
+
+    if notice.coverage:
+        fields.append(EmbedField(name="Coverage", value=notice.coverage, inline=True))
+    return tuple(fields)
+
+
 class Notifier:
     """Builds Discord embeds and posts grab + wait-complete notifications."""
 
@@ -109,33 +290,29 @@ class Notifier:
 
         return self.discord_url is not None
 
-    def push_grab(
-        self,
-        *,
-        arr_title: str,
-        al_title: str,
-        seadex_url: str,
-        fields: Sequence[EmbedField],
-        thumb_url: str | None,
-    ) -> bool:
+    def push_grab(self, notice: GrabNotice) -> bool:
         """Post a grab notification: the AniList title linking to the SeaDex entry.
 
+        The author line names the event ("Sonarr · SeaDex grab") rather than
+        repeating a title; the description stacks the Arr's own title (when it
+        differs), the entry's notes and comparison links; the AniList art
+        frames it (cover thumbnail + wide banner).
+
         Args:
-            arr_title (str): Title as in the Arr instance (the author line)
-            al_title (str): Title as in AniList (the embed title)
-            seadex_url (str): URL to the SeaDex page (the title link)
-            fields (Sequence[EmbedField]): Embed fields from :meth:`build_fields`
-            thumb_url (str | None): AniList cover thumbnail URL
+            notice (GrabNotice): The grab's resolved notification payload.
         """
 
         return self._push(
             DiscordEmbed(
-                author_name=arr_title,
-                title=al_title,
+                author_name=f"{notice.arr.capitalize()} · SeaDex grab",
+                title=notice.al_title,
                 color=COLOR_GRAB,
-                url=seadex_url or None,
-                fields=tuple(fields),
-                thumb_url=thumb_url,
+                url=notice.entry.url or None,
+                description=_grab_description(notice),
+                fields=_grab_fields(notice),
+                thumb_url=notice.thumb_url,
+                image_url=notice.banner_url,
+                author_icon_url=_SEADEX_ICON,
             ),
         )
 
@@ -214,52 +391,6 @@ class Notifier:
             )
             return False
         return True
-
-    def build_fields(
-        self,
-        *,
-        arr: Arr,
-        release_group: list[str | None] | None,
-        seadex_dict: SeadexDict,
-    ) -> list[EmbedField]:
-        """Build the Discord embed fields for a grab.
-
-        The first field names the Arr's current release group; one field per
-        SeaDex release group then lists its tags and, as ``[Tracker](url)``
-        markdown links, the releases flagged for download.
-
-        Args:
-            arr (Arr): Type of arr instance
-            release_group (list[str | None] | None): Arr release group(s)
-            seadex_dict (dict): Dictionary of SeaDex releases
-        """
-
-        fields: list[EmbedField] = []
-
-        # First field: the Arr's current release group(s), blanks/None dropped,
-        # falling back to "None" when nothing is left.
-        names = [group for group in (release_group or []) if group] or ["None"]
-
-        fields.append(
-            EmbedField(
-                name=f"{arr.capitalize()} Release:",
-                value="\n".join(names),
-            ),
-        )
-
-        # One field per SeaDex group with links flagged for download; the link
-        # text is the tracker the release comes from.
-        for srg, srg_item in seadex_dict.items():
-            links = [f"[{u.tracker.value}]({url})" for url, u in srg_item.urls.items() if u.download]
-            if not links:
-                continue
-            value = ""
-            if srg_item.tags:
-                value += "Tags: " + ", ".join(sorted(str(tag) for tag in srg_item.tags)) + "\n"
-            value += "\n".join(links)
-            fields.append(EmbedField(name=f"SeaDex recommendation: {srg}", value=value))
-
-        return fields
 
     def _pace(self) -> None:
         """Keep burst pushes >= 1s apart and stamp this push's instant.

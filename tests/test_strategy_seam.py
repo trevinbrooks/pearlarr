@@ -1495,7 +1495,9 @@ class TestRadarrProcessAlIdSeam:
         assert req.al_id == 5
         assert req.item_title == "Item Title"
         assert req.anilist_title == "Movie Title"
-        assert req.sd_url == "https://releases.moe/5"
+        # The SeaDex entry rides the request whole (the notifier reads its
+        # url/notes/comparisons), so pin identity, not a copied field.
+        assert req.entry is entry
         # The grab consumes the FILTERED dict + hashes, not the pre-filter dict.
         assert req.seadex_dict is filtered
         assert req.torrent_hashes == ["feedface"]
