@@ -50,11 +50,13 @@ import pytest
 import truststore
 from typer.testing import CliRunner
 
+from seadexarr.modules.boot_view import NullBootView
 from seadexarr.modules.cache import CacheStore
 from seadexarr.modules.cli import (
     _configured_arrs,
     _console_format,
     _handle_sigterm,
+    _load_shared_config,
     _run_arrs,
     _schedule_hours,
     _trust_os_certificates,
@@ -1065,6 +1067,52 @@ class TestMissingConfigExitsNonzero:
         assert "starter template was written" in result.output
         # This arm exits now; the skip-and-retry wording belongs to the others.
         assert "Skipping this run" not in result.output
+
+
+class TestUnknownTrackerWarning:
+    """Unknown ``seadex.trackers`` values warn at load - they silently match nothing.
+
+    Warn-not-reject: strict key validation already rejects unknown KEYS; an unknown
+    VALUE is a typo that would quietly filter out every release from that tracker.
+    """
+
+    @staticmethod
+    def _load(tmp_path: Path, logger: logging.Logger, body: str) -> AppConfig | None:
+        config = tmp_path / "config.yml"
+        config.write_text(body, encoding="utf-8")
+        config.chmod(0o600)  # keep the loose-permissions warning out of the capture
+        return _load_shared_config(str(config), logger, NullBootView(), "")
+
+    def test_unknown_value_warns_naming_it_and_the_vocabulary(
+        self,
+        tmp_path: Path,
+        logger: logging.Logger,
+    ) -> None:
+        capture = CaptureHandler()
+        logger.addHandler(capture)
+        assert self._load(tmp_path, logger, "seadex:\n  trackers: [Nyaaa, Nyaa]\n") is not None
+
+        warning = next(r for r in capture.records if r.levelno == logging.WARNING)
+        message = warning.getMessage()
+        assert "nyaaa" in message  # the offender (casefolded, as matching sees it)
+        assert "case-insensitive" in message
+        assert "animetosho" in message  # the known vocabulary is enumerated
+        assert "otherprivate" in message  # including the seadex-only catch-alls
+
+    def test_known_values_do_not_warn(self, tmp_path: Path, logger: logging.Logger) -> None:
+        capture = CaptureHandler()
+        logger.addHandler(capture)
+        loaded = self._load(tmp_path, logger, "seadex:\n  trackers: [Nyaa, OtherPrivate]\n")
+
+        assert loaded is not None
+        assert loaded.seadex.trackers == {"nyaa", "otherprivate"}
+        assert [r for r in capture.records if r.levelno >= logging.WARNING] == []
+
+    def test_default_trackers_do_not_warn(self, tmp_path: Path, logger: logging.Logger) -> None:
+        capture = CaptureHandler()
+        logger.addHandler(capture)
+        assert self._load(tmp_path, logger, "sonarr:\n  url: http://s\n") is not None
+        assert [r for r in capture.records if r.levelno >= logging.WARNING] == []
 
 
 class TestUnwritableDataDir:

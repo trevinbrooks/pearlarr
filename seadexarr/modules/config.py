@@ -59,6 +59,11 @@ PRIVATE_TRACKERS = {
     ]
 }
 
+# Every name the seadex ``Tracker`` enum can emit (casefolded), so the cli can warn on
+# configured trackers that match nothing. Literals keep this module's imports light;
+# a parity test pins them against the installed enum.
+KNOWN_TRACKERS = PUBLIC_TRACKERS | PRIVATE_TRACKERS | {"other", "otherprivate"}
+
 CONFIG_TEMPLATE_FILE = "config_sample.yml"
 
 

@@ -31,7 +31,7 @@ seadex:
   prefer_dual_audio: true          # Prefer dual-audio releases (else prefer Ja-only)
   want_best: true                  # Prefer releases tagged "best"
   ignore_tags:                     # SeaDex tags to skip (e.g. Dolby Vision, Deband Required)
-  trackers:                        # Allowed trackers (default: all public + private)
+  trackers:                        # Allowed trackers (default: all public + private). Names are case-insensitive; SeaDex knows: Nyaa, AnimeTosho, AniDex, RuTracker, AB, BeyondHD, PassThePopcorn, BroadcastTheNet, HDBits, Blutopia, Aither, Other, OtherPrivate
   ignore_anilist_ids:              # AniList IDs to never process (a list of integer IDs)
   ignore_seadex_update_times: false   # If true, re-check entries even if SeaDex hasn't updated them
   use_torrent_hash_to_filter: false   # Filter by torrent hash (true) instead of release group (false)

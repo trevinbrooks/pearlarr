@@ -13,8 +13,10 @@ from pathlib import Path
 import pytest
 import yaml
 from pydantic import SecretStr, ValidationError
+from seadex import Tracker
 
 from seadexarr.modules.config import (
+    KNOWN_TRACKERS,
     PRIVATE_TRACKERS,
     PUBLIC_TRACKERS,
     AdvancedSettings,
@@ -311,6 +313,12 @@ class TestNormalization:
         # `trackers: Nyaa` (a natural scalar mistake) is one tracker, not iterated
         # character-by-character into a garbage {'n', 'y', 'a'} set that matches nothing.
         assert SeadexSettings.model_validate({"trackers": "Nyaa"}).trackers == {"nyaa"}
+
+    def test_known_trackers_matches_the_installed_seadex_enum(self) -> None:
+        # KNOWN_TRACKERS is spelled as literals (config.py must not import seadex -
+        # boot depends on it staying light); pin them to the real enum so a seadex
+        # upgrade that adds/renames a tracker can't drift silently.
+        assert KNOWN_TRACKERS == {tracker.value.casefold() for tracker in Tracker}
 
     def test_trackers_non_iterable_raises_validation_error(self) -> None:
         # A non-iterable must surface as a clean ValidationError (which the cli catches

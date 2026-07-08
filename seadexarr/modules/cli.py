@@ -16,7 +16,15 @@ import yaml
 from pydantic import ValidationError
 
 from .boot_view import BootView, make_boot_view
-from .config import AppConfig, Arr, LogFormat, config_permissions_loose, restrict_config_permissions, template_path
+from .config import (
+    KNOWN_TRACKERS,
+    AppConfig,
+    Arr,
+    LogFormat,
+    config_permissions_loose,
+    restrict_config_permissions,
+    template_path,
+)
 from .json_narrow import is_json_list, is_json_obj
 from .log import LOG_NAME, LogLevel, apply_log_level, indent_string, log_styled, setup_logger
 from .manual_import import ImportWaitMode
@@ -202,6 +210,15 @@ def _load_shared_config(
             logger.warning(
                 f"Config file {config} is readable by other users and holds API keys - "
                 f"tighten it with: chmod 600 {config}",
+            )
+        # An unknown tracker name silently matches nothing on SeaDex, so a typo would
+        # quietly filter out every release from that tracker - warn, don't reject.
+        unknown_trackers = sorted(loaded.seadex.trackers - KNOWN_TRACKERS)
+        if unknown_trackers:
+            logger.warning(
+                f"Unknown seadex.trackers value(s) ignored by matching: "
+                f"{', '.join(unknown_trackers)} (known, case-insensitive: "
+                f"{', '.join(sorted(KNOWN_TRACKERS))})",
             )
         return loaded
     except FileNotFoundError:
