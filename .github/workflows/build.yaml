@@ -58,6 +58,31 @@ jobs:
           git fetch origin "$base"
           uv run diff-cover coverage.xml --compare-branch "origin/$base" --fail-under=90
 
+  # Reduced subset on purpose: the lint/type gates are platform-independent and
+  # already run (on both Python versions) in the ubuntu matrix above; this leg
+  # exists to catch OS-specific breakage (path handling, file locking, atomic
+  # renames), which only pytest exercises. Single job on the 3.13 floor - the
+  # most likely real-user combo on Windows; version breadth stays on ubuntu.
+  checks_windows:
+    name: Checks (windows, py 3.13)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.1
+        with:
+          enable-cache: true
+      - name: Sync dependencies
+        # .python-version pins 3.14 (the dev version), so an unpinned sync would
+        # silently test 3.14 here; --python 3.13 keeps this leg on the floor.
+        run: uv sync --group dev --python 3.13
+      - name: Python version (sanity)
+        run: uv run python -V
+      - name: Pytest
+        run: uv run pytest tests/ -q
+
   build_sdist_and_wheel:
     name: Build source distribution
     runs-on: ubuntu-latest
