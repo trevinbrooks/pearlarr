@@ -1,6 +1,6 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# Drives module-private resolver internals under test (_entry_from_raw, m._parse_*, resolver._maybe_download).
+# Drives module-private resolver internals under test (_entry_from_raw, m._parse_*, resolver._(maybe_)download*).
 """Parity + edge tests for the SQL-backed ``MappingResolver`` / ``AniBridge``.
 
 The SQL backings must reproduce the in-memory implementations exactly. AniBridge's
@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import NamedTuple
@@ -987,4 +988,67 @@ class TestDownloadFileSizeCap:
 
         # Neither the destination nor the .part temp survives the abort.
         assert not dest.exists()
+        assert not (tmp_path / "out.json.part").exists()
+
+
+class TestDownloadFile:
+    """The streamed download contract: atomic success, contained failures."""
+
+    @respx.mock
+    def test_success_streams_to_dest_and_removes_the_part_temp(self, tmp_path: Path) -> None:
+        """A 200 lands the exact body at dest with the .part temp gone (atomic rename)."""
+
+        body = bytes(range(256)) * 800  # 200 KB: several 64 KiB read chunks
+        respx.get("https://example/src.json").respond(content=body)
+        dest = tmp_path / "out.json"
+        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, _web=_WEB)
+
+        resolver._download_file("https://example/src.json", str(dest), label="src.json")
+
+        assert dest.read_bytes() == body
+        assert not (tmp_path / "out.json.part").exists()
+
+    @respx.mock
+    def test_http_failure_raises_a_url_free_oserror_and_writes_nothing(self, tmp_path: Path) -> None:
+        """A 500 raises OSError carrying only the status - never the URL - and writes no file.
+
+        ``raise_for_status`` fires before the ``.part`` open, so nothing lands on
+        disk; the exact-message assert pins the containment contract (the httpx
+        message embeds the URL, ours must not).
+        """
+
+        respx.get("https://example/src.json").respond(status_code=500)
+        dest = tmp_path / "out.json"
+        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, _web=_WEB)
+
+        with pytest.raises(OSError, match="download failed: HTTP 500") as excinfo:
+            resolver._download_file("https://example/src.json", str(dest), label="src.json")
+
+        assert str(excinfo.value) == "download failed: HTTP 500"  # exact: no URL leaks
+        assert not dest.exists()
+        assert not (tmp_path / "out.json.part").exists()
+
+    @respx.mock
+    def test_mid_stream_failure_preserves_the_preexisting_dest(self, tmp_path: Path) -> None:
+        """A transport error mid-body leaves the cached copy intact and cleans the .part.
+
+        Pins the atomicity contract ``_maybe_download``'s fall-open relies on: a
+        failed refresh writes only the temp (one chunk lands before the wire dies,
+        verified live: respx streams the generator lazily), never the dest it
+        falls back to; the ``finally`` sweeps the temp.
+        """
+
+        def _chunks() -> Iterator[bytes]:
+            yield b"y" * (1 << 16)  # one chunk reaches .part before the wire dies
+            raise httpx.ReadError("boom")
+
+        respx.get("https://example/src.json").mock(return_value=httpx.Response(200, content=_chunks()))
+        dest = tmp_path / "out.json"
+        dest.write_bytes(b'{"cached": true}')
+        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, _web=_WEB)
+
+        with pytest.raises(OSError, match="download failed: ReadError"):
+            resolver._download_file("https://example/src.json", str(dest), label="src.json")
+
+        assert dest.read_bytes() == b'{"cached": true}'  # the cached copy is untouched
         assert not (tmp_path / "out.json.part").exists()
