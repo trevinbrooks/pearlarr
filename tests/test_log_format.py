@@ -15,6 +15,8 @@ Pins the knob's contract:
   live cockpits degrade to their calm log digest - designed, not a bug.
 * ``apply_log_level`` re-points the plain/json console handler exactly like
   the rich one, and never touches the file handler.
+* rich's exc_info branch renders a level badge + message then a frame-capped
+  traceback with ``show_locals=False`` (frame locals can hold config secrets).
 """
 
 import io
@@ -28,6 +30,7 @@ from pathlib import Path
 from typing import cast, override
 
 import pytest
+from rich.console import Console
 
 from seadexarr.modules.config import LogFormat
 from seadexarr.modules.console_caps import console_of
@@ -169,3 +172,41 @@ class TestApplyLogLevelPlain:
         assert console.level == logging.DEBUG
         # The file handler's level is the logger's job, not the console re-point's.
         assert file_handler.level == logging.NOTSET
+
+
+class TestRichExcInfoRender:
+    def test_exc_info_renders_badge_and_traceback_but_never_locals(self) -> None:
+        """An exc_info record renders the ERROR badge + message, then the traceback.
+
+        Pins the secrets guarantee: ``show_locals=False`` means a frame local's
+        VALUE is never rendered (locals can hold config secrets). The sentinel is
+        assembled at runtime so the rendered SOURCE context lines cannot contain
+        it - only rendered locals could. Also pins that the branch returns after
+        the traceback (the message renders exactly once, no payload dispatch).
+        """
+
+        stream = io.StringIO()
+        handler = RichConsoleHandler(Console(file=stream, width=200))
+        logger = logging.getLogger("seadexarr-test-rich-exc-render")
+        logger.addHandler(handler)
+        logger.setLevel(logging.ERROR)
+
+        sentinel = "hunter2-" + "sentinel"  # never a contiguous string in this source file
+        try:
+            leaked = sentinel
+            raise ValueError(f"qbit exploded holding {len(leaked)} secret bytes")
+        except ValueError:
+            logger.error("sync failed", exc_info=True)
+
+        out = stream.getvalue()
+        first_line = out.splitlines()[0]
+        assert first_line.startswith("ERROR")
+        assert "sync failed" in first_line
+        assert "Traceback" in out
+        assert "ValueError" in out
+        assert "qbit exploded" in out
+        assert sentinel not in out  # the frame local's value must never render
+        # The branch returns after the traceback: exactly one badged message line
+        # ("sync failed" also shows up as traceback source context, so count the
+        # badge+message pair, which only the handler's own render produces).
+        assert out.count("ERROR    sync failed") == 1
