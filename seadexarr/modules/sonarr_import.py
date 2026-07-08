@@ -48,6 +48,7 @@ from .sonarr_import_plan import (
     EpisodeSnapshot,
     ImportAction,
     ImportDecision,
+    ParsedQuality,
     QueueVerdict,
     all_targets_done,
     build_episode_id_map,
@@ -116,6 +117,10 @@ class ImportExecutor:
         # is logged once a run rather than every poll until the record clears.
         self._warned_unplaceable: set[str] = set()
 
+        # Whether the unmatched-default_quality warning fired this run; the seam
+        # runs once per FILE, so without this the typo would warn on every import.
+        self._warned_default_quality = False
+
         # Monotonic time of the last RefreshMonitoredDownloads we asked Sonarr for,
         # used to throttle the rescan: the blocking pass calls import_completed
         # every poll and may walk several torrents back-to-back, so we re-issue the
@@ -129,6 +134,7 @@ class ImportExecutor:
         self._quality_defs_cache = None
         self._languages_cache = None
         self._warned_unplaceable = set()
+        self._warned_default_quality = False
         self._last_refresh_monotonic = None
 
     def refresh_downloads(self) -> None:
@@ -390,7 +396,15 @@ class ImportExecutor:
         base = os.path.basename(path)
         sonarr_axes = quality_axes_from_model(decision.quality)
         our_axes = parse_quality_from_filename(base)
-        default_axes = quality_axes_from_name(self._config.imports.default_quality, quality_defs)
+        default_name = self._config.imports.default_quality
+        default_axes = quality_axes_from_name(default_name, quality_defs)
+        # A configured default that matches no definition contributes nothing;
+        # surface the (likely) typo once per run instead of staying silent.
+        if default_name and default_axes == ParsedQuality() and not self._warned_default_quality:
+            self._warned_default_quality = True
+            self.logger.warning(
+                f"imports.default_quality '{default_name}' matches no Sonarr quality definition; ignoring it",
+            )
         quality = resolve_quality(
             sonarr_axes,
             our_axes,
