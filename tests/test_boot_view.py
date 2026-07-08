@@ -33,7 +33,7 @@ from seadexarr.modules.boot_view import (
 )
 from seadexarr.modules.config import Arr
 from seadexarr.modules.console_caps import Capabilities, TerminalEnv
-from seadexarr.modules.log import RichConsoleHandler
+from seadexarr.modules.log import LogCounter, RichConsoleHandler
 from seadexarr.modules.mappings import MappingResolver
 from seadexarr.modules.run_services import RunDeps
 
@@ -62,6 +62,9 @@ def _logger_with_console(
 ) -> tuple[logging.Logger, Console]:
     logger = logging.getLogger(f"boot-view-test-{force_terminal}-{width}")
     logger.handlers.clear()
+    # The name is shared across tests: a LogCounter one test adds must not leak
+    # into the next under randomized ordering.
+    logger.filters.clear()
     logger.propagate = False
     logger.setLevel(logging.INFO)
     console = Console(file=io.StringIO(), force_terminal=force_terminal, width=width)
@@ -181,6 +184,100 @@ def test_live_warn_graduates_as_warning() -> None:
     out = _plain(console)
     assert "⚠" in out
     assert "not configured" in out
+
+
+# --- capstone error gate ---------------------------------------------------------
+
+
+def test_error_logged_mid_step_without_raise_suppresses_the_capstone() -> None:
+    # An ERROR that doesn't raise still means the section isn't "ready"; the view
+    # sees it through the LogCounter setup_logger attaches to production loggers.
+    clock = _FakeClock()
+    logger, console = _logger_with_console(force_terminal=True)
+    logger.addFilter(LogCounter())
+    view = make_boot_view(logger, time_source=clock)
+
+    with view.step("Reading config"):
+        clock.tick(0.02)
+        logger.error("half-configured arr refused")
+    view.end_section()
+    view.close()
+
+    out = _plain(console)
+    assert "✔ Reading config" in out  # the step itself still graduates as success
+    assert "ready in" not in out
+
+
+def test_error_logged_between_steps_suppresses_the_capstone() -> None:
+    # Errors logged in an OPEN section but outside any step (e.g. a refused
+    # selection after "Reading config") gate the capstone too - the counter delta
+    # spans the whole section, not just step bodies.
+    clock = _FakeClock()
+    logger, console = _logger_with_console(force_terminal=True)
+    logger.addFilter(LogCounter())
+    view = make_boot_view(logger, time_source=clock)
+
+    with view.step("Reading config"):
+        clock.tick(0.02)
+    logger.error("no runnable arr selected")
+    view.end_section()
+    view.close()
+
+    assert "ready in" not in _plain(console)
+
+
+def test_deferred_warn_still_allows_the_capstone() -> None:
+    # A DEFERRED (⚠) finish - qBittorrent unconfigured, a SeaDex outage - is a
+    # degraded but READY section; only failures and logged errors gate the capstone.
+    clock = _FakeClock()
+    logger, console = _logger_with_console(force_terminal=True)
+    logger.addFilter(LogCounter())
+    view = make_boot_view(logger, time_source=clock)
+
+    with view.step("Connecting to qBittorrent") as step:
+        clock.tick(0.05)
+        step.warn("not configured")
+    view.end_section()
+    view.close()
+
+    out = _plain(console)
+    assert "⚠" in out
+    assert "ready in" in out
+
+
+def test_counterless_logger_still_gets_a_capstone() -> None:
+    # Bare loggers (tests, embedders) carry no LogCounter and log_counter raises
+    # LookupError; the gate must read that as "no errors", not swallow the capstone.
+    clock = _FakeClock()
+    logger, console = _logger_with_console(force_terminal=True)
+    view = make_boot_view(logger, time_source=clock)
+
+    with view.step("Opening cache"):
+        clock.tick(0.1)
+        logger.error("uncounted error")  # invisible without a counter, by design
+    view.end_section()
+    view.close()
+
+    assert "ready in" in _plain(console)
+
+
+def test_error_gate_resets_with_the_section() -> None:
+    # end_section resets the snapshot: an error during one arr's section must not
+    # suppress the NEXT arr's capstone (multi-arr runs share the view).
+    clock = _FakeClock()
+    logger, console = _logger_with_console(force_terminal=True)
+    logger.addFilter(LogCounter())
+    view = make_boot_view(logger, time_source=clock)
+
+    with view.step("First step"):
+        logger.error("first section error")
+    view.end_section()
+    with view.step("Second step"):
+        clock.tick(0.1)
+    view.end_section()
+    view.close()
+
+    assert _plain(console).count("ready in") == 1  # second section only
 
 
 # --- non-TTY digest ------------------------------------------------------------

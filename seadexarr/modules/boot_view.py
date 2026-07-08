@@ -45,7 +45,7 @@ from .console_caps import (
     make_live,
     spinner_name,
 )
-from .log import INDENT, format_elapsed, indent_string, log_styled, log_titled_rule
+from .log import INDENT, format_elapsed, indent_string, log_counter, log_styled, log_titled_rule
 from .manual_import import OutcomeCategory
 
 # Width of the live download bar (mapping refresh); only the live cockpit draws
@@ -150,6 +150,7 @@ class _DurableBootView(BootView):
         self._section_started: float | None = None
         self._section_count = 0
         self._section_failed = False
+        self._section_errors_at = 0
 
     @final
     @override
@@ -172,6 +173,7 @@ class _DurableBootView(BootView):
         start = self._time()
         if self._section_started is None:
             self._section_started = start
+            self._section_errors_at = self._errors_logged()
         self._safe(lambda: self._begin(step))
         failed = False
         try:
@@ -198,6 +200,7 @@ class _DurableBootView(BootView):
         self._section_started = None
         self._section_count = 0
         self._section_failed = False
+        self._section_errors_at = 0
 
     @final
     @override
@@ -221,12 +224,33 @@ class _DurableBootView(BootView):
         log_styled(self._logger, indent_string(f"{glyph} {text}"), self._style(category.style))
 
     def _emit_capstone(self) -> None:
-        # No "ready" line on an empty or failed section: the error log already
-        # carries the meaning, and claiming "ready" after a failure would lie.
-        if self._section_count == 0 or self._section_started is None or self._section_failed:
+        # No "ready" line on an empty or failed section, or one that logged an
+        # ERROR without raising (a refused arm mid-section): the error log
+        # already carries the meaning, and claiming "ready" after it would lie.
+        if (
+            self._section_count == 0
+            or self._section_started is None
+            or self._section_failed
+            or self._errors_logged() > self._section_errors_at
+        ):
             return
         elapsed = self._time() - self._section_started
         log_styled(self._logger, indent_string(f"ready in {_format_secs(elapsed)}"), self._style("grey50"))
+
+    def _errors_logged(self) -> int:
+        """ERROR+ records the logger's LogCounter has seen (0 on a counterless logger).
+
+        Explicit LookupError handling, not ``_safe``: the snapshot read in
+        ``_step`` runs OUTSIDE ``_safe`` (a raise would escape into the wrapped
+        work), and letting ``_safe`` eat a capstone-side raise would swallow the
+        whole capstone for counterless loggers.
+        """
+
+        try:
+            counter = log_counter(self._logger)
+        except LookupError:
+            return 0
+        return sum(n for level, n in counter.counts.items() if level >= logging.ERROR)
 
     def _style(self, style: str) -> str | None:
         return style if self._caps.color else None
