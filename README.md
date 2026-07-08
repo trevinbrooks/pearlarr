@@ -371,12 +371,14 @@ environment:
 - `seadex.trackers`: Can manually select a list of trackers. Defaults to blank, which will use all the 
   public and private trackers regardless of `seadex.private_releases` — private filtering happens later in
   the selection, so the `warn`/`fallback` policies can still see (and report on) private-only releases.
-  All trackers with torrents on SeaDex, and whether they are supported are below.
+  All trackers with torrents on SeaDex, and whether they are supported are below. Names are matched
+  case-insensitively.
   - Public trackers
     - Nyaa (supported)
     - AnimeTosho (supported)
     - AniDex
     - RuTracker (supported)
+    - Other — SeaDex's catch-all bucket for public releases not on a named tracker
   - Private trackers
     - AB
     - BeyondHD
@@ -385,6 +387,7 @@ environment:
     - HDBits
     - Blutopia
     - Aither
+    - OtherPrivate — SeaDex's catch-all bucket for private releases not on a named tracker
 - `seadex.ignore_anilist_ids`: AniList IDs to never process (a list of integer IDs). Defaults to empty
 - `seadex.ignore_seadex_update_times`: If true, will not check against the update times in the cache to
   decide whether to search for a release. Defaults to false
