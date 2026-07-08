@@ -7,6 +7,26 @@ This is the core domain logic extracted into ``DownloadPlanner`` in Phase 4:
 the resulting per-url ``download`` flags, the returned hash list, and the
 private-only skip outcome surfaced on the :class:`PlanResult` /
 :class:`PrivateOnlySkips` (rather than mutated run state, as before Phase 4).
+
+The ``reduce_overlapping_downloads`` branch matrix these tests pin::
+
+    interactive ............................ early return, nothing touched
+    per same-files set (no flagged: skip set), public_flagged == 0:
+      upgrade_pending + promotion found .... INFO "private-only; grabbing public alternative X"
+      upgrade_pending + none + fallback .... WARNING stale reason, stale_held, skipped
+      no mismatch + owned fallback rides ... INFO soft-skip, fallback_covered
+      neither .............................. WARNING "not supported", skipped
+    public_flagged >= 1:
+      first fully-addable group ............ keeper; losers unflag (debug only)
+      none addable + mismatch + promotion .. INFO "remaining files private-only; grabbing ..."
+      promotion refused + fallback rides ... stale_held set SILENTLY, degrade to first
+      otherwise ............................ degrade to public_flagged[0]
+      fallback keeper over private drops ... INFO "private-only; falling back to X"
+    then per set: rescue re-flags just-dropped public urls no survivor covers;
+    finally per group: identical non-empty filesets dedup to the first.
+
+Skip state (skipped/groups/notices/stale_held/fallback_covered) accumulates
+across sets onto ONE result - the multi-set tests pin that accumulation.
 """
 
 import logging
@@ -387,6 +407,99 @@ class TestReduceOverlappingDownloads:
         assert seadex["A"].urls["u1"].download is True
         assert seadex["B"].urls["u2"].download is True
 
+    def test_two_private_only_sets_accumulate_groups_and_notices(self) -> None:
+        # Two disjoint private-only sets in ONE entry: the skip state must
+        # accumulate onto one result - both group names, one WARNING notice per
+        # set (in set order) - not overwrite or collapse to the last set.
+        planner = make_planner()
+        seadex = {
+            "P1": rg_group(
+                {"u1": url_item(download=True, is_public=False)},
+                all_episodes=[EpisodeRecord(season=1, episode=1, size=0)],
+            ),
+            "P2": rg_group(
+                {"u2": url_item(download=True, is_public=False)},
+                all_episodes=[EpisodeRecord(season=2, episode=1, size=0)],
+            ),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["P1"].urls["u1"].download is False
+        assert seadex["P2"].urls["u2"].download is False
+        assert skips.skipped is True
+        assert skips.groups == ["P1", "P2"]
+        assert [n.groups for n in skips.notices] == [["P1"], ["P2"]]
+        assert [n.level for n in skips.notices] == [logging.WARNING, logging.WARNING]
+
+    def test_soft_skip_and_stale_hold_combine_across_sets(self) -> None:
+        # One entry, two sets: an owned-fallback soft-skip (set 1) and a
+        # size-mismatch fallback hold (set 2). The per-set bits land TOGETHER on
+        # one result - fallback_covered and stale_held are independent - and only
+        # the held set reaches skipped/groups; the notices keep their levels.
+        planner = make_planner()
+        e1 = [EpisodeRecord(season=1, episode=1, size=0)]
+        e2 = [EpisodeRecord(season=2, episode=1, size=0)]
+        seadex = {
+            "Priv1": rg_group({"u1": url_item(download=True, is_public=False)}, all_episodes=e1),
+            "Fall1": rg_group(
+                {"u2": url_item(download=False, is_public=True, is_fallback=True)},
+                all_episodes=e1,
+            ),
+            "Priv2": rg_group(
+                {"u3": url_item(download=True, is_public=False, size_mismatch=True)},
+                all_episodes=e2,
+            ),
+            "Fall2": rg_group(
+                {"u4": url_item(download=False, is_public=True, is_fallback=True)},
+                all_episodes=e2,
+            ),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["Priv1"].urls["u1"].download is False
+        assert seadex["Priv2"].urls["u3"].download is False
+        assert seadex["Fall1"].urls["u2"].download is False
+        assert seadex["Fall2"].urls["u4"].download is False
+        assert skips.fallback_covered is True
+        assert skips.stale_held is True
+        assert skips.skipped is True
+        assert skips.groups == ["Priv2"]
+        assert [n.groups for n in skips.notices] == [["Priv1"], ["Priv2"]]
+        assert [n.level for n in skips.notices] == [logging.INFO, logging.WARNING]
+
+    def test_both_promotion_prefixes_in_one_entry(self) -> None:
+        # The two promotion notices are DISTINCT: the no-public-flagged branch
+        # says "private-only" (the whole set was private), the degraded-keeper
+        # branch says "remaining files private-only" (the set had a public url).
+        # One entry exercising both must surface both wordings, nothing skipped.
+        planner = make_planner()
+        e1 = [EpisodeRecord(season=1, episode=1, size=0)]
+        e2 = [EpisodeRecord(season=2, episode=1, size=0)]
+        seadex = {
+            "PrivA": rg_group(
+                {"u1": url_item(download=True, is_public=False, size_mismatch=True)},
+                all_episodes=e1,
+            ),
+            "PubA": rg_group({"u2": url_item(download=False, is_public=True)}, all_episodes=e1),
+            "MixedB": rg_group(
+                {
+                    "u3": url_item(download=False, is_public=True),
+                    "u4": url_item(download=True, is_public=False, size_mismatch=True),
+                },
+                all_episodes=e2,
+            ),
+            "PubB": rg_group({"u5": url_item(download=False, is_public=True)}, all_episodes=e2),
+        }
+        skips = planner.reduce_overlapping_downloads(seadex)
+        assert seadex["PubA"].urls["u2"].download is True
+        assert seadex["PubB"].urls["u5"].download is True
+        assert seadex["PrivA"].urls["u1"].download is False
+        assert seadex["MixedB"].urls["u3"].download is False
+        assert seadex["MixedB"].urls["u4"].download is False
+        assert skips.skipped is False
+        assert [n.reason for n in skips.notices] == [
+            "private-only; grabbing public alternative PubA",
+            "remaining files private-only; grabbing public alternative PubB",
+        ]
+
 
 class TestSameGroupDuplicateDedup:
     """Within one group, flagged urls with identical non-empty filesets dedup to
@@ -452,6 +565,25 @@ class TestSameGroupDuplicateDedup:
         planner.reduce_overlapping_downloads(seadex)
         assert seadex["A"].urls["u1"].download is True
         assert seadex["A"].urls["u2"].download is True
+
+    def test_identical_filesets_across_groups_never_dedup(self) -> None:
+        # The dedup's seen-set is rebuilt PER GROUP: two groups in different
+        # same-files sets carrying identical file lists both survive (a hoisted
+        # cross-group seen-set would silently drop B's coverage).
+        planner = make_planner()
+        seadex = {
+            "A": rg_group(
+                {"u1": url_item(files=["X - S01E01.mkv"], download=True)},
+                all_episodes=[EpisodeRecord(season=1, episode=1, size=0)],
+            ),
+            "B": rg_group(
+                {"u2": url_item(files=["X - S01E01.mkv"], download=True)},
+                all_episodes=[EpisodeRecord(season=2, episode=1, size=0)],
+            ),
+        }
+        planner.reduce_overlapping_downloads(seadex)
+        assert seadex["A"].urls["u1"].download is True
+        assert seadex["B"].urls["u2"].download is True
 
 
 class TestFilterByTorrentHash:
