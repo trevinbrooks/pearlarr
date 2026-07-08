@@ -47,23 +47,53 @@ this behaviour by setting ``seadex.ignore_seadex_update_times`` to true in the c
 
 ## Installation
 
-SeaDexArr is available as a Docker container. Into a Docker Compose file:
+SeaDexArr is designed to run as a Docker container. Copy
+[docker-compose.example.yml](docker-compose.example.yml) to `docker-compose.yml` (or fold the
+`seadexarr` service into an existing stack), create the config directory yourself, and bring it up:
 
 ```
-services:
-
-  seadexarr:
-    image: ghcr.io/trevinbrooks/seadexarr:latest  # or seadexarr:main for the cutting edge
-    container_name: seadexarr
-    environment: 
-      - SCHEDULE_TIME=6  # Deprecated: set schedule.interval_hours in config.yml instead (env still wins if set)
-    volumes:
-      - /path/to/config:/config
-    restart: unless-stopped
+mkdir -p ./config
+docker compose up -d seadexarr
 ```
 
-And then to run on a schedule, simply run `docker compose up -d seadexarr`. If you want to run one Arr one time, you 
-can instead run like `docker compose run seadexarr run single --sonarr`.
+Creating `./config` first matters: a missing bind-mount directory is auto-created by Docker
+root-owned, and the container (uid 1000 by default) then stops immediately with a message naming
+the fix (`chown` the host directory, or point `user:`/PUID/PGID at its owner — see Permissions
+below).
+
+On the very first boot the container writes a starter `config.yml` into the `/config` mount and
+exits with code 1 — it can't do anything useful until the file is filled in. With
+`restart: unless-stopped` Docker restarts it; the template now exists, so the container stays up
+but each run just logs that neither arr is configured. Fill in `./config/config.yml`, then
+`docker compose restart seadexarr` and check `docker compose logs -f seadexarr`.
+
+One-off commands run through the same service, e.g.
+`docker compose run --rm seadexarr run single --sonarr` (everything after the service name is
+passed to the `seadexarr` CLI). The image also carries a healthcheck (`seadexarr paths`), so
+`docker ps` shows the container healthy once the CLI and its data directory resolve — purely
+informational; nothing auto-restarts on unhealthy.
+
+### Scheduling
+
+Inside the container, cron owns the cadence: [supercronic](https://github.com/aptible/supercronic)
+runs `seadexarr run single` on the `SEADEXARR_CRON` schedule (default `0 */6 * * *`, i.e. every 6
+hours), evaluated in the `TZ` timezone (default UTC). `SEADEXARR_RUN_ON_START=true` (the default)
+also runs one catch-up pass when the container starts; set it to `false` to wait for the first
+cron fire instead. The config's `schedule.interval_hours` does not apply in the container — it
+only drives the bare-metal `seadexarr run scheduled` loop, the fallback scheduler for pip
+installs. Overlapping runs are double-guarded: supercronic won't start a run while the previous
+one is still going, and SeaDexArr holds its own cross-process file lock besides.
+
+### Permissions
+
+The compose file's `user: "${PUID:-1000}:${PGID:-1000}"` line sets the uid/gid the container runs
+as. PUID and PGID are compose *interpolation* variables — set them in an `.env` file next to the
+compose file or in the shell; they are **not** `environment:` keys (an `environment:` entry is
+silently ignored for this). Match them to the owner of the `./config` host directory so the
+container can write its config, caches and logs there. The starter config is written mode 600,
+which lines up when your host editor runs as the same uid the container uses; if you loosen it
+(e.g. `chmod 644`), SeaDexArr warns on every run that the file — which holds API keys — is
+readable by other users.
 
 SeaDexArr can also be installed via pip:
 
@@ -99,7 +129,7 @@ holds the whole data directory.
 ## CLI
 
 SeaDexArr features a command-line interface, with a number of modules. If running in Docker mode, 
-run them through your compose service, e.g. ``docker compose run seadexarr cache stats``
+run them through your compose service, e.g. ``docker compose run --rm seadexarr cache stats``
 (everything after the service name is passed to the ``seadexarr`` CLI).
 
 Every command answers ``--help`` (or ``-h``), and ``seadexarr --version`` prints the installed
@@ -110,8 +140,10 @@ Radarr-only setup just skips the other one. Tab completion for your shell is ava
 ### ``seadexarr run``
 
 There are two options here, ``run scheduled`` and ``run single``. Scheduled is the default mode,
-and will run if you just enter ``seadexarr`` into the command line, which will run every few hours
-(default 6) to keep things up to date automatically. Single will just run once and be done: on its
+and will run if you just enter ``seadexarr`` into the command line, which will run every
+``schedule.interval_hours`` (default 6) to keep things up to date automatically — it's the
+bare-metal fallback scheduler; the Docker image schedules via its built-in supercronic +
+``SEADEXARR_CRON`` instead (see Scheduling above). Single will just run once and be done: on its
 own, ``run single`` runs every configured arr, and ``--sonarr``/``--radarr`` narrow it to one
 module.
 
@@ -170,44 +202,56 @@ The same composition is available programmatically: build the shared collaborato
 plus an Arr strategy, and drive ``run_sync``:
 
 ```python
-from seadexarr import RunDeps, RunLoop, RunServices, SonarrSync
+from seadexarr import RunDeps, RunLoop, RunServices, SonarrSync, setup_logger
 from seadexarr.modules.config import AppConfig, Arr
-from seadexarr.modules.mappings import MappingResolver
+from seadexarr.modules.mappings import MappingResolver, MappingSources
 from seadexarr.modules.paths import ensure_data_dir, resolve_paths
+from seadexarr.modules.web_client import make_web_client
 
 paths = resolve_paths()
 ensure_data_dir(paths)
 config = AppConfig.load(paths.config)
+logger = setup_logger(config.advanced.log_level, paths.log_dir)
 
-# Downloads/parses the ID-mapping sources once; shared across Arr runs.
-mappings = MappingResolver(
-    cache_time=config.advanced.cache_time,
-    ignore_anilist_ids=config.seadex.ignore_anilist_ids,
-    anime_mappings_cfg=config.mappings.anime_mappings,
-    anidb_mappings_cfg=config.mappings.anidb_mappings,
-    anibridge_mappings_cfg=config.mappings.anibridge_mappings,
-    mappings_db=paths.mappings_db,
-)
+# One shared client for all non-arr web traffic (mapping downloads, trackers, webhooks).
+web = make_web_client()
 try:
-    deps = RunDeps.build(
-        Arr.SONARR,
-        paths.config,
-        paths.cache,
-        mappings=mappings,
-        app_config=config,
+    # Downloads/parses the ID-mapping sources once; shared across Arr runs.
+    mappings = MappingResolver(
+        cache_time=config.advanced.cache_time,
+        ignore_anilist_ids=config.seadex.ignore_anilist_ids,
+        sources=MappingSources(
+            anime=config.mappings.anime_mappings,
+            anidb=config.mappings.anidb_mappings,
+            anibridge=config.mappings.anibridge_mappings,
+        ),
+        web=web,
+        mappings_db=paths.mappings_db,
+        logger=logger,
     )
     try:
-        services = RunServices(deps, Arr.SONARR)
-        runner = RunLoop(deps, services)
-        runner.run_sync(
-            SonarrSync(deps, services),
-            item_id=None,
-            dry_run=False,
+        deps = RunDeps.build(
+            Arr.SONARR,
+            paths.cache,
+            logger=logger,
+            mappings=mappings,
+            app_config=config,
+            web=web,
         )
+        try:
+            services = RunServices(deps, Arr.SONARR)
+            runner = RunLoop(deps, services)
+            runner.run_sync(
+                SonarrSync(deps, services),
+                item_id=None,
+                dry_run=False,
+            )
+        finally:
+            deps.close()
     finally:
-        deps.close()
+        mappings.close()
 finally:
-    mappings.close()
+    web.close()
 ```
 
 A Radarr run is the same shape with ``RadarrSync`` and ``Arr.RADARR``. If no config file exists
@@ -262,9 +306,9 @@ configured (see ``notifications.wait_webhook_url``).
 
 ## Config
 
-The config file is nested YAML: settings live in eight groups (``sonarr``, ``radarr``,
-``qbittorrent``, ``seadex``, ``imports``, ``notifications``, ``mappings``, ``advanced``), referred
-to as ``group.key`` below. The config is validated on load — an unknown or misspelled key fails
+The config file is nested YAML: settings live in nine groups (``sonarr``, ``radarr``,
+``qbittorrent``, ``seadex``, ``imports``, ``notifications``, ``schedule``, ``mappings``,
+``advanced``), referred to as ``group.key`` below. The config is validated on load — an unknown or misspelled key fails
 with an error naming it rather than being silently ignored — and keys left blank fall back to
 their defaults. These should be self-explanatory, but a more detailed description of each is given
 below.
@@ -385,6 +429,11 @@ above; Sonarr only).
 - `notifications.wait_notify`: Push a notification when a wait pass completes. Defaults to on whenever
   either webhook above is set
 
+### Schedule settings
+
+- `schedule.interval_hours`: Hours between cycles of the bare-metal `run scheduled` loop. The
+  Docker image ignores it (`SEADEXARR_CRON` owns the container cadence). Defaults to 6
+
 ### Mapping settings
 
 - `mappings.anime_mappings`: Can provide custom Anime ID mappings here. Otherwise, will use the Kometa mappings.
@@ -406,6 +455,10 @@ above; Sonarr only).
 - `advanced.max_torrents_to_add`: Used to limit the number of torrents you add in one run. Defaults to blank,
   which will just add everything it finds
 - `advanced.log_level`: Controls the level of logging. Can be DEBUG, INFO, WARNING, ERROR, or CRITICAL. Defaults to "INFO"
+- `advanced.log_format`: Console output format. `auto` (the default) renders the rich styled
+  console on a terminal and plain timestamped lines when piped or under Docker; `rich`, `plain`
+  and `json` (one JSON object per line) force a renderer. `plain` and `json` also disable the
+  live progress views (expected). The log file always uses the plain timestamped format
 
 ## Roadmap
 
