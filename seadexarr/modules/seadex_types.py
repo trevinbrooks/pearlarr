@@ -1,6 +1,7 @@
-"""The ``seadex_dict`` domain vocabulary: the shapes the planner and notifier read.
+"""Domain vocabulary + the typed API boundary: the shapes a run reads and writes.
 
-The central ``seadex_dict`` is a four-level mapping built once per AniList entry
+Two halves live here. The first is the ``seadex_dict`` domain vocabulary: the
+central ``seadex_dict`` is a four-level mapping built once per AniList entry
 by :meth:`seadexarr.modules.seadex_filter.SeadexReleaseFilter.build` (reached via
 the ``RunServices.get_seadex_dict`` delegator) and threaded through the decision engine
 (:mod:`seadexarr.modules.planner`) and the Discord notifier
@@ -18,6 +19,42 @@ The defaults also encode one load-bearing distinction:
 ``SeadexReleaseGroupItem.all_episodes`` is ``None`` when no episode parsing ran
 (Radarr movies) and an empty ``list`` when parsing ran but found nothing -
 ``get_same_files_groups`` keys off exactly that difference.
+
+The second half (from "pydantic boundary plumbing" down) is the typed API
+boundary: pydantic models that arr/AniList JSON is validated into at the
+client edge, replacing the former hand-plucked ``from_api`` dicts and
+TypedDict casts. The regime:
+
+* READ models subclass :class:`_ApiModel` (frozen, unknown keys ignored) and
+  enter via :func:`validate_each` - the fail-open list read, one scrubbed
+  warning per skipped record - or via ``model_validate`` inside the owning
+  client's single-object fail-open try/except (degrading to the site's
+  existing default, e.g. the all-None :class:`AniListMediaNode` miss node).
+* The library fetches (:class:`SonarrSeries` / :class:`RadarrMovie`) read
+  STRICT: ``validate_each(..., strict=True)`` raises
+  :class:`BoundaryContractError` when a non-empty payload validates to
+  nothing, so a broken endpoint never reads as an empty library.
+* Records whose loss would change a decision fold junk PER FIELD instead of
+  skipping (:class:`QueueRecord`, :class:`HistoryRecord`,
+  :class:`CommandResource`/:class:`CommandFile`, via the reusable lenient
+  validators): a dropped queue record could route a wait into a
+  double-importing step-in; a dropped history record is a missed dirty-mark.
+* WRITE / re-emit shapes subclass :class:`_WireModel` (``extra="allow"``) so
+  unknown keys survive the read->resolve->re-emit round-trip; the standard
+  write dump is ``model_dump(exclude_unset=True)``, never ``exclude_none``.
+
+The port also fixed two latent crashes: a junk ``rejections`` entry can no
+longer reach the import classifier's ``.casefold()``
+(:class:`ImportRejection` folds/skips them), and a JSON-array AniList body is
+no longer laundered into a dict (it folds to the ``{}`` no-data arm in
+:mod:`~.anilist_client`).
+
+Kept deliberately un-ported: ``SonarrParseRecord`` (:mod:`~.sonarr_parse` - a
+persisted parse-cache row, not a wire read), :func:`coerce_int` (the lenient
+int fold behind ``_int_or_zero``, plus non-boundary coercions in
+:mod:`~.anibridge` / :mod:`~.manual_import`), the :data:`Json` alias (typing
+for constructed payloads and the :mod:`~.json_narrow` guards), and the
+structural protocols (:class:`ArrItem` and friends).
 """
 
 import logging
@@ -196,8 +233,8 @@ class _ApiModel(BaseModel):
     ``validate_by_name`` is required: aliased fields are also constructed by
     field name across the tests/fakes, which would otherwise silently no-op to
     defaults. Bool policy: pydantic's lax coercion already preserves True -> 1
-    on int fields, so no model rejects bools; :func:`coerce_int` survives only
-    as :class:`HistoryRecord`'s fold validator.
+    on int fields, so no model rejects bools; at this boundary
+    :func:`coerce_int` survives only inside the ``_int_or_zero`` lenient fold.
     """
 
     model_config = ConfigDict(frozen=True, extra="ignore", validate_by_name=True)
