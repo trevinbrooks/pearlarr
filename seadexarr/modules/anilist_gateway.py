@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 
 import httpx
 
-from .anilist import (
+from .anilist_client import (
     ANILIST_BATCH_SIZE,
     AniListCache,
     AniListRetryLog,

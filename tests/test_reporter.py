@@ -20,7 +20,7 @@ import time
 import httpx
 import pytest
 
-from seadexarr.modules.anilist import AniListCache, AniListRetryLog
+from seadexarr.modules.anilist_client import AniListCache, AniListRetryLog
 from seadexarr.modules.anilist_gateway import AniListGateway
 from seadexarr.modules.cache import AbstractCacheStore, CacheRecord
 from seadexarr.modules.config import Arr

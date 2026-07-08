@@ -2,7 +2,7 @@
 """Contract tests for ``AniListGateway``: the TTL gates, eviction, and prefetch.
 
 The gateway is driven over the in-memory :class:`FakeCacheStore`; the HTTP/retry
-layer (``get_query_batch``'s transport) is already pinned in ``test_anilist``,
+layer (``get_query_batch``'s transport) is already pinned in ``test_anilist_client``,
 so prefetch fakes it with a recording batch stub at the module attribute.
 """
 
@@ -14,7 +14,7 @@ import httpx
 import pytest
 
 import seadexarr.modules.anilist_gateway as anilist_gateway
-from seadexarr.modules.anilist import ANILIST_BATCH_SIZE, AniListCache, AniListRetryLog
+from seadexarr.modules.anilist_client import ANILIST_BATCH_SIZE, AniListCache, AniListRetryLog
 from seadexarr.modules.anilist_gateway import ANILIST_CACHE_TTL_DAYS, AniListGateway
 from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
 

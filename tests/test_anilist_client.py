@@ -3,7 +3,7 @@
 # These are deliberately under-test private helpers; the repo already disables
 # reportPrivateUsage for all of tests/ (test code reads private members), but the
 # strict directive above re-enables it, so restore the repo's test policy here.
-"""Direct unit tests for the pure helpers and retry path in ``anilist``.
+"""Direct unit tests for the pure helpers and retry path in ``anilist_client``.
 
 These functions are otherwise only exercised incidentally. The classification /
 parsing / extraction helpers take plain ``dict`` bodies, so they are tested with
@@ -19,7 +19,7 @@ import httpx
 import pytest
 import respx
 
-from seadexarr.modules.anilist import (
+from seadexarr.modules.anilist_client import (
     _MEDIA_FIELDS,
     API_URL,
     MAX_RETRIES,
