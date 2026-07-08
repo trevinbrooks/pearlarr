@@ -234,72 +234,6 @@ def _file_digest(path: str) -> str:
     return h.hexdigest()
 
 
-def _download_file(
-    url: str,
-    dest: str,
-    *,
-    client: httpx.Client,
-    timeout: int,
-    logger: logging.Logger | None,
-    label: str,
-    progress: ProgressSink | None = None,
-) -> None:
-    """Stream ``url`` to ``dest`` with a per-read timeout and throttled progress.
-
-    Writes to a ``.part`` temp and atomically renames on success, so a failed or
-    stalled download never leaves a truncated source file for the next run to
-    digest and trust. A per-read timeout bounds a stall (the read raises rather
-    than blocking forever). Progress is reported about once per MB - to the boot
-    cockpit's live bar when a ``progress`` sink is given, else (standalone use) as
-    a throttled DEBUG line. Raises ``OSError`` on any failure (the callers'
-    containment contract).
-    """
-
-    tmp = dest + ".part"
-    try:
-        try:
-            # Pin identity encoding: httpx would transparently gunzip, making the
-            # counted (decoded) bytes disagree with the compressed Content-Length
-            # and the progress fraction/MB details read nonsense.
-            with client.stream("GET", url, timeout=timeout, headers={"Accept-Encoding": "identity"}) as resp:
-                resp.raise_for_status()
-                total = int(resp.headers.get("Content-Length") or 0)
-                got = 0
-                next_mark = 1 << 20
-                with open(tmp, "wb") as out:
-                    for chunk in resp.iter_bytes(1 << 16):
-                        out.write(chunk)
-                        got += len(chunk)
-                        if got > MAX_DOWNLOAD_BYTES:
-                            # A runaway/hostile response must not fill the disk; the
-                            # largest real source is a few tens of MB. OSError so the
-                            # refresh path's fall-open containment applies.
-                            raise OSError(
-                                f"{label} exceeded the {MAX_DOWNLOAD_BYTES >> 20} MB download cap; aborting",
-                            )
-                        if got >= next_mark:
-                            if progress is not None and total:
-                                progress.progress(got / total, f"{label} · {got >> 20}/{total >> 20} MB")
-                            elif logger is not None:
-                                suffix = (
-                                    f"{got >> 20}/{total >> 20} MB ({got * 100 // total}%)"
-                                    if total
-                                    else f"{got >> 20} MB"
-                                )
-                                logger.debug(f"  ...downloading {label}: {suffix}")
-                            next_mark = got + (1 << 20)
-        except httpx.HTTPStatusError as e:
-            # Callers contain OSError (urllib's URLError was one); translate at this
-            # boundary keeping the status but never the message (it embeds the URL).
-            raise OSError(f"download failed: HTTP {e.response.status_code}") from e
-        except httpx.HTTPError as e:
-            raise OSError(f"download failed: {type(e).__name__}") from e
-        os.replace(tmp, dest)
-    finally:
-        with contextlib.suppress(OSError):
-            os.remove(tmp)
-
-
 def _parse_anime_mappings(path: str) -> AnimeIdsMap:
     """Load the Kometa Anime-IDs JSON map from disk."""
 
@@ -554,6 +488,64 @@ class MappingResolver:
             self._store.replace_anibridge(INLINE_DIGEST, ab.to_rows())
             self.anibridge = AniBridge.from_store(self._store)
 
+    def _download_file(self, url: str, dest: str, *, label: str) -> None:
+        """Stream ``url`` to ``dest`` with a per-read timeout and throttled progress.
+
+        Writes to a ``.part`` temp and atomically renames on success, so a failed or
+        stalled download never leaves a truncated source file for the next run to
+        digest and trust. A per-read timeout bounds a stall (the read raises rather
+        than blocking forever). Progress is reported about once per MB - to the boot
+        cockpit's live bar when the resolver has a progress sink, else as a
+        throttled DEBUG line. Raises ``OSError`` on any failure (the callers'
+        containment contract).
+        """
+
+        tmp = dest + ".part"
+        try:
+            try:
+                # Pin identity encoding: httpx would transparently gunzip, making the
+                # counted (decoded) bytes disagree with the compressed Content-Length
+                # and the progress fraction/MB details read nonsense.
+                with self._web.stream(
+                    "GET", url, timeout=DOWNLOAD_TIMEOUT_S, headers={"Accept-Encoding": "identity"}
+                ) as resp:
+                    resp.raise_for_status()
+                    total = int(resp.headers.get("Content-Length") or 0)
+                    got = 0
+                    next_mark = 1 << 20
+                    with open(tmp, "wb") as out:
+                        for chunk in resp.iter_bytes(1 << 16):
+                            out.write(chunk)
+                            got += len(chunk)
+                            if got > MAX_DOWNLOAD_BYTES:
+                                # A runaway/hostile response must not fill the disk; the
+                                # largest real source is a few tens of MB. OSError so the
+                                # refresh path's fall-open containment applies.
+                                raise OSError(
+                                    f"{label} exceeded the {MAX_DOWNLOAD_BYTES >> 20} MB download cap; aborting",
+                                )
+                            if got >= next_mark:
+                                if self._progress is not None and total:
+                                    self._progress.progress(got / total, f"{label} · {got >> 20}/{total >> 20} MB")
+                                elif self.logger is not None:
+                                    suffix = (
+                                        f"{got >> 20}/{total >> 20} MB ({got * 100 // total}%)"
+                                        if total
+                                        else f"{got >> 20} MB"
+                                    )
+                                    self.logger.debug(f"  ...downloading {label}: {suffix}")
+                                next_mark = got + (1 << 20)
+            except httpx.HTTPStatusError as e:
+                # Callers contain OSError (urllib's URLError was one); translate at this
+                # boundary keeping the status but never the message (it embeds the URL).
+                raise OSError(f"download failed: HTTP {e.response.status_code}") from e
+            except httpx.HTTPError as e:
+                raise OSError(f"download failed: {type(e).__name__}") from e
+            os.replace(tmp, dest)
+        finally:
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+
     def _maybe_download(self, file: str, url: str, label: str) -> None:
         """Download ``file`` if missing, or refresh it once it's past cache_time."""
 
@@ -563,30 +555,14 @@ class MappingResolver:
 
         if not os.path.exists(file):
             self._log(f"Downloading {label}")
-            _download_file(
-                url,
-                file,
-                client=self._web,
-                timeout=DOWNLOAD_TIMEOUT_S,
-                logger=self.logger,
-                label=label,
-                progress=self._progress,
-            )
+            self._download_file(url, file, label=label)
             return
 
         age = datetime.now() - datetime.fromtimestamp(os.path.getmtime(file))
         if age.days >= self.cache_time:
             self._log(f"Refreshing {label} (cached {age.days}d >= {self.cache_time}d)")
             try:
-                _download_file(
-                    url,
-                    file,
-                    client=self._web,
-                    timeout=DOWNLOAD_TIMEOUT_S,
-                    logger=self.logger,
-                    label=label,
-                    progress=self._progress,
-                )
+                self._download_file(url, file, label=label)
             except OSError as e:
                 # A transient blip refreshing a stale-but-valid cached source must not abort
                 # the run: the atomic .part write left the cached file intact, so fall open to

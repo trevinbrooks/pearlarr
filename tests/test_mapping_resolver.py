@@ -860,7 +860,7 @@ class TestMaybeDownloadFailOpen:
         source.write_text("{}")
         old = time.time() - 10 * 86400  # 10 days old, past cache_time
         os.utime(source, (old, old))
-        monkeypatch.setattr(m, "_download_file", _boom)
+        monkeypatch.setattr(MappingResolver, "_download_file", _boom)
 
         logger = logging.getLogger("seadexarr-test-maybe-download")
         resolver = make_bare_instance(MappingResolver, logger=logger, _progress=None, cache_time=1, _web=_WEB)
@@ -875,7 +875,7 @@ class TestMaybeDownloadFailOpen:
     ) -> None:
         # With no file on disk there is nothing to fall open to, so a first-ever
         # download failure stays fatal (the run cannot proceed without the source).
-        monkeypatch.setattr(m, "_download_file", _boom)
+        monkeypatch.setattr(MappingResolver, "_download_file", _boom)
         resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, cache_time=1, _web=_WEB)
 
         with pytest.raises(OSError):
@@ -890,16 +890,10 @@ class TestDownloadFileSizeCap:
         dest = tmp_path / "out.json"
         monkeypatch.setattr(m, "MAX_DOWNLOAD_BYTES", 1024)
         respx.get("https://example/src.json").respond(content=b"x" * 4096)
+        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, _web=_WEB)
 
         with pytest.raises(OSError, match="download cap"):
-            m._download_file(
-                "https://example/src.json",
-                str(dest),
-                client=httpx.Client(),
-                timeout=5,
-                logger=None,
-                label="src.json",
-            )
+            resolver._download_file("https://example/src.json", str(dest), label="src.json")
 
         # Neither the destination nor the .part temp survives the abort.
         assert not dest.exists()
