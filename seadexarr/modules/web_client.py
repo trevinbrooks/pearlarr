@@ -9,6 +9,7 @@ transient-retry policy those scrapes used to get from the urllib3 ``Retry``
 adapter on the old requests session.
 """
 
+import contextlib
 import random
 import time
 from collections.abc import Callable
@@ -17,6 +18,11 @@ import httpx
 
 from .arr_http import BACKOFF_BASE_S, GET_RETRIES, RETRYABLE_STATUS
 from .. import __version__
+
+# Cap on an honored Retry-After window (mirrors the AniList loop's MAX_BACKOFF):
+# long enough for a real throttle, short enough that a broken header can't
+# stall a scrape for minutes.
+RETRY_AFTER_CAP_S = 60
 
 # Identify ourselves to the hosts we scrape/post to (AniList's API terms ask
 # clients to be identifiable); also what a maintainer would see if this client
@@ -59,13 +65,16 @@ def get_with_retries(
 
     The web twin of ``ArrHttp._get_with_retries`` (same retry count, backoff
     shape and retryable-status set) - GETs only, so it stays safe for
-    idempotent reads. Returns the final response: a success, a terminal
-    non-retryable status, or the still-transient one once retries run out -
-    the call site's ``raise_for_status`` surfaces a bad status (the urllib3
-    policy's ``raise_on_status=False``, preserved).
+    idempotent reads. A retryable response's own ``Retry-After`` window beats
+    the exponential backoff (urllib3 ``Retry`` parity), capped. Returns the
+    final response: a success, a terminal non-retryable status, or the
+    still-transient one once retries run out - the call site's
+    ``raise_for_status`` surfaces a bad status (the urllib3 policy's
+    ``raise_on_status=False``, preserved).
     """
 
     for attempt in range(GET_RETRIES):
+        retry_after = None
         try:
             response = client.get(url)
         except httpx.TransportError:
@@ -73,7 +82,13 @@ def get_with_retries(
         else:
             if response.status_code not in RETRYABLE_STATUS:
                 return response
-        sleep(BACKOFF_BASE_S * 2**attempt + random.uniform(0, 0.25))
+            retry_after = response.headers.get("Retry-After")
+        wait = BACKOFF_BASE_S * 2**attempt + random.uniform(0, 0.25)
+        if retry_after is not None:
+            # An unparseable header (e.g. an HTTP-date) falls back to the backoff.
+            with contextlib.suppress(ValueError):
+                wait = min(max(float(retry_after), 0), RETRY_AFTER_CAP_S)
+        sleep(wait)
     # The last attempt: a transport error now propagates (retries exhausted,
     # matching the urllib3 Retry policy raising) and any status returns.
     return client.get(url)

@@ -13,7 +13,8 @@ client. ``get_with_retries`` replaces the urllib3 ``Retry`` adapter the old
 requests session mounted, so its matrix is pinned too: transient statuses and
 transport errors retry with backoff, a terminal status returns immediately,
 retry exhaustion returns the response (never raises on status) but propagates
-a transport error.
+a transport error, and a response's Retry-After window beats the backoff
+(capped, junk falls back).
 """
 
 import ssl
@@ -24,7 +25,7 @@ import respx
 
 from seadexarr import __version__
 from seadexarr.modules.arr_http import GET_RETRIES
-from seadexarr.modules.web_client import USER_AGENT, get_with_retries, make_web_client
+from seadexarr.modules.web_client import RETRY_AFTER_CAP_S, USER_AGENT, get_with_retries, make_web_client
 
 _URL = "https://web.test/page"
 
@@ -113,6 +114,41 @@ def test_get_with_retries_exhausted_transport_error_propagates() -> None:
         get_with_retries(client, _URL, sleep=lambda _s: None)
 
     assert route.call_count == GET_RETRIES + 1
+
+
+@respx.mock
+def test_get_with_retries_honors_retry_after() -> None:
+    # urllib3 Retry parity: the throttled response's own window beats the
+    # exponential backoff, so a 429 carrying Retry-After: 7 waits 7s, not 0.5s.
+    route = respx.get(_URL)
+    route.side_effect = [httpx.Response(429, headers={"Retry-After": "7"}), httpx.Response(200)]
+    sleeps: list[float] = []
+
+    with httpx.Client() as client:
+        response = get_with_retries(client, _URL, sleep=sleeps.append)
+
+    assert response.status_code == 200
+    assert sleeps == [7.0]
+
+
+@respx.mock
+def test_get_with_retries_caps_and_falls_back_on_bad_retry_after() -> None:
+    # An absurd window is capped; an unparseable one (e.g. an HTTP-date) falls
+    # back to that attempt's exponential backoff instead of being honored.
+    route = respx.get(_URL)
+    route.side_effect = [
+        httpx.Response(503, headers={"Retry-After": "9999"}),
+        httpx.Response(503, headers={"Retry-After": "soon"}),
+        httpx.Response(200),
+    ]
+    sleeps: list[float] = []
+
+    with httpx.Client() as client:
+        response = get_with_retries(client, _URL, sleep=sleeps.append)
+
+    assert response.status_code == 200
+    assert sleeps[0] == RETRY_AFTER_CAP_S
+    assert 1.0 <= sleeps[1] <= 1.25  # attempt 1: 0.5 * 2**1 + jitter
 
 
 @respx.mock
