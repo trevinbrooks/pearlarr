@@ -723,11 +723,11 @@ def quality_axes_from_model(model: QualityModel | None) -> ParsedQuality:
     """The ``(source, resolution)`` axes of a Sonarr ``QualityModel``.
 
     Reads the canonical schema path ``model.quality.source`` /
-    ``model.quality.resolution`` via ``.get()`` (the ``QualityModel``/``Quality``
-    keys are ``NotRequired``, so subscripting is runtime-unsafe). An ``"unknown"``
-    source or a ``0``/absent resolution maps to ``None`` (undetermined), so an
-    unparsed candidate cleanly yields ``ParsedQuality()`` and falls through to the
-    next precedence layer.
+    ``model.quality.resolution`` (every field defaults to None on the partial
+    models the helpers build). An ``"unknown"`` source or a ``0``/absent
+    resolution maps to ``None`` (undetermined), so an unparsed candidate
+    cleanly yields ``ParsedQuality()`` and falls through to the next
+    precedence layer.
 
     Args:
         model (QualityModel | None): A candidate's in-context quality model.
@@ -736,15 +736,15 @@ def quality_axes_from_model(model: QualityModel | None) -> ParsedQuality:
         ParsedQuality: The structured axes Sonarr determined, each possibly None.
     """
 
-    if not model:
+    if model is None:
         return ParsedQuality()
-    quality = model.get("quality")
-    if not quality:
+    quality = model.quality  # an empty/null wire quality already folded to None
+    if quality is None:
         return ParsedQuality()
-    resolution = quality.get("resolution")
-    if not isinstance(resolution, int) or resolution <= 0:
+    resolution = quality.resolution
+    if resolution is None or resolution <= 0:
         resolution = None
-    return ParsedQuality(source=QualitySource.parse(quality.get("source")), resolution=resolution)
+    return ParsedQuality(source=QualitySource.parse(quality.source), resolution=resolution)
 
 
 def quality_axes_from_name(
@@ -772,12 +772,12 @@ def quality_axes_from_name(
         return ParsedQuality()
     target = name.casefold()
     for definition in quality_defs:
-        quality = definition.get("quality")
-        if not quality:
+        quality = definition.quality
+        if quality is None:
             continue
-        def_name = quality.get("name")
+        def_name = quality.name
         if def_name is not None and def_name.casefold() == target:
-            return quality_axes_from_model({"quality": quality})
+            return quality_axes_from_model(QualityModel(quality=quality))
     return ParsedQuality()
 
 
@@ -806,10 +806,10 @@ def _find_definition(
     """
 
     for definition in quality_defs:
-        quality = definition.get("quality")
+        quality = definition.quality
         if quality is None:
             continue
-        if quality.get("resolution") == resolution and QualitySource.parse(quality.get("source")) is source:
+        if quality.resolution == resolution and QualitySource.parse(quality.source) is source:
             return quality
     return None
 
@@ -817,11 +817,9 @@ def _find_definition(
 def _candidate_revision(candidate_model: QualityModel | None) -> Revision:
     """The candidate's revision (proper/repack), or a fresh ``version 1`` default."""
 
-    if candidate_model is not None:
-        revision = candidate_model.get("revision")
-        if revision is not None:
-            return revision
-    return {"version": 1, "real": 0, "isRepack": False}
+    if candidate_model is not None and candidate_model.revision is not None:
+        return candidate_model.revision
+    return Revision(version=1, real=0, isRepack=False)
 
 
 def resolve_quality(
@@ -872,14 +870,16 @@ def resolve_quality(
         if quality is None and source is QualitySource.TELEVISION_RAW:
             quality = _find_definition(QualitySource.TELEVISION, resolution, quality_defs)
         if quality is not None:
-            return {"quality": quality, "revision": revision}
+            return QualityModel(quality=quality, revision=revision)
 
     # No confident match: re-emit Sonarr's own candidate (valid by construction)
-    # rather than omit the quality, else synthesize an explicit Unknown.
-    if candidate_model is not None and candidate_model.get("quality"):
+    # rather than omit the quality, else synthesize an explicit Unknown. An
+    # EMPTY candidate quality already folded to None at the parse boundary, so
+    # this None test is the historical dict-falsiness check.
+    if candidate_model is not None and candidate_model.quality is not None:
         return candidate_model
-    unknown: Quality = {"id": 0, "name": "Unknown", "source": "unknown", "resolution": 0}
-    return {"quality": unknown, "revision": revision}
+    unknown = Quality(id=0, name="Unknown", source="unknown", resolution=0)
+    return QualityModel(quality=unknown, revision=revision)
 
 
 def resolve_language_objects(
@@ -893,11 +893,13 @@ def resolve_language_objects(
     """
 
     by_name: dict[str, Language] = {
-        name.casefold(): definition for definition in lang_defs if isinstance((name := definition.get("name")), str)
+        name.casefold(): definition for definition in lang_defs if (name := definition.name) is not None
     }
     resolved: list[Language] = []
     for name in names:
         definition = by_name.get(name.casefold())
         if definition is not None:
-            resolved.append({"id": definition.get("id"), "name": definition.get("name")})
+            # Re-built fresh with BOTH fields set, so the exclude_unset write
+            # dump always carries them (a null id included).
+            resolved.append(Language(id=definition.id, name=definition.name))
     return resolved

@@ -50,7 +50,6 @@ from seadexarr.modules.seadex_types import (
     EpisodeRecord,
     ManualImportCandidate,
     ProgressSink,
-    QualityModel,
     SeadexDict,
     SeadexReleaseGroupItem,
     SeadexUrlItem,
@@ -934,15 +933,16 @@ def import_probe(
 def manual_candidate(
     path: str,
     *,
-    quality: QualityModel | None = None,
+    quality: dict[str, Any] | None = None,
     rejections: list[Any] | None = None,
 ) -> ManualImportCandidate:
     """One parsed Sonarr manual-import candidate, as ``import_completed`` reads it.
 
     Mirrors the typed value ``SonarrClient.manual_import_candidates`` returns:
     only the fields the import decision consults are populated - ``path``
-    (basename drives the episode-id lookup), the in-context ``quality`` fallback,
-    and ``rejections`` (sample / already-imported skips). Built through
+    (basename drives the episode-id lookup), the in-context ``quality`` fallback
+    (the RAW wire dict, validated exactly as at the client boundary), and
+    ``rejections`` (sample / already-imported skips). Built through
     ``ManualImportCandidate.from_api`` so the raw rejection shapes (a bare string
     or an ``{"reason": ...}`` dict) are folded exactly as in production.
     """

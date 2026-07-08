@@ -922,11 +922,11 @@ class TestImportCompletedPayload:
         files = sonarr.execute_calls[0][0]
         assert len(files) == 1
         entry = files[0]
-        assert entry["seriesId"] == 7
-        assert entry["episodeIds"] == [101]
-        assert entry["releaseGroup"] == "SubGroup"
-        assert entry["downloadId"] == "HASH"
-        assert entry["path"] == "/downloads/Show - 01 [1080p].mkv"
+        assert entry.seriesId == 7
+        assert entry.episodeIds == [101]
+        assert entry.releaseGroup == "SubGroup"
+        assert entry.downloadId == "HASH"
+        assert entry.path == "/downloads/Show - 01 [1080p].mkv"
 
     def test_sonarr_structured_quality_wins_over_ours(self) -> None:
         # Sonarr already parsed the release as (bluray, 1080); our filename parse
@@ -940,9 +940,13 @@ class TestImportCompletedPayload:
             "/d/Show - 01 [1080p][WEB-DL].mkv",
             quality={"quality": {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
         )
-        quality_defs: list[QualityDefinition] = [
-            {"quality": {"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080}},
-            {"quality": {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
+        quality_defs = [
+            QualityDefinition.model_validate(
+                {"quality": {"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080}},
+            ),
+            QualityDefinition.model_validate(
+                {"quality": {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
+            ),
         ]
         strat, sonarr = _make_sonarr_for_import(
             candidates=[candidate],
@@ -954,14 +958,14 @@ class TestImportCompletedPayload:
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
         entry = sonarr.execute_calls[0][0][0]
-        quality = entry.get("quality")
+        quality = entry.quality
         assert quality is not None
-        inner = quality.get("quality")
+        inner = quality.quality
         assert inner is not None
-        assert inner.get("name") == "Bluray-1080p"
-        revision = quality.get("revision")
+        assert inner.name == "Bluray-1080p"
+        revision = quality.revision
         assert revision is not None
-        assert revision.get("version") == 1
+        assert revision.version == 1
 
     def test_our_parse_fills_when_sonarr_quality_unknown(self) -> None:
         # Sonarr couldn't parse the release (Unknown); our filename parse of
@@ -975,9 +979,13 @@ class TestImportCompletedPayload:
             "/d/Show - 01 [1080p][WEB-DL].mkv",
             quality={"quality": {"id": 0, "name": "Unknown", "source": "unknown", "resolution": 0}},
         )
-        quality_defs: list[QualityDefinition] = [
-            {"quality": {"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080}},
-            {"quality": {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
+        quality_defs = [
+            QualityDefinition.model_validate(
+                {"quality": {"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080}},
+            ),
+            QualityDefinition.model_validate(
+                {"quality": {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
+            ),
         ]
         strat, sonarr = _make_sonarr_for_import(
             candidates=[candidate],
@@ -989,11 +997,11 @@ class TestImportCompletedPayload:
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
         entry = sonarr.execute_calls[0][0][0]
-        quality = entry.get("quality")
+        quality = entry.quality
         assert quality is not None
-        inner = quality.get("quality")
+        inner = quality.quality
         assert inner is not None
-        assert inner.get("name") == "WEBDL-1080p"
+        assert inner.name == "WEBDL-1080p"
 
     def test_matches_disk_name_across_nfd_normalization(self) -> None:
         # The seed map is keyed by an NFC name; the on-disk leaf arrives NFD
@@ -1011,7 +1019,7 @@ class TestImportCompletedPayload:
         probe = strat.import_completed(pending, "/d")
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
-        assert sonarr.execute_calls[0][0][0]["episodeIds"] == [101]
+        assert sonarr.execute_calls[0][0][0].episodeIds == [101]
 
     def test_candidate_not_in_our_map_is_never_imported(self) -> None:
         # Strict-honor: a file Sonarr found that ISN'T in our map (e.g. an episode
@@ -1031,7 +1039,7 @@ class TestImportCompletedPayload:
 
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
-        paths = [f["path"] for f in sonarr.execute_calls[0][0]]
+        paths = [f.path for f in sonarr.execute_calls[0][0]]
         assert paths == ["/d/Show - 01 [1080p].mkv"]
 
     def test_sample_candidate_is_skipped(self) -> None:
@@ -1056,7 +1064,7 @@ class TestImportCompletedPayload:
         # sample is never queued.
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
-        paths = [f["path"] for f in sonarr.execute_calls[0][0]]
+        paths = [f.path for f in sonarr.execute_calls[0][0]]
         assert paths == ["/d/Show - 01 [1080p].mkv"]
 
     def test_already_imported_rejection_does_not_skip_missing_group_file(self) -> None:
@@ -1151,10 +1159,7 @@ class TestImportCompletedPayload:
             episode_ids=[101],
         )
         candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
-        languages: list[Language] = [
-            {"id": 1, "name": "English"},
-            {"id": 8, "name": "Japanese"},
-        ]
+        languages = [Language(id=1, name="English"), Language(id=8, name="Japanese")]
         strat, sonarr = _make_sonarr_for_import(
             candidates=[candidate],
             languages=languages,
@@ -1165,7 +1170,7 @@ class TestImportCompletedPayload:
 
         assert probe.readiness is ImportReadiness.RETRY
         assert probe.command_issued is True
-        names = [lang["name"] for lang in sonarr.execute_calls[0][0][0]["languages"]]
+        names = [lang.name for lang in sonarr.execute_calls[0][0][0].languages]
         assert names == ["Japanese", "English"]
 
     def test_failed_execute_retries(self) -> None:
@@ -1195,14 +1200,16 @@ class TestImportCompletedPayload:
             episode_ids=[101],
         )
         candidate = manual_candidate("/d/Show - 01 [1080p].mkv")
-        defs_a: list[QualityDefinition] = [
-            {"quality": {"id": 1, "name": "A", "source": "web", "resolution": 1080}},
+        defs_a = [
+            QualityDefinition.model_validate({"quality": {"id": 1, "name": "A", "source": "web", "resolution": 1080}}),
         ]
-        defs_b: list[QualityDefinition] = [
-            {"quality": {"id": 2, "name": "B", "source": "bluray", "resolution": 1080}},
+        defs_b = [
+            QualityDefinition.model_validate(
+                {"quality": {"id": 2, "name": "B", "source": "bluray", "resolution": 1080}},
+            ),
         ]
-        langs_a: list[Language] = [{"id": 1, "name": "English"}]
-        langs_b: list[Language] = [{"id": 8, "name": "Japanese"}]
+        langs_a = [Language(id=1, name="English")]
+        langs_b = [Language(id=8, name="Japanese")]
         strat, sonarr = _make_sonarr_for_import(
             candidates=[candidate],
             quality_defs=defs_a,
@@ -1302,31 +1309,25 @@ class TestResolveLanguageObjects:
     """resolve_language_objects maps names to {id,name}, dropping unknowns."""
 
     def test_resolves_in_request_order(self) -> None:
-        defs: list[Language] = [
-            {"id": 1, "name": "English"},
-            {"id": 8, "name": "Japanese"},
-        ]
+        defs = [Language(id=1, name="English"), Language(id=8, name="Japanese")]
 
         result = resolve_language_objects(["Japanese", "English"], defs)
 
-        assert result == [
-            {"id": 8, "name": "Japanese"},
-            {"id": 1, "name": "English"},
-        ]
+        assert result == [Language(id=8, name="Japanese"), Language(id=1, name="English")]
 
     def test_skips_unknown_names(self) -> None:
-        defs: list[Language] = [{"id": 8, "name": "Japanese"}]
+        defs = [Language(id=8, name="Japanese")]
 
         result = resolve_language_objects(["Japanese", "Klingon"], defs)
 
-        assert result == [{"id": 8, "name": "Japanese"}]
+        assert result == [Language(id=8, name="Japanese")]
 
     def test_matches_case_insensitively(self) -> None:
-        defs: list[Language] = [{"id": 8, "name": "Japanese"}]
+        defs = [Language(id=8, name="Japanese")]
 
         result = resolve_language_objects(["japanese"], defs)
 
-        assert result == [{"id": 8, "name": "Japanese"}]
+        assert result == [Language(id=8, name="Japanese")]
 
 
 class _FakeRadarr:

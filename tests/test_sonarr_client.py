@@ -26,8 +26,10 @@ from seadexarr.modules.seadex_types import (
     BoundaryContractError,
     CommandResource,
     HistoryRecord,
+    Language,
     ManualImportFile,
     ParsedFileInfo,
+    Quality,
     QueueRecord,
     SonarrItem,
 )
@@ -522,18 +524,27 @@ def test_manual_import_execute_posts_body_and_returns_id() -> None:
     the queued command id; ``import_mode`` threads straight into the body.
     """
 
-    file: ManualImportFile = {
-        "path": "/downloads/show/ep01.mkv",
-        "seriesId": 42,
-        "episodeIds": [101],
-        "releaseGroup": "SubsPlease",
-        "downloadId": "A" * 40,
-        "languages": [{"id": 1, "name": "English"}],
-    }
+    file = ManualImportFile(
+        path="/downloads/show/ep01.mkv",
+        seriesId=42,
+        episodeIds=[101],
+        releaseGroup="SubsPlease",
+        downloadId="A" * 40,
+        languages=[Language(id=1, name="English")],
+    )
     expected_body: dict[str, object] = {
         "name": "ManualImport",
         "importMode": "move",
-        "files": [file],
+        "files": [
+            {
+                "path": "/downloads/show/ep01.mkv",
+                "seriesId": 42,
+                "episodeIds": [101],
+                "releaseGroup": "SubsPlease",
+                "downloadId": "A" * 40,
+                "languages": [{"id": 1, "name": "English"}],
+            },
+        ],
     }
     route = respx.post(f"{_BASE}/command").respond(json={"id": 4242})
     command_id = _make_client().manual_import_execute(files=[file], import_mode="move")
@@ -552,14 +563,14 @@ def test_manual_import_execute_posts_body_and_returns_id() -> None:
 def test_manual_import_execute_non_2xx_returns_none() -> None:
     """A non-2xx command POST leaves the import pending (returns ``None``)."""
 
-    file: ManualImportFile = {
-        "path": "/downloads/show/ep01.mkv",
-        "seriesId": 42,
-        "episodeIds": [101],
-        "releaseGroup": "SubsPlease",
-        "downloadId": "A" * 40,
-        "languages": [{"id": 1, "name": "English"}],
-    }
+    file = ManualImportFile(
+        path="/downloads/show/ep01.mkv",
+        seriesId=42,
+        episodeIds=[101],
+        releaseGroup="SubsPlease",
+        downloadId="A" * 40,
+        languages=[Language(id=1, name="English")],
+    )
     respx.post(f"{_BASE}/command").respond(status_code=400, json={})
     assert _make_client().manual_import_execute(files=[file]) is None
 
@@ -815,28 +826,28 @@ def test_trailing_slash_url_is_normalized() -> None:
 
 
 @respx.mock
-def test_quality_definitions_returns_raw_list() -> None:
-    """Quality definitions are passed through verbatim (the resolver re-emits the
-    nested ``quality`` into the outgoing payload).
+def test_quality_definitions_decodes_nested_quality_verbatim() -> None:
+    """Each definition's nested ``quality`` validates verbatim (the resolver
+    re-emits it into the outgoing payload, unknown keys included).
     """
 
     route = respx.get(f"{_BASE}/qualitydefinition").respond(json=sonarr_fixture("qualitydefinitions.json"))
     defs = _make_client().quality_definitions()
 
-    assert defs[0].get("quality") == {"id": 0, "name": "Unknown", "source": "unknown", "resolution": 0}
+    assert defs[0].quality == Quality(id=0, name="Unknown", source="unknown", resolution=0)
     request = route.calls.last.request
     assert "apikey" not in str(request.url)
     assert request.headers["X-Api-Key"] == "testkey"
 
 
 @respx.mock
-def test_languages_returns_raw_list() -> None:
-    """Languages are passed through verbatim (POSTed into the file payload)."""
+def test_languages_decodes_id_name_records() -> None:
+    """Languages decode to the {id, name} records the resolver matches/re-builds."""
 
     body: list[object] = [{"id": 1, "name": "English"}, {"id": 8, "name": "Japanese"}]
     respx.get(f"{_BASE}/language").respond(json=body)
 
-    assert _make_client().languages() == [{"id": 1, "name": "English"}, {"id": 8, "name": "Japanese"}]
+    assert _make_client().languages() == [Language(id=1, name="English"), Language(id=8, name="Japanese")]
 
 
 @respx.mock

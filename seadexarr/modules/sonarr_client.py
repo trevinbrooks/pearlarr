@@ -6,7 +6,7 @@ riding the httpx-based :class:`~.arr_http.ArrHttp` bound at construction.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, cast, override
+from typing import cast, override
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -17,7 +17,6 @@ from .seadex_types import (
     CommandBody,
     CommandResource,
     HistoryRecord,
-    Json,
     Language,
     ManualImportCandidate,
     ManualImportFile,
@@ -342,9 +341,9 @@ class SonarrClient(AbstractSonarrClient):
         if raw is None:
             return None
 
-        # Each element is an unvalidated ManualImportResource: cast at the parse
-        # boundary (skipping strays), then narrow to the fields planning reads.
-        return [ManualImportCandidate.from_api(cast("dict[str, Any]", c)) for c in raw if isinstance(c, dict)]
+        # Validate each ManualImportResource at this boundary (junk candidates
+        # skip with a warning), narrowing to the fields planning reads.
+        return validate_each(ManualImportCandidate, raw, logger=self._logger)
 
     @override
     def manual_import_execute(
@@ -373,12 +372,7 @@ class SonarrClient(AbstractSonarrClient):
             int | None: The queued command's id, or None on failure.
         """
 
-        body: CommandBody = {
-            "name": "ManualImport",
-            "importMode": import_mode,
-            "files": files,
-        }
-        return self._post_command(body)
+        return self._post_command(CommandBody(name="ManualImport", importMode=import_mode, files=files))
 
     @override
     def refresh_monitored_downloads(self) -> int | None:
@@ -392,8 +386,7 @@ class SonarrClient(AbstractSonarrClient):
         None on failure.
         """
 
-        body: CommandBody = {"name": "RefreshMonitoredDownloads"}
-        return self._post_command(body)
+        return self._post_command(CommandBody(name="RefreshMonitoredDownloads"))
 
     def _post_command(self, body: CommandBody) -> int | None:
         """POST a command to ``/api/v3/command`` and return its queued id.
@@ -407,19 +400,20 @@ class SonarrClient(AbstractSonarrClient):
             body (CommandBody): The outgoing command body (must carry ``name``).
         """
 
-        # CommandBody is JSON-safe but a non-closed TypedDict can never be
-        # proven against the recursive alias, so cast at the wire boundary.
+        # The standard write dump: exclude_unset keeps exactly what the builder
+        # set (RefreshMonitoredDownloads stays a bare {"name"}), never
+        # exclude_none (an explicitly-set None must reach the wire).
         payload = self._http.post_json(
             "/api/v3/command",
-            json=cast("Json", body),
-            warn=indent_string(f"Could not queue {body['name']} command ({{detail}})"),
+            json=body.model_dump(exclude_unset=True),
+            warn=indent_string(f"Could not queue {body.name} command ({{detail}})"),
         )
         if payload is None:
             return None
         if not isinstance(payload, dict):
             # A 2xx whose body carries no readable id: Sonarr may still have
             # queued the command, so leave a breadcrumb before reporting None.
-            self._logger.warning(indent_string(f"Could not queue {body['name']} command (unexpected payload)"))
+            self._logger.warning(indent_string(f"Could not queue {body.name} command (unexpected payload)"))
             return None
 
         # The returned CommandResource's "id" is the queued command id (0 when
@@ -428,7 +422,7 @@ class SonarrClient(AbstractSonarrClient):
             command = CommandResource.model_validate(payload)
         except ValidationError as e:
             self._logger.warning(
-                indent_string(f"Could not queue {body['name']} command (malformed response: {validation_summary(e)})"),
+                indent_string(f"Could not queue {body.name} command (malformed response: {validation_summary(e)})"),
             )
             return None
         return command.id or None
@@ -513,9 +507,9 @@ class SonarrClient(AbstractSonarrClient):
         if raw is None:
             return []
 
-        # QualityDefinitionResource dicts pass through verbatim (the resolver
-        # re-emits the nested "quality"): cast at the parse boundary, skip strays.
-        return [cast("QualityDefinition", record) for record in raw if isinstance(record, dict)]
+        # Validate each definition at this boundary (junk records skip with a
+        # warning); the nested quality keeps its unknown keys for the re-emit.
+        return validate_each(QualityDefinition, raw, logger=self._logger)
 
     @override
     def languages(self) -> list[Language]:
@@ -539,9 +533,9 @@ class SonarrClient(AbstractSonarrClient):
         if raw is None:
             return []
 
-        # LanguageResource dicts ({id, name}) pass through verbatim (the resolver
-        # matches by name and re-emits): cast at the parse boundary, skip strays.
-        return [cast("Language", record) for record in raw if isinstance(record, dict)]
+        # Validate each language at this boundary (junk records skip with a
+        # warning); the resolver matches by name and re-builds {id, name}.
+        return validate_each(Language, raw, logger=self._logger)
 
     @override
     def command_status(self, command_id: int) -> CommandResource:

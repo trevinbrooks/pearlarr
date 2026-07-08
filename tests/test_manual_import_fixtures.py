@@ -70,6 +70,13 @@ def load_fixture[T](name: str, _shape: type[T] | None = None) -> T:
     return data
 
 
+def _load_definitions() -> list[QualityDefinition]:
+    """The captured quality-definition list, validated as the client boundary does."""
+
+    raw: list[dict[str, object]] = load_fixture("qualitydefinitions.json")
+    return [QualityDefinition.model_validate(d) for d in raw]
+
+
 def _pinfo(
     *,
     season: int | None = None,
@@ -104,34 +111,33 @@ class TestQualityResolution:
         # every definition must carry both. This guards the stand-in (and any real
         # capture swapped in for it) - it does NOT by itself prove the live
         # instance serializes the fields; that capture is owed to the user.
-        defs: list[QualityDefinition] = load_fixture("qualitydefinitions.json")
+        defs = _load_definitions()
         assert defs
         for definition in defs:
-            quality = definition.get("quality")
+            quality = definition.quality
             assert quality is not None
-            assert isinstance(quality.get("resolution"), int)
-            assert isinstance(quality.get("source"), str)
-            if quality.get("name") != "Unknown":
-                assert QualitySource.parse(quality.get("source")) is not None
+            assert isinstance(quality.resolution, int)
+            assert isinstance(quality.source, str)
+            if quality.name != "Unknown":
+                assert QualitySource.parse(quality.source) is not None
 
     def test_bd_remux_resolves_against_full_def_list(self) -> None:
         # The original failure: a 1080p BD remux. Sonarr parses it as
         # (blurayRaw, 1080); against the full definition list that must resolve to
         # the "Bluray-1080p Remux" definition (valid id+name) - never omitted.
-        defs: list[QualityDefinition] = load_fixture("qualitydefinitions.json")
         sonarr = ParsedQuality(source=QualitySource.BLURAY_RAW, resolution=1080)
         model = resolve_quality(
             sonarr,
             ParsedQuality(),
             ParsedQuality(),
-            defs,
+            _load_definitions(),
             candidate_model=None,
         )
-        quality = model.get("quality")
+        quality = model.quality
         assert quality is not None
-        assert quality.get("name") == "Bluray-1080p Remux"
-        assert quality.get("source") == "blurayRaw"
-        assert quality.get("resolution") == 1080
+        assert quality.name == "Bluray-1080p Remux"
+        assert quality.source == "blurayRaw"
+        assert quality.resolution == 1080
 
     def test_structured_read_on_real_manualimport_candidate(self) -> None:
         # quality_axes_from_model reads (source, resolution) off a candidate
@@ -140,7 +146,9 @@ class TestQualityResolution:
         raw: list[dict[str, object]] = load_fixture("manualimport_yamada.json")
         candidates = [ManualImportCandidate.from_api(c) for c in raw]
         dvd = next(
-            c for c in candidates if c.quality is not None and (c.quality.get("quality") or {}).get("name") == "DVD"
+            c
+            for c in candidates
+            if c.quality is not None and c.quality.quality is not None and c.quality.quality.name == "DVD"
         )
         assert quality_axes_from_model(dvd.quality) == ParsedQuality(
             source=QualitySource.DVD,
@@ -639,9 +647,9 @@ class TestYamadaEndToEnd:
         assert sonarr.execute_calls[0][1] == "auto"
 
         files = sonarr.execute_calls[0][0]
-        assigned = {f["episodeIds"][0]: f for f in files}
+        assigned = {f.episodeIds[0]: f for f in files}
         assert set(assigned) == {8030, 8031}
-        assert all(f["seriesId"] == 213 for f in files)
+        assert all(f.seriesId == 213 for f in files)
 
     def test_import_mode_propagates_from_config(self) -> None:
         # imports.mode flows through to manual_import_execute - a regression that
@@ -757,6 +765,6 @@ class TestYamadaEndToEnd:
         assert sonarr.execute_calls[0][1] == "auto"
 
         files = sonarr.execute_calls[0][0]
-        assigned = {f["episodeIds"][0]: f for f in files}
+        assigned = {f.episodeIds[0]: f for f in files}
         assert set(assigned) == {8030, 8031}
-        assert all(f["seriesId"] == 213 for f in files)
+        assert all(f.seriesId == 213 for f in files)

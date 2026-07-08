@@ -32,9 +32,11 @@ from seadexarr.modules.planner import normalize_rg
 from seadexarr.modules.seadex_types import (
     SONARR_MISSING_KEY,
     CommandResource,
+    Quality,
     QualityDefinition,
     QualityModel,
     QualitySource,
+    Revision,
     SonarrEpisode,
 )
 from seadexarr.modules.sonarr_import_plan import (
@@ -320,8 +322,9 @@ class TestManualImportInFlight:
 
 
 # A realistic subset of Sonarr's /api/v3/qualitydefinition, matched on the
-# structured (source, resolution) pair (never on the display name).
-_DEFS: list[QualityDefinition] = [
+# structured (source, resolution) pair (never on the display name). Validated
+# from the raw wire shape, as the client boundary does.
+_RAW_DEFS: list[dict[str, object]] = [
     {"quality": {"id": 4, "name": "HDTV-720p", "source": "television", "resolution": 720}},
     {"quality": {"id": 6, "name": "Bluray-720p", "source": "bluray", "resolution": 720}},
     {"quality": {"id": 9, "name": "HDTV-1080p", "source": "television", "resolution": 1080}},
@@ -331,12 +334,13 @@ _DEFS: list[QualityDefinition] = [
     {"quality": {"id": 19, "name": "Bluray-2160p", "source": "bluray", "resolution": 2160}},
     {"quality": {"id": 21, "name": "Bluray-2160p Remux", "source": "blurayRaw", "resolution": 2160}},
 ]
+_DEFS: list[QualityDefinition] = [QualityDefinition.model_validate(d) for d in _RAW_DEFS]
 
 
 def _resolved_name(model: QualityModel) -> str | None:
     """The emitted quality's display name, for asserting which definition won."""
 
-    return (model.get("quality") or {}).get("name")
+    return model.quality.name if model.quality is not None else None
 
 
 class TestParseQualityFromFilename:
@@ -372,18 +376,18 @@ class TestParseQualityFromFilename:
 
 class TestQualityAxesFromModel:
     def test_reads_structured_source_and_resolution(self) -> None:
-        model: QualityModel = {
-            "quality": {"name": "Bluray-1080p", "source": "bluray", "resolution": 1080},
-        }
+        model = QualityModel.model_validate(
+            {"quality": {"name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
+        )
         assert quality_axes_from_model(model) == ParsedQuality(
             source=QualitySource.BLURAY,
             resolution=1080,
         )
 
     def test_unknown_source_and_zero_resolution_are_undetermined(self) -> None:
-        model: QualityModel = {
-            "quality": {"name": "Unknown", "source": "unknown", "resolution": 0},
-        }
+        model = QualityModel.model_validate(
+            {"quality": {"name": "Unknown", "source": "unknown", "resolution": 0}},
+        )
         assert quality_axes_from_model(model) == ParsedQuality(source=None, resolution=None)
 
     def test_none_model_is_empty(self) -> None:
@@ -422,7 +426,8 @@ class TestResolveQuality:
             candidate_model=None,
         )
         assert _resolved_name(model) == "Bluray-1080p Remux"
-        assert (model.get("quality") or {}).get("id") == 20
+        assert model.quality is not None
+        assert model.quality.id == 20
 
     def test_per_axis_fill_from_default(self) -> None:
         # User's example: we parsed (None, 1080); default is Bluray-2160p ->
@@ -454,10 +459,12 @@ class TestResolveQuality:
     def test_no_match_falls_back_to_candidate_verbatim(self) -> None:
         # Nothing determined, but Sonarr's candidate carries a real quality:
         # re-emit it verbatim rather than omit the quality key.
-        candidate: QualityModel = {
-            "quality": {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080},
-            "revision": {"version": 1, "real": 0, "isRepack": False},
-        }
+        candidate = QualityModel.model_validate(
+            {
+                "quality": {"id": 7, "name": "Bluray-1080p", "source": "bluray", "resolution": 1080},
+                "revision": {"version": 1, "real": 0, "isRepack": False},
+            },
+        )
         model = resolve_quality(
             ParsedQuality(),
             ParsedQuality(),
@@ -465,7 +472,7 @@ class TestResolveQuality:
             _DEFS,
             candidate,
         )
-        assert model == candidate
+        assert model is candidate
 
     def test_nothing_resolves_synthesizes_explicit_unknown(self) -> None:
         # No axes and no candidate quality: emit an explicit Unknown object (never
@@ -477,18 +484,20 @@ class TestResolveQuality:
             _DEFS,
             candidate_model=None,
         )
-        assert model.get("quality") == {"id": 0, "name": "Unknown", "source": "unknown", "resolution": 0}
-        assert "revision" in model
+        assert model.quality == Quality(id=0, name="Unknown", source="unknown", resolution=0)
+        assert model.revision is not None
 
     def test_candidate_revision_is_preserved(self) -> None:
         # A repack/proper revision on the candidate carries onto the resolved model.
         sonarr = ParsedQuality(source=QualitySource.WEB, resolution=1080)
-        candidate: QualityModel = {
-            "quality": {"name": "WEBDL-1080p", "source": "web", "resolution": 1080},
-            "revision": {"version": 2, "real": 0, "isRepack": True},
-        }
+        candidate = QualityModel.model_validate(
+            {
+                "quality": {"name": "WEBDL-1080p", "source": "web", "resolution": 1080},
+                "revision": {"version": 2, "real": 0, "isRepack": True},
+            },
+        )
         model = resolve_quality(sonarr, ParsedQuality(), ParsedQuality(), _DEFS, candidate)
-        assert model.get("revision") == {"version": 2, "real": 0, "isRepack": True}
+        assert model.revision == Revision(version=2, real=0, isRepack=True)
 
 
 class TestDeriveLanguages:

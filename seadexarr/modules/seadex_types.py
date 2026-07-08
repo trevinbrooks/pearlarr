@@ -28,10 +28,8 @@ from enum import StrEnum
 from typing import (
     Annotated,
     Any,
-    NotRequired,
     Protocol,
     Self,
-    TypedDict,
     cast,
     runtime_checkable,
 )
@@ -156,9 +154,8 @@ def as_size_list(size: int | list[int | None] | None) -> list[int]:
 # of blocking the run.
 ARR_REQUEST_TIMEOUT_S = (5, 30)
 
-# Structural twin of requests' recursive ``JsonType`` (private module - importable,
-# but load-bearing on requests internals, so mirrored locally). Constructed JSON
-# payloads are typed against (or cast through) this at the wire boundary.
+# The recursive JSON value shape. Constructed JSON payloads are typed against
+# this at the wire boundary (``ArrHttp.post_json``, the redact/narrow walks).
 type Json = None | bool | int | float | str | Sequence["Json"] | Mapping[str, "Json"]
 
 
@@ -204,6 +201,19 @@ class _ApiModel(BaseModel):
     """
 
     model_config = ConfigDict(frozen=True, extra="ignore", validate_by_name=True)
+
+
+class _WireModel(BaseModel):
+    """Frozen wire re-emit shape: unknown keys VALIDATE and RE-EMIT (extra="allow").
+
+    For the read->resolve->re-emit round-trips (a candidate's quality model, a
+    definition's nested quality) and our constructed write bodies. The standard
+    write dump is ``model_dump(exclude_unset=True)`` - NEVER ``exclude_none``
+    (an explicitly-set None, e.g. a language's null id, must reach the wire) -
+    so construction discipline applies: set every key the wire body needs.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="allow")
 
 
 class BoundaryContractError(RuntimeError):
@@ -484,20 +494,17 @@ class AniListMediaNode(_ApiModel):
 # source repository. Nullability mirrors the schema exactly (a schema
 # ``string | null`` field -> ``str | None``).
 #
-# Two kinds of model live here, per the repo's hybrid rule:
-#   * ``Quality`` / ``Revision`` / ``QualityModel`` / ``Language`` are TypedDicts:
-#     a candidate's in-context ``QualityModel`` is read for a name AND re-emitted
-#     verbatim into the outgoing payload, and a resolved ``Language`` is built as
-#     a dict and POSTed, so a TypedDict types the JSON shape without forcing a
-#     round-trip through a dataclass. The ``Quality`` / ``Revision`` /
-#     ``QualityModel`` keys are ``NotRequired`` because the helpers build and read
-#     *partial* objects (a candidate ``QualityModel`` carrying only ``quality``
-#     and no ``revision``, a quality dict with just ``id``/``name``); ``Language``
-#     always carries both ``id`` and ``name`` (nullable values from a ``.get()``).
-#   * ``ManualImportCandidate`` / ``ImportRejection`` are frozen dataclass VIEWS
-#     with a defensive ``from_api``: they are READ into the import decision, so
-#     they follow the ``SonarrEpisode`` precedent (attribute access, ``.get()``
-#     defaults).
+# Two kinds of model live here:
+#   * ``Quality`` / ``Revision`` / ``QualityModel`` are ``_WireModel``s
+#     (extra="allow"): a candidate's in-context ``QualityModel`` is read for its
+#     axes AND re-emitted verbatim into the outgoing payload, so unknown keys at
+#     BOTH nesting levels must survive the round-trip. Every field defaults so
+#     the helpers can build/read *partial* objects (a model carrying only
+#     ``quality``, a quality with just ``id``/``name``).
+#   * ``ManualImportCandidate`` / ``ImportRejection`` / ``Language`` /
+#     ``QualityDefinition`` are ``_ApiModel`` reads into the import decision
+#     (unknown keys ignored); a resolved ``Language`` is also re-built fresh
+#     with both fields set and POSTed in the file payload.
 
 
 class QualitySource(StrEnum):
@@ -547,54 +554,56 @@ class QualitySource(StrEnum):
         return None
 
 
-class Quality(TypedDict):
+class Quality(_WireModel):
     """The nested ``quality`` object of a Sonarr ``QualityModel``.
 
     Schema ``Quality``: ``id``/``resolution`` are non-null ints, ``name`` is
     ``string | null``, ``source`` is the :class:`QualitySource` enum (a string).
-    Every key is ``NotRequired`` because the helpers build and read partial
-    quality dicts (the quality resolver copies only the keys a definition carries).
+    Every field defaults because the helpers build and read partial qualities
+    (the resolver re-emits only what a definition carries); unknown keys
+    survive to the wire (extra="allow").
     """
 
-    id: NotRequired[int]
-    name: NotRequired[str | None]
-    source: NotRequired[str]
-    resolution: NotRequired[int]
+    id: int | None = None
+    name: str | None = None
+    source: str | None = None
+    resolution: int | None = None
 
 
-class Revision(TypedDict):
+class Revision(_WireModel):
     """The nested ``revision`` object of a Sonarr ``QualityModel`` (schema ``Revision``)."""
 
-    version: NotRequired[int]
-    real: NotRequired[int]
-    isRepack: NotRequired[bool]
+    version: int | None = None
+    real: int | None = None
+    isRepack: bool | None = None
 
 
-class QualityModel(TypedDict):
+class QualityModel(_WireModel):
     """A Sonarr ``QualityModel`` (schema): ``{quality, revision}``.
 
     Used two ways on the manual-import path: a candidate's in-context model is
     read for its structured ``quality.source``/``quality.resolution`` axes and,
-    when no definition matches the resolved quality, re-emitted verbatim into the
-    outgoing file payload; and ``resolve_quality`` builds one from the matched
-    quality definition. Both keys are ``NotRequired`` because a built model may
-    omit ``revision`` and a candidate model may carry only ``quality``.
+    when no definition matches the resolved quality, re-emitted verbatim into
+    the outgoing file payload (unknown keys included). An empty/null incoming
+    ``quality`` folds to None, so "the candidate carries no real quality"
+    remains ONE explicit None test everywhere (the historical dict-falsiness).
     """
 
-    quality: NotRequired[Quality]
-    revision: NotRequired[Revision]
+    quality: Annotated[Quality | None, BeforeValidator(_none_if_falsy)] = None
+    revision: Revision | None = None
 
 
-class Language(TypedDict):
+class Language(_ApiModel):
     """A Sonarr ``Language`` (schema): ``{id, name}``.
 
-    Read+passthrough: ``resolve_language_objects`` builds these from the
-    ``/api/v3/language`` list and they are POSTed verbatim in the file payload.
-    ``id``/``name`` come from a defensive ``.get()``, so both are nullable.
+    Read+rebuild: ``resolve_language_objects`` matches these from the
+    ``/api/v3/language`` list and re-builds ``{id, name}`` fresh - BOTH fields
+    explicitly set, so the write dump (``exclude_unset``) always carries them,
+    a null ``id`` included.
     """
 
-    id: int | None
-    name: str | None
+    id: int | None = None
+    name: str | None = None
 
 
 class ImportRejection(_ApiModel):
@@ -609,61 +618,57 @@ class ImportRejection(_ApiModel):
     reason: str | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class ManualImportCandidate:
+class ManualImportCandidate(_ApiModel):
     """A Sonarr ``ManualImportResource``, reduced to the fields planning reads.
 
     The decision path consults only ``path`` (the on-disk file to import,
-    ``string | null`` in the schema), ``quality`` (the in-context ``QualityModel``
-    re-emitted verbatim when it wins) and ``rejections`` (the per-file
-    sample/already-imported flags). Parsed at the client boundary via
-    :meth:`from_api`, mirroring :class:`SonarrEpisode`.
+    ``string | null`` in the schema), ``quality`` (the in-context
+    :class:`QualityModel`, re-emitted verbatim - unknown keys included - when
+    it wins the resolution; an empty/null one folds to None) and ``rejections``
+    (the per-file sample/already-imported flags). ``rejections`` may be null
+    (schema) and, on older Sonarr versions, a bare string per entry rather
+    than an ``ImportRejectionResource`` object; both fold to an
+    :class:`ImportRejection`, and non-str/non-dict junk entries are skipped.
     """
 
     path: str | None = None
-    quality: QualityModel | None = None
+    quality: Annotated[QualityModel | None, BeforeValidator(_none_if_falsy)] = None
     rejections: tuple[ImportRejection, ...] = ()
+
+    @field_validator("rejections", mode="before")
+    @classmethod
+    def _fold_rejections(cls, value: object) -> object:
+        """Fold str/dict rejection entries to :class:`ImportRejection`; skip junk."""
+
+        if not isinstance(value, list):
+            return ()
+        folded: list[ImportRejection] = []
+        for rejection in cast("list[object]", value):
+            if isinstance(rejection, str):
+                folded.append(ImportRejection(reason=rejection))
+            elif isinstance(rejection, dict):
+                try:
+                    folded.append(ImportRejection.model_validate(rejection))
+                except ValidationError:
+                    continue  # junk reason: skip the entry, keep the candidate
+            elif isinstance(rejection, ImportRejection):
+                folded.append(rejection)  # field-name construction passes models
+        return folded
 
     @classmethod
     def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Build from one raw ``ManualImportResource`` dict (filters unknown keys).
+        """Thin shim over ``model_validate`` (the historical parse entrypoint)."""
 
-        ``rejections`` may be ``null`` (schema) and, on older Sonarr versions, a
-        bare string per entry rather than an ``ImportRejectionResource`` object;
-        both are folded to an :class:`ImportRejection` so the classifier reads one
-        shape. ``quality`` is kept as the raw ``QualityModel`` mapping (re-emitted
-        verbatim), so it is passed through unchanged.
-        """
-
-        rejections: list[ImportRejection] = []
-        raw_rejections: list[Any] = raw.get("rejections") or []
-        for rejection in raw_rejections:
-            if isinstance(rejection, str):
-                rejections.append(ImportRejection(reason=rejection))
-            elif isinstance(rejection, dict):
-                try:
-                    rejections.append(ImportRejection.model_validate(rejection))
-                except ValidationError:
-                    continue  # junk reason: skip the entry, keep the candidate
-
-        # The candidate's in-context QualityModel is re-emitted verbatim into the
-        # outgoing payload, so it is passed through as the raw mapping; narrow it
-        # to QualityModel at this parse boundary.
-        quality: Mapping[str, Any] | None = raw.get("quality")
-        return cls(
-            path=raw.get("path"),
-            quality=cast(QualityModel, quality) if quality else None,
-            rejections=tuple(rejections),
-        )
+        return cls.model_validate(raw)
 
 
-class ManualImportFile(TypedDict):
+class ManualImportFile(_WireModel):
     """One outgoing ``ManualImport`` command file entry (the POST payload).
 
-    Built by the Sonarr strategy from a planned ``import`` decision and POSTed as
-    JSON, so a ``TypedDict`` types the constructed dict without a round-trip.
-    ``quality`` is the only optional key (omitted, not sent as ``None``, when no
-    quality resolves - Sonarr then falls back to Unknown).
+    Built by the Sonarr strategy from a planned ``import`` decision and POSTed
+    via ``model_dump(exclude_unset=True)``. ``quality`` is the only optional
+    field (omitted from the wire, never sent as ``None``, when unset - Sonarr
+    then falls back to Unknown); the builder always sets it.
     """
 
     path: str
@@ -672,7 +677,7 @@ class ManualImportFile(TypedDict):
     releaseGroup: str
     downloadId: str
     languages: list[Language]
-    quality: NotRequired[QualityModel]
+    quality: QualityModel | None = None
 
 
 # --- Sonarr queue (``/api/v3/queue`` records) -------------------------------
@@ -756,36 +761,36 @@ class HistoryRecord(_ApiModel):
 # --- Sonarr quality definitions (``/api/v3/qualitydefinition``) --------------
 
 
-class QualityDefinition(TypedDict):
+class QualityDefinition(_ApiModel):
     """One Sonarr ``QualityDefinitionResource`` (schema), reduced to ``quality``.
 
     Read-and-re-emit: ``resolve_quality`` matches a definition by its nested
     ``quality.source``/``quality.resolution`` pair and re-emits the matched
-    :class:`Quality` verbatim into the outgoing ``QualityModel``, so a
-    ``TypedDict`` types the JSON shape without a round-trip. Only the nested
-    ``quality`` is consumed; ``quality`` is ``NotRequired`` because a
-    malformed/partial definition may omit it (the resolver skips such entries).
+    :class:`Quality` verbatim (a ``_WireModel``, so its unknown keys survive)
+    into the outgoing ``QualityModel``. Only the nested ``quality`` is
+    consumed; an empty/null one folds to None so the resolver's skip stays one
+    explicit None test.
     """
 
-    quality: NotRequired[Quality]
+    quality: Annotated[Quality | None, BeforeValidator(_none_if_falsy)] = None
 
 
 # --- Sonarr commands (``/api/v3/command``) -----------------------------------
 
 
-class CommandBody(TypedDict):
+class CommandBody(_WireModel):
     """One outgoing ``/api/v3/command`` POST body (a Sonarr command request).
 
-    Constructed by the strategy and POSTed as JSON, so a ``TypedDict`` types the
-    body without a round-trip. ``name`` is the command name (always sent);
-    ``importMode`` / ``files`` are the extra keys the ``ManualImport`` command
-    carries, so both are ``NotRequired`` (``RefreshMonitoredDownloads`` sends only
-    ``name``).
+    Constructed by the strategy and POSTed via ``model_dump(exclude_unset=True)``.
+    ``name`` is the command name (always sent); ``importMode`` / ``files`` are
+    the extra fields the ``ManualImport`` command carries - unset (and so
+    omitted from the wire) for ``RefreshMonitoredDownloads``, which sends only
+    ``{"name"}``.
     """
 
     name: str
-    importMode: NotRequired[str]
-    files: NotRequired[list[ManualImportFile]]
+    importMode: str | None = None
+    files: list[ManualImportFile] | None = None
 
 
 def _int_entries(value: object) -> object:

@@ -387,15 +387,6 @@ class ImportExecutor:
         quality_defs = self._quality_definitions()
 
         path = decision.path or decision.basename
-        entry: ManualImportFile = {
-            "path": path,
-            "seriesId": pending.series_id,
-            "episodeIds": decision.episode_ids,
-            "releaseGroup": pending.release_group,
-            "downloadId": pending.infohash,
-            "languages": lang_objs,
-        }
-
         base = os.path.basename(path)
         sonarr_axes = quality_axes_from_model(decision.quality)
         our_axes = parse_quality_from_filename(base)
@@ -407,15 +398,24 @@ class ImportExecutor:
             quality_defs,
             decision.quality,
         )
-        entry["quality"] = quality
-        resolved = quality.get("quality") or {}
-        if QualitySource.parse(resolved.get("source")) is None:
+        # A resolved-but-source-less quality is the synthesized Unknown (an empty
+        # nested quality already folded to None at the parse boundary).
+        resolved = quality.quality
+        if resolved is None or QualitySource.parse(resolved.source) is None:
             self.logger.warning(
                 indent_string(
                     f"{content_path}: could not confidently resolve quality for {base}; importing as Unknown (re-grab risk)",
                 ),
             )
-        return entry
+        return ManualImportFile(
+            path=path,
+            seriesId=pending.series_id,
+            episodeIds=decision.episode_ids,
+            releaseGroup=pending.release_group,
+            downloadId=pending.infohash,
+            languages=lang_objs,
+            quality=quality,
+        )
 
 
 class _SeedStatuses(NamedTuple):
