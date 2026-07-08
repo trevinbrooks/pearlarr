@@ -24,7 +24,7 @@ class RunLoop:
 
     Receives its shared collaborators as a :class:`RunDeps` bundle plus the
     :class:`RunServices` hub (both built and injected by the composition root
-    in ``cli.py``) and owns the run loop, the per-run :class:`RunContext`
+    in ``bootstrap.py``) and owns the run loop, the per-run :class:`RunContext`
     lifecycle, and the wait-pass machinery. It drives an injected
     :class:`~.protocols.ArrSync` strategy (passed to :meth:`run_sync`) for the
     Arr-specific pieces; the strategy holds the :class:`RunServices` hub as its
@@ -149,7 +149,7 @@ class RunLoop:
         strategy's hooks consume and produce - rather than the loose ``Any`` the
         run machinery used to carry. ``ArrSync`` is invariant in its item type, so
         a concrete (non-union) strategy must reach this call: the composition root
-        (``cli.py``) branches per Arr so each call binds one ``ItemT`` cleanly.
+        (``bootstrap.py``) branches per Arr so each call binds one ``ItemT`` cleanly.
 
         Args:
             strategy (ArrSync[ItemT]): The Arr-specific strategy to drive (injected

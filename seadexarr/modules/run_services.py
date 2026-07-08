@@ -54,7 +54,7 @@ class QbitConnectionError(Exception):
 class RunDeps:
     """The shared leaf collaborators for one Arr run, built once at the root.
 
-    A plain value object the composition root (``cli.py``) builds via
+    A plain value object the composition root (``bootstrap.py``) builds via
     :meth:`build` and injects into the :class:`RunServices` hub, the
     :class:`~.run_loop.RunLoop` run loop, and the Arr-specific strategy.
     Keeping construction here (where every collaborator type is already imported)
@@ -231,7 +231,7 @@ class RunDeps:
     def close(self) -> None:
         """Release run-scoped resources: the arr HTTP client and the cache db.
 
-        Called once per arr run from ``cli.py``'s ``finally`` (each arr owns its
+        Called once per arr run from ``bootstrap.py``'s ``finally`` (each arr owns its
         own ``CacheStore`` - no sharing - so this never double-closes). The cache
         ``close`` rolls back anything not flushed by the end-of-run save point.
         ``web`` is NOT closed here: the CLI owns it across the whole cycle.
@@ -246,7 +246,7 @@ class RunServices:
     """The per-AniList-id services hub the strategies call.
 
     Receives its shared collaborators as a :class:`RunDeps` bundle (built and
-    injected by the composition root in ``cli.py``) and owns the shared per-id
+    injected by the composition root in ``bootstrap.py``) and owns the shared per-id
     pipeline the Arr strategies reach through ``self._services``: the release
     filter, the grab tail, the cache checks, and the strategy-facing log
     delegates. ``arr`` is THE authority for which Arr is being run (``ctx.arr``

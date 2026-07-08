@@ -8,7 +8,7 @@ from .log import setup_logger
 # exported for programmatic use: build a ``RunDeps`` (the shared collaborators),
 # wrap it in a ``RunServices`` (the per-id services hub), inject both into
 # ``RunLoop`` and a strategy, then drive ``RunLoop.run_sync``
-# - this is what ``cli.py`` does (the facades were dropped).
+# - this is what ``bootstrap.py`` does (the facades were dropped).
 #
 # ``RunDeps``/``RunServices``/``RunLoop``/``RadarrSync``/``SonarrSync`` are
 # exported LAZILY (PEP 562): importing this package - which the ``seadexarr``

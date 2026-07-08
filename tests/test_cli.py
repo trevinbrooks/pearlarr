@@ -22,7 +22,7 @@ Pins the behaviours the commands must guarantee:
 * ``run single`` with no selection flag runs every *configured* arr (scheduled-mode
   symmetry); an explicit flag for an unconfigured arr refuses cleanly, an implicit
   selection skips it with a dim ledger note - except a half-configured arr (url
-  without api_key), whose skip warns by name (``_configured_arrs``).
+  without api_key), whose skip warns by name (``configured_arrs``).
 * The inspection commands (``config validate`` / ``config show``) never write the
   starter template, and ``show`` masks secret-named values (plus the free-form
   ``qbittorrent.options`` block and URL-embedded logins) while keeping unset
@@ -51,13 +51,11 @@ import truststore
 from typer.testing import CliRunner
 
 from seadexarr.modules.boot_view import NullBootView
+from seadexarr.modules.bootstrap import configured_arrs, load_shared_config, run_arrs
 from seadexarr.modules.cache import CacheStore
 from seadexarr.modules.cli import (
-    _configured_arrs,
     _console_format,
     _handle_sigterm,
-    _load_shared_config,
-    _run_arrs,
     _schedule_hours,
     _trust_os_certificates,
     cache_backup,
@@ -368,7 +366,7 @@ class TestConfigInit:
 
 
 class _RunArrsRecorder:
-    """A stand-in for ``cli._run_arrs`` that records how ``run_single`` calls it."""
+    """A stand-in for ``bootstrap.run_arrs`` that records how ``run_single`` calls it."""
 
     def __init__(self) -> None:
         self.arrs: list[tuple[Arr, int | None]] | None = None
@@ -396,16 +394,16 @@ class _RunArrsRecorder:
 class TestRunSingleSelection:
     """No selection flag = every arr, implicitly; any flag/id narrows explicitly.
 
-    ``_run_arrs`` is faked out, so these pin only the selection wiring: which
+    ``run_arrs`` is faked out, so these pin only the selection wiring: which
     ``(arr, item_id)`` pairs are requested and whether the request counts as
     explicit (an explicit request for an unconfigured arr must refuse rather
-    than skip - that arm is pinned on ``_configured_arrs`` below).
+    than skip - that arm is pinned on ``configured_arrs`` below).
     """
 
     @pytest.fixture
     def recorder(self, monkeypatch: pytest.MonkeyPatch) -> _RunArrsRecorder:
         recorder = _RunArrsRecorder()
-        monkeypatch.setattr("seadexarr.modules.cli._run_arrs", recorder)
+        monkeypatch.setattr("seadexarr.modules.bootstrap.run_arrs", recorder)
         return recorder
 
     def test_no_selection_requests_both_arrs_implicitly(self, recorder: _RunArrsRecorder) -> None:
@@ -454,7 +452,7 @@ class TestConfiguredArrs:
         logger: logging.Logger,
         capture: CaptureHandler,
     ) -> None:
-        kept = _configured_arrs(
+        kept = configured_arrs(
             [(Arr.RADARR, None), (Arr.SONARR, None)],
             _config_with(sonarr=True),
             explicit=False,
@@ -478,7 +476,7 @@ class TestConfiguredArrs:
         config = AppConfig.model_validate(
             {"sonarr": {"url": "http://sonarr:8989", "api_key": "k"}, "radarr": {"url": "http://radarr:7878"}},
         )
-        kept = _configured_arrs(
+        kept = configured_arrs(
             [(Arr.RADARR, None), (Arr.SONARR, None)],
             config,
             explicit=False,
@@ -498,7 +496,7 @@ class TestConfiguredArrs:
         capture: CaptureHandler,
     ) -> None:
         config = AppConfig.model_validate({"radarr": {"url": "http://radarr:7878"}})
-        kept = _configured_arrs([(Arr.RADARR, None)], config, explicit=True, config_path="config.yml", logger=logger)
+        kept = configured_arrs([(Arr.RADARR, None)], config, explicit=True, config_path="config.yml", logger=logger)
         assert kept is None
         error = next(r for r in capture.records if r.levelno == logging.ERROR)
         assert "set radarr.api_key in config.yml" in error.getMessage()
@@ -508,7 +506,7 @@ class TestConfiguredArrs:
         logger: logging.Logger,
         capture: CaptureHandler,
     ) -> None:
-        kept = _configured_arrs(
+        kept = configured_arrs(
             [(Arr.RADARR, 42)],
             _config_with(sonarr=True),
             explicit=True,
@@ -526,7 +524,7 @@ class TestConfiguredArrs:
         logger: logging.Logger,
         capture: CaptureHandler,
     ) -> None:
-        kept = _configured_arrs(
+        kept = configured_arrs(
             [(Arr.RADARR, None), (Arr.SONARR, None)],
             _config_with(),
             explicit=False,
@@ -543,7 +541,7 @@ class TestConfiguredArrs:
     ) -> None:
         arrs: list[tuple[Arr, int | None]] = [(Arr.RADARR, None), (Arr.SONARR, 7)]
         assert (
-            _configured_arrs(
+            configured_arrs(
                 arrs, _config_with(sonarr=True, radarr=True), explicit=True, config_path="config.yml", logger=logger
             )
             == arrs
@@ -750,7 +748,7 @@ class TestSelectionSettlesBeforeMappingFetch:
         def fail_build(*args: object, **kwargs: object) -> NoReturn:
             raise AssertionError("mapping sources must not be fetched when nothing can run")
 
-        monkeypatch.setattr("seadexarr.modules.cli._build_resolver", fail_build)
+        monkeypatch.setattr("seadexarr.modules.bootstrap.build_resolver", fail_build)
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
         Path(paths.config).write_text("", encoding="utf-8")  # valid config, neither arr configured
@@ -909,7 +907,7 @@ class TestApplyLogLevel:
 class TestLogLevelWiring:
     """The headline fix: ``advanced.log_level`` reaches CLI runs, ``--log-level`` wins.
 
-    ``apply_log_level`` itself is pinned above; these pin that ``_run_arrs``
+    ``apply_log_level`` itself is pinned above; these pin that ``run_arrs``
     actually calls it once the config is readable, with cli > config precedence
     (the original bug: the config level was dead on every CLI run).
     """
@@ -921,7 +919,7 @@ class TestLogLevelWiring:
         def record(logger: logging.Logger, log_level: str) -> None:
             calls.append(log_level)
 
-        monkeypatch.setattr("seadexarr.modules.cli.apply_log_level", record)
+        monkeypatch.setattr("seadexarr.modules.bootstrap.apply_log_level", record)
         return calls
 
     @staticmethod
@@ -965,11 +963,11 @@ class _SetupLoggerRecorder:
 
 
 class _StopScheduledLoop(Exception):
-    """Breaks ``run_scheduled``'s infinite loop from a faked ``_run_arrs``."""
+    """Breaks ``run_scheduled``'s infinite loop from a faked ``run_arrs``."""
 
 
 def _stop_loop(*args: object, **kwargs: object) -> NoReturn:
-    """A ``_run_arrs`` stand-in that breaks ``run_scheduled``'s loop."""
+    """A ``run_arrs`` stand-in that breaks ``run_scheduled``'s loop."""
 
     raise _StopScheduledLoop
 
@@ -1004,7 +1002,7 @@ class TestLogFormatWiring:
         setup_recorder: _SetupLoggerRecorder,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr("seadexarr.modules.cli._run_arrs", _RunArrsRecorder())
+        monkeypatch.setattr("seadexarr.modules.bootstrap.run_arrs", _RunArrsRecorder())
         self._write_config_with_format()
         assert run_single() is True
         assert setup_recorder.console_formats == ["json"]
@@ -1016,7 +1014,7 @@ class TestLogFormatWiring:
     ) -> None:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         monkeypatch.setattr(signal, "signal", _swallow_signal)
-        monkeypatch.setattr("seadexarr.modules.cli._run_arrs", _stop_loop)
+        monkeypatch.setattr("seadexarr.modules.bootstrap.run_arrs", _stop_loop)
         self._write_config_with_format()
         with pytest.raises(_StopScheduledLoop):
             run_scheduled()
@@ -1029,7 +1027,7 @@ class TestConsoleFormat:
     def test_missing_config_folds_to_auto_and_writes_nothing(self, tmp_path: Path) -> None:
         missing = tmp_path / "config.yml"
         assert _console_format(str(missing)) == "auto"
-        # No template-copy side effect: _load_shared_config owns the first-run copy.
+        # No template-copy side effect: load_shared_config owns the first-run copy.
         assert not missing.exists()
 
     def test_reads_the_configured_format(self, tmp_path: Path) -> None:
@@ -1053,7 +1051,7 @@ class TestMissingConfigExitsNonzero:
     """A virgin data dir: exit 1 with the starter template written, never a silent retry.
 
     Driven end-to-end through CliRunner: the ``typer.Exit`` raised inside
-    ``_load_shared_config``'s FileNotFoundError arm must escape ``_run_arrs``'
+    ``load_shared_config``'s FileNotFoundError arm must escape ``run_arrs``'
     finallys (boot view, web client, run lock all release) and reach typer as
     exit code 1 - pinning the whole propagation path, not just the helper.
     """
@@ -1081,7 +1079,7 @@ class TestUnknownTrackerWarning:
         config = tmp_path / "config.yml"
         config.write_text(body, encoding="utf-8")
         config.chmod(0o600)  # keep the loose-permissions warning out of the capture
-        return _load_shared_config(str(config), logger, NullBootView(), "")
+        return load_shared_config(str(config), logger, NullBootView(), "")
 
     def test_unknown_value_warns_naming_it_and_the_vocabulary(
         self,
@@ -1168,7 +1166,7 @@ class TestUnwritableDataDir:
         self,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        # Arm order in _load_shared_config matters twice: FileNotFoundError
+        # Arm order in load_shared_config matters twice: FileNotFoundError
         # (exit 1) must not swallow this OSError, and the OSError arm must
         # catch it before the traceback arm. Skip + retry, never exit.
         paths = resolve_paths()
@@ -1210,7 +1208,7 @@ class TestScheduledLifecycle:
         os.makedirs(paths.data_dir)
         Path(paths.config).write_text("sonar:\n  url: x\n", encoding="utf-8")
 
-        result = _run_arrs(
+        result = run_arrs(
             [(Arr.SONARR, None)],
             paths=paths,
             logger=logger,
@@ -1246,7 +1244,7 @@ class TestScheduledLifecycle:
 
         monkeypatch.setattr(signal, "signal", record_signal)
         monkeypatch.setattr("seadexarr.modules.cli.setup_logger", _SetupLoggerRecorder())
-        monkeypatch.setattr("seadexarr.modules.cli._run_arrs", _stop_loop)
+        monkeypatch.setattr("seadexarr.modules.bootstrap.run_arrs", _stop_loop)
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
 
         with pytest.raises(_StopScheduledLoop):
@@ -1291,7 +1289,7 @@ class TestScheduleHours:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         missing = tmp_path / "config.yml"
         assert _schedule_hours(str(missing), logger) == 6.0
-        # No template-copy side effect: _load_shared_config owns the first-run copy.
+        # No template-copy side effect: load_shared_config owns the first-run copy.
         assert not missing.exists()
         assert capture.records == []  # nothing to warn about without the env var
 
