@@ -287,7 +287,22 @@ def _parse_anidb_mappings(path: str) -> ElementTree.Element:
     return ElementTree.parse(path).getroot()
 
 
-def _anidb_rows(root: ElementTree.Element) -> tuple[list[AnidbMappingRow], list[int]]:
+class _AnidbParse(NamedTuple):
+    """The flattened AniDB parse plus the two skip tallies.
+
+    ``malformed`` counts ``<anime>`` elements dropped whole (missing/non-int
+    anidbid - 0 on healthy upstream data); ``unsupported`` counts ``<mapping>``
+    forms this parser deliberately doesn't consume (the offset form's empty text,
+    multi-episode spans - present in the hundreds on a healthy file).
+    """
+
+    rows: list[AnidbMappingRow]
+    ambiguous: list[int]
+    malformed: int
+    unsupported: int
+
+
+def _anidb_rows(root: ElementTree.Element) -> _AnidbParse:
     """Flatten the AniDB XML into ``anidb_mapping`` rows + the ambiguous-id set.
 
     Reproduces the former ``anidb_anime_by_id`` + ``_parse_anidb_mapping_dict``
@@ -298,20 +313,24 @@ def _anidb_rows(root: ElementTree.Element) -> tuple[list[AnidbMappingRow], list[
       no mapping rows, and :meth:`MappingResolver.anidb_mapping_dict` raises on it.
     * For an unambiguous id, each ``<mapping-list>/<mapping>`` with text is parsed
       to ``{tvdb_ep: anidb_ep}`` keyed by ``tvdbseason``; a repeated season is
-      last-wins, matching the former dict assignment. Malformed mappings are
-      skipped (the old code only crashed if such an anime was looked up; populating
-      every anime must tolerate what it never reached).
+      last-wins, matching the former dict assignment. Malformed/unsupported
+      mappings are skipped but tallied (the old code only crashed if such an anime
+      was looked up; populating every anime must tolerate what it never reached).
     """
 
     counts: dict[int, int] = {}
     season_maps: dict[int, dict[int, dict[int, int]]] = {}
+    malformed = 0
+    unsupported = 0
     for anime in root.findall("anime"):
         anidbid = anime.get("anidbid")
         if anidbid is None:
+            malformed += 1
             continue
         try:
             aid = int(anidbid)
         except ValueError:
+            malformed += 1
             continue
         counts[aid] = counts.get(aid, 0) + 1
 
@@ -319,6 +338,7 @@ def _anidb_rows(root: ElementTree.Element) -> tuple[list[AnidbMappingRow], list[
         for ms in anime.findall("mapping-list"):
             for i in ms.findall("mapping"):
                 if not i.text:
+                    unsupported += 1
                     continue
                 try:
                     season = int(i.attrib["tvdbseason"])
@@ -326,6 +346,7 @@ def _anidb_rows(root: ElementTree.Element) -> tuple[list[AnidbMappingRow], list[
                     # orientation {tvdb_ep: anidb_ep}; last <mapping> per season wins
                     season_map[season] = {int(p[1]): int(p[0]) for p in pairs}
                 except (KeyError, ValueError, IndexError):
+                    unsupported += 1
                     continue
         season_maps[aid] = season_map
 
@@ -339,7 +360,7 @@ def _anidb_rows(root: ElementTree.Element) -> tuple[list[AnidbMappingRow], list[
                 rows.append(AnidbMappingRow(aid, season, tvdb_ep, anidb_ep))
 
     ambiguous = [aid for aid, count in counts.items() if count > 1]
-    return rows, ambiguous
+    return _AnidbParse(rows, ambiguous, malformed, unsupported)
 
 
 @dataclass(frozen=True, slots=True)
@@ -477,8 +498,9 @@ class MappingResolver:
         else:
             assert isinstance(sources.anidb, ElementTree.Element)
             self._anidb_enabled = True
-            rows, ambiguous = _anidb_rows(sources.anidb)
-            self._store.replace_anidb(INLINE_DIGEST, rows, ambiguous)
+            # Inline sources have no summary line; the skip tallies are dropped.
+            parsed = _anidb_rows(sources.anidb)
+            self._store.replace_anidb(INLINE_DIGEST, parsed.rows, parsed.ambiguous)
 
         if sources.anibridge is False:
             self.anibridge = None
@@ -596,9 +618,16 @@ class MappingResolver:
             return
         self._log("Parsing + indexing anidb anime-list ...")
         t0 = time.perf_counter()
-        rows, ambiguous = _anidb_rows(_parse_anidb_mappings(self._anidb_path))
-        self._store.replace_anidb(digest, rows, ambiguous)
-        self._log(f"Indexed anidb anime-list ({len(rows)} mappings, {time.perf_counter() - t0:.2f}s)")
+        parsed = _anidb_rows(_parse_anidb_mappings(self._anidb_path))
+        self._store.replace_anidb(digest, parsed.rows, parsed.ambiguous)
+        # The skip tallies ride the summary only when nonzero: malformed is 0 on
+        # healthy upstream data; unsupported forms number in the hundreds.
+        skips = f", {parsed.malformed} malformed skipped" if parsed.malformed else ""
+        if parsed.unsupported:
+            skips += f", {parsed.unsupported} unsupported mapping forms"
+        self._log(
+            f"Indexed anidb anime-list ({len(parsed.rows)} mappings, {time.perf_counter() - t0:.2f}s{skips})",
+        )
 
     def _load_anibridge(self) -> None:
         """Download + (re)index the anibridge graph only if its content changed."""
