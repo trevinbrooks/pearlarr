@@ -460,7 +460,8 @@ class CacheStore(AbstractCacheStore):
             ensure=lambda c: _ensure_schema(c, path, logger),
             logger=logger,
             what="Cache database",
-            recovery="started a fresh cache (entries will be re-checked this run).",
+            recovery="started a fresh cache (titles will be re-checked; grab-dedup and "
+            "pending-import tracking reset, so recent grabs may be re-offered).",
         )
         if fell_back:
             exists = False

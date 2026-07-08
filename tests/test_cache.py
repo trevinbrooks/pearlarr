@@ -8,6 +8,7 @@ the in-memory -> file promotion for a missing cache.
 """
 
 import contextlib
+import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ from seadexarr.modules.config import Arr
 from seadexarr.modules.sqlite_util import is_corruption
 
 from .builders import make_entry_record
+from .fakes import CaptureHandler
 
 # Stand-in for a config-file checksum. ``CacheStore`` only stamps and compares the
 # value it is handed; it never computes one, so any string works here.
@@ -619,9 +621,16 @@ class TestCorruptStore:
     def test_corrupt_db_is_quarantined_and_recovered(self, tmp_path: Path) -> None:
         db = tmp_path / "cache.db"
         db.write_text("this is not a sqlite database")  # torn-write stand-in
+        logger = logging.getLogger("seadexarr-test-cache-quarantine")
+        logger.propagate = False
+        capture = CaptureHandler()
+        logger.addHandler(capture)
 
         # Must NOT raise - fail open to a fresh store.
-        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        try:
+            store = CacheStore.load(str(db), config_checksum=CHECKSUM, logger=logger)
+        finally:
+            logger.removeHandler(capture)
         assert store.get_entry(Arr.SONARR, 7) is None
         store.update_cache(Arr.SONARR, 7, {"name": "Recovered"})
         store.save(preview=False)
@@ -632,3 +641,11 @@ class TestCorruptStore:
         reopened = CacheStore.load(str(db), config_checksum=CHECKSUM)
         assert _entry_name(reopened, 7) == "Recovered"
         reopened.close()
+
+        # The recovery notice names the state that was lost, not just "fresh cache".
+        notice = next(r.getMessage() for r in capture.records if r.levelno == logging.WARNING)
+        assert "moved it to" in notice
+        assert notice.endswith(
+            "started a fresh cache (titles will be re-checked; grab-dedup and "
+            "pending-import tracking reset, so recent grabs may be re-offered).",
+        )
