@@ -1,16 +1,18 @@
+import json
 import logging
 import os
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
-from typing import Final, override
+from typing import Final, TextIO, override
 
 from rich.console import Console
 from rich.rule import Rule
 from rich.text import Text
 from rich.traceback import Traceback
 
-from .config import Arr
+from .config import Arr, LogFormat
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +255,36 @@ class RichConsoleHandler(logging.Handler):
             self.handleError(record)
 
 
+class PlainConsoleHandler(logging.StreamHandler[TextIO]):
+    """Marker type for the plain/json stdout handler (the formatter differs).
+
+    A distinct subclass so ``apply_log_level`` can re-point the console handler
+    without touching the file handler (``FileHandler`` is also a
+    ``StreamHandler``), and so ``console_of`` keeps returning None here: the
+    live cockpits deliberately degrade to their log digest under plain/json.
+    """
+
+
+class JsonFormatter(logging.Formatter):
+    """One JSON object per record: time, level, message (+ exc), in that order.
+
+    ``time`` is local time WITH its UTC offset so aggregators can order lines.
+    Payload-only records keep their file-log message text (blank separators as
+    ``""``, section rules as dash strings) by design - file-log parity.
+    """
+
+    @override
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "time": datetime.fromtimestamp(record.created).astimezone().isoformat(),
+            "level": record.levelname,
+            "message": record.getMessage(),
+        }
+        if record.exc_info is not None:
+            payload["exc"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
+
+
 class LogCounter(logging.Filter):
     """A logging filter that tallies records by level as a side effect.
 
@@ -340,7 +372,9 @@ def apply_log_level(logger: logging.Logger, log_level: str) -> None:
     level = _LOG_LEVELS.get(log_level.upper(), logging.INFO)
     logger.setLevel(level)
     for handler in logger.handlers:
-        if isinstance(handler, RichConsoleHandler):
+        # Whichever console handler setup_logger installed (rich, or the
+        # plain/json marker type); never the file handler.
+        if isinstance(handler, RichConsoleHandler | PlainConsoleHandler):
             handler.setLevel(_console_level(level))
 
 
@@ -348,10 +382,16 @@ def apply_log_level(logger: logging.Logger, log_level: str) -> None:
 LOG_NAME = "SeaDexArr"
 MAX_LOG_FILES = 9
 
+# One text format shared by the file log and the plain console renderer, so
+# piped/Docker output reads exactly like the log file.
+PLAIN_LOG_FORMAT = "%(asctime)s %(levelname)s: %(message)s"
+PLAIN_LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
+
 
 def setup_logger(
     log_level: str,
     log_dir: str,
+    console_format: LogFormat = "auto",
 ) -> logging.Logger:
     """
     Set up the logger.
@@ -360,6 +400,10 @@ def setup_logger(
         log_level (str): The log level to use
         log_dir (str): Full path to the directory for log files (resolved by the
             caller via ``paths.log_dir``; created here if missing).
+        console_format (LogFormat): Console renderer - "rich" (the live styled
+            console), "plain" (the file log's timestamped lines) or "json" (one
+            JSON object per line). "auto" (default) resolves once, here: rich
+            when stdout is a TTY, plain otherwise (pipes, Docker logs).
 
     Returns:
         A logger object for logging messages.
@@ -401,11 +445,9 @@ def setup_logger(
         level = logging.INFO
     logger.setLevel(level)
 
-    # Define the log message format for the log files
-    logfile_formatter = logging.Formatter(
-        fmt="%(asctime)s %(levelname)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    # The text format the file log always uses, shared with the plain console
+    # renderer below so piped output reads exactly like the log file.
+    text_formatter = logging.Formatter(fmt=PLAIN_LOG_FORMAT, datefmt=PLAIN_LOG_DATEFMT)
 
     # Create the file handler. Rotation is performed manually above (once per
     # setup_logger() call); the handler opens a fresh file each run (mode="w").
@@ -415,14 +457,22 @@ def setup_logger(
         mode="w",
         encoding="utf-8",
     )
-    handler.setFormatter(logfile_formatter)
+    handler.setFormatter(text_formatter)
 
-    # Configure console logging through the rich. Routine lines print with no
-    # level prefix; warnings and errors get a colored badge (see
-    # RichConsoleHandler). rich auto-detects non-interactive output (pipes,
-    # Docker logs) and drops ANSI styling there.
-    console = Console(file=sys.stdout)
-    console_handler = RichConsoleHandler(console)
+    # Resolve "auto" once, at setup: rich for an interactive terminal, plain
+    # timestamped lines when piped / under Docker.
+    if console_format == "auto":
+        console_format = "rich" if sys.stdout.isatty() else "plain"
+
+    if console_format == "rich":
+        # Console logging through rich: routine lines print with no level
+        # prefix; warnings and errors get a colored badge (RichConsoleHandler).
+        console_handler: logging.Handler = RichConsoleHandler(Console(file=sys.stdout))
+    else:
+        # plain/json: a bare stdout handler; plain shares the file log's
+        # formatter, json emits one object per line (JsonFormatter).
+        console_handler = PlainConsoleHandler(sys.stdout)
+        console_handler.setFormatter(JsonFormatter() if console_format == "json" else text_formatter)
     console_handler.setLevel(_console_level(level))
 
     logger.addHandler(handler)

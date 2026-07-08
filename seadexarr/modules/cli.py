@@ -15,7 +15,7 @@ import yaml
 from pydantic import ValidationError
 
 from .boot_view import BootView, make_boot_view
-from .config import AppConfig, Arr, config_permissions_loose, restrict_config_permissions, template_path
+from .config import AppConfig, Arr, LogFormat, config_permissions_loose, restrict_config_permissions, template_path
 from .json_narrow import is_json_list, is_json_obj
 from .log import LogLevel, apply_log_level, indent_string, log_styled, setup_logger
 from .manual_import import ImportWaitMode
@@ -613,6 +613,32 @@ def show_paths() -> bool:
 _DEFAULT_SCHEDULE_HOURS = 6.0
 
 
+def _peek_config(config_path: str) -> AppConfig | None:
+    """Silently read + validate the config for a pre-logger peek, or None.
+
+    Never writes the starter template and never logs: ``_load_shared_config``
+    owns the first-run copy and the user-facing config errors. Only the load's
+    real failure set (unreadable file, bad YAML, failed validation) is
+    suppressed; anything else is a programming bug and must surface.
+    """
+
+    with contextlib.suppress(OSError, yaml.YAMLError, ValidationError):
+        if os.path.exists(config_path):
+            return AppConfig.load(config_path)
+    return None
+
+
+def _console_format(config_path: str) -> LogFormat:
+    """The configured ``advanced.log_format``, for wiring ``setup_logger``.
+
+    Folds to "auto" (resolved by ``setup_logger``) when the config is missing
+    or unreadable - the real load owns reporting those.
+    """
+
+    peeked = _peek_config(config_path)
+    return peeked.advanced.log_format if peeked is not None else "auto"
+
+
 def _schedule_hours(config_path: str, logger: logging.Logger) -> float:
     """Hours between scheduled cycles: SCHEDULE_TIME env (deprecated) > config > 6.
 
@@ -620,9 +646,7 @@ def _schedule_hours(config_path: str, logger: logging.Logger) -> float:
     warning); an invalid one is reported with the value actually used instead.
     Both notices go through the logger so they reach the log file and render
     styled among the run's other lines. Config read failures - including a
-    still-missing file - degrade to the default quietly: ``_load_shared_config``
-    owns the user-facing config errors (and the first-run template copy), so no
-    load side effects happen here.
+    still-missing file - degrade to the default quietly (``_peek_config``).
     """
 
     raw = os.getenv("SCHEDULE_TIME")
@@ -635,12 +659,8 @@ def _schedule_hours(config_path: str, logger: logging.Logger) -> float:
             logger.warning("SCHEDULE_TIME is deprecated; set schedule.interval_hours in the config instead.")
             return hours
 
-    fallback = _DEFAULT_SCHEDULE_HOURS
-    # The load's real failure set (unreadable file, bad YAML, failed validation);
-    # anything else is a programming bug and must surface.
-    with contextlib.suppress(OSError, yaml.YAMLError, ValidationError):
-        if os.path.exists(config_path):
-            fallback = AppConfig.load(config_path).schedule.interval_hours
+    peeked = _peek_config(config_path)
+    fallback = peeked.schedule.interval_hours if peeked is not None else _DEFAULT_SCHEDULE_HOURS
     if raw is not None:
         logger.warning(f"Invalid SCHEDULE_TIME {raw!r}; using {fallback:g} hours.")
     return fallback
@@ -661,7 +681,13 @@ def run_scheduled(
     ensure_data_dir(paths)
 
     while True:
-        logger = setup_logger(log_level=log_level or "INFO", log_dir=paths.log_dir)
+        # The config's console format is peeked each cycle (like the cadence
+        # below), so a config edit takes effect without a restart.
+        logger = setup_logger(
+            log_level=log_level or "INFO",
+            log_dir=paths.log_dir,
+            console_format=_console_format(paths.config),
+        )
 
         # Re-read the cadence each cycle so a config edit takes effect without a
         # restart.
@@ -759,7 +785,11 @@ def run_single(
     paths = resolve_paths()
     ensure_data_dir(paths)
 
-    logger = setup_logger(log_level=log_level or "INFO", log_dir=paths.log_dir)
+    logger = setup_logger(
+        log_level=log_level or "INFO",
+        log_dir=paths.log_dir,
+        console_format=_console_format(paths.config),
+    )
 
     # Build the shared config + mappings once and run each requested arr. True
     # when the run proceeded and every arr completed; False (exit 1) when the

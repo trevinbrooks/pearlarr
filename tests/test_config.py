@@ -331,6 +331,16 @@ class TestNormalization:
         with pytest.raises(ValidationError):
             AdvancedSettings.model_validate({"log_level": "VERBOSE"})
 
+    def test_log_format_defaults_to_auto_and_is_lowercased(self) -> None:
+        assert AdvancedSettings().log_format == "auto"
+        assert AdvancedSettings.model_validate({"log_format": "JSON"}).log_format == "json"
+
+    def test_log_format_typo_raises_validation_error(self) -> None:
+        # Constrained at load like log_level: a typo'd renderer name is a clean
+        # ValidationError, not a runtime fallback.
+        with pytest.raises(ValidationError):
+            AdvancedSettings.model_validate({"log_format": "fancy"})
+
 
 class TestQbittorrent:
     def test_credentials_require_all_three(self) -> None:

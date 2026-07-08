@@ -365,6 +365,13 @@ class ScheduleSettings(_ConfigBase):
     interval_hours: float = Field(default=6.0, gt=0, allow_inf_nan=False)
 
 
+type LogFormat = Literal["auto", "rich", "plain", "json"]
+"""The console output formats ``advanced.log_format`` accepts.
+
+``auto`` resolves once at logger setup: rich on a TTY stdout, plain otherwise.
+"""
+
+
 class AdvancedSettings(_ConfigBase):
     """Advanced knobs (rate limiting, caching, run cap, logging)."""
 
@@ -379,6 +386,7 @@ class AdvancedSettings(_ConfigBase):
     # Constrained to the levels the logger honors, so a typo is a clean
     # ValidationError at load instead of a runtime warn-and-default.
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    log_format: LogFormat = "auto"
 
     @field_validator("log_level", mode="before")
     @classmethod
@@ -387,6 +395,15 @@ class AdvancedSettings(_ConfigBase):
 
         if isinstance(value, str):
             return value.upper()
+        return value
+
+    @field_validator("log_format", mode="before")
+    @classmethod
+    def _lowercase_log_format(cls, value: Any) -> Any:
+        """Lowercase a configured format so ``JSON`` and ``json`` both validate."""
+
+        if isinstance(value, str):
+            return value.lower()
         return value
 
 

@@ -49,6 +49,7 @@ from typer.testing import CliRunner
 from seadexarr.modules.cache import CacheStore
 from seadexarr.modules.cli import (
     _configured_arrs,
+    _console_format,
     _schedule_hours,
     _trust_os_certificates,
     cache_backup,
@@ -59,10 +60,11 @@ from seadexarr.modules.cli import (
     config_init,
     config_show,
     config_validate,
+    run_scheduled,
     run_single,
     seadexarr_cli,
 )
-from seadexarr.modules.config import AppConfig, Arr, template_path
+from seadexarr.modules.config import AppConfig, Arr, LogFormat, template_path
 from seadexarr.modules.log import (
     LogLevel,
     RichConsoleHandler,
@@ -75,6 +77,7 @@ from seadexarr.modules.manual_import import ImportWaitMode
 from seadexarr.modules.paths import AppPaths, resolve_paths
 from seadexarr.modules.runlock import single_instance_lock
 
+from .builders import make_logger
 from .fakes import CaptureHandler
 
 
@@ -876,7 +879,9 @@ class TestVersionAndHelp:
 
 class TestApplyLogLevel:
     def test_repoints_logger_and_console_thresholds(self, tmp_path: Path) -> None:
-        logger = setup_logger(log_level="INFO", log_dir=str(tmp_path / "logs"))
+        # Forced rich: "auto" resolves to plain under pytest's non-TTY stdout
+        # (the plain twin of this pin lives in test_log_format.py).
+        logger = setup_logger(log_level="INFO", log_dir=str(tmp_path / "logs"), console_format="rich")
         console = next(h for h in logger.handlers if isinstance(h, RichConsoleHandler))
 
         # Raising the level quiets the file log but the console keeps INFO+
@@ -938,6 +943,93 @@ class TestLogLevelWiring:
         assert run_single(log_level=LogLevel.DEBUG) is False
         assert applied == [LogLevel.DEBUG]
         capsys.readouterr()
+
+
+class _SetupLoggerRecorder:
+    """A stand-in for ``cli.setup_logger`` recording the console_format it got."""
+
+    def __init__(self) -> None:
+        self.console_formats: list[LogFormat] = []
+
+    def __call__(self, log_level: str, log_dir: str, console_format: LogFormat = "auto") -> logging.Logger:
+        self.console_formats.append(console_format)
+        return make_logger()
+
+
+class _StopScheduledLoop(Exception):
+    """Breaks ``run_scheduled``'s infinite loop from a faked ``_run_arrs``."""
+
+
+class TestLogFormatWiring:
+    """``advanced.log_format`` reaches ``setup_logger`` on both run commands.
+
+    The renderers themselves are pinned in test_log_format.py; these pin only
+    that the run commands peek the config and thread ``console_format`` through
+    (scheduled mode re-peeks each cycle, before the logger is rebuilt).
+    """
+
+    @pytest.fixture
+    def setup_recorder(self, monkeypatch: pytest.MonkeyPatch) -> _SetupLoggerRecorder:
+        recorder = _SetupLoggerRecorder()
+        monkeypatch.setattr("seadexarr.modules.cli.setup_logger", recorder)
+        return recorder
+
+    @staticmethod
+    def _write_config_with_format() -> None:
+        paths = resolve_paths()
+        os.makedirs(paths.data_dir)
+        Path(paths.config).write_text("advanced:\n  log_format: json\n", encoding="utf-8")
+
+    def test_run_single_threads_the_config_format(
+        self,
+        setup_recorder: _SetupLoggerRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("seadexarr.modules.cli._run_arrs", _RunArrsRecorder())
+        self._write_config_with_format()
+        assert run_single() is True
+        assert setup_recorder.console_formats == ["json"]
+
+    def test_run_scheduled_threads_the_config_format(
+        self,
+        setup_recorder: _SetupLoggerRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def stop_loop(*args: object, **kwargs: object) -> NoReturn:
+            raise _StopScheduledLoop
+
+        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
+        monkeypatch.setattr("seadexarr.modules.cli._run_arrs", stop_loop)
+        self._write_config_with_format()
+        with pytest.raises(_StopScheduledLoop):
+            run_scheduled()
+        assert setup_recorder.console_formats == ["json"]
+
+
+class TestConsoleFormat:
+    """``_console_format``: a silent pre-logger peek folding every failure to "auto"."""
+
+    def test_missing_config_folds_to_auto_and_writes_nothing(self, tmp_path: Path) -> None:
+        missing = tmp_path / "config.yml"
+        assert _console_format(str(missing)) == "auto"
+        # No template-copy side effect: _load_shared_config owns the first-run copy.
+        assert not missing.exists()
+
+    def test_reads_the_configured_format(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yml"
+        # Case-folded by the config validator, like log_level.
+        path.write_text("advanced:\n  log_format: JSON\n", encoding="utf-8")
+        assert _console_format(str(path)) == "json"
+
+    def test_invalid_config_folds_to_auto(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yml"
+        path.write_text("advanced:\n  log_format: fancy\n", encoding="utf-8")
+        assert _console_format(str(path)) == "auto"
+
+    def test_malformed_yaml_folds_to_auto(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yml"
+        path.write_text("advanced: [unclosed\n", encoding="utf-8")
+        assert _console_format(str(path)) == "auto"
 
 
 class TestScheduleHours:

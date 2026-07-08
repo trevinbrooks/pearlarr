@@ -86,3 +86,4 @@ advanced:
   max_torrents_to_add:             # Cap torrents added per run (default: unlimited)
   detect_arr_activity: true        # Re-check entries whose files Sonarr/Radarr changed since the last pass
   log_level: "INFO"                # DEBUG / INFO / WARNING / ERROR / CRITICAL (case-insensitive)
+  log_format: "auto"               # auto (rich on a terminal, plain timestamps+levels when piped/Docker) / rich / plain / json - plain and json also disable the live progress views (expected)
