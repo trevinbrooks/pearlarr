@@ -189,7 +189,7 @@ def quarantine_corrupt(
         logger (logging.Logger | None): For the one-line quarantine notice.
         what (str): Human noun for the log line (e.g. ``"Cache database"``).
         recovery (str): Trailing clause describing the recovery (e.g.
-            ``"started a fresh cache (entries will be re-checked this run)."``).
+            ``"started a fresh cache (...)."``, ending with the period).
     """
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")

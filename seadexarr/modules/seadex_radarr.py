@@ -286,7 +286,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         for mf in self.radarr.movie_files(radarr_movie_id):
             radarr_release_dict.setdefault(mf.release_group, []).append(mf.size)
 
-        # If we have nothing, return None
+        # No files: a single unknown-group placeholder keeps the shape uniform
         if not radarr_release_dict:
             radarr_release_dict = {None: [None]}
 
