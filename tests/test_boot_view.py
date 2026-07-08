@@ -118,16 +118,16 @@ def test_live_view_graduates_and_summarizes() -> None:
     view.banner()
     with view.step("Reading config"):
         clock.tick(0.02)
-    with view.step("Connecting to Sonarr") as connecting:
+    with view.step("Fetching Sonarr library") as fetching:
         clock.tick(1.2)
-        connecting.note("42 series")
+        fetching.note("42 series")
     view.end_section()
     view.close()
 
     out = _plain(console)
     assert "SeaDexArr" in out  # brand banner
     assert "✔ Reading config" in out
-    assert f"✔ Connecting to Sonarr{SEP}42 series" in out  # detail rides the ledger line
+    assert f"✔ Fetching Sonarr library{SEP}42 series" in out  # detail rides the ledger line
     assert "ready in" in out  # capstone
 
 

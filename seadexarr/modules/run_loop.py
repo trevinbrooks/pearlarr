@@ -201,7 +201,7 @@ class RunLoop:
 
         # Fetch the library (the long pre-scan network wait) inside the cockpit so
         # the spinner animates through it; the count graduates as the step's detail.
-        with boot.step(f"Connecting to {arr.capitalize()}") as connecting:
+        with boot.step(f"Fetching {arr.capitalize()} library") as fetching:
             all_items: list[ItemT] = strategy.get_items()
 
             # If we're targeting a single item, filter down to it
@@ -209,7 +209,7 @@ class RunLoop:
                 all_items = strategy.filter_to_single(all_items, item_id)
 
             n_items = len(all_items)
-            connecting.note(arr_item_noun(arr, n_items))
+            fetching.note(arr_item_noun(arr, n_items))
 
         # Arr-side activity scan: one /history/since poll marks items whose files
         # the arr changed since the last pass dirty, so the cached-entry skip
