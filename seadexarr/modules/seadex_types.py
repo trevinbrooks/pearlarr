@@ -520,6 +520,7 @@ class AniListMediaNode(_ApiModel):
     title_romaji: str | None = Field(default=None, validation_alias=AliasPath("title", "romaji"))
     episodes: int | None = None
     cover_image: str | None = Field(default=None, validation_alias=AliasPath("coverImage", "large"))
+    banner_image: str | None = Field(default=None, validation_alias="bannerImage")
     format: str | None = None
 
 

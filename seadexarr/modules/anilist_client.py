@@ -56,6 +56,7 @@ _MEDIA_FIELDS = """
         large
         medium
     }
+    bannerImage
     episodes
     format
 """

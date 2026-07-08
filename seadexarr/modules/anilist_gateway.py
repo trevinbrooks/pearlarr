@@ -222,6 +222,15 @@ class AniListGateway:
 
         return self._media(al_id).cover_image
 
+    def banner(self, al_id: int) -> str | None:
+        """Resolve the AniList wide banner URL for an id, or None.
+
+        Args:
+            al_id (int): AniList ID
+        """
+
+        return self._media(al_id).banner_image
+
     def media_format(self, al_id: int) -> str | None:
         """Resolve the AniList media format (TV / MOVIE / OVA / ...) for an id, or None.
 

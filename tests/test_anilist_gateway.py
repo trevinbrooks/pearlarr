@@ -41,6 +41,7 @@ def _full_media(al_id: int) -> dict[str, dict[str, object]]:
             "id": al_id,
             "title": {"english": "English Title", "romaji": "Romaji Title"},
             "coverImage": {"large": "https://img/large"},
+            "bannerImage": "https://img/banner",
             "episodes": 12,
             "format": "TV",
         },
@@ -217,9 +218,10 @@ class TestMediaResolution:
 
         assert gateway.title(42) == "English Title"
         assert gateway.thumb(42) == "https://img/large"
+        assert gateway.banner(42) == "https://img/banner"
         assert gateway.media_format(42) == "TV"
         assert gateway.n_eps(42) == 12
-        # The first resolver fetched and stored the raw body; the other three
+        # The first resolver fetched and stored the raw body; the other four
         # were cache hits, so the wire saw exactly one query.
         assert client.query_calls == [42]
         assert 42 in gateway.al_cache
