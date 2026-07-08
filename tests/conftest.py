@@ -67,7 +67,7 @@ def isolate_data_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Point ``SEADEX_ARR_DATA_DIR`` at a per-test tmp dir for every test.
+    """Point ``SEADEXARR_DATA_DIR`` at a per-test tmp dir for every test.
 
     A backstop: ``resolve_paths()`` is read at runtime across ``cli.py`` and
     ``mappings.py``, and ``test_cli`` does destructive cache ops keyed off it - one

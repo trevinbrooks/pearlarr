@@ -113,7 +113,7 @@ def test_sonarr_run_drives_real_composition_root(
     # A real config.yml on disk (run_single reads it via resolve_paths): Sonarr creds,
     # qBittorrent unset -> preview, and the one inline tvdb->anilist mapping that lets
     # the REAL resolver resolve a live id with no network (anidb/anibridge disabled).
-    monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
     config = make_config(
         url="http://sonarr.test",
         api_key="testkey",
@@ -247,7 +247,7 @@ def test_radarr_run_drives_real_composition_root(
     # A real config.yml on disk: Radarr creds, qBittorrent unset -> preview, and
     # the one inline tmdb->anilist mapping that lets the REAL resolver resolve a
     # live id with no network (anidb/anibridge disabled).
-    monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
     config = make_config(
         radarr_url="http://radarr.test",
         radarr_api_key="testkey",

@@ -7,7 +7,7 @@ from platformdirs import user_data_dir
 
 # Single override + the OS-standard default. The env var stays the canonical override
 # (Docker sets it to /config); the CLI's --data-dir flag folds into it (see cli.main).
-DATA_DIR_ENV = "SEADEX_ARR_DATA_DIR"
+DATA_DIR_ENV = "SEADEXARR_DATA_DIR"
 APP_NAME = "seadexarr"
 
 # The single in-code source for the project's repository URL (the CLI epilog and
@@ -36,7 +36,7 @@ class AppPaths:
 def resolve_paths(data_dir: str | None = None) -> AppPaths:
     """Resolve every path under the data directory.
 
-    Precedence: explicit ``data_dir`` arg > ``SEADEX_ARR_DATA_DIR`` env >
+    Precedence: explicit ``data_dir`` arg > ``SEADEXARR_DATA_DIR`` env >
     ``platformdirs.user_data_dir`` (``~/Library/Application Support/seadexarr`` on
     macOS, ``~/.local/share/seadexarr`` on Linux, ``%LOCALAPPDATA%\\seadexarr`` on
     Windows). ``appauthor=False`` drops the Windows author subfolder.

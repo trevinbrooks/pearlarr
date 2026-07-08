@@ -9,16 +9,16 @@ if [ "$#" -gt 0 ]; then
 fi
 
 # A root-owned bind mount is the classic first-boot trap; fail with the fix, not a traceback.
-if [ ! -w "${SEADEX_ARR_DATA_DIR}" ]; then
-    echo "ERROR: ${SEADEX_ARR_DATA_DIR} is not writable by uid $(id -u) (gid $(id -g))." >&2
+if [ ! -w "${SEADEXARR_DATA_DIR}" ]; then
+    echo "ERROR: ${SEADEXARR_DATA_DIR} is not writable by uid $(id -u) (gid $(id -g))." >&2
     echo "Chown the mounted host directory to that uid, or point the compose user:/PUID/PGID at the directory's owner." >&2
     exit 1
 fi
 
 # First boot: write the starter template, then stop so the user can fill it in.
-if [ ! -f "${SEADEX_ARR_DATA_DIR}/config.yml" ]; then
+if [ ! -f "${SEADEXARR_DATA_DIR}/config.yml" ]; then
     seadexarr config init
-    echo "Fill in config.yml (on the host side of the ${SEADEX_ARR_DATA_DIR} mount), then start the container again." >&2
+    echo "Fill in config.yml (on the host side of the ${SEADEXARR_DATA_DIR} mount), then start the container again." >&2
     exit 1
 fi
 

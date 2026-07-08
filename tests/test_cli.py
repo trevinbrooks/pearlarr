@@ -33,7 +33,7 @@ Pins the behaviours the commands must guarantee:
   skip-and-retry); an invalid config keeps the skip+retry contract in scheduled
   mode; SIGTERM stops the scheduled loop with exit code 0.
 
-Each test points ``resolve_paths()`` at its own ``tmp_path`` via ``SEADEX_ARR_DATA_DIR``
+Each test points ``resolve_paths()`` at its own ``tmp_path`` via ``SEADEXARR_DATA_DIR``
 and calls the command functions directly (they return ``bool``); the exit-code
 tests go through ``CliRunner`` since the callback only runs inside typer.
 """
@@ -110,7 +110,7 @@ class TestCacheRoundTrip:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
 
         assert cache_backup() is True
@@ -149,7 +149,7 @@ class TestCacheRoundTrip:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
         (tmp_path / "cache.db-wal").write_text("stale")
         (tmp_path / "cache.db-shm").write_text("stale")
@@ -168,7 +168,7 @@ class TestHealthyDiagnostics:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
 
         assert cache_stats() is True
@@ -185,7 +185,7 @@ class TestCorruptDatabaseIsReportedNotCrashed:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
         (tmp_path / "cache.db").write_text("not a database")
 
         # Reporting bad integrity is this command's whole job, so it must not crash
@@ -199,7 +199,7 @@ class TestCorruptDatabaseIsReportedNotCrashed:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
         (tmp_path / "cache.db").write_text("not a database")
 
         assert cache_stats() is False
@@ -211,7 +211,7 @@ class TestCorruptDatabaseIsReportedNotCrashed:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
         (tmp_path / "cache.db").write_text("not a database")
 
         # backup reads the source through the online-backup API, so a corrupt source
@@ -229,7 +229,7 @@ class TestActiveRunGuard:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
 
         # Holding the single-instance lock on the data dir simulates an active run;
@@ -247,7 +247,7 @@ class TestActiveRunGuard:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
         assert cache_backup() is True
 
@@ -270,7 +270,7 @@ class TestMissingFilesAreReportedNotRaised:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
 
         # Each message names what's missing and hints at how to get one, so a
         # fresh install isn't met with a bare "No file at ...".
@@ -297,7 +297,7 @@ class TestMissingFilesAreReportedNotRaised:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
         (tmp_path / "cache.db").write_text("not a database")
 
         # A torn snapshot must not survive a failed backup: a later restore would
@@ -313,7 +313,7 @@ class TestMissingFilesAreReportedNotRaised:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
         assert cache_backup() is True
 
@@ -343,7 +343,7 @@ class TestConfigInit:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
         config = tmp_path / "config.yml"
 
         assert config_init() is True
@@ -1132,7 +1132,7 @@ class TestUnwritableDataDir:
         ro_parent = tmp_path / "ro"
         ro_parent.mkdir()
         data_dir = ro_parent / "data"
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(data_dir))
         ro_parent.chmod(0o500)
         try:
             result = CliRunner().invoke(seadexarr_cli, ["run", "single"])
@@ -1141,7 +1141,7 @@ class TestUnwritableDataDir:
 
         assert result.exit_code == 1
         assert f"Cannot write to the data directory {data_dir}" in result.stderr
-        assert "SEADEX_ARR_DATA_DIR" in result.stderr  # the remedy is named
+        assert "SEADEXARR_DATA_DIR" in result.stderr  # the remedy is named
         assert "Traceback" not in result.output
 
     def test_config_init_into_a_readonly_dir_reports_cleanly(
@@ -1153,7 +1153,7 @@ class TestUnwritableDataDir:
         # template copy is what fails - it needs the same one-line treatment.
         data_dir = tmp_path / "data"
         data_dir.mkdir()
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(data_dir))
         data_dir.chmod(0o500)
         try:
             result = CliRunner().invoke(seadexarr_cli, ["config", "init"])
@@ -1386,7 +1386,7 @@ class TestExitCodes:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
         runner = CliRunner()
 
         # No cache.db yet: the command reports the missing file (on stderr,

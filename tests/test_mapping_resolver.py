@@ -801,7 +801,7 @@ def _real_source_paths() -> _RealSources:
 
     ``TestRealDataParity`` carries ``@pytest.mark.real_data_dir`` so the autouse tmp
     data-dir override is off for it and ``resolve_paths()`` sees the developer's
-    real ``SEADEX_ARR_DATA_DIR``; evaluating this at import would instead capture
+    real ``SEADEXARR_DATA_DIR``; evaluating this at import would instead capture
     whatever dir was active before the fixtures ran.
     """
 

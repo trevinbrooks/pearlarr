@@ -597,7 +597,7 @@ def main(
         str | None,
         typer.Option(
             help="Override the data directory holding config, caches and logs "
-            "(default: SEADEX_ARR_DATA_DIR or the OS per-user data directory).",
+            "(default: SEADEXARR_DATA_DIR or the OS per-user data directory).",
         ),
     ] = None,
     version: Annotated[
@@ -620,19 +620,19 @@ def main(
     Args:
         data_dir: Override the data directory holding config, caches and logs
             (typer exposes this as ``--data-dir``). Defaults to None, which uses
-            ``SEADEX_ARR_DATA_DIR`` or the OS-standard per-user data location.
+            ``SEADEXARR_DATA_DIR`` or the OS-standard per-user data location.
         version: Handled entirely by the eager ``_print_version`` callback
             (typer exposes this as ``--version``/``-V``). Defaults to False.
     """
 
     _trust_os_certificates()
 
-    # The flag is sugar over SEADEX_ARR_DATA_DIR: fold it into the env so every
+    # The flag is sugar over SEADEXARR_DATA_DIR: fold it into the env so every
     # command's resolve_paths() sees it (commands are also called directly in tests,
     # so the env - not ctx.obj - is the single override channel). Flag wins over a
     # pre-set env because it overwrites here, before any subcommand resolves.
     if data_dir is not None:
-        os.environ["SEADEX_ARR_DATA_DIR"] = os.path.abspath(data_dir)
+        os.environ["SEADEXARR_DATA_DIR"] = os.path.abspath(data_dir)
 
     if ctx.invoked_subcommand is None:
         run_scheduled()
@@ -690,7 +690,7 @@ def _data_dir_unwritable(data_dir: str, e: OSError) -> NoReturn:
 
     typer.echo(
         f"Cannot write to the data directory {data_dir} ({e}). "
-        f"Fix its permissions, or point --data-dir / SEADEX_ARR_DATA_DIR at a writable location.",
+        f"Fix its permissions, or point --data-dir / SEADEXARR_DATA_DIR at a writable location.",
         err=True,
     )
     raise typer.Exit(1) from None
@@ -910,7 +910,7 @@ def config_init(
     """Write a starter config.yml to the data directory.
 
     The file lands in the resolved data directory (see the paths command);
-    override the location with --data-dir or SEADEX_ARR_DATA_DIR. An existing
+    override the location with --data-dir or SEADEXARR_DATA_DIR. An existing
     config.yml is never overwritten unless --force is passed, so a re-run can't
     wipe out a filled-in configuration.
     """

@@ -3,7 +3,7 @@
 
 Pins the behaviours the rest of the app relies on:
 
-* ``resolve_paths`` honours the precedence ``--data-dir`` arg > ``SEADEX_ARR_DATA_DIR``
+* ``resolve_paths`` honours the precedence ``--data-dir`` arg > ``SEADEXARR_DATA_DIR``
   env > the OS-standard ``platformdirs`` default, and lays every file under one dir.
 * The global ``--data-dir`` flag folds into the env so each command (called directly in
   tests, not via ``ctx.obj``) sees it, and the flag wins over a pre-set env.
@@ -21,7 +21,7 @@ from seadexarr.modules.cli import seadexarr_cli
 from seadexarr.modules.log import setup_logger
 from seadexarr.modules.paths import APP_NAME, ensure_data_dir, resolve_paths
 
-# These tests own the SEADEX_ARR_DATA_DIR env directly (precedence / default cases),
+# These tests own the SEADEXARR_DATA_DIR env directly (precedence / default cases),
 # so they opt out of the autouse tmp data-dir isolation (see tests/conftest.py).
 pytestmark = pytest.mark.real_data_dir
 
@@ -40,15 +40,15 @@ class TestResolvePaths:
         assert paths.log_dir == os.path.join(base, "logs")
 
     def test_arg_wins_over_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path / "from_env"))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path / "from_env"))
         assert resolve_paths(str(tmp_path / "from_arg")).data_dir == str(tmp_path / "from_arg")
 
     def test_env_wins_over_default(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
         assert resolve_paths().data_dir == str(tmp_path)
 
     def test_default_falls_back_to_platformdirs(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("SEADEX_ARR_DATA_DIR", raising=False)
+        monkeypatch.delenv("SEADEXARR_DATA_DIR", raising=False)
         # The OS-standard per-user location; we don't pin the prefix (it differs per
         # platform), only that it is absolute and names the app.
         data_dir = resolve_paths().data_dir
@@ -70,7 +70,7 @@ class TestEnsureDataDir:
 
 class TestPathsCommand:
     def test_prints_the_resolved_data_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
         result = runner.invoke(seadexarr_cli, ["paths"])
         assert result.exit_code == 0
         assert f"data_dir:    {tmp_path}" in result.output
@@ -78,7 +78,7 @@ class TestPathsCommand:
     def test_data_dir_flag_overrides_env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # monkeypatch records the key so the callback's os.environ write is restored
         # on teardown and never leaks into other tests.
-        monkeypatch.setenv("SEADEX_ARR_DATA_DIR", str(tmp_path / "from_env"))
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path / "from_env"))
         result = runner.invoke(seadexarr_cli, ["--data-dir", str(tmp_path / "from_flag"), "paths"])
         assert result.exit_code == 0
         assert f"data_dir:    {tmp_path / 'from_flag'}" in result.output

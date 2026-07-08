@@ -50,7 +50,7 @@ COPY --chmod=755 docker/entrypoint.sh /entrypoint.sh
 # One mounted volume holds config, caches and logs (see seadexarr paths).
 # HOME=/tmp is a backstop for arbitrary-uid runs (the run path never needs it).
 ENV PATH="/app/.venv/bin:${PATH}" \
-    SEADEX_ARR_DATA_DIR=/config \
+    SEADEXARR_DATA_DIR=/config \
     HOME=/tmp
 USER seadexarr
 HEALTHCHECK --interval=5m --timeout=30s --start-period=30s CMD ["seadexarr", "paths"]

@@ -121,9 +121,9 @@ location:
 | macOS   | `~/Library/Application Support/seadexarr`            |
 | Windows | `%LOCALAPPDATA%\seadexarr`                           |
 
-Override the location with the `SEADEX_ARR_DATA_DIR` environment variable or the global
+Override the location with the `SEADEXARR_DATA_DIR` environment variable or the global
 `--data-dir` flag (the flag wins). Run `seadexarr paths` to print the resolved locations.
-The Docker image sets `SEADEX_ARR_DATA_DIR=/config`, so the `/config` volume mount above
+The Docker image sets `SEADEXARR_DATA_DIR=/config`, so the `/config` volume mount above
 holds the whole data directory.
 
 ## CLI
@@ -177,7 +177,7 @@ to paste into a bug report.
 
 Prints the resolved data directory and the files within it (config, caches, logs).
 Useful for confirming where SeaDexArr is reading/writing, especially with a custom
-``--data-dir`` or ``SEADEX_ARR_DATA_DIR``.
+``--data-dir`` or ``SEADEXARR_DATA_DIR``.
 
 ### ``seadexarr cache``
 

@@ -61,3 +61,17 @@ uv run seadexarr run single --sonarr  # one Sonarr pass
 Everything lives in one data directory (`seadexarr paths` prints it). Fill in
 `config.yml` with your instance URLs and API keys — and never paste real keys or
 webhook URLs into issues, docs, or code; placeholders only.
+
+## Environment variables
+
+Environment variables use the `SEADEXARR_` prefix with `__` as the nesting
+delimiter: a future pydantic-settings layer would read `SEADEXARR_SONARR__URL`
+into `config.sonarr.url`, so names must stay unambiguous under that split. The
+current inventory:
+
+- `SEADEXARR_DATA_DIR` — override the data directory (the global `--data-dir`
+  flag wins over it)
+- `SEADEXARR_CRON`, `SEADEXARR_RUN_ON_START` — Docker-entrypoint-only: the
+  container's cron cadence and the boot-time catch-up run
+
+New variables must follow the scheme.
