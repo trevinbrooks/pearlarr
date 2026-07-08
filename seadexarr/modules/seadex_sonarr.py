@@ -1,4 +1,5 @@
 import time
+from collections.abc import Sequence
 from typing import override
 
 from . import coverage as _coverage
@@ -66,6 +67,38 @@ def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
                 return True
 
     return False
+
+
+def radarr_movies_matching(
+    mapping: MappingEntry,
+    movies: Sequence[RadarrItem],
+) -> list[RadarrItem]:
+    """The Radarr movies a specials mapping already covers, matched by TMDB/IMDb id.
+
+    Only a season-0 mapping can match (shows and movies are sometimes lumped
+    together, so a movie rides along as a special). An unset mapping id never
+    matches - the ``is not None`` guards mean None == None is not a match.
+    Order is preserved; a movie matching on both ids appears once.
+
+    Args:
+        mapping (MappingEntry): Mapping between TVDB and AniList
+        movies (Sequence[RadarrItem]): The Radarr movie library to match against
+    """
+
+    radarr_movies: list[RadarrItem] = []
+
+    if mapping.tvdb_season == 0:
+        mapping_tmdb_id = mapping.tmdb_movie_id
+        mapping_imdb_id = mapping.imdb_id
+
+        for m in movies:
+            # Match by TMDB or IMDb id; one append per movie either way.
+            tmdb_match = mapping_tmdb_id is not None and m.tmdbId == mapping_tmdb_id
+            imdb_match = mapping_imdb_id is not None and m.imdbId == mapping_imdb_id
+            if tmdb_match or imdb_match:
+                radarr_movies.append(m)
+
+    return radarr_movies
 
 
 class SonarrSync(ArrSync[SonarrItem]):
@@ -324,21 +357,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         # If we don't want to add movies that are already in Radarr, do that now
         if self.ignore_movies_in_radarr and self.all_radarr_movies is not None:
-            radarr_movies: list[RadarrItem] = []
-
-            # Make sure these are flagged as specials since sometimes shows and
-            # movies are all lumped together
-            mapping_season = mapping.tvdb_season
-            if mapping_season == 0:
-                mapping_tmdb_id = mapping.tmdb_movie_id
-                mapping_imdb_id = mapping.imdb_id
-
-                for m in self.all_radarr_movies:
-                    # Match by TMDB or IMDb id; one append per movie either way.
-                    tmdb_match = mapping_tmdb_id is not None and m.tmdbId == mapping_tmdb_id
-                    imdb_match = mapping_imdb_id is not None and m.imdbId == mapping_imdb_id
-                    if tmdb_match or imdb_match:
-                        radarr_movies.append(m)
+            radarr_movies = radarr_movies_matching(mapping, self.all_radarr_movies)
 
             if len(radarr_movies) > 0:
                 for movie in radarr_movies:
