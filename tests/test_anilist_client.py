@@ -285,12 +285,12 @@ def test_query_retries_on_throttle_error_body(monkeypatch: pytest.MonkeyPatch) -
 @respx.mock
 def test_query_batch_reshapes_page_media_by_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """A Page body is re-keyed to {id: single-id-shaped body}, so the results can
-    seed the run cache directly; junk and id-less entries in the media array are
-    skipped (an id unknown to AniList is simply absent, never an error)."""
+    seed the run cache directly; junk, id-less and non-int-id entries in the media
+    array are skipped (an id unknown to AniList is simply absent, never an error)."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     page: dict[str, object] = {
-        "data": {"Page": {"media": [{"id": 1, "episodes": 12}, "junk", {"episodes": 9}]}},
+        "data": {"Page": {"media": [{"id": 1, "episodes": 12}, "junk", {"episodes": 9}, {"id": "7", "episodes": 3}]}},
     }
     route = respx.post(API_URL).respond(json=page)
 
@@ -298,6 +298,20 @@ def test_query_batch_reshapes_page_media_by_id(monkeypatch: pytest.MonkeyPatch) 
 
     assert route.call_count == 1
     assert out == {1: {"data": {"Media": {"id": 1, "episodes": 12}}}}
+
+
+@respx.mock
+def test_query_json_array_body_is_no_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 200 whose body is a JSON *array* falls to the {} no-data arm instead of
+    being laundered as a dict (which used to crash the callers' .get walks)."""
+
+    monkeypatch.setattr(time, "sleep", _no_sleep)
+    route = respx.post(API_URL).respond(json=[1, 2, 3])
+
+    body = _client().query(1)
+
+    assert route.call_count == 1
+    assert body == {}
 
 
 # --- retry narration (backoff waits + the once-per-run give-up warning) ------

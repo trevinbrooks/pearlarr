@@ -143,6 +143,22 @@ def test_get_animetosho_torrent_no_feed_match_returns_none_url() -> None:
 
 
 @respx.mock
+def test_get_animetosho_torrent_non_str_url_folds_to_none() -> None:
+    """A matching feed entry with a junk (non-str) ``torrent_url`` yields ``None``
+    instead of leaking the junk value downstream as a fake download URL.
+    """
+
+    page_url = "https://animetosho.org/view/cool-anime-01.123456"
+
+    respx.get(page_url).respond(html=_torrent_fixture("animetosho_page.html"))
+    respx.get(ANIMETOSHO_FEED_URL).respond(json=[{"link": page_url, "torrent_url": 123}])
+    download_url, title = get_animetosho_torrent(page_url, client=httpx.Client())
+
+    assert download_url is None
+    assert title == _ANIMETOSHO_TITLE
+
+
+@respx.mock
 def test_get_animetosho_torrent_missing_title_raises() -> None:
     """A page with no ``<h2 id="title">`` raises before the feed is queried."""
 

@@ -8,7 +8,7 @@ import shutil
 import sqlite3
 import time
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Annotated, cast
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 import yaml
@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from .boot_view import BootView, make_boot_view
 from .config import AppConfig, Arr, config_permissions_loose, restrict_config_permissions, template_path
+from .json_narrow import is_json_list, is_json_obj
 from .log import LogLevel, apply_log_level, indent_string, log_styled, setup_logger
 from .manual_import import ImportWaitMode
 from .paths import PROJECT_URL, AppPaths, ensure_data_dir, resolve_paths
@@ -897,9 +898,9 @@ def _redact_secrets(node: object, *, mask_values: bool = False) -> object:
     value regardless of key name.
     """
 
-    if isinstance(node, dict):
+    if is_json_obj(node):
         redacted: dict[str, object] = {}
-        for key, value in cast("dict[str, object]", node).items():
+        for key, value in node.items():
             lowered = key.lower()
             if value is not None and (mask_values or any(marker in lowered for marker in _SECRET_KEY_MARKERS)):
                 redacted[key] = "REDACTED"
@@ -908,8 +909,8 @@ def _redact_secrets(node: object, *, mask_values: bool = False) -> object:
             else:
                 redacted[key] = _redact_secrets(value, mask_values=mask_values or lowered in _MASK_ALL_SUBTREES)
         return redacted
-    if isinstance(node, list):
-        return [_redact_secrets(item, mask_values=mask_values) for item in cast("list[object]", node)]
+    if is_json_list(node):
+        return [_redact_secrets(item, mask_values=mask_values) for item in node]
     return node
 
 

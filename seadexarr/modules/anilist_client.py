@@ -5,11 +5,12 @@ import logging
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any
 
 import httpx
 from pydantic import ValidationError
 
+from .json_narrow import is_json_list, is_json_obj
 from .seadex_types import AniListError, AniListMediaNode, validation_summary
 
 API_URL = "https://graphql.anilist.co"
@@ -156,13 +157,12 @@ def _parse_errors(body: dict[str, Any] | None) -> list[AniListError]:
     """
 
     raw_errors = (body or {}).get("errors")
-    if not isinstance(raw_errors, list):
+    if not is_json_list(raw_errors):
         return []
-    # response.json() is untyped; validate each GraphQL error entry into the
-    # typed AniListError, dropping the junk ones (a soft-throttle or malformed
-    # body can carry non-dict junk in the errors array).
+    # Validate each GraphQL error entry into the typed AniListError, dropping
+    # the junk ones (a soft-throttle or malformed body can carry non-dict junk).
     errors: list[AniListError] = []
-    for err in cast("list[object]", raw_errors):
+    for err in raw_errors:
         try:
             errors.append(AniListError.model_validate(err))
         except ValidationError:
@@ -269,17 +269,17 @@ class AniListClient:
         """
 
         j = self._post_with_retry(BATCH_QUERY, {"ids": list(al_ids)})
-        # response.json() is untyped and the cache stores each Media body verbatim
-        # (re-parsed on read via AniListMediaNode.from_api). Keep each Media OBJECT
-        # carrying an id, skipping any non-object entry in the array.
+        # The cache stores each Media body verbatim (re-parsed on read into an
+        # AniListMediaNode). Keep each Media OBJECT carrying an int id, skipping
+        # junk entries in the array.
         out: AniListCache = {}
-        for raw in cast("list[Any]", extract_path(j, "data", "Page").get("media") or []):
-            if not isinstance(raw, dict):
+        media_list = extract_path(j, "data", "Page").get("media")
+        for raw in media_list if is_json_list(media_list) else []:
+            if not is_json_obj(raw):
                 continue
-            media = cast("dict[str, Any]", raw)
-            media_id = media.get("id")
-            if media_id is not None:
-                out[media_id] = {"data": {"Media": media}}
+            media_id = raw.get("id")
+            if isinstance(media_id, int):
+                out[media_id] = {"data": {"Media": raw}}
         return out
 
     def _post_with_retry(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
@@ -322,16 +322,17 @@ class AniListClient:
             retryable = resp.status_code in RETRYABLE_STATUS
 
             # Parse the body so a soft-throttle (HTTP 200 + throttle error payload)
-            # can take the same retry path as a 429 status. A non-JSON body yields
-            # {} here and falls through to the return below. response.json() is
-            # untyped (the GraphQL body is an open JSON object), so cast at the parse
-            # boundary; a non-dict body is rejected by the isinstance guards below.
+            # can take the same retry path as a 429 status. A non-JSON body - or a
+            # JSON body that isn't an object (e.g. an array) - folds to None here
+            # and returns as {} below, the callers' no-data arm.
+            raw_body: object
             try:
-                body: dict[str, Any] | None = cast("dict[str, Any]", resp.json())
+                raw_body = resp.json()
             except ValueError:
-                body = None
+                raw_body = None
+            body: dict[str, Any] | None = raw_body if is_json_obj(raw_body) else None
 
-            if not retryable and isinstance(body, dict) and _errors_are_retryable(body):
+            if not retryable and body is not None and _errors_are_retryable(body):
                 retryable = True
 
             if retryable and attempt < MAX_RETRIES:

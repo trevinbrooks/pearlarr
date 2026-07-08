@@ -1,10 +1,10 @@
-from typing import Any, cast
 from urllib.parse import urlencode, urljoin
 
 import httpx
 import pynyaa
 from bs4 import BeautifulSoup
 
+from .json_narrow import is_json_list, is_json_obj
 from .web_client import get_with_retries, make_web_client
 
 ANIMETOSHO_FEED_URL = "https://animetosho.org/feed/json"
@@ -97,18 +97,18 @@ def get_animetosho_torrent(
 
     # A JSON error object (rate limit / interstitial) instead of the expected
     # feed array would otherwise iterate as its string keys and crash on .get.
-    if not isinstance(j, list):
+    if not is_json_list(j):
         raise TorrentParseError(f"AnimeTosho feed returned unexpected JSON (not a list) from {query_url}")
 
-    # Find the feed entry whose link matches the page URL. response.json() is
-    # untyped, so cast each entry at the parse boundary (skipping non-objects).
+    # Find the feed entry whose link matches the page URL, skipping non-object
+    # entries; a non-str torrent_url folds to None (no link found).
     parsed_url: str | None = None
-    for entry in cast("list[Any]", j):
-        if not isinstance(entry, dict):
+    for entry in j:
+        if not is_json_obj(entry):
             continue
-        item = cast("dict[str, Any]", entry)
-        if item.get("link") == url:
-            parsed_url = cast("str | None", item.get("torrent_url"))
+        if entry.get("link") == url:
+            raw_url = entry.get("torrent_url")
+            parsed_url = raw_url if isinstance(raw_url, str) else None
             break
 
     return parsed_url, title
