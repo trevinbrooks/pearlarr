@@ -185,8 +185,13 @@ def test_discord_push_posts_the_wrapped_embed() -> None:
 
     discord_push(url="https://discord.example/hook", embed=embed, client=httpx.Client())
 
-    body = cast("dict[str, list[dict[str, Json]]]", json.loads(route.calls.last.request.content))
-    (sent,) = body["embeds"]  # the wire shape: {"embeds": [to_payload()]}
+    body = cast("dict[str, Json]", json.loads(route.calls.last.request.content))
+    # The wire shape: the SeaDexArr display identity riding beside the embed.
+    assert body["username"] == "SeaDexArr"
+    assert _str_at(body, "avatar_url").startswith("https://")
+    embeds = body["embeds"]
+    assert isinstance(embeds, list)
+    (sent,) = cast("list[dict[str, Json]]", embeds)
     expected = embed.to_payload()
     # The timestamp is stamped at send time; everything else matches the boundary.
     assert {k: v for k, v in sent.items() if k != "timestamp"} == {

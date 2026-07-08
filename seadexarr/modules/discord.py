@@ -16,6 +16,10 @@ from .paths import PROJECT_URL
 from .seadex_types import Json
 from .. import __version__
 
+# The SeaDex logo, sent as the webhook's avatar so every notification posts
+# under a consistent SeaDexArr identity regardless of the webhook's own setup.
+_SEADEX_ICON = "https://cdn.discordapp.com/icons/771790175591333909/529b324695b60f65abb7aaa31c114c7b.webp?size=2048"
+
 # Embed accent colors (the strip Discord renders along the embed's left edge).
 # Grab amber follows the *arr ecosystem convention (grabbed = amber "in
 # flight"; green = imported) in the flat-UI shade matching its siblings below.
@@ -37,8 +41,8 @@ _MAX_TOTAL_LEN = 6000
 class EmbedField(NamedTuple):
     """One Discord embed field (name/value), typed until the payload boundary.
 
-    ``inline`` fields render side by side (up to three per row), which the grab
-    embed uses to pair the replaced release with the SeaDex pick(s).
+    ``inline`` fields render side by side (up to three per row); the current
+    embeds stack full-width fields, so it stays at its False default.
     """
 
     name: str
@@ -118,10 +122,17 @@ class DiscordEmbed:
 def discord_push(url: str, embed: DiscordEmbed, *, client: httpx.Client) -> None:
     """POST one embed to the webhook - a pure POST, pacing lives in the Notifier.
 
-    Raises ``httpx.HTTPError`` (incl. HTTP error statuses) so the caller's
-    containment decides; a webhook failure must never abort a grab. The
-    hung-webhook bound is the shared web client's default timeout.
+    The payload overrides the webhook's display identity (SeaDexArr name +
+    SeaDex avatar) so posts look the same on any webhook. Raises
+    ``httpx.HTTPError`` (incl. HTTP error statuses) so the caller's containment
+    decides; a webhook failure must never abort a grab. The hung-webhook bound
+    is the shared web client's default timeout.
     """
 
-    response = client.post(url, json={"embeds": [embed.to_payload()]})
+    payload = {
+        "username": "SeaDexArr",
+        "avatar_url": _SEADEX_ICON,
+        "embeds": [embed.to_payload()],
+    }
+    response = client.post(url, json=payload)
     response.raise_for_status()
