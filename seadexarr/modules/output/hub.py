@@ -175,6 +175,24 @@ class OutputHub:
     def counts(self) -> SeverityCounts:
         return self._counts
 
+    @property
+    def level(self) -> int:
+        """The configured level — a lock-free int read for the bridge's early-out."""
+
+        return self._level
+
+    def console_render_active(self) -> bool:
+        """True when the console seat exists and is armed (not struck out).
+
+        Deliberately lock-free (plain attribute reads): the rich handler calls this
+        under handler locks, and hub dispatch re-enters the logger — taking the hub
+        lock here is the inversion bridge.py documents. A one-record stale read at
+        a begin_cycle boundary is acceptable.
+        """
+
+        sub = self._console_sub
+        return sub is not None and sub.strikes < self._strike_limit
+
     def cycle_counts(self) -> SeverityTally:
         """Severity deltas since the last begin_cycle."""
 

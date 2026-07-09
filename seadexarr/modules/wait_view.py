@@ -55,6 +55,7 @@ from .log import (
     log_styled,
 )
 from .manual_import import Outcome, OutcomeCategory
+from .output import ScopeKind, ScopeMark
 
 # The live cockpit never grows past this many in-flight rows; the rest collapse
 # into a one-line "+ N more ..." overflow, so a large carried-over backlog can't
@@ -534,12 +535,16 @@ class _DurableWaitView(WaitView):
         self._tally: Counter[OutcomeCategory] = Counter()
         self._last_elapsed = 0.0
         self._closed = False
+        # Marks the wait region open on the hub (B1): diagnostics fired mid-wait
+        # place at the wait indent instead of column 0.
+        self._scope = ScopeMark(ScopeKind.WAIT_REGION, "wait")
 
     @final
     @override
     def update(self, snapshot: WaitSnapshot) -> None:
         try:
             self._last_elapsed = snapshot.elapsed_s
+            self._scope.open()
             self._emit_new_graduations(snapshot)
             self._render(snapshot)
         except Exception:
@@ -558,6 +563,9 @@ class _DurableWaitView(WaitView):
             self._log_summary()
         except Exception:
             self._logger.debug("wait view close failed", exc_info=True)
+        # After the guarded teardown, so a _teardown raise can't eat the close —
+        # and never before stop(), so no col-0 mark under a visible cockpit.
+        self._scope.close()
 
     def _emit_new_graduations(self, snapshot: WaitSnapshot) -> None:
         for torrent in graduations(self._seen, snapshot):
@@ -676,7 +684,11 @@ class LiveWaitView(_DurableWaitView):
     @override
     def _teardown(self) -> None:
         if self._live is not None:
-            self._live.stop()
+            try:
+                self._live.stop()
+            except Exception:
+                # Contained here so a stop() raise can't eat _log_summary too.
+                self._logger.debug("wait live stop failed", exc_info=True)
             self._live = None
             self._spinner = None
 
@@ -814,6 +826,8 @@ class _LiveFrame:
         try:
             group = self._get_group()
         except Exception:
+            # Must stay below WARNING: the bridge adopts WARNING+, and hub.emit off
+            # this Console-lock-holding thread is an ABBA deadlock (revisit at PR4).
             self._logger.debug("wait frame render failed", exc_info=True)
             return
         yield group

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -68,6 +69,58 @@ type ConsoleRender = TitledRule | SectionRule | KvLine | StyledLine
 # The single ``extra=`` key carrying a ConsoleRender to the console handler.
 CONSOLE_EXTRA: Final = "seadex_console"
 
+# The ``extra=`` mark on hub re-emissions (output/legacy_echo.py): the bridge and
+# the rich console handler drop marked records; the file/plain paths keep them.
+HUB_EVENT: Final = "seadex_hub_event"
+
+# The second mark on file_only re-emissions (hub containment notes): the file
+# keeps them, but the plain/json stdout path and LogCounter skip them.
+HUB_FILE_ONLY: Final = "seadex_hub_file_only"
+
+
+def hub_event_marked(record: logging.LogRecord) -> bool:
+    """True when ``record`` is a hub re-emission (carries the ``HUB_EVENT`` mark)."""
+
+    mark: object = getattr(record, HUB_EVENT, None)
+    return mark is not None
+
+
+def hub_file_only_marked(record: logging.LogRecord) -> bool:
+    """True when ``record`` is a file-only hub re-emission (``HUB_FILE_ONLY``)."""
+
+    mark: object = getattr(record, HUB_FILE_ONLY, None)
+    return mark is not None
+
+
+# The hub's console-ownership probe, registered by ``install_bridge``: when it
+# answers True the hub's renderer owns the badge class, so the rich handler skips
+# plain WARNING+ records; absent/False (no bridge, struck-out console seat) the
+# legacy badge renders — warnings can never vanish.
+_console_owner: Callable[[], bool] | None = None
+
+
+def register_console_owner(owner: Callable[[], bool]) -> None:
+    """Install the hub's console-ownership probe (``install_bridge``)."""
+
+    global _console_owner
+    _console_owner = owner
+
+
+def clear_console_owner() -> None:
+    """Remove the probe (``uninstall_bridge``, tests)."""
+
+    global _console_owner
+    _console_owner = None
+
+
+class HubBridgeBase(logging.Handler):
+    """Marker base for the output bridge (output/bridge.py).
+
+    A distinct base so ``setup_logger`` can preserve the bridge across its
+    per-cycle handler rebuilds without importing the output package (which
+    imports this module back).
+    """
+
 
 def console_payload(record: logging.LogRecord) -> ConsoleRender | None:
     """The typed console payload carried on ``record``, or None for a plain line."""
@@ -82,8 +135,14 @@ class RichConsoleHandler(logging.Handler):
     """Console log handler that renders records through ``rich``.
 
     Routine INFO/DEBUG lines print with no level prefix, so the output reads
-    as clean text. Plain WARNING/ERROR messages get a colored level badge so
-    problems stand out (aligned "key : value" lines never do - see ``kv``).
+    as clean text. PLAIN records at WARNING+ (the badge class, including
+    exc_info records) are NOT rendered here while the registered console owner
+    (the hub, via ``install_bridge``) answers True: the logging bridge
+    (output/bridge.py) adopts them and the hub's rich renderer places them
+    in-context (S5 pin 2) - rendering here too would double them. With no
+    owner, or a struck-out console seat, the legacy badge renders so a warning
+    can never vanish. Hub re-emissions (``HUB_EVENT``-marked records) are
+    always skipped. Aligned "key : value" lines never get a badge - see ``kv``.
 
     Presentation is driven by one typed payload (a :data:`ConsoleRender`
     dataclass under ``CONSOLE_EXTRA``, built by the ``log_*`` producers and
@@ -171,20 +230,34 @@ class RichConsoleHandler(logging.Handler):
         Emitted whole (soft_wrap) so the terminal handles any overflow, rather
         than rich re-wrapping with unindented continuation lines.
         """
-        badge = self.LEVEL_BADGES.get(record.levelno)
-        if badge is None:
+        if self.LEVEL_BADGES.get(record.levelno) is None:
             line = Text(message, style=payload.style if payload is not None else "")
         else:
-            label, style = badge
-            line = Text(f"{label:<8} ", style=style)
-            line.append(message)
+            line = badge_line(record.levelno, message)
 
         self.console.print(line, highlight=False, soft_wrap=True)
 
     @override
     def emit(self, record: logging.LogRecord) -> None:
         try:
+            # A hub re-emission: the hub's console renderer owns its rendering;
+            # only the file/plain surfaces carry the record.
+            if hub_event_marked(record):
+                return
+
             payload = console_payload(record)
+
+            # The badge class moved to hub placement (S5 pin 2): the bridge
+            # adopts plain WARNING+ records, the hub's renderer draws the badge —
+            # but only while the hub actually owns the console; with no bridge or
+            # a struck-out console seat, the legacy badge below still renders.
+            if (
+                payload is None
+                and record.levelno >= logging.WARNING
+                and _console_owner is not None
+                and _console_owner()
+            ):
+                return
 
             # A titled section: a full-width rule, then the title text
             # LEFT-ALIGNED on the next line (user directive).
@@ -208,13 +281,7 @@ class RichConsoleHandler(logging.Handler):
             # The file handler still records the full plain-text traceback (the
             # formatter renders exc_info), so nothing is lost from the log file.
             if record.exc_info:
-                label, style = self.LEVEL_BADGES.get(
-                    record.levelno,
-                    ("ERROR", "bold red"),
-                )
-                line = Text(f"{label:<8} ", style=style)
-                line.append(message)
-                self.console.print(line, highlight=False, soft_wrap=True)
+                self.console.print(badge_line(record.levelno, message), highlight=False, soft_wrap=True)
                 exc_type, exc_value, exc_tb = record.exc_info
                 if exc_type is not None and exc_value is not None:
                     self.console.print(
@@ -253,6 +320,19 @@ class RichConsoleHandler(logging.Handler):
                         self._print_line(record, message, payload)
         except Exception:
             self.handleError(record)
+
+
+def badge_line(levelno: int, message: str) -> Text:
+    """``message`` behind its level badge — the ONE home of the badge column grammar.
+
+    Levels without a badge fall back to the ERROR one (only the exc_info arm,
+    which always badges, can reach that).
+    """
+
+    label, style = RichConsoleHandler.LEVEL_BADGES.get(levelno, ("ERROR", "bold red"))
+    line = Text(f"{label:<8} ", style=style)
+    line.append(message)
+    return line
 
 
 class PlainConsoleHandler(logging.StreamHandler[TextIO]):
@@ -303,7 +383,9 @@ class LogCounter(logging.Filter):
 
     @override
     def filter(self, record: logging.LogRecord) -> bool:
-        self.counts[record.levelno] = self.counts.get(record.levelno, 0) + 1
+        # File-only hub notes are containment forensics, never a user-visible tally.
+        if not hub_file_only_marked(record):
+            self.counts[record.levelno] = self.counts.get(record.levelno, 0) + 1
         return True
 
     def snapshot(self) -> dict[int, int]:
@@ -323,6 +405,12 @@ def log_counter(logger: logging.Logger) -> LogCounter:
             return log_filter
     msg = f"logger {logger.name!r} carries no LogCounter (was it built by setup_logger?)"
     raise LookupError(msg)
+
+
+def _not_hub_file_only(record: logging.LogRecord) -> bool:
+    """Console-handler filter: file-only hub notes reach the file sink alone."""
+
+    return not hub_file_only_marked(record)
 
 
 # The level names the file logger honors; any other value (a typo) warns and
@@ -378,6 +466,12 @@ def apply_log_level(logger: logging.Logger, log_level: str) -> None:
         if isinstance(handler, RichConsoleHandler | PlainConsoleHandler):
             handler.setLevel(console_level(level))
 
+    # Forward to the output hub (S4: each surface applies its own floor).
+    # Imported lazily: the output package imports this module at load.
+    from .output.runtime import current_hub
+
+    current_hub().set_level(level)
+
 
 # Logger and log-file name; also the log rotation cap (.log -> .log.1 ... .log.9).
 LOG_NAME = "SeaDexArr"
@@ -419,8 +513,11 @@ def setup_logger(
 
     # Close and detach any handlers from a previous call FIRST (scheduled mode
     # re-runs this each cycle): the old file handler must release the log file
-    # before it is rotated, and an unclosed handler leaks its descriptor.
+    # before it is rotated, and an unclosed handler leaks its descriptor. The
+    # output bridge is installed once per process (cli) and must survive.
     for old_handler in list(logger.handlers):
+        if isinstance(old_handler, HubBridgeBase):
+            continue
         logger.removeHandler(old_handler)
         old_handler.close()
 
@@ -475,6 +572,8 @@ def setup_logger(
         console_handler = PlainConsoleHandler(sys.stdout)
         console_handler.setFormatter(JsonFormatter() if console_format == "json" else text_formatter)
     console_handler.setLevel(console_level(level))
+    # File-only hub notes stay off stdout (the FileHandler carries no filter).
+    console_handler.addFilter(_not_hub_file_only)
 
     logger.addHandler(handler)
     logger.addHandler(console_handler)

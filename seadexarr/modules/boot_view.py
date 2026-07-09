@@ -47,6 +47,7 @@ from .console_caps import (
 )
 from .log import INDENT, format_elapsed, indent_string, log_counter, log_styled, log_titled_rule
 from .manual_import import OutcomeCategory
+from .output import ScopeKind, ScopeMark
 
 # Width of the live download bar (mapping refresh); only the live cockpit draws
 # it, so it doesn't need to scale with the terminal like the wait cockpit's does.
@@ -151,10 +152,14 @@ class _DurableBootView(BootView):
         self._section_count = 0
         self._section_failed = False
         self._section_errors_at = 0
+        # Marks the boot section open on the hub (B1/B2): diagnostics fired
+        # between steps place at the boot-ledger indent instead of column 0.
+        self._scope = ScopeMark(ScopeKind.BOOT_SECTION, "boot")
 
     @final
     @override
     def banner(self) -> None:
+        self._scope.open()
         title = f"SeaDexArr {_app_version()}".rstrip()
         self._safe(lambda: log_titled_rule(self._logger, title, heavy=True))
         # A blank under the title gives the step ledger a gap below the header,
@@ -169,6 +174,7 @@ class _DurableBootView(BootView):
 
     @contextlib.contextmanager
     def _step(self, label: str) -> Generator[BootStep]:
+        self._scope.open()
         step = BootStep(self._notify, label)
         start = self._time()
         if self._section_started is None:
@@ -197,6 +203,7 @@ class _DurableBootView(BootView):
     def end_section(self) -> None:
         self._safe(self._stop_live)
         self._safe(self._emit_capstone)
+        self._scope.close()
         self._section_started = None
         self._section_count = 0
         self._section_failed = False

@@ -306,6 +306,31 @@ def test_the_hub_stamps_one_instant_per_emit_for_every_renderer() -> None:
     assert second.whens == [100.0, 200.0]
 
 
+# --- console ownership (the rich handler's skip predicate) ---------------------------
+
+
+def test_console_render_active_is_false_without_a_console_seat() -> None:
+    hub = OutputHub([RecordingRenderer()])
+
+    assert hub.console_render_active() is False
+
+
+def test_console_render_active_is_true_for_an_armed_seat() -> None:
+    hub = OutputHub([], console=RecordingRenderer())
+
+    assert hub.console_render_active() is True
+
+
+def test_console_render_active_is_false_once_the_seat_strikes_out() -> None:
+    # The quarantine fallback: a struck-out console seat hands the badge class
+    # back to the legacy handler, so warnings can never vanish.
+    hub = OutputHub([], console=_FailingRenderer(), strike_limit=1)
+
+    hub.emit(_EVENT)
+
+    assert hub.console_render_active() is False
+
+
 # --- console renderer swap (S3) ------------------------------------------------------
 
 

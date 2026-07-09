@@ -14,7 +14,6 @@ writing to a buffer, so no real terminal is needed.
 
 import io
 import logging
-import re
 import time
 from typing import override
 
@@ -25,6 +24,8 @@ from rich.text import Text
 from seadexarr.modules.console_caps import Capabilities, TerminalEnv
 from seadexarr.modules.log import RichConsoleHandler
 from seadexarr.modules.manual_import import Outcome, OutcomeCategory
+from seadexarr.modules.output import ScopeClosed, ScopeKind, ScopeOpened, install_hub
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.wait_view import (
     LiveWaitView,
     LogWaitView,
@@ -43,8 +44,7 @@ from seadexarr.modules.wait_view import (
 )
 
 from .builders import SEP
-
-_ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+from .fakes import strip_ansi
 
 
 def _logger_with_console(
@@ -64,7 +64,7 @@ def _logger_with_console(
 def _plain(console: Console) -> str:
     stream = console.file
     assert isinstance(stream, io.StringIO)
-    return _ANSI.sub("", stream.getvalue())
+    return strip_ansi(stream.getvalue())
 
 
 def _downloading(
@@ -295,7 +295,7 @@ def test_spinner_frame_advances_in_a_table_cell() -> None:
         _ = stream.seek(0)
         stream.truncate(0)
         console.print(view._current_group())
-        return _ANSI.sub("", stream.getvalue())
+        return strip_ansi(stream.getvalue())
 
     assert frame_at(0.0) != frame_at(0.5)  # the dots spinner cycled across ~6 frames
 
@@ -589,3 +589,68 @@ def test_view_methods_are_total_and_never_raise() -> None:
     # abort the engine's wait loop or the end-of-run cache save).
     view.update(WaitSnapshot((_downloading("h1", "A", 0.5),)))
     view.close()
+
+
+# --- the wait-region scope graft (B1) --------------------------------------------
+
+
+class TestWaitRegionScope:
+    """The shared spine marks its wait region open/closed on the hub, so
+    bridge-adopted diagnostics fired mid-wait place at the wait indent.
+    conftest's autouse teardown uninstalls the hub after every test."""
+
+    @staticmethod
+    def _live_view() -> LiveWaitView:
+        logger, _ = _logger_with_console(force_terminal=True)
+        caps = Capabilities(live=True, color=False, unicode=True, width=100, height=40)
+        return LiveWaitView(TerminalEnv(Console(file=io.StringIO()), caps, logger, time_source=lambda: 0.0))
+
+    @staticmethod
+    def _scope_pair(recording: RecordingHub) -> tuple[ScopeOpened, ScopeClosed]:
+        (opened,) = recording.of_type(ScopeOpened)
+        (closed,) = recording.of_type(ScopeClosed)
+        return opened, closed
+
+    def test_live_start_opens_and_close_closes_the_scope(self) -> None:
+        recording = RecordingHub()
+        install_hub(recording.hub)
+        view = self._live_view()
+        view.update(WaitSnapshot((_downloading("h1", "A", 0.5),)))
+        view.update(WaitSnapshot((_downloading("h1", "A", 0.6),)))  # no re-open
+        view.close()
+        view.close()  # idempotent
+
+        opened, closed = self._scope_pair(recording)
+        assert opened.scope.kind is ScopeKind.WAIT_REGION
+        assert closed.scope == opened.scope
+
+    def test_log_view_emits_the_wait_marks_too(self) -> None:
+        # The scope rides the shared spine, so the non-TTY digest marks the
+        # region as well (text-sink breadcrumbs need it come PR6).
+        recording = RecordingHub()
+        install_hub(recording.hub)
+        logger, _ = _logger_with_console(force_terminal=False)
+        caps = Capabilities(live=False, color=False, unicode=False, width=80, height=24)
+        view = LogWaitView(logger, caps, poll_s=30, digest_interval=300)
+        view.update(WaitSnapshot((_downloading("h1", "A", 0.5),)))
+        view.close()
+
+        opened, closed = self._scope_pair(recording)
+        assert opened.scope.kind is ScopeKind.WAIT_REGION
+        assert closed.scope == opened.scope
+
+    def test_a_teardown_raise_still_closes_the_scope(self) -> None:
+        # The close mark sits after the guarded teardown: a stop() bug can't
+        # leave the region open (later diagnostics would indent forever).
+        recording = RecordingHub()
+        install_hub(recording.hub)
+        logger = logging.getLogger("wait-scope-boom")
+        logger.handlers.clear()
+        logger.addHandler(logging.NullHandler())
+        caps = Capabilities(live=False, color=False, unicode=False, width=80, height=24)
+        view = _BoomView(logger, caps)
+        view.update(WaitSnapshot((_downloading("h1", "A", 0.5),)))
+        view.close()
+
+        opened, closed = self._scope_pair(recording)
+        assert closed.scope == opened.scope

@@ -15,8 +15,13 @@ Pins the knob's contract:
   live cockpits degrade to their calm log digest - designed, not a bug.
 * ``apply_log_level`` re-points the plain/json console handler exactly like
   the rich one, and never touches the file handler.
-* rich's exc_info branch renders a level badge + message then a frame-capped
-  traceback with ``show_locals=False`` (frame locals can hold config secrets).
+* The PR2 seam (S5 pin 2): the rich handler badge-renders plain WARNING+
+  records UNLESS the registered console owner answers True (the bridge adopts
+  them; the hub's renderer places them) — no owner or a struck-out seat keeps
+  the legacy badge, so warnings can never vanish. ``HUB_EVENT``-marked
+  re-emissions are always skipped; the payload arms and plain INFO/DEBUG render
+  exactly as before. The badge + traceback rendering is also pinned on the
+  renderer side in test_output_rich_renderer.py.
 """
 
 import io
@@ -27,7 +32,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import cast, override
+from typing import cast
 
 import pytest
 from rich.console import Console
@@ -35,20 +40,20 @@ from rich.console import Console
 from seadexarr.modules.config import LogFormat
 from seadexarr.modules.console_caps import console_of
 from seadexarr.modules.log import (
+    CONSOLE_EXTRA,
+    DETAIL_KEY_WIDTH,
+    HUB_EVENT,
     JsonFormatter,
+    KvLine,
     PlainConsoleHandler,
     RichConsoleHandler,
     apply_log_level,
+    log_titled_rule,
+    register_console_owner,
     setup_logger,
 )
 
-
-class _TtyStringIO(io.StringIO):
-    """An in-memory stream that claims to be a terminal (drives the "auto" TTY arm)."""
-
-    @override
-    def isatty(self) -> bool:
-        return True
+from .fakes import TtyStringIO, strip_ansi
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,7 +153,7 @@ class TestFormatSelection:
         assert not isinstance(console.formatter, JsonFormatter)
 
     def test_auto_on_a_tty_picks_rich(self, build: _Builder) -> None:
-        setup = build("auto", stream=_TtyStringIO())
+        setup = build("auto", stream=TtyStringIO())
         assert any(isinstance(h, RichConsoleHandler) for h in setup.logger.handlers)
         assert not any(isinstance(h, PlainConsoleHandler) for h in setup.logger.handlers)
 
@@ -174,41 +179,121 @@ class TestApplyLogLevelPlain:
         assert file_handler.level == logging.NOTSET
 
 
-class TestRichExcInfoRender:
-    def test_exc_info_renders_badge_and_traceback_but_never_locals(self) -> None:
-        """An exc_info record renders the ERROR badge + message, then the traceback.
+def _rich_setup(name: str) -> tuple[logging.Logger, io.StringIO]:
+    """A DEBUG-level logger over a RichConsoleHandler writing to a buffer."""
 
-        Pins the secrets guarantee: ``show_locals=False`` means a frame local's
-        VALUE is never rendered (locals can hold config secrets). The sentinel is
-        assembled at runtime so the rendered SOURCE context lines cannot contain
-        it - only rendered locals could. Also pins that the branch returns after
-        the traceback (the message renders exactly once, no payload dispatch).
-        """
+    stream = io.StringIO()
+    handler = RichConsoleHandler(Console(file=stream, width=200))
+    logger = logging.getLogger(name)
+    logger.handlers.clear()
+    logger.propagate = False
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
+    return logger, stream
 
-        stream = io.StringIO()
-        handler = RichConsoleHandler(Console(file=stream, width=200))
-        logger = logging.getLogger("seadexarr-test-rich-exc-render")
-        logger.addHandler(handler)
-        logger.setLevel(logging.ERROR)
 
-        sentinel = "hunter2-" + "sentinel"  # never a contiguous string in this source file
+class TestRichHandlerSeam:
+    """The PR2 seam: hub placement owns the badge class only while the registered
+    console owner answers True; otherwise the legacy badge renders (fallback)."""
+
+    def test_plain_warning_and_error_records_skip_the_handler_when_the_hub_owns_the_console(self) -> None:
+        """Plain WARNING+ (incl. exc_info) never render here while the hub's
+        renderer owns the console - it draws the badge (double render otherwise)."""
+
+        logger, stream = _rich_setup("seadexarr-test-rich-seam-badge")
+        register_console_owner(lambda: True)  # conftest's uninstall_bridge clears it
+
+        logger.warning("watch out")
+        try:
+            raise ValueError("boom")
+        except ValueError:
+            logger.error("sync failed", exc_info=True)
+
+        assert stream.getvalue() == ""
+
+    def test_plain_warning_renders_the_badge_without_a_console_owner(self) -> None:
+        """No bridge installed (library use, the pre-install window): pre-PR2 look."""
+
+        logger, stream = _rich_setup("seadexarr-test-rich-seam-no-owner")
+
+        logger.warning("watch out")
+
+        assert "WARNING  watch out" in strip_ansi(stream.getvalue())
+
+    def test_plain_warning_renders_the_badge_when_the_console_seat_struck_out(self) -> None:
+        """The quarantine fallback: a False owner (struck-out seat) means the hub
+        renderer is NOT drawing badges, so the legacy badge must - never both,
+        never neither."""
+
+        logger, stream = _rich_setup("seadexarr-test-rich-seam-struck-out")
+        register_console_owner(lambda: False)
+
+        logger.warning("watch out")
+
+        assert "WARNING  watch out" in strip_ansi(stream.getvalue())
+
+    def test_hub_event_marked_records_skip_the_handler(self) -> None:
+        """A LegacyRenderer re-emission was already placed by the hub's renderer."""
+
+        logger, stream = _rich_setup("seadexarr-test-rich-seam-hub-event")
+
+        logger.info("httpx: flaky pool", extra={HUB_EVENT: True})
+
+        assert stream.getvalue() == ""
+
+    def test_plain_info_still_renders_without_a_badge(self) -> None:
+        logger, stream = _rich_setup("seadexarr-test-rich-seam-info")
+
+        logger.info("checking Frieren")
+
+        assert stream.getvalue() == "checking Frieren\n"
+
+    def test_payload_arms_still_render_at_warning(self) -> None:
+        """A WARNING kv line keeps its aligned, badge-free legacy render (severity
+        is carried by LogCounter/the hub tally, not a column-0 badge)."""
+
+        logger, stream = _rich_setup("seadexarr-test-rich-seam-kv")
+
+        payload = KvLine(key="missing", value="S01E03", key_width=DETAIL_KEY_WIDTH, indent=2, sep="")
+        logger.warning("missing S01E03", extra={CONSOLE_EXTRA: payload})
+        log_titled_rule(logger, "Sonarr", heavy=True)
+
+        out = stream.getvalue()
+        assert "S01E03" in out
+        assert "WARNING" not in out
+        assert "Sonarr" in out  # the TitledRule arm is untouched
+
+    def test_debug_exc_info_renders_the_traceback_but_never_frame_locals(self) -> None:
+        """The handler-side secrets pin: exc_info tracebacks render with
+        show_locals=False, so a frame local's VALUE (an api key) can never leak."""
+
+        logger, stream = _rich_setup("seadexarr-test-rich-secrets")
+        sentinel = "hun" + "ter2"  # runtime-assembled: never a contiguous string here
+
         try:
             leaked = sentinel
             raise ValueError(f"qbit exploded holding {len(leaked)} secret bytes")
         except ValueError:
-            logger.error("sync failed", exc_info=True)
+            logger.debug("boom", exc_info=True)
 
-        out = stream.getvalue()
-        first_line = out.splitlines()[0]
-        assert first_line.startswith("ERROR")
-        assert "sync failed" in first_line
+        out = strip_ansi(stream.getvalue())
         assert "Traceback" in out
         assert "ValueError" in out
         assert "qbit exploded" in out
-        assert sentinel not in out  # the frame local's value must never render
-        # The branch returns after the traceback: exactly one badged message line
-        # ("sync failed" also shows up as traceback source context, so count the
-        # badge+message pair, which only the handler's own render produces). This
-        # assert stays out of that context only because it sits past rich's
-        # 3-line window around the raise - keep the distance.
-        assert out.count("ERROR    sync failed") == 1
+        assert sentinel not in out
+
+
+class TestInvalidLevelComplaint:
+    """setup_logger's invalid-level critical fires BEFORE any hub/bridge exists."""
+
+    def test_complaint_renders_on_the_rich_console_without_an_owner(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # cli wires the hub AFTER setup_logger, so no console owner is registered
+        # yet and the legacy badge renders the complaint (the F2 default).
+        stream = TtyStringIO()
+        monkeypatch.setattr(sys, "stdout", stream)
+
+        setup_logger(log_level="BOGUS", log_dir=str(tmp_path / "logs"), console_format="rich")
+
+        assert "CRITICAL Invalid log level 'BOGUS'" in strip_ansi(stream.getvalue())

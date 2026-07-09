@@ -45,6 +45,7 @@ from .events import (
     WaitStarted,
     severity_of,
 )
+from .runtime import current_hub
 from .trace import CapturedTrace
 from ..manual_import import OutcomeCategory
 
@@ -74,6 +75,33 @@ class ScopeIds:
 
 # The process-wide default minter (see ScopeIds docstring).
 PROCESS_SCOPE_IDS: Final = ScopeIds()
+
+
+@final
+class ScopeMark:
+    """The cockpit views' ambient-scope mark ceremony: idempotent open/close.
+
+    Mints from :data:`PROCESS_SCOPE_IDS` and emits through :func:`~.runtime.current_hub`
+    at call time (the hub may be installed after the view is built). Only the mark
+    pair — no handle semantics, no demotion.
+    """
+
+    def __init__(self, kind: ScopeKind, label: str) -> None:
+        self._kind = kind
+        self._label = label
+        self._scope: ScopeId | None = None
+
+    def open(self) -> None:
+        if self._scope is not None:
+            return
+        self._scope = PROCESS_SCOPE_IDS.mint(self._kind)
+        current_hub().emit(ScopeOpened(scope=self._scope, label=self._label))
+
+    def close(self) -> None:
+        if self._scope is None:
+            return
+        current_hub().emit(ScopeClosed(scope=self._scope))
+        self._scope = None
 
 
 def _describe_fact(fact: EntryFact) -> str:

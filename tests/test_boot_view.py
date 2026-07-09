@@ -16,7 +16,6 @@ injected so durations are deterministic.
 
 import io
 import logging
-import re
 from pathlib import Path
 from typing import override
 
@@ -25,6 +24,7 @@ from rich.console import Console
 
 from seadexarr.modules.boot_view import (
     BootStep,
+    BootView,
     LiveBootView,
     LogBootView,
     NullBootView,
@@ -35,11 +35,12 @@ from seadexarr.modules.config import Arr
 from seadexarr.modules.console_caps import Capabilities, TerminalEnv
 from seadexarr.modules.log import LogCounter, RichConsoleHandler
 from seadexarr.modules.mappings import MappingResolver
+from seadexarr.modules.output import ScopeClosed, ScopeKind, ScopeOpened, install_hub
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.run_services import RunDeps
 
 from .builders import SEP, make_bare_instance, make_config
-
-_ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+from .fakes import strip_ansi
 
 
 class _FakeClock:
@@ -75,7 +76,7 @@ def _logger_with_console(
 def _plain(console: Console) -> str:
     stream = console.file
     assert isinstance(stream, io.StringIO)
-    return _ANSI.sub("", stream.getvalue()).replace("\r", "")
+    return strip_ansi(stream.getvalue()).replace("\r", "")
 
 
 # --- factory / capability probe ------------------------------------------------
@@ -489,3 +490,51 @@ def test_boom_view_still_propagates_caller_errors() -> None:
     except ValueError:
         raised = True
     assert raised  # presentation booms are swallowed; the caller's error is not
+
+
+class TestBootSectionScope:
+    """The B1/B2 graft: the view marks its boot section open/closed on the hub,
+    so bridge-adopted diagnostics fired BETWEEN steps place at the ledger indent."""
+
+    @staticmethod
+    def _view_with_hub(*, force_terminal: bool) -> tuple[BootView, RecordingHub]:
+        recording = RecordingHub()
+        install_hub(recording.hub)
+        logger, _console = _logger_with_console(force_terminal=force_terminal)
+        return make_boot_view(logger, time_source=_FakeClock()), recording
+
+    def test_banner_opens_and_end_section_closes_the_scope(self) -> None:
+        # conftest's autouse teardown uninstalls the hub after every test.
+        view, recording = self._view_with_hub(force_terminal=True)
+        view.banner()
+        with view.step("Reading config"):
+            pass
+        view.end_section()
+
+        (opened,) = recording.of_type(ScopeOpened)
+        (closed,) = recording.of_type(ScopeClosed)
+        assert opened.scope.kind is ScopeKind.BOOT_SECTION
+        assert closed.scope == opened.scope
+
+    def test_a_step_after_end_section_opens_a_fresh_scope(self) -> None:
+        # The second arr's boot steps reopen a section (bootstrap's per-arr loop).
+        view, recording = self._view_with_hub(force_terminal=False)
+        view.banner()
+        view.end_section()
+        with view.step("Fetching library"):
+            pass
+        view.end_section()
+
+        first, second = recording.of_type(ScopeOpened)
+        assert first.scope != second.scope
+        assert [c.scope for c in recording.of_type(ScopeClosed)] == [first.scope, second.scope]
+
+    def test_close_is_the_scope_safety_net(self) -> None:
+        # bootstrap's finally-guarded teardown: a failed section still closes.
+        view, recording = self._view_with_hub(force_terminal=False)
+        view.banner()
+        view.close()
+        view.close()  # idempotent
+
+        assert len(recording.of_type(ScopeOpened)) == 1
+        assert len(recording.of_type(ScopeClosed)) == 1

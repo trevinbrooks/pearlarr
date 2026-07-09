@@ -26,6 +26,11 @@ from .config import (
 from .json_narrow import is_json_list, is_json_obj
 from .log import LOG_NAME, LogLevel, setup_logger
 from .manual_import import ImportWaitMode
+from .output import OutputHub, Renderer
+from .output.bridge import install_bridge
+from .output.legacy_echo import LegacyRenderer
+from .output.rich_renderer import RichRenderer
+from .output.runtime import install_hub
 from .paths import PROJECT_URL, AppPaths, ensure_data_dir, resolve_paths
 from .runlock import single_instance_lock
 
@@ -298,21 +303,53 @@ def _prepare_data_dir(paths: AppPaths) -> None:
         _data_dir_unwritable(paths.data_dir, e)
 
 
-def _setup_run_logger(paths: AppPaths, log_level: LogLevel | None) -> logging.Logger:
+def _setup_run_logger(paths: AppPaths, log_level: LogLevel | None, console_format: LogFormat) -> logging.Logger:
     """``setup_logger`` for a run command, with the unwritable-dir treatment.
 
     The log-dir makedirs and the rotation renames run before any handler exists,
     so an OSError here gets the same clean stderr line as ``ensure_data_dir``.
+    ``console_format`` is the caller's ``_console_format`` peek (shared with the
+    hub's ``begin_cycle``, so the two surfaces can't disagree within a cycle).
     """
 
     try:
         return setup_logger(
             log_level=log_level or "INFO",
             log_dir=paths.log_dir,
-            console_format=_console_format(paths.config),
+            console_format=console_format,
         )
     except OSError as e:
         _data_dir_unwritable(paths.data_dir, e)
+
+
+def _console_seat(console_format: LogFormat) -> Renderer:
+    """The hub's console renderer for a cycle's format (S3).
+
+    One seat fits every format: the RichRenderer resolves the live Console per
+    render and no-ops when the console handlers aren't rich (plain/json), so a
+    format swap only refreshes the seat's fold state.
+    """
+
+    del console_format
+    return RichRenderer()
+
+
+def _install_output_hub() -> OutputHub:
+    """Build + install the per-process OutputHub (S3, once, after ``setup_logger``).
+
+    PR2 seats: the LegacyRenderer echo as the stable sink and the root+app
+    logging bridge (with warnings capture); the first ``begin_cycle`` seats the
+    RichRenderer console via ``_console_seat``. The hub's own file/line/json
+    sinks stay out until PR6 — the legacy handlers own those surfaces during the
+    strangler window. A repeat call (tests, ``run single`` twice in-process)
+    re-wires the seam. Callers install AFTER the run logger is built, so no
+    record is ever adopted before the legacy handlers exist.
+    """
+
+    hub = OutputHub([LegacyRenderer()], console_factory=_console_seat)
+    install_hub(hub)
+    install_bridge(hub)
+    return hub
 
 
 def _schedule_hours(config_path: str, logger: logging.Logger) -> float:
@@ -375,10 +412,20 @@ def run_scheduled(
     # die mid-sleep with SIGTERM's default nonzero status.
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
+    # The hub is per-process (S3): installed once, inside the loop AFTER the
+    # first setup_logger (the bridge must never precede the legacy handlers).
+    hub: OutputHub | None = None
+
     while True:
         # The config's console format is peeked each cycle (like the cadence
         # below), so a config edit takes effect without a restart.
-        logger = _setup_run_logger(paths, log_level)
+        console_format = _console_format(paths.config)
+        logger = _setup_run_logger(paths, log_level, console_format)
+        if hub is None:
+            hub = _install_output_hub()
+        # Dual-run through PR2-5: the hub cycles alongside the legacy logger;
+        # the config level lands mid-cycle via apply_log_level -> hub.set_level.
+        hub.begin_cycle(console_format=console_format, level=logger.level)
 
         # Re-read the cadence each cycle so a config edit takes effect without a
         # restart.
@@ -478,7 +525,12 @@ def run_single(
     paths = resolve_paths()
     _prepare_data_dir(paths)
 
-    logger = _setup_run_logger(paths, log_level)
+    console_format = _console_format(paths.config)
+    logger = _setup_run_logger(paths, log_level, console_format)
+    # Hub install comes AFTER the logger build, so the bridge never adopts a
+    # record (e.g. the invalid-level complaint) before the handlers exist.
+    hub = _install_output_hub()
+    hub.begin_cycle(console_format=console_format, level=logger.level)
 
     # Build the shared config + mappings once and run each requested arr. True
     # when the run proceeded and every arr completed; False (exit 1) when the

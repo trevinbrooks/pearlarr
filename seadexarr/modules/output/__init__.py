@@ -1,14 +1,19 @@
-"""SeaDexArr's output architecture (PR1: vocabulary + hub + text sinks, landed dark).
+"""SeaDexArr's output architecture (PR2: the diagnostic path is LIVE).
 
 An event-stream chassis: producers emit the closed union of frozen event
 dataclasses (:mod:`.events`) through typed scope handles (:mod:`.scopes`) into one
 synchronous :class:`~.hub.OutputHub`; surfaces subscribe as renderers. The shared
 :class:`~.breadcrumbs.BreadcrumbFold` folds scope boundaries into the open path
-(labels for the text sinks in :mod:`.textline`; placement authority arrives with
-the rich renderer in PR2). Nothing in production imports this package yet.
+(labels for the text sinks in :mod:`.textline`; the placement authority is the
+:class:`~.rich_renderer.RichRenderer`'s instance). Live since PR2: the logging
+bridge (:mod:`.bridge`) adopts stdlib records, the RichRenderer places adopted
+diagnostics against the boot/wait cockpit scopes, and the
+:class:`~.legacy_echo.LegacyRenderer` echoes third-party records to the legacy
+file path. The text sinks in :mod:`.textline` stay dark until PR6.
 """
 
 from .breadcrumbs import KIND_DEPTH, PATH_SEP, SEGMENT_WORD, BreadcrumbFold, OpenNode
+from .bridge import HubBridgeHandler, attributed_message, install_bridge, is_first_party, uninstall_bridge
 from .events import (
     Accent,
     BootReady,
@@ -57,6 +62,9 @@ from .events import (
     severity_of,
 )
 from .hub import STRIKE_LIMIT, NullRenderer, OutputHub, Renderer, SeverityCounts, SeverityTally
+from .legacy_echo import LegacyRenderer
+from .rich_renderer import RichRenderer, diagnostic_text, diagnostic_threshold
+from .runtime import current_hub, install_hub, uninstall_hub
 from .scopes import (
     PROCESS_SCOPE_IDS,
     Diagnostics,
@@ -65,6 +73,7 @@ from .scopes import (
     EntryScope,
     ScopeFactory,
     ScopeIds,
+    ScopeMark,
     StepScope,
     WaitScope,
 )
@@ -101,9 +110,11 @@ __all__ = [
     "GrabFact",
     "GrabFailed",
     "GrabStatus",
+    "HubBridgeHandler",
     "ItemStarted",
     "JsonRenderer",
     "LedgerRow",
+    "LegacyRenderer",
     "LineRenderer",
     "NeedsActionCause",
     "NeedsActionFact",
@@ -116,6 +127,7 @@ __all__ = [
     "ReleaseName",
     "ReleaseSkipped",
     "Renderer",
+    "RichRenderer",
     "RunFinished",
     "RunStarted",
     "RunSummary",
@@ -128,6 +140,7 @@ __all__ = [
     "ScopeId",
     "ScopeIds",
     "ScopeKind",
+    "ScopeMark",
     "ScopeOpened",
     "Severity",
     "SeverityCounts",
@@ -141,7 +154,16 @@ __all__ = [
     "WaitProgress",
     "WaitScope",
     "WaitStarted",
+    "attributed_message",
     "console_threshold",
+    "current_hub",
+    "diagnostic_text",
+    "diagnostic_threshold",
     "format_line",
+    "install_bridge",
+    "install_hub",
+    "is_first_party",
     "severity_of",
+    "uninstall_bridge",
+    "uninstall_hub",
 ]

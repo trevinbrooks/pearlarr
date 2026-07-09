@@ -12,7 +12,9 @@ Collaborators that the run machinery only reads as bare attributes (absorbed as
 the test that drives them.
 """
 
+import io
 import logging
+import re
 from collections.abc import Callable
 from typing import override
 
@@ -36,6 +38,22 @@ from seadexarr.modules.seadex_types import (
     SonarrItem,
 )
 from seadexarr.modules.sonarr_client import AbstractSonarrClient
+
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
+
+
+def strip_ansi(text: str) -> str:
+    """Drop ANSI escape sequences so assertions see the plain characters."""
+
+    return _ANSI.sub("", text)
+
+
+class TtyStringIO(io.StringIO):
+    """An in-memory stream that claims to be a terminal (drives the rich/TTY arms)."""
+
+    @override
+    def isatty(self) -> bool:
+        return True
 
 
 class FakeArrItem:

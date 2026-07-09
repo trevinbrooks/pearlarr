@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from seadexarr.modules.mapping_store import MappingStore
+from seadexarr.modules.output import uninstall_bridge, uninstall_hub
 from seadexarr.modules.paths import DATA_DIR_ENV
 
 from .builders import make_logger
@@ -39,7 +40,9 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     removed, level back to NOTSET): a test that ran ``setup_logger`` /
     ``apply_log_level`` would otherwise leak a console handler bound to its own
     captured stdout and a raised level into whichever test runs next under
-    randomized ordering.
+    randomized ordering. The output seam gets the same treatment: a test that
+    installed the hub/bridge (the cli run commands do) would otherwise leave the
+    bridge on the ROOT logger, echoing every later test's third-party warnings.
     """
 
     opened: list[MappingStore] = []
@@ -54,6 +57,8 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     yield
     for store in opened:
         store.close()
+    uninstall_bridge()
+    uninstall_hub()
     app_logger = logging.getLogger("SeaDexArr")
     for handler in list(app_logger.handlers):
         handler.close()
