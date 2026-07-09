@@ -1,4 +1,14 @@
-"""OutputHub: synchronous fan-out under one RLock, with per-event containment.
+"""OutputHub: enqueue under one RLock; a single drainer dispatches outside it.
+
+``emit`` appends to a bounded queue under the hub lock, and the first emitter
+becomes the combiner: it drains the queue and calls renderers with the lock
+RELEASED, re-checking for new entries before handing the baton back — so no
+event ever waits for a future emit, and the hub-lock x console-lock (ABBA)
+deadlock can never form. Deliberately not a consumer thread: this hub is the
+app's UI, and synchronous main-path dispatch keeps output ordered with program
+actions and crash-faithful; cross-thread events are rare stragglers the active
+drain picks up. Lifecycle calls (``begin_cycle``/``set_level``/``close``) park
+until no drain is in flight, so they never race a renderer's ``handle``.
 
 Renderers that raise strike out (3 per cycle, S9) and are skipped until
 ``begin_cycle`` re-arms them — never a process-latching quarantine (the verified
@@ -26,9 +36,9 @@ from ..config import LogFormat
 # Strikes per renderer per cycle before it is skipped until the next begin_cycle.
 STRIKE_LIMIT: Final = 3
 
-# Bound on events queued by re-entrant emits (a renderer emitting mid-dispatch);
-# overflow drops silently — re-entrant floods are a bug, not a data path.
-REENTRANT_QUEUE_CAP: Final = 100
+# Bound on the pending-event queue; overflow sheds the NEWEST event (one file-only
+# note per episode) — a blocking enqueue would re-form the ABBA deadlock.
+QUEUE_CAP: Final = 10_000
 
 
 class Renderer(Protocol):
@@ -169,8 +179,10 @@ class OutputHub:
         self._cycle_mark = SeverityTally()
         self._level = int(Severity.INFO)
         self._closed = False
-        self._dispatch_depth = 0
-        self._queue: deque[tuple[Event, float]] = deque()
+        self._pending: deque[tuple[Event, float]] = deque()
+        self._drainer: threading.Thread | None = None
+        self._idle = threading.Condition(self._lock)
+        self._overflowing = False
 
     @property
     def counts(self) -> SeverityCounts:
@@ -208,37 +220,92 @@ class OutputHub:
         self._counts.record(severity)
 
     def emit(self, event: Event) -> None:
-        """Dispatch to every armed renderer, in order, under the hub lock.
+        """Enqueue under the hub lock; the combiner dispatches outside it.
 
-        Total against renderer bugs: a raise strikes the renderer and surfaces as
-        a file-only diagnostic to the survivors; emit itself never raises. A
-        re-entrant emit (a renderer emitting mid-dispatch) is queued and drained
-        by the outermost dispatch — bounded, order-preserving (pre-implements the
-        S5 bridge contract). Emits on a closed hub drop silently.
+        Under the lock: closed/once-key gating, the severity tally (at enqueue,
+        so counts survive a dying renderer), one clock read, one queue append.
+        If no drain is active the caller takes the baton and drains synchronously
+        before returning; otherwise the active drainer picks the event up (its
+        loop re-checks the queue before releasing the baton) — this covers both
+        cross-thread emits and re-entrant emits from inside a renderer's handle.
+        Overflow past the cap sheds the newest event, never blocks (bounded
+        blocking would re-form the ABBA deadlock through backpressure). Total
+        against renderer bugs: a raise strikes the renderer and surfaces as a
+        file-only diagnostic to the survivors; emit itself never raises
+        (KeyboardInterrupt/SystemExit still propagate). Emits on a closed hub
+        drop silently.
         """
 
         with self._lock:
             if self._closed:
                 return
+            if isinstance(event, Diagnostic) and event.once_key is not None:
+                # Deduped events are dropped whole: not enqueued, not counted.
+                key = (event.origin, event.once_key)
+                if key in self._once_keys:
+                    return
+                self._once_keys.add(key)
+            self._counts.record(severity_of(event))
             when = self._clock()
-            if self._dispatch_depth > 0:
-                if len(self._queue) < REENTRANT_QUEUE_CAP:
-                    self._queue.append((event, when))
+            if len(self._pending) >= QUEUE_CAP:
+                # Shed rendering only (the tally above stands); one note per episode.
+                if not self._overflowing:
+                    self._overflowing = True
+                    self._pending.append((self._overflow_note(), when))
+            else:
+                self._pending.append((event, when))
+            if self._drainer is not None:
                 return
-            self._dispatch_depth += 1
-            try:
-                self._dispatch(event, when)
-                while self._queue:
-                    queued, queued_when = self._queue.popleft()
-                    self._dispatch(queued, queued_when)
-            finally:
-                self._dispatch_depth -= 1
+            self._drainer = threading.current_thread()
+        self._drain()
+
+    def _drain(self) -> None:
+        """The combiner loop: pop + snapshot under the lock, dispatch outside it.
+
+        The empty re-check before releasing the baton is the combiner guarantee:
+        no event ever waits for a future emit.
+        """
+
+        try:
+            while True:
+                with self._lock:
+                    if self._closed or not self._pending:
+                        self._pending.clear()
+                        self._overflowing = False
+                        self._drainer = None
+                        self._idle.notify_all()
+                        break
+                    event, when = self._pending.popleft()
+                    armed = [sub for sub in self._subs if sub.strikes < self._strike_limit]
+                self._dispatch(event, when, armed)
+        finally:
+            # A propagating KeyboardInterrupt/SystemExit must not strand the baton.
+            with self._lock:
+                if self._drainer is threading.current_thread():
+                    self._drainer = None
+                    self._idle.notify_all()
+
+    def _await_no_drainer(self) -> None:
+        """Park (lock held) until no OTHER thread holds the drain baton — the
+        current-thread escape prevents self-deadlock on a mid-drain lifecycle call."""
+
+        while self._drainer is not None and self._drainer is not threading.current_thread():
+            self._idle.wait()
+
+    def _overflow_note(self) -> Diagnostic:
+        return Diagnostic(
+            severity=Severity.WARNING,
+            message=f"output queue overflowed ({QUEUE_CAP} pending); shedding newest events until it drains",
+            origin="output.hub",
+            file_only=True,
+        )
 
     def begin_cycle(self, *, console_format: LogFormat, level: int) -> None:
         """Per-cycle turnover: re-arm strikes, clear once-keys, swap the console
         renderer when the re-peeked format changed, rotate/reset sinks, mark counts."""
 
         with self._lock:
+            self._await_no_drainer()
             if self._closed:
                 return
             self._once_keys.clear()
@@ -258,6 +325,7 @@ class OutputHub:
         """Forward the configured level; each surface applies its own floor semantics (S4)."""
 
         with self._lock:
+            self._await_no_drainer()
             self._level = level
             for sub in self._subs:
                 try:
@@ -269,6 +337,7 @@ class OutputHub:
         """Idempotent teardown of every surface (file close, Live stop in PR2+)."""
 
         with self._lock:
+            self._await_no_drainer()
             if self._closed:
                 return
             self._closed = True
@@ -277,26 +346,22 @@ class OutputHub:
                     sub.renderer.close()
 
     def _strike(self, sub: _Sub) -> None:
-        """One strike; crossing the limit also closes the renderer — a quarantined
-        seat must release its resources (a struck boot Live keeps repainting otherwise)."""
+        """One strike (under a brief lock re-acquire); crossing the limit also closes
+        the renderer — a quarantined seat must release its resources (a struck boot
+        Live keeps repainting otherwise)."""
 
-        sub.strikes += 1
-        if sub.strikes == self._strike_limit:
+        with self._lock:
+            sub.strikes += 1
+            crossed = sub.strikes == self._strike_limit
+        if crossed:
             with contextlib.suppress(Exception):
                 sub.renderer.close()
 
-    def _dispatch(self, event: Event, when: float) -> None:
-        if isinstance(event, Diagnostic) and event.once_key is not None:
-            # Deduped events are dropped whole: not dispatched, not counted.
-            key = (event.origin, event.once_key)
-            if key in self._once_keys:
-                return
-            self._once_keys.add(key)
-        self._counts.record(severity_of(event))
+    def _dispatch(self, event: Event, when: float, subs: Sequence[_Sub]) -> None:
+        """Fan one event out to the snapshotted subs — no hub lock held here."""
+
         failures: list[tuple[_Sub, Exception]] = []
-        for sub in self._subs:
-            if sub.strikes >= self._strike_limit:
-                continue
+        for sub in subs:
             try:
                 sub.renderer.handle(event, when)
             except Exception as exc:
@@ -345,9 +410,9 @@ class OutputHub:
             trace=CapturedTrace.from_exception(exc),
             file_only=True,
         )
-        for sub in self._subs:
-            if sub is skip or sub.strikes >= self._strike_limit:
-                continue
+        with self._lock:
+            armed = [sub for sub in self._subs if sub is not skip and sub.strikes < self._strike_limit]
+        for sub in armed:
             try:
                 sub.renderer.handle(note, when)
             except Exception:

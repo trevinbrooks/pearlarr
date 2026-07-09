@@ -1,13 +1,17 @@
 # pyright: strict
+# pyright: reportPrivateUsage=false
 """Tests for the OutputHub (``output.hub``).
 
 Pin the dispatch contract (every surface, emit order), per-event containment
 with N strikes + per-cycle re-arm (never process-latching), the once= dedup
-store, SeverityCounts mark/counts_since, set_level fan-out, and the console
-renderer swap on a format change at begin_cycle.
+store, SeverityCounts mark/counts_since, set_level fan-out, the console
+renderer swap on a format change at begin_cycle, and the combiner: renderers
+run without the hub lock, concurrent emits hand off to the active drainer, and
+lifecycle calls wait out an in-flight drain.
 """
 
 import logging
+import threading
 from typing import override
 
 import pytest
@@ -25,6 +29,7 @@ from seadexarr.modules.output import (
     SeverityCounts,
     SeverityTally,
 )
+from seadexarr.modules.output.hub import QUEUE_CAP
 from seadexarr.modules.output.recording import RecordingHub, RecordingRenderer
 
 _EVENT = RunStarted(version="v1.0.0", data_dir="/data")
@@ -75,6 +80,103 @@ class _EmittingRenderer:
         if not self.emitted and self.hub is not None:
             self.emitted = True
             self.hub.emit(Diagnostic(severity=Severity.INFO, message="re-entrant"))
+
+    def begin_cycle(self) -> None:
+        pass
+
+    def set_level(self, level: int) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class _DoubleEmittingRenderer(_EmittingRenderer):
+    """Emits two follow-ups from inside handle of the first event (FIFO probe)."""
+
+    @override
+    def handle(self, event: Event, when: float) -> None:
+        if not self.emitted and self.hub is not None:
+            self.emitted = True
+            self.hub.emit(Diagnostic(severity=Severity.INFO, message="first"))
+            self.hub.emit(Diagnostic(severity=Severity.INFO, message="second"))
+
+
+class _LockProbeRenderer:
+    """handle() probes the hub lock from a HELPER thread (the same thread would
+    trivially re-acquire an RLock it owns)."""
+
+    def __init__(self) -> None:
+        self.hub: OutputHub | None = None
+        self.lock_was_free: list[bool] = []
+
+    def handle(self, event: Event, when: float) -> None:
+        hub = self.hub
+        assert hub is not None
+        acquired: list[bool] = []
+
+        def probe() -> None:
+            if hub._lock.acquire(blocking=False):
+                hub._lock.release()
+                acquired.append(True)
+            else:
+                acquired.append(False)
+
+        helper = threading.Thread(target=probe)
+        helper.start()
+        helper.join(timeout=5.0)
+        self.lock_was_free.extend(acquired)
+
+    def begin_cycle(self) -> None:
+        pass
+
+    def set_level(self, level: int) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class _GatedRenderer:
+    """Blocks inside handle (on the first event only) until released; records each
+    handled event with its handling thread plus lifecycle calls, in one order log."""
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.handled: list[tuple[str, threading.Thread]] = []
+        self.log: list[str] = []
+        self._blocked_once = False
+
+    def handle(self, event: Event, when: float) -> None:
+        name = type(event).__name__
+        self.handled.append((name, threading.current_thread()))
+        if not self._blocked_once:
+            self._blocked_once = True
+            self.entered.set()
+            assert self.release.wait(timeout=5.0), "gate never released"
+        self.log.append(f"handled:{name}")
+
+    def begin_cycle(self) -> None:
+        self.log.append("cycle")
+
+    def set_level(self, level: int) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class _InterruptOnceRenderer:
+    """Raises KeyboardInterrupt on the first handle only (the baton-recovery probe)."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def handle(self, event: Event, when: float) -> None:
+        self.calls += 1
+        if self.calls == 1:
+            raise KeyboardInterrupt
 
     def begin_cycle(self) -> None:
         pass
@@ -218,6 +320,112 @@ def test_a_reentrant_emit_is_queued_and_drained_after_the_outer_event() -> None:
     assert [type(event).__name__ for event in observer.events] == ["RunStarted", "Diagnostic"]
 
 
+def test_reentrant_emits_drain_fifo_before_the_outer_emit_returns() -> None:
+    emitter, observer = _DoubleEmittingRenderer(), RecordingRenderer()
+    hub = OutputHub([emitter, observer])
+    emitter.hub = hub
+
+    hub.emit(_EVENT)
+
+    # Both follow-ups drained inside the same emit call, in enqueue order.
+    assert isinstance(observer.events[0], RunStarted)
+    assert [d.message for d in observer.of_type(Diagnostic)] == ["first", "second"]
+
+
+# --- the combiner (dispatch outside the hub lock) -------------------------------------
+
+
+def test_handle_runs_without_the_hub_lock_held() -> None:
+    probe = _LockProbeRenderer()
+    hub = OutputHub([probe])
+    probe.hub = hub
+
+    hub.emit(_EVENT)
+
+    assert probe.lock_was_free == [True]
+
+
+def test_a_concurrent_emit_hands_off_to_the_active_drainer() -> None:
+    gated = _GatedRenderer()
+    hub = OutputHub([gated])
+
+    drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
+    drainer.start()
+    assert gated.entered.wait(timeout=5.0)
+
+    # B's emit returns immediately without dispatching: A still owns the baton.
+    hub.emit(Diagnostic(severity=Severity.INFO, message="from B"))
+    assert [name for name, _ in gated.handled] == ["RunStarted"]
+
+    gated.release.set()
+    drainer.join(timeout=5.0)
+    assert not drainer.is_alive()
+    assert [name for name, _ in gated.handled] == ["RunStarted", "Diagnostic"]
+    assert gated.handled[1][1] is drainer  # A's drain loop delivered B's event
+
+
+def test_a_propagating_interrupt_never_strands_the_baton() -> None:
+    flaky, survivor = _InterruptOnceRenderer(), RecordingRenderer()
+    hub = OutputHub([flaky, survivor])
+
+    with pytest.raises(KeyboardInterrupt):
+        hub.emit(_EVENT)
+    assert hub._drainer is None  # the finally released the baton
+
+    follow = Diagnostic(severity=Severity.INFO, message="after")
+    hub.emit(follow)  # a fresh emit claims the baton and dispatches
+    assert follow in survivor.events
+
+
+def test_lifecycle_waits_for_the_active_drain_to_finish() -> None:
+    gated = _GatedRenderer()
+    hub = OutputHub([gated])
+
+    drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
+    drainer.start()
+    assert gated.entered.wait(timeout=5.0)
+
+    lifecycle = threading.Thread(target=lambda: hub.begin_cycle(console_format="plain", level=logging.INFO))
+    lifecycle.start()
+    # A bounded chance for a broken (non-waiting) begin_cycle to interleave.
+    lifecycle.join(timeout=0.2)
+    assert lifecycle.is_alive()  # parked until the drain finishes
+    assert "cycle" not in gated.log
+
+    gated.release.set()
+    drainer.join(timeout=5.0)
+    lifecycle.join(timeout=5.0)
+    assert gated.log == ["handled:RunStarted", "cycle"]
+
+
+def test_overflow_sheds_newest_with_one_note_per_episode() -> None:
+    gated, observer = _GatedRenderer(), RecordingRenderer()
+    hub = OutputHub([gated, observer])
+    mark = hub.counts.mark()
+
+    drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
+    drainer.start()
+    assert gated.entered.wait(timeout=5.0)
+
+    # Fill the stalled queue to the cap, then two more that must be shed.
+    for i in range(QUEUE_CAP):
+        hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
+    hub.emit(Diagnostic(severity=Severity.INFO, message="dropped-1"))
+    hub.emit(Diagnostic(severity=Severity.INFO, message="dropped-2"))
+
+    gated.release.set()
+    drainer.join(timeout=30.0)
+    assert not drainer.is_alive()
+
+    messages = [d.message for d in observer.of_type(Diagnostic)]
+    assert f"q{QUEUE_CAP - 1}" in messages  # everything under the cap still renders
+    assert "dropped-1" not in messages and "dropped-2" not in messages
+    assert sum("overflowed" in m for m in messages) == 1  # one note, not one per drop
+    # Shed events were still counted at enqueue; the note itself is never counted.
+    since = hub.counts.counts_since(mark)
+    assert (since.info, since.warnings) == (QUEUE_CAP + 3, 0)
+
+
 # --- once= dedup ---------------------------------------------------------------------
 
 
@@ -272,6 +480,15 @@ def test_hub_tallies_every_emitted_event() -> None:
 
     since = recording.hub.counts.counts_since(mark)
     assert (since.info, since.errors) == (1, 1)
+
+
+def test_severity_is_counted_at_enqueue_even_when_every_renderer_raises() -> None:
+    hub = OutputHub([_FailingRenderer(), _FailingRenderer()])
+    mark = hub.counts.mark()
+
+    hub.emit(Diagnostic(severity=Severity.ERROR, message="boom"))
+
+    assert hub.counts.counts_since(mark).errors == 1
 
 
 def test_cycle_counts_reads_the_delta_since_begin_cycle() -> None:

@@ -572,8 +572,8 @@ class _GrammarSink(_TextLineSink):
 class LineRenderer(_GrammarSink):
     """Plain stdout: the file grammar on the console (pipes, Docker logs).
 
-    Flushes per line; stdout blocking under the hub lock is parity with stdlib
-    logging today — revisit at PR2 if it ever matters.
+    Flushes per line; stdout blocking happens under the drain baton (never the
+    hub lock), which is parity with stdlib logging's handler lock.
     """
 
     def __init__(self, stream: TextIO) -> None:
