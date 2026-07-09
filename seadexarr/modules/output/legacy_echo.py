@@ -6,7 +6,7 @@ to be persisted. Every re-emission carries the ``HUB_EVENT`` mark: the bridge
 drops it (loop-proof) and the rich console handler skips it (the hub's renderer
 already owns the console); the FileHandler writes it and LogCounter counts it.
 
-Two event families echo here:
+Three event families echo here:
 
 * Adopted third-party diagnostics — so stragglers now reach the file and the
   run's issue tally (N1, a deliberate fix). ``file_only`` diagnostics (hub
@@ -20,6 +20,12 @@ Two event families echo here:
   bytes and LogCounter tallies are unchanged). The heads-up echoes only when the
   console is NOT live-capable: the old ``LiveBootView`` never logged it, so a
   live-TTY run's file must not gain it now.
+* The scan surface (PR4) — banners, ledger rows, entry blocks, action blocks,
+  the run summary — re-logged as today's EXACT records via the shared
+  :mod:`.scan_lines` builders (message + ``CONSOLE_EXTRA`` payload both ride, so
+  a record is indistinguishable from the reporter's own). ``ReleaseSkipped`` /
+  ``GrabFailed`` stay pass-arms: their producers are still raw logger warnings
+  the bridge adopts (a later band converts them).
 """
 
 from __future__ import annotations
@@ -59,8 +65,9 @@ from .events import (
     WaitProgress,
     WaitStarted,
 )
+from .scan_lines import ScanEvent, scan_event_lines
 from ..console_caps import Capabilities, CapsCache, console_of
-from ..log import HUB_EVENT, HUB_FILE_ONLY, LOG_NAME
+from ..log import CONSOLE_EXTRA, HUB_EVENT, HUB_FILE_ONLY, LOG_NAME
 
 
 @final
@@ -83,30 +90,34 @@ class LegacyRenderer:
             case RunStarted() | BootStepSlow() | BootStepFinished() | BootReady():
                 self._boot_ledger(event)
             case (
+                ScanStarted()
+                | ItemStarted()
+                | EntryHeader()
+                | EntryDetail()
+                | LedgerRow()
+                | GrabAction()
+                | CapReached()
+                | RunSummaryReady()
+            ):
+                self._scan(event)
+            case (
                 CycleStarted()
                 | NextRunScheduled()
                 | ScopeOpened()
                 | ScopeClosed()
                 | BootStepStarted()
                 | BootStepProgressed()
-                | ScanStarted()
-                | ItemStarted()
-                | EntryHeader()
-                | EntryDetail()
-                | LedgerRow()
                 | ReleaseSkipped()
                 | GrabFailed()
-                | GrabAction()
-                | CapReached()
                 | ScanFinished()
-                | RunSummaryReady()
                 | WaitStarted()
                 | WaitProgress()
                 | TorrentGraduated()
                 | WaitFinished()
                 | RunFinished()
             ):
-                # The legacy producers still render these surfaces themselves.
+                # The legacy producers still render these surfaces themselves
+                # (ScanFinished/RunFinished have no legacy line at all).
                 pass
             case _:
                 assert_never(event)
@@ -140,6 +151,25 @@ class LegacyRenderer:
                 self._echo_line(graduation_line(event, self._caps()))
             case BootReady(elapsed_s=elapsed_s):
                 self._echo_line(ready_line(elapsed_s))
+
+    def _scan(self, event: ScanEvent) -> None:
+        """Re-emit a scan event's legacy lines through the app logger.
+
+        Each line carries its exact message AND its ``CONSOLE_EXTRA`` payload,
+        so the record is indistinguishable from the reporter's own on every
+        legacy surface (file bytes, plain/json stdout, LogCounter).
+        """
+
+        # Gate once before assembly: an EntryDetail line carries its own
+        # severity; every other scan line is INFO. logger.log re-gates per line.
+        gate = int(event.severity) if isinstance(event, EntryDetail) else logging.INFO
+        if not self._logger.isEnabledFor(gate):
+            return
+        for line in scan_event_lines(event):
+            extra: dict[str, object] = {HUB_EVENT: True}
+            if line.payload is not None:
+                extra[CONSOLE_EXTRA] = line.payload
+            self._logger.log(line.level, line.message, extra=extra)
 
     def _echo_line(self, message: str) -> None:
         """One INFO boot-ledger line back through the app logger."""

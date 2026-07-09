@@ -1,14 +1,15 @@
-"""The rich console surface (PR3: diagnostics + the boot cockpit; grows into the
-full renderer).
+"""The rich console surface (PR3: diagnostics + the boot cockpit; PR4: the scan
+arm; grows into the full renderer).
 
 Diagnostics are position-free; this renderer is the single ambient placement
 authority: its :class:`~.breadcrumbs.BreadcrumbFold` instance decides where a
-diagnostic lands: boot-ledger indent while the boot section is open, the wait
-indent while the wait region is open, column 0 otherwise. Mid-scan diagnostics
-stay column-0 until PR4 emits the scan scopes (bug parity with today's
-punch-through). The boot events (banner / steps / capstone) drive the
-:class:`~.boot_region.BootRegion` — the live spinner and the durable ledger
-lines moved there from ``boot_view``.
+diagnostic lands: indented while a boot section, wait region, or entry block is
+open, column 0 otherwise (RUN/ITEM alone stays column-0 — bug parity with
+today's punch-through until the producer band emits entry scopes). The boot
+events (banner / steps / capstone) drive the :class:`~.boot_region.BootRegion`
+— the live spinner and the durable ledger lines moved there from ``boot_view``.
+The scan events render through the shared :mod:`.scan_lines` builders at
+LOGGER-parity gating, so the console shows exactly what the file logs.
 
 During the strangler window the renderer resolves the CURRENT shared Console at
 render time from the live :class:`~..log.RichConsoleHandler` (``setup_logger``
@@ -63,6 +64,7 @@ from .events import (
     WaitProgress,
     WaitStarted,
 )
+from .scan_lines import ScanEvent, render_legacy_lines, scan_event_lines
 from .trace import CapturedTrace
 from ..console_caps import CapsCache, console_of
 from ..log import INDENT, LOG_NAME, RichConsoleHandler, badge_line, console_level
@@ -143,26 +145,30 @@ class RichRenderer:
                 # Scope boundaries feed the fold (and the departure check) only.
                 pass
             case (
-                CycleStarted()
-                | NextRunScheduled()
-                | ScanStarted()
+                ScanStarted()
                 | ItemStarted()
                 | EntryHeader()
                 | EntryDetail()
                 | LedgerRow()
-                | ReleaseSkipped()
-                | GrabFailed()
                 | GrabAction()
                 | CapReached()
-                | ScanFinished()
                 | RunSummaryReady()
+            ):
+                self._scan(event)
+            case (
+                CycleStarted()
+                | NextRunScheduled()
+                | ReleaseSkipped()
+                | GrabFailed()
+                | ScanFinished()
                 | WaitStarted()
                 | WaitProgress()
                 | TorrentGraduated()
                 | WaitFinished()
                 | RunFinished()
             ):
-                # No render arms yet; they arrive with PR4-5.
+                # ReleaseSkipped/GrabFailed producers are still raw logger
+                # warnings the bridge adopts; the wait arms arrive with PR5.
                 pass
             case _:
                 assert_never(event)
@@ -201,10 +207,25 @@ class RichRenderer:
                 ),
             )
 
-    def _cockpit_open(self) -> bool:
-        """True while a boot section or wait region is open (the two PR2 scopes)."""
+    def _scan(self, event: ScanEvent) -> None:
+        """The scan console arm: the shared legacy lines over the shared Console.
 
-        return any(node.kind in (ScopeKind.BOOT_SECTION, ScopeKind.WAIT_REGION) for node in self._crumbs.nodes())
+        Gating is LOGGER parity (``render_legacy_lines``): at a configured
+        WARNING the INFO scan lines vanish from the console exactly as they
+        vanish from the file — deliberately NOT the diagnostics' console floor.
+        """
+
+        console = self._console_source()
+        if console is None:
+            return
+        render_legacy_lines(console, scan_event_lines(event), self._level)
+
+    def _cockpit_open(self) -> bool:
+        """True while a boot section, wait region, or entry block is open — the
+        indented contexts a diagnostic folds into (RUN/ITEM alone stays column-0)."""
+
+        indented = (ScopeKind.BOOT_SECTION, ScopeKind.WAIT_REGION, ScopeKind.ENTRY)
+        return any(node.kind in indented for node in self._crumbs.nodes())
 
     def _boot_section_open(self) -> bool:
         """Whether the boot section sits on the frontier (the stack is <=4 nodes)."""

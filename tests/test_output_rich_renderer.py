@@ -3,10 +3,11 @@
 
 Pin ambient placement against the PR2 cockpit scopes (boot-ledger indent while
 the boot section is open, wait indent while the wait region is open, column 0
-otherwise - including mid-scan, bug-parity until PR4), the S4 floors (third-party
-WARNING floor unless DEBUG; first-party INFO renders dim), the ``file_only`` and
-no-rich-console no-ops, trace rendering without locals, markup literalness, and
-the begin_cycle fold reset.
+otherwise - including under bare RUN/ITEM nodes, bug-parity until the producer
+band emits entry scopes), the S4 floors (third-party WARNING floor unless DEBUG;
+first-party INFO renders dim), the ``file_only`` and no-rich-console no-ops,
+trace rendering without locals, markup literalness, and the begin_cycle fold
+reset. The ENTRY-indent arm is pinned in ``test_output_scan_render``.
 """
 
 import io
@@ -79,9 +80,10 @@ class TestPlacement:
 
         assert _lines(stream) == [f"{INDENT}WARNING  webhook flaked"]
 
-    def test_mid_scan_stays_at_column_zero_until_pr4(self) -> None:
-        """Bug parity: scan scopes aren't emitted yet, so mid-scan diagnostics
-        keep today's column-0 placement (PR4 moves them in-context)."""
+    def test_mid_scan_stays_at_column_zero_under_run_and_item_alone(self) -> None:
+        """Bug parity: producers don't emit ENTRY scopes yet, so a mid-scan
+        diagnostic keeps today's column-0 placement under bare RUN/ITEM nodes
+        (an open entry scope indents it - see test_output_scan_render)."""
 
         renderer, stream = _renderer()
 
@@ -92,7 +94,9 @@ class TestPlacement:
             _warning("mid-scan"),
         )
 
-        assert _lines(stream) == ["WARNING  mid-scan"]
+        # The scan arm renders the banner/header lines (PR4); the diagnostic
+        # itself lands un-indented at column 0.
+        assert _lines(stream)[-1] == "WARNING  mid-scan"
 
     def test_begin_cycle_resets_the_fold(self) -> None:
         renderer, stream = _renderer()

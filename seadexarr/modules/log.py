@@ -142,6 +142,44 @@ def print_titled_rule(console: Console, title: str, style: str, *, heavy: bool) 
     console.print(Text(title, style=f"{style} bold"), highlight=False, soft_wrap=True)
 
 
+def render_kv(kv: KvLine) -> Text:
+    """Build a styled "key : value" (or gutter "key value") line from a kv payload.
+
+    The leading "<indent><key><sep>" segment comes from the shared _kv_prefix
+    helper, so this matches kv_string (the file log) exactly. Labels are a
+    fixed dim grey50 so the value reads first. An optional ``tail`` (e.g., a
+    "(marked incomplete)" note) is appended console-side only. Module-level so
+    the hub's console seat (output/scan_lines.py) shares the handler's look.
+    """
+
+    prefix = _kv_prefix(kv.indent, kv.key, kv.key_width, kv.sep)
+    line = Text(prefix, style="grey50")
+    value = kv.value
+    if isinstance(value, Text):
+        # A pre-styled value (e.g., a torrent name with its release group
+        # highlighted) already carries its own spans, so append it as-is and
+        # let those stand - value_style here would flatten them.
+        if len(value):
+            line.append(" ")
+            line.append(value)
+    elif value != "":
+        line.append(" ")
+        line.append(Text(value, style=kv.value_style or ""))
+    if kv.tail:
+        line.append(" ")
+        line.append(Text(kv.tail, style=kv.tail_style or "yellow"))
+    return line
+
+
+def render_rule(char: str) -> Rule:
+    """A full-width separator: heavy ("━") for section ("=") breaks, light ("─")
+    for sub ("-") breaks, so the two stay distinguishable without color."""
+
+    if "=" in char:
+        return Rule(style="cyan", characters="━")
+    return Rule(style="grey37", characters="─")
+
+
 class RichConsoleHandler(logging.Handler):
     """Console log handler that renders records through ``rich``.
 
@@ -200,40 +238,9 @@ class RichConsoleHandler(logging.Handler):
         super().__init__(level=level)
         self.console = console
 
-    @staticmethod
-    def _render_kv(kv: KvLine) -> Text:
-        """Build a styled "key : value" (or gutter "key value") line from a kv payload.
-
-        The leading "<indent><key><sep>" segment comes from the shared _kv_prefix
-        helper, so this matches kv_string (the file log) exactly. Labels are a
-        fixed dim grey50 so the value reads first. An optional ``tail`` (e.g., a
-        "(marked incomplete)" note) is appended console-side only.
-        """
-        prefix = _kv_prefix(kv.indent, kv.key, kv.key_width, kv.sep)
-        line = Text(prefix, style="grey50")
-        value = kv.value
-        if isinstance(value, Text):
-            # A pre-styled value (e.g., a torrent name with its release group
-            # highlighted) already carries its own spans, so append it as-is and
-            # let those stand - value_style here would flatten them.
-            if len(value):
-                line.append(" ")
-                line.append(value)
-        elif value != "":
-            line.append(" ")
-            line.append(Text(value, style=kv.value_style or ""))
-        if kv.tail:
-            line.append(" ")
-            line.append(Text(kv.tail, style=kv.tail_style or "yellow"))
-        return line
-
     def _print_rule(self, char: str) -> None:
-        """A full-width separator: heavy ("━") for section ("=") breaks, light
-        ("─") for sub ("-") breaks, so the two stay distinguishable without color."""
-        if "=" in char:
-            self.console.print(Rule(style="cyan", characters="━"))
-        else:
-            self.console.print(Rule(style="grey37", characters="─"))
+        """Delegates to the module-level ``render_rule`` (shared with the hub seat)."""
+        self.console.print(render_rule(char))
 
     def _print_line(self, record: logging.LogRecord, message: str, payload: StyledLine | None) -> None:
         """A plain message: level badge for WARNING+, optional style.
@@ -310,7 +317,7 @@ class RichConsoleHandler(logging.Handler):
                     # and surfaced in the run summary's "issues" tally; here,
                     # position and value_style carry the meaning.
                     self.console.print(
-                        self._render_kv(payload),
+                        render_kv(payload),
                         highlight=False,
                         soft_wrap=True,
                     )
