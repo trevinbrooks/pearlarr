@@ -40,6 +40,7 @@ from seadexarr.modules.log import LogCounter, LogFormatter
 from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport
 from seadexarr.modules.mappings import MappingResolver, MappingSources
 from seadexarr.modules.notify import Notifier
+from seadexarr.modules.output import emit_to_hub
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.reporter import RunContext, RunReporter
 from seadexarr.modules.run_services import RunDeps, RunServices
@@ -539,7 +540,6 @@ def make_torrent_record(
 
 def _real_reporter(
     logger: logging.Logger,
-    log_fmt: LogFormatter,
     cache_store: AbstractCacheStore,
     web: httpx.Client,
 ) -> RunReporter:
@@ -547,11 +547,14 @@ def _real_reporter(
 
     The reporter is a presentation collaborator with a large surface; rather than
     fake it, the factories build the real one with a faked cache store + a real
-    (cache-backed) AniList gateway - so a driven path logs through the real code.
+    (cache-backed) AniList gateway - so a driven path emits through the real code.
+    It emits through the production hub resolver (``emit_to_hub``); with no hub
+    installed (conftest uninstalls per test), the events drop silently.
     """
 
     return RunReporter(
-        log_fmt=log_fmt,
+        emit=emit_to_hub,
+        logger=logger,
         cache_store=cache_store,
         anilist=AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=web, logger=logger)),
     )
@@ -651,7 +654,7 @@ def make_run_deps(
         notifier=Notifier(discord_url=None, webhook_url=None, web=http, logger=logger),
         planner=make_planner(),
         log_fmt=log_fmt,
-        reporter=_real_reporter(logger, log_fmt, cache_store, http),
+        reporter=_real_reporter(logger, cache_store, http),
     )
 
 
@@ -752,7 +755,7 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         ),
         # No discord/webhook url -> a disabled, best-effort no-op notifier.
         "_notifier": Notifier(discord_url=None, webhook_url=None, web=web, logger=logger),
-        "_reporter": _real_reporter(logger, log_fmt, cache_store, web),
+        "_reporter": _real_reporter(logger, cache_store, web),
         "log_fmt": log_fmt,
         "qbit": CLIENT_SENTINEL,
         "_ctx": RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
@@ -779,7 +782,7 @@ def make_import_wait_manager(**overrides: Any) -> ImportWaitManager:
     defaults: dict[str, Any] = {
         "_config": config,
         "cache_store": cache_store,
-        "_reporter": _real_reporter(logger, LogFormatter(logger), cache_store, httpx.Client()),
+        "_reporter": _real_reporter(logger, cache_store, httpx.Client()),
         "logger": logger,
         "qbit": None,
         "_ctx": RunContext(arr=Arr.SONARR),

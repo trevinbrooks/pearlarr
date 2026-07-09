@@ -13,6 +13,7 @@ import logging
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import Literal
 
 import httpx
 import qbittorrentapi
@@ -29,6 +30,7 @@ from .log import EntryState, LogFormatter
 from .manual_import import ImportWaitMode
 from .mappings import ExternalIds, MappingEntry, MappingResolver
 from .notify import Notifier
+from .output import emit_to_hub
 from .planner import DownloadPlanner
 from .reporter import RunContext, RunReporter, is_preview
 from .seadex_filter import FilterResult, SeadexReleaseFilter
@@ -218,9 +220,11 @@ class RunDeps:
                 logger=logger,
             ),
             log_fmt=log_fmt,
-            # Presentation: owns every log_* method and the end-of-run summary.
+            # Presentation: every log_* method emits a typed output event through
+            # the process hub (resolved at call time), never rendering directly.
             reporter=RunReporter(
-                log_fmt=log_fmt,
+                emit=emit_to_hub,
+                logger=logger,
                 cache_store=cache_store,
                 anilist=anilist,
             ),
@@ -629,14 +633,9 @@ class RunServices:
     # only log_* methods kept here are the ones the Sonarr/Radarr strategies
     # invoke through their services view; each delegates the same way.
 
-    def log_entry_status(
-        self,
-        state: EntryState,
-        label: str,
-        style: str | None = "grey50",
-    ) -> bool:
+    def log_entry_status(self, state: EntryState, label: str) -> bool:
         """Log a one-line entry status row (delegates to RunReporter)."""
-        return self._reporter.log_entry_status(state, label, style=style)
+        return self._reporter.log_entry_status(state, label)
 
     def log_anilist_item_unmonitored(self, item_title: str) -> bool:
         """Log an unmonitored-item skip (delegates to RunReporter)."""
@@ -660,7 +659,7 @@ class RunServices:
         self,
         arr: Arr,
         al_id: int,
-        state: EntryState = EntryState.UNCHANGED,
+        state: Literal[EntryState.UNCHANGED, EntryState.IN_RADARR] = EntryState.UNCHANGED,
     ) -> bool:
         """Log a cached entry (delegates to RunReporter)."""
         return self._reporter.log_cached_entry(self._ctx, arr, al_id, state=state)

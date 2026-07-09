@@ -1,4 +1,6 @@
-# pyright: strict
+# pyright: strict, reportPrivateUsage=false
+# reportPrivateUsage is off for the dual-list parity pins alone: the producer's
+# _TIP_PRECEDENCE and the builder's _TIP_TEXTS are deliberately private twins.
 """Golden harness for the scan surface (PR4 Band C): the grammar contract.
 
 Every constant below was captured by RUNNING the current ``RunReporter`` (not
@@ -17,7 +19,7 @@ event -> the same lines.
 import itertools
 import logging
 import time
-from typing import Any, override
+from typing import Any, get_args, override
 
 import httpx
 import pytest
@@ -33,11 +35,9 @@ from seadexarr.modules.log import (
     EntryState,
     KvLine,
     LogCounter,
-    LogFormatter,
     SectionRule,
     StyledLine,
     TitledRule,
-    console_payload,
     group_highlight,
 )
 from seadexarr.modules.manual_import import ImportWaitMode, PendingState
@@ -46,6 +46,7 @@ from seadexarr.modules.output import (
     CapReached,
     EntryDetail,
     EntryHeader,
+    Event,
     GrabAction,
     GrabStatus,
     ItemStarted,
@@ -57,9 +58,13 @@ from seadexarr.modules.output import (
     RunSummaryReady,
     RunTally,
     ScanStarted,
+    ScopeClosed,
+    ScopeOpened,
     StyledValue,
 )
+from seadexarr.modules.output.scan_lines import _TIP_TEXTS, ScanEvent
 from seadexarr.modules.reporter import (
+    _TIP_PRECEDENCE,
     GrabRecord,
     NeedsActionKind,
     NeedsActionRecord,
@@ -70,7 +75,7 @@ from seadexarr.modules.reporter import (
 from seadexarr.modules.torrents import AddOutcome, ReleaseOutcome
 
 from .builders import FakeCacheStore, make_entry_record, pending_import, rg_group, url_item
-from .fakes import CaptureHandler
+from .fakes import SCAN_EVENT_TYPES, scan_lines_from_events
 
 type Line = tuple[int, str, ConsoleRender | None]
 """One pinned record: (levelno, plain message, CONSOLE_EXTRA payload)."""
@@ -173,6 +178,7 @@ IGNORED_LINES: tuple[Line, ...] = (
 CHECKING_FULL = EntryHeader(
     state=EntryState.CHECKING,
     title="Frieren",
+    al_id=1,
     coverage="S01 E01-E28",
     url="https://releases.moe/111852",
     incomplete=True,
@@ -189,7 +195,12 @@ CHECKING_FULL_LINES: tuple[Line, ...] = (
     ),
 )
 
-CHECKING_URL_ONLY = EntryHeader(state=EntryState.CHECKING, title="Perfect Blue", url="https://releases.moe/437")
+CHECKING_URL_ONLY = EntryHeader(
+    state=EntryState.CHECKING,
+    title="Perfect Blue",
+    al_id=1,
+    url="https://releases.moe/437",
+)
 CHECKING_URL_ONLY_LINES: tuple[Line, ...] = (
     _blank(),
     _styled("  checking    Perfect Blue", ""),
@@ -368,6 +379,32 @@ ACTION_DOWNLOADING_NO_WAIT_LINES: tuple[Line, ...] = (
         style="yellow",
     ),
     _detail("    group     GroupA [HDR]", "group", "GroupA [HDR]", style="cyan"),
+    _detail(
+        "    downloading [GroupA] Frieren S01 1080p.mkv",
+        "downloading",
+        "[GroupA] Frieren S01 1080p.mkv",
+        style="yellow",
+    ),
+)
+
+# Mixed outcomes render grouped - all added, then all downloading - regardless
+# of results order (accepted Band-D delta; OLD interleaved in results order).
+ACTION_MIXED = GrabAction(
+    status=GrabStatus.ADDING,
+    groups=_FRESH_GROUPS,
+    added=(ReleaseName(name="[GroupB] Frieren S01 1080p.mkv", group="GroupB"),),
+    downloading=_DOWNLOADING,
+)
+ACTION_MIXED_LINES: tuple[Line, ...] = (
+    _detail(
+        "    status    adding SeaDex's recommended release",
+        "status",
+        "adding SeaDex's recommended release",
+        style=None,
+    ),
+    _detail("    group     GroupA [HDR]", "group", "GroupA [HDR]", style="cyan"),
+    _detail("    group     GroupB", "group", "GroupB", style="cyan"),
+    _detail("    added     [GroupB] Frieren S01 1080p.mkv", "added", "[GroupB] Frieren S01 1080p.mkv", style="green"),
     _detail(
         "    downloading [GroupA] Frieren S01 1080p.mkv",
         "downloading",
@@ -764,14 +801,18 @@ class _ScriptedTitleClient(AniListClient):
 
 
 class _Harness:
-    """A real RunReporter (real gateway, faked leaves) with record capture."""
+    """A real RunReporter (real gateway, faked leaves) recording emitted events."""
 
     def __init__(self, store: AbstractCacheStore | None = None, title: str | None = None) -> None:
         self.logger = _fresh_logger()
-        self.handler = CaptureHandler()
-        self.logger.addHandler(self.handler)
+        # NullHandler: the scripted summary warnings/errors are COUNTED by the
+        # logger's LogCounter filter (the issues delta) but rendered nowhere; the
+        # parity lines come from the recorded EVENTS below, never from records.
+        self.logger.addHandler(logging.NullHandler())
+        self.events: list[Event] = []
         self.reporter = RunReporter(
-            log_fmt=LogFormatter(self.logger),
+            emit=self.events.append,
+            logger=self.logger,
             cache_store=store if store is not None else FakeCacheStore(),
             anilist=AniListGateway(
                 cache_store=FakeCacheStore(),
@@ -781,7 +822,9 @@ class _Harness:
         )
 
     def lines(self) -> tuple[Line, ...]:
-        return tuple((r.levelno, r.getMessage(), console_payload(r)) for r in self.handler.records)
+        """Re-derive the scan lines from the recorded events through the shipped builders."""
+
+        return tuple((line.level, line.message, line.payload) for line in scan_lines_from_events(self.events))
 
 
 def _seeded_store() -> FakeCacheStore:
@@ -802,7 +845,7 @@ class TestBannerParity:
         harness.reporter.log_arr_start(Arr.SONARR, 3)
         assert harness.lines() == SCAN_STARTED_SONARR_LINES
 
-        harness.handler.records.clear()
+        harness.events.clear()
         harness.reporter.log_arr_start(Arr.RADARR, 1)
         assert harness.lines() == SCAN_STARTED_RADARR_LINES
 
@@ -811,7 +854,7 @@ class TestBannerParity:
         harness.reporter.log_arr_item_start(Arr.SONARR, "Frieren: Beyond Journey's End", 2, 3)
         assert harness.lines() == ITEM_STARTED_SONARR_LINES
 
-        harness.handler.records.clear()
+        harness.events.clear()
         harness.reporter.log_arr_item_start(Arr.RADARR, "Perfect Blue", 1, 1)
         assert harness.lines() == ITEM_STARTED_RADARR_LINES
 
@@ -869,7 +912,7 @@ class TestEntryHeaderParity:
             (PendingState.IMPORTING, PENDING_IMPORTING_LINES),
             (PendingState.IMPORTED, PENDING_IMPORTED_LINES),
         ):
-            harness.handler.records.clear()
+            harness.events.clear()
             assert harness.reporter.log_pending_snapshot(state, pending) is True
             assert harness.lines() == expected
 
@@ -929,13 +972,24 @@ class TestActionBlockParity:
         assert harness.reporter.log_seadex_action(seadex_dict, results, monitor_active=True) is True
         assert harness.lines() == ACTION_DOWNLOADING_WAITING_LINES
 
-        harness.handler.records.clear()
+        harness.events.clear()
         assert harness.reporter.log_seadex_action(seadex_dict, results, monitor_active=False) is True
         assert harness.lines() == ACTION_DOWNLOADING_NO_WAIT_LINES
 
+    def test_mixed_results_group_added_before_downloading(self) -> None:
+        # Downloading-first input still renders added-first: the grouping, not
+        # results order, is the pinned contract.
+        harness = _Harness()
+        results = [
+            ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="[GroupA] Frieren S01 1080p.mkv", group="GroupA"),
+            ReleaseOutcome(outcome=AddOutcome.ADDED, name="[GroupB] Frieren S01 1080p.mkv", group="GroupB"),
+        ]
+        assert harness.reporter.log_seadex_action(self._SEADEX_DICT, results) is True
+        assert harness.lines() == ACTION_MIXED_LINES
+
     def test_max_torrents(self) -> None:
         harness = _Harness()
-        harness.reporter.log_max_torrents_added()
+        harness.reporter.log_max_torrents_added(5)
         assert harness.lines() == CAP_REACHED_LINES
 
 
@@ -954,7 +1008,9 @@ def _summary_lines(
         harness.logger.warning("scripted warning")
     for _ in range(errors):
         harness.logger.error("scripted error")
-    harness.handler.records.clear()
+    # The scripted issues rode the logger (counted for the delta), not events;
+    # clear so only the summary's own events feed the re-derived lines.
+    harness.events.clear()
     harness.reporter.log_run_summary(ctx, is_preview=is_preview, has_client=has_client)
     return harness.lines()
 
@@ -986,6 +1042,14 @@ class TestRunSummaryParity:
         ctx = RunContext(arr=Arr.SONARR, stats=_wait_off_stats())
         assert _summary_lines(ctx, is_preview=False, has_client=True) == SUMMARY_WAIT_OFF_LINES
 
+    def test_warnings_only_issues_row_renders_yellow(self) -> None:
+        # The style ladder's middle rung (warnings without errors) has no golden
+        # of its own: bold-red needs errors, yellow needs warnings alone.
+        ctx = RunContext(arr=Arr.SONARR)
+        lines = _summary_lines(ctx, is_preview=False, has_client=True, warnings=2)
+        expected = _srow("  issues       : 2 warnings, 0 errors", "issues", "2 warnings, 0 errors", style="yellow")
+        assert expected in lines
+
 
 class TestTorrentValuePins:
     """The summary "torrent" Text values, pinned by content (plain + spans + base
@@ -1010,3 +1074,116 @@ class TestTorrentValuePins:
         assert value.plain == "[GroupB] Dry.Show.S01.1080p-GroupB"
         assert value.spans == [Span(1, 7, "grey50")]
         assert value.style == "grey50"
+
+
+class TestScopeLifecycle:
+    """A1/A3: the entry-scope open/close discipline over multi-method sequences.
+
+    Asserts on the RAW recorded event stream (scope boundaries included). Serials
+    mint from the process-wide minter, so the checks are RELATIONAL - which scope
+    opens/closes in which order, which header carries which id - never absolute
+    serial values.
+    """
+
+    def test_item_entry_entry_item_sequence(self) -> None:
+        # item -> entry -> entry -> item: each new entry closes the previous, and
+        # the closing item boundary closes the last one.
+        harness = _Harness()
+        ctx = RunContext(arr=Arr.SONARR)
+        harness.reporter.log_arr_item_start(Arr.SONARR, "Show", 1, 1)
+        harness.reporter.log_al_title(ctx, "First", make_entry_record(url="https://releases.moe/1"))
+        harness.reporter.log_al_title(ctx, "Second", make_entry_record(url="https://releases.moe/2"))
+        harness.reporter.log_arr_item_start(Arr.SONARR, "Next", 1, 1)
+
+        boundaries = [e for e in harness.events if isinstance(e, (ScopeOpened, ScopeClosed))]
+        assert len(boundaries) == 4
+        first_open, first_close, second_open, second_close = boundaries
+        # Each entry is closed before the next one opens (one entry at a time).
+        assert isinstance(first_open, ScopeOpened) and first_open.label == "First"
+        assert isinstance(first_close, ScopeClosed) and first_close.scope == first_open.scope
+        assert isinstance(second_open, ScopeOpened) and second_open.label == "Second"
+        assert isinstance(second_close, ScopeClosed) and second_close.scope == second_open.scope
+        # Every header carries the id of the scope opened immediately before it.
+        headers = [e for e in harness.events if isinstance(e, EntryHeader)]
+        assert [h.scope for h in headers] == [first_open.scope, second_open.scope]
+
+    def test_bare_titled_rows_open_no_scope(self) -> None:
+        # The self-contained ledger rows never open an entry scope (col-0 rows).
+        harness = _Harness()
+        ctx = RunContext(arr=Arr.SONARR)
+        harness.reporter.log_arr_item_unmonitored(ctx, "Unmon")
+        harness.reporter.log_no_anilist_mappings(ctx, "NoMap")
+        harness.reporter.log_ignored_anilist_id(7)
+        harness.reporter.log_entry_status(EntryState.IN_RADARR, "Owned")
+
+        assert not any(isinstance(e, (ScopeOpened, ScopeClosed)) for e in harness.events)
+        assert all(isinstance(e, LedgerRow) for e in harness.events)
+
+    def test_close_is_idempotent(self) -> None:
+        # A second boundary with no open entry emits no spurious ScopeClosed.
+        harness = _Harness()
+        ctx = RunContext(arr=Arr.SONARR)
+        harness.reporter.log_al_title(ctx, "Show", make_entry_record(url="https://releases.moe/1"))
+        harness.reporter.log_arr_item_start(Arr.SONARR, "A", 1, 1)  # closes the entry
+        harness.reporter.log_arr_item_start(Arr.SONARR, "B", 1, 1)  # nothing left to close
+
+        assert len([e for e in harness.events if isinstance(e, ScopeClosed)]) == 1
+
+    def test_action_keeps_the_entry_open_for_a_trailing_diagnostic(self) -> None:
+        # A1(b): log_seadex_action POSTS but does not close, so the entry stays on
+        # the frontier - a diagnostic emitted before the next boundary indents
+        # under this entry (live-verified), not col-0.
+        harness = _Harness()
+        ctx = RunContext(arr=Arr.SONARR)
+        harness.reporter.log_al_title(ctx, "Show", make_entry_record(url="https://releases.moe/1"))
+        harness.reporter.log_seadex_action({}, [ReleaseOutcome(outcome=AddOutcome.ADDED, name="X", group="G")])
+
+        assert not any(isinstance(e, ScopeClosed) for e in harness.events)
+        opened = next(e for e in harness.events if isinstance(e, ScopeOpened))
+        action = next(e for e in harness.events if isinstance(e, GrabAction))
+        assert action.scope == opened.scope
+
+    def test_fresh_reporter_has_no_open_entry(self) -> None:
+        # A3: _entry starts None on a fresh reporter, so the first current-entry
+        # detail (no header before it) opens no scope and rides scope-free.
+        harness = _Harness()
+        harness.reporter.log_no_seadex_releases(RunContext(arr=Arr.SONARR))
+
+        assert not any(isinstance(e, ScopeOpened) for e in harness.events)
+        detail = next(e for e in harness.events if isinstance(e, EntryDetail))
+        assert detail.scope is None
+
+    def test_cap_closes_the_open_entry(self) -> None:
+        # The scan breaks at the cap and _finalize_run's reconcile runs before
+        # the summary: a still-open ENTRY frontier would misplace its diagnostics.
+        harness = _Harness()
+        ctx = RunContext(arr=Arr.SONARR)
+        harness.reporter.log_al_title(ctx, "Show", make_entry_record(url="https://releases.moe/1"))
+        harness.reporter.log_max_torrents_added(5)
+
+        opened = next(e for e in harness.events if isinstance(e, ScopeOpened))
+        closes = [e for e in harness.events if isinstance(e, ScopeClosed)]
+        assert [c.scope for c in closes] == [opened.scope]
+        # The close lands BEFORE the cap event in the stream.
+        assert harness.events.index(closes[0]) < harness.events.index(
+            next(e for e in harness.events if isinstance(e, CapReached)),
+        )
+
+
+# --- dual-list drift pins ---------------------------------------------------------
+
+
+def test_scan_event_types_match_the_alias() -> None:
+    """The fakes filter tuple can't rot behind the ScanEvent union: a new scan
+    event missing from it would silently vanish from every re-derived golden."""
+
+    members: set[object] = set(get_args(ScanEvent.__value__))
+    assert set(SCAN_EVENT_TYPES) == members
+
+
+def test_tip_precedence_covers_exactly_the_tip_texts() -> None:
+    """Producer precedence (_TIP_PRECEDENCE) and builder texts (_TIP_TEXTS) are
+    hand-maintained twins; an entry in one without the other silently drops the
+    tip line (unranked cause -> tip=None; unmapped cause -> no text)."""
+
+    assert set(_TIP_PRECEDENCE) == set(_TIP_TEXTS)

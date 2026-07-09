@@ -68,7 +68,7 @@ from .events import (
 from .hub import STRIKE_LIMIT, NullRenderer, OutputHub, Renderer, SeverityCounts, SeverityTally
 from .legacy_echo import LegacyRenderer
 from .rich_renderer import RichRenderer, diagnostic_text, diagnostic_threshold
-from .runtime import current_hub, install_hub, uninstall_hub
+from .runtime import current_hub, emit_to_hub, install_hub, uninstall_hub
 from .scopes import (
     PROCESS_SCOPE_IDS,
     Diagnostics,
@@ -163,6 +163,7 @@ __all__ = [
     "current_hub",
     "diagnostic_text",
     "diagnostic_threshold",
+    "emit_to_hub",
     "format_line",
     "install_bridge",
     "install_hub",

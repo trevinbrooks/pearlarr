@@ -113,11 +113,12 @@ class GrabPipeline:
         """Add torrent(s) to qBittorrent
 
         The per-release outcome lines (added / kept) are NOT logged here; this
-        returns them so the caller (log_seadex_action) can print the whole block
-        in order with a status that reflects what actually happened - "adding" if
-        anything was grabbed, "keeping" if every recommended release was already
-        present. The "skipped" warnings (private-only, unselected tracker) are
-        still logged inline, as they're independent of that status.
+        returns them so the caller (log_seadex_action) can emit the whole block -
+        added releases first, then already-downloading ones - with a status that
+        reflects what actually happened: "adding" if anything was grabbed,
+        "keeping" if every recommended release was already present. The "skipped"
+        warnings (private-only, unselected tracker) are still logged inline, as
+        they're independent of that status.
 
         Args:
             torrent_dict (dict): Dictionary of torrent info
@@ -539,7 +540,7 @@ class GrabPipeline:
 
         cap = self._config.advanced.max_torrents_to_add
         if cap is not None and self._ctx.torrents_added >= cap:
-            self._reporter.log_max_torrents_added()
+            self._reporter.log_max_torrents_added(cap)
             # Cap reached: signal the run to stop with a pure bool. run_sync breaks
             # the scan and runs the single _finalize_run site (so the blocking/hybrid
             # pass still imports this run's records before the save + summary).

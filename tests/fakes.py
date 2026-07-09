@@ -15,11 +15,23 @@ the test that drives them.
 import io
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import override
 
 from seadexarr.modules.manual_import import ImportProbe, ImportProgress, PendingImport
 from seadexarr.modules.mappings import MappingEntry
+from seadexarr.modules.output import (
+    CapReached,
+    EntryDetail,
+    EntryHeader,
+    Event,
+    GrabAction,
+    ItemStarted,
+    LedgerRow,
+    RunSummaryReady,
+    ScanStarted,
+)
+from seadexarr.modules.output.scan_lines import LegacyLine, scan_event_lines
 from seadexarr.modules.protocols import ArrSync
 from seadexarr.modules.radarr_client import AbstractRadarrClient
 from seadexarr.modules.seadex_types import (
@@ -46,6 +58,37 @@ def strip_ansi(text: str) -> str:
     """Drop ANSI escape sequences so assertions see the plain characters."""
 
     return _ANSI.sub("", text)
+
+
+# ``ScanEvent`` is a ``type`` alias (TypeAliasType) - ``isinstance`` raises on it -
+# so re-derivation filters the raw stream with this explicit class tuple. Left
+# unannotated so the inferred heterogeneous tuple narrows to exactly ScanEvent.
+SCAN_EVENT_TYPES = (
+    ScanStarted,
+    ItemStarted,
+    EntryHeader,
+    EntryDetail,
+    LedgerRow,
+    GrabAction,
+    CapReached,
+    RunSummaryReady,
+)
+
+
+def scan_lines_from_events(events: Iterable[Event]) -> list[LegacyLine]:
+    """Re-derive the legacy scan lines a recorded event stream produces.
+
+    The reporter EMITS events; both output seats render them through
+    ``scan_event_lines``. Tests that assert reporter output record the events and
+    replay them here (scope-boundary / diagnostic events carry no lines and drop),
+    so the assertions ride the SAME builders production uses.
+    """
+
+    lines: list[LegacyLine] = []
+    for event in events:
+        if isinstance(event, SCAN_EVENT_TYPES):
+            lines.extend(scan_event_lines(event))
+    return lines
 
 
 class TtyStringIO(io.StringIO):

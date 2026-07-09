@@ -10,11 +10,23 @@ from __future__ import annotations
 
 from typing import Final
 
+from .events import Event
 from .hub import OutputHub
 
 _DEFAULT_HUB: Final = OutputHub([])
 
 _hub: OutputHub = _DEFAULT_HUB
+
+
+def emit_to_hub(event: Event) -> None:
+    """Emit through the process hub, resolved at call time (the strangler seam).
+
+    THE late-resolver emit for every producer without a bound handle - the
+    reporter's ``emit`` seam, boot_flow's ledger, ScopeMark - so the per-cycle
+    hub swap is never captured at build time, and the seam has one home.
+    """
+
+    current_hub().emit(event)
 
 
 def install_hub(hub: OutputHub) -> None:

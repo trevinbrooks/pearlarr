@@ -73,6 +73,8 @@ from .test_scan_parity import (
     ACTION_DRY_LINES,
     ACTION_FRESH,
     ACTION_FRESH_LINES,
+    ACTION_MIXED,
+    ACTION_MIXED_LINES,
     CACHED_BARE,
     CACHED_BARE_LINES,
     CACHED_FULL,
@@ -217,6 +219,7 @@ class TestBuilders:
     def test_grab_actions(self) -> None:
         for event, expected in (
             (ACTION_FRESH, ACTION_FRESH_LINES),
+            (ACTION_MIXED, ACTION_MIXED_LINES),
             (ACTION_DRY, ACTION_DRY_LINES),
             (ACTION_DOWNLOADING_WAITING, ACTION_DOWNLOADING_WAITING_LINES),
             (ACTION_DOWNLOADING_NO_WAIT, ACTION_DOWNLOADING_NO_WAIT_LINES),

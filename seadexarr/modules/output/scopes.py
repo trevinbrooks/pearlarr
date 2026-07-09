@@ -45,7 +45,7 @@ from .events import (
     WaitStarted,
     severity_of,
 )
-from .runtime import current_hub
+from .runtime import emit_to_hub
 from .trace import CapturedTrace
 from ..manual_import import OutcomeCategory
 
@@ -81,7 +81,7 @@ PROCESS_SCOPE_IDS: Final = ScopeIds()
 class ScopeMark:
     """The cockpit views' ambient-scope mark ceremony: idempotent open/close.
 
-    Mints from :data:`PROCESS_SCOPE_IDS` and emits through :func:`~.runtime.current_hub`
+    Mints from :data:`PROCESS_SCOPE_IDS` and emits through :func:`~.runtime.emit_to_hub`
     at call time (the hub may be installed after the view is built). Only the mark
     pair — no handle semantics, no demotion.
     """
@@ -95,12 +95,12 @@ class ScopeMark:
         if self._scope is not None:
             return
         self._scope = PROCESS_SCOPE_IDS.mint(self._kind)
-        current_hub().emit(ScopeOpened(scope=self._scope, label=self._label))
+        emit_to_hub(ScopeOpened(scope=self._scope, label=self._label))
 
     def close(self) -> None:
         if self._scope is None:
             return
-        current_hub().emit(ScopeClosed(scope=self._scope))
+        emit_to_hub(ScopeClosed(scope=self._scope))
         self._scope = None
 
 

@@ -254,8 +254,7 @@ class _FakeRunServices(RunServices):
         return self._grab_result
 
     @override
-    def log_entry_status(self, state: EntryState, label: str, style: str | None = "grey50") -> bool:
-        del style
+    def log_entry_status(self, state: EntryState, label: str) -> bool:
         self.log_entry_status_calls.append((state, label))
         return True
 

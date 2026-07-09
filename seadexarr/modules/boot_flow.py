@@ -28,7 +28,6 @@ from typing import final
 
 from .output import (
     BootReady,
-    Event,
     RunStarted,
     ScopeFactory,
     ScopeKind,
@@ -36,13 +35,7 @@ from .output import (
     SeverityTally,
     StepScope,
 )
-from .output.runtime import current_hub
-
-
-def _emit(event: Event) -> None:
-    """Emit through the process hub, resolved at call time (the strangler seam)."""
-
-    current_hub().emit(event)
+from .output.runtime import current_hub, emit_to_hub
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +61,7 @@ class BootFlow:
     def __init__(self, data_dir: str = "", *, clock: Callable[[], float] = time.monotonic) -> None:
         self._data_dir = data_dir
         self._clock = clock
-        self._steps = ScopeFactory(_emit, clock=clock)
+        self._steps = ScopeFactory(emit_to_hub, clock=clock)
         self._section = ScopeMark(ScopeKind.BOOT_SECTION, "boot")
         self._window: _CapstoneWindow | None = None
         self._section_failed = False
@@ -80,7 +73,7 @@ class BootFlow:
         stale nodes on it), so the section mark opens after it.
         """
 
-        _emit(RunStarted(version=_app_version(), data_dir=self._data_dir))
+        emit_to_hub(RunStarted(version=_app_version(), data_dir=self._data_dir))
         self._section.open()
 
     @contextlib.contextmanager
@@ -131,7 +124,7 @@ class BootFlow:
         # suppress the capstone on purpose — the cause is in the file log.
         if current_hub().counts.counts_since(window.counts_mark).errors > 0:
             return
-        _emit(BootReady(elapsed_s=self._clock() - window.started_at))
+        emit_to_hub(BootReady(elapsed_s=self._clock() - window.started_at))
 
 
 def _app_version() -> str:

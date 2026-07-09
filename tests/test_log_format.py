@@ -47,8 +47,8 @@ from seadexarr.modules.log import (
     KvLine,
     PlainConsoleHandler,
     RichConsoleHandler,
+    TitledRule,
     apply_log_level,
-    log_titled_rule,
     register_console_owner,
     setup_logger,
 )
@@ -256,7 +256,7 @@ class TestRichHandlerSeam:
 
         payload = KvLine(key="missing", value="S01E03", key_width=DETAIL_KEY_WIDTH, indent=2, sep="")
         logger.warning("missing S01E03", extra={CONSOLE_EXTRA: payload})
-        log_titled_rule(logger, "Sonarr", heavy=True)
+        logger.info("Sonarr", extra={CONSOLE_EXTRA: TitledRule(title="Sonarr", heavy=True)})
 
         out = stream.getvalue()
         assert "S01E03" in out

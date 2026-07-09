@@ -759,30 +759,6 @@ def log_styled(
     logger.info(message, extra={CONSOLE_EXTRA: StyledLine(style=style or "")})
 
 
-def log_titled_rule(
-    logger: logging.Logger,
-    title: str,
-    *,
-    heavy: bool = False,
-    message: str | None = None,
-) -> None:
-    """Log a titled section header: a full-width rule, then the bold title line
-
-    Args:
-        logger: Logger the line is emitted through
-        title: The section title the console renders under the rule
-        heavy: Draw a heavy rule ("━", run boundaries) instead of a light one
-            ("─", per-title headers). Defaults to False
-        message: The plain text the file log stores. Defaults to the title;
-            pass it when a console-only annotation rides the rendered title
-    """
-
-    logger.info(
-        message if message is not None else title,
-        extra={CONSOLE_EXTRA: TitledRule(title=title, heavy=heavy)},
-    )
-
-
 def log_section_rule(
     logger: logging.Logger,
     char: str = "-",

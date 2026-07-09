@@ -5,8 +5,9 @@ The run loop and the end-of-run summary had no coverage before this phase, so
 these pin the run-state contracts the orchestrator depends on: the stats-tally
 counters each ``log_*`` method bumps, the active-title attribution set by
 ``log_al_title``, and that the summary renders without error on both the real
-and dry-run paths. Presentation goes through a NullHandler logger, so the tests
-assert on the :class:`RunContext` mutations rather than exact log strings.
+and dry-run paths. Presentation is captured as EMITTED events (via the ``emit``
+seam) and, where a test pins output, re-derived to lines through the shipped
+builders; most tests just assert on the :class:`RunContext` mutations.
 
 The collaborators are real, not mocks: the reporter is built with the shared
 in-memory :class:`FakeCacheStore` (typed by ``AbstractCacheStore``) and a real
@@ -14,7 +15,6 @@ in-memory :class:`FakeCacheStore` (typed by ``AbstractCacheStore``) and a real
 composite, fake its leaves" seam - so the whole file type-checks at strict.
 """
 
-import logging
 import time
 from typing import Any, override
 
@@ -24,8 +24,8 @@ from seadexarr.modules.anilist_client import AniListClient
 from seadexarr.modules.anilist_gateway import AniListGateway
 from seadexarr.modules.cache import AbstractCacheStore, CacheRecord
 from seadexarr.modules.config import Arr
-from seadexarr.modules.log import LogFormatter
 from seadexarr.modules.manual_import import ImportWaitMode, PendingState
+from seadexarr.modules.output import Event, NeedsActionCause, RunSummaryReady
 from seadexarr.modules.reporter import (
     GrabRecord,
     NeedsActionKind,
@@ -37,27 +37,47 @@ from seadexarr.modules.reporter import (
 from seadexarr.modules.torrents import AddOutcome, ReleaseOutcome
 
 from .builders import FakeCacheStore, make_entry_record, make_logger, pending_import
-from .fakes import CaptureHandler
+from .fakes import scan_lines_from_events
+
+
+def _record(
+    cache_store: AbstractCacheStore | None = None,
+    client: AniListClient | None = None,
+) -> tuple[RunReporter, list[Event]]:
+    """A real RunReporter (faked cache leaf, real gateway) plus its recorded events.
+
+    The reporter EMITS events through the recorder; tests that pin output re-derive
+    lines from the events. A real gateway with a faked cache store: the reporter
+    only reads/updates its ``al_cache`` dict, so the real wiring runs without a
+    network.
+    """
+
+    logger = make_logger()
+    store: AbstractCacheStore = cache_store if cache_store is not None else FakeCacheStore()
+    anilist = AniListGateway(
+        cache_store=FakeCacheStore(),
+        logger=logger,
+        client=client if client is not None else AniListClient(client=httpx.Client(), logger=logger),
+    )
+    events: list[Event] = []
+    reporter = RunReporter(emit=events.append, logger=logger, cache_store=store, anilist=anilist)
+    return reporter, events
 
 
 def _make_reporter(
     cache_store: AbstractCacheStore | None = None,
     client: AniListClient | None = None,
 ) -> RunReporter:
-    logger = make_logger()
-    store: AbstractCacheStore = cache_store if cache_store is not None else FakeCacheStore()
-    # A real gateway with a faked cache store: the reporter only reads/updates
-    # its ``al_cache`` dict, so the real wiring is exercised without a network.
-    anilist = AniListGateway(
-        cache_store=FakeCacheStore(),
-        logger=logger,
-        client=client if client is not None else AniListClient(client=httpx.Client(), logger=logger),
-    )
-    return RunReporter(
-        log_fmt=LogFormatter(logger),
-        cache_store=store,
-        anilist=anilist,
-    )
+    """The reporter alone, for the ctx/stats-mutation tests (events discarded)."""
+
+    reporter, _events = _record(cache_store, client)
+    return reporter
+
+
+def _event_messages(events: list[Event]) -> list[str]:
+    """The plain messages a recorded event stream re-derives to (shipped builders)."""
+
+    return [line.message for line in scan_lines_from_events(events)]
 
 
 def _seeded_store(*, name: str, coverage: str, url: str) -> FakeCacheStore:
@@ -128,19 +148,13 @@ class TestStatsCounters:
         # reads "skipped" with the reason - never "no entry". An UNCACHED id has
         # no stored name, so the title still comes from the gateway lookup.
         client = _ScriptedTitleClient()
-        reporter = _make_reporter(client=client)
+        reporter, events = _record(client=client)
         ctx = RunContext(arr=Arr.SONARR)
-        handler = CaptureHandler()
-        reporter.logger.addHandler(handler)
-        reporter.logger.setLevel(logging.DEBUG)
-        try:
-            reporter.log_seadex_outage_skip(ctx, 42)
-        finally:
-            reporter.logger.removeHandler(handler)
+        reporter.log_seadex_outage_skip(ctx, 42)
 
         assert ctx.stats.seadex_unreachable == 1
         assert ctx.stats.no_seadex_entry == 0
-        joined = "\n".join(r.getMessage() for r in handler.records)
+        joined = "\n".join(_event_messages(events))
         assert "skipped" in joined and "Resolved" in joined
         assert "lookup skipped (SeaDex unreachable)" in joined
         assert "no entry" not in joined
@@ -151,18 +165,12 @@ class TestStatsCounters:
         # skip must render it from there with NO AniList lookup - in a compound
         # SeaDex+AniList outage a lookup would pay retry backoff per title.
         client = _ScriptedTitleClient()
-        reporter = _make_reporter(_seeded_store(name="Stored Title", coverage="S01", url="u"), client=client)
+        reporter, events = _record(_seeded_store(name="Stored Title", coverage="S01", url="u"), client=client)
         ctx = RunContext(arr=Arr.SONARR)
-        handler = CaptureHandler()
-        reporter.logger.addHandler(handler)
-        reporter.logger.setLevel(logging.DEBUG)
-        try:
-            reporter.log_seadex_outage_skip(ctx, 1)
-        finally:
-            reporter.logger.removeHandler(handler)
+        reporter.log_seadex_outage_skip(ctx, 1)
 
         assert ctx.stats.seadex_unreachable == 1
-        joined = "\n".join(r.getMessage() for r in handler.records)
+        joined = "\n".join(_event_messages(events))
         assert "Stored Title" in joined
         assert "lookup skipped (SeaDex unreachable)" in joined
         assert client.query_calls == []  # the stored name spared the lookup
@@ -216,42 +224,46 @@ class TestRunSummary:
         ]
         return ctx
 
-    def test_real_run_renders(self) -> None:
-        assert _make_reporter().log_run_summary(
-            self._ctx_with_data(),
-            is_preview=False,
-            has_client=True,
-        )
+    def _summary_of(self, events: list[Event]) -> RunSummaryReady:
+        return next(e for e in events if isinstance(e, RunSummaryReady))
 
-    def test_dry_run_renders(self) -> None:
-        assert _make_reporter().log_run_summary(
-            self._ctx_with_data(),
-            is_preview=True,
-            has_client=False,
-        )
+    def test_real_run_emits_the_scoreboard(self) -> None:
+        reporter, events = _record()
+        assert reporter.log_run_summary(self._ctx_with_data(), is_preview=False, has_client=True)
+
+        summary = self._summary_of(events).summary
+        assert summary.dry_run is False and summary.dry_run_note is None
+        assert summary.added_count == 1
+        assert summary.tally.checked == 3
+        assert [f.cause for f in summary.tally.needs_action] == [NeedsActionCause.PRIVATE_ONLY]
+        assert summary.tip is NeedsActionCause.PRIVATE_ONLY
+        assert summary.elapsed_s is not None and summary.elapsed_s > 0
+        joined = "\n".join(_event_messages(events))
+        assert "run complete" in joined and "needs action" in joined
+
+    def test_dry_run_note_wording_tracks_the_client(self) -> None:
+        reporter, events = _record()
+        assert reporter.log_run_summary(self._ctx_with_data(), is_preview=True, has_client=False)
+        summary = self._summary_of(events).summary
+        assert summary.dry_run is True
+        assert summary.dry_run_note == "qBittorrent not configured; nothing grabbed"
+
+        reporter, events = _record()
+        assert reporter.log_run_summary(self._ctx_with_data(), is_preview=True, has_client=True)
+        assert self._summary_of(events).summary.dry_run_note == "nothing grabbed"
 
 
 def _summary_messages(
-    reporter: RunReporter,
     ctx: RunContext,
     *,
     import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
 ) -> list[str]:
-    """Capture every log message log_run_summary emits, for row assertions."""
+    """The messages log_run_summary re-derives to, for row-presence assertions."""
 
     ctx.import_wait_mode = import_wait_mode
-    handler = CaptureHandler()
-    reporter.logger.addHandler(handler)
-    reporter.logger.setLevel(logging.DEBUG)
-    try:
-        reporter.log_run_summary(
-            ctx,
-            is_preview=False,
-            has_client=True,
-        )
-    finally:
-        reporter.logger.removeHandler(handler)
-    return [r.getMessage() for r in handler.records]
+    reporter, events = _record()
+    reporter.log_run_summary(ctx, is_preview=False, has_client=True)
+    return _event_messages(events)
 
 
 class TestPendingSnapshot:
@@ -294,7 +306,6 @@ class TestSummaryPendingCounters:
         ctx.stats.imported = 3
 
         messages = _summary_messages(
-            _make_reporter(),
             ctx,
             import_wait_mode=ImportWaitMode.BLOCKING,
         )
@@ -311,7 +322,6 @@ class TestSummaryPendingCounters:
         ctx.stats.imported = 3
 
         messages = _summary_messages(
-            _make_reporter(),
             ctx,
             import_wait_mode=ImportWaitMode.OFF,
         )
@@ -323,7 +333,6 @@ class TestSummaryPendingCounters:
         ctx = RunContext(arr=Arr.SONARR)  # all counters zero
 
         messages = _summary_messages(
-            _make_reporter(),
             ctx,
             import_wait_mode=ImportWaitMode.BLOCKING,
         )
@@ -343,7 +352,6 @@ class TestSummaryPendingCounters:
         # counters stay 0 -> no queued/importing rows
 
         messages = _summary_messages(
-            _make_reporter(),
             ctx,
             import_wait_mode=ImportWaitMode.BLOCKING,
         )
@@ -356,7 +364,7 @@ class TestSummaryNoReleaseRow:
     """The "no release" row is gated on non-zero, like its no-mapping/no-entry siblings."""
 
     def test_zero_count_renders_no_row(self) -> None:
-        messages = _summary_messages(_make_reporter(), RunContext(arr=Arr.SONARR))
+        messages = _summary_messages(RunContext(arr=Arr.SONARR))
 
         assert not any("no release" in m for m in messages)
 
@@ -364,7 +372,7 @@ class TestSummaryNoReleaseRow:
         ctx = RunContext(arr=Arr.SONARR)
         ctx.stats.no_releases = 2
 
-        messages = _summary_messages(_make_reporter(), ctx)
+        messages = _summary_messages(ctx)
 
         assert any("no release" in m and "2" in m for m in messages)
 
@@ -374,7 +382,7 @@ class TestSummarySeadexDownRow:
     (and untrue) "no entry" count."""
 
     def test_zero_count_renders_no_row(self) -> None:
-        messages = _summary_messages(_make_reporter(), RunContext(arr=Arr.SONARR))
+        messages = _summary_messages(RunContext(arr=Arr.SONARR))
 
         assert not any("seadex down" in m for m in messages)
 
@@ -382,7 +390,7 @@ class TestSummarySeadexDownRow:
         ctx = RunContext(arr=Arr.SONARR)
         ctx.stats.seadex_unreachable = 3
 
-        messages = _summary_messages(_make_reporter(), ctx)
+        messages = _summary_messages(ctx)
 
         assert any("seadex down" in m and "3" in m for m in messages)
         assert not any("no entry" in m for m in messages)
@@ -407,21 +415,21 @@ class TestPrivateOnlyTip:
         return ctx
 
     def test_private_only_kind_renders_tip_despite_reworded_reason(self) -> None:
-        messages = _summary_messages(_make_reporter(), self._needs_ctx(NeedsActionKind.PRIVATE_ONLY))
+        messages = _summary_messages(self._needs_ctx(NeedsActionKind.PRIVATE_ONLY))
         assert any("private_releases: fallback" in m for m in messages)
         assert not any("private_releases: allow" in m for m in messages)
 
     def test_no_fallback_kind_tip_omits_the_fallback_suggestion(self) -> None:
         # Fallback mode found nothing public: suggesting private_releases: fallback
         # (already on) would be nonsense, so that kind's tip names no setting at all.
-        messages = _summary_messages(_make_reporter(), self._needs_ctx(NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK))
+        messages = _summary_messages(self._needs_ctx(NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK))
         assert not any("private_releases" in m for m in messages)
         assert any("re-checked every run" in m for m in messages)
 
     def test_stale_kind_renders_the_owned_stale_tip(self) -> None:
         # The fallback-never-replaces-an-owned-copy hold: the tip names the two
         # ways out (update or delete) and, with fallback already on, no setting.
-        messages = _summary_messages(_make_reporter(), self._needs_ctx(NeedsActionKind.PRIVATE_ONLY_STALE))
+        messages = _summary_messages(self._needs_ctx(NeedsActionKind.PRIVATE_ONLY_STALE))
         assert not any("private_releases" in m for m in messages)
         assert any(
             "your copies of these releases are outdated (their file sizes no longer match); "
@@ -431,31 +439,25 @@ class TestPrivateOnlyTip:
         )
 
     def test_unsupported_tracker_kind_renders_no_tip(self) -> None:
-        messages = _summary_messages(_make_reporter(), self._needs_ctx(NeedsActionKind.UNSUPPORTED_TRACKER))
+        messages = _summary_messages(self._needs_ctx(NeedsActionKind.UNSUPPORTED_TRACKER))
         assert not any("private_releases" in m for m in messages)
 
 
 def _action_messages(
-    reporter: RunReporter,
     results: list[ReleaseOutcome],
     *,
     dry_run: bool = False,
     monitor_active: bool = False,
 ) -> tuple[bool, list[str]]:
-    """Capture the status + per-release rows log_seadex_action emits.
+    """The status + per-release rows log_seadex_action re-derives to.
 
     Passes an empty ``seadex_dict`` so the recommended-group rows are skipped and
     the assertions key only on the status line and the per-release outcome rows.
     """
 
-    handler = CaptureHandler()
-    reporter.logger.addHandler(handler)
-    reporter.logger.setLevel(logging.DEBUG)
-    try:
-        logged = reporter.log_seadex_action({}, results, dry_run=dry_run, monitor_active=monitor_active)
-    finally:
-        reporter.logger.removeHandler(handler)
-    return logged, [r.getMessage() for r in handler.records]
+    reporter, events = _record()
+    logged = reporter.log_seadex_action({}, results, dry_run=dry_run, monitor_active=monitor_active)
+    return logged, _event_messages(events)
 
 
 class TestLogSeadexAction:
@@ -463,7 +465,6 @@ class TestLogSeadexAction:
 
     def test_added_status_and_label(self) -> None:
         logged, messages = _action_messages(
-            _make_reporter(),
             [ReleaseOutcome(outcome=AddOutcome.ADDED, name="Show-NAN0", group="NAN0")],
         )
         joined = "\n".join(messages)
@@ -477,7 +478,6 @@ class TestLogSeadexAction:
         # A hashless/private torrent has name=None; the row must fall back to the
         # release group, never render the literal "None".
         logged, messages = _action_messages(
-            _make_reporter(),
             [ReleaseOutcome(outcome=AddOutcome.ADDED, name=None, group="NAN0")],
         )
         joined = "\n".join(messages)
@@ -487,7 +487,6 @@ class TestLogSeadexAction:
 
     def test_already_downloading_status_monitor_active(self) -> None:
         logged, messages = _action_messages(
-            _make_reporter(),
             [ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="Show-NAN0", group="NAN0")],
             monitor_active=True,
         )
@@ -504,7 +503,6 @@ class TestLogSeadexAction:
     def test_already_downloading_status_monitor_inactive(self) -> None:
         # Feature off / preview: state the fact, but don't promise an import.
         _, messages = _action_messages(
-            _make_reporter(),
             [ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="X", group="G")],
             monitor_active=False,
         )
@@ -517,7 +515,6 @@ class TestLogSeadexAction:
         # A fresh grab happened, so the headline is "adding"; the per-release rows
         # disambiguate (one added, one still downloading).
         _, messages = _action_messages(
-            _make_reporter(),
             [
                 ReleaseOutcome(outcome=AddOutcome.ADDED, name="new", group="G"),
                 ReleaseOutcome(outcome=AddOutcome.ALREADY_ADDED, name="old", group="G"),
@@ -534,7 +531,6 @@ class TestLogSeadexAction:
         # A dry run must never read like a real grab: the status says "would add
         # ... (dry run)" and the per-release row is labeled "would add".
         logged, messages = _action_messages(
-            _make_reporter(),
             [ReleaseOutcome(outcome=AddOutcome.ADDED, name="Show-NAN0", group="NAN0")],
             dry_run=True,
         )
@@ -546,7 +542,7 @@ class TestLogSeadexAction:
         assert "adding SeaDex's recommended release" not in joined
 
     def test_all_skipped_returns_false_and_emits_nothing(self) -> None:
-        logged, messages = _action_messages(_make_reporter(), [])
+        logged, messages = _action_messages([])
 
         assert logged is False
         assert messages == []
