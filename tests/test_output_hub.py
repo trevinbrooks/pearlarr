@@ -63,6 +63,18 @@ class _InterruptingRenderer(_FailingRenderer):
         raise KeyboardInterrupt
 
 
+class _FailOnMarkerRenderer(_FailingRenderer):
+    """Raises on the marker event (RunStarted) only; renders leg-boundary events
+    (RunFinished) cleanly, so a leg close between failures neither strikes nor
+    resets the strike count."""
+
+    @override
+    def handle(self, event: Event, when: float) -> None:
+        self.calls += 1
+        if isinstance(event, RunStarted):
+            raise RuntimeError("render bug")
+
+
 class _FailingCloseRenderer(_FailingRenderer):
     @override
     def close(self) -> None:
@@ -270,6 +282,43 @@ def test_three_strikes_quarantine_until_begin_cycle_rearms() -> None:
     hub.begin_cycle(console_format="plain", level=logging.INFO)
     hub.emit(_EVENT)
     assert flaky.calls == STRIKE_LIMIT + 1  # re-armed, not process-latched
+
+
+def test_strikes_carry_across_a_run_leg_boundary_and_only_begin_cycle_rearms() -> None:
+    """G3: a leg close (RunFinished) is not a cycle turnover. Strikes are a per-cycle
+    budget (S9): they accumulate across the RunFinished leg boundary, so the Nth
+    strike quarantines regardless of the boundary, and only begin_cycle re-arms."""
+
+    flaky, survivor = _FailOnMarkerRenderer(), RecordingRenderer()
+    hub = OutputHub([flaky, survivor])
+    sub = hub._subs[0]
+
+    # Leg 1: one strike short of the limit — still armed across the leg boundary.
+    for _ in range(STRIKE_LIMIT - 1):
+        hub.emit(_EVENT)
+    assert sub.strikes == STRIKE_LIMIT - 1
+
+    # The leg boundary renders cleanly: it neither strikes nor resets the count.
+    hub.emit(RunFinished(arr=Arr.SONARR))
+    assert sub.strikes == STRIKE_LIMIT - 1
+    assert flaky.closes == 0
+
+    # Leg 2: the carried-over count makes the next failure the Nth strike, so the
+    # crossing (quarantine + close) fires across the boundary — never reset by it.
+    hub.emit(_EVENT)
+    assert sub.strikes == STRIKE_LIMIT
+    assert flaky.closes == 1
+
+    calls_at_quarantine = flaky.calls
+    hub.emit(_EVENT)  # quarantined: skipped (not dispatched), not re-closed
+    assert flaky.calls == calls_at_quarantine
+    assert flaky.closes == 1
+
+    # Only a cycle turnover re-arms the seat — the leg boundary never did.
+    hub.begin_cycle(console_format="plain", level=logging.INFO)
+    assert sub.strikes == 0
+    hub.emit(_EVENT)
+    assert sub.strikes == 1
 
 
 def test_quarantine_closes_the_seat_exactly_once_at_the_crossing() -> None:

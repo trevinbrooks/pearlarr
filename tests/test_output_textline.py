@@ -71,6 +71,7 @@ from seadexarr.modules.output import (
     console_threshold,
     format_line,
 )
+from seadexarr.modules.output.textline import _JSON_SKIP, _TEXT_SKIP
 from seadexarr.modules.output.trace import CapturedTrace
 from seadexarr.modules.reporter import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
 from seadexarr.modules.seadex_types import Json
@@ -707,6 +708,19 @@ def test_every_event_type_has_a_decided_form_on_both_surfaces() -> None:
         stream = io.StringIO()
         JsonRenderer(stream).handle(event, _EPOCH)
         assert (stream.getvalue() == "") == (type(event) in _JSON_SILENT), type(event).__name__
+
+
+def test_skip_sets_are_event_members_pinned_to_their_current_membership() -> None:
+    """The source skip sets are hand-maintained subsets of the Event union: (a) a
+    renamed/removed event breaks the subset check loudly (import still succeeds, but
+    get_args no longer holds it); (b) the exact membership is pinned, so adding or
+    dropping a skip is a conscious, reviewed change — not a silent behavior shift."""
+
+    union_members: set[object] = set(get_args(Event.__value__))
+    assert _TEXT_SKIP <= union_members
+    assert _JSON_SKIP <= union_members
+    assert _TEXT_SKIP == {ScopeOpened, ScopeClosed, ScanFinished, RunFinished}
+    assert _JSON_SKIP == {BootStepSlow}
 
 
 def test_json_respects_the_console_level_floor() -> None:
