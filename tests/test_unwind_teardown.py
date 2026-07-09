@@ -1,19 +1,20 @@
 # pyright: strict
 """The composition root's unwind teardown: close the leg before reporting its death.
 
-``run_arrs`` wraps each arr's body in an INNER ``try`` whose ``finally`` emits
-``RunFinished``. Being inner, it runs during the unwind BEFORE the outer ``except``
-arms log the leg-fatal error - so that error is a cycle-level fact rendered at
-column 0, never a detail indented inside whatever entry / item / boot step the leg
-happened to die in.
+``run_arrs`` wraps each arr's body in an INNER ``except BaseException`` that emits
+``RunFinished`` and re-raises. Being inner, it runs during the unwind BEFORE the
+outer ``except`` arms log the leg-fatal error - so that error is a cycle-level fact
+rendered at column 0, never a detail indented inside whatever entry / item / boot
+step the leg happened to die in.
 
 These pin the EMIT ORDERING (the half bootstrap owns). What the ordering buys - the
 error actually landing at column 0 - is pinned against the real renderer in
 ``test_output_rich_renderer.TestUnwindPlacement``; the run tail's own boundary calls
 are pinned in ``test_import_wait.TestFinalizeRunOrdering`` / ``TestFinalizeRunUnwind``.
-A completed leg therefore emits ``RunFinished`` twice (the tail's, then this one);
-the fold's close is idempotent (``test_output_breadcrumbs``) and a repeat is a
-renderer no-op (``TestUnwindPlacement``).
+``RunFinished`` is emitted exactly once per leg: the tail emits on success, and
+bootstrap's inner handler emits only when the leg died first. The fold's close
+idempotency (``test_output_breadcrumbs``) and the renderer no-op
+(``TestUnwindPlacement``) remain as defense in depth.
 
 ``RunDeps.build`` is the failure site: it is the earliest thing inside the inner
 try, so it also exercises the ``deps is None`` path - no reporter exists yet, which
@@ -33,6 +34,7 @@ from seadexarr.modules.boot_flow import BootFlow
 from seadexarr.modules.bootstrap import run_arrs
 from seadexarr.modules.cache import CacheSchemaError
 from seadexarr.modules.config import AppConfig, Arr
+from seadexarr.modules.manual_import import ImportWaitMode
 from seadexarr.modules.mappings import MappingResolver, MappingSources
 from seadexarr.modules.output import Diagnostic, RunFinished, Severity, install_bridge, install_hub
 from seadexarr.modules.output.recording import RecordingHub
@@ -171,3 +173,105 @@ class TestUnwindEmitsRunFinished:
         error_at, error = _leg_fatal_error(recording)
         assert recording.events.index(RunFinished(arr=Arr.SONARR)) < error_at
         assert "Unexpected error during Sonarr run" in error.message
+
+
+class _StubDeps:
+    """A ``RunDeps`` stand-in whose only exercised method is the outer finally's close."""
+
+    def close(self) -> None:
+        """No run-scoped resources to release (bootstrap's outer finally calls this)."""
+
+
+class _FakeRunServices:
+    """The per-id hub bootstrap builds; never driven, since ``RunLoop`` is faked."""
+
+    def __init__(self, deps: RunDeps, arr: Arr) -> None:
+        del deps, arr
+
+
+class _FakeSonarrSync:
+    """The strategy handed to ``run_sync``; the faked loop never consults it."""
+
+    def __init__(self, deps: RunDeps, services: _FakeRunServices) -> None:
+        del deps, services
+
+
+class _FakeRunLoop:
+    """A run loop whose ``run_sync`` returns without emitting the tail's RunFinished."""
+
+    def __init__(self, deps: RunDeps, services: _FakeRunServices) -> None:
+        del deps, services
+
+    def run_sync(
+        self,
+        strategy: _FakeSonarrSync,
+        *,
+        item_id: int | None,
+        dry_run: bool,
+        import_wait_mode: ImportWaitMode | None,
+        boot: BootFlow,
+    ) -> None:
+        del strategy, item_id, dry_run, import_wait_mode, boot
+
+
+def _completing_build() -> object:
+    """A ``RunDeps.build`` replacement returning a close-only stub (real signature)."""
+
+    def build(
+        arr: Arr,
+        cache: str = "cache.db",
+        *,
+        logger: logging.Logger,
+        mappings: MappingResolver,
+        app_config: AppConfig,
+        web: httpx.Client,
+        boot: BootFlow,
+    ) -> _StubDeps:
+        del arr, cache, logger, mappings, app_config, web, boot
+        return _StubDeps()
+
+    return build
+
+
+def _run_completing_leg(
+    monkeypatch: pytest.MonkeyPatch,
+    app_logger: logging.Logger,
+) -> tuple[bool, RecordingHub]:
+    """Drive one Sonarr leg that completes normally; record the event stream.
+
+    The construction seams are faked so the leg finishes without real deps: ``build``
+    returns a close-only stub, and ``RunServices`` / ``RunLoop`` / ``SonarrSync`` are
+    minimal no-ops. bootstrap lazy-imports the latter three INSIDE ``run_arrs``, so the
+    source-module attributes are what the leg resolves.
+    """
+
+    _write_config()
+    monkeypatch.setattr(bootstrap, "build_resolver", _memory_resolver)
+    monkeypatch.setattr(RunDeps, "build", _completing_build())
+    monkeypatch.setattr("seadexarr.modules.run_services.RunServices", _FakeRunServices)
+    monkeypatch.setattr("seadexarr.modules.run_loop.RunLoop", _FakeRunLoop)
+    monkeypatch.setattr("seadexarr.modules.seadex_sonarr.SonarrSync", _FakeSonarrSync)
+
+    recording = RecordingHub()
+    install_hub(recording.hub)
+    install_bridge(recording.hub)
+
+    completed = run_arrs([(Arr.SONARR, None)], paths=resolve_paths(), logger=app_logger)
+    return completed, recording
+
+
+class TestCompletedLegSingleClose:
+    """A leg that returns normally adds no RunFinished of its own - the run tail owns it."""
+
+    def test_completed_leg_emits_no_run_finished_from_bootstrap(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        app_logger: logging.Logger,
+    ) -> None:
+        completed, recording = _run_completing_leg(monkeypatch, app_logger)
+
+        assert completed is True
+        # The unwind emit fires only on a dying leg; a normal return leaves the close
+        # to the run tail (faked to a no-op here). The real tail's emit is pinned in
+        # test_import_wait.TestFinalizeRunOrdering, so zero here proves nothing doubled.
+        assert recording.of_type(RunFinished) == []

@@ -474,8 +474,9 @@ class WaitFinished:
 
 @dataclass(frozen=True, slots=True)
 class RunFinished:
-    """The run-close boundary (B4.3): emitted at the end of _finalize_run and
-    defensively by the unwind teardown (B3); the fold treats it idempotently."""
+    """The run-close boundary (B4.3): emitted at the end of _finalize_run, and by
+    the unwind teardown (B3) only when the leg dies before that tail close; the fold
+    treats it idempotently (defense in depth)."""
 
     arr: Arr
 

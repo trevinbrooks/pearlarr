@@ -350,11 +350,10 @@ def run_arrs(
                     # UnboundLocalError in the finally's close.
                     deps: RunDeps | None = None
                     try:
-                        # An INNER finally, so it closes the leg's open output frames
+                        # An inner handler so a dying leg's open output frames close
                         # BEFORE the except arms below log: a leg-fatal error is a
-                        # cycle-level fact, never a detail of the entry / item / boot
-                        # step the leg died in. A completed leg emits RunFinished twice
-                        # (the run tail's, then this); the fold's close is idempotent.
+                        # cycle-level fact, not a detail of the entry / item / boot step
+                        # it died in; a completed leg's single close comes from the run tail.
                         try:
                             deps = RunDeps.build(
                                 arr_name,
@@ -384,11 +383,12 @@ def run_arrs(
                                         import_wait_mode=import_wait_mode,
                                         boot=boot,
                                     )
-                        finally:
-                            # Through the hub seam, not the reporter: deps is None
-                            # when RunDeps.build itself failed. hub.emit never raises,
-                            # so this finally cannot mask the in-flight leg-fatal error.
+                        except BaseException:
+                            # Through the hub seam, not the reporter (deps is None when
+                            # RunDeps.build itself failed); hub.emit contains renderer errors,
+                            # so the emit cannot mask the in-flight leg-fatal Exception.
                             emit_to_hub(RunFinished(arr=arr_name))
+                            raise
                     except (QbitConnectionError, CacheSchemaError) as e:
                         # A user-facing environment problem (wrong host/credentials, a
                         # cache.db from a newer release): a clean one-line message, not

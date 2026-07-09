@@ -346,7 +346,7 @@ class RunReporter:
         self._emit(ScanFinished(arr=arr))
 
     def run_finished(self, arr: Arr) -> None:
-        """Close the run (the leg-close boundary); bootstrap re-emits it on unwind.
+        """Close the run (the leg-close boundary); bootstrap emits it on unwind.
 
         The entry close is defensive - ``scan_finished`` ran on every path here.
 

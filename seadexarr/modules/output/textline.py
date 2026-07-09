@@ -404,8 +404,7 @@ def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact 
     assert_never(event)
 
 
-# Facts with no TEXT-line form: pure boundaries (the summary is the run-end marker;
-# run-close is deliberately emitted twice, B3/B4.3 — a rendered line would double).
+# Facts with no TEXT-line form: pure boundaries (the summary is the run-end marker).
 _TEXT_SKIP: Final = frozenset({ScopeOpened, ScopeClosed, ScanFinished, RunFinished})
 # Facts the JSON stream drops: the slow heads-up is a text-sink affordance only.
 _JSON_SKIP: Final = frozenset({BootStepSlow})
