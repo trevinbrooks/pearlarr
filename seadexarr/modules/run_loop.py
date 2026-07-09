@@ -388,8 +388,9 @@ class RunLoop:
              and never reports completion for this-run grabs;
           4. ONLY for blocking/hybrid, run the interleaved monitor + live region
              dead last, after the summary, so the wait/import is the live report;
-          5. save the cache last, so the store reflects both the inline-snapshot
-             and the monitor drops.
+          5. save the cache last in a finally spanning steps 1-4, so a raise
+             anywhere still persists the run's staged writes and the store
+             reflects both the inline-snapshot and the monitor drops.
 
         Every wait/import path is skipped on a preview (no client / dry run).
         """
@@ -403,23 +404,21 @@ class RunLoop:
         preview = self._services.is_preview()
         active = self._ctx.import_wait_mode is not ImportWaitMode.OFF and not preview
 
-        if active and self._ctx.import_wait_mode is ImportWaitMode.DEFERRED:
-            self._wait_manager.reconcile_remaining()
-        if active:
-            self._wait_manager.tally_carried_over_into_stats()
-
-        self._reporter.log_run_summary(
-            self._ctx,
-            is_preview=preview,
-            has_client=self.qbit is not None,
-        )
-
-        # The monitor is the only post-summary step that mutates the store
-        # (dropping records it imports); guard the save in a finally so an
-        # unexpected monitor error can't lose this run's grabs or drops from the
-        # durable cache (the old order saved before the wait pass for the same
-        # reason - here the save runs after, to also capture the monitor's drops).
+        # The finally guards the whole tail: a raise in reconcile/tally/summary/
+        # monitor must not let bootstrap's close roll back the run's staged
+        # writes. The save trails the monitor to also capture its drops.
         try:
+            if active and self._ctx.import_wait_mode is ImportWaitMode.DEFERRED:
+                self._wait_manager.reconcile_remaining()
+            if active:
+                self._wait_manager.tally_carried_over_into_stats()
+
+            self._reporter.log_run_summary(
+                self._ctx,
+                is_preview=preview,
+                has_client=self.qbit is not None,
+            )
+
             if active and self._ctx.import_wait_mode in (
                 ImportWaitMode.BLOCKING,
                 ImportWaitMode.HYBRID,

@@ -1618,7 +1618,9 @@ class TestFinalizeRunUnwind:
     """A raise in the tail leaves ``run_finished`` to bootstrap's unwind emit.
 
     The scan is already closed either way, so the leg-fatal error the composition
-    root logs can never render inside a stale entry (Band D review finding #7).
+    root logs can never render inside a stale entry (Band D review finding #7). The
+    finally spans the whole tail, so a raise still saves - the run's staged writes
+    survive rather than rolling back when bootstrap closes the store.
     """
 
     def test_reconcile_raise_closes_the_scan_but_not_the_run(self) -> None:
@@ -1633,8 +1635,9 @@ class TestFinalizeRunUnwind:
         with pytest.raises(RuntimeError, match="reconcile exploded"):
             engine._finalize_run()
 
-        # The scan closed before the reconcile ran; the run close is bootstrap's.
-        assert calls == ["scan_finished", "reconcile"]
+        # The raise still escapes (bootstrap closes the run), but the finally now
+        # saves so the run's staged writes persist rather than rolling back.
+        assert calls == ["scan_finished", "reconcile", "save"]
 
     def test_monitor_raise_still_saves_but_leaves_the_run_open(self) -> None:
         # run_finished sits OUTSIDE the save's finally on purpose: emitting it there
@@ -1651,6 +1654,22 @@ class TestFinalizeRunUnwind:
             engine._finalize_run()
 
         assert calls == ["scan_finished", "tally", "summary", "monitor", "save"]
+
+    def test_tally_raise_still_saves_but_leaves_the_run_open(self) -> None:
+        # A pre-summary raise also lands in the finally, so the run's staged writes
+        # persist. Deferred so reconcile precedes tally and pins the whole prefix.
+        calls: list[str] = []
+        engine = _finalize_engine(
+            calls,
+            qbit=CLIENT_SENTINEL,
+            mode=ImportWaitMode.DEFERRED,
+            raise_on="tally",
+        )
+
+        with pytest.raises(RuntimeError, match="tally exploded"):
+            engine._finalize_run()
+
+        assert calls == ["scan_finished", "reconcile", "tally", "save"]
 
 
 class TestDropPending:
