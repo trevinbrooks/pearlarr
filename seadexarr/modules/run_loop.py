@@ -375,8 +375,9 @@ class RunLoop:
     def _finalize_run(self) -> None:
         """Shared run tail: reconcile + tally, print the summary, THEN block.
 
-        The ordering corrects the old "exited right away" + detached-tally
-        behaviour. In order:
+        Bracketed by the two run-lifecycle close boundaries (the scan closes at
+        the top, the run at the very end). The ordering corrects the old "exited
+        right away" + detached-tally behaviour. In order:
 
           1. deferred-mode pre-summary reconcile of any carried-over records not
              already snapshotted inline (non-blocking; feeds the counters);
@@ -392,6 +393,12 @@ class RunLoop:
 
         Every wait/import path is skipped on a preview (no client / dry run).
         """
+
+        # Close the scan (and any open entry) before anything below can raise or
+        # log: the reconcile/tally diagnostics are run-level facts, not details of
+        # the last entry. Always ScanStarted-paired - run_sync (this method's only
+        # caller) has no early return between log_arr_start and here.
+        self._reporter.scan_finished(self._ctx.arr)
 
         preview = self._services.is_preview()
         active = self._ctx.import_wait_mode is not ImportWaitMode.OFF and not preview
@@ -425,6 +432,10 @@ class RunLoop:
                     self._notify_wait_complete(result)
         finally:
             self.cache_store.save(preview=preview)
+
+        # The leg's last event. Deliberately OUTSIDE the finally: a monitor/save
+        # raise leaves it to bootstrap's unwind emit, so it lands exactly once.
+        self._reporter.run_finished(self._ctx.arr)
 
     def _notify_wait_complete(self, result: WaitResult) -> None:
         """Push the completion notification, gated on ``wait_notify``; swallow errors."""

@@ -25,7 +25,16 @@ from seadexarr.modules.anilist_gateway import AniListGateway
 from seadexarr.modules.cache import AbstractCacheStore, CacheRecord
 from seadexarr.modules.config import Arr
 from seadexarr.modules.manual_import import ImportWaitMode, PendingState
-from seadexarr.modules.output import Event, NeedsActionCause, RunSummaryReady
+from seadexarr.modules.output import (
+    EntryHeader,
+    Event,
+    NeedsActionCause,
+    RunFinished,
+    RunSummaryReady,
+    ScanFinished,
+    ScopeClosed,
+    ScopeOpened,
+)
 from seadexarr.modules.reporter import (
     GrabRecord,
     NeedsActionKind,
@@ -201,6 +210,40 @@ class TestActiveTitle:
         assert ctx.current_title == "Steins;Gate"
         assert ctx.current_url == "https://releases.moe/9"
         assert ctx.current_coverage == "S01 E01-E24"
+
+
+class TestCloseBoundaries:
+    """``scan_finished`` / ``run_finished`` close the open entry, then state the boundary.
+
+    Closing entry-first is what keeps a later diagnostic (a reconcile warning, a
+    leg-fatal error) from rendering inside the entry the scan happened to end on.
+    """
+
+    def test_scan_finished_closes_the_open_entry_first(self) -> None:
+        reporter, events = _record()
+        reporter.log_al_title(RunContext(arr=Arr.SONARR), "Steins;Gate", make_entry_record())
+
+        reporter.scan_finished(Arr.SONARR)
+
+        assert [type(e) for e in events] == [ScopeOpened, EntryHeader, ScopeClosed, ScanFinished]
+
+    def test_run_finished_without_an_open_entry_emits_only_the_boundary(self) -> None:
+        reporter, events = _record()
+
+        reporter.run_finished(Arr.SONARR)
+
+        assert events == [RunFinished(arr=Arr.SONARR)]
+
+    def test_the_boundaries_are_idempotent_about_the_entry(self) -> None:
+        # scan_finished already closed it, so run_finished's defensive close is a no-op:
+        # a second ScopeClosed would demote every later fact on that stale scope.
+        reporter, events = _record()
+        reporter.log_al_title(RunContext(arr=Arr.SONARR), "Steins;Gate", make_entry_record())
+
+        reporter.scan_finished(Arr.SONARR)
+        reporter.run_finished(Arr.SONARR)
+
+        assert [type(e) for e in events].count(ScopeClosed) == 1
 
 
 class TestRunSummary:

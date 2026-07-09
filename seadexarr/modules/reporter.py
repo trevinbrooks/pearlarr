@@ -28,9 +28,11 @@ from .output import (
     NeedsActionFact,
     RecommendedGroup,
     ReleaseName,
+    RunFinished,
     RunSummary,
     RunSummaryReady,
     RunTally,
+    ScanFinished,
     ScanStarted,
     ScopeFactory,
     StyledValue,
@@ -217,7 +219,7 @@ def _summary_tip(needs: tuple[NeedsActionFact, ...]) -> NeedsActionCause | None:
 
 
 class RunReporter:
-    """Owns the ``log_*`` producer surface: each method EMITS a typed output event.
+    """Owns the producer surface: each method EMITS a typed output event.
 
     Built once per arr instance with its stable collaborators (the ``emit`` seam,
     the logger whose LogCounter the summary diffs, the cache store, the AniList
@@ -328,6 +330,32 @@ class RunReporter:
         self._close_entry()
         self._emit(ItemStarted(arr=arr, index=n_item, total=n_items, title=item_title))
         return True
+
+    # The two close boundaries carry no ``log_`` prefix and return nothing: they
+    # state a boundary rather than report one, and no renderer draws a line for
+    # either (rich passes, legacy echoes nothing, the text sink skips them).
+
+    def scan_finished(self, arr: Arr) -> None:
+        """Close the scan and its open entry (the per-arr scan-close boundary).
+
+        Args:
+            arr: Type of arr instance
+        """
+
+        self._close_entry()
+        self._emit(ScanFinished(arr=arr))
+
+    def run_finished(self, arr: Arr) -> None:
+        """Close the run (the leg-close boundary); bootstrap re-emits it on unwind.
+
+        The entry close is defensive - ``scan_finished`` ran on every path here.
+
+        Args:
+            arr: Type of arr instance
+        """
+
+        self._close_entry()
+        self._emit(RunFinished(arr=arr))
 
     # --- self-contained ledger rows ------------------------------------------
 

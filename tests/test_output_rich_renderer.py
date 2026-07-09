@@ -1,13 +1,14 @@
 # pyright: strict
 """Tests for the rich console surface's diagnostic path (``output.rich_renderer``).
 
-Pin ambient placement against the PR2 cockpit scopes (boot-ledger indent while
-the boot section is open, wait indent while the wait region is open, column 0
-otherwise - including under bare RUN/ITEM nodes, bug-parity until the producer
-band emits entry scopes), the S4 floors (third-party WARNING floor unless DEBUG;
-first-party INFO renders dim), the ``file_only`` and no-rich-console no-ops,
-trace rendering without locals, markup literalness, and the begin_cycle fold
-reset. The ENTRY-indent arm is pinned in ``test_output_scan_render``.
+Pin ambient placement against the cockpit scopes (boot-ledger indent while the
+boot section is open, wait indent while the wait region is open, column 0
+otherwise - including under bare RUN/ITEM nodes), the unwind close that empties
+the frontier for a leg-fatal error, the S4 floors (third-party WARNING floor
+unless DEBUG; first-party INFO renders dim), the ``file_only`` and
+no-rich-console no-ops, trace rendering without locals, markup literalness, and
+the begin_cycle fold reset. The ENTRY-indent arm is pinned in
+``test_output_scan_render``.
 """
 
 import io
@@ -23,6 +24,7 @@ from seadexarr.modules.output import (
     Event,
     ItemStarted,
     RichRenderer,
+    RunFinished,
     ScanStarted,
     ScopeClosed,
     ScopeId,
@@ -37,6 +39,7 @@ from .fakes import strip_ansi
 
 _BOOT = ScopeId(ScopeKind.BOOT_SECTION, 1)
 _WAIT = ScopeId(ScopeKind.WAIT_REGION, 2)
+_ENTRY = ScopeId(ScopeKind.ENTRY, 3)
 
 
 def _renderer(width: int = 120) -> tuple[RichRenderer, io.StringIO]:
@@ -81,9 +84,9 @@ class TestPlacement:
         assert _lines(stream) == [f"{INDENT}WARNING  webhook flaked"]
 
     def test_mid_scan_stays_at_column_zero_under_run_and_item_alone(self) -> None:
-        """Bug parity: producers don't emit ENTRY scopes yet, so a mid-scan
-        diagnostic keeps today's column-0 placement under bare RUN/ITEM nodes
-        (an open entry scope indents it - see test_output_scan_render)."""
+        """RUN/ITEM are structural, not indented contexts: between entries (the
+        item's own rows), a diagnostic keeps column 0. An open entry scope indents
+        it - see test_output_scan_render."""
 
         renderer, stream = _renderer()
 
@@ -106,6 +109,74 @@ class TestPlacement:
         _feed(renderer, _warning("fresh cycle"))
 
         assert _lines(stream) == ["WARNING  fresh cycle"]
+
+
+class TestUnwindPlacement:
+    """The other half of bootstrap's unwind emit: RunFinished clears the frontier.
+
+    ``bootstrap`` emits RunFinished from an inner finally, before its except arms
+    log the leg-fatal error (``test_unwind_teardown`` pins that ordering). These
+    pin what the ordering BUYS - the error lands at column 0, whatever frame the
+    leg died in - and the regression it closes.
+    """
+
+    def test_run_finished_clears_a_mid_scan_entry_to_column_zero(self) -> None:
+        renderer, stream = _renderer()
+
+        _feed(
+            renderer,
+            ScanStarted(arr=Arr.SONARR, total=182),
+            ItemStarted(arr=Arr.SONARR, index=12, total=182, title="Frieren"),
+            ScopeOpened(scope=_ENTRY, label="Frieren"),
+            RunFinished(arr=Arr.SONARR),
+            _warning("Sonarr run failed"),
+        )
+
+        # RunFinished renders nothing itself; it just empties the frontier.
+        assert _lines(stream)[-1] == "WARNING  Sonarr run failed"
+
+    def test_without_the_unwind_emit_the_error_indents_under_the_entry(self) -> None:
+        # The negative control - Band D review finding #7, the state Band E closes.
+        renderer, stream = _renderer()
+
+        _feed(
+            renderer,
+            ScanStarted(arr=Arr.SONARR, total=182),
+            ItemStarted(arr=Arr.SONARR, index=12, total=182, title="Frieren"),
+            ScopeOpened(scope=_ENTRY, label="Frieren"),
+            _warning("Sonarr run failed"),
+        )
+
+        assert _lines(stream)[-1] == f"{INDENT}WARNING  Sonarr run failed"
+
+    def test_run_finished_also_clears_an_open_boot_section(self) -> None:
+        # A leg that dies inside RunDeps.build never opens a scan: the boot section
+        # is depth-1 too, so the same close evicts it and the error lands at column 0.
+        renderer, stream = _renderer()
+
+        _feed(
+            renderer,
+            ScopeOpened(scope=_BOOT, label="boot"),
+            RunFinished(arr=Arr.SONARR),
+            _warning("cache.db was written by a newer SeaDexArr"),
+        )
+
+        assert _lines(stream) == ["WARNING  cache.db was written by a newer SeaDexArr"]
+
+    def test_a_repeat_run_finished_is_a_no_op(self) -> None:
+        # A completed leg emits RunFinished twice (the run tail's, then bootstrap's
+        # defensive one). The second must not disturb an already-empty frontier.
+        renderer, stream = _renderer()
+
+        _feed(
+            renderer,
+            ScanStarted(arr=Arr.SONARR, total=1),
+            RunFinished(arr=Arr.SONARR),
+            RunFinished(arr=Arr.SONARR),
+            _warning("after the leg"),
+        )
+
+        assert _lines(stream)[-1] == "WARNING  after the leg"
 
 
 class TestFloors:

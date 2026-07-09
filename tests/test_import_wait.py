@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import override
 
+import pytest
 import qbittorrentapi
 
 from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
@@ -1466,10 +1467,13 @@ def _attach_wait_manager(engine: RunLoop) -> None:
 
 
 class _FinalizeReporter:
-    """Records the engine's end-of-run summary as a ``"summary"`` ordering marker."""
+    """Records the run tail's summary + the two close boundaries as markers."""
 
     def __init__(self, calls: list[str]) -> None:
         self._calls = calls
+
+    def scan_finished(self, arr: Arr) -> None:
+        self._calls.append("scan_finished")
 
     def log_run_summary(
         self,
@@ -1480,6 +1484,9 @@ class _FinalizeReporter:
     ) -> bool:
         self._calls.append("summary")
         return True
+
+    def run_finished(self, arr: Arr) -> None:
+        self._calls.append("run_finished")
 
 
 class _RecordingCacheStore(FakeCacheStore):
@@ -1497,37 +1504,48 @@ class _RecordingCacheStore(FakeCacheStore):
 class _FinalizeWaitManager:
     """A stand-in wait manager for the finalize-ordering tests.
 
-    Its reconcile/tally passes are silent no-ops (mirroring the real ones reading
-    an empty store and appending nothing), and ``run_monitor`` appends the
-    ``"monitor"`` ordering marker. The real ``run_monitor`` returns early on the
+    Every pass appends its ordering marker; the real ones return early on the
     empty working set these tests build - recording nothing - so a recording
-    stand-in is what makes the monitor step observable.
+    stand-in is what makes each step observable. ``raise_on`` scripts one pass to
+    fail, for the unwind pins (the raise escapes ``_finalize_run``, exactly as a
+    real failure would, and bootstrap's finally is what closes the run).
     """
 
-    def __init__(self, calls: list[str]) -> None:
+    def __init__(self, calls: list[str], *, raise_on: str | None = None) -> None:
         self._calls = calls
+        self._raise_on = raise_on
+
+    def _mark(self, name: str) -> None:
+        self._calls.append(name)
+        if name == self._raise_on:
+            raise RuntimeError(f"{name} exploded")
 
     def reconcile_remaining(self) -> None:
-        pass
+        self._mark("reconcile")
 
     def tally_carried_over_into_stats(self) -> None:
-        pass
+        self._mark("tally")
 
     def run_monitor(self) -> WaitResult | None:
-        self._calls.append("monitor")
+        self._mark("monitor")
         return None
 
 
-def _finalize_engine(calls: list[str], *, qbit: object, mode: ImportWaitMode) -> RunLoop:
-    """A bare engine whose summary / save / monitor each append a marker to ``calls``.
+def _finalize_engine(
+    calls: list[str],
+    *,
+    qbit: object,
+    mode: ImportWaitMode,
+    raise_on: str | None = None,
+) -> RunLoop:
+    """A bare engine whose every run-tail step appends a marker to ``calls``.
 
     The reporter, cache store, and wait manager are typed recorders (a
     ``_FinalizeReporter`` / ``_RecordingCacheStore`` / ``_FinalizeWaitManager``), so
     ``_finalize_run``'s ordering is asserted on the recorded ``calls`` list without a
-    live Sonarr/qBittorrent. The fake wait manager's reconcile/tally are silent
-    no-ops and its ``run_monitor`` records the ``"monitor"`` marker. The finalize's
-    preview fact comes off the services hub, so a bare one shares the engine's ctx
-    (and the ``qbit`` that decides preview).
+    live Sonarr/qBittorrent. The finalize's preview fact comes off the services hub,
+    so a bare one shares the engine's ctx (and the ``qbit`` that decides preview).
+    ``raise_on`` names the wait-manager pass that should blow up.
     """
 
     ctx = RunContext(arr=Arr.SONARR, import_wait_mode=mode)
@@ -1542,14 +1560,19 @@ def _finalize_engine(calls: list[str], *, qbit: object, mode: ImportWaitMode) ->
         ),
         _reporter=_FinalizeReporter(calls),
         cache_store=_RecordingCacheStore(calls),
-        _wait_manager=_FinalizeWaitManager(calls),
+        _wait_manager=_FinalizeWaitManager(calls, raise_on=raise_on),
         _services=make_services(qbit=qbit, _ctx=ctx),
         _ctx=ctx,
     )
 
 
 class TestFinalizeRunOrdering:
-    """_finalize_run prints the summary BEFORE the blocking monitor runs."""
+    """_finalize_run brackets the tail with its close boundaries, summary before monitor.
+
+    ``scan_finished`` leads on every path - so the reconcile/tally diagnostics that
+    follow place at run level, never inside the last entry - and ``run_finished``
+    trails the save, so it is the leg's last event.
+    """
 
     def test_blocking_summary_precedes_monitor_then_saves_last(self) -> None:
         # The scoreboard must print before the monitor, and the save must be dead
@@ -1563,7 +1586,7 @@ class TestFinalizeRunOrdering:
 
         engine._finalize_run()
 
-        assert calls == ["summary", "monitor", "save"]
+        assert calls == ["scan_finished", "tally", "summary", "monitor", "save", "run_finished"]
 
     def test_deferred_does_not_run_monitor(self) -> None:
         # Deferred reconciles pre-summary but NEVER runs the blocking monitor.
@@ -1577,7 +1600,7 @@ class TestFinalizeRunOrdering:
         engine._finalize_run()
 
         assert "monitor" not in calls
-        assert calls == ["summary", "save"]
+        assert calls == ["scan_finished", "reconcile", "tally", "summary", "save", "run_finished"]
 
     def test_preview_skips_monitor_and_tally(self) -> None:
         # A preview (no client) short-circuits reconcile/tally/monitor.
@@ -1588,7 +1611,46 @@ class TestFinalizeRunOrdering:
 
         assert "monitor" not in calls
         # Even short-circuited, the summary still prints and the save still runs last.
-        assert calls == ["summary", "save"]
+        assert calls == ["scan_finished", "summary", "save", "run_finished"]
+
+
+class TestFinalizeRunUnwind:
+    """A raise in the tail leaves ``run_finished`` to bootstrap's unwind emit.
+
+    The scan is already closed either way, so the leg-fatal error the composition
+    root logs can never render inside a stale entry (Band D review finding #7).
+    """
+
+    def test_reconcile_raise_closes_the_scan_but_not_the_run(self) -> None:
+        calls: list[str] = []
+        engine = _finalize_engine(
+            calls,
+            qbit=CLIENT_SENTINEL,
+            mode=ImportWaitMode.DEFERRED,
+            raise_on="reconcile",
+        )
+
+        with pytest.raises(RuntimeError, match="reconcile exploded"):
+            engine._finalize_run()
+
+        # The scan closed before the reconcile ran; the run close is bootstrap's.
+        assert calls == ["scan_finished", "reconcile"]
+
+    def test_monitor_raise_still_saves_but_leaves_the_run_open(self) -> None:
+        # run_finished sits OUTSIDE the save's finally on purpose: emitting it there
+        # would double up with bootstrap's unwind emit on this very path.
+        calls: list[str] = []
+        engine = _finalize_engine(
+            calls,
+            qbit=CLIENT_SENTINEL,
+            mode=ImportWaitMode.BLOCKING,
+            raise_on="monitor",
+        )
+
+        with pytest.raises(RuntimeError, match="monitor exploded"):
+            engine._finalize_run()
+
+        assert calls == ["scan_finished", "tally", "summary", "monitor", "save"]
 
 
 class TestDropPending:

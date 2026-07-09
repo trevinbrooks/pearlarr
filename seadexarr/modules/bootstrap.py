@@ -23,6 +23,7 @@ from pydantic import ValidationError
 from .boot_flow import BootFlow
 from .config import KNOWN_TRACKERS, AppConfig, Arr, config_permissions_loose
 from .log import apply_log_level, indent_string, log_styled
+from .output import RunFinished, emit_to_hub
 from .runlock import single_instance_lock
 
 if TYPE_CHECKING:
@@ -349,34 +350,45 @@ def run_arrs(
                     # UnboundLocalError in the finally's close.
                     deps: RunDeps | None = None
                     try:
-                        deps = RunDeps.build(
-                            arr_name,
-                            paths.cache,
-                            logger=logger,
-                            mappings=mappings,
-                            app_config=app_config,
-                            web=web,
-                            boot=boot,
-                        )
-                        services = RunServices(deps, arr_name)
-                        runner = RunLoop(deps, services)
-                        match arr_name:
-                            case Arr.SONARR:
-                                runner.run_sync(
-                                    SonarrSync(deps, services),
-                                    item_id=item_id,
-                                    dry_run=dry_run,
-                                    import_wait_mode=import_wait_mode,
-                                    boot=boot,
-                                )
-                            case Arr.RADARR:
-                                runner.run_sync(
-                                    RadarrSync(deps, services),
-                                    item_id=item_id,
-                                    dry_run=dry_run,
-                                    import_wait_mode=import_wait_mode,
-                                    boot=boot,
-                                )
+                        # An INNER finally, so it closes the leg's open output frames
+                        # BEFORE the except arms below log: a leg-fatal error is a
+                        # cycle-level fact, never a detail of the entry / item / boot
+                        # step the leg died in. A completed leg emits RunFinished twice
+                        # (the run tail's, then this); the fold's close is idempotent.
+                        try:
+                            deps = RunDeps.build(
+                                arr_name,
+                                paths.cache,
+                                logger=logger,
+                                mappings=mappings,
+                                app_config=app_config,
+                                web=web,
+                                boot=boot,
+                            )
+                            services = RunServices(deps, arr_name)
+                            runner = RunLoop(deps, services)
+                            match arr_name:
+                                case Arr.SONARR:
+                                    runner.run_sync(
+                                        SonarrSync(deps, services),
+                                        item_id=item_id,
+                                        dry_run=dry_run,
+                                        import_wait_mode=import_wait_mode,
+                                        boot=boot,
+                                    )
+                                case Arr.RADARR:
+                                    runner.run_sync(
+                                        RadarrSync(deps, services),
+                                        item_id=item_id,
+                                        dry_run=dry_run,
+                                        import_wait_mode=import_wait_mode,
+                                        boot=boot,
+                                    )
+                        finally:
+                            # Through the hub seam, not the reporter: deps is None
+                            # when RunDeps.build itself failed. hub.emit never raises,
+                            # so this finally cannot mask the in-flight leg-fatal error.
+                            emit_to_hub(RunFinished(arr=arr_name))
                     except (QbitConnectionError, CacheSchemaError) as e:
                         # A user-facing environment problem (wrong host/credentials, a
                         # cache.db from a newer release): a clean one-line message, not
