@@ -9,6 +9,7 @@ import signal
 import sqlite3
 import time
 from datetime import datetime, timedelta
+from functools import partial
 from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import typer
@@ -23,6 +24,7 @@ from .config import (
     restrict_config_permissions,
     template_path,
 )
+from .console_caps import CapsCache
 from .json_narrow import is_json_list, is_json_obj
 from .log import LOG_NAME, LogLevel, setup_logger
 from .manual_import import ImportWaitMode
@@ -322,7 +324,7 @@ def _setup_run_logger(paths: AppPaths, log_level: LogLevel | None, console_forma
         _data_dir_unwritable(paths.data_dir, e)
 
 
-def _console_seat(console_format: LogFormat) -> Renderer:
+def _console_seat(console_format: LogFormat, caps_cache: CapsCache) -> Renderer:
     """The hub's console renderer for a cycle's format (S3).
 
     One seat fits every format: the RichRenderer resolves the live Console per
@@ -331,7 +333,7 @@ def _console_seat(console_format: LogFormat) -> Renderer:
     """
 
     del console_format
-    return RichRenderer()
+    return RichRenderer(caps_cache=caps_cache)
 
 
 def _install_output_hub() -> OutputHub:
@@ -346,7 +348,13 @@ def _install_output_hub() -> OutputHub:
     record is ever adopted before the legacy handlers exist.
     """
 
-    hub = OutputHub([LegacyRenderer()], console_factory=_console_seat)
+    # ONE caps cache shared by both seats: the echo and the boot region must
+    # branch on the same probe (a mid-boot resize can't flip one surface only).
+    caps_cache = CapsCache()
+    hub = OutputHub(
+        [LegacyRenderer(caps_cache)],
+        console_factory=partial(_console_seat, caps_cache=caps_cache),
+    )
     install_hub(hub)
     install_bridge(hub)
     return hub

@@ -35,6 +35,7 @@ class _FailingRenderer:
 
     def __init__(self) -> None:
         self.calls = 0
+        self.closes = 0
 
     def handle(self, event: Event, when: float) -> None:
         self.calls += 1
@@ -47,13 +48,20 @@ class _FailingRenderer:
         pass
 
     def close(self) -> None:
-        pass
+        self.closes += 1
 
 
 class _InterruptingRenderer(_FailingRenderer):
     @override
     def handle(self, event: Event, when: float) -> None:
         raise KeyboardInterrupt
+
+
+class _FailingCloseRenderer(_FailingRenderer):
+    @override
+    def close(self) -> None:
+        self.closes += 1
+        raise RuntimeError("close bug")
 
 
 class _EmittingRenderer:
@@ -129,6 +137,36 @@ def test_three_strikes_quarantine_until_begin_cycle_rearms() -> None:
     hub.begin_cycle(console_format="plain", level=logging.INFO)
     hub.emit(_EVENT)
     assert flaky.calls == STRIKE_LIMIT + 1  # re-armed, not process-latched
+
+
+def test_quarantine_closes_the_seat_exactly_once_at_the_crossing() -> None:
+    """The live-leak pin: striking out closes the renderer (a struck boot Live
+    must stop repainting), and only the crossing fires it — never skipped events."""
+
+    flaky, survivor = _FailingRenderer(), RecordingRenderer()
+    hub = OutputHub([flaky, survivor])
+
+    for _ in range(STRIKE_LIMIT):
+        hub.emit(_EVENT)
+    assert flaky.closes == 1  # closed the moment the count crossed the limit
+
+    hub.emit(_EVENT)  # skipped while quarantined: close is not re-fired
+    assert flaky.closes == 1
+
+    hub.begin_cycle(console_format="plain", level=logging.INFO)
+    for _ in range(STRIKE_LIMIT):
+        hub.emit(_EVENT)
+    assert flaky.closes == 2  # re-armed, then a fresh strike-out closes again
+
+
+def test_a_raising_close_never_escapes_the_quarantine_crossing() -> None:
+    flaky = _FailingCloseRenderer()
+    hub = OutputHub([flaky, RecordingRenderer()])
+
+    for _ in range(STRIKE_LIMIT):
+        hub.emit(_EVENT)  # must not raise even though close() itself raises
+
+    assert flaky.closes == 1
 
 
 def test_the_final_strike_announces_the_quarantine() -> None:

@@ -553,8 +553,10 @@ def severity_of(event: Event) -> Severity:
             return reason.severity
         case GrabFailed():
             return Severity.WARNING
-        case BootStepFinished(outcome=outcome):
-            return _category_severity(outcome)
+        case BootStepFinished():
+            # INFO regardless of outcome: a failed/deferred step's caller logs the
+            # problem itself, so an outcome-based tally would double-count it.
+            return Severity.INFO
         case TorrentGraduated(outcome=outcome):
             return _category_severity(outcome.category)
         case (

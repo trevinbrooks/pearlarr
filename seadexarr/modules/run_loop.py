@@ -2,7 +2,7 @@ import time
 from typing import final
 
 from .arr_activity import ArrActivityMonitor
-from .boot_view import BootView, NullBootView
+from .boot_flow import BootFlow
 from .import_wait import ImportWaitManager
 from .log import arr_item_noun, count_noun, log_counter
 from .manual_import import (
@@ -140,7 +140,7 @@ class RunLoop:
         item_id: int | None,
         dry_run: bool,
         import_wait_mode: ImportWaitMode | None = None,
-        boot: BootView | None = None,
+        boot: BootFlow,
     ) -> None:
         """Shared run scaffolding for both Arr syncers
 
@@ -163,12 +163,11 @@ class RunLoop:
             import_wait_mode (ImportWaitMode | None): The CLI ``--import-wait-mode``
                 override, resolved cli > config > default. None falls back to the
                 configured ``imports.wait_mode``.
-            boot (BootView | None): The startup cockpit; the library fetch and the
-                metadata prefetch graduate into it as steps, and it is torn down
-                right before the per-item scan begins. Defaults to None (no-op view).
+            boot (BootFlow): The startup cockpit's producer facade; the
+                library fetch and the metadata prefetch graduate into it as steps,
+                and its section is capped right before the per-item scan begins
+                (a no-op unless a hub renders).
         """
-
-        boot = boot if boot is not None else NullBootView()
 
         # Hold the active strategy (so _finalize_run / _grab can call its import
         # hook) and resolve the effective wait mode (cli > config > default) for

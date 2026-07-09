@@ -50,7 +50,7 @@ import pytest
 import truststore
 from typer.testing import CliRunner
 
-from seadexarr.modules.boot_view import NullBootView
+from seadexarr.modules.boot_flow import BootFlow
 from seadexarr.modules.bootstrap import configured_arrs, load_shared_config, run_arrs
 from seadexarr.modules.cache import CacheStore
 from seadexarr.modules.cli import (
@@ -1079,7 +1079,7 @@ class TestUnknownTrackerWarning:
         config = tmp_path / "config.yml"
         config.write_text(body, encoding="utf-8")
         config.chmod(0o600)  # keep the loose-permissions warning out of the capture
-        return load_shared_config(str(config), logger, NullBootView(), "")
+        return load_shared_config(str(config), logger, BootFlow(), "")
 
     def test_unknown_value_warns_naming_it_and_the_vocabulary(
         self,

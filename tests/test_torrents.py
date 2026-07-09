@@ -25,6 +25,7 @@ import qbittorrentapi
 from seadex import Tracker
 
 import seadexarr.modules.torrents as torrents
+from seadexarr.modules.boot_flow import BootFlow
 from seadexarr.modules.config import Arr
 from seadexarr.modules.mappings import MappingResolver
 from seadexarr.modules.run_services import QbitConnectionError, RunDeps
@@ -299,4 +300,5 @@ def test_qbit_login_failure_maps_to_qbit_connection_error(monkeypatch: pytest.Mo
             logger=logging.getLogger("seadexarr.test"),
             mappings=make_bare_instance(MappingResolver),
             web=httpx.Client(),
+            boot=BootFlow(),
         )

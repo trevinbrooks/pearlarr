@@ -353,8 +353,8 @@ type _ZeroInt = Annotated[int, BeforeValidator(_int_or_zero)]
 class ProgressSink(Protocol):
     """Sink for step progress - drives the boot cockpit's live bar.
 
-    Structural, so the boot view's step handle satisfies it without the data /
-    gateway modules importing the UI layer. ``fraction`` is 0-1 completion;
+    Structural, so the boot flow's step scope satisfies it without the data /
+    gateway modules importing the output layer. ``fraction`` is 0-1 completion;
     ``detail`` is a short human note.
     """
 

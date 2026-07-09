@@ -235,6 +235,11 @@ class OutcomeCategory(Enum):
         self.ascii_glyph = ascii_glyph
         self.style = style
 
+    def glyph_for(self, *, use_unicode: bool) -> str:
+        """The ledger glyph: unicode ``✔/⚠/✖`` or its ASCII fallback."""
+
+        return self.glyph if use_unicode else self.ascii_glyph
+
 
 class Outcome(Enum):
     """A torrent's terminal result in the wait pass, with its rendering vocab.
@@ -292,7 +297,7 @@ class Outcome(Enum):
     def glyph(self, *, use_unicode: bool) -> str:
         """The leading ledger glyph: unicode ``✔/⚠/✖`` or its ASCII fallback."""
 
-        return self.category.glyph if use_unicode else self.category.ascii_glyph
+        return self.category.glyph_for(use_unicode=use_unicode)
 
 
 # qBittorrent reports a torrent with no meaningful ETA as 8_640_000 seconds

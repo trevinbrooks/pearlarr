@@ -42,6 +42,8 @@ from seadexarr.modules.output import (
 )
 from seadexarr.modules.wait_view import WaitSnapshot
 
+from .fakes import FakeClock
+
 
 class _Recorder:
     """A bare Emit target: just the ordered event list, no hub behavior."""
@@ -56,20 +58,9 @@ class _Recorder:
         return [event for event in self.events if isinstance(event, cls)]
 
 
-class _FakeClock:
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def __call__(self) -> float:
-        return self.now
-
-    def tick(self, seconds: float) -> None:
-        self.now += seconds
-
-
-def _factory() -> tuple[ScopeFactory, _Recorder, _FakeClock]:
+def _factory() -> tuple[ScopeFactory, _Recorder, FakeClock]:
     recorder = _Recorder()
-    clock = _FakeClock()
+    clock = FakeClock()
     # A fresh minter per test keeps serials deterministic (production shares one).
     return ScopeFactory(recorder, clock=clock, ids=ScopeIds()), recorder, clock
 

@@ -8,7 +8,7 @@ surviving ``setup_logger`` rebuilds, the per-thread reentrancy downgrade, and
 the loop/double-render seams: one console render + one file line per record,
 and a LegacyRenderer re-emission is never re-adopted. The motivating scenario -
 a plain WARNING fired between boot steps - is pinned end-to-end through the
-real boot view, bridge, hub and renderer.
+real boot flow, bridge, hub and renderer.
 """
 
 import io
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from seadexarr.modules.boot_view import make_boot_view
+from seadexarr.modules.boot_flow import BootFlow
 from seadexarr.modules.log import (
     CONSOLE_EXTRA,
     HUB_EVENT,
@@ -49,27 +49,6 @@ from seadexarr.modules.output import (
 from seadexarr.modules.output.recording import RecordingRenderer
 
 from .fakes import CaptureHandler, TtyStringIO, strip_ansi
-
-
-@pytest.fixture
-def app_logger() -> Generator[logging.Logger]:
-    """The real app logger, isolated: handlers/filters/level saved and restored."""
-
-    logger = logging.getLogger(LOG_NAME)
-    saved_handlers = list(logger.handlers)
-    saved_filters = list(logger.filters)
-    saved_level = logger.level
-    logger.handlers.clear()
-    logger.filters.clear()
-    logger.setLevel(logging.DEBUG)
-    logger.propagate = False
-    yield logger
-    for handler in logger.handlers:
-        if handler not in saved_handlers:
-            handler.close()
-    logger.handlers[:] = saved_handlers
-    logger.filters[:] = saved_filters
-    logger.setLevel(saved_level)
 
 
 @pytest.fixture
@@ -121,6 +100,28 @@ class TestAdoption:
         logger.error("dim note", extra={CONSOLE_EXTRA: StyledLine(style="grey50")})
 
         assert recorder.of_type(Diagnostic) == []
+
+    def test_first_party_payload_records_tally_count_only(self, app_logger: logging.Logger) -> None:
+        """The capstone gap: a WARNING+ payload record stays legacy-rendered but
+        its severity still reaches the hub tally — with ZERO events dispatched."""
+
+        recorder = RecordingRenderer()
+        hub = OutputHub([recorder])
+        install_bridge(hub)
+        mark = hub.counts.mark()
+
+        try:
+            app_logger.error("dim note", extra={CONSOLE_EXTRA: StyledLine(style="grey50")})
+            app_logger.warning(
+                "missing S01E03", extra={CONSOLE_EXTRA: KvLine(key="missing", value="S01E03", key_width=9)}
+            )
+            app_logger.info("plain kv", extra={CONSOLE_EXTRA: KvLine(key="cache", value="hit", key_width=9)})
+        finally:
+            uninstall_bridge()
+
+        since = hub.counts.counts_since(mark)
+        assert (since.errors, since.warnings, since.info) == (1, 1, 0)
+        assert recorder.events == []  # count-only: nothing constructed or dispatched
 
     def test_hub_event_marked_records_are_dropped(self, bridged: tuple[RecordingRenderer, logging.Logger]) -> None:
         recorder, logger = bridged
@@ -412,7 +413,7 @@ class TestStranglerSeam:
         step closes lands under the boot ledger, not at column 0."""
 
         logger, stream, _log_file = full_stack
-        boot = make_boot_view(logger)
+        boot = BootFlow()
         boot.banner()
         with boot.step("Reading config"):
             pass

@@ -13,15 +13,14 @@ and ``_finalize_run`` is replaced by a typed recorder - so the contracts are
 pinned by asserting recorded state.
 """
 
-import contextlib
 import logging
-from collections.abc import Generator
-from typing import override
 
-from seadexarr.modules.boot_view import BootStep, BootView
+from seadexarr.modules.boot_flow import BootFlow
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.manual_import import OutcomeCategory
 from seadexarr.modules.mappings import MappingEntry
+from seadexarr.modules.output import BootStepFinished, install_hub
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.protocols import ImportCompleter
 from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.run_loop import RunLoop
@@ -140,6 +139,7 @@ class TestCapReachedFinalizesOnce:
             strategy,
             item_id=None,
             dry_run=True,
+            boot=BootFlow(),
         )
 
         # The cap stopped the scan after the first id: the second item is never reached.
@@ -165,6 +165,7 @@ class TestPerIdErrorContainment:
                 strategy,
                 item_id=None,
                 dry_run=True,
+                boot=BootFlow(),
             )
         finally:
             logger.removeHandler(capture)
@@ -177,57 +178,32 @@ class TestPerIdErrorContainment:
         assert finalize.calls == 1
 
 
-class _RecordingBoot(BootView):
-    """A ``BootView`` that records each step's graduated (label, detail, category)."""
-
-    def __init__(self) -> None:
-        self.steps: list[tuple[str, str | None, OutcomeCategory]] = []
-
-    @override
-    def banner(self) -> None:
-        return
-
-    @override
-    def step(self, label: str) -> contextlib.AbstractContextManager[BootStep]:
-        return self._record(label)
-
-    @contextlib.contextmanager
-    def _record(self, label: str) -> Generator[BootStep]:
-        step = BootStep(lambda _step: None, label)
-        try:
-            yield step
-        finally:
-            self.steps.append((step.label, step.detail, step.category))
-
-    @override
-    def end_section(self) -> None:
-        return
-
-    @override
-    def close(self) -> None:
-        return
-
-
 class TestSeaDexBootNote:
-    """The SeaDex prefetch step's ledger note must be truthful on an outage."""
+    """The SeaDex prefetch step's ledger note must be truthful on an outage.
 
-    def _seadex_step(self, boot: _RecordingBoot) -> tuple[str, str | None, OutcomeCategory]:
-        [step] = [s for s in boot.steps if s[0] == "Fetching SeaDex entries"]
+    The boot flow emits events, so the graduated (label, detail, outcome) is
+    read off the recorded ``BootStepFinished`` stream (conftest's autouse
+    teardown uninstalls the hub after every test).
+    """
+
+    def _seadex_step(self, recording: RecordingHub) -> BootStepFinished:
+        [step] = [e for e in recording.of_type(BootStepFinished) if e.label == "Fetching SeaDex entries"]
         return step
 
-    def _run(self, logger: logging.Logger, *, seadex: _FakeGateway) -> _RecordingBoot:
+    def _run(self, logger: logging.Logger, *, seadex: _FakeGateway) -> RecordingHub:
         strategy = FakeStrategy(
             items=[FakeArrItem(item_id=1, title="A")],
             anilist_ids={1: MappingEntry(anilist_id=1)},
         )
-        boot = _RecordingBoot()
+        recording = RecordingHub()
+        install_hub(recording.hub)
         _engine(_FinalizeRecorder(), logger, seadex=seadex).run_sync(
             strategy,
             item_id=None,
             dry_run=True,
-            boot=boot,
+            boot=BootFlow(),
         )
-        return boot
+        return recording
 
     def test_outage_notes_unreachable_not_a_count(self, logger: logging.Logger) -> None:
         # The prefetch "return" is how many ids NEEDED fetching; on an outage
@@ -235,13 +211,13 @@ class TestSeaDexBootNote:
         seadex = _FakeGateway()
         seadex.outage = True
 
-        _label, detail, category = self._seadex_step(self._run(logger, seadex=seadex))
+        step = self._seadex_step(self._run(logger, seadex=seadex))
 
-        assert detail == "SeaDex unreachable - unfetched titles will be skipped"
-        assert category is OutcomeCategory.DEFERRED  # graduates as a warning
+        assert step.detail == "SeaDex unreachable - unfetched titles will be skipped"
+        assert step.outcome is OutcomeCategory.DEFERRED  # graduates as a warning
 
     def test_healthy_prefetch_keeps_the_count_note(self, logger: logging.Logger) -> None:
-        _label, detail, category = self._seadex_step(self._run(logger, seadex=_FakeGateway()))
+        step = self._seadex_step(self._run(logger, seadex=_FakeGateway()))
 
-        assert detail == "cached"  # the fake reports 0 fetched -> cache-warm
-        assert category is OutcomeCategory.SUCCESS
+        assert step.detail == "cached"  # the fake reports 0 fetched -> cache-warm
+        assert step.outcome is OutcomeCategory.SUCCESS

@@ -2,7 +2,8 @@
 
 Renderers that raise strike out (3 per cycle, S9) and are skipped until
 ``begin_cycle`` re-arms them — never a process-latching quarantine (the verified
-daemon hazard). ``emit`` itself never raises on a renderer bug, so presentation
+daemon hazard). Striking out also closes the renderer, so a quarantined seat
+releases its resources (a live spinner must stop repainting). ``emit`` itself never raises on a renderer bug, so presentation
 can never abort a run or the cache save; KeyboardInterrupt/SystemExit still
 propagate (Ctrl-C must unwind). The hub reads the clock once per emit and hands
 every renderer the same instant, so cross-sink timestamps can never disagree.
@@ -198,6 +199,14 @@ class OutputHub:
 
         return self._counts.counts_since(self._cycle_mark)
 
+    def record_severity(self, severity: Severity) -> None:
+        """Count-only bump, no event: first-party WARNING+ payload records render
+        fully legacy, but their severity must still reach the capstone/summary tallies."""
+
+        if self._closed:
+            return
+        self._counts.record(severity)
+
     def emit(self, event: Event) -> None:
         """Dispatch to every armed renderer, in order, under the hub lock.
 
@@ -241,7 +250,7 @@ class OutputHub:
                 try:
                     sub.renderer.begin_cycle()
                 except Exception:
-                    sub.strikes += 1
+                    self._strike(sub)
             self.set_level(level)
             self._cycle_mark = self._counts.mark()
 
@@ -254,7 +263,7 @@ class OutputHub:
                 try:
                     sub.renderer.set_level(level)
                 except Exception:
-                    sub.strikes += 1
+                    self._strike(sub)
 
     def close(self) -> None:
         """Idempotent teardown of every surface (file close, Live stop in PR2+)."""
@@ -266,6 +275,15 @@ class OutputHub:
             for sub in self._subs:
                 with contextlib.suppress(Exception):
                     sub.renderer.close()
+
+    def _strike(self, sub: _Sub) -> None:
+        """One strike; crossing the limit also closes the renderer — a quarantined
+        seat must release its resources (a struck boot Live keeps repainting otherwise)."""
+
+        sub.strikes += 1
+        if sub.strikes == self._strike_limit:
+            with contextlib.suppress(Exception):
+                sub.renderer.close()
 
     def _dispatch(self, event: Event, when: float) -> None:
         if isinstance(event, Diagnostic) and event.once_key is not None:
@@ -282,7 +300,7 @@ class OutputHub:
             try:
                 sub.renderer.handle(event, when)
             except Exception as exc:
-                sub.strikes += 1
+                self._strike(sub)
                 failures.append((sub, exc))
         # Notes go out after the event, so survivors keep the emit order.
         for sub, exc in failures:
@@ -314,7 +332,7 @@ class OutputHub:
         try:
             fresh.set_level(self._level)
         except Exception:
-            sub.strikes += 1
+            self._strike(sub)
 
     def _note(self, message: str, exc: Exception, when: float, *, skip: _Sub | None) -> None:
         """A file-only containment note to the armed survivors — never counted
@@ -334,4 +352,4 @@ class OutputHub:
                 sub.renderer.handle(note, when)
             except Exception:
                 # A failure while reporting a failure just strikes — no recursion.
-                sub.strikes += 1
+                self._strike(sub)

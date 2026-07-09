@@ -131,6 +131,17 @@ def console_payload(record: logging.LogRecord) -> ConsoleRender | None:
     return None
 
 
+def print_titled_rule(console: Console, title: str, style: str, *, heavy: bool) -> None:
+    """A titled section header: a full-width rule, then the bold title line.
+
+    Shared by the ``TitledRule`` handler arm and the boot banner, so the two
+    console looks can't drift.
+    """
+
+    console.print(Rule(style=style, characters="━" if heavy else "─"))
+    console.print(Text(title, style=f"{style} bold"), highlight=False, soft_wrap=True)
+
+
 class RichConsoleHandler(logging.Handler):
     """Console log handler that renders records through ``rich``.
 
@@ -262,14 +273,7 @@ class RichConsoleHandler(logging.Handler):
             # A titled section: a full-width rule, then the title text
             # LEFT-ALIGNED on the next line (user directive).
             if isinstance(payload, TitledRule):
-                self.console.print(
-                    Rule(style=payload.style, characters="━" if payload.heavy else "─"),
-                )
-                self.console.print(
-                    Text(payload.title, style=f"{payload.style} bold"),
-                    highlight=False,
-                    soft_wrap=True,
-                )
+                print_titled_rule(self.console, payload.title, payload.style, heavy=payload.heavy)
                 return
 
             message = record.getMessage()

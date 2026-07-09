@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from seadexarr.modules.log import LOG_NAME
 from seadexarr.modules.mapping_store import MappingStore
 from seadexarr.modules.output import uninstall_bridge, uninstall_hub
 from seadexarr.modules.paths import DATA_DIR_ENV
@@ -87,6 +88,33 @@ def isolate_data_dir(
     if "real_data_dir" in request.keywords:
         return
     monkeypatch.setenv(DATA_DIR_ENV, str(tmp_path / "seadexarr_data"))
+
+
+@pytest.fixture
+def app_logger() -> Iterator[logging.Logger]:
+    """The real app logger, isolated: handlers/filters/level/propagate restored.
+
+    Starts at DEBUG so nothing is level-gated by default; tests pinning gated
+    output set the level they need on the yielded logger.
+    """
+
+    log = logging.getLogger(LOG_NAME)
+    saved_handlers = list(log.handlers)
+    saved_filters = list(log.filters)
+    saved_level = log.level
+    saved_propagate = log.propagate
+    log.handlers.clear()
+    log.filters.clear()
+    log.setLevel(logging.DEBUG)
+    log.propagate = False
+    yield log
+    for handler in log.handlers:
+        if handler not in saved_handlers:
+            handler.close()
+    log.handlers[:] = saved_handlers
+    log.filters[:] = saved_filters
+    log.setLevel(saved_level)
+    log.propagate = saved_propagate
 
 
 @pytest.fixture

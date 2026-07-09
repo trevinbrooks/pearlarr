@@ -91,15 +91,18 @@ def test_grab_failed_is_a_warning() -> None:
     assert severity_of(GrabFailed(group="G", url="u", error="tracker down")) is Severity.WARNING
 
 
-def test_boot_step_finished_severity_follows_its_outcome_category() -> None:
+def test_boot_step_finished_tallies_info_regardless_of_outcome() -> None:
+    """The outcome drives glyphs/styles only: a failed/deferred step's caller logs
+    the problem itself, so an outcome-based tally would double-count it."""
+
     scope = ScopeId(ScopeKind.BOOT_STEP, 1)
 
     def finished(outcome: OutcomeCategory) -> BootStepFinished:
         return BootStepFinished(scope=scope, label="Reading config", outcome=outcome, detail=None, elapsed_s=0.1)
 
     assert severity_of(finished(OutcomeCategory.SUCCESS)) is Severity.INFO
-    assert severity_of(finished(OutcomeCategory.DEFERRED)) is Severity.WARNING
-    assert severity_of(finished(OutcomeCategory.FAILED)) is Severity.ERROR
+    assert severity_of(finished(OutcomeCategory.DEFERRED)) is Severity.INFO
+    assert severity_of(finished(OutcomeCategory.FAILED)) is Severity.INFO
 
 
 def test_torrent_graduated_severity_follows_its_outcome_category() -> None:

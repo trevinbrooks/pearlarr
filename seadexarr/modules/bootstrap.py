@@ -20,7 +20,7 @@ import typer
 import yaml
 from pydantic import ValidationError
 
-from .boot_view import make_boot_view
+from .boot_flow import BootFlow
 from .config import KNOWN_TRACKERS, AppConfig, Arr, config_permissions_loose
 from .log import apply_log_level, indent_string, log_styled
 from .runlock import single_instance_lock
@@ -32,7 +32,6 @@ if TYPE_CHECKING:
     # that use them, so their deps aren't pulled at CLI module load.
     import httpx
 
-    from .boot_view import BootView
     from .manual_import import ImportWaitMode
     from .mappings import MappingResolver
     from .paths import AppPaths
@@ -66,7 +65,7 @@ def format_yaml_error(e: yaml.YAMLError) -> str:
 def load_shared_config(
     config: str,
     logger: logging.Logger,
-    boot: BootView,
+    boot: BootFlow,
     retry: str,
 ) -> AppConfig | None:
     """Read + validate the config file, once per run (both arrs reuse it).
@@ -141,7 +140,7 @@ def build_resolver(
     app_config: AppConfig,
     mappings_db: str,
     logger: logging.Logger,
-    boot: BootView,
+    boot: BootFlow,
     retry: str,
     web: httpx.Client,
 ) -> MappingResolver | None:
@@ -299,17 +298,10 @@ def run_arrs(
             )
             return False
 
-        # The startup cockpit: an instant brand title, then a live spinner over the
-        # pre-scan IO (config, mappings, cache, qBittorrent, library fetch,
-        # prefetch). Built from the logger's console so it degrades to a calm log
-        # digest on a non-TTY, and closed in the finally so the terminal is always
-        # restored even on an early failure.
-        boot = make_boot_view(logger)
+        # The banner names the data dir every cycle: scheduled mode rotates the
+        # log per cycle, and "which data dir is this?" is the first support question.
+        boot = BootFlow(paths.data_dir)
         boot.banner()
-        # Name the resolved data dir in every cycle's log - scheduled mode rotates
-        # a fresh log file each cycle, and "which config/cache is this actually
-        # using?" is the first support question.
-        log_styled(logger, indent_string(f"Data directory: {paths.data_dir}"), "grey50")
         # Pull the heavy run machinery now - after the instant title, before the
         # cockpit's first step - so this one-time import cost lands in the gap
         # between the banner and the spinner rather than stalling a live step.

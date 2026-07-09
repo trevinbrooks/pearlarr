@@ -56,6 +56,19 @@ class TtyStringIO(io.StringIO):
         return True
 
 
+class FakeClock:
+    """A monotonic-ish clock the tests advance by hand, for stable durations."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def tick(self, seconds: float) -> None:
+        self.now += seconds
+
+
 class FakeArrItem:
     """A minimal item satisfying the ``ArrItem`` protocol surface.
 

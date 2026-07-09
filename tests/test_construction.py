@@ -18,6 +18,7 @@ import httpx
 import pytest
 
 from seadexarr.modules import run_services
+from seadexarr.modules.boot_flow import BootFlow
 from seadexarr.modules.config import Arr
 from seadexarr.modules.mappings import MappingResolver
 from seadexarr.modules.run_loop import RunLoop
@@ -120,6 +121,7 @@ def test_rundeps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest.Monk
         mappings=make_bare_instance(MappingResolver),
         app_config=make_config(verify_ssl=False),
         web=httpx.Client(),
+        boot=BootFlow(),
     )
     deps.close()
 

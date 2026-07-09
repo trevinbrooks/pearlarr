@@ -131,7 +131,10 @@ def test_boot_step_finished_line_keeps_the_step_path() -> None:
     assert line == f"{_TS} INFO [boot › Reading config] done outcome=ok elapsed_s=0.02"
 
 
-def test_warned_boot_step_carries_its_detail_at_warning_level() -> None:
+def test_warned_boot_step_stays_info_with_the_warn_on_the_outcome_field() -> None:
+    # Level stays INFO for every outcome (echo/ledger parity; a WARNING severity
+    # would double-count next to the caller's own logged warning) — the deferred
+    # state rides outcome=warned.
     finished = BootStepFinished(
         scope=_STEP,
         label="Refreshing mappings",
@@ -140,9 +143,7 @@ def test_warned_boot_step_carries_its_detail_at_warning_level() -> None:
         elapsed_s=3.5,
     )
     line = _format(finished, BootStepStarted(scope=_STEP, label="Refreshing mappings"))
-    assert line == (
-        f'{_TS} WARNING [Refreshing mappings] done outcome=warned detail="SeaDex unreachable" elapsed_s=3.50'
-    )
+    assert line == (f'{_TS} INFO [Refreshing mappings] done outcome=warned detail="SeaDex unreachable" elapsed_s=3.50')
 
 
 def test_boot_step_slow_heads_up_line() -> None:

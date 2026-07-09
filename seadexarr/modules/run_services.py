@@ -21,7 +21,7 @@ from seadex import EntryRecord, SeaDexEntry
 from .anilist_client import AniListClient
 from .anilist_gateway import AniListGateway
 from .arr_http import make_httpx_client
-from .boot_view import BootView, NullBootView
+from .boot_flow import BootFlow
 from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
 from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_value
 from .grab_pipeline import GrabPipeline, GrabRequest
@@ -91,7 +91,7 @@ class RunDeps:
         mappings: MappingResolver,
         app_config: AppConfig,
         web: httpx.Client,
-        boot: BootView | None = None,
+        boot: BootFlow,
     ) -> "RunDeps":
         """Construct the shared collaborators in dependency order.
 
@@ -108,12 +108,10 @@ class RunDeps:
             web (httpx.Client): The shared non-arr web client (tracker scrapes,
                 AniList, webhooks), built once by the CLI per cycle and owned
                 there - ``close`` deliberately leaves it open.
-            boot (BootView | None, optional): The startup cockpit; the qBittorrent
-                login and cache open graduate into it as steps. Defaults to None (a
-                no-op view), so the standalone path runs without a cockpit.
+            boot (BootFlow): The startup cockpit's producer facade; the
+                qBittorrent login and cache open graduate into it as steps
+                (a no-op unless a hub renders).
         """
-
-        boot = boot if boot is not None else NullBootView()
 
         # ``arr_config`` is this arr's connection/behaviour submodel, injected
         # alongside the shared root.

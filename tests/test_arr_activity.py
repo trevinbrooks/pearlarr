@@ -23,6 +23,7 @@ from seadexarr.modules.arr_activity import (
     format_history_date,
     parse_history_date,
 )
+from seadexarr.modules.boot_flow import BootFlow
 from seadexarr.modules.cache import HistoryCheckpoint
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.mappings import MappingEntry
@@ -314,7 +315,7 @@ class TestRunLoopActivityWiring:
         config: AppConfig | None = None,
     ) -> RunLoop:
         engine = _engine(_FinalizeRecorder(), logger, config=config)
-        engine.run_sync(strategy, item_id=item_id, dry_run=True)
+        engine.run_sync(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
         return engine
 
     def test_touched_item_marks_its_anilist_ids_dirty(self, logger: logging.Logger) -> None:
@@ -337,7 +338,7 @@ class TestRunLoopActivityWiring:
         engine = _engine(_FinalizeRecorder(), logger)
         stale = datetime.now(UTC) - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS + 10)
         engine.cache_store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint(format_history_date(stale), 1))
-        engine.run_sync(strategy, item_id=None, dry_run=True)
+        engine.run_sync(strategy, item_id=None, dry_run=True, boot=BootFlow())
 
         assert engine._services._dirty_al_ids == {11}
 

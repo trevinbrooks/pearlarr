@@ -1,10 +1,10 @@
-"""Shared console-capability probing for the live views (wait + boot).
+"""Shared console-capability probing for the live regions (wait + boot).
 
-Both :mod:`.wait_view` and :mod:`.boot_view` drive an optional sticky
-``rich.Live`` region over the SAME ``Console`` the logger already owns, and both
-must degrade to a calm log digest on a non-TTY (Docker / a pipe / a dumb or too-
-narrow terminal). The probe is identical for both, so it lives here once:
-:func:`console_of` finds the logger's console and :func:`detect_capabilities`
+Both :mod:`.wait_view` and the boot region (:mod:`.output.boot_region`) drive an
+optional sticky ``rich.Live`` region over the SAME ``Console`` the logger already
+owns, and both must degrade to a calm log digest on a non-TTY (Docker / a pipe /
+a dumb or too-narrow terminal). The probe is identical for both, so it lives here
+once: :func:`console_of` finds the logger's console and :func:`detect_capabilities`
 folds rich's derived signals into the small :class:`Capabilities` value the views
 branch on.
 """
@@ -12,6 +12,7 @@ branch on.
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import final
 
 from rich.console import Console
 from rich.live import Live
@@ -91,6 +92,37 @@ def detect_capabilities(console: Console | None) -> Capabilities:
         width=width,
         height=height,
     )
+
+
+@final
+class CapsCache:
+    """An identity-keyed :func:`detect_capabilities` cache for the render seats.
+
+    The boot region and the legacy echo both branch on the probe (the slow
+    heads-up policy); they must share ONE instance per hub, or a mid-boot resize
+    across ``MIN_LIVE_WIDTH`` could flip one surface's decision only.
+    """
+
+    __slots__ = ("_state",)
+
+    def __init__(self) -> None:
+        self._state: tuple[Console, Capabilities] | None = None
+
+    def for_console(self, console: Console | None) -> Capabilities:
+        """The cached probe for ``console``; a new identity re-probes and replaces."""
+
+        if console is None:
+            return detect_capabilities(None)
+        state = self._state
+        if state is None or state[0] is not console:
+            state = (console, detect_capabilities(console))
+            self._state = state
+        return state[1]
+
+    def reset(self) -> None:
+        """Drop the cached probe (cycle start; idempotent)."""
+
+        self._state = None
 
 
 def block_bar(fraction: float, width: int, caps: Capabilities) -> Text:

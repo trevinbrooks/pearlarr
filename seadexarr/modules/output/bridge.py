@@ -8,7 +8,9 @@ Adoption rules:
   loop-proof (S5 pin 3).
 * App-logger records: ONLY plain records (no ``CONSOLE_EXTRA`` payload) at
   WARNING+ are adopted — exactly the col-0 badge bug class. Payload records and
-  plain INFO/DEBUG stay fully legacy (byte parity).
+  plain INFO/DEBUG stay fully legacy (byte parity); WARNING+ payload records
+  still bump the hub tally count-only (no event), so a styled error can never
+  slip past the boot capstone or the summary counts.
 * Root records (third-party: httpx, urllib3, pydantic, py.warnings, ...): ALL
   levels are adopted with ``origin = record.name``; the renderer floors them
   (S4) and the file path admits per the configured level.
@@ -109,7 +111,12 @@ class HubBridgeHandler(HubBridgeBase):
         if hub_event_marked(record):
             return None
         if is_first_party(record.name):
-            if record.levelno < logging.WARNING or console_payload(record) is not None:
+            if record.levelno < logging.WARNING:
+                return None
+            if console_payload(record) is not None:
+                # Legacy renders the payload whole; only the severity reaches the
+                # tally (else a styled ERROR would never dent the capstone counts).
+                self._hub.record_severity(_severity_of(record.levelno))
                 return None
         elif record.levelno < logging.WARNING and record.levelno < self._hub.level:
             # Sub-threshold third-party records aren't constructed/counted (pre-PR2 parity).

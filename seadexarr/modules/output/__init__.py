@@ -1,4 +1,4 @@
-"""SeaDexArr's output architecture (PR2: the diagnostic path is LIVE).
+"""SeaDexArr's output architecture (PR3: diagnostics + the boot flow are LIVE).
 
 An event-stream chassis: producers emit the closed union of frozen event
 dataclasses (:mod:`.events`) through typed scope handles (:mod:`.scopes`) into one
@@ -9,7 +9,11 @@ synchronous :class:`~.hub.OutputHub`; surfaces subscribe as renderers. The share
 bridge (:mod:`.bridge`) adopts stdlib records, the RichRenderer places adopted
 diagnostics against the boot/wait cockpit scopes, and the
 :class:`~.legacy_echo.LegacyRenderer` echoes third-party records to the legacy
-file path. The text sinks in :mod:`.textline` stay dark until PR6.
+file path. Live since PR3: the boot flow (banner / steps / capstone) is
+event-driven — ``boot_flow.BootFlow`` produces, the RichRenderer's
+:class:`~.boot_region.BootRegion` owns the cockpit, and the LegacyRenderer
+echoes the ledger lines byte-identically for file/plain. The text sinks in
+:mod:`.textline` stay dark until PR6.
 """
 
 from .breadcrumbs import KIND_DEPTH, PATH_SEP, SEGMENT_WORD, BreadcrumbFold, OpenNode
