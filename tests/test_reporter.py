@@ -19,6 +19,7 @@ import time
 from typing import Any, override
 
 import httpx
+from seadex import Tag
 
 from seadexarr.modules.anilist_client import AniListClient
 from seadexarr.modules.anilist_gateway import AniListGateway
@@ -28,6 +29,7 @@ from seadexarr.modules.manual_import import ImportWaitMode, PendingState
 from seadexarr.modules.output import (
     EntryHeader,
     Event,
+    GrabAction,
     NeedsActionCause,
     RunFinished,
     RunSummaryReady,
@@ -45,7 +47,7 @@ from seadexarr.modules.reporter import (
 )
 from seadexarr.modules.torrents import AddOutcome, ReleaseOutcome
 
-from .builders import FakeCacheStore, make_entry_record, make_logger, pending_import
+from .builders import FakeCacheStore, make_entry_record, make_logger, pending_import, rg_group, url_item
 from .fakes import scan_lines_from_events
 
 
@@ -212,6 +214,27 @@ class TestActiveTitle:
         assert ctx.current_coverage == "S01 E01-E24"
 
 
+class TestEntryHeaderAlId:
+    """G1: ``al_id`` on the emitted EntryHeader is producer-unverified - garbage
+    in either header-opening path passed the whole suite - so pin it on both."""
+
+    def _header(self, events: list[Event]) -> EntryHeader:
+        return next(e for e in events if isinstance(e, EntryHeader))
+
+    def test_log_al_title_carries_the_seadex_entrys_anilist_id(self) -> None:
+        reporter, events = _record()
+        entry = make_entry_record(anilist_id=12345)
+        reporter.log_al_title(RunContext(arr=Arr.SONARR), "Steins;Gate", entry)
+        assert self._header(events).al_id == 12345
+
+    def test_log_cached_entry_carries_the_al_id_param(self) -> None:
+        store = FakeCacheStore()
+        store.update_cache(Arr.SONARR, 4242, CacheRecord(name="Cached", coverage="S01", url="u"))
+        reporter, events = _record(store)
+        reporter.log_cached_entry(RunContext(arr=Arr.SONARR), Arr.SONARR, 4242)
+        assert self._header(events).al_id == 4242
+
+
 class TestCloseBoundaries:
     """``scan_finished`` / ``run_finished`` close the open entry, then state the boundary.
 
@@ -244,6 +267,28 @@ class TestCloseBoundaries:
         reporter.run_finished(Arr.SONARR)
 
         assert [type(e) for e in events].count(ScopeClosed) == 1
+
+
+class TestCompleteBlocksSelfClose:
+    """D6: a cached / carried-over-pending block is COMPLETE on return (nothing
+    follows it - the header carries the whole row), so it self-closes. A gap
+    diagnostic (e.g. a retry WARNING while resolving the next title) then rides
+    col 0 rather than indenting under the finished block. Contrast a CHECKING
+    entry, which legitimately accrues followers and stays open until a boundary.
+    """
+
+    def test_cached_entry_emits_scope_closed_before_returning(self) -> None:
+        reporter, events = _record(_seeded_store(name="Cached", coverage="S01", url="u"))
+        reporter.log_cached_entry(RunContext(arr=Arr.SONARR), Arr.SONARR, 1)
+        assert [type(e) for e in events] == [ScopeOpened, EntryHeader, ScopeClosed]
+
+    def test_pending_snapshot_emits_scope_closed_before_returning(self) -> None:
+        reporter, events = _record()
+        assert reporter.log_pending_snapshot(
+            PendingState.IMPORTED,
+            pending_import(title="My Show", coverage="S01 E01-E13", url="https://releases.moe/1"),
+        )
+        assert [type(e) for e in events] == [ScopeOpened, EntryHeader, ScopeClosed]
 
 
 class TestRunSummary:
@@ -589,3 +634,21 @@ class TestLogSeadexAction:
 
         assert logged is False
         assert messages == []
+
+    def test_recommended_group_tags_are_sorted(self) -> None:
+        # G2: the tags ride a frozenset (StrEnum hash is per-process random), so
+        # the producer sorts them; feed several unordered and pin the emitted order.
+        reporter, events = _record()
+        seadex_dict = {
+            "NAN0": rg_group(
+                {"u": url_item(download=True)},
+                tags=frozenset({Tag.HDR, Tag.DOLBY_VISION, Tag.BROKEN}),
+            ),
+        }
+        reporter.log_seadex_action(
+            seadex_dict,
+            [ReleaseOutcome(outcome=AddOutcome.ADDED, name="Show-NAN0", group="NAN0")],
+        )
+
+        action = next(e for e in events if isinstance(e, GrabAction))
+        assert action.groups[0].tags == ("Broken", "Dolby Vision", "HDR")

@@ -226,8 +226,10 @@ class RunReporter:
     gateway). The methods hold every producer-side decision - stats bumps, ctx
     mutation, gates, title fallbacks - then state WHAT happened as an event; the
     scan-line builders (``output.scan_lines``) own the layout. An open entry block
-    rides ``self._entry``: coverage/url-bearing headers open one, its details
-    stream through it, and any boundary/sibling closes it (idempotently) first.
+    rides ``self._entry``: a CHECKING header opens one and its details stream
+    through it (any boundary/sibling closes it, idempotently, first); a COMPLETE
+    block (cached / carried-over pending) opens and self-closes via ``_block``, so
+    a gap diagnostic keeps col 0 rather than indenting under the finished block.
     """
 
     def __init__(
@@ -261,6 +263,18 @@ class RunReporter:
 
         self._close_entry()
         self._entry = self._scopes.entry(header)
+
+    def _block(self, header: EntryHeader) -> None:
+        """Emit a self-contained entry block: open its scope, then close it.
+
+        For COMPLETE blocks (cached / carried-over pending) whose header carries
+        the whole row (coverage/url baked in) and that accrue no followers -
+        closing before return keeps a gap diagnostic (e.g. a retry WARNING while
+        resolving the next title) at col 0, not indented under the finished block.
+        """
+
+        self._open_entry(header)
+        self._close_entry()
 
     def _post(self, fact: EntryFact) -> None:
         """Post an entry fact on the open scope, else emit it scope-free.
@@ -507,7 +521,7 @@ class RunReporter:
         # row green/undimmed (the old always-grey50 invariant, now type-pinned).
         state: Literal[EntryState.UNCHANGED, EntryState.IN_RADARR] = EntryState.UNCHANGED,
     ) -> bool:
-        """Open a cached entry's block: a dim header plus its coverage/URL line.
+        """Emit a cached entry's self-contained block: a dim header plus its coverage/URL line.
 
         Cached entries have been unchanged since the last run, so they collapse to
         a dim header (state and title) and continuation lines carrying the stored
@@ -537,7 +551,9 @@ class RunReporter:
         if title is None:
             title = "(unknown title)"
 
-        self._open_entry(
+        # A complete block (nothing follows it): self-close so a gap diagnostic
+        # rides col 0, not indented under the finished row.
+        self._block(
             EntryHeader(
                 state,
                 title,
@@ -558,7 +574,7 @@ class RunReporter:
     }
 
     def log_pending_snapshot(self, state: PendingState, pending: PendingImport) -> bool:
-        """Open a carried-over pending record's block inline in the series block.
+        """Emit a carried-over pending record's self-contained block inline in the series block.
 
         Emits the same titled header + coverage/link continuation as the other
         entry headers (so the carried-over record reads inside the series block and
@@ -577,8 +593,10 @@ class RunReporter:
         if entry_state is None:
             return False
         # The IMPORTED-green vs dim distinction is renderer policy keyed on state
-        # (the builder does it) - the producer passes no style.
-        self._open_entry(
+        # (the builder does it) - the producer passes no style. A complete block
+        # (the next record's reconcile may warn): self-close so that warning rides
+        # col 0, not indented under this finished row.
+        self._block(
             EntryHeader(
                 entry_state,
                 pending.display_label,
