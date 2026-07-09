@@ -347,8 +347,9 @@ class LogLevel(StrEnum):
     CRITICAL = "CRITICAL"
 
 
-def _console_level(level: int) -> int:
-    """The console handler's threshold for a logger level.
+def console_level(level: int) -> int:
+    """The console-surface threshold for a logger level (the single body; the
+    output package's ``console_threshold`` delegates here).
 
     The console always shows INFO+ so routine progress stays visible even when
     the file logger is raised - except DEBUG, which lowers the threshold, and
@@ -375,7 +376,7 @@ def apply_log_level(logger: logging.Logger, log_level: str) -> None:
         # Whichever console handler setup_logger installed (rich, or the
         # plain/json marker type); never the file handler.
         if isinstance(handler, RichConsoleHandler | PlainConsoleHandler):
-            handler.setLevel(_console_level(level))
+            handler.setLevel(console_level(level))
 
 
 # Logger and log-file name; also the log rotation cap (.log -> .log.1 ... .log.9).
@@ -473,7 +474,7 @@ def setup_logger(
         # formatter, json emits one object per line (JsonFormatter).
         console_handler = PlainConsoleHandler(sys.stdout)
         console_handler.setFormatter(JsonFormatter() if console_format == "json" else text_formatter)
-    console_handler.setLevel(_console_level(level))
+    console_handler.setLevel(console_level(level))
 
     logger.addHandler(handler)
     logger.addHandler(console_handler)
