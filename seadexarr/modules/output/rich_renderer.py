@@ -4,8 +4,8 @@ arm; grows into the full renderer).
 Diagnostics are position-free; this renderer is the single ambient placement
 authority: its :class:`~.breadcrumbs.BreadcrumbFold` instance decides where a
 diagnostic lands: indented while a boot section, wait region, or entry block is
-open, column 0 otherwise (RUN/ITEM alone stays column-0 — bug parity with
-today's punch-through until the producer band emits entry scopes). The boot
+open, column 0 otherwise (RUN/ITEM alone stays column-0 — the producers open
+entry scopes, so a note between entries sits at the run margin). The boot
 events (banner / steps / capstone) drive the :class:`~.boot_region.BootRegion`
 — the live spinner and the durable ledger lines moved there from ``boot_view``.
 The scan events render through the shared :mod:`.scan_lines` builders at
@@ -220,14 +220,19 @@ class RichRenderer:
             return
         render_legacy_lines(console, scan_event_lines(event), self._level)
 
+    def _frontier_has(self, *kinds: ScopeKind) -> bool:
+        """True when any open node (the whole stack, not just the top) is one of ``kinds``."""
+
+        wanted = frozenset(kinds)
+        return any(node.kind in wanted for node in self._crumbs.nodes())
+
     def _cockpit_open(self) -> bool:
         """True while a boot section, wait region, or entry block is open — the
         indented contexts a diagnostic folds into (RUN/ITEM alone stays column-0)."""
 
-        indented = (ScopeKind.BOOT_SECTION, ScopeKind.WAIT_REGION, ScopeKind.ENTRY)
-        return any(node.kind in indented for node in self._crumbs.nodes())
+        return self._frontier_has(ScopeKind.BOOT_SECTION, ScopeKind.WAIT_REGION, ScopeKind.ENTRY)
 
     def _boot_section_open(self) -> bool:
-        """Whether the boot section sits on the frontier (the stack is <=4 nodes)."""
+        """Whether the boot section sits on the frontier (the stack is <=3 nodes)."""
 
-        return any(node.kind is ScopeKind.BOOT_SECTION for node in self._crumbs.nodes())
+        return self._frontier_has(ScopeKind.BOOT_SECTION)

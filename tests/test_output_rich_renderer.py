@@ -164,8 +164,8 @@ class TestUnwindPlacement:
         assert _lines(stream) == ["WARNING  cache.db was written by a newer SeaDexArr"]
 
     def test_a_repeat_run_finished_is_a_no_op(self) -> None:
-        # A completed leg emits RunFinished twice (the run tail's, then bootstrap's
-        # defensive one). The second must not disturb an already-empty frontier.
+        # A repeat close must not disturb an already-empty frontier (defense in
+        # depth; production emits it once per leg).
         renderer, stream = _renderer()
 
         _feed(

@@ -34,8 +34,9 @@ from .output import (
     ScopeMark,
     SeverityTally,
     StepScope,
+    current_hub,
+    emit_to_hub,
 )
-from .output.runtime import current_hub, emit_to_hub
 
 
 @dataclass(frozen=True, slots=True)

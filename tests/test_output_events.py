@@ -120,8 +120,8 @@ def test_structural_events_default_to_info() -> None:
     assert severity_of(ScanStarted(arr=Arr.SONARR, total=182)) is Severity.INFO
     assert severity_of(ItemStarted(arr=Arr.SONARR, index=1, total=2, title="X")) is Severity.INFO
     assert severity_of(LedgerRow(state=EntryState.IGNORED, label="AniList #1")) is Severity.INFO
-    # The close boundaries tally as nothing: bootstrap re-emits RunFinished on
-    # every leg, so a non-INFO severity would double-count the unwind.
+    # The close boundaries are markers, not tallied facts: INFO tallies as nothing
+    # in the warnings / errors counts.
     assert severity_of(ScanFinished(arr=Arr.SONARR)) is Severity.INFO
     assert severity_of(RunFinished(arr=Arr.SONARR)) is Severity.INFO
 

@@ -28,11 +28,10 @@ from .console_caps import CapsCache
 from .json_narrow import is_json_list, is_json_obj
 from .log import LOG_NAME, LogLevel, setup_logger
 from .manual_import import ImportWaitMode
-from .output import OutputHub, Renderer
+from .output import OutputHub, Renderer, install_hub
 from .output.bridge import install_bridge
 from .output.legacy_echo import LegacyRenderer
 from .output.rich_renderer import RichRenderer
-from .output.runtime import install_hub
 from .paths import PROJECT_URL, AppPaths, ensure_data_dir, resolve_paths
 from .runlock import single_instance_lock
 

@@ -112,13 +112,14 @@ class GrabPipeline:
     ) -> tuple[int, list[ReleaseOutcome]]:
         """Add torrent(s) to qBittorrent
 
-        The per-release outcome lines (added / kept) are NOT logged here; this
-        returns them so the caller (log_seadex_action) can emit the whole block -
-        added releases first, then already-downloading ones - with a status that
-        reflects what actually happened: "adding" if anything was grabbed,
-        "keeping" if every recommended release was already present. The "skipped"
-        warnings (private-only, unselected tracker) are still logged inline, as
-        they're independent of that status.
+        The per-release outcome lines (added / already-downloading) are NOT
+        logged here; this returns them so the caller (log_seadex_action) can emit
+        the whole block - added releases first, then already-downloading ones -
+        with a status that reflects what actually happened: "adding" if anything
+        was grabbed, "already downloading" if every recommended release was
+        already in the client from a prior run. The "skipped" warnings
+        (private-only, unselected tracker) are still logged inline, as they're
+        independent of that status.
 
         Args:
             torrent_dict (dict): Dictionary of torrent info
@@ -509,8 +510,9 @@ class GrabPipeline:
         )
 
         # Log the action block now the outcome is known, so the status reads
-        # "adding" only when something was actually grabbed, "already downloading"
-        # when the pick is already in the client mid-download, else "keeping".
+        # "adding" only when something was actually grabbed, "would add" on a
+        # preview, else "already downloading" - the pick is in the client from a
+        # prior run, still downloading.
         self._reporter.log_seadex_action(
             req.seadex_dict,
             results,
