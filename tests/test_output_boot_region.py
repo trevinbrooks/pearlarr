@@ -6,8 +6,8 @@
 Renderer half: the RichRenderer's boot region draws the banner, graduates
 finished steps to durable scrollback lines, prints the capstone, degrades to the
 heads-up digest on a non-live rich console, and tears its single Live slot down
-on the boot section's close (rich refuses two concurrent Lives, so a leaked slot
-raises). Parity half: the file/plain ledger lines the LegacyRenderer echoes for
+whenever the boot section leaves the fold's frontier (ScopeClosed, ScanStarted,
+run/cycle boundaries). Parity half: the file/plain ledger lines the LegacyRenderer echoes for
 a scripted boot flow are byte-identical to the pre-PR3 view's output - the
 goldens below were captured against ``boot_view`` at 78dd3e3, not derived from
 the new builders - and LogCounter's tallies are unchanged.
@@ -20,6 +20,7 @@ from importlib.metadata import version
 from rich.console import Console
 
 from seadexarr.modules.boot_flow import BootFlow
+from seadexarr.modules.config import Arr
 from seadexarr.modules.console_caps import Capabilities
 from seadexarr.modules.log import LOG_NAME, LogCounter, RichConsoleHandler
 from seadexarr.modules.manual_import import OutcomeCategory
@@ -29,14 +30,19 @@ from seadexarr.modules.output import (
     BootStepProgressed,
     BootStepSlow,
     BootStepStarted,
+    CycleStarted,
+    Diagnostic,
     Event,
     LegacyRenderer,
     OutputHub,
     RichRenderer,
     RunStarted,
+    ScanStarted,
     ScopeClosed,
     ScopeId,
     ScopeKind,
+    ScopeOpened,
+    Severity,
     install_hub,
 )
 from seadexarr.modules.output.boot_region import (
@@ -52,6 +58,13 @@ from .fakes import FakeClock, strip_ansi
 
 _SECTION = ScopeId(ScopeKind.BOOT_SECTION, 900)
 _SECTION_TWO = ScopeId(ScopeKind.BOOT_SECTION, 901)
+
+
+def _opened(scope: ScopeId = _SECTION) -> ScopeOpened:
+    """Production shape: the section opens via ScopeOpened before any step."""
+
+    return ScopeOpened(scope=scope, label="boot")
+
 
 _ASCII_CAPS = Capabilities(live=False, color=False, unicode=False, width=80, height=24)
 _UNICODE_CAPS = Capabilities(live=False, color=True, unicode=True, width=100, height=40)
@@ -140,6 +153,7 @@ class TestBootRegion:
 
         _feed(
             renderer,
+            _opened(),
             _started("Reading config"),
             _finished("Reading config", detail="config.yml"),
             _started("Connecting to qBittorrent", serial=2),
@@ -164,6 +178,7 @@ class TestBootRegion:
 
         _feed(
             renderer,
+            _opened(),
             _started("[1/2] weird [bold]label[/bold]"),
             _finished("[1/2] weird [bold]label[/bold]"),
             ScopeClosed(scope=_SECTION),
@@ -178,6 +193,7 @@ class TestBootRegion:
 
         _feed(
             renderer,
+            _opened(),
             _started("Refreshing mappings"),
             BootStepSlow(scope=ScopeId(ScopeKind.BOOT_STEP, 1), label="Refreshing mappings"),
             _finished("Refreshing mappings"),
@@ -189,6 +205,7 @@ class TestBootRegion:
         live_renderer, wide = _renderer()
         _feed(
             live_renderer,
+            _opened(),
             _started("Refreshing mappings"),
             BootStepSlow(scope=ScopeId(ScopeKind.BOOT_STEP, 1), label="Refreshing mappings"),
             _finished("Refreshing mappings"),
@@ -201,29 +218,62 @@ class TestBootRegion:
     def test_scope_closed_tears_down_the_live_slot(self) -> None:
         renderer, stream = _renderer()
 
-        _feed(renderer, _started("One"), _finished("One"), ScopeClosed(scope=_SECTION))
+        _feed(renderer, _opened(), _started("One"), _finished("One"))
+        live = renderer._boot._live
+        assert live is not None and live.is_started
+        _feed(renderer, ScopeClosed(scope=_SECTION))
+        assert renderer._boot._live is None and not live.is_started
         # A second section must start a FRESH Live: rich refuses two concurrent
         # Lives on one console, so a leaked slot would raise LiveError here.
-        _feed(renderer, _started("Two", serial=2), _finished("Two", serial=2), ScopeClosed(scope=_SECTION_TWO))
+        _feed(
+            renderer,
+            _opened(_SECTION_TWO),
+            _started("Two", serial=2),
+            _finished("Two", serial=2),
+            ScopeClosed(scope=_SECTION_TWO),
+        )
 
         out = _plain(stream)
         assert f"  ✔ One{SEP}0.61s" in out
         assert f"  ✔ Two{SEP}0.61s" in out
 
+    def test_scan_started_tears_down_the_live_slot(self) -> None:
+        # The PR4 trap: ScanStarted evicts the boot section in the fold WITHOUT
+        # any ScopeClosed; the spinner must not survive over the scan output.
+        renderer, _stream = _renderer()
+
+        _feed(renderer, _opened(), _started("Fetching library"))
+        live = renderer._boot._live
+        assert live is not None and live.is_started
+        _feed(renderer, ScanStarted(arr=Arr.SONARR, total=182))
+
+        assert renderer._boot._live is None and not live.is_started
+
+    def test_run_and_cycle_boundaries_tear_down_the_live_slot(self) -> None:
+        # Teardown keys on the frontier departure, not on WHICH event caused it.
+        for boundary in (RunStarted(version="v9.9.9", data_dir="/data"), CycleStarted(number=2)):
+            renderer, _stream = _renderer()
+            _feed(renderer, _opened(), _started("Fetching library"))
+            live = renderer._boot._live
+            assert live is not None and live.is_started
+            _feed(renderer, boundary)
+            assert renderer._boot._live is None and not live.is_started
+
     def test_begin_cycle_and_close_stop_a_live_slot(self) -> None:
         renderer, _stream = _renderer()
 
-        _feed(renderer, _started("One"))
+        _feed(renderer, _opened(), _started("One"))
         renderer.begin_cycle()
-        _feed(renderer, _started("Two", serial=2))
+        _feed(renderer, _opened(), _started("Two", serial=2))
         renderer.close()
-        _feed(renderer, _started("Three", serial=3), ScopeClosed(scope=_SECTION))
+        _feed(renderer, _opened(), _started("Three", serial=3), ScopeClosed(scope=_SECTION))
 
     def test_progress_updates_never_raise_and_stay_transient(self) -> None:
         renderer, stream = _renderer()
 
         _feed(
             renderer,
+            _opened(),
             _started("Refreshing mappings"),
             BootStepProgressed(scope=ScopeId(ScopeKind.BOOT_STEP, 1), fraction=0.5, detail="1/2 MB"),
             _finished("Refreshing mappings", detail="1/2 MB"),
@@ -242,6 +292,7 @@ class TestBootRegion:
         _feed(
             renderer,
             RunStarted(version="v9.9.9", data_dir="/data"),
+            _opened(),
             _started("Reading config"),
             _finished("Reading config"),
             BootReady(elapsed_s=0.61),
@@ -252,6 +303,37 @@ class TestBootRegion:
         assert "SeaDexArr" not in out
         assert "✔" not in out  # no graduated ledger line (spinner frames may remain)
         assert "ready in" not in out
+
+    def test_warning_level_keeps_first_party_info_diagnostics(self) -> None:
+        # The two gates stay distinct at configured WARNING: the boot ledger
+        # vanishes (logger parity, above) while a first-party INFO diagnostic
+        # keeps rendering (diagnostic_threshold's console INFO floor).
+        renderer, stream = _renderer()
+        renderer.set_level(logging.WARNING)
+
+        _feed(
+            renderer,
+            _opened(),
+            _started("Reading config"),
+            _finished("Reading config"),
+            Diagnostic(severity=Severity.INFO, message="Radarr not configured", origin=LOG_NAME),
+            ScopeClosed(scope=_SECTION),
+        )
+
+        out = _plain(stream)
+        assert "✔" not in out
+        assert "Radarr not configured" in out
+
+    def test_level_source_is_live_not_a_construction_snapshot(self) -> None:
+        renderer, stream = _renderer()
+
+        _feed(renderer, _opened(), _started("One"), _finished("One"))
+        renderer.set_level(logging.WARNING)
+        _feed(renderer, _started("Two", serial=2), _finished("Two", serial=2), ScopeClosed(scope=_SECTION))
+
+        out = _plain(stream)
+        assert "✔ One" in out
+        assert "✔ Two" not in out
 
     def test_without_a_rich_console_every_boot_event_no_ops(self) -> None:
         renderer = RichRenderer(lambda: None)
@@ -272,7 +354,7 @@ class TestBootRegion:
 
 
 def _frame(label: str, caps: Capabilities, fraction: float | None, detail: str | None) -> str:
-    region = BootRegion(lambda: None)
+    region = BootRegion(lambda: None, level_source=lambda: logging.INFO)
     region._label = label
     return region._frame_text(caps, fraction, detail).plain
 

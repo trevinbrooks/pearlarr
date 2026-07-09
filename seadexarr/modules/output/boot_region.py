@@ -33,8 +33,6 @@ from .events import (
     BootStepSlow,
     BootStepStarted,
     RunStarted,
-    ScopeClosed,
-    ScopeKind,
 )
 from ..console_caps import Capabilities, CapsCache, block_bar, make_live, spinner_name
 from ..log import INDENT, format_elapsed, indent_string, print_titled_rule
@@ -43,9 +41,7 @@ from ..log import INDENT, format_elapsed, indent_string, print_titled_rule
 # it, so it doesn't need to scale with the terminal like the wait cockpit's does.
 _BAR_WIDTH = 16
 
-type BootEvent = (
-    RunStarted | BootStepStarted | BootStepProgressed | BootStepSlow | BootStepFinished | BootReady | ScopeClosed
-)
+type BootEvent = RunStarted | BootStepStarted | BootStepProgressed | BootStepSlow | BootStepFinished | BootReady
 """The event subset the RichRenderer delegates to the boot region."""
 
 
@@ -109,27 +105,31 @@ class BootRegion:
 
     Durable lines (banner, graduations, heads-up, capstone) print the moment
     their event arrives — they reflow ABOVE the transient spinner via the shared
-    Console lock, exactly like the PR2 diagnostics. The spinner is torn down on
-    the boot section's ``ScopeClosed`` (and defensively by ``begin_cycle``/
-    ``close``), so scan output never lands under a stale live region.
+    Console lock, exactly like the PR2 diagnostics. The spinner is torn down by
+    :meth:`section_left` when the renderer's fold evicts the boot-section node
+    (whatever event evicted it — and defensively by ``begin_cycle``/``close``),
+    so scan output never lands under a stale live region.
     """
 
-    def __init__(self, console_source: Callable[[], Console | None], caps_cache: CapsCache | None = None) -> None:
+    def __init__(
+        self,
+        console_source: Callable[[], Console | None],
+        caps_cache: CapsCache | None = None,
+        *,
+        level_source: Callable[[], int],
+    ) -> None:
         self._console_source = console_source
         # Production wiring (cli) shares ONE cache with the LegacyRenderer echo so
         # both surfaces branch on the same probe; None builds a private cache.
         self._caps_cache = caps_cache if caps_cache is not None else CapsCache()
-        self._level = logging.INFO
+        # The RichRenderer's level store, read live (no duplicate _level here).
+        self._level_source = level_source
         self._live: Live | None = None
         self._spinner: Spinner | None = None
         # The only cross-event frame state: Progressed events carry no label.
         self._label = ""
 
     def handle(self, event: BootEvent) -> None:
-        if isinstance(event, ScopeClosed):
-            if event.scope.kind is ScopeKind.BOOT_SECTION:
-                self._stop_live()
-            return
         console = self._console_source()
         if console is None:
             return
@@ -153,15 +153,17 @@ class BootRegion:
                     self._print(console, Text(graduation_line(event, caps), style=style))
             case BootReady(elapsed_s=elapsed_s):
                 # Old-view order: the spinner is torn down BEFORE the capstone
-                # prints (ScopeClosed stays the teardown for capstone-less ends).
+                # prints (section_left stays the teardown for capstone-less ends).
                 self._stop_live()
                 if self._admits_durable():
                     self._print(console, Text(ready_line(elapsed_s), style="grey50" if caps.color else ""))
             case _:
                 assert_never(event)
 
-    def set_level(self, level: int) -> None:
-        self._level = level
+    def section_left(self) -> None:
+        """The boot section left the renderer's frontier: tear the live slot down."""
+
+        self._stop_live()
 
     def begin_cycle(self) -> None:
         self._stop_live()
@@ -172,9 +174,13 @@ class BootRegion:
         self._stop_live()
 
     def _admits_durable(self) -> bool:
-        """Level parity with the logger-driven ledger: INFO lines need level <= INFO."""
+        """Level parity with the logger-driven ledger: INFO lines need level <= INFO.
 
-        return self._level <= logging.INFO
+        Deliberately NOT the diagnostics' ``diagnostic_threshold`` gate: at a
+        configured WARNING the boot ledger vanishes, matching the file log.
+        """
+
+        return self._level_source() <= logging.INFO
 
     def _banner(self, console: Console, event: RunStarted) -> None:
         # Parity: the same console look the pre-PR3 TitledRule/StyledLine payloads produced.

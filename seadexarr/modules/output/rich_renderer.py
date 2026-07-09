@@ -115,53 +115,57 @@ class RichRenderer:
         # production (cli wiring); None builds the BootRegion a private cache.
         self._console_source = console_source
         self._crumbs = BreadcrumbFold()
-        self._boot = BootRegion(console_source, caps_cache)
         self._level = int(Severity.INFO)
+        self._boot = BootRegion(console_source, caps_cache, level_source=self._current_level)
 
     def handle(self, event: Event, when: float) -> None:
         del when
-        try:
-            match event:
-                case Diagnostic():
-                    self._diagnostic(event)
-                case (
-                    RunStarted()
-                    | ScopeClosed()
-                    | BootStepStarted()
-                    | BootStepProgressed()
-                    | BootStepSlow()
-                    | BootStepFinished()
-                    | BootReady()
-                ):
-                    self._boot.handle(event)
-                case (
-                    CycleStarted()
-                    | NextRunScheduled()
-                    | ScopeOpened()
-                    | ScanStarted()
-                    | ItemStarted()
-                    | EntryHeader()
-                    | EntryDetail()
-                    | LedgerRow()
-                    | ReleaseSkipped()
-                    | GrabFailed()
-                    | GrabAction()
-                    | CapReached()
-                    | ScanFinished()
-                    | RunSummaryReady()
-                    | WaitStarted()
-                    | WaitProgress()
-                    | TorrentGraduated()
-                    | WaitFinished()
-                    | RunFinished()
-                ):
-                    # No producer emits these yet; their arms arrive with PR4-5.
-                    pass
-                case _:
-                    assert_never(event)
-        finally:
-            # The fold advances even when rendering raises (placement stays true).
-            self._crumbs.apply(event)
+        # Placement must be settled BEFORE rendering (fold-first also keeps the
+        # fold advancing when rendering raises); a boot-section departure tears
+        # the live slot down no matter which event evicted the node.
+        boot_was_open = self._boot_section_open()
+        self._crumbs.apply(event)
+        if boot_was_open and not self._boot_section_open():
+            self._boot.section_left()
+        match event:
+            case Diagnostic():
+                self._diagnostic(event)
+            case (
+                RunStarted()
+                | BootStepStarted()
+                | BootStepProgressed()
+                | BootStepSlow()
+                | BootStepFinished()
+                | BootReady()
+            ):
+                self._boot.handle(event)
+            case ScopeOpened() | ScopeClosed():
+                # Scope boundaries feed the fold (and the departure check) only.
+                pass
+            case (
+                CycleStarted()
+                | NextRunScheduled()
+                | ScanStarted()
+                | ItemStarted()
+                | EntryHeader()
+                | EntryDetail()
+                | LedgerRow()
+                | ReleaseSkipped()
+                | GrabFailed()
+                | GrabAction()
+                | CapReached()
+                | ScanFinished()
+                | RunSummaryReady()
+                | WaitStarted()
+                | WaitProgress()
+                | TorrentGraduated()
+                | WaitFinished()
+                | RunFinished()
+            ):
+                # No render arms yet; they arrive with PR4-5.
+                pass
+            case _:
+                assert_never(event)
 
     def begin_cycle(self) -> None:
         self._crumbs.reset()
@@ -169,10 +173,14 @@ class RichRenderer:
 
     def set_level(self, level: int) -> None:
         self._level = level
-        self._boot.set_level(level)
 
     def close(self) -> None:
         self._boot.close()
+
+    def _current_level(self) -> int:
+        """The single level store, read live by the boot region's level_source."""
+
+        return self._level
 
     def _diagnostic(self, event: Diagnostic) -> None:
         if event.file_only:
@@ -197,3 +205,8 @@ class RichRenderer:
         """True while a boot section or wait region is open (the two PR2 scopes)."""
 
         return any(node.kind in (ScopeKind.BOOT_SECTION, ScopeKind.WAIT_REGION) for node in self._crumbs.nodes())
+
+    def _boot_section_open(self) -> bool:
+        """Whether the boot section sits on the frontier (the stack is <=4 nodes)."""
+
+        return any(node.kind is ScopeKind.BOOT_SECTION for node in self._crumbs.nodes())
