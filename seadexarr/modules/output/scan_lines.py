@@ -132,29 +132,11 @@ def _info(message: str, payload: ConsoleRender) -> LegacyLine:
     return LegacyLine(logging.INFO, message, payload)
 
 
-def _kv_line(
-    key: str,
-    value: str | Text,
-    *,
-    key_width: int,
-    value_style: str | None,
-    indent: int,
-    sep: str = " :",
-    level: int = logging.INFO,
-    tail: str | None = None,
-) -> LegacyLine:
-    """One kv line: the exact ``kv_string`` message + the matching KvLine payload."""
+def _kv_line(payload: KvLine, *, level: int = logging.INFO) -> LegacyLine:
+    """One kv line: the KvLine payload plus the exact ``kv_string`` message it renders."""
 
-    payload = KvLine(
-        key=key,
-        value=value,
-        key_width=key_width,
-        value_style=value_style,
-        indent=indent,
-        sep=sep,
-        tail=tail,
-    )
-    return LegacyLine(level, kv_string(key, value, key_width=key_width, indent=indent, sep=sep), payload)
+    message = kv_string(payload.key, payload.value, key_width=payload.key_width, indent=payload.indent, sep=payload.sep)
+    return LegacyLine(level, message, payload)
 
 
 def _detail_kv(
@@ -167,16 +149,16 @@ def _detail_kv(
 ) -> LegacyLine:
     """An entry-detail line (the colon-less gutter kv, LogFormatter.detail's shape)."""
 
-    return _kv_line(
-        key,
-        value,
+    payload = KvLine(
+        key=key,
+        value=value,
         key_width=DETAIL_KEY_WIDTH,
         value_style=value_style,
         indent=DETAIL_INDENT,
         sep="",
-        level=level,
         tail=tail,
     )
+    return _kv_line(payload, level=level)
 
 
 def _ledger_line(state: EntryState, label: str, style: str) -> LegacyLine:
@@ -192,14 +174,14 @@ def scan_started_lines(event: ScanStarted) -> tuple[LegacyLine, ...]:
     """The run banner: a blank, then the heavy titled rule."""
 
     banner = f"Starting SeaDexArr ({event.arr.capitalize()}) for {arr_item_noun(event.arr, event.total)}"
-    return (_BLANK, _info(banner, TitledRule(title=banner, heavy=True)))
+    return _BLANK, _info(banner, TitledRule(title=banner, heavy=True))
 
 
 def item_started_lines(event: ItemStarted) -> tuple[LegacyLine, ...]:
     """A per-item header: a blank, then the light titled rule."""
 
     header = f"[{event.index}/{event.total}] {event.arr.capitalize()}: {event.title}"
-    return (_BLANK, _info(header, TitledRule(title=header)))
+    return _BLANK, _info(header, TitledRule(title=header))
 
 
 def entry_header_lines(event: EntryHeader) -> tuple[LegacyLine, ...]:
@@ -227,7 +209,7 @@ def entry_header_lines(event: EntryHeader) -> tuple[LegacyLine, ...]:
 def ledger_row_lines(event: LedgerRow) -> tuple[LegacyLine, ...]:
     """A self-contained ledger row (unmonitored / no mapping / ignored / ...)."""
 
-    return (_BLANK, _ledger_line(event.state, event.label, accent_style(event.accent)))
+    return _BLANK, _ledger_line(event.state, event.label, accent_style(event.accent))
 
 
 def entry_detail_lines(event: EntryDetail) -> tuple[LegacyLine, ...]:
@@ -263,14 +245,12 @@ def grab_action_lines(event: GrabAction) -> tuple[LegacyLine, ...]:
                 message += " - waiting to import"
             lines.append(_detail_kv("status", message, value_style="yellow"))
     for group in event.groups:
-        recommendation = f"{group.name} [{', '.join(group.tags)}]" if group.tags else group.name
-        lines.append(_detail_kv("group", recommendation, value_style="cyan"))
-    # A name-less (hashless/private) release falls back to its group, never "None".
+        lines.append(_detail_kv("group", group.display, value_style="cyan"))
     added_label = "would add" if event.status is GrabStatus.WOULD_ADD else "added"
     for release in event.added:
-        lines.append(_detail_kv(added_label, release.name or release.group, value_style="green"))
+        lines.append(_detail_kv(added_label, release.display, value_style="green"))
     for release in event.downloading:
-        lines.append(_detail_kv("downloading", release.name or release.group, value_style="yellow"))
+        lines.append(_detail_kv("downloading", release.display, value_style="yellow"))
     return tuple(lines)
 
 
@@ -282,7 +262,7 @@ def cap_reached_lines(event: CapReached) -> tuple[LegacyLine, ...]:
 
 
 def _summary_kv(key: str, value: str, *, value_style: str | None = None) -> LegacyLine:
-    return _kv_line(key, value, key_width=_SUMMARY_KEY_WIDTH, value_style=value_style, indent=1)
+    return _kv_line(KvLine(key=key, value=value, key_width=_SUMMARY_KEY_WIDTH, value_style=value_style, indent=1))
 
 
 def _summary_block(
@@ -296,7 +276,7 @@ def _summary_block(
     for label, value, accent in rows:
         if not value:
             continue
-        yield _kv_line(label, value, key_width=_BLOCK_KEY_WIDTH, value_style=accent, indent=3, sep="")
+        yield _kv_line(KvLine(key=label, value=value, key_width=_BLOCK_KEY_WIDTH, value_style=accent, indent=3, sep=""))
 
 
 def _needs_block(item: NeedsActionFact) -> Iterator[LegacyLine]:

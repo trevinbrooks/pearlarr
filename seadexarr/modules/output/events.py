@@ -277,11 +277,17 @@ class GrabStatus(Enum):
 
 @dataclass(frozen=True, slots=True)
 class RecommendedGroup:
-    """A recommended release group with its SeaDex tags, carried separately (never
-    pre-joined into "Group [tag, tag]" display strings)."""
+    """A recommended release group with its SeaDex tags, carried separately;
+    :attr:`display` is the one place they're joined for output."""
 
     name: str
     tags: tuple[str, ...] = ()
+
+    @property
+    def display(self) -> str:
+        """The "name [tag, tag]" form, or the bare name when untagged."""
+
+        return f"{self.name} [{', '.join(self.tags)}]" if self.tags else self.name
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,6 +296,12 @@ class ReleaseName:
 
     name: str
     group: str
+
+    @property
+    def display(self) -> str:
+        """The torrent name, falling back to its group when name-less (never "None")."""
+
+        return self.name or self.group
 
 
 @dataclass(frozen=True, slots=True)

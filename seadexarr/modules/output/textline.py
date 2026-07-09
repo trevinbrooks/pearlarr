@@ -51,7 +51,6 @@ from .events import (
     NeedsActionFact,
     NextRunScheduled,
     PlacedBy,
-    RecommendedGroup,
     ReleaseName,
     ReleaseSkipped,
     RunFinished,
@@ -178,14 +177,8 @@ def _grab_message(status: GrabStatus) -> str:
     return "recommended release already downloading"
 
 
-def _group_text(group: RecommendedGroup) -> str:
-    if group.tags:
-        return f"{group.name} [{', '.join(group.tags)}]"
-    return group.name
-
-
 def _names_text(releases: tuple[ReleaseName, ...]) -> str:
-    return "; ".join(release.name or release.group for release in releases)
+    return "; ".join(release.display for release in releases)
 
 
 def _fields_run_started(event: RunStarted) -> tuple[Field, ...]:
@@ -242,7 +235,7 @@ def _fields_grab_action(event: GrabAction) -> tuple[Field, ...]:
     if event.waiting_to_import:
         fields.append(Field("waiting_to_import", True))
     if event.groups:
-        fields.append(Field("groups", "; ".join(_group_text(group) for group in event.groups)))
+        fields.append(Field("groups", "; ".join(group.display for group in event.groups)))
     if event.added:
         fields.append(Field("added", _names_text(event.added)))
     if event.downloading:
