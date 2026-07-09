@@ -3,8 +3,12 @@
 ``emit`` appends to a bounded queue under the hub lock, and the first emitter
 becomes the combiner: it drains the queue and calls renderers with the lock
 RELEASED, re-checking for new entries before handing the baton back — so no
-event ever waits for a future emit, and the hub-lock x console-lock (ABBA)
-deadlock can never form. Deliberately not a consumer thread: this hub is the
+event ever waits for a future emit. Dispatch is lock-free, so it can never form
+the hub-lock→console-lock (ABBA) inversion; the lifecycle calls that DO hold the
+hub lock across a renderer (``begin_cycle``/``close``/``_swap_console``, where
+``close`` reaches ``Live.stop``'s Console lock) stay deadlock-free by the
+separate lock-ordering guarantee, not by this drain. Deliberately not a consumer
+thread: this hub is the
 app's UI, and synchronous main-path dispatch keeps output ordered with program
 actions and crash-faithful; cross-thread events are rare stragglers the active
 drain picks up. Lifecycle calls (``begin_cycle``/``set_level``/``close``) park
@@ -36,8 +40,9 @@ from ..config import LogFormat
 # Strikes per renderer per cycle before it is skipped until the next begin_cycle.
 STRIKE_LIMIT: Final = 3
 
-# Bound on the pending-event queue; overflow sheds the NEWEST event (one file-only
-# note per episode) — a blocking enqueue would re-form the ABBA deadlock.
+# Bound on the pending-event queue; overflow sheds the newest DIAGNOSTIC only (one
+# file-only note per episode) — structural/scan events are never shed. A blocking
+# enqueue would re-form the ABBA deadlock.
 QUEUE_CAP: Final = 10_000
 
 
@@ -228,8 +233,10 @@ class OutputHub:
         before returning; otherwise the active drainer picks the event up (its
         loop re-checks the queue before releasing the baton) — this covers both
         cross-thread emits and re-entrant emits from inside a renderer's handle.
-        Overflow past the cap sheds the newest event, never blocks (bounded
-        blocking would re-form the ABBA deadlock through backpressure). Total
+        Overflow past the cap sheds only diagnostics — the unbounded bridge-fed
+        class; structural/scan events are appended even past the cap (fold inputs
+        must never be lost), and never blocks (bounded blocking would re-form the
+        ABBA deadlock through backpressure). Total
         against renderer bugs: a raise strikes the renderer and surfaces as a
         file-only diagnostic to the survivors; emit itself never raises
         (KeyboardInterrupt/SystemExit still propagate). Emits on a closed hub
@@ -247,8 +254,11 @@ class OutputHub:
                 self._once_keys.add(key)
             self._counts.record(severity_of(event))
             when = self._clock()
-            if len(self._pending) >= QUEUE_CAP:
-                # Shed rendering only (the tally above stands); one note per episode.
+            if isinstance(event, Diagnostic) and len(self._pending) >= QUEUE_CAP:
+                # Shed ONLY diagnostics — the unbounded bridge-fed class. Structural/
+                # scan events are O(library) and can't themselves overflow the cap, so
+                # its memory bound survives while fold inputs are never lost. Shed
+                # rendering only (the tally above stands); one note per episode.
                 if not self._overflowing:
                     self._overflowing = True
                     self._pending.append((self._overflow_note(), when))

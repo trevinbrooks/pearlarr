@@ -16,7 +16,7 @@ from typing import override
 
 import pytest
 
-from seadexarr.modules.config import LogFormat
+from seadexarr.modules.config import Arr, LogFormat
 from seadexarr.modules.output import (
     STRIKE_LIMIT,
     Diagnostic,
@@ -24,6 +24,7 @@ from seadexarr.modules.output import (
     NullRenderer,
     OutputHub,
     Renderer,
+    RunFinished,
     RunStarted,
     Severity,
     SeverityCounts,
@@ -177,6 +178,36 @@ class _InterruptOnceRenderer:
         self.calls += 1
         if self.calls == 1:
             raise KeyboardInterrupt
+
+    def begin_cycle(self) -> None:
+        pass
+
+    def set_level(self, level: int) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class _ReArmableGate:
+    """Blocks inside handle once per armed episode until released; arm() re-arms it
+    for the next episode — the overflow-note-per-episode reset probe."""
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self._armed = True
+
+    def arm(self) -> None:
+        self.entered.clear()
+        self.release.clear()
+        self._armed = True
+
+    def handle(self, event: Event, when: float) -> None:
+        if self._armed:
+            self._armed = False
+            self.entered.set()
+            assert self.release.wait(timeout=5.0), "gate never released"
 
     def begin_cycle(self) -> None:
         pass
@@ -424,6 +455,76 @@ def test_overflow_sheds_newest_with_one_note_per_episode() -> None:
     # Shed events were still counted at enqueue; the note itself is never counted.
     since = hub.counts.counts_since(mark)
     assert (since.info, since.warnings) == (QUEUE_CAP + 3, 0)
+
+
+def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D1: at the cap only diagnostics shed — a fold input (RunFinished) is appended
+    even past the cap, so the breadcrumb frontier can never be corrupted."""
+
+    cap = 3
+    monkeypatch.setattr("seadexarr.modules.output.hub.QUEUE_CAP", cap)
+    gated, observer = _GatedRenderer(), RecordingRenderer()
+    hub = OutputHub([gated, observer])
+
+    drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
+    drainer.start()
+    assert gated.entered.wait(timeout=5.0)
+
+    # _EVENT is blocked mid-handle (already popped); fill the pending queue to the cap.
+    for i in range(cap):
+        hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
+    structural = RunFinished(arr=Arr.SONARR)
+    hub.emit(structural)  # non-diagnostic at the cap: appended, never shed
+
+    gated.release.set()
+    drainer.join(timeout=30.0)
+    assert not drainer.is_alive()
+
+    assert structural in observer.events
+    messages = [d.message for d in observer.of_type(Diagnostic)]
+    assert all("overflowed" not in m for m in messages)  # a structural never trips the note
+
+
+def test_overflow_sheds_diagnostics_and_re_arms_the_note_per_episode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D1 kept behavior: diagnostics past the cap shed (still counted at enqueue) with
+    one note per episode; the note re-arms once a drain empties the queue."""
+
+    cap = 3
+    monkeypatch.setattr("seadexarr.modules.output.hub.QUEUE_CAP", cap)
+    gate, observer = _ReArmableGate(), RecordingRenderer()
+    hub = OutputHub([gate, observer])
+    mark = hub.counts.mark()
+
+    def run_overflow_episode() -> None:
+        gate.arm()
+        drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
+        drainer.start()
+        assert gate.entered.wait(timeout=5.0)
+        for i in range(cap):  # fill to the cap
+            hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
+        hub.emit(Diagnostic(severity=Severity.INFO, message="dropped-1"))
+        hub.emit(Diagnostic(severity=Severity.INFO, message="dropped-2"))
+        gate.release.set()
+        drainer.join(timeout=30.0)
+        assert not drainer.is_alive()
+
+    run_overflow_episode()
+    messages = [d.message for d in observer.of_type(Diagnostic)]
+    assert f"q{cap - 1}" in messages  # everything under the cap still renders
+    assert "dropped-1" not in messages and "dropped-2" not in messages
+    assert sum("overflowed" in m for m in messages) == 1  # one note, not one per drop
+    assert hub._overflowing is False  # the drain emptied the queue and re-armed the note
+
+    run_overflow_episode()
+    messages = [d.message for d in observer.of_type(Diagnostic)]
+    assert sum("overflowed" in m for m in messages) == 2  # a fresh note for the new episode
+
+    # Shed diagnostics were counted at enqueue; the note itself is never counted.
+    # Per episode: _EVENT + cap diagnostics + 2 dropped = cap + 3 info.
+    since = hub.counts.counts_since(mark)
+    assert (since.info, since.warnings) == (2 * (cap + 3), 0)
 
 
 # --- once= dedup ---------------------------------------------------------------------
