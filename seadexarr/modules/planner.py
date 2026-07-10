@@ -16,6 +16,7 @@ from itertools import compress
 from .config import Arr
 from .log import indent_string
 from .manual_import import normalize_group
+from .output import Severity
 from .seadex_types import (
     ArrReleaseDict,
     EpisodeRecord,
@@ -40,7 +41,7 @@ class SkipNotice:
 
     groups: list[str]
     reason: str
-    level: int = logging.WARNING
+    severity: Severity = Severity.WARNING
 
 
 @dataclass
@@ -825,7 +826,7 @@ class DownloadPlanner:
                     SkipNotice(
                         groups=list(flagged),
                         reason="private-only; a public fallback already covers these files",
-                        level=logging.INFO,
+                        severity=Severity.INFO,
                     ),
                 )
                 for rg in flagged:
@@ -851,7 +852,7 @@ class DownloadPlanner:
                 SkipNotice(
                     groups=list(flagged),
                     reason=reason,
-                    level=logging.WARNING,
+                    severity=Severity.WARNING,
                 ),
             )
             skips.skipped = True
@@ -893,7 +894,7 @@ class DownloadPlanner:
                 SkipNotice(
                     groups=private_dropped,
                     reason=f"private-only; falling back to {keeper}",
-                    level=logging.INFO,
+                    severity=Severity.INFO,
                 ),
             )
 
@@ -963,7 +964,7 @@ class DownloadPlanner:
             SkipNotice(
                 groups=list(flagged),
                 reason=f"{prefix}; grabbing public alternative {promoted}",
-                level=logging.INFO,
+                severity=Severity.INFO,
             ),
         )
 

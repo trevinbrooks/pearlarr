@@ -32,6 +32,7 @@ across sets onto ONE result - the multi-set tests pin that accumulation.
 import logging
 
 from seadexarr.modules.config import Arr
+from seadexarr.modules.output import Severity
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.seadex_types import EpisodeRecord, SeadexReleaseGroupItem
 
@@ -97,7 +98,7 @@ class TestReduceOverlappingDownloads:
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].reason == "private-only (private releases not supported)"
-        assert skips.notices[0].level == logging.WARNING
+        assert skips.notices[0].severity is Severity.WARNING
 
     def test_private_only_set_with_unrelated_fallback_still_warns(self) -> None:
         # The fallback covers DIFFERENT files (own same-files set): it doesn't
@@ -120,7 +121,7 @@ class TestReduceOverlappingDownloads:
         assert skips.skipped is True
         assert skips.groups == ["Priv"]
         assert len(skips.notices) == 1
-        assert skips.notices[0].level == logging.WARNING
+        assert skips.notices[0].severity is Severity.WARNING
 
     def test_private_only_set_with_owned_fallback_soft_skips(self) -> None:
         # Same files, and the public fallback is unflagged (the Arr already has
@@ -140,7 +141,7 @@ class TestReduceOverlappingDownloads:
         assert skips.fallback_covered is True
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
-        assert skips.notices[0].level == logging.INFO
+        assert skips.notices[0].severity is Severity.INFO
 
     def test_keeper_prefers_fully_addable_group(self) -> None:
         # A mixed group (public + flagged private url) is first, but its private
@@ -206,7 +207,7 @@ class TestReduceOverlappingDownloads:
         assert skips.fallback_covered is False
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
-        assert skips.notices[0].level == logging.WARNING
+        assert skips.notices[0].severity is Severity.WARNING
         stale_reason = (
             "private-only; your copy is outdated (its file size no longer matches the release) "
             "and only a fallback covers it"
@@ -252,7 +253,7 @@ class TestReduceOverlappingDownloads:
         assert skips.groups == []
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
-        assert skips.notices[0].level == logging.INFO
+        assert skips.notices[0].severity is Severity.INFO
         # A preferred group is not a fallback, so the notice must not say so.
         assert skips.notices[0].reason == "private-only; grabbing public alternative Pub"
 
@@ -301,7 +302,7 @@ class TestReduceOverlappingDownloads:
         assert skips.stale_held is False
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["M"]
-        assert skips.notices[0].level == logging.INFO
+        assert skips.notices[0].severity is Severity.INFO
         assert skips.notices[0].reason == "remaining files private-only; grabbing public alternative P"
 
     def test_degraded_keeper_without_mismatch_does_not_promote(self) -> None:
@@ -341,7 +342,7 @@ class TestReduceOverlappingDownloads:
         assert skips.fallback_covered is False
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
-        assert skips.notices[0].level == logging.INFO
+        assert skips.notices[0].severity is Severity.INFO
         # The keeper flow is now the sole producer of this wording; pin it exactly.
         assert skips.notices[0].reason == "private-only; falling back to Fall"
 
@@ -387,7 +388,7 @@ class TestReduceOverlappingDownloads:
         assert seadex["P"].urls["p"].download is False
         assert skips.skipped is False
         assert len(skips.notices) == 1
-        assert skips.notices[0].level == logging.INFO
+        assert skips.notices[0].severity is Severity.INFO
         # M is a preferred group, not a fallback, so the verb must say so.
         assert skips.notices[0].reason == "private-only; grabbing public alternative M"
 
@@ -428,7 +429,7 @@ class TestReduceOverlappingDownloads:
         assert skips.skipped is True
         assert skips.groups == ["P1", "P2"]
         assert [n.groups for n in skips.notices] == [["P1"], ["P2"]]
-        assert [n.level for n in skips.notices] == [logging.WARNING, logging.WARNING]
+        assert [n.severity for n in skips.notices] == [Severity.WARNING, Severity.WARNING]
 
     def test_soft_skip_and_stale_hold_combine_across_sets(self) -> None:
         # One entry, two sets: an owned-fallback soft-skip (set 1) and a
@@ -463,7 +464,7 @@ class TestReduceOverlappingDownloads:
         assert skips.skipped is True
         assert skips.groups == ["Priv2"]
         assert [n.groups for n in skips.notices] == [["Priv1"], ["Priv2"]]
-        assert [n.level for n in skips.notices] == [logging.INFO, logging.WARNING]
+        assert [n.severity for n in skips.notices] == [Severity.INFO, Severity.WARNING]
 
     def test_both_promotion_prefixes_in_one_entry(self) -> None:
         # The two promotion notices are DISTINCT: the no-public-flagged branch

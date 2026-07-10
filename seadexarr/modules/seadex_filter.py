@@ -8,7 +8,7 @@ from seadex import EntryRecord, TorrentRecord
 from .config import PRIVATE_TRACKERS, PrivateReleaseAction
 from .console_caps import console_of
 from .log import indent_string
-from .output import Accent, Severity, StyledValue
+from .output import Accent, StyledValue
 from .reporter import RunContext
 from .seadex_types import (
     ArrReleaseDict,
@@ -296,13 +296,12 @@ class SeadexReleaseFilter:
         )
 
         # The planner reports what to log rather than logging it; post each
-        # private-only skip exactly as the inline call used to. The planner only
-        # emits stdlib INFO/WARNING levels, both exact Severity members.
+        # private-only skip exactly as the inline call used to.
         for notice in result.skip_notices:
             self._reporter.detail(
                 "skipped",
                 StyledValue(f"{', '.join(notice.groups)} {notice.reason}", Accent.CAUTION),
-                severity=Severity(notice.level),
+                severity=notice.severity,
             )
 
         # Carry the skip flag/groups onto the run context (reset per title in the

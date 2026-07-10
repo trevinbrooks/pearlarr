@@ -106,12 +106,12 @@ class AniListRetryLog:
     logger: logging.Logger
     _gave_up: bool = field(default=False, init=False)
 
-    def waiting(self, reason: str, wait: float, retry: int, *, level: int = logging.INFO) -> None:
+    def waiting(self, reason: str, wait: float, retry: int, *, severity: Severity = Severity.INFO) -> None:
         """One backoff notice, so a long Retry-After wait doesn't look like a hang."""
 
         emit_to_hub(
             Diagnostic(
-                severity=Severity(level),
+                severity=severity,
                 message=f"AniList {reason}; waiting {wait:.0f}s (retry {retry}/{MAX_RETRIES})",
                 origin=LOG_NAME,
             ),
@@ -323,7 +323,7 @@ class AniListClient:
                     f"request failed ({type(e).__name__})",
                     wait,
                     attempt + 1,
-                    level=logging.DEBUG,
+                    severity=Severity.DEBUG,
                 )
                 time.sleep(wait)
                 continue
