@@ -5,9 +5,10 @@ app logger (its ``propagate`` stays False, so the app path needs its own seat).
 Adoption rules:
 
 * App-logger records: WARNING+ adopt visible (the badge class); sub-WARNING
-  adopt ``file_only`` ALWAYS — DEBUG chatter and unmigrated INFO stragglers stay
-  in the file, the rich TTY still shows the raw record via RichConsoleHandler,
-  and plain/json stdout deliberately omit forensic chatter.
+  adopt ``file_only`` at INFO+ config (DEBUG chatter and unmigrated INFO
+  stragglers stay forensic) and under a rich seat (RichConsoleHandler already
+  prints the raw record). At a configured DEBUG with a plain/json seat they
+  adopt visible — the bridge is the only console route there.
 * Root records (third-party: httpx, urllib3, pydantic, py.warnings, ...):
   WARNING+ adopt visible with ``origin = record.name``; sub-WARNING records below
   the hub's level are never constructed, at-or-above it they adopt ``file_only``
@@ -109,9 +110,10 @@ class HubBridgeHandler(HubBridgeBase):
         if record.levelno >= logging.WARNING:
             file_only = False
         elif is_first_party(record.name):
-            # Forensics: filed, off plain/json stdout; the rich TTY still shows
-            # the raw record via RichConsoleHandler.
-            file_only = True
+            # Visible only at DEBUG config on a plain/json seat (the only console
+            # route there); a rich seat already prints the raw record, so visible
+            # adoption would double it.
+            file_only = self._hub.level > logging.DEBUG or self._hub.console_format == "rich"
         elif record.levelno < self._hub.level:
             # Sub-threshold third-party records aren't constructed/counted.
             return None

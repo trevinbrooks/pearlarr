@@ -988,6 +988,23 @@ def test_begin_cycle_swaps_the_console_renderer_only_on_format_change() -> None:
     assert sink.events == [_EVENT, _EVENT]  # the stable sink saw both
 
 
+def test_console_format_is_none_before_any_begin_cycle() -> None:
+    hub = OutputHub([RecordingRenderer()], console_factory=lambda console_format: NullRenderer())
+
+    assert hub.console_format is None
+
+
+def test_console_format_reflects_the_seated_format_after_begin_cycle() -> None:
+    # The bridge's first-party adoption arm reads this (rich double-print guard).
+    hub = OutputHub([RecordingRenderer()], console_factory=lambda console_format: NullRenderer())
+
+    hub.begin_cycle(console_format="plain", level=logging.INFO)
+    assert hub.console_format == "plain"
+
+    hub.begin_cycle(console_format="rich", level=logging.INFO)
+    assert hub.console_format == "rich"
+
+
 def test_a_failing_console_factory_keeps_the_old_seat_and_notes_file_only() -> None:
     console, sink = RecordingRenderer(), _FileishRecorder()
 

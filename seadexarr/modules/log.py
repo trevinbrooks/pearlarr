@@ -296,6 +296,9 @@ def apply_log_level(logger: logging.Logger, log_level: str) -> None:
 
     level = _LOG_LEVELS.get(log_level.upper(), logging.INFO)
     logger.setLevel(level)
+    # Keep root in step (see setup_logger): the config level lands here mid-cycle,
+    # and the root-seated bridge must see sub-WARNING third-party records.
+    logging.getLogger().setLevel(level)
     for handler in logger.handlers:
         # The rich console handler setup_logger installed (plain/json attach
         # no console handler at all); never the bridge.
@@ -361,6 +364,9 @@ def setup_logger(
     if level is None:
         level = logging.INFO
     logger.setLevel(level)
+    # The bridge lives on the ROOT logger: open root's level too, so the bridge's
+    # own gate (not stdlib's WARNING default) decides third-party records.
+    logging.getLogger().setLevel(level)
 
     # Defensive fold for programmatic callers; cli resolves before calling.
     if console_format == "auto":

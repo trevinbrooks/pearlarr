@@ -1,9 +1,11 @@
 # pyright: strict
 """Tests for the logging bridge (``output.bridge``) + the real-seat wiring.
 
-Pin the adoption table (WARNING+ visible; first-party sub-WARNING file_only
-ALWAYS; third-party sub-WARNING gated by the hub level, then file_only unless
-configured DEBUG), construct-never-mutate (caplog safety), warnings capture,
+Pin the adoption table (WARNING+ visible; first-party sub-WARNING file_only at
+INFO+ config or under a rich seat, visible at DEBUG config on plain/json;
+third-party sub-WARNING gated by the hub level, then file_only unless
+configured DEBUG), the root-logger gate ``setup_logger`` opens for the bridge,
+construct-never-mutate (caplog safety), warnings capture,
 idempotent install surviving ``setup_logger`` rebuilds, the per-thread
 reentrancy downgrade, and the full-stack seams over the REAL sinks: one console
 render + one structured file line per record. The motivating scenario - a
@@ -27,6 +29,7 @@ from seadexarr.modules.output import (
     Event,
     FileLogSink,
     HubBridgeHandler,
+    NullRenderer,
     OutputHub,
     RichRenderer,
     Severity,
@@ -75,9 +78,11 @@ class TestAdoption:
         (diagnostic,) = recorder.of_type(Diagnostic)
         assert diagnostic == Diagnostic(severity=Severity.WARNING, message="watch out", origin=LOG_NAME)
 
-    def test_first_party_sub_warning_adopts_file_only(self, bridged: tuple[RecordingRenderer, logging.Logger]) -> None:
-        """P3: DEBUG chatter + unmigrated INFO stragglers stay in the FILE; the
-        rich TTY shows the raw record; plain/json stdout deliberately omit it."""
+    def test_first_party_sub_warning_adopts_file_only_at_info_config(
+        self, bridged: tuple[RecordingRenderer, logging.Logger]
+    ) -> None:
+        """P3: at INFO+ config (the bridged hub's default) DEBUG chatter +
+        unmigrated INFO stragglers stay in the FILE; stdout omits them."""
 
         recorder, logger = bridged
 
@@ -88,6 +93,45 @@ class TestAdoption:
             (Severity.INFO, True),
             (Severity.DEBUG, True),
         ]
+
+    def test_first_party_sub_warning_visible_at_debug_config_on_a_plain_seat(self, app_logger: logging.Logger) -> None:
+        """At DEBUG config with a plain/json seat the bridge is a first-party
+        record's ONLY console route, so DEBUG/INFO adopt visible."""
+
+        recorder = RecordingRenderer()
+        hub = OutputHub([recorder], console_factory=lambda console_format: NullRenderer())
+        hub.begin_cycle(console_format="plain", level=logging.DEBUG)
+        install_bridge(hub)
+
+        try:
+            app_logger.debug("cache hit")
+            app_logger.info("checking Frieren")
+        finally:
+            uninstall_bridge()
+
+        assert [(d.severity, d.file_only) for d in recorder.of_type(Diagnostic)] == [
+            (Severity.DEBUG, False),
+            (Severity.INFO, False),
+        ]
+
+    def test_first_party_sub_warning_stays_file_only_at_debug_config_under_rich(
+        self, app_logger: logging.Logger
+    ) -> None:
+        """Under a rich seat RichConsoleHandler already prints the raw record;
+        visible adoption would double it, so file_only stands even at DEBUG."""
+
+        recorder = RecordingRenderer()
+        hub = OutputHub([recorder], console_factory=lambda console_format: NullRenderer())
+        hub.begin_cycle(console_format="rich", level=logging.DEBUG)
+        install_bridge(hub)
+
+        try:
+            app_logger.debug("cache hit")
+        finally:
+            uninstall_bridge()
+
+        (diagnostic,) = recorder.of_type(Diagnostic)
+        assert diagnostic.file_only
 
     def test_third_party_adopts_all_levels_visible_at_configured_debug(self, app_logger: logging.Logger) -> None:
         """At a configured DEBUG the early-out never fires and nothing is demoted
@@ -229,6 +273,50 @@ class _MidDispatchLogger:
 
     def close(self) -> None:
         pass
+
+
+# --- the root-logger gate (setup_logger opens it for the bridge) -----------------------
+
+
+class TestRootGate:
+    """A self-silent (NOTSET) library logger defers to the ROOT level; stdlib's
+    WARNING default would drop its sub-WARNING records before the bridge runs."""
+
+    def test_third_party_info_reaches_the_bridge_at_info_config(self, app_logger: logging.Logger) -> None:
+        del app_logger
+        recorder = RecordingRenderer()
+        install_bridge(OutputHub([recorder]))
+        setup_logger(log_level="INFO", console_format="plain")
+        library = _third_party("bridge-test-rootgate-info", level=logging.NOTSET)
+
+        try:
+            library.debug("handshake bytes")  # below root INFO: never constructed
+            library.info("handshake ok")
+        finally:
+            uninstall_bridge()
+
+        (diagnostic,) = recorder.of_type(Diagnostic)
+        assert diagnostic.severity is Severity.INFO
+        assert diagnostic.message == "handshake ok"
+        assert diagnostic.file_only
+
+    def test_third_party_debug_reaches_the_bridge_visible_at_debug_config(self, app_logger: logging.Logger) -> None:
+        del app_logger
+        recorder = RecordingRenderer()
+        hub = OutputHub([recorder])
+        hub.set_level(logging.DEBUG)
+        install_bridge(hub)
+        setup_logger(log_level="DEBUG", console_format="plain")
+        library = _third_party("bridge-test-rootgate-debug", level=logging.NOTSET)
+
+        try:
+            library.debug("handshake bytes")
+        finally:
+            uninstall_bridge()
+
+        (diagnostic,) = recorder.of_type(Diagnostic)
+        assert diagnostic.severity is Severity.DEBUG
+        assert not diagnostic.file_only
 
 
 # --- install lifecycle ----------------------------------------------------------------

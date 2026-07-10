@@ -44,6 +44,8 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     randomized ordering. The output seam gets the same treatment: a test that
     installed the hub/bridge (the cli run commands do) would otherwise leave the
     bridge on the ROOT logger, echoing every later test's third-party warnings.
+    ``setup_logger``/``apply_log_level`` also open the ROOT logger's level (the
+    bridge's gate); it is restored to the stdlib WARNING default here.
     """
 
     opened: list[MappingStore] = []
@@ -65,6 +67,7 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         handler.close()
         app_logger.removeHandler(handler)
     app_logger.setLevel(logging.NOTSET)
+    logging.getLogger().setLevel(logging.WARNING)
 
 
 @pytest.fixture(autouse=True)
