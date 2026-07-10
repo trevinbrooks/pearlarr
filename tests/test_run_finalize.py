@@ -19,7 +19,7 @@ from seadexarr.modules.boot_flow import BootFlow
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.manual_import import OutcomeCategory
 from seadexarr.modules.mappings import MappingEntry
-from seadexarr.modules.output import BootStepFinished, SeverityTally, install_hub
+from seadexarr.modules.output import BootStepFinished, CountsMark, SeverityCounts, install_hub
 from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.protocols import ImportCompleter
 from seadexarr.modules.reporter import RunContext
@@ -53,8 +53,8 @@ class _FakeGateway:
 class _FakeReporter:
     """The run-loop log hooks the scan drives (each just acknowledges)."""
 
-    def counts_mark(self) -> SeverityTally:
-        return SeverityTally()
+    def counts_mark(self) -> CountsMark:
+        return SeverityCounts().bound_mark()
 
     def log_arr_start(self, arr: Arr, n_items: int) -> bool:
         return True

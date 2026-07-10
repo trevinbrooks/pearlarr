@@ -28,11 +28,11 @@ from typing import final
 
 from .output import (
     BootReady,
+    CountsMark,
     RunStarted,
     ScopeFactory,
     ScopeKind,
     ScopeMark,
-    SeverityTally,
     StepScope,
     current_hub,
     emit_to_hub,
@@ -46,7 +46,7 @@ class _CapstoneWindow:
     import work)."""
 
     started_at: float
-    counts_mark: SeverityTally
+    counts_mark: CountsMark
 
 
 @final
@@ -87,7 +87,7 @@ class BootFlow:
 
         self._section.open()
         if self._window is None:
-            self._window = _CapstoneWindow(self._clock(), current_hub().counts.mark())
+            self._window = _CapstoneWindow(self._clock(), current_hub().counts.bound_mark())
         try:
             with self._steps.step(label) as scope:
                 yield scope
@@ -120,10 +120,10 @@ class BootFlow:
         window = self._window
         if window is None or self._section_failed:
             return
-        # The mark and this diff must read the SAME hub (production installs it once,
-        # pre-loop); counts exclude file_only forensics, so only an ERROR a visible
+        # The mark carries the counter it was stamped on (a hub swap can't skew the
+        # diff); counts exclude file_only forensics, so only an ERROR a visible
         # surface could show suppresses the ready line.
-        if current_hub().counts.counts_since(window.counts_mark).errors > 0:
+        if window.counts_mark.since().errors > 0:
             return
         emit_to_hub(BootReady(elapsed_s=self._clock() - window.started_at))
 

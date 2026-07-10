@@ -1171,6 +1171,9 @@ def _summary_lines(
     """Capture exactly what log_run_summary emits, with scripted issue deltas."""
 
     harness = _Harness()
+    # Production shape: run start stamps the mark (bound to the harness counter),
+    # then the run's issues accrue on it.
+    ctx.counts_mark = harness.reporter.counts_mark()
     # Scripted issues ride the bound counter directly (the issues-row delta);
     # they produce no events, so only the summary's feed the re-derived lines.
     for _ in range(warnings):

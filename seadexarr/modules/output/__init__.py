@@ -66,7 +66,7 @@ from .events import (
     WaitStarted,
     severity_of,
 )
-from .hub import STRIKE_LIMIT, NullRenderer, OutputHub, Renderer, SeverityCounts, SeverityTally
+from .hub import STRIKE_LIMIT, CountsMark, NullRenderer, OutputHub, Renderer, SeverityCounts, SeverityTally
 from .rich_renderer import RichRenderer, diagnostic_text, diagnostic_threshold
 from .runtime import current_hub, emit_to_hub, hub_counts, install_hub, uninstall_hub
 from .scopes import (
@@ -101,6 +101,7 @@ __all__ = [
     "BreadcrumbFold",
     "CapReached",
     "CapturedTrace",
+    "CountsMark",
     "CountsSource",
     "CycleStarted",
     "Diagnostic",

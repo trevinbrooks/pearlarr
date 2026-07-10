@@ -14,6 +14,7 @@ from .manual_import import ImportWaitMode, PendingImport, PendingState
 from .output import (
     Accent,
     CapReached,
+    CountsMark,
     CountsSource,
     Emit,
     EntryDetail,
@@ -38,7 +39,7 @@ from .output import (
     ScanStarted,
     ScopeFactory,
     Severity,
-    SeverityTally,
+    SeverityCounts,
     StyledValue,
 )
 from .seadex_types import SeadexDict
@@ -169,9 +170,10 @@ class RunContext:
     unsupported_tracker_groups: list[str] = field(default_factory=list[str])
     unsupported_tracker_hashes: list[str] = field(default_factory=list[str])
     # Run clock (monotonic, so an NTP/DST step can't yield negative elapsed) and
-    # the hub-counts mark stamped at run start, diffed for the summary's issues row.
+    # the counts mark stamped at run start, diffed for the summary's issues row.
+    # Default: a throwaway zero counter, so an unstamped ctx diffs to zero.
     started_monotonic: float | None = None
-    counts_mark: SeverityTally = field(default_factory=SeverityTally)
+    counts_mark: CountsMark = field(default_factory=lambda: SeverityCounts().bound_mark())
     # PendingImport records written THIS run (on a successful add), for the
     # end-of-run blocking pass; the durable copies live in cache_store under
     # ``pending_imports``, so this is just the fast in-memory list to wait on.
@@ -226,10 +228,11 @@ class RunReporter:
     """Owns the producer surface: each method EMITS a typed output event.
 
     Built once per arr instance with its stable collaborators (the ``emit`` seam,
-    the bound hub-counts source the summary diffs, the cache store, the AniList
-    gateway). The methods hold every producer-side decision - stats bumps, ctx
-    mutation, gates, title fallbacks - then state WHAT happened as an event; the
-    scan-line builders (``output.scan_lines``) own the layout. An open entry block
+    the hub-counts source ``counts_mark`` binds into the run-start mark, the
+    cache store, the AniList gateway). The methods hold every producer-side
+    decision - stats bumps, ctx mutation, gates, title fallbacks - then state
+    WHAT happened as an event; the scan-line builders (``output.scan_lines``)
+    own the layout. An open entry block
     rides ``self._entry``: a CHECKING header opens one and its details stream
     through it (any boundary/sibling closes it, idempotently, first); a COMPLETE
     block (cached / carried-over pending) opens and self-closes via ``_block``, so
@@ -730,13 +733,14 @@ class RunReporter:
 
     # --- summary boundary ----------------------------------------------------
 
-    def counts_mark(self) -> SeverityTally:
+    def counts_mark(self) -> CountsMark:
         """The counts mark run start stamps; ``log_run_summary`` diffs against it.
 
-        One bound source: the mark and the diff can never read different hubs.
+        The mark carries the counter it was stamped on, so its ``since()`` diff
+        can never read a different hub than the mark did.
         """
 
-        return self._counts().mark()
+        return self._counts().bound_mark()
 
     def log_run_summary(self, ctx: RunContext, *, is_preview: bool, has_client: bool) -> bool:
         """Emit the end-of-run scoreboard (the summary boundary; closes the entry).
@@ -754,9 +758,9 @@ class RunReporter:
 
         self._close_entry()
 
-        # Warning/error counts come from the bound hub-counts source, diffed
-        # against the mark stamped when the run started.
-        since = self._counts().counts_since(ctx.counts_mark)
+        # Warning/error counts: the run-start mark carries its own counter, so
+        # this diff reads the exact counter the mark was stamped on.
+        since = ctx.counts_mark.since()
 
         # A run grabs nothing when explicitly flagged dry, or when no client is
         # configured at all - the note wording distinguishes the two.

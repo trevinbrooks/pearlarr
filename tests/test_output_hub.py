@@ -810,6 +810,20 @@ def test_severity_counts_mark_and_delta() -> None:
     assert counts.mark().warnings == 2  # totals stay monotonic
 
 
+def test_bound_mark_diffs_only_its_own_counter() -> None:
+    """A CountsMark carries its counter: records on ANOTHER counter never skew since()."""
+
+    counts = SeverityCounts()
+    mark = counts.bound_mark()
+
+    other = SeverityCounts()
+    other.record(Severity.ERROR)
+    assert mark.since() == SeverityTally()
+
+    counts.record(Severity.WARNING)
+    assert mark.since() == SeverityTally(warning=1)
+
+
 def test_hub_tallies_every_emitted_event() -> None:
     recording = RecordingHub()
     mark = recording.hub.counts.mark()

@@ -234,6 +234,22 @@ def test_error_gate_resets_with_the_section() -> None:
     assert len(recording.of_type(BootReady)) == 1  # second section only
 
 
+def test_capstone_gate_survives_a_hub_swap_mid_section() -> None:
+    # The window's mark carries the counter it was stamped on: errors tallied by
+    # a hub installed AFTER the mark (an embedding caller re-installing) must not
+    # suppress the capstone with a cross-hub diff.
+    flow, _, clock = _flow()
+
+    with flow.step("Reading config"):
+        clock.tick(0.02)
+    swapped = RecordingHub()
+    install_hub(swapped.hub)  # conftest teardown uninstalls
+    swapped.emit(_error("unrelated error on the new hub"))
+    flow.end_section()
+
+    assert len(swapped.of_type(BootReady)) == 1  # gated on the ORIGINAL counter
+
+
 def test_empty_section_emits_no_capstone() -> None:
     flow, recording, _ = _flow()
 

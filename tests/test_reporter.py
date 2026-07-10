@@ -36,6 +36,7 @@ from seadexarr.modules.output import (
     ScanFinished,
     ScopeClosed,
     ScopeOpened,
+    Severity,
     SeverityCounts,
 )
 from seadexarr.modules.reporter import (
@@ -341,6 +342,40 @@ class TestRunSummary:
         reporter, events = _record()
         assert reporter.log_run_summary(self._ctx_with_data(), is_preview=True, has_client=True)
         assert self._summary_of(events).summary.dry_run_note == "nothing grabbed"
+
+    def test_counts_mark_stays_bound_to_the_counter_it_was_stamped_on(self) -> None:
+        """A counter swapped in between mark and summary (a re-installed hub) can't
+        feed the diff: the mark carries the ORIGINAL counter."""
+
+        logger = make_logger()
+        anilist = AniListGateway(
+            cache_store=FakeCacheStore(),
+            logger=logger,
+            client=AniListClient(client=httpx.Client(), logger=logger),
+        )
+        counters = [SeverityCounts()]
+        events: list[Event] = []
+        reporter = RunReporter(
+            emit=events.append,
+            counts=lambda: counters[-1],
+            cache_store=FakeCacheStore(),
+            anilist=anilist,
+        )
+
+        ctx = self._ctx_with_data()
+        ctx.counts_mark = reporter.counts_mark()
+        counters[-1].record(Severity.WARNING)  # the run's own post-mark warning
+
+        # The "hub swap": the source now resolves to a fresh counter soaking up
+        # unrelated errors.
+        counters.append(SeverityCounts())
+        counters[-1].record(Severity.ERROR)
+        counters[-1].record(Severity.ERROR)
+
+        reporter.log_run_summary(ctx, is_preview=False, has_client=True)
+        summary = self._summary_of(events).summary
+        assert summary.warnings == 1  # the original counter's record, not garbage
+        assert summary.errors == 0  # the swapped-in counter's errors never leak
 
 
 def _summary_messages(

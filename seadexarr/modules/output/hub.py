@@ -120,6 +120,17 @@ class SeverityTally:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CountsMark:
+    """A baseline stamped on ONE counter; since() can never diff across hubs."""
+
+    counts: SeverityCounts
+    baseline: SeverityTally
+
+    def since(self) -> SeverityTally:
+        return self.counts.counts_since(self.baseline)
+
+
 @final
 class SeverityCounts:
     """Monotonic per-process tallies; runs take a mark() and read counts_since().
@@ -151,6 +162,11 @@ class SeverityCounts:
 
     def counts_since(self, mark: SeverityTally) -> SeverityTally:
         return self.mark().delta(mark)
+
+    def bound_mark(self) -> CountsMark:
+        """A mark carrying THIS counter, so a later hub swap can't skew the diff."""
+
+        return CountsMark(self, self.mark())
 
 
 class _Sub:
