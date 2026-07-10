@@ -247,6 +247,8 @@ def live_model(snapshot: WaitSnapshot, caps: Capabilities) -> LiveModel:
     )
 
 
+# Every non-terminal Phase, drift-pinned (test_output_wait_render ties it to
+# set(Phase)); _overflow_text and wait_pulse_line hand-list the same trio.
 _PHASE_RANK = {Phase.IMPORTING: 0, Phase.DOWNLOADING: 1, Phase.QUEUED: 2}
 
 

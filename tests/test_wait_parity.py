@@ -21,7 +21,6 @@ import logging
 
 from rich.console import Console
 
-from seadexarr.modules.console_caps import Capabilities, detect_capabilities
 from seadexarr.modules.log import ConsoleRender, RichConsoleHandler, SectionRule, StyledLine, console_payload
 from seadexarr.modules.manual_import import Outcome
 from seadexarr.modules.output import LegacyRenderer, OutputHub, Phase, TorrentView, WaitSnapshot, install_hub
@@ -33,11 +32,6 @@ type Line = tuple[int, str, ConsoleRender | None]
 """One pinned record: (levelno, plain message, CONSOLE_EXTRA payload)."""
 
 _I = logging.INFO
-
-# A capable TTY (the live-cockpit seat): color + unicode glyphs.
-_LIVE_CAPS = Capabilities(live=True, color=True, unicode=True, width=100, height=40)
-# The plain/piped seat (PlainConsoleHandler -> no console): ASCII glyphs, no color.
-_PIPE_CAPS = detect_capabilities(None)
 
 _RULE: Line = (_I, "-" * 80, SectionRule(char="-"))
 
@@ -159,8 +153,9 @@ def _narrator(app_logger: logging.Logger, *, pulse_s: float, live: bool) -> tupl
     """The real narrator wired to a real hub carrying ONE LegacyRenderer.
 
     ``live`` attaches a live-capable console handler so the echo's caps probe
-    resolves the ``_LIVE_CAPS`` shape (an explicit color_system keeps caps.color
-    deterministic across CI envs); without one it resolves ``_PIPE_CAPS``.
+    resolves live/color/unicode (an explicit color_system keeps caps.color
+    deterministic across CI envs); without one it resolves the no-console
+    ASCII shape (the plain/piped seat).
     """
 
     if live:

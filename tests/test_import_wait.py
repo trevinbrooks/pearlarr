@@ -1203,6 +1203,7 @@ class TestRunMonitor:
         assert result is not None and result.waited == 0
         assert set(mgr._pending_records()) == {"h"}  # left pending for next run
         assert view.saw("h", Phase.DOWNLOADING)
+        assert view.closed is False  # injected views are the caller's to close (own_view seam)
 
     def test_interrupt_mid_cycle_still_graduates_that_cycles_terminals(self) -> None:
         # A torrent that turned terminal in the SAME cycle the interrupt lands in

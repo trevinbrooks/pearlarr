@@ -1,4 +1,6 @@
 # pyright: strict
+# pyright: reportPrivateUsage=false
+# ^ the drift pin reads _PHASE_RANK and the ETA tests drive _compact_eta directly.
 """Tests for the wait surface's legacy echo + throttle (PR5 Band B).
 
 The parity centerpiece: drive the REAL ``LegacyRenderer`` through the five Band A
@@ -35,7 +37,9 @@ from seadexarr.modules.output import (
     WaitStarted,
 )
 from seadexarr.modules.output.wait_lines import (
+    _PHASE_RANK,
     PulseThrottle,
+    _compact_eta,
     graduation_tail,
     live_model,
     sparkline,
@@ -255,6 +259,15 @@ class TestPulseThrottle:
         assert throttle.fire(0.0) is False  # skip-first again
         assert throttle.fire(600.0) is True
 
+    def test_first_fire_is_skipped_even_past_the_interval(self) -> None:
+        # skip-first as DISTINCT behavior: a late first snapshot (already past the
+        # mark) still never pulses — the old view's first render printed the start
+        # line and returned no matter when it ran.
+        throttle = PulseThrottle()
+        throttle.arm(5.0)
+        assert throttle.fire(7.0) is False  # skipped unconditionally
+        assert throttle.fire(7.0) is True  # the next one is already due
+
 
 # --- builder edge cases the goldens don't isolate ---------------------------------------
 
@@ -426,6 +439,22 @@ def test_sparkline_needs_two_samples() -> None:
     snap = WaitSnapshot((_downloading_row("h", "Show", 0.5, history=(3_200_000,)),))
 
     assert live_model(snap, _WIDE).rows[0].speed == "3.1 MB/s"
+
+
+def test_compact_eta_covers_every_magnitude() -> None:
+    # The docstring's own examples, pinned: zero-padded minutes past an hour, a
+    # bare-seconds tail, and negatives floored to ~0s (never "~-5s").
+    assert _compact_eta(4000) == "~1h06m"
+    assert _compact_eta(3900) == "~1h05m"
+    assert _compact_eta(130) == "~2m"
+    assert _compact_eta(40) == "~40s"
+    assert _compact_eta(-5) == "~0s"
+
+
+def test_phase_rank_covers_every_non_terminal_phase() -> None:
+    # Drift pin: a new Phase member must be placed in the cockpit ordering — and
+    # in the overflow/pulse tallies that hand-list the same non-terminal trio.
+    assert set(_PHASE_RANK) | {Phase.TERMINAL} == set(Phase)
 
 
 # --- graduation ledger coda ------------------------------------------------------

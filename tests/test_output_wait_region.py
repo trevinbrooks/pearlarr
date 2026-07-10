@@ -16,6 +16,7 @@ import io
 import logging
 
 from rich.console import Console, Group
+from rich.spinner import Spinner
 
 from seadexarr.modules.config import Arr
 from seadexarr.modules.manual_import import Outcome
@@ -34,10 +35,22 @@ from seadexarr.modules.output import (
     WaitProgress,
     WaitSnapshot,
     WaitStarted,
+    install_hub,
 )
+from seadexarr.modules.output.recording import RecordingHub
+from seadexarr.modules.output.wait_lines import live_model
 from seadexarr.modules.output.wait_region import WaitRegion, _LiveFrame
 
 from .fakes import CaptureHandler, strip_ansi
+
+
+def _render_group(group: Group) -> str:
+    """A group's plain rendering — what one refresh tick would draw."""
+
+    stream = io.StringIO()
+    Console(file=stream, force_terminal=True, width=100).print(group)
+    return strip_ansi(stream.getvalue())
+
 
 _WAIT = ScopeId(ScopeKind.WAIT_REGION, 700)
 _WAIT_TWO = ScopeId(ScopeKind.WAIT_REGION, 701)
@@ -282,6 +295,57 @@ class TestWaitRegionDirect:
         region.section_left()  # idempotent
         assert region._live is None
 
+    def test_frame_rolls_the_clocks_forward_between_polls(self) -> None:
+        # The self-animating tick: a refresh AFTER the push rebuilds the frame
+        # with the clock's advance folded into the overall elapsed and every
+        # in-flight row's phase clock (TERMINAL rows would stay frozen).
+        clock = {"now": 100.0}
+        console = Console(file=io.StringIO(), force_terminal=True, width=100)
+        region = WaitRegion(lambda: console, level_source=lambda: logging.INFO, time_source=lambda: clock["now"])
+        importing = TorrentView(key="h", label="Copy", phase=Phase.IMPORTING, phase_elapsed_s=4.0)
+        region.handle(WaitStarted(total=1, pulse_s=300.0))
+        region.handle(WaitProgress(snapshot=WaitSnapshot((importing,), elapsed_s=10.0)))
+
+        at_push = _render_group(region._current_group())
+        clock["now"] = 105.0  # five refresh-thread seconds later, no new poll
+        ticked = _render_group(region._current_group())
+
+        assert "10s" in at_push and "4s" in at_push
+        assert "15s" in ticked and "9s" in ticked  # 10+5 header, 4+5 row clock
+
+    def test_wide_frame_renders_the_bar_percent_and_importing_spinner(self) -> None:
+        # The RowModel -> rich-widget mapping: a download shows its block bar +
+        # clamped percent; an importing row rides the shared Spinner marker with
+        # its "copying" word in the bar column.
+        region = self._region()
+        download = TorrentView(key="d", label="Down", phase=Phase.DOWNLOADING, fraction=0.5)
+        copying = TorrentView(key="c", label="Copy", phase=Phase.IMPORTING, command_issued=True)
+        region.handle(WaitStarted(total=2, pulse_s=300.0))
+        region.handle(WaitProgress(snapshot=WaitSnapshot((download, copying), elapsed_s=5.0)))
+
+        model = live_model(WaitSnapshot((download, copying), elapsed_s=5.0), region._caps)
+        importing_cells = region._row_cells(next(r for r in model.rows if r.phase is Phase.IMPORTING))
+        assert isinstance(importing_cells[0], Spinner)  # the shared animated marker
+
+        frame = _render_group(region._current_group())
+        assert "50%" in frame and "█" in frame  # the download's percent + bar
+        assert "copying" in frame  # the importing row's status word
+
+    def test_narrow_frame_degrades_the_status_into_the_count_column(self) -> None:
+        # No bar column below the width threshold: a barless row still says what
+        # it is doing via the count column.
+        clock = {"now": 0.0}
+        console = Console(file=io.StringIO(), force_terminal=True, width=60)
+        region = WaitRegion(lambda: console, level_source=lambda: logging.INFO, time_source=lambda: clock["now"])
+        copying = TorrentView(key="c", label="Copy", phase=Phase.IMPORTING, command_issued=True)
+        region.handle(WaitStarted(total=1, pulse_s=300.0))
+        region.handle(WaitProgress(snapshot=WaitSnapshot((copying,), elapsed_s=5.0)))
+
+        frame = _render_group(region._current_group())
+        row_line = next(line for line in frame.splitlines() if "Copy" in line)
+        assert "copying" in row_line  # degraded into the count column
+        assert "█" not in row_line and "░" not in row_line  # no ROW bar at this width
+
 
 def _boom() -> Group:
     raise RuntimeError("frame build failed")
@@ -297,3 +361,22 @@ def test_live_frame_swallows_a_raising_group_build(app_logger: logging.Logger) -
     # the refresh thread (the ABBA-safe swallow stays below WARNING).
     assert list(frame.__rich_console__(console, console.options)) == []
     assert [record.levelno for record in capture.records] == [logging.DEBUG]
+
+    # Once per Live session: rich retries every tick, and a persistent bug must
+    # not traceback-spam a DEBUG run at 12.5 records/s.
+    assert list(frame.__rich_console__(console, console.options)) == []
+    assert len(capture.records) == 1
+
+
+def test_a_raising_tick_emits_nothing_to_the_hub(app_logger: logging.Logger) -> None:
+    # The below-WARNING swallow is a proxy for the real rule: the refresh thread
+    # must NEVER reach the hub (hub.emit off a Live-lock-holding thread is the
+    # ABBA topology the pin exists to prevent).
+    recording = RecordingHub()
+    install_hub(recording.hub)
+    console = Console(file=io.StringIO())
+    frame = _LiveFrame(_boom, app_logger)
+
+    assert list(frame.__rich_console__(console, console.options)) == []
+
+    assert recording.events == []
