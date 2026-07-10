@@ -759,26 +759,6 @@ def log_styled(
     logger.info(message, extra={CONSOLE_EXTRA: StyledLine(style=style or "")})
 
 
-def log_section_rule(
-    logger: logging.Logger,
-    char: str = "-",
-    *,
-    width: int = 80,
-) -> None:
-    """Log a full-width separator rule: heavy cyan for "=", light gray for "-"
-
-    The file log stores the plain ``rule_string`` text; the console draws a
-    styled rich rule.
-
-    Args:
-        logger: Logger the line is emitted through
-        char: Rule character ("=" section break, "-" sub break). Defaults to "-"
-        width: Width of the file-log rule. Defaults to 80
-    """
-
-    logger.info(rule_string(char, width), extra={CONSOLE_EXTRA: SectionRule(char)})
-
-
 def group_highlight(
     name: str | None,
     group: str | None,

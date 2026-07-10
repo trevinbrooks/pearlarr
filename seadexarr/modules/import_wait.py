@@ -395,7 +395,6 @@ class ImportWaitManager:
                 self.logger,
                 poll_s=self._config.imports.poll_interval,
                 digest_interval=self._config.imports.digest_interval,
-                time_source=clock,
             )
 
         # Fresh-per-call behavioral object: it owns the per-cycle accumulators (so

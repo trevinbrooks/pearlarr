@@ -56,6 +56,8 @@ KIND_DEPTH: Final[Mapping[ScopeKind, int]] = {
     ScopeKind.RUN: 1,
     ScopeKind.BOOT_STEP: 2,
     ScopeKind.ITEM: 2,
+    # Same depth as ITEM is deliberate (P5): a wait pass is mutually exclusive
+    # with an item; revisit only if a per-item wait ever appears.
     ScopeKind.WAIT_REGION: 2,
     ScopeKind.ENTRY: 3,
 }

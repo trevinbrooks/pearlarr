@@ -1,16 +1,16 @@
-"""Shared console-capability probing for the live regions (wait + boot).
+"""Shared console-capability probing for the render seats (wait + boot).
 
-Both :mod:`.wait_view` and the boot region (:mod:`.output.boot_region`) drive an
-optional sticky ``rich.Live`` region over the SAME ``Console`` the logger already
-owns, and both must degrade to a calm log digest on a non-TTY (Docker / a pipe /
-a dumb or too-narrow terminal). The probe is identical for both, so it lives here
-once: :func:`console_of` finds the logger's console and :func:`detect_capabilities`
-folds rich's derived signals into the small :class:`Capabilities` value the views
-branch on.
+The output package's live regions (:mod:`.output.boot_region`,
+:mod:`.output.wait_region`) drive an optional sticky ``rich.Live`` region over
+the SAME ``Console`` the logger already owns, and both must degrade to a calm
+log digest on a non-TTY (Docker / a pipe / a dumb or too-narrow terminal); the
+legacy echo and the wait narrator's ``wants_telemetry`` probe branch on the same
+signals. The probe lives here once: :func:`console_of` finds the logger's
+console and :func:`detect_capabilities` folds rich's derived signals into the
+small :class:`Capabilities` value the seats branch on.
 """
 
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import final
 
@@ -45,20 +45,6 @@ class Capabilities:
     unicode: bool
     width: int
     height: int
-
-
-@dataclass(frozen=True, slots=True)
-class TerminalEnv:
-    """The render environment a live (sticky-region) view binds at construction.
-
-    Built only on the factories' live branch, so ``console`` is non-None by
-    construction (a capable TTY was already detected).
-    """
-
-    console: Console
-    caps: Capabilities
-    logger: logging.Logger
-    time_source: Callable[[], float]
 
 
 def console_of(logger: logging.Logger) -> Console | None:

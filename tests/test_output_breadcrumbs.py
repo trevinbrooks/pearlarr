@@ -260,3 +260,11 @@ def test_kind_depth_covers_every_scope_kind_with_no_stray_keys() -> None:
     and a stray key would rot unnoticed."""
 
     assert set(KIND_DEPTH) == set(ScopeKind)
+
+
+def test_wait_region_depth_deliberately_equals_item_depth() -> None:
+    """The P5 pin: production wait is run-level (post-summary, after the item/entry
+    nodes closed), so a wait pass is mutually exclusive with an item and shares its
+    depth. Revisit only if a per-item wait ever appears."""
+
+    assert KIND_DEPTH[ScopeKind.WAIT_REGION] == KIND_DEPTH[ScopeKind.ITEM]

@@ -77,10 +77,10 @@ PROCESS_SCOPE_IDS: Final = ScopeIds()
 
 @final
 class ScopeMark:
-    """The cockpit views' ambient-scope mark ceremony: idempotent open/close.
+    """The boot flow's ambient-scope mark ceremony: idempotent open/close.
 
     Mints from :data:`PROCESS_SCOPE_IDS` and emits through :func:`~.runtime.emit_to_hub`
-    at call time (the hub may be installed after the view is built). Only the mark
+    at call time (the hub may be installed after the flow is built). Only the mark
     pair — no handle semantics, no demotion.
     """
 

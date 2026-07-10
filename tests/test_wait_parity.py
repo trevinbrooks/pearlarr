@@ -1,31 +1,31 @@
 # pyright: strict
-"""Byte goldens for the wait pass's DURABLE logger output (PR5 Band A).
+"""Byte goldens for the wait pass's DURABLE logger output (PR5).
 
-Captured by RUNNING the current ``LiveWaitView`` / ``LogWaitView`` (not
-hand-derived), before any wait code moves onto the event hub: each scenario pins
-the exact ``(level, message, payload)`` records a ``CaptureHandler`` on the app
-logger sees. After the PR5 flip, the narrator -> LegacyRenderer echo must
-reproduce these bytes exactly. Only the durable logger seam is pinned - the rich
-Live cockpit frames are ephemeral and deliberately not golden material.
+The golden constants were captured at Band A by RUNNING the then-current
+``LiveWaitView`` / ``LogWaitView`` (not hand-derived); they are the CONTRACT and
+never change. Since the Band C flip the same scenarios drive the REAL producer -
+:class:`HubWaitView` -> a real hub -> the :class:`LegacyRenderer` echo - and
+must reproduce these bytes exactly: each scenario pins the exact ``(level,
+message, payload)`` records a ``CaptureHandler`` on the app logger sees. Only
+the durable logger seam is pinned - the rich Live cockpit frames are ephemeral
+and deliberately not golden material.
 
-The per-mode matrix the LegacyRenderer must reproduce (P3): a live TTY logs NO
-start line and NO pulses (graduations + tally only); the piped digest adds the
-start line and the throttled "still waiting" pulses. The P7 level fact: EVERY
-wait line - graduations (failures included), start/pulse, rule, and tally -
-logs at INFO today (``log_styled`` / ``log_section_rule`` / plain ``info``).
+The per-mode matrix (P3): a live TTY logs NO start line and NO pulses
+(graduations + tally only); the piped digest adds the start line and the
+throttled "still waiting" pulses. The P7 level fact: EVERY wait line -
+graduations (failures included), start/pulse, rule, and tally - logs at INFO.
 """
 
 import io
-import itertools
 import logging
 
 from rich.console import Console
 
-from seadexarr.modules.console_caps import Capabilities, TerminalEnv, detect_capabilities
-from seadexarr.modules.log import ConsoleRender, SectionRule, StyledLine, console_payload
+from seadexarr.modules.console_caps import Capabilities, detect_capabilities
+from seadexarr.modules.log import ConsoleRender, RichConsoleHandler, SectionRule, StyledLine, console_payload
 from seadexarr.modules.manual_import import Outcome
-from seadexarr.modules.output import Phase, TorrentView, WaitSnapshot
-from seadexarr.modules.wait_view import LiveWaitView, LogWaitView
+from seadexarr.modules.output import LegacyRenderer, OutputHub, Phase, TorrentView, WaitSnapshot, install_hub
+from seadexarr.modules.wait_view import HubWaitView
 
 from .fakes import CaptureHandler
 
@@ -34,7 +34,7 @@ type Line = tuple[int, str, ConsoleRender | None]
 
 _I = logging.INFO
 
-# A capable TTY (the LiveWaitView seat): color + unicode glyphs.
+# A capable TTY (the live-cockpit seat): color + unicode glyphs.
 _LIVE_CAPS = Capabilities(live=True, color=True, unicode=True, width=100, height=40)
 # The plain/piped seat (PlainConsoleHandler -> no console): ASCII glyphs, no color.
 _PIPE_CAPS = detect_capabilities(None)
@@ -152,19 +152,24 @@ LOG_MIXED_OUTCOME_LINES: tuple[Line, ...] = (
 )
 
 
-# --- the harness: drive the REAL views, assert the goldens ---------------------------
-
-_logger_ids = itertools.count()
+# --- the harness: drive the REAL producer through the REAL echo, assert the goldens --
 
 
-def _capture_logger() -> tuple[logging.Logger, CaptureHandler]:
-    logger = logging.getLogger(f"wait-parity-{next(_logger_ids)}")
-    logger.handlers.clear()
-    logger.propagate = False
-    logger.setLevel(logging.INFO)
+def _narrator(app_logger: logging.Logger, *, pulse_s: float, live: bool) -> tuple[HubWaitView, CaptureHandler]:
+    """The real narrator wired to a real hub carrying ONE LegacyRenderer.
+
+    ``live`` attaches a live-capable console handler so the echo's caps probe
+    resolves the ``_LIVE_CAPS`` shape (an explicit color_system keeps caps.color
+    deterministic across CI envs); without one it resolves ``_PIPE_CAPS``.
+    """
+
+    if live:
+        console = Console(file=io.StringIO(), force_terminal=True, width=100, color_system="truecolor")
+        app_logger.addHandler(RichConsoleHandler(console))
     capture = CaptureHandler()
-    logger.addHandler(capture)
-    return logger, capture
+    app_logger.addHandler(capture)
+    install_hub(OutputHub([LegacyRenderer()]))
+    return HubWaitView(app_logger, pulse_s=pulse_s, wants_telemetry=live), capture
 
 
 def _lines(capture: CaptureHandler) -> tuple[Line, ...]:
@@ -172,15 +177,10 @@ def _lines(capture: CaptureHandler) -> tuple[Line, ...]:
 
 
 class TestLiveWaitParity:
-    @staticmethod
-    def _view(logger: logging.Logger) -> LiveWaitView:
-        return LiveWaitView(TerminalEnv(Console(file=io.StringIO()), _LIVE_CAPS, logger, time_source=lambda: 0.0))
-
-    def test_graduates_every_outcome_then_tallies(self) -> None:
+    def test_graduates_every_outcome_then_tallies(self, app_logger: logging.Logger) -> None:
         # Drift pin: the scenario stays exhaustive if Outcome ever grows.
         assert {t.outcome for t in _ALL_OUTCOMES} == set(Outcome)
-        logger, capture = _capture_logger()
-        view = self._view(logger)
+        view, capture = _narrator(app_logger, pulse_s=300.0, live=True)  # max(poll 30, digest 300)
 
         view.update(WaitSnapshot((_downloading("h1", "Bocchi the Rock!"), _queued("h4", "Spy x Family")), elapsed_s=10))
         assert _lines(capture) == ()  # a live pass logs NO start line and NO pulses
@@ -189,11 +189,10 @@ class TestLiveWaitParity:
 
         assert _lines(capture) == LIVE_ALL_OUTCOMES_LINES
 
-    def test_partial_close_logs_the_partial_tally(self) -> None:
+    def test_partial_close_logs_the_partial_tally(self, app_logger: logging.Logger) -> None:
         # The Ctrl-C shape: run_monitor breaks out and its finally closes the
         # view with torrents still in flight; the tally covers the graduated.
-        logger, capture = _capture_logger()
-        view = self._view(logger)
+        view, capture = _narrator(app_logger, pulse_s=300.0, live=True)
 
         view.update(
             WaitSnapshot(
@@ -212,9 +211,8 @@ class TestLiveWaitParity:
 
 
 class TestLogWaitParity:
-    def test_start_throttled_pulses_graduations_tally(self) -> None:
-        logger, capture = _capture_logger()
-        view = LogWaitView(logger, _PIPE_CAPS, poll_s=30, digest_interval=300)
+    def test_start_throttled_pulses_graduations_tally(self, app_logger: logging.Logger) -> None:
+        view, capture = _narrator(app_logger, pulse_s=300.0, live=False)  # max(poll 30, digest 300)
         in_flight = (_downloading("q1", "Show A"), _importing("q2", "Show B"))
 
         view.update(WaitSnapshot((_queued("q1", "Show A"), _queued("q2", "Show B")), elapsed_s=0))  # start line
@@ -241,9 +239,8 @@ class TestLogWaitParity:
 
         assert _lines(capture) == LOG_DIGEST_LINES
 
-    def test_pulse_interval_is_the_max_of_poll_and_digest(self) -> None:
-        logger, capture = _capture_logger()
-        view = LogWaitView(logger, _PIPE_CAPS, poll_s=600, digest_interval=300)
+    def test_pulse_interval_is_the_max_of_poll_and_digest(self, app_logger: logging.Logger) -> None:
+        view, capture = _narrator(app_logger, pulse_s=600.0, live=False)  # max(poll 600, digest 300)
         row = (_downloading("h", "Slow Show"),)
 
         view.update(WaitSnapshot(row, elapsed_s=0))
@@ -253,9 +250,8 @@ class TestLogWaitParity:
 
         assert _lines(capture) == LOG_POLL_FLOOR_LINES
 
-    def test_mixed_outcomes_tally_pins_the_failed_segment(self) -> None:
-        logger, capture = _capture_logger()
-        view = LogWaitView(logger, _PIPE_CAPS, poll_s=30, digest_interval=300)
+    def test_mixed_outcomes_tally_pins_the_failed_segment(self, app_logger: logging.Logger) -> None:
+        view, capture = _narrator(app_logger, pulse_s=300.0, live=False)
 
         view.update(
             WaitSnapshot((_queued("m1", "Show A"), _queued("m2", "Show B"), _queued("m3", "Show C")), elapsed_s=0),
@@ -276,7 +272,7 @@ class TestLogWaitParity:
 
 
 def test_every_wait_line_logs_at_info() -> None:
-    """The P7 fact, pinned whole: today's wait surface has exactly one level."""
+    """The P7 fact, pinned whole: the wait surface has exactly one level."""
 
     all_lines = (
         LIVE_ALL_OUTCOMES_LINES

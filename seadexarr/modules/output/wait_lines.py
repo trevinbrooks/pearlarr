@@ -5,7 +5,7 @@ Two families, no styled look decided here. The bounded live-frame model
 coda (:func:`graduation_tail`) reduce the wait value types in :mod:`.events` to
 a rich-free layout brain both cockpit seats share. The :class:`LegacyLine`
 builders (:func:`wait_start_line` and friends) map each durable wait fact to the
-exact log line today's views produce - pinned by the Band A goldens in
+exact log line the pre-hub views produced - pinned by the Band A goldens in
 ``tests/test_wait_parity.py`` - so the file/plain echo and the console's
 durable lines can never drift. :class:`PulseThrottle` carries the non-TTY
 digest cadence, shared by both echo seats so the arithmetic can't diverge.
