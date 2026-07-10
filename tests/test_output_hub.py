@@ -12,7 +12,7 @@ lifecycle calls wait out an in-flight drain.
 
 import logging
 import threading
-from typing import override
+from typing import ClassVar, override
 
 import pytest
 
@@ -45,6 +45,8 @@ _EVENT = RunStarted(version="v1.0.0", data_dir="/data")
 
 class _FailingRenderer:
     """A renderer whose handle always raises (the containment test double)."""
+
+    writes_file_only: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self.calls = 0
@@ -92,6 +94,8 @@ class _FailingCloseRenderer(_FailingRenderer):
 class _EmittingRenderer:
     """A renderer that emits a follow-up Diagnostic from inside handle (once)."""
 
+    writes_file_only: ClassVar[bool] = False
+
     def __init__(self) -> None:
         self.hub: OutputHub | None = None
         self.emitted = False
@@ -125,6 +129,8 @@ class _DoubleEmittingRenderer(_EmittingRenderer):
 class _LockProbeRenderer:
     """handle() probes the hub lock from a HELPER thread (the same thread would
     trivially re-acquire an RLock it owns)."""
+
+    writes_file_only: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self.hub: OutputHub | None = None
@@ -161,6 +167,8 @@ class _GatedRenderer:
     """Blocks inside handle (on the first event only) until released; records each
     handled event with its handling thread plus lifecycle calls, in one order log."""
 
+    writes_file_only: ClassVar[bool] = False
+
     def __init__(self) -> None:
         self.entered = threading.Event()
         self.release = threading.Event()
@@ -190,6 +198,8 @@ class _GatedRenderer:
 class _InterruptOnceRenderer:
     """Raises KeyboardInterrupt on the first handle only (the baton-recovery probe)."""
 
+    writes_file_only: ClassVar[bool] = False
+
     def __init__(self) -> None:
         self.calls = 0
 
@@ -211,6 +221,8 @@ class _InterruptOnceRenderer:
 class _ReArmableGate:
     """Blocks inside handle once per armed episode until released; arm() re-arms it
     for the next episode — the overflow-note-per-episode reset probe."""
+
+    writes_file_only: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self.entered = threading.Event()
@@ -260,11 +272,87 @@ def test_null_renderer_satisfies_the_protocol() -> None:
     hub.close()
 
 
+class _FileishRecorder:
+    """A recording survivor that claims the file_only surface (a FileLogSink stand-in)."""
+
+    writes_file_only: ClassVar[bool] = True
+
+    def __init__(self) -> None:
+        self.events: list[Event] = []
+
+    def handle(self, event: Event, when: float) -> None:
+        self.events.append(event)
+
+    def begin_cycle(self) -> None:
+        pass
+
+    def set_level(self, level: int) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class _FailingFileish(_FailingRenderer):
+    """A failing renderer that IS the file surface (the dying-log-file shape)."""
+
+    writes_file_only: ClassVar[bool] = True
+
+
+class _LifecycleEmitter:
+    """begin_cycle emits into the hub (the bridge-adoption re-entrancy shape)."""
+
+    writes_file_only: ClassVar[bool] = False
+
+    def __init__(self) -> None:
+        self.hub: OutputHub | None = None
+        self.events: list[Event] = []
+        self.seen_during_cycle: int | None = None
+
+    def handle(self, event: Event, when: float) -> None:
+        self.events.append(event)
+
+    def begin_cycle(self) -> None:
+        if self.hub is not None:
+            self.hub.emit(Diagnostic(severity=Severity.INFO, message="mid-lifecycle"))
+            self.seen_during_cycle = len(self.events)
+
+    def set_level(self, level: int) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class _EmitThenInterrupt:
+    """Emits a follow-up then raises KeyboardInterrupt from handle — the
+    signal-mid-dispatch shape: the queued tail must still land."""
+
+    writes_file_only: ClassVar[bool] = False
+
+    def __init__(self) -> None:
+        self.hub: OutputHub | None = None
+
+    def handle(self, event: Event, when: float) -> None:
+        if isinstance(event, RunStarted) and self.hub is not None:
+            self.hub.emit(Diagnostic(severity=Severity.INFO, message="exit marker"))
+            raise KeyboardInterrupt
+
+    def begin_cycle(self) -> None:
+        pass
+
+    def set_level(self, level: int) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
 # --- containment --------------------------------------------------------------------
 
 
 def test_a_raising_renderer_never_breaks_the_survivors() -> None:
-    flaky, survivor = _FailingRenderer(), RecordingRenderer()
+    flaky, survivor = _FailingRenderer(), _FileishRecorder()
     hub = OutputHub([flaky, survivor])
 
     hub.emit(_EVENT)
@@ -272,10 +360,29 @@ def test_a_raising_renderer_never_breaks_the_survivors() -> None:
     assert survivor.events[0] == _EVENT
     note = survivor.events[1]
     assert isinstance(note, Diagnostic)
-    assert note.file_only
+    assert note.file_only  # a file surface survives: forensic, not console spam
+    assert note.severity is Severity.WARNING
     assert note.origin == "output.hub"
     assert "_FailingRenderer failed on RunStarted" in note.message
     assert note.trace is not None and "RuntimeError" in note.trace.plain_text()
+
+
+def test_losing_the_file_sink_escalates_the_note_to_a_counted_visible_error() -> None:
+    """A run must never silently lose its whole log file: when the casualty IS
+    the file surface, the containment note goes visible at ERROR and counts."""
+
+    flaky, survivor = _FailingFileish(), RecordingRenderer()
+    hub = OutputHub([flaky, survivor])
+    mark = hub.counts.mark()
+
+    hub.emit(_EVENT)
+
+    note = survivor.events[1]
+    assert isinstance(note, Diagnostic)
+    assert not note.file_only
+    assert note.severity is Severity.ERROR
+    assert "_FailingFileish failed on RunStarted" in note.message
+    assert hub.counts.counts_since(mark).errors == 1
 
 
 def test_three_strikes_quarantine_until_begin_cycle_rearms() -> None:
@@ -381,12 +488,12 @@ def test_keyboard_interrupt_still_propagates() -> None:
         hub.emit(_EVENT)
 
 
-def test_containment_notes_are_never_counted() -> None:
-    flaky, survivor = _FailingRenderer(), RecordingRenderer()
+def test_containment_notes_are_uncounted_while_a_file_surface_survives() -> None:
+    flaky, survivor = _FailingRenderer(), _FileishRecorder()
     hub = OutputHub([flaky, survivor])
     mark = hub.counts.mark()
 
-    hub.emit(_EVENT)  # INFO event; the WARNING note must not inflate the tally
+    hub.emit(_EVENT)  # INFO event; the forensic WARNING note must not inflate the tally
 
     since = hub.counts.counts_since(mark)
     assert (since.info, since.warnings) == (1, 0)
@@ -419,6 +526,21 @@ def test_reentrant_emits_drain_fifo_before_the_outer_emit_returns() -> None:
     assert [d.message for d in observer.of_type(Diagnostic)] == ["first", "second"]
 
 
+def test_a_lifecycle_reentrant_emit_enqueues_and_drains_after_the_turnover() -> None:
+    """An emit from inside a renderer's lifecycle call (a bridge-adopted teardown
+    debug) must never start a nested drain against a half-mutated subscriber
+    list; the lifecycle body holds the baton and drains the stragglers after."""
+
+    emitter = _LifecycleEmitter()
+    hub = OutputHub([emitter])
+    emitter.hub = hub
+
+    hub.begin_cycle(console_format="plain", level=logging.INFO)
+
+    assert emitter.seen_during_cycle == 0  # enqueued, not dispatched mid-lifecycle
+    assert [d.message for d in emitter.events if isinstance(d, Diagnostic)] == ["mid-lifecycle"]
+
+
 # --- the combiner (dispatch outside the hub lock) -------------------------------------
 
 
@@ -449,6 +571,21 @@ def test_a_concurrent_emit_hands_off_to_the_active_drainer() -> None:
     assert not drainer.is_alive()
     assert [name for name, _ in gated.handled] == ["RunStarted", "Diagnostic"]
     assert gated.handled[1][1] is drainer  # A's drain loop delivered B's event
+
+
+def test_an_unwinding_interrupt_still_flushes_the_queued_tail() -> None:
+    raiser, survivor = _EmitThenInterrupt(), RecordingRenderer()
+    hub = OutputHub([raiser, survivor])
+    raiser.hub = hub
+
+    with pytest.raises(KeyboardInterrupt):
+        hub.emit(_EVENT)
+
+    # The in-flight event's remaining fan-out is lost to the interrupt, but the
+    # QUEUED marker (a SIGTERM handler's exit line) flushes before the baton is
+    # released — crash fidelity for the tail.
+    assert [d.message for d in survivor.of_type(Diagnostic)] == ["exit marker"]
+    assert hub._drainer is None
 
 
 def test_a_propagating_interrupt_never_strands_the_baton() -> None:
@@ -700,9 +837,11 @@ def test_severity_is_counted_at_enqueue_even_when_every_renderer_raises() -> Non
     hub = OutputHub([_FailingRenderer(), _FailingRenderer()])
     mark = hub.counts.mark()
 
-    hub.emit(Diagnostic(severity=Severity.ERROR, message="boom"))
+    hub.emit(Diagnostic(severity=Severity.WARNING, message="boom"))
 
-    assert hub.counts.counts_since(mark).errors == 1
+    since = hub.counts.counts_since(mark)
+    assert since.warnings == 1  # counted at enqueue, though nothing rendered it
+    assert since.errors == 2  # with no file surface left, both notes escalate visible
 
 
 # --- levels + lifecycle -------------------------------------------------------------
@@ -768,6 +907,37 @@ def test_the_hub_stamps_one_instant_per_emit_for_every_renderer() -> None:
 # --- console ownership (the rich handler's skip predicate) ---------------------------
 
 
+def test_visible_warnings_reach_stderr_while_no_console_seat_is_armed(capsys: pytest.CaptureFixture[str]) -> None:
+    """The install→begin_cycle window (and a quarantined seat): a visible
+    WARNING+ diagnostic must still reach a human, via stderr."""
+
+    hub = OutputHub([_FileishRecorder()], console_factory=lambda console_format: NullRenderer())
+
+    hub.emit(Diagnostic(severity=Severity.CRITICAL, message="invalid level", origin="app"))
+
+    assert "CRITICAL [app] invalid level" in capsys.readouterr().err
+
+
+def test_the_stderr_fallback_skips_info_file_only_and_seated_consoles(capsys: pytest.CaptureFixture[str]) -> None:
+    hub = OutputHub([_FileishRecorder()], console_factory=lambda console_format: NullRenderer())
+
+    hub.emit(Diagnostic(severity=Severity.INFO, message="quiet"))
+    hub.emit(Diagnostic(severity=Severity.WARNING, message="forensic", file_only=True))
+    hub.begin_cycle(console_format="plain", level=logging.INFO)
+    hub.emit(Diagnostic(severity=Severity.WARNING, message="seated"))
+
+    assert capsys.readouterr().err == ""
+
+
+def test_factory_less_hubs_never_write_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    # The renderer-less default hub's library contract: drop silently, stay quiet.
+    hub = OutputHub([])
+
+    hub.emit(Diagnostic(severity=Severity.ERROR, message="library use"))
+
+    assert capsys.readouterr().err == ""
+
+
 def test_console_render_active_is_false_without_a_console_seat() -> None:
     hub = OutputHub([RecordingRenderer()])
 
@@ -819,7 +989,7 @@ def test_begin_cycle_swaps_the_console_renderer_only_on_format_change() -> None:
 
 
 def test_a_failing_console_factory_keeps_the_old_seat_and_notes_file_only() -> None:
-    console, sink = RecordingRenderer(), RecordingRenderer()
+    console, sink = RecordingRenderer(), _FileishRecorder()
 
     def factory(console_format: LogFormat) -> Renderer:
         raise RuntimeError("no tty")

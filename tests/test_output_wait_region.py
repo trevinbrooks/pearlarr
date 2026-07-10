@@ -142,9 +142,12 @@ class TestWaitCockpitLifecycle:
 
         _feed(renderer, WaitStarted(total=1, pulse_s=300.0), _progress(_dl("Show"), elapsed=0))
         assert renderer._wait._live is not None
+        assert renderer._wait._live_frame is not None
 
         renderer.begin_cycle()
         assert renderer._wait._live is None
+        # The frame dies with its Live slot: no dangling dead frame to keep polling.
+        assert renderer._wait._live_frame is None
 
 
 class TestNonLiveDigest:

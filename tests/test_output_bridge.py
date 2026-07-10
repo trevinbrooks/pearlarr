@@ -16,6 +16,7 @@ import sys
 import warnings
 from collections.abc import Generator
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -207,6 +208,8 @@ class TestAdoption:
 
 class _MidDispatchLogger:
     """A renderer that logs a third-party record from inside handle (once)."""
+
+    writes_file_only: ClassVar[bool] = False
 
     def __init__(self, logger_name: str) -> None:
         self._name = logger_name

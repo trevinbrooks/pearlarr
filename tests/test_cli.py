@@ -49,7 +49,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import NoReturn, cast
+from typing import ClassVar, NoReturn, cast
 
 import pytest
 import truststore
@@ -1019,6 +1019,8 @@ class _CycleStampingRenderer:
     """Records each hub event with how many ``begin_cycle`` calls preceded it,
     so post-begin ordering (CycleStarted lands in the fresh cycle) is assertable."""
 
+    writes_file_only: ClassVar[bool] = False
+
     def __init__(self) -> None:
         self.cycles = 0
         self.events: list[tuple[Event, int]] = []
@@ -1308,6 +1310,28 @@ class TestUnwritableDataDir:
         assert result.exit_code == 1
         assert f"Cannot write to the data directory {data_dir}" in result.stderr
         assert "SEADEXARR_DATA_DIR" in result.stderr  # the remedy is named
+        assert "Traceback" not in result.output
+
+    def test_an_unwritable_log_file_reports_and_exits_one(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The Docker shape: dir writable, SeaDexArr.log left root-owned by a prior
+        # run. The install-time probe must abort cleanly, not strike the sink.
+        data_dir = tmp_path / "data"
+        log = data_dir / "logs" / "SeaDexArr.log"
+        log.parent.mkdir(parents=True)
+        log.write_text("root-owned\n", encoding="utf-8")
+        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(data_dir))
+        log.chmod(0o400)
+        try:
+            result = CliRunner().invoke(seadexarr_cli, ["run", "single"])
+        finally:
+            log.chmod(0o644)
+
+        assert result.exit_code == 1
+        assert f"Cannot write to the data directory {data_dir}" in result.stderr
         assert "Traceback" not in result.output
 
     def test_config_init_into_a_readonly_dir_reports_cleanly(

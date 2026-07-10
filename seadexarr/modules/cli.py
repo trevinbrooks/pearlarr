@@ -359,19 +359,21 @@ def _install_output_hub(paths: AppPaths) -> OutputHub:
     it (the invalid-level complaint) reaches the hub instead of
     ``logging.lastResort``. ``install_hub`` closes any previously installed hub
     (a repeat ``run single`` in-process must not leak an open FileLogSink).
-    The makedirs here is the pre-run log-dir writability check (``setup_logger``
-    no longer touches the filesystem).
+    The probe is the pre-run writability check: it must reach the log FILE
+    itself (a root-owned SeaDexArr.log fails open, not makedirs), so an
+    unwritable file aborts here like pre-flip instead of striking the sink.
     """
 
+    file_sink = FileLogSink(paths.log_dir)
     try:
-        os.makedirs(paths.log_dir, exist_ok=True)
+        file_sink.probe()
     except OSError as e:
         _data_dir_unwritable(paths.data_dir, e)
     # ONE caps cache shared across console-seat swaps: the seat and its
     # boot/wait regions must branch on the same probe.
     caps_cache = CapsCache()
     hub = OutputHub(
-        [FileLogSink(paths.log_dir)],
+        [file_sink],
         console_factory=partial(_console_seat, caps_cache=caps_cache),
     )
     install_hub(hub)

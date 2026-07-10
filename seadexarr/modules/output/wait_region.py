@@ -246,6 +246,9 @@ class WaitRegion(LiveRegion):
         """Drop any stale live slot + frame snapshot (per pass and per cycle)."""
 
         self._stop_live()
+        # The frame's lifetime is the Live slot's: a dangling dead frame would
+        # keep _collect_frame_failure polling stale state across sessions.
+        self._live_frame = None
         self._anchor = None
         self._caps = detect_capabilities(None)
         self._layout = _TableLayout.for_width(self._caps.width)

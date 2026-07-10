@@ -502,7 +502,8 @@ class _TextLineSink:
     """
 
     # The single file_only routing rule: console-ish surfaces skip, the file keeps.
-    _writes_file_only: ClassVar[bool] = False
+    # Public: the hub reads it to decide whether a containment note still has a home.
+    writes_file_only: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self._crumbs = BreadcrumbFold()
@@ -530,7 +531,7 @@ class _TextLineSink:
         pass
 
     def _admits(self, event: Event) -> bool:
-        return self._writes_file_only or not (isinstance(event, Diagnostic) and event.file_only)
+        return self.writes_file_only or not (isinstance(event, Diagnostic) and event.file_only)
 
     def _render(self, event: Event, when: float, severity: Severity) -> None:
         raise NotImplementedError
@@ -585,7 +586,7 @@ class FileLogSink(_GrammarSink):
     truncate without a pending rotation).
     """
 
-    _writes_file_only: ClassVar[bool] = True
+    writes_file_only: ClassVar[bool] = True
 
     def __init__(self, log_dir: str) -> None:
         super().__init__()
@@ -596,6 +597,22 @@ class FileLogSink(_GrammarSink):
     @property
     def path(self) -> str:
         return os.path.join(self._dir, f"{LOG_NAME}.log")
+
+    def probe(self) -> None:
+        """Fail fast (OSError) if the log file can't be appended.
+
+        cli pre-flights this at install so a root-owned/read-only file aborts
+        with the clean data-dir message, instead of striking the sink mid-run.
+        A file the probe itself created is removed, so the first real write
+        still sees the pre-probe rotation state.
+        """
+
+        os.makedirs(self._dir, exist_ok=True)
+        existed = os.path.isfile(self.path)
+        with open(self.path, "a", encoding="utf-8"):
+            pass
+        if not existed:
+            os.remove(self.path)
 
     @override
     def close(self) -> None:

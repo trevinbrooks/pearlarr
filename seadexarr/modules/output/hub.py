@@ -12,7 +12,10 @@ thread: this hub is the
 app's UI, and synchronous main-path dispatch keeps output ordered with program
 actions and crash-faithful; cross-thread events are rare stragglers the active
 drain picks up. Lifecycle calls (``begin_cycle``/``set_level``/``close``) park
-until no drain is in flight, so they never race a renderer's ``handle``.
+until no drain is in flight, so they never race a renderer's ``handle`` — and
+they hold the drain baton for their body, so a re-entrant emit from inside a
+renderer's lifecycle call (a bridge-adopted ``logger.debug`` in a teardown path)
+enqueues instead of draining against a half-mutated subscriber list.
 
 Renderers that raise strike out (3 per cycle, S9) and are skipped until
 ``begin_cycle`` re-arms them — never a process-latching quarantine (the verified
@@ -26,12 +29,13 @@ every renderer the same instant, so cross-sink timestamps can never disagree.
 from __future__ import annotations
 
 import contextlib
+import sys
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass
-from typing import Final, Protocol, final
+from typing import ClassVar, Final, Protocol, final
 
 from .events import Diagnostic, Event, Severity, severity_of
 from .trace import CapturedTrace
@@ -56,6 +60,10 @@ class Renderer(Protocol):
     pass-through renderers (Null/Recording) are exempt by nature.
     """
 
+    # True only for the surface that renders file_only diagnostics (the file sink);
+    # the hub reads it to decide whether a containment note still has a home.
+    writes_file_only: ClassVar[bool]
+
     def handle(self, event: Event, when: float) -> None: ...
 
     def begin_cycle(self) -> None: ...
@@ -68,6 +76,8 @@ class Renderer(Protocol):
 @final
 class NullRenderer:
     """A no-op surface (tests / headless runs)."""
+
+    writes_file_only: ClassVar[bool] = False
 
     def handle(self, event: Event, when: float) -> None:
         pass
@@ -118,7 +128,9 @@ class SeverityCounts:
     """
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        # RLock: a SIGTERM handler's emit can land while THIS thread is inside
+        # record(); re-entry may lose one increment, a Lock would deadlock.
+        self._lock = threading.RLock()
         self._counts: dict[Severity, int] = dict.fromkeys(Severity, 0)
 
     def record(self, severity: Severity) -> None:
@@ -286,11 +298,30 @@ class OutputHub:
                     armed = [sub for sub in self._subs if sub.strikes < self._strike_limit]
                 self._dispatch(event, when, armed)
         finally:
-            # A propagating KeyboardInterrupt/SystemExit must not strand the baton.
+            # A propagating KeyboardInterrupt/SystemExit must not strand the baton —
+            # or the queued tail (a SIGTERM handler's exit marker lands mid-unwind):
+            # flush best-effort, then release.
             with self._lock:
-                if self._drainer is threading.current_thread():
-                    self._drainer = None
-                    self._idle.notify_all()
+                stranded = self._drainer is threading.current_thread()
+            if stranded:
+                try:
+                    self._flush_on_unwind()
+                finally:
+                    with self._lock:
+                        self._drainer = None
+                        self._idle.notify_all()
+
+    def _flush_on_unwind(self) -> None:
+        """Dispatch the queued tail while an exception unwinds ``_drain`` (crash
+        fidelity: the tail must be on screen/in the file when the process dies)."""
+
+        while True:
+            with self._lock:
+                if self._closed or not self._pending:
+                    return
+                event, when = self._pending.popleft()
+                armed = [sub for sub in self._subs if sub.strikes < self._strike_limit]
+            self._dispatch(event, when, armed)
 
     def _await_no_drainer(self) -> None:
         """Park (lock held) until no OTHER thread holds the drain baton — the
@@ -307,6 +338,25 @@ class OutputHub:
             file_only=True,
         )
 
+    @contextlib.contextmanager
+    def _baton_held(self) -> Generator[None]:
+        """Hold the drain baton for a lifecycle body (lock held, no other drainer).
+
+        A renderer's lifecycle call can log; the bridge adopts that into a
+        re-entrant emit, which must enqueue — never start a nested drain against
+        a half-mutated subscriber list. Callers drain after releasing the lock.
+        """
+
+        owned = self._drainer is threading.current_thread()
+        if not owned:
+            self._drainer = threading.current_thread()
+        try:
+            yield
+        finally:
+            if not owned:
+                self._drainer = None
+                self._idle.notify_all()
+
     def begin_cycle(self, *, console_format: LogFormat, level: int) -> None:
         """Per-cycle turnover: re-arm strikes, clear once-keys, swap the console
         renderer when the re-peeked format changed, rotate/reset sinks."""
@@ -315,29 +365,36 @@ class OutputHub:
             self._await_no_drainer()
             if self._closed:
                 return
-            self._once_keys.clear()
-            for sub in self._subs:
-                sub.strikes = 0
-            if self._console_factory is not None and console_format != self._console_format:
-                self._swap_console(console_format)
-            for sub in self._subs:
-                try:
-                    sub.renderer.begin_cycle()
-                except Exception:
-                    self._strike(sub)
-            self.set_level(level)
+            with self._baton_held():
+                self._once_keys.clear()
+                for sub in self._subs:
+                    sub.strikes = 0
+                if self._console_factory is not None and console_format != self._console_format:
+                    self._swap_console(console_format)
+                for sub in self._subs:
+                    try:
+                        sub.renderer.begin_cycle()
+                    except Exception:
+                        self._strike(sub)
+                self._set_level_locked(level)
+        self._drain()
 
     def set_level(self, level: int) -> None:
         """Forward the configured level; each surface applies its own floor semantics (S4)."""
 
         with self._lock:
             self._await_no_drainer()
-            self._level = level
-            for sub in self._subs:
-                try:
-                    sub.renderer.set_level(level)
-                except Exception:
-                    self._strike(sub)
+            with self._baton_held():
+                self._set_level_locked(level)
+        self._drain()
+
+    def _set_level_locked(self, level: int) -> None:
+        self._level = level
+        for sub in self._subs:
+            try:
+                sub.renderer.set_level(level)
+            except Exception:
+                self._strike(sub)
 
     def close(self) -> None:
         """Idempotent teardown of every surface (file close, Live stop in PR2+)."""
@@ -346,10 +403,12 @@ class OutputHub:
             self._await_no_drainer()
             if self._closed:
                 return
-            self._closed = True
-            for sub in self._subs:
-                with contextlib.suppress(Exception):
-                    sub.renderer.close()
+            with self._baton_held():
+                self._closed = True
+                for sub in self._subs:
+                    with contextlib.suppress(Exception):
+                        sub.renderer.close()
+        self._drain()
 
     def _strike(self, sub: _Sub) -> None:
         """One strike (under a brief lock re-acquire); crossing the limit also closes
@@ -373,6 +432,7 @@ class OutputHub:
             except Exception as exc:
                 self._strike(sub)
                 failures.append((sub, exc))
+        self._stderr_fallback(event)
         # Notes go out after the event, so survivors keep the emit order.
         for sub, exc in failures:
             quarantined = " (quarantined until next cycle)" if sub.strikes >= self._strike_limit else ""
@@ -406,21 +466,43 @@ class OutputHub:
             self._strike(sub)
 
     def _note(self, message: str, exc: Exception, when: float, *, skip: _Sub | None) -> None:
-        """A file-only containment note to the armed survivors — never counted
-        (a presentation bug must not inflate the user-visible warnings tally)."""
+        """A containment note to the armed survivors.
 
+        Forensic (file_only, uncounted — a presentation bug must not inflate the
+        user-visible warnings tally) while a file_only surface survives to write
+        it. When the casualty IS the file sink, the note escalates: visible,
+        ERROR, counted — a run must never silently lose its whole log file.
+        """
+
+        with self._lock:
+            armed = [sub for sub in self._subs if sub is not skip and sub.strikes < self._strike_limit]
+        file_only = any(sub.renderer.writes_file_only for sub in armed)
         note = Diagnostic(
-            severity=Severity.WARNING,
+            severity=Severity.WARNING if file_only else Severity.ERROR,
             message=message,
             origin="output.hub",
             trace=CapturedTrace.from_exception(exc),
-            file_only=True,
+            file_only=file_only,
         )
-        with self._lock:
-            armed = [sub for sub in self._subs if sub is not skip and sub.strikes < self._strike_limit]
+        if not file_only:
+            # P5: counts = what a visible surface could show; this one is visible.
+            self._counts.record(note.severity)
         for sub in armed:
             try:
                 sub.renderer.handle(note, when)
             except Exception:
                 # A failure while reporting a failure just strikes — no recursion.
                 self._strike(sub)
+        self._stderr_fallback(note)
+
+    def _stderr_fallback(self, event: Event) -> None:
+        """No armed console seat (pre-begin_cycle, or quarantined): visible
+        WARNING+ diagnostics still reach a human via stderr. Factory-less hubs
+        (the renderer-less default, recording hubs) keep dropping silently —
+        library and test use must stay quiet."""
+
+        if self._console_factory is None or self.console_render_active():
+            return
+        if isinstance(event, Diagnostic) and not event.file_only and event.severity >= Severity.WARNING:
+            sys.stderr.write(f"{event.severity.name} [{event.origin}] {event.message}\n")
+            sys.stderr.flush()

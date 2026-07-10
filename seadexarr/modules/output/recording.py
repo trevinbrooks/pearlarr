@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import final
+from typing import ClassVar, final
 
 from .events import Event
 from .hub import OutputHub
@@ -11,6 +11,8 @@ from .hub import OutputHub
 @final
 class RecordingRenderer:
     """A renderer that records everything it is handed (events + lifecycle calls)."""
+
+    writes_file_only: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self.events: list[Event] = []

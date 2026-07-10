@@ -26,7 +26,7 @@ import logging
 import time
 from collections.abc import Callable
 from datetime import datetime
-from typing import assert_never, final
+from typing import ClassVar, assert_never, final
 
 from rich.console import Console
 from rich.text import Text
@@ -112,6 +112,8 @@ def diagnostic_text(event: Diagnostic, *, indented: bool) -> Text:
 @final
 class RichRenderer:
     """The hub's console seat (diagnostics + the boot/scan/wait cockpit arms)."""
+
+    writes_file_only: ClassVar[bool] = False
 
     def __init__(
         self,

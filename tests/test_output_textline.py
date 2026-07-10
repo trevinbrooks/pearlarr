@@ -531,6 +531,29 @@ def test_every_line_is_on_disk_immediately(tmp_path: Path) -> None:
     sink.close()
 
 
+def test_probe_leaves_no_file_behind_and_keeps_existing_content(tmp_path: Path) -> None:
+    sink = FileLogSink(str(tmp_path))
+    sink.probe()
+    assert not (tmp_path / "SeaDexArr.log").exists()  # the probe's own file is removed
+
+    (tmp_path / "SeaDexArr.log").write_text("previous run\n", encoding="utf-8")
+    sink.probe()
+    assert (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8") == "previous run\n"
+
+
+def test_probe_raises_on_an_unwritable_log_file(tmp_path: Path) -> None:
+    # The Docker shape: the DIRECTORY is writable, the file (another uid's) is not.
+    log = tmp_path / "SeaDexArr.log"
+    log.write_text("root-owned\n", encoding="utf-8")
+    log.chmod(0o400)
+    sink = FileLogSink(str(tmp_path))
+    try:
+        with pytest.raises(OSError):
+            sink.probe()
+    finally:
+        log.chmod(0o644)
+
+
 def test_file_sink_writes_utf8(tmp_path: Path) -> None:
     sink = FileLogSink(str(tmp_path))
     sink.handle(
