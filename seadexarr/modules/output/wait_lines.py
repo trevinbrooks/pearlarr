@@ -46,9 +46,6 @@ MIN_LIVE_ROWS = 4
 # Rows reserved for the banner, header, overflow line and a little breathing room
 # when clamping the body to the terminal height.
 _RESERVED_ROWS = 8
-# Speed samples a downloading row keeps for its sparkline (one per heavy poll,
-# so the default 30s cadence holds the last ~4 minutes).
-SPARK_SAMPLES = 8
 # The sparkline needs unicode blocks and enough width not to crowd the label.
 MIN_SPARK_WIDTH = 80
 
@@ -272,7 +269,7 @@ def _row_model(torrent: TorrentView, *, spark: bool) -> RowModel:
             label=torrent.label,
             phase=torrent.phase,
             fraction=clamp01(torrent.fraction),
-            count=f"{round(torrent.fraction * 100)}%",
+            count=f"{round(clamp01(torrent.fraction) * 100)}%",
             speed=rate,
             time="" if torrent.eta_s is None else _compact_eta(torrent.eta_s),
             size="" if torrent.bytes_total is None else human_bytes(torrent.bytes_total),
@@ -326,7 +323,10 @@ def _aggregate_speed(snapshot: WaitSnapshot) -> int:
 
 
 def _aggregate_eta(snapshot: WaitSnapshot, agg_speed: int) -> int | None:
-    """An honest "downloads done" ETA: remaining bytes over the shared pipe."""
+    """An honest "downloads done" ETA: remaining bytes over the shared pipe.
+
+    A sub-second remainder reads as done (None), never a "~0s left" flicker.
+    """
 
     if agg_speed <= 0:
         return None
@@ -341,7 +341,7 @@ def _aggregate_eta(snapshot: WaitSnapshot, agg_speed: int) -> int | None:
             remaining += torrent.bytes_total - torrent.bytes_done
     if remaining <= 0:
         return None
-    return int(remaining / agg_speed)
+    return int(remaining / agg_speed) or None
 
 
 _SPARK_CHARS = "▁▂▃▄▅▆▇█"
@@ -367,7 +367,9 @@ def sparkline(samples: tuple[int, ...]) -> str:
 def _compact_eta(seconds: float) -> str:
     """A short ``~`` ETA, e.g. ``"~2m"`` / ``"~1h05m"`` / ``"~40s"``."""
 
-    total = int(seconds)
+    # Floor at 0: a negative ETA (an unsanitized producer edge) must never
+    # render "~-5s".
+    total = max(0, int(seconds))
     if total >= 3600:
         hours, minutes = divmod(total // 60, 60)
         return f"~{hours}h{minutes:02d}m"

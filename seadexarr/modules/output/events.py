@@ -466,12 +466,18 @@ class Phase(Enum):
     TERMINAL = auto()
 
 
+# Speed samples a downloading row keeps for its sparkline (one per heavy poll,
+# so the default 30s cadence holds the last ~4 minutes); the producer bounds
+# TorrentView.speed_history to this window.
+SPARK_SAMPLES = 8
+
+
 @dataclass(frozen=True, slots=True)
 class TorrentView:
     """One torrent's state for a single frame - the engine's per-poll snapshot row.
 
     Immutable so a snapshot is a value: the engine rebuilds the row each cycle
-    (``dataclasses.replace`` off the prior one) and the view renders it. Telemetry
+    (``dataclasses.replace`` off the prior one) and the renderers draw it. Telemetry
     fields are already sanitized (``manual_import.TorrentProbe``); ``outcome`` is
     non-None iff ``phase`` is ``TERMINAL``.
     """
@@ -489,13 +495,13 @@ class TorrentView:
     # "Files inserted" bar for an IMPORTING row: both set -> a determinate
     # done/total bar; both None -> indeterminate (just the "importing" word).
     # On a TERMINAL imported row they carry the final files count for the ledger,
-    # and phase_elapsed_s freezes as the ledger's wait clock (the live view's
+    # and phase_elapsed_s freezes as the ledger's wait clock (the wait region's
     # between-poll ticking skips TERMINAL rows, so it can't drift).
     import_done: int | None = None
     import_total: int | None = None
     # Speed samples (bytes/s, stalled -> 0), one per heavy poll, newest last -
     # the sparkline showing slow-but-moving vs wedged. Bounded by the producer
-    # to the sparkline window (SPARK_SAMPLES, output/wait_lines.py).
+    # to the sparkline window (SPARK_SAMPLES above).
     speed_history: tuple[int, ...] = ()
     outcome: Outcome | None = None
 
@@ -672,6 +678,9 @@ def severity_of(event: Event) -> Severity:
             # problem itself, so an outcome-based tally would double-count it.
             return Severity.INFO
         case TorrentGraduated(outcome=outcome):
+            # Deliberately diverges from the P7 all-INFO legacy echo until PR6's
+            # fidelity flip aligns the two; hub counts have no post-boot reader
+            # this side of PR6, so nothing can double-count meanwhile.
             return _category_severity(outcome.category)
         case (
             RunStarted()

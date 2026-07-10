@@ -347,8 +347,8 @@ def _install_output_hub() -> OutputHub:
     record is ever adopted before the legacy handlers exist.
     """
 
-    # ONE caps cache shared by both seats: the echo and the boot region must
-    # branch on the same probe (a mid-boot resize can't flip one surface only).
+    # ONE caps cache shared by every seat: the echo and the boot/wait regions
+    # must branch on the same probe (a mid-run resize can't flip one surface only).
     caps_cache = CapsCache()
     hub = OutputHub(
         [LegacyRenderer(caps_cache)],

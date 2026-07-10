@@ -37,8 +37,7 @@ from .manual_import import (
     classify_pending,
     sanitize_torrent_telemetry,
 )
-from .output import Phase, TorrentView, WaitSnapshot
-from .output.wait_lines import SPARK_SAMPLES
+from .output import SPARK_SAMPLES, Phase, TorrentView, WaitSnapshot
 from .protocols import ImportCompleter
 from .reporter import RunContext
 from .run_services import RunDeps

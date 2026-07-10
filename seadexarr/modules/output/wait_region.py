@@ -106,6 +106,7 @@ class _LiveFrame:
     def __init__(self, get_group: Callable[[], Group], logger: logging.Logger) -> None:
         self._get_group = get_group
         self._logger = logger
+        self._logged = False
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         del console, options
@@ -114,7 +115,11 @@ class _LiveFrame:
         except Exception:
             # Must stay below WARNING: the bridge adopts WARNING+, and hub.emit off
             # this Console-lock-holding thread is an ABBA deadlock (see pr5_plan P4).
-            self._logger.debug("wait frame render failed", exc_info=True)
+            # Once per Live session (a fresh frame per start): rich retries at
+            # 12.5 ticks/s, so a persistent bug would traceback-spam a DEBUG run.
+            if not self._logged:
+                self._logged = True
+                self._logger.debug("wait frame render failed", exc_info=True)
             return
         yield group
 
@@ -127,7 +132,9 @@ class WaitRegion:
     event arrives - they reflow ABOVE the transient cockpit via the shared
     Console lock, exactly like the PR2 diagnostics. The Live is torn down by
     :meth:`section_left` when the renderer's fold evicts the wait-region node
-    (whatever event evicted it - and defensively by ``begin_cycle``/``close``).
+    (whatever event evicted it), by a new pass's ``WaitStarted`` reset - the
+    load-bearing route when back-to-back passes replace the frontier node in
+    one fold step - and defensively by ``begin_cycle``/``close``.
     """
 
     def __init__(
@@ -233,8 +240,8 @@ class WaitRegion:
         self._layout = _TableLayout.for_width(self._caps.width)
 
     def _stop_live(self) -> None:
-        # Take-and-clear; the stop() raise is contained (like wait_view's teardown)
-        # so a failed stop can't eat the tally print that follows on WaitFinished.
+        # Take-and-clear; the stop() raise is contained so a failed stop can't
+        # eat the tally print that follows on WaitFinished.
         live, self._live, self._spinner = self._live, None, None
         if live is not None:
             try:
@@ -316,9 +323,11 @@ class WaitRegion:
     def _row_cells(self, row: RowModel) -> list[Text | Spinner]:
         layout = self._layout
         # One shared spinner animates every importing row in sync; the static glyph
-        # is the fallback (no live region, or any other phase).
+        # is the fallback (no live region, or any other phase). Read once: the main
+        # thread's _stop_live clears the attribute mid-teardown.
+        spinner = self._spinner
         marker: Text | Spinner = (
-            self._spinner if row.phase is Phase.IMPORTING and self._spinner is not None else self._marker(row.phase)
+            spinner if row.phase is Phase.IMPORTING and spinner is not None else self._marker(row.phase)
         )
         cells: list[Text | Spinner] = [marker, Text(row.label)]
         if layout.bar_width:

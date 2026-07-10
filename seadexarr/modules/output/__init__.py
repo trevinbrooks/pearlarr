@@ -19,6 +19,7 @@ echoes the ledger lines byte-identically for file/plain. The text sinks in
 from .breadcrumbs import KIND_DEPTH, PATH_SEP, SEGMENT_WORD, BreadcrumbFold, OpenNode
 from .bridge import HubBridgeHandler, attributed_message, install_bridge, is_first_party, uninstall_bridge
 from .events import (
+    SPARK_SAMPLES,
     Accent,
     BootReady,
     BootStepFinished,
@@ -92,6 +93,7 @@ __all__ = [
     "PATH_SEP",
     "PROCESS_SCOPE_IDS",
     "SEGMENT_WORD",
+    "SPARK_SAMPLES",
     "STRIKE_LIMIT",
     "Accent",
     "BootReady",
