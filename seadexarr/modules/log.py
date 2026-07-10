@@ -40,8 +40,8 @@ class SectionRule:
 class KvLine:
     """An aligned "key : value" (or gutter "key value") detail line.
 
-    Locks the producer (``LogFormatter.kv``) and consumer
-    (``RichConsoleHandler._render_kv``) to the same fields, so the two sides
+    Locks the producer (the ``output.scan_lines`` builders) and consumer
+    (``render_kv``) to the same fields, so the two sides
     can't silently drift. ``value`` is a plain string or a pre-styled ``Text``
     (the only non-str path, from ``group_highlight``).
     """
@@ -191,11 +191,12 @@ class RichConsoleHandler(logging.Handler):
     in-context (S5 pin 2) - rendering here too would double them. With no
     owner, or a struck-out console seat, the legacy badge renders so a warning
     can never vanish. Hub re-emissions (``HUB_EVENT``-marked records) are
-    always skipped. Aligned "key : value" lines never get a badge - see ``kv``.
+    always skipped. Aligned "key : value" lines never get a badge - see
+    :class:`KvLine` below.
 
     Presentation is driven by one typed payload (a :data:`ConsoleRender`
-    dataclass under ``CONSOLE_EXTRA``, built by the ``log_*`` producers and
-    ``LogFormatter.kv``), so the plain message string (what the file log
+    dataclass under ``CONSOLE_EXTRA``, built by the ``output.scan_lines``
+    builders), so the plain message string (what the file log
     stores) stays clean while the console gets the rich treatment:
 
     * :class:`TitledRule` -> a titled section: a full-width rule, then the
@@ -858,112 +859,6 @@ def arr_item_noun(arr: Arr, n: int) -> str:
     if arr is Arr.RADARR:
         return count_noun(n, "movie")
     return count_noun(n, "series", "series")
-
-
-class LogFormatter:
-    """Render aligned detail lines through a logger.
-
-    Holds only the logger and the rule width - no run state - so the
-    presentation primitives (an aligned "key : value" line, a blank separator)
-    live apart from the reporting layer that decides
-    *what* to report. The semantic ``log_*`` methods on ``RunReporter`` keep the
-    run state (via ``RunContext``) and delegate their rendering here.
-
-    Args:
-        logger (logging.Logger): Logger every line is emitted through
-        line_length (int): Full width used for separator rules. Defaults to 80
-    """
-
-    def __init__(self, logger: logging.Logger, line_length: int = 80) -> None:
-        self.logger = logger
-        self.line_length = line_length
-
-    def kv(
-        self,
-        key: str,
-        value: str | Text,
-        value_style: str | None = None,
-        level: int = logging.INFO,
-        indent: int = 1,
-        *,
-        key_width: int,
-        sep: str = " :",
-        tail: str | None = None,
-    ) -> None:
-        """Log an aligned "key : value" (or gutter "key value") detail line
-
-        The file log stores the plain kv_string text; on the console the label
-        is dimmed so the value reads first, and an optional value_style accents
-        the outcome (e.g., green for "added").
-
-        Args:
-            key: Left-hand label
-            value: Right-hand value
-            value_style: Optional rich style for the value (e.g. "green")
-            level: Logging level. Defaults to logging.INFO
-            indent: Number of indent levels. Defaults to 1
-            key_width: Column width the key is padded to
-            sep: Separator after the padded key. Defaults to ":"; pass "" for
-                the colon-less gutter format (see detail)
-            tail: Optional emphasized suffix (console only), e.g., an "incomplete"
-                note. Defaults to None
-        """
-
-        payload = KvLine(
-            key=key,
-            value=value,
-            key_width=key_width,
-            value_style=value_style,
-            indent=indent,
-            sep=sep,
-            tail=tail,
-        )
-        self.logger.log(
-            level,
-            kv_string(key, value, key_width=key_width, indent=indent, sep=sep),
-            extra={CONSOLE_EXTRA: payload},
-        )
-
-    def detail(
-        self,
-        label: str,
-        value: str | Text,
-        *,
-        value_style: str | None = None,
-        level: int = logging.INFO,
-        tail: str | None = None,
-    ) -> None:
-        """Log an entry-detail line: dim gutter label, value at the title column
-
-        The colon-less "<label> <value>" form is used for everything indented under
-        an entry (files / link / status / group / added / kept / missing /
-        skipped / anilist). The value lands in the same column as the entry title,
-        so the whole block reads as one aligned column; the label sits dimmed in
-        the indent gutter and the value carries any accent color.
-
-        Args:
-            label: Gutter label, e.g. "files" or "added"
-            value: The value text
-            value_style: Optional rich style for the value (e.g. "green")
-            level: Logging level. Defaults to logging.INFO
-            tail: Optional emphasized suffix (console only). Defaults to None
-        """
-
-        self.kv(
-            label,
-            value,
-            value_style=value_style,
-            level=level,
-            indent=DETAIL_INDENT,
-            key_width=DETAIL_KEY_WIDTH,
-            sep="",
-            tail=tail,
-        )
-
-    def blank(self) -> None:
-        """Emit a blank line to visually separate entries / item blocks"""
-
-        self.logger.info("")
 
 
 def format_elapsed(seconds: float) -> str:

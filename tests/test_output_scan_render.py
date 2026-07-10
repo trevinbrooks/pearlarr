@@ -259,6 +259,7 @@ class TestBuilders:
             Accent.BAD: "red",
             Accent.ACCENT: "cyan",
             Accent.FOCUS: "bold",
+            Accent.NOTE: "blue",
         }
 
 

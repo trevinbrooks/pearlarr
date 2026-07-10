@@ -35,6 +35,7 @@ from .output import (
     ScanFinished,
     ScanStarted,
     ScopeFactory,
+    Severity,
     StyledValue,
 )
 from .seadex_types import SeadexDict
@@ -289,15 +290,17 @@ class RunReporter:
         else:
             self._emit(fact)
 
-    def _detail(self, label: str, value: StyledValue) -> None:
+    def detail(self, label: str, value: StyledValue, *, severity: Severity = Severity.INFO) -> None:
         """The ONE entry-detail path: routes through the open scope, else scope-free.
 
         Making this the only way to emit a detail keeps a post-close detail (the
         no-entry / outage paths, where ``_entry`` is already None) from being
-        written against a stale ``self._entry`` out of habit.
+        written against a stale ``self._entry`` out of habit. Public: the per-id
+        collaborators (grab pipeline / release filter / episode mapper) post their
+        mid-entry skipped/failed/missing lines through it too.
         """
 
-        self._post(EntryDetail(label=label, value=value))
+        self._post(EntryDetail(label=label, value=value, severity=severity))
 
     def _ledger(self, state: EntryState, label: str) -> None:
         """Close any open entry, then emit a scope-free (col-0) ledger row.
@@ -448,7 +451,7 @@ class RunReporter:
         entry = self.cache_store.get_entry(ctx.arr, al_id)
         self._log_titled_entry(EntryState.SKIPPED, al_id, name=entry.name if entry is not None else None)
         # Scope-free (the titled row closed the entry): the reason rides col-0.
-        self._detail("status", StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
+        self.detail("status", StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
         return True
 
     def _log_titled_entry(self, state: EntryState, al_id: int, *, name: str | None = None) -> bool:
@@ -466,7 +469,7 @@ class RunReporter:
         # otherwise the ledger already reads "AniList #<id>" and a detail line
         # would just duplicate it. PLAIN accent -> style-less kv, as today.
         if title:
-            self._detail("anilist", StyledValue(str(al_id)))
+            self.detail("anilist", StyledValue(str(al_id)))
         return True
 
     # --- entry-block headers -------------------------------------------------
@@ -616,7 +619,7 @@ class RunReporter:
         """
 
         ctx.stats.no_releases += 1
-        self._detail("status", StyledValue("no suitable releases on SeaDex", Accent.DIM))
+        self.detail("status", StyledValue("no suitable releases on SeaDex", Accent.DIM))
         return True
 
     def log_seadex_action(

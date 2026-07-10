@@ -12,7 +12,6 @@ Binds the run :class:`RunContext` via :meth:`begin_run` (the same object the
 run loop holds), so the grab bookkeeping the run summary reads stays in sync.
 """
 
-import logging
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -24,6 +23,7 @@ from .cache import CacheRecord
 from .config import PrivateReleaseAction
 from .manual_import import ImportWaitMode, PendingImport
 from .notify import GrabNotice
+from .output import Accent, Severity, StyledValue
 from .reporter import (
     GrabRecord,
     NeedsActionKind,
@@ -86,7 +86,6 @@ class GrabPipeline:
         self._anilist = deps.anilist
         self._notifier = deps.notifier
         self._reporter = deps.reporter
-        self.log_fmt = deps.log_fmt
         self.qbit = deps.qbit
         # Seeded with the engine's placeholder ctx; rebound each run via begin_run
         # (the same object the engine holds, so the grab bookkeeping stays in sync).
@@ -185,11 +184,10 @@ class GrabPipeline:
         tracker = url_item.tracker
 
         if not url_item.is_public:
-            self.log_fmt.detail(
+            self._reporter.detail(
                 "skipped",
-                f"{srg} on {tracker} (private-only)",
-                value_style="yellow",
-                level=logging.WARNING,
+                StyledValue(f"{srg} on {tracker} (private-only)", Accent.CAUTION),
+                severity=Severity.WARNING,
             )
             self._ctx.private_only_skipped = True
             self._ctx.private_only_groups.append(srg)
@@ -197,10 +195,9 @@ class GrabPipeline:
 
         # Skip trackers not in the user's selected list
         if tracker.casefold() not in self._config.seadex.trackers:
-            self.log_fmt.detail(
+            self._reporter.detail(
                 "skipped",
-                f"{url} (tracker {tracker} not in your selected list)",
-                value_style="yellow",
+                StyledValue(f"{url} (tracker {tracker} not in your selected list)", Accent.CAUTION),
             )
             return None
 
@@ -209,11 +206,10 @@ class GrabPipeline:
         # release too); skip+warn here so the loop continues, and flag the title so
         # it's not cached as done (re-checked once a parser / config change lands).
         if tracker not in PARSEABLE_TRACKERS:
-            self.log_fmt.detail(
+            self._reporter.detail(
                 "skipped",
-                f"{url} (tracker {tracker} not yet supported)",
-                value_style="yellow",
-                level=logging.WARNING,
+                StyledValue(f"{url} (tracker {tracker} not yet supported)", Accent.CAUTION),
+                severity=Severity.WARNING,
             )
             self._ctx.unsupported_tracker_skipped = True
             self._ctx.unsupported_tracker_groups.append(srg)
@@ -231,11 +227,10 @@ class GrabPipeline:
         try:
             result = self._torrents.add(item=url_item, preview=self._is_preview())
         except GRAB_FAILURES as e:
-            self.log_fmt.detail(
+            self._reporter.detail(
                 "failed",
-                f"could not grab {url}: {e}; will retry next run",
-                value_style="yellow",
-                level=logging.WARNING,
+                StyledValue(f"could not grab {url}: {e}; will retry next run", Accent.CAUTION),
+                severity=Severity.WARNING,
             )
             self._grab_failed_groups.append(srg)
             return None
@@ -378,10 +373,9 @@ class GrabPipeline:
         if not any_to_download:
             if not self._ctx.private_only_skipped:
                 self._ctx.stats.up_to_date += 1
-                self.log_fmt.detail(
+                self._reporter.detail(
                     "status",
-                    "already have the recommended release",
-                    value_style="blue",
+                    StyledValue("already have the recommended release", Accent.NOTE),
                 )
         else:
             cap_reached = self._grab(req)

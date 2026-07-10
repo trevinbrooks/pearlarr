@@ -36,7 +36,7 @@ from seadexarr.modules.cache import (
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.grab_pipeline import GrabPipeline
 from seadexarr.modules.import_wait import ImportWaitManager
-from seadexarr.modules.log import LogCounter, LogFormatter
+from seadexarr.modules.log import LogCounter
 from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport
 from seadexarr.modules.mappings import MappingResolver, MappingSources
 from seadexarr.modules.notify import Notifier
@@ -584,7 +584,6 @@ def make_services(**overrides: Any) -> RunServices:
     config = _split_config(overrides)
     defaults: dict[str, Any] = {
         "logger": logger,
-        "log_fmt": LogFormatter(logger),
         "_config": config,
         # The real __init__ always sets the authoritative arr + a RunContext;
         # faithful defaults so methods that read self._ctx.arr (the run-arr
@@ -624,7 +623,6 @@ def make_run_deps(
     config = config or make_config(url="http://sonarr", api_key="key")
     cache_store = cache_store or FakeCacheStore()
     logger = logger or make_logger()
-    log_fmt = LogFormatter(logger)
     # The one deliberately-leaked httpx client backs BOTH deps.http and
     # deps.web (never used for real traffic here; httpx clients don't warn on GC).
     http = httpx.Client()
@@ -653,7 +651,6 @@ def make_run_deps(
         torrents=_real_torrents(logger, http),
         notifier=Notifier(discord_url=None, webhook_url=None, web=http, logger=logger),
         planner=make_planner(),
-        log_fmt=log_fmt,
         reporter=_real_reporter(logger, cache_store, http),
     )
 
@@ -742,7 +739,6 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
 
     config = _split_config(overrides)
     logger = make_logger()
-    log_fmt = LogFormatter(logger)
     cache_store = overrides.pop("cache_store", None) or FakeCacheStore()
     web = httpx.Client()
     defaults: dict[str, Any] = {
@@ -756,7 +752,6 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         # No discord/webhook url -> a disabled, best-effort no-op notifier.
         "_notifier": Notifier(discord_url=None, webhook_url=None, web=web, logger=logger),
         "_reporter": _real_reporter(logger, cache_store, web),
-        "log_fmt": log_fmt,
         "qbit": CLIENT_SENTINEL,
         "_ctx": RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),
         # __init__-seeded per-title state the bare instance must also carry.

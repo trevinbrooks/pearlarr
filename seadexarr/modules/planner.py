@@ -33,7 +33,7 @@ class SkipNotice:
     """A release dropped for being private, for the caller to log.
 
     Rendered by the orchestrator as ``"<groups> <reason>"`` on a ``skipped``
-    detail line, replacing the inline ``log_fmt`` call this used to make from
+    detail line, replacing the inline detail call this used to make from
     deep inside the decision engine. A warn-and-hold skip logs at WARNING; a
     drop covered by a public fallback logs at INFO.
     """

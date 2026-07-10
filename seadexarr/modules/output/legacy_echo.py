@@ -24,8 +24,8 @@ Four event families echo here:
   the run summary — re-logged as today's EXACT records via the shared
   :mod:`.scan_lines` builders (message + ``CONSOLE_EXTRA`` payload both ride, so
   a record is indistinguishable from the reporter's own). ``ReleaseSkipped`` /
-  ``GrabFailed`` stay pass-arms: their producers are still raw logger warnings
-  the bridge adopts (a later band converts them).
+  ``GrabFailed`` stay pass-arms: nothing produces them yet — the skip/failure
+  sites emit ``EntryDetail`` lines until PR6 Band D flips them to the typed events.
 * The wait surface (PR5, P3) — graduations and the closing tally always echo;
   the digest start line + throttled "still waiting" pulses echo ONLY on a
   non-live console (a live-TTY run's file never carried them). The pulse cadence

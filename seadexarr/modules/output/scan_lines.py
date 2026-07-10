@@ -125,6 +125,8 @@ def accent_style(accent: Accent) -> str:
             return "cyan"
         case Accent.FOCUS:
             return "bold"
+        case Accent.NOTE:
+            return "blue"
     assert_never(accent)
 
 
@@ -147,7 +149,7 @@ def _detail_kv(
     level: int = logging.INFO,
     tail: str | None = None,
 ) -> LegacyLine:
-    """An entry-detail line (the colon-less gutter kv, LogFormatter.detail's shape)."""
+    """An entry-detail line (the colon-less gutter kv indented under an entry block)."""
 
     payload = KvLine(
         key=key,

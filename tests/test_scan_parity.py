@@ -19,6 +19,7 @@ event -> the same lines.
 import itertools
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any, get_args, override
 
 import httpx
@@ -38,6 +39,7 @@ from seadexarr.modules.log import (
     SectionRule,
     StyledLine,
     TitledRule,
+    console_payload,
     group_highlight,
 )
 from seadexarr.modules.manual_import import ImportWaitMode, PendingState
@@ -51,7 +53,9 @@ from seadexarr.modules.output import (
     GrabStatus,
     ItemStarted,
     LedgerRow,
+    LegacyRenderer,
     NeedsActionCause,
+    OutputHub,
     RecommendedGroup,
     ReleaseName,
     RunSummary,
@@ -60,7 +64,10 @@ from seadexarr.modules.output import (
     ScanStarted,
     ScopeClosed,
     ScopeOpened,
+    Severity,
     StyledValue,
+    emit_to_hub,
+    install_hub,
 )
 from seadexarr.modules.output.scan_lines import _TIP_TEXTS, ScanEvent
 from seadexarr.modules.reporter import (
@@ -75,12 +82,13 @@ from seadexarr.modules.reporter import (
 from seadexarr.modules.torrents import AddOutcome, ReleaseOutcome
 
 from .builders import FakeCacheStore, make_entry_record, pending_import, rg_group, url_item
-from .fakes import SCAN_EVENT_TYPES, scan_lines_from_events
+from .fakes import SCAN_EVENT_TYPES, CaptureHandler, scan_lines_from_events
 
 type Line = tuple[int, str, ConsoleRender | None]
 """One pinned record: (levelno, plain message, CONSOLE_EXTRA payload)."""
 
 _I = logging.INFO
+_W = logging.WARNING
 
 # The one tag the action-block goldens use. Deliberately a single tag: today's
 # reporter joins a frozenset, so multi-tag order is hash-random across runs.
@@ -939,6 +947,148 @@ class TestDetailParity:
         harness = _Harness()
         harness.reporter.log_no_seadex_releases(RunContext(arr=Arr.SONARR))
         assert harness.lines() == NO_RELEASES_LINES
+
+
+def _xdetail(level: int, message: str, key: str, value: str, style: str) -> Line:
+    """An external detail row at the site's own level (else exactly ``_detail``'s shape)."""
+
+    return (level, message, KvLine(key=key, value=value, key_width=9, value_style=style, indent=2, sep=""))
+
+
+@dataclass(frozen=True, slots=True)
+class _DetailSite:
+    """One migrated producer site: the ``reporter.detail`` args + its pinned record."""
+
+    label: str
+    value: StyledValue
+    severity: Severity
+    golden: Line
+
+
+class TestExternalDetailParity:
+    """PR6 Band A: the 7 ``LogFormatter.detail`` producer sites (grab pipeline /
+    release filter / episode mapper) now post through ``reporter.detail``. Each
+    golden was captured by RUNNING the pre-migration ``LogFormatter.detail`` with
+    the site's literal args at fc58aef; the reporter must reproduce every record
+    byte-identically through the live LegacyRenderer echo.
+    """
+
+    SITES: tuple[_DetailSite, ...] = (
+        # grab_pipeline._add_one_url: a private-only release.
+        _DetailSite(
+            "skipped",
+            StyledValue("GroupA on Nyaa (private-only)", Accent.CAUTION),
+            Severity.WARNING,
+            _xdetail(
+                _W,
+                "    skipped   GroupA on Nyaa (private-only)",
+                "skipped",
+                "GroupA on Nyaa (private-only)",
+                "yellow",
+            ),
+        ),
+        # grab_pipeline._add_one_url: a tracker outside the user's selected list.
+        _DetailSite(
+            "skipped",
+            StyledValue("https://x/1 (tracker Nyaa not in your selected list)", Accent.CAUTION),
+            Severity.INFO,
+            _xdetail(
+                _I,
+                "    skipped   https://x/1 (tracker Nyaa not in your selected list)",
+                "skipped",
+                "https://x/1 (tracker Nyaa not in your selected list)",
+                "yellow",
+            ),
+        ),
+        # grab_pipeline._add_one_url: a tracker with no parser yet.
+        _DetailSite(
+            "skipped",
+            StyledValue("https://x/1 (tracker Nyaa not yet supported)", Accent.CAUTION),
+            Severity.WARNING,
+            _xdetail(
+                _W,
+                "    skipped   https://x/1 (tracker Nyaa not yet supported)",
+                "skipped",
+                "https://x/1 (tracker Nyaa not yet supported)",
+                "yellow",
+            ),
+        ),
+        # grab_pipeline._add_one_url: a contained grab failure.
+        _DetailSite(
+            "failed",
+            StyledValue("could not grab https://x/1: tracker down; will retry next run", Accent.CAUTION),
+            Severity.WARNING,
+            _xdetail(
+                _W,
+                "    failed    could not grab https://x/1: tracker down; will retry next run",
+                "failed",
+                "could not grab https://x/1: tracker down; will retry next run",
+                "yellow",
+            ),
+        ),
+        # grab_pipeline.grab_and_cache: nothing to download (the blue NOTE accent).
+        _DetailSite(
+            "status",
+            StyledValue("already have the recommended release", Accent.NOTE),
+            Severity.INFO,
+            _xdetail(
+                _I,
+                "    status    already have the recommended release",
+                "status",
+                "already have the recommended release",
+                "blue",
+            ),
+        ),
+        # seadex_filter.filter_downloads: a planner SkipNotice (WARNING form).
+        _DetailSite(
+            "skipped",
+            StyledValue("GroupA, GroupB private-only (private releases not supported)", Accent.CAUTION),
+            Severity.WARNING,
+            _xdetail(
+                _W,
+                "    skipped   GroupA, GroupB private-only (private releases not supported)",
+                "skipped",
+                "GroupA, GroupB private-only (private releases not supported)",
+                "yellow",
+            ),
+        ),
+        # sonarr_episodes.get_sonarr_release_dict: missing-episode coverage.
+        _DetailSite(
+            "missing",
+            StyledValue("S01 E12", Accent.CAUTION),
+            Severity.INFO,
+            _xdetail(
+                _I,
+                "    missing   S01 E12",
+                "missing",
+                "S01 E12",
+                "yellow",
+            ),
+        ),
+    )
+
+    def test_reporter_detail_reproduces_the_goldens(self, app_logger: logging.Logger) -> None:
+        # The production wiring: reporter -> emit_to_hub -> LegacyRenderer echo
+        # back through the app logger, where the capture pins the exact records.
+        capture = CaptureHandler()
+        app_logger.addHandler(capture)
+        install_hub(OutputHub([LegacyRenderer()]))
+        reporter = RunReporter(
+            emit=emit_to_hub,
+            logger=app_logger,
+            cache_store=FakeCacheStore(),
+            anilist=AniListGateway(
+                cache_store=FakeCacheStore(),
+                logger=app_logger,
+                client=_ScriptedTitleClient(app_logger, None),
+            ),
+        )
+
+        for site in self.SITES:
+            reporter.detail(site.label, site.value, severity=site.severity)
+
+        lines = tuple((r.levelno, r.getMessage(), console_payload(r)) for r in capture.records)
+        assert lines == tuple(site.golden for site in self.SITES)
 
 
 class TestActionBlockParity:

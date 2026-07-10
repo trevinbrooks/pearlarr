@@ -26,7 +26,7 @@ from .boot_flow import BootFlow
 from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, CachedEntry, CacheRecord, CacheStore
 from .config import AppConfig, Arr, ArrSettings, PrivateReleaseAction, secret_value
 from .grab_pipeline import GrabPipeline, GrabRequest
-from .log import EntryState, LogFormatter
+from .log import EntryState
 from .manual_import import ImportWaitMode
 from .mappings import ExternalIds, MappingEntry, MappingResolver
 from .notify import Notifier
@@ -80,7 +80,6 @@ class RunDeps:
     torrents: TorrentService
     notifier: Notifier
     planner: DownloadPlanner
-    log_fmt: LogFormatter
     reporter: RunReporter
 
     @classmethod
@@ -188,9 +187,6 @@ class RunDeps:
             logger=logger,
         )
 
-        # All aligned detail rendering goes through this formatter.
-        log_fmt = LogFormatter(logger)
-
         return cls(
             config=app_config,
             arr_config=arr_config,
@@ -219,7 +215,6 @@ class RunDeps:
                 use_torrent_hash_to_filter=app_config.seadex.use_torrent_hash_to_filter,
                 logger=logger,
             ),
-            log_fmt=log_fmt,
             # Presentation: every log_* method emits a typed output event through
             # the process hub (resolved at call time), never rendering directly.
             reporter=RunReporter(
@@ -279,7 +274,6 @@ class RunServices:
         self._torrents = deps.torrents
         self._notifier = deps.notifier
         self._planner = deps.planner
-        self.log_fmt = deps.log_fmt
         self._reporter = deps.reporter
 
         self.arr = arr

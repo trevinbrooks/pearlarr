@@ -13,7 +13,6 @@ when the Arr genuinely already owns the files. Regression coverage for the
 preferred-public size-mismatch promote and the coverage-blind per-group drop.
 """
 
-import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 
@@ -22,6 +21,8 @@ from seadex import EntryRecord, TorrentRecord, Tracker
 from seadexarr.modules.config import Arr
 from seadexarr.modules.grab_pipeline import GrabRequest
 from seadexarr.modules.log import EntryState
+from seadexarr.modules.output import EntryDetail, Severity, install_hub, uninstall_hub
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.reporter import NeedsActionKind, RunContext
 from seadexarr.modules.seadex_types import EpisodeRecord, SeadexDict
 
@@ -38,7 +39,6 @@ from .builders import (
     make_torrent_record,
     sonarr_ep,
 )
-from .fakes import CaptureHandler
 
 PRIV_URL = "https://animebytes.tv/torrents.php?id=1"
 PUB_URL = "https://nyaa.si/view/1"
@@ -90,17 +90,27 @@ def _fill_episodes(sd: SeadexDict, mapping: dict[str, list[EpisodeRecord]]) -> N
 
 
 @contextmanager
-def _capture(logger: logging.Logger) -> Generator[CaptureHandler]:
-    """Collect INFO+ records off the shared test logger, restoring it after."""
+def _record() -> Generator[RecordingHub]:
+    """Record the events the filter/pipeline post via the reporter's process-hub seam."""
 
-    handler = CaptureHandler()
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+    recording = RecordingHub()
+    install_hub(recording.hub)
     try:
-        yield handler
+        yield recording
     finally:
-        logger.removeHandler(handler)
-        logger.setLevel(logging.WARNING)
+        uninstall_hub()
+
+
+def _warning_texts(recording: RecordingHub) -> list[str]:
+    """The recorded detail texts at WARNING+ (the old ``levelno >= WARNING`` filter)."""
+
+    return [d.value.text for d in recording.of_type(EntryDetail) if d.severity >= Severity.WARNING]
+
+
+def _info_texts(recording: RecordingHub) -> list[str]:
+    """The recorded detail texts at exactly INFO."""
+
+    return [d.value.text for d in recording.of_type(EntryDetail) if d.severity is Severity.INFO]
 
 
 def _grab_request(al_id: int, seadex_dict: SeadexDict, hashes: list[str | None], entry: EntryRecord) -> GrabRequest:
@@ -146,13 +156,13 @@ class TestUpgradePendingHoldsForOwnedStale:
         )
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
-        with _capture(filt.logger) as handler:
+        with _record() as recording:
             hashes, out = filt.filter_downloads(11, sd, {"Priv": [100]}, ep_list)
 
         assert out["Fall"].urls[PUB_URL].download is False
         assert out["Priv"].urls[PRIV_URL].download is False
         assert hashes == []
-        warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+        warnings = _warning_texts(recording)
         assert any(STALE_NOTICE in m for m in warnings), warnings
         assert ctx.private_only_skipped is True
         assert ctx.private_only_stale_held is True
@@ -180,13 +190,13 @@ class TestUpgradePendingHoldsForOwnedStale:
         )
         sd = filt.build(_entry_private_pick_plus_public_alt())
 
-        with _capture(filt.logger) as handler:
+        with _record() as recording:
             hashes, out = filt.filter_downloads(22, sd, {"Priv": [100]}, None)
 
         assert out["Fall"].urls[PUB_URL].download is False
         assert out["Priv"].urls[PRIV_URL].download is False
         assert hashes == []
-        warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+        warnings = _warning_texts(recording)
         assert any(STALE_NOTICE in m for m in warnings), warnings
         assert ctx.private_only_skipped is True
         assert ctx.private_only_stale_held is True
@@ -224,13 +234,13 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         # Sonarr holds Priv's release at the MATCHING SeaDex size.
         ep_list = [sonarr_ep(1, 1, size=999, release_group="Priv")]
 
-        with _capture(filt.logger) as handler:
+        with _record() as recording:
             hashes, out = filt.filter_downloads(11, sd, {"Priv": [999]}, ep_list)
 
         assert out["Priv"].urls[PRIV_URL].download is False
         assert out["Fall"].urls[PUB_URL].download is False
         assert hashes == []
-        assert handler.records == []
+        assert recording.events == []
         assert ctx.private_only_skipped is False
         assert ctx.private_only_stale_held is False
 
@@ -262,13 +272,13 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         entry = _entry_private_pick_plus_public_alt()
         sd = filt.build(entry)
 
-        with _capture(filt.logger) as handler:
+        with _record() as recording:
             hashes, out = filt.filter_downloads(22, sd, {"Priv": [999]}, None)
 
         assert out["Priv"].urls[PRIV_URL].download is False
         assert out["Fall"].urls[PUB_URL].download is False
         assert hashes == []
-        assert handler.records == []
+        assert recording.events == []
         assert ctx.private_only_skipped is False
         assert ctx.private_only_stale_held is False
 
@@ -303,10 +313,10 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         _fill_episodes(sd, {PRIV_URL: [EpisodeRecord(season=1, episode=1, size=999)]})
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
-        with _capture(filt.logger) as handler:
+        with _record() as recording:
             hashes, out = filt.filter_downloads(11, sd, {"Priv": [100]}, ep_list)
 
-        warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+        warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
         assert ctx.private_only_skipped is True
 
@@ -339,15 +349,15 @@ class TestOwnedFallbackSoftSkip:
         entry = _entry_private_pick_plus_public_alt()
         sd = filt.build(entry)
 
-        with _capture(filt.logger) as handler:
+        with _record() as recording:
             hashes, out = filt.filter_downloads(11, sd, {}, None)
 
         assert out["Priv"].urls[PRIV_URL].download is False
         assert out["Fall"].urls[PUB_URL].download is False
         assert set(hashes) == {None, PUB_HASH}
-        info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
+        info = _info_texts(recording)
         assert any("a public fallback already covers these files" in m for m in info), info
-        assert not [r for r in handler.records if r.levelno >= logging.WARNING]
+        assert _warning_texts(recording) == []
         assert ctx.private_only_skipped is False
         assert ctx.fallback_covered is True
 
@@ -424,7 +434,7 @@ class TestFilterDownloadsNoticeSeam:
         # S01E01 is held at a stale size (upgrade pending); S02E01 is missing.
         ep_list = [sonarr_ep(1, 1, size=100, release_group="PrivA"), sonarr_ep(2, 1)]
 
-        with _capture(filt.logger) as handler:
+        with _record() as recording:
             hashes, out = filt.filter_downloads(44, sd, {"PrivA": [100]}, ep_list)
 
         assert out["PubA"].urls[self.PUBA_URL].download is True
@@ -433,8 +443,8 @@ class TestFilterDownloadsNoticeSeam:
         assert hashes == [self.PUBA_HASH]
         # Each SkipNotice reaches the logger at ITS level: the promoted set at
         # INFO, the truly-blocked set at WARNING.
-        info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
-        warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+        info = _info_texts(recording)
+        warnings = _warning_texts(recording)
         assert any("PrivA private-only; grabbing public alternative PubA" in m for m in info), info
         assert any("PrivB private-only (private releases not supported)" in m for m in warnings), warnings
         # The skip flag + group names land on the run context for the grab tail
@@ -522,14 +532,14 @@ class TestMixedGroupKeeperPreference:
         )
 
         # Sonarr is missing both episodes: every url flags before the reducer.
-        with _capture(filt.logger) as handler:
+        with _record() as recording:
             hashes, out = filt.filter_downloads(55, sd, {}, [sonarr_ep(1, 1), sonarr_ep(2, 1)])
 
         assert out["H"].urls[self.H_URL].download is True
         assert out["G"].urls[PUB_URL].download is False
         assert out["G"].urls[PRIV_URL].download is False
         assert hashes == [self.H_HASH]
-        assert not [r for r in handler.records if r.levelno >= logging.WARNING]
+        assert _warning_texts(recording) == []
         assert ctx.private_only_skipped is False
 
         torrents = FakeTorrents({self.H_HASH: (AddOutcome.ADDED, "H S01+S02")})
@@ -591,10 +601,10 @@ class TestMixedGroupKeeperPreference:
             sleep_time=0,
         )
         pipe._anilist.al_cache.update({56: {}})
-        with _capture(pipe.log_fmt.logger) as handler:
+        with _record() as recording:
             pipe.grab_and_cache(_grab_request(56, out, hashes, entry))
 
-        warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+        warnings = _warning_texts(recording)
         assert any("private-only" in m for m in warnings), warnings
         assert ctx.private_only_skipped is True
         assert ctx.private_only_groups == ["G"]
@@ -669,10 +679,10 @@ class TestSurvivingPrivateCoverage:
             sleep_time=0,
         )
         pipe._anilist.al_cache.update({33: {}})
-        with _capture(pipe.log_fmt.logger) as handler:
+        with _record() as recording:
             pipe.grab_and_cache(_grab_request(33, out, hashes, entry))
 
-        warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+        warnings = _warning_texts(recording)
         assert any("private-only" in m for m in warnings), warnings
         assert ctx.private_only_skipped is True
         assert ctx.private_only_groups == ["A"]
@@ -738,15 +748,15 @@ class TestPromotionGeneralization:
         )
         ep_list = [sonarr_ep(1, 1, size=100, release_group="Priv")]
 
-        with _capture(filt.logger) as handler:
+        with _record() as recording:
             hashes, out = filt.filter_downloads(66, sd, {"Priv": [100]}, ep_list)
 
         assert out["Pub"].urls[PUB_URL].download is True
         assert out["Priv"].urls[PRIV_URL].download is False
         assert hashes == [PUB_HASH]
-        info = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
+        info = _info_texts(recording)
         assert any("grabbing public alternative Pub" in m for m in info), info
-        assert not [r for r in handler.records if r.levelno >= logging.WARNING]
+        assert _warning_texts(recording) == []
         assert ctx.private_only_skipped is False
 
         torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "Show S01 web")})
@@ -783,13 +793,13 @@ class TestPromotionGeneralization:
         )
         sd = filt.build(self._preferred_pair_entry(73))
 
-        with _capture(filt.logger) as handler:
+        with _record() as recording:
             hashes, out = filt.filter_downloads(73, sd, {"Priv": [100]}, None)
 
         assert out["Pub"].urls[PUB_URL].download is True
         assert out["Priv"].urls[PRIV_URL].download is False
         assert hashes == [PUB_HASH]
-        assert not [r for r in handler.records if r.levelno >= logging.WARNING]
+        assert _warning_texts(recording) == []
         assert ctx.private_only_skipped is False
 
     M_PUB_URL = "https://nyaa.si/view/3"
@@ -861,14 +871,14 @@ class TestPromotionGeneralization:
             sonarr_ep(2, 1, size=100, release_group="M"),
         ]
 
-        with _capture(filt.logger) as handler:
+        with _record() as recording:
             hashes, out = filt.filter_downloads(77, sd, {"M": [555, 100]}, ep_list)
 
         assert out["F"].urls[self.F_URL].download is False
         assert out["M"].urls[self.M_PUB_URL].download is False
         assert out["M"].urls[PRIV_URL].download is True
         assert hashes == []
-        assert handler.records == []
+        assert recording.events == []
         assert ctx.private_only_skipped is False
         assert ctx.private_only_stale_held is True
 
@@ -976,13 +986,13 @@ class TestEqualUnionMixedGroups:
                 sleep_time=0,
             )
             pipe._anilist.al_cache.update({al_id: {}})
-            with _capture(pipe.log_fmt.logger) as handler:
+            with _record() as recording:
                 pipe.grab_and_cache(_grab_request(al_id, out, hashes, entry))
 
             # Both episodes obtained; the keeper's surviving private batch is
             # refused with a WARNING, and warn mode still caches the title.
             assert set(torrents.calls) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
-            warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+            warnings = _warning_texts(recording)
             assert any("private-only" in m for m in warnings), warnings
             assert ctx.private_only_skipped is True
             assert cache.check_al_id_in_cache(Arr.SONARR, al_id, entry) is True
@@ -1077,9 +1087,9 @@ class TestModeSwitchResurfacesFallbackSatisfied:
         assert set(sd_warn) == {"Priv"}  # warn mode adds no fallback
         _fill_episodes(sd_warn, {PRIV_URL: [EpisodeRecord(season=1, episode=1, size=999)]})
         ep_list = [sonarr_ep(1, 1, size=555, release_group="Fall")]
-        with _capture(warn_filt.logger) as handler:
+        with _record() as recording:
             warn_hashes, warn_out = warn_filt.filter_downloads(11, sd_warn, {"Fall": [555]}, ep_list)
-        warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+        warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
 
         warn_pipe = make_grab_pipeline(cache_store=cache, _ctx=warn_ctx, private_releases="warn", sleep_time=0)

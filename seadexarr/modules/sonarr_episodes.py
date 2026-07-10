@@ -15,6 +15,7 @@ from collections.abc import Iterable
 from . import coverage as _coverage
 from .config import AppConfig
 from .mappings import ExternalIds, MappingEntry, MappingMode, MappingSource
+from .output import Accent, StyledValue
 from .radarr_client import IdField, IdFilter, collect_anime_items
 from .run_services import RunDeps, RunServices
 from .seadex_types import (
@@ -128,7 +129,7 @@ class SonarrEpisodes:
 
         Args:
             deps (RunDeps): The shared collaborators (config/mappings/AniList
-                gateway/log formatter are unpacked off it).
+                gateway/reporter are unpacked off it).
             sonarr (AbstractSonarrClient): The strategy's Sonarr client (built once,
                 reused so a multi-season series fetches its episodes once).
             services (RunServices): The services hub; ``prefetch`` calls into it to
@@ -143,7 +144,7 @@ class SonarrEpisodes:
         # Episode counts / formats resolve through the gateway (shared with the
         # engine), so its warm cache and retry narration apply here too.
         self._anilist = deps.anilist
-        self.log_fmt = deps.log_fmt
+        self._reporter = deps.reporter
 
         # Per-run cache of the raw Sonarr episode fetch, keyed by series id. A
         # multi-season series maps to several AniList ids, each of which would
@@ -464,10 +465,9 @@ class SonarrEpisodes:
             missing_coverage = _coverage.coverage_string(
                 _coverage.episodes_from_ep_list(ep_list, missing_only=True),
             )
-            self.log_fmt.detail(
+            self._reporter.detail(
                 "missing",
-                missing_coverage or f"{missing_eps}/{n_eps}",
-                value_style="yellow",
+                StyledValue(missing_coverage or f"{missing_eps}/{n_eps}", Accent.CAUTION),
             )
 
         return sonarr_release_dict

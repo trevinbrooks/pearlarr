@@ -11,7 +11,6 @@ Built bare (``object.__new__`` via ``make_bare_instance``) so no live qBittorren
 login happens; the client ``add`` is faked by ``FakeTorrents``.
 """
 
-import logging
 from collections.abc import Mapping
 
 import httpx
@@ -25,6 +24,8 @@ from seadexarr.modules.discord import DiscordEmbed
 from seadexarr.modules.grab_pipeline import GrabPipeline, GrabRequest
 from seadexarr.modules.manual_import import ImportWaitMode, PendingImport
 from seadexarr.modules.notify import Notifier
+from seadexarr.modules.output import EntryDetail, Severity, install_hub
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.reporter import NeedsActionKind, RunContext
 from seadexarr.modules.seadex_types import SeadexDict, SeadexUrlItem
 from seadexarr.modules.torrent import TorrentParseError
@@ -42,7 +43,6 @@ from .builders import (
     rg_group,
     url_item,
 )
-from .fakes import CaptureHandler
 
 
 def _stub_add_torrent(
@@ -784,12 +784,13 @@ class TestGrabFailureContainment:
         ids=["parse", "add", "tracker", "pynyaa", "qbit"],
     )
     def test_failure_is_one_clean_warning_no_traceback(self, error: Exception) -> None:
-        # Every boundary failure mode lands as a single WARNING with no exc_info
-        # (the old path fell through to run_loop's per-id traceback arm).
+        # Every boundary failure mode lands as ONE WARNING detail event (the old
+        # path fell through to run_loop's per-id traceback arm; the typed
+        # EntryDetail carries no traceback by construction).
         torrents = FakeTorrents({}, raises={"h1": error})
         pipeline = _pipeline(torrents=torrents)
-        handler = CaptureHandler()
-        pipeline.log_fmt.logger.addHandler(handler)
+        recording = RecordingHub()
+        install_hub(recording.hub)
 
         n_added, results = pipeline.add_torrent(
             one_release_dict(srg="NAN0", infohash="h1"),
@@ -798,12 +799,12 @@ class TestGrabFailureContainment:
 
         assert n_added == 0
         assert results == []
-        warnings = [r for r in handler.records if r.levelno == logging.WARNING]
+        warnings = [d for d in recording.of_type(EntryDetail) if d.severity is Severity.WARNING]
         assert len(warnings) == 1
-        message = warnings[0].getMessage()
+        assert warnings[0].label == "failed"
+        message = warnings[0].value.text
         assert "could not grab https://nyaa.si/view/1" in message
         assert "will retry next run" in message
-        assert warnings[0].exc_info is None
 
     def test_failed_release_does_not_drop_the_next_one(self) -> None:
         # Containment is per release: the sibling url after the failure still grabs.

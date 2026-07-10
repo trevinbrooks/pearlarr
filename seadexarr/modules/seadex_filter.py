@@ -8,6 +8,7 @@ from seadex import EntryRecord, TorrentRecord
 from .config import PRIVATE_TRACKERS, PrivateReleaseAction
 from .console_caps import console_of
 from .log import indent_string
+from .output import Accent, Severity, StyledValue
 from .reporter import RunContext
 from .seadex_types import (
     ArrReleaseDict,
@@ -67,7 +68,7 @@ class SeadexReleaseFilter:
         self._planner = deps.planner
         self.cache_store = deps.cache_store
         self.logger = deps.logger
-        self.log_fmt = deps.log_fmt
+        self._reporter = deps.reporter
         # Seeded with the services hub's placeholder ctx; rebound each run via
         # begin_run (the same object the hub holds, so a write here is seen by the
         # grab tail).
@@ -294,14 +295,14 @@ class SeadexReleaseFilter:
             ep_list=ep_list,
         )
 
-        # The planner reports what to log rather than logging it; render each
-        # private-only skip exactly as the inline call used to.
+        # The planner reports what to log rather than logging it; post each
+        # private-only skip exactly as the inline call used to. The planner only
+        # emits stdlib INFO/WARNING levels, both exact Severity members.
         for notice in result.skip_notices:
-            self.log_fmt.detail(
+            self._reporter.detail(
                 "skipped",
-                f"{', '.join(notice.groups)} {notice.reason}",
-                value_style="yellow",
-                level=notice.level,
+                StyledValue(f"{', '.join(notice.groups)} {notice.reason}", Accent.CAUTION),
+                severity=Severity(notice.level),
             )
 
         # Carry the skip flag/groups onto the run context (reset per title in the
