@@ -677,6 +677,18 @@ def test_hub_tallies_every_emitted_event() -> None:
     assert (since.info, since.errors) == (1, 1)
 
 
+def test_file_only_diagnostics_are_never_counted() -> None:
+    # Counts = what a visible surface could show; file_only forensics stay out.
+    recording = RecordingHub()
+    mark = recording.hub.counts.mark()
+
+    recording.emit(Diagnostic(severity=Severity.WARNING, message="forensic note", file_only=True))
+    assert recording.hub.counts.counts_since(mark).warnings == 0
+
+    recording.emit(Diagnostic(severity=Severity.WARNING, message="visible note"))
+    assert recording.hub.counts.counts_since(mark).warnings == 1
+
+
 def test_severity_is_counted_at_enqueue_even_when_every_renderer_raises() -> None:
     hub = OutputHub([_FailingRenderer(), _FailingRenderer()])
     mark = hub.counts.mark()

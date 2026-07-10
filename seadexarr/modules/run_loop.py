@@ -4,7 +4,7 @@ from typing import final
 from .arr_activity import ArrActivityMonitor
 from .boot_flow import BootFlow
 from .import_wait import ImportWaitManager
-from .log import arr_item_noun, count_noun, log_counter
+from .log import arr_item_noun, count_noun
 from .manual_import import (
     ImportWaitMode,
     resolve_wait_mode,
@@ -101,8 +101,8 @@ class RunLoop:
 
         Replaces the run-scoped state wholesale with a new RunContext - this is
         the ONLY fresh-mint site; its ``arr`` is read off the services hub (the
-        authority) - and snapshots the logger-level counter (warning/error
-        counts are diffed against this when the summary is logged). The
+        authority) - and stamps the hub-counts mark (warning/error counts are
+        diffed against it when the summary is logged). The
         ``begin_run`` rebind is folded in here so the ctx swap and the
         collaborator rebind can never drift apart - a missed rebind would
         silently route a collaborator's writes to the orphaned prior context.
@@ -119,7 +119,7 @@ class RunLoop:
             import_wait_mode=import_wait_mode,
             # Monotonic so a wall-clock step (NTP, DST) can't yield negative elapsed
             started_monotonic=time.monotonic(),
-            log_counts_at_start=log_counter(self.logger).snapshot(),
+            counts_mark=self._reporter.counts_mark(),
         )
         self.begin_run(self._ctx)
 

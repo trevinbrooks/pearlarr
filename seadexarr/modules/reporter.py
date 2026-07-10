@@ -1,4 +1,3 @@
-import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -10,11 +9,12 @@ from seadex import EntryRecord
 from .anilist_gateway import AniListGateway
 from .cache import AbstractCacheStore
 from .config import Arr
-from .log import EntryState, log_counter
+from .log import EntryState
 from .manual_import import ImportWaitMode, PendingImport, PendingState
 from .output import (
     Accent,
     CapReached,
+    CountsSource,
     Emit,
     EntryDetail,
     EntryFact,
@@ -36,6 +36,7 @@ from .output import (
     ScanStarted,
     ScopeFactory,
     Severity,
+    SeverityTally,
     StyledValue,
 )
 from .seadex_types import SeadexDict
@@ -166,9 +167,9 @@ class RunContext:
     unsupported_tracker_groups: list[str] = field(default_factory=list[str])
     unsupported_tracker_hashes: list[str] = field(default_factory=list[str])
     # Run clock (monotonic, so an NTP/DST step can't yield negative elapsed) and
-    # the logger-counter snapshot taken at the start, diffed for the summary.
+    # the hub-counts mark stamped at run start, diffed for the summary's issues row.
     started_monotonic: float | None = None
-    log_counts_at_start: dict[int, int] = field(default_factory=dict[int, int])
+    counts_mark: SeverityTally = field(default_factory=SeverityTally)
     # PendingImport records written THIS run (on a successful add), for the
     # end-of-run blocking pass; the durable copies live in cache_store under
     # ``pending_imports``, so this is just the fast in-memory list to wait on.
@@ -223,7 +224,7 @@ class RunReporter:
     """Owns the producer surface: each method EMITS a typed output event.
 
     Built once per arr instance with its stable collaborators (the ``emit`` seam,
-    the logger whose LogCounter the summary diffs, the cache store, the AniList
+    the bound hub-counts source the summary diffs, the cache store, the AniList
     gateway). The methods hold every producer-side decision - stats bumps, ctx
     mutation, gates, title fallbacks - then state WHAT happened as an event; the
     scan-line builders (``output.scan_lines``) own the layout. An open entry block
@@ -237,13 +238,13 @@ class RunReporter:
         self,
         *,
         emit: Emit,
-        logger: logging.Logger,
+        counts: CountsSource,
         cache_store: AbstractCacheStore,
         anilist: AniListGateway,
     ) -> None:
         self._emit = emit
         self._scopes = ScopeFactory(emit)
-        self.logger = logger
+        self._counts = counts
         self.cache_store = cache_store
         self.anilist = anilist
         # The entry block currently open (a coverage/url-bearing header); None
@@ -716,6 +717,14 @@ class RunReporter:
 
     # --- summary boundary ----------------------------------------------------
 
+    def counts_mark(self) -> SeverityTally:
+        """The counts mark run start stamps; ``log_run_summary`` diffs against it.
+
+        One bound source: the mark and the diff can never read different hubs.
+        """
+
+        return self._counts().mark()
+
     def log_run_summary(self, ctx: RunContext, *, is_preview: bool, has_client: bool) -> bool:
         """Emit the end-of-run scoreboard (the summary boundary; closes the entry).
 
@@ -732,13 +741,9 @@ class RunReporter:
 
         self._close_entry()
 
-        # Warning/error counts come from the logger-level counter, diffed against
-        # the snapshot taken when the run started.
-        now_counts = log_counter(self.logger).snapshot()
-        start_counts = ctx.log_counts_at_start
-
-        def _delta(level: int) -> int:
-            return now_counts.get(level, 0) - start_counts.get(level, 0)
+        # Warning/error counts come from the bound hub-counts source, diffed
+        # against the mark stamped when the run started.
+        since = self._counts().counts_since(ctx.counts_mark)
 
         # A run grabs nothing when explicitly flagged dry, or when no client is
         # configured at all - the note wording distinguishes the two.
@@ -758,9 +763,9 @@ class RunReporter:
                     added_count=ctx.torrents_added,
                     tally=tally,
                     wait_mode_on=ctx.import_wait_mode is not ImportWaitMode.OFF,
-                    warnings=_delta(logging.WARNING),
-                    # Today's n_errors sums ERROR and CRITICAL.
-                    errors=_delta(logging.ERROR) + _delta(logging.CRITICAL),
+                    warnings=since.warnings,
+                    # The tally's errors property sums ERROR and CRITICAL, as today.
+                    errors=since.errors,
                     elapsed_s=elapsed_s,
                     tip=_summary_tip(tally.needs_action),
                 ),

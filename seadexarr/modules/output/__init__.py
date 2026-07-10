@@ -72,9 +72,10 @@ from .events import (
 from .hub import STRIKE_LIMIT, NullRenderer, OutputHub, Renderer, SeverityCounts, SeverityTally
 from .legacy_echo import LegacyRenderer
 from .rich_renderer import RichRenderer, diagnostic_text, diagnostic_threshold
-from .runtime import current_hub, emit_to_hub, install_hub, uninstall_hub
+from .runtime import current_hub, emit_to_hub, hub_counts, install_hub, uninstall_hub
 from .scopes import (
     PROCESS_SCOPE_IDS,
+    CountsSource,
     Diagnostics,
     Emit,
     EntryFact,
@@ -85,7 +86,7 @@ from .scopes import (
     StepScope,
     WaitScope,
 )
-from .textline import Field, FileLogSink, JsonRenderer, LineRenderer, console_threshold, format_line
+from .textline import Field, FileLogSink, JsonRenderer, LineRenderer, format_line
 from .trace import CapturedTrace
 
 __all__ = [
@@ -104,6 +105,7 @@ __all__ = [
     "BreadcrumbFold",
     "CapReached",
     "CapturedTrace",
+    "CountsSource",
     "CycleStarted",
     "Diagnostic",
     "Diagnostics",
@@ -167,12 +169,12 @@ __all__ = [
     "WaitSnapshot",
     "WaitStarted",
     "attributed_message",
-    "console_threshold",
     "current_hub",
     "diagnostic_text",
     "diagnostic_threshold",
     "emit_to_hub",
     "format_line",
+    "hub_counts",
     "install_bridge",
     "install_hub",
     "is_first_party",

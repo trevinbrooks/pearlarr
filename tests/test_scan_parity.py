@@ -35,7 +35,6 @@ from seadexarr.modules.log import (
     ConsoleRender,
     EntryState,
     KvLine,
-    LogCounter,
     SectionRule,
     StyledLine,
     TitledRule,
@@ -65,6 +64,7 @@ from seadexarr.modules.output import (
     ScopeClosed,
     ScopeOpened,
     Severity,
+    SeverityCounts,
     StyledValue,
     emit_to_hub,
     install_hub,
@@ -785,12 +785,11 @@ _logger_ids = itertools.count()
 
 
 def _fresh_logger() -> logging.Logger:
-    """A uniquely-named DEBUG logger with the LogCounter the summary reader needs."""
+    """A uniquely-named DEBUG logger for the gateway/scripted-client collaborators."""
 
     logger = logging.getLogger(f"scan-parity-{next(_logger_ids)}")
     logger.propagate = False
     logger.setLevel(logging.DEBUG)
-    logger.addFilter(LogCounter())
     return logger
 
 
@@ -812,15 +811,16 @@ class _Harness:
     """A real RunReporter (real gateway, faked leaves) recording emitted events."""
 
     def __init__(self, store: AbstractCacheStore | None = None, title: str | None = None) -> None:
-        self.logger = _fresh_logger()
-        # NullHandler: the scripted summary warnings/errors are COUNTED by the
-        # logger's LogCounter filter (the issues delta) but rendered nowhere; the
+        # NullHandler: the logger only serves the gateway/scripted client; the
         # parity lines come from the recorded EVENTS below, never from records.
+        self.logger = _fresh_logger()
         self.logger.addHandler(logging.NullHandler())
         self.events: list[Event] = []
+        # The summary's issues row diffs this bound counter (scripted directly).
+        self.counts = SeverityCounts()
         self.reporter = RunReporter(
             emit=self.events.append,
-            logger=self.logger,
+            counts=lambda: self.counts,
             cache_store=store if store is not None else FakeCacheStore(),
             anilist=AniListGateway(
                 cache_store=FakeCacheStore(),
@@ -1073,9 +1073,10 @@ class TestExternalDetailParity:
         capture = CaptureHandler()
         app_logger.addHandler(capture)
         install_hub(OutputHub([LegacyRenderer()]))
+        counts = SeverityCounts()
         reporter = RunReporter(
             emit=emit_to_hub,
-            logger=app_logger,
+            counts=lambda: counts,
             cache_store=FakeCacheStore(),
             anilist=AniListGateway(
                 cache_store=FakeCacheStore(),
@@ -1154,13 +1155,12 @@ def _summary_lines(
     """Capture exactly what log_run_summary emits, with scripted issue deltas."""
 
     harness = _Harness()
+    # Scripted issues ride the bound counter directly (the issues-row delta);
+    # they produce no events, so only the summary's feed the re-derived lines.
     for _ in range(warnings):
-        harness.logger.warning("scripted warning")
+        harness.counts.record(Severity.WARNING)
     for _ in range(errors):
-        harness.logger.error("scripted error")
-    # The scripted issues rode the logger (counted for the delta), not events;
-    # clear so only the summary's own events feed the re-derived lines.
-    harness.events.clear()
+        harness.counts.record(Severity.ERROR)
     harness.reporter.log_run_summary(ctx, is_preview=is_preview, has_client=has_client)
     return harness.lines()
 

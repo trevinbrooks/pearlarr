@@ -69,7 +69,7 @@ from .events import (
     WaitStarted,
     severity_of,
 )
-from ..log import LOG_NAME, MAX_LOG_FILES, console_level
+from ..log import LOG_NAME, MAX_LOG_FILES
 from ..manual_import import OutcomeCategory
 
 TS_FORMAT: Final = "%Y-%m-%d %H:%M:%S"
@@ -85,12 +85,6 @@ class Field(NamedTuple):
 
 
 type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
-
-
-def console_threshold(level: int) -> int:
-    """The stdout surfaces' floor (S4); delegates to log.py's single body."""
-
-    return console_level(level)
 
 
 @dataclass(frozen=True, slots=True)
@@ -528,7 +522,9 @@ class _TextLineSink:
         self._turn_over()
 
     def set_level(self, level: int) -> None:
-        self._threshold = console_threshold(level)
+        # Text surfaces share the file's S4 semantics: the raw configured level.
+        # The INFO floor is rich-console-only (log.py's console_level).
+        self._threshold = level
 
     def close(self) -> None:
         pass
@@ -554,9 +550,9 @@ class _GrammarSink(_TextLineSink):
             return
         ts = self._ts.format(when)
         text = "\n".join(_render_line(line, ts) for line in kept) + "\n"
-        self._write(text, max(line.severity for line in kept))
+        self._write(text)
 
-    def _write(self, text: str, severity: Severity) -> None:
+    def _write(self, text: str) -> None:
         raise NotImplementedError
 
 
@@ -573,7 +569,7 @@ class LineRenderer(_GrammarSink):
         self._stream = stream
 
     @override
-    def _write(self, text: str, severity: Severity) -> None:
+    def _write(self, text: str) -> None:
         self._stream.write(text)
         self._stream.flush()
 
@@ -583,9 +579,10 @@ class FileLogSink(_GrammarSink):
     """The traditional structured log file; rotation mirrors setup_logger's cascade.
 
     Rotation is pending at construction and re-armed by begin_cycle; it runs on the
-    first write after either, so an idle cycle never churns the cascade. Writes are
-    buffered — flushed on WARNING+, cycle turnover, and close. A reopen after close
-    appends (never a silent truncate without a pending rotation).
+    first write after either, so an idle cycle never churns the cascade. Every line
+    flushes as written (crash fidelity: the tail is on disk when the process dies —
+    the old FileHandler's behavior). A reopen after close appends (never a silent
+    truncate without a pending rotation).
     """
 
     _writes_file_only: ClassVar[bool] = True
@@ -601,11 +598,6 @@ class FileLogSink(_GrammarSink):
         return os.path.join(self._dir, f"{LOG_NAME}.log")
 
     @override
-    def set_level(self, level: int) -> None:
-        # The file honors the configured level directly (S4) - no INFO floor.
-        self._threshold = level
-
-    @override
     def close(self) -> None:
         self._close_file()
 
@@ -615,11 +607,10 @@ class FileLogSink(_GrammarSink):
         self._rotate_pending = True
 
     @override
-    def _write(self, text: str, severity: Severity) -> None:
+    def _write(self, text: str) -> None:
         stream = self._open_if_needed()
         stream.write(text)
-        if severity >= Severity.WARNING:
-            stream.flush()
+        stream.flush()
 
     def _open_if_needed(self) -> TextIO:
         if self._file is None:

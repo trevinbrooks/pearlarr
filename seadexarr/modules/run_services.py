@@ -30,7 +30,7 @@ from .log import EntryState
 from .manual_import import ImportWaitMode
 from .mappings import ExternalIds, MappingEntry, MappingResolver
 from .notify import Notifier
-from .output import emit_to_hub
+from .output import emit_to_hub, hub_counts
 from .planner import DownloadPlanner
 from .reporter import RunContext, RunReporter, is_preview
 from .seadex_filter import FilterResult, SeadexReleaseFilter
@@ -219,7 +219,7 @@ class RunDeps:
             # the process hub (resolved at call time), never rendering directly.
             reporter=RunReporter(
                 emit=emit_to_hub,
-                logger=logger,
+                counts=hub_counts,
                 cache_store=cache_store,
                 anilist=anilist,
             ),

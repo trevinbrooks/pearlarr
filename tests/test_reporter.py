@@ -36,6 +36,7 @@ from seadexarr.modules.output import (
     ScanFinished,
     ScopeClosed,
     ScopeOpened,
+    SeverityCounts,
 )
 from seadexarr.modules.reporter import (
     GrabRecord,
@@ -71,7 +72,8 @@ def _record(
         client=client if client is not None else AniListClient(client=httpx.Client(), logger=logger),
     )
     events: list[Event] = []
-    reporter = RunReporter(emit=events.append, logger=logger, cache_store=store, anilist=anilist)
+    counts = SeverityCounts()
+    reporter = RunReporter(emit=events.append, counts=lambda: counts, cache_store=store, anilist=anilist)
     return reporter, events
 
 

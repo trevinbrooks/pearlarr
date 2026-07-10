@@ -46,12 +46,16 @@ from .events import (
     WaitStarted,
     severity_of,
 )
+from .hub import SeverityCounts
 from .runtime import emit_to_hub
 from .trace import CapturedTrace
 from ..manual_import import OutcomeCategory
 
 type Emit = Callable[[Event], None]
 """The one producer-side seam: the hub satisfies it; tests pass a recorder."""
+
+type CountsSource = Callable[[], SeverityCounts]
+"""Emit's counts twin: ``hub_counts`` satisfies it; tests bind their own counter."""
 
 type EntryFact = EntryDetail | LedgerRow | ReleaseSkipped | GrabFailed | GrabAction
 """The entry-block facts an EntryScope can post (stamped with its ScopeId)."""

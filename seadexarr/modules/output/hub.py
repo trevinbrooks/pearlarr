@@ -228,7 +228,8 @@ class OutputHub:
         """Enqueue under the hub lock; the combiner dispatches outside it.
 
         Under the lock: closed/once-key gating, the severity tally (at enqueue,
-        so counts survive a dying renderer), one clock read, one queue append.
+        so counts survive a dying renderer; file_only diagnostics are never
+        counted), one clock read, one queue append.
         If no drain is active the caller enters the combiner, which takes the
         baton interrupt-safely and drains synchronously before returning;
         otherwise the active drainer picks the event up (its loop re-checks the
@@ -253,7 +254,10 @@ class OutputHub:
                 if key in self._once_keys:
                     return
                 self._once_keys.add(key)
-            self._counts.record(severity_of(event))
+            # Counts = what a visible surface could show: file_only forensics never
+            # inflate the issues row or suppress the capstone.
+            if not (isinstance(event, Diagnostic) and event.file_only):
+                self._counts.record(severity_of(event))
             when = self._clock()
             if isinstance(event, Diagnostic) and len(self._pending) >= QUEUE_CAP:
                 # Shed ONLY diagnostics — the unbounded bridge-fed class. Structural/

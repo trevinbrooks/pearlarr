@@ -40,7 +40,7 @@ from seadexarr.modules.log import LogCounter
 from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport
 from seadexarr.modules.mappings import MappingResolver, MappingSources
 from seadexarr.modules.notify import Notifier
-from seadexarr.modules.output import emit_to_hub
+from seadexarr.modules.output import SeverityCounts, emit_to_hub
 from seadexarr.modules.planner import DownloadPlanner
 from seadexarr.modules.reporter import RunContext, RunReporter
 from seadexarr.modules.run_services import RunDeps, RunServices
@@ -549,12 +549,14 @@ def _real_reporter(
     fake it, the factories build the real one with a faked cache store + a real
     (cache-backed) AniList gateway - so a driven path emits through the real code.
     It emits through the production hub resolver (``emit_to_hub``); with no hub
-    installed (conftest uninstalls per test), the events drop silently.
+    installed (conftest uninstalls per test), the events drop silently. The
+    summary's issues row diffs a per-reporter counter (fresh, so always zeros).
     """
 
+    counts = SeverityCounts()
     return RunReporter(
         emit=emit_to_hub,
-        logger=logger,
+        counts=lambda: counts,
         cache_store=cache_store,
         anilist=AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=web, logger=logger)),
     )

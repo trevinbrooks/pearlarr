@@ -121,8 +121,8 @@ class BootFlow:
         if window is None or self._section_failed:
             return
         # The mark and this diff must read the SAME hub (production installs it once,
-        # pre-loop); counted file-only ERRORs (the bridge's mid-dispatch downgrades)
-        # suppress the capstone on purpose — the cause is in the file log.
+        # pre-loop); counts exclude file_only forensics, so only an ERROR a visible
+        # surface could show suppresses the ready line.
         if current_hub().counts.counts_since(window.counts_mark).errors > 0:
             return
         emit_to_hub(BootReady(elapsed_s=self._clock() - window.started_at))

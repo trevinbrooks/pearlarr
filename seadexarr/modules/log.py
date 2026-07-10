@@ -448,8 +448,8 @@ class LogLevel(StrEnum):
 
 
 def console_level(level: int) -> int:
-    """The console-surface threshold for a logger level (the single body; the
-    output package's ``console_threshold`` delegates here).
+    """The RICH-console threshold for a logger level (the handlers here and the
+    RichRenderer's diagnostic floor); the text surfaces use the raw level (S4).
 
     The console always shows INFO+ so routine progress stays visible even when
     the file logger is raised - except DEBUG, which lowers the threshold, and

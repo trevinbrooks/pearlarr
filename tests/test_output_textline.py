@@ -1,6 +1,6 @@
 # pyright: strict, reportPrivateUsage=false
-# reportPrivateUsage is off for one test: JsonRenderer's data-dependent summary
-# admission is only reachable below its console floor by poking _threshold directly.
+# reportPrivateUsage is off for the skip-set pins alone: _TEXT_SKIP/_JSON_SKIP are
+# deliberately private tables, imported to pin their exact membership.
 """Tests for the shared text grammar + text sinks (``output.textline``).
 
 Golden-pin the ``ts LEVEL [path] message k=v`` grammar (the PR6 file contract),
@@ -69,7 +69,6 @@ from seadexarr.modules.output import (
     WaitProgress,
     WaitSnapshot,
     WaitStarted,
-    console_threshold,
     format_line,
 )
 from seadexarr.modules.output.textline import _JSON_SKIP, _TEXT_SKIP
@@ -373,13 +372,6 @@ def _line_sink() -> tuple[LineRenderer, io.StringIO]:
     return LineRenderer(stream), stream
 
 
-def test_console_threshold_keeps_the_info_floor() -> None:
-    assert console_threshold(logging.WARNING) == logging.INFO
-    assert console_threshold(logging.ERROR) == logging.INFO
-    assert console_threshold(logging.DEBUG) == logging.DEBUG
-    assert console_threshold(logging.CRITICAL) == logging.CRITICAL
-
-
 def test_file_sink_honors_the_configured_level_but_still_folds(tmp_path: Path) -> None:
     sink = FileLogSink(str(tmp_path))
     sink.set_level(logging.WARNING)
@@ -446,6 +438,31 @@ def test_line_and_file_output_are_byte_identical(tmp_path: Path) -> None:
     assert stream.getvalue() != ""
 
 
+def test_line_and_file_parity_holds_at_a_warning_level(tmp_path: Path) -> None:
+    # plain == file is structural at EVERY level (raw set_level, S4): the sole
+    # divergence is the file_only carve-out.
+    events: list[Event] = [
+        Diagnostic(severity=Severity.WARNING, message="rate limited", origin="anilist"),
+        *_entry_context(),  # INFO scan events: dropped by both surfaces
+        Diagnostic(severity=Severity.WARNING, message="renderer failed", origin="output.hub", file_only=True),
+    ]
+    line_sink, stream = _line_sink()
+    file_sink = FileLogSink(str(tmp_path))
+    line_sink.set_level(logging.WARNING)
+    file_sink.set_level(logging.WARNING)
+
+    for event in events:
+        line_sink.handle(event, _EPOCH)
+        file_sink.handle(event, _EPOCH)
+    file_sink.close()
+
+    file_lines = (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8").splitlines(keepends=True)
+    assert sum("renderer failed" in line for line in file_lines) == 1
+    # stdout bytes == file bytes minus exactly the file_only line.
+    assert stream.getvalue() == "".join(line for line in file_lines if "renderer failed" not in line)
+    assert stream.getvalue() != ""
+
+
 def test_file_rotation_mirrors_the_log_cascade(tmp_path: Path) -> None:
     sink = FileLogSink(str(tmp_path))
 
@@ -486,17 +503,16 @@ def test_a_reopened_file_sink_appends_after_close(tmp_path: Path) -> None:
     assert not (tmp_path / "SeaDexArr.log.1").exists()
 
 
-def test_a_warning_flushes_the_file_before_close(tmp_path: Path) -> None:
+def test_every_line_is_on_disk_immediately(tmp_path: Path) -> None:
+    # Per-line flush (crash fidelity): the tail is on disk before close or any WARNING.
     sink = FileLogSink(str(tmp_path))
     log = tmp_path / "SeaDexArr.log"
 
     sink.handle(RunStarted(version="v1.0.0", data_dir="/d"), _EPOCH)
-    assert log.read_text(encoding="utf-8") == ""  # INFO writes stay buffered
+    assert "SeaDexArr started" in log.read_text(encoding="utf-8")
 
     sink.handle(Diagnostic(severity=Severity.WARNING, message="crash imminent", origin="app"), _EPOCH)
-    content = log.read_text(encoding="utf-8")
-    assert "SeaDexArr started" in content
-    assert "crash imminent" in content  # WARNING+ flushes for forensics
+    assert "crash imminent" in log.read_text(encoding="utf-8")
     sink.close()
 
 
@@ -725,7 +741,8 @@ def test_skip_sets_are_event_members_pinned_to_their_current_membership() -> Non
     assert _JSON_SKIP == {BootStepSlow}
 
 
-def test_json_respects_the_console_level_floor() -> None:
+def test_json_set_level_applies_the_raw_configured_level() -> None:
+    # Raw S4 semantics: DEBUG lowers the floor, WARNING raises it past INFO.
     stream = io.StringIO()
     renderer = JsonRenderer(stream)
     renderer.set_level(logging.DEBUG)
@@ -734,20 +751,20 @@ def test_json_respects_the_console_level_floor() -> None:
 
     quiet = io.StringIO()
     quiet_renderer = JsonRenderer(quiet)
-    quiet_renderer.handle(Diagnostic(severity=Severity.DEBUG, message="verbose", origin="httpx"), _EPOCH)
+    quiet_renderer.set_level(logging.WARNING)
+    quiet_renderer.handle(Diagnostic(severity=Severity.INFO, message="routine", origin="app"), _EPOCH)
     assert quiet.getvalue() == ""
 
 
 def test_json_summary_admission_is_data_dependent_at_a_warning_threshold() -> None:
-    # console_threshold never yields WARNING, so poke the floor directly.
     stream = io.StringIO()
     renderer = JsonRenderer(stream)
-    renderer._threshold = logging.WARNING
+    renderer.set_level(logging.WARNING)
     renderer.handle(_summary_ready(), _EPOCH)
     assert "run_summary" in stream.getvalue()  # needs-action content admits
 
     quiet = io.StringIO()
     quiet_renderer = JsonRenderer(quiet)
-    quiet_renderer._threshold = logging.WARNING
+    quiet_renderer.set_level(logging.WARNING)
     quiet_renderer.handle(_quiet_summary_ready(), _EPOCH)
     assert quiet.getvalue() == ""  # nothing actionable: the routine summary drops

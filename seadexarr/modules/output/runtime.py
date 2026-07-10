@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Final
 
 from .events import Event
-from .hub import OutputHub
+from .hub import OutputHub, SeverityCounts
 
 _DEFAULT_HUB: Final = OutputHub([])
 
@@ -29,6 +29,12 @@ def emit_to_hub(event: Event) -> None:
     """
 
     current_hub().emit(event)
+
+
+def hub_counts() -> SeverityCounts:
+    """The process hub's severity counts, resolved at call time (emit_to_hub's twin)."""
+
+    return current_hub().counts
 
 
 def install_hub(hub: OutputHub) -> None:
