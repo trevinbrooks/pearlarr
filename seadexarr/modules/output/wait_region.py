@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import assert_never, final
+from typing import assert_never, final, override
 
 from rich.console import Console, ConsoleOptions, Group, RenderResult
 from rich.padding import Padding
@@ -193,6 +193,7 @@ class WaitRegion(LiveRegion):
             case _:
                 assert_never(event)
 
+    @override
     def _reset(self) -> None:
         self._reset_frame()
         self._throttle.reset()
@@ -219,6 +220,7 @@ class WaitRegion(LiveRegion):
             self._live_frame = _LiveFrame(self._current_group)
             self._live.update(self._live_frame, refresh=True)
 
+    @override
     def _stop_live(self) -> None:
         # Teardown routes (section_left/close/reset) also flush the latch: a
         # failure from the session's last ticks must not die with the frame.

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import assert_never, final
+from typing import assert_never, final, override
 
 from rich.console import Console
 from rich.padding import Padding
@@ -149,6 +149,7 @@ class BootRegion(LiveRegion):
             case _:
                 assert_never(event)
 
+    @override
     def _reset(self) -> None:
         super()._reset()
         self._label = ""
