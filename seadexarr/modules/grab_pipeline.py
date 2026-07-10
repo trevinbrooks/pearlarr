@@ -23,7 +23,7 @@ from .cache import CacheRecord
 from .config import PrivateReleaseAction
 from .manual_import import ImportWaitMode, PendingImport
 from .notify import GrabNotice
-from .output import Accent, Severity, StyledValue
+from .output import Accent, GrabFailed, ReleaseSkipped, SkipReason, StyledValue
 from .reporter import (
     GrabRecord,
     NeedsActionKind,
@@ -184,20 +184,15 @@ class GrabPipeline:
         tracker = url_item.tracker
 
         if not url_item.is_public:
-            self._reporter.detail(
-                "skipped",
-                StyledValue(f"{srg} on {tracker} (private-only)", Accent.CAUTION),
-                severity=Severity.WARNING,
-            )
+            self._reporter.post(ReleaseSkipped(group=srg, tracker=tracker, reason=SkipReason.PRIVATE_ONLY, url=url))
             self._ctx.private_only_skipped = True
             self._ctx.private_only_groups.append(srg)
             return None
 
         # Skip trackers not in the user's selected list
         if tracker.casefold() not in self._config.seadex.trackers:
-            self._reporter.detail(
-                "skipped",
-                StyledValue(f"{url} (tracker {tracker} not in your selected list)", Accent.CAUTION),
+            self._reporter.post(
+                ReleaseSkipped(group=srg, tracker=tracker, reason=SkipReason.TRACKER_NOT_SELECTED, url=url),
             )
             return None
 
@@ -206,10 +201,8 @@ class GrabPipeline:
         # release too); skip+warn here so the loop continues, and flag the title so
         # it's not cached as done (re-checked once a parser / config change lands).
         if tracker not in PARSEABLE_TRACKERS:
-            self._reporter.detail(
-                "skipped",
-                StyledValue(f"{url} (tracker {tracker} not yet supported)", Accent.CAUTION),
-                severity=Severity.WARNING,
+            self._reporter.post(
+                ReleaseSkipped(group=srg, tracker=tracker, reason=SkipReason.UNSUPPORTED_TRACKER, url=url),
             )
             self._ctx.unsupported_tracker_skipped = True
             self._ctx.unsupported_tracker_groups.append(srg)
@@ -227,11 +220,7 @@ class GrabPipeline:
         try:
             result = self._torrents.add(item=url_item, preview=self._is_preview())
         except GRAB_FAILURES as e:
-            self._reporter.detail(
-                "failed",
-                StyledValue(f"could not grab {url}: {e}; will retry next run", Accent.CAUTION),
-                severity=Severity.WARNING,
-            )
+            self._reporter.post(GrabFailed(group=srg, url=url, error=str(e)))
             self._grab_failed_groups.append(srg)
             return None
 

@@ -31,6 +31,7 @@ from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
 from seadexarr.modules.config import Arr
 from seadexarr.modules.grab_pipeline import GrabPipeline
 from seadexarr.modules.import_wait import ImportWaitManager, MonitorPass
+from seadexarr.modules.log import LOG_NAME
 from seadexarr.modules.manual_import import (
     ImportProbe,
     ImportProgress,
@@ -43,7 +44,8 @@ from seadexarr.modules.manual_import import (
     TorrentTelemetry,
     WaitOutcome,
 )
-from seadexarr.modules.output import SPARK_SAMPLES, Phase, TorrentView, WaitSnapshot
+from seadexarr.modules.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitSnapshot, install_hub
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.run_loop import RunLoop
 from seadexarr.modules.torrents import AddOutcome
@@ -504,10 +506,19 @@ class TestPruneExpiredPending:
             strategy=_RecordingStrategy(),
             store_records=records,
         )
+        recording = RecordingHub()
+        install_hub(recording.hub)  # conftest teardown restores the default
 
         mgr.prune_expired_pending()
 
         assert set(mgr._pending_records()) == {"fresh"}
+        # Only the aged drop is announced (an INFO hub Diagnostic since PR6
+        # Band D); the unparseable-stamp drop stays DEBUG chatter on the logger.
+        (aged,) = recording.of_type(Diagnostic)
+        assert aged.severity is Severity.INFO
+        assert aged.origin == LOG_NAME
+        assert "is older than" in aged.message
+        assert "giving up on it" in aged.message
 
     def test_ttl_direction_keeps_recent_drops_aged(self) -> None:
         # MUTATION PIN: `cutoff = now() - timedelta` flipped to `+` survived the
@@ -1190,6 +1201,8 @@ class TestRunMonitor:
             import_poll_interval=30,
         )
         view = RecordingWaitView()
+        recording = RecordingHub()
+        install_hub(recording.hub)  # conftest teardown restores the default
 
         def interrupt(_seconds: float) -> None:
             raise KeyboardInterrupt
@@ -1204,6 +1217,11 @@ class TestRunMonitor:
         assert set(mgr._pending_records()) == {"h"}  # left pending for next run
         assert view.saw("h", Phase.DOWNLOADING)
         assert view.closed is False  # injected views are the caller's to close (own_view seam)
+        # The break is announced as an INFO hub Diagnostic (PR6 Band D flip).
+        (note,) = recording.of_type(Diagnostic)
+        assert note.severity is Severity.INFO
+        assert note.message == "Wait interrupted; 1 left pending"
+        assert note.origin == LOG_NAME
 
     def test_interrupt_mid_cycle_still_graduates_that_cycles_terminals(self) -> None:
         # A torrent that turned terminal in the SAME cycle the interrupt lands in

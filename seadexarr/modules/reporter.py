@@ -21,6 +21,7 @@ from .output import (
     EntryHeader,
     EntryScope,
     GrabAction,
+    GrabFailed,
     GrabStatus,
     ItemStarted,
     LedgerRow,
@@ -28,6 +29,7 @@ from .output import (
     NeedsActionFact,
     RecommendedGroup,
     ReleaseName,
+    ReleaseSkipped,
     RunFinished,
     RunSummary,
     RunSummaryReady,
@@ -302,6 +304,17 @@ class RunReporter:
         """
 
         self._post(EntryDetail(label=label, value=value, severity=severity))
+
+    def post(self, fact: ReleaseSkipped | GrabFailed) -> None:
+        """The ONE path for the typed release-level facts: routes through the open
+        entry scope, else scope-free.
+
+        The narrowed public type keeps EntryDetail / LedgerRow / GrabAction on
+        their dedicated paths; the grab pipeline posts its per-release
+        skipped/failed facts here.
+        """
+
+        self._post(fact)
 
     def _ledger(self, state: EntryState, label: str) -> None:
         """Close any open entry, then emit a scope-free (col-0) ledger row.

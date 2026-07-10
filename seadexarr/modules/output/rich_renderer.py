@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from datetime import datetime
 from typing import assert_never, final
 
 from rich.console import Console
@@ -169,6 +170,8 @@ class RichRenderer:
                 | EntryHeader()
                 | EntryDetail()
                 | LedgerRow()
+                | ReleaseSkipped()
+                | GrabFailed()
                 | GrabAction()
                 | CapReached()
                 | RunSummaryReady()
@@ -176,10 +179,11 @@ class RichRenderer:
                 self._scan(event)
             case WaitStarted() | WaitProgress() | TorrentGraduated() | WaitFinished():
                 self._wait.handle(event)
-            case CycleStarted() | NextRunScheduled() | ReleaseSkipped() | GrabFailed() | ScanFinished() | RunFinished():
-                # ReleaseSkipped/GrabFailed producers are still raw logger
-                # warnings the bridge adopts; ScanFinished/RunFinished/cycle
-                # boundaries have no console line of their own.
+            case NextRunScheduled(at=at):
+                self._next_run(at)
+            case CycleStarted() | ScanFinished() | RunFinished():
+                # Pure boundaries: the banner leads each cycle and the summary
+                # closes each run, so none draws a console line of its own.
                 pass
             case _:
                 assert_never(event)
@@ -219,6 +223,20 @@ class RichRenderer:
                     max_frames=CapturedTrace.MAX_FRAMES,
                 ),
             )
+
+    def _next_run(self, at: datetime) -> None:
+        """The scheduled-mode footer, plain and level-gated like a raw INFO record.
+
+        Weekday included: interval_hours can exceed 24, so a bare HH:MM would be
+        ambiguous about which day it means.
+        """
+
+        if self._level > logging.INFO:
+            return
+        console = self._console_source()
+        if console is None:
+            return
+        console.print(Text(f"Next scheduled run at {at:%a %H:%M}"), highlight=False, soft_wrap=True)
 
     def _scan(self, event: ScanEvent) -> None:
         """The scan console arm: the shared legacy lines over the shared Console.

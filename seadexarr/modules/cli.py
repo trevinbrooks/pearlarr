@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import itertools
 import logging
 import math
 import os
@@ -29,7 +30,19 @@ from .console_caps import CapsCache
 from .json_narrow import is_json_list, is_json_obj
 from .log import LOG_NAME, LogLevel, setup_logger
 from .manual_import import ImportWaitMode
-from .output import FileLogSink, JsonRenderer, LineRenderer, OutputHub, Renderer, install_hub
+from .output import (
+    CycleStarted,
+    Diagnostic,
+    FileLogSink,
+    JsonRenderer,
+    LineRenderer,
+    NextRunScheduled,
+    OutputHub,
+    Renderer,
+    Severity,
+    emit_to_hub,
+    install_hub,
+)
 from .output.bridge import install_bridge
 from .output.rich_renderer import RichRenderer
 from .paths import PROJECT_URL, AppPaths, ensure_data_dir, resolve_paths
@@ -394,13 +407,13 @@ def _schedule_hours(config_path: str, logger: logging.Logger) -> float:
 
 
 def _handle_sigterm(signum: int, frame: FrameType | None) -> NoReturn:
-    """Scheduled mode's SIGTERM handler: log, then exit 0 (a clean stop).
+    """Scheduled mode's SIGTERM handler: announce, then exit 0 (a clean stop).
 
     Docker stop / systemd deliver SIGTERM; the raise interrupts even the
     inter-cycle ``time.sleep``, so shutdown is prompt at any point in the loop.
     """
 
-    logging.getLogger(LOG_NAME).info("Received SIGTERM; exiting.")
+    emit_to_hub(Diagnostic(severity=Severity.INFO, message="Received SIGTERM; exiting.", origin=LOG_NAME))
     raise SystemExit(0)
 
 
@@ -430,13 +443,15 @@ def run_scheduled(
     # so a record fired from inside setup_logger reaches the hub, never lastResort.
     hub = _install_output_hub(paths)
 
-    while True:
+    for cycle in itertools.count(1):
         # The config's console format is re-resolved each cycle (like the
         # cadence below), so a config edit takes effect without a restart.
         console_format = _resolved_format(paths.config)
         logger = setup_logger(log_level=log_level or "INFO", console_format=console_format)
         # The config level lands mid-cycle via apply_log_level -> hub.set_level.
         hub.begin_cycle(console_format=console_format, level=logger.level)
+        # Post-begin_cycle, so the boundary lands in the fresh cycle's file.
+        emit_to_hub(CycleStarted(number=cycle))
 
         # Re-read the cadence each cycle so a config edit takes effect without a
         # restart.
@@ -458,10 +473,7 @@ def run_scheduled(
             retry_note=f"will retry in {schedule_time:g}h (Ctrl-C to stop)",
         )
 
-        # Weekday included: interval_hours can exceed 24, so a bare HH:MM would
-        # be ambiguous about which day it means.
-        next_run_time = (datetime.now() + timedelta(hours=schedule_time)).strftime("%a %H:%M")
-        logger.info(f"Next scheduled run at {next_run_time}")
+        emit_to_hub(NextRunScheduled(at=datetime.now() + timedelta(hours=schedule_time)))
 
         time.sleep(schedule_time * 3600)
 

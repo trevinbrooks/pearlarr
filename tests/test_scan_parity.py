@@ -48,12 +48,14 @@ from seadexarr.modules.output import (
     EntryHeader,
     Event,
     GrabAction,
+    GrabFailed,
     GrabStatus,
     ItemStarted,
     LedgerRow,
     NeedsActionCause,
     RecommendedGroup,
     ReleaseName,
+    ReleaseSkipped,
     RunSummary,
     RunSummaryReady,
     RunTally,
@@ -62,6 +64,7 @@ from seadexarr.modules.output import (
     ScopeOpened,
     Severity,
     SeverityCounts,
+    SkipReason,
     StyledValue,
 )
 from seadexarr.modules.output.scan_lines import _TIP_TEXTS, ScanEvent
@@ -960,21 +963,29 @@ class _DetailSite:
     golden: Line
 
 
+@dataclass(frozen=True, slots=True)
+class _FactSite:
+    """One flipped producer site: the typed fact ``reporter.post`` takes + its pinned record."""
+
+    fact: ReleaseSkipped | GrabFailed
+    golden: Line
+
+
 class TestExternalDetailParity:
-    """PR6 Band A: the 7 ``LogFormatter.detail`` producer sites (grab pipeline /
-    release filter / episode mapper) now post through ``reporter.detail``. Each
-    golden was captured by RUNNING the pre-migration ``LogFormatter.detail`` with
-    the site's literal args at fc58aef; the reporter must reproduce every line
-    byte-identically through the shipped ``scan_lines`` builders (the grammar
-    every rendering surface consumes).
+    """The external producer sites (grab pipeline / release filter / episode
+    mapper). Each golden was captured by RUNNING the pre-migration
+    ``LogFormatter.detail`` with the site's literal args at fc58aef; the reporter
+    must reproduce every line byte-identically through the shipped ``scan_lines``
+    builders (the grammar every rendering surface consumes). PR6 Band D flipped
+    the four grab-pipeline sites to typed ``reporter.post`` facts - the golden
+    ``Line`` tuples stay verbatim; the planner notice / missing / status sites
+    stay ``reporter.detail``-driven (D3).
     """
 
-    SITES: tuple[_DetailSite, ...] = (
+    FACT_SITES: tuple[_FactSite, ...] = (
         # grab_pipeline._add_one_url: a private-only release.
-        _DetailSite(
-            "skipped",
-            StyledValue("GroupA on Nyaa (private-only)", Accent.CAUTION),
-            Severity.WARNING,
+        _FactSite(
+            ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.PRIVATE_ONLY, url="https://x/1"),
             _xdetail(
                 _W,
                 "    skipped   GroupA on Nyaa (private-only)",
@@ -984,10 +995,8 @@ class TestExternalDetailParity:
             ),
         ),
         # grab_pipeline._add_one_url: a tracker outside the user's selected list.
-        _DetailSite(
-            "skipped",
-            StyledValue("https://x/1 (tracker Nyaa not in your selected list)", Accent.CAUTION),
-            Severity.INFO,
+        _FactSite(
+            ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.TRACKER_NOT_SELECTED, url="https://x/1"),
             _xdetail(
                 _I,
                 "    skipped   https://x/1 (tracker Nyaa not in your selected list)",
@@ -997,10 +1006,8 @@ class TestExternalDetailParity:
             ),
         ),
         # grab_pipeline._add_one_url: a tracker with no parser yet.
-        _DetailSite(
-            "skipped",
-            StyledValue("https://x/1 (tracker Nyaa not yet supported)", Accent.CAUTION),
-            Severity.WARNING,
+        _FactSite(
+            ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.UNSUPPORTED_TRACKER, url="https://x/1"),
             _xdetail(
                 _W,
                 "    skipped   https://x/1 (tracker Nyaa not yet supported)",
@@ -1010,10 +1017,8 @@ class TestExternalDetailParity:
             ),
         ),
         # grab_pipeline._add_one_url: a contained grab failure.
-        _DetailSite(
-            "failed",
-            StyledValue("could not grab https://x/1: tracker down; will retry next run", Accent.CAUTION),
-            Severity.WARNING,
+        _FactSite(
+            GrabFailed(group="GroupA", url="https://x/1", error="tracker down"),
             _xdetail(
                 _W,
                 "    failed    could not grab https://x/1: tracker down; will retry next run",
@@ -1022,6 +1027,9 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
+    )
+
+    SITES: tuple[_DetailSite, ...] = (
         # grab_pipeline.grab_and_cache: nothing to download (the blue NOTE accent).
         _DetailSite(
             "status",
@@ -1063,6 +1071,16 @@ class TestExternalDetailParity:
         ),
     )
 
+    def test_reporter_post_reproduces_the_goldens(self) -> None:
+        # The flipped sites post typed facts; the shipped builders re-derive the
+        # exact (level, message, payload) lines the detail-era sites pinned.
+        harness = _Harness()
+
+        for site in self.FACT_SITES:
+            harness.reporter.post(site.fact)
+
+        assert harness.lines() == tuple(site.golden for site in self.FACT_SITES)
+
     def test_reporter_detail_reproduces_the_goldens(self) -> None:
         # The real reporter emits EntryDetail events; the shipped builders
         # re-derive the exact (level, message, payload) lines the sites pinned.
@@ -1072,6 +1090,22 @@ class TestExternalDetailParity:
             harness.reporter.detail(site.label, site.value, severity=site.severity)
 
         assert harness.lines() == tuple(site.golden for site in self.SITES)
+
+    def test_post_rides_the_open_entry_then_emits_scope_free(self) -> None:
+        # Inside an open entry the fact carries the entry scope; after a boundary
+        # closes it, a post emits scope-free (col-0 by design, like _post).
+        harness = _Harness()
+        ctx = RunContext(arr=Arr.SONARR)
+        harness.reporter.log_al_title(ctx, "Show", make_entry_record(url="https://releases.moe/1"))
+        harness.reporter.post(self.FACT_SITES[0].fact)
+        harness.reporter.log_arr_item_start(Arr.SONARR, "Next", 1, 1)  # closes the entry
+        harness.reporter.post(self.FACT_SITES[3].fact)
+
+        opened = next(e for e in harness.events if isinstance(e, ScopeOpened))
+        skipped = next(e for e in harness.events if isinstance(e, ReleaseSkipped))
+        failed = next(e for e in harness.events if isinstance(e, GrabFailed))
+        assert skipped.scope == opened.scope
+        assert failed.scope is None
 
 
 class TestActionBlockParity:

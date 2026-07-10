@@ -18,6 +18,9 @@ import pytest
 import seadexarr
 from seadexarr.modules.cache import SCHEMA_VERSION, CacheSchemaError, CacheStore, HistoryCheckpoint
 from seadexarr.modules.config import Arr
+from seadexarr.modules.log import LOG_NAME
+from seadexarr.modules.output import Diagnostic, Severity, install_hub
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.sqlite_util import is_corruption
 
 from .builders import make_entry_record
@@ -121,6 +124,8 @@ class TestSchemaVersionGate:
         raw.execute("INSERT INTO entries (arr, al_id, name) VALUES ('sonarr', 7, 'Frieren')")
         raw.commit()
         raw.close()
+        recording = RecordingHub()
+        install_hub(recording.hub)  # conftest teardown restores the default
 
         store = CacheStore.load(str(db), config_checksum=CHECKSUM)
         entry = store.get_entry(Arr.SONARR, 7)
@@ -131,6 +136,11 @@ class TestSchemaVersionGate:
         # The upgrade committed at load time - durable even though the run's own
         # staged writes were rolled back by close().
         assert _user_version(db) == SCHEMA_VERSION
+        # Each step announces itself as an INFO hub Diagnostic (PR6 Band D flip).
+        (upgraded,) = recording.of_type(Diagnostic)
+        assert upgraded.severity is Severity.INFO
+        assert upgraded.message == "Upgraded cache database schema v0 -> v1"
+        assert upgraded.origin == LOG_NAME
 
     def test_manually_altered_v0_db_upgrades_cleanly(self, tmp_path: Path) -> None:
         # A v0 db that already got the ALTER by hand (the pre-gate bridge): the

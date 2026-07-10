@@ -21,7 +21,7 @@ from seadex import EntryRecord, TorrentRecord, Tracker
 from seadexarr.modules.config import Arr
 from seadexarr.modules.grab_pipeline import GrabRequest
 from seadexarr.modules.log import EntryState
-from seadexarr.modules.output import EntryDetail, Severity, install_hub, uninstall_hub
+from seadexarr.modules.output import EntryDetail, ReleaseSkipped, Severity, SkipReason, install_hub, uninstall_hub
 from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.reporter import NeedsActionKind, RunContext
 from seadexarr.modules.seadex_types import EpisodeRecord, SeadexDict
@@ -111,6 +111,12 @@ def _info_texts(recording: RecordingHub) -> list[str]:
     """The recorded detail texts at exactly INFO."""
 
     return [d.value.text for d in recording.of_type(EntryDetail) if d.severity is Severity.INFO]
+
+
+def _private_skips(recording: RecordingHub) -> list[ReleaseSkipped]:
+    """The add-time private-only skips (grab_pipeline's typed facts since PR6 Band D)."""
+
+    return [s for s in recording.of_type(ReleaseSkipped) if s.reason is SkipReason.PRIVATE_ONLY]
 
 
 def _grab_request(al_id: int, seadex_dict: SeadexDict, hashes: list[str | None], entry: EntryRecord) -> GrabRequest:
@@ -604,8 +610,7 @@ class TestMixedGroupKeeperPreference:
         with _record() as recording:
             pipe.grab_and_cache(_grab_request(56, out, hashes, entry))
 
-        warnings = _warning_texts(recording)
-        assert any("private-only" in m for m in warnings), warnings
+        assert [s.group for s in _private_skips(recording)] == ["G"]
         assert ctx.private_only_skipped is True
         assert ctx.private_only_groups == ["G"]
         assert torrents.calls == [PUB_HASH]
@@ -682,8 +687,7 @@ class TestSurvivingPrivateCoverage:
         with _record() as recording:
             pipe.grab_and_cache(_grab_request(33, out, hashes, entry))
 
-        warnings = _warning_texts(recording)
-        assert any("private-only" in m for m in warnings), warnings
+        assert [s.group for s in _private_skips(recording)] == ["A"]
         assert ctx.private_only_skipped is True
         assert ctx.private_only_groups == ["A"]
         assert torrents.calls == [PUB_HASH]
@@ -992,8 +996,7 @@ class TestEqualUnionMixedGroups:
             # Both episodes obtained; the keeper's surviving private batch is
             # refused with a WARNING, and warn mode still caches the title.
             assert set(torrents.calls) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
-            warnings = _warning_texts(recording)
-            assert any("private-only" in m for m in warnings), warnings
+            assert _private_skips(recording), recording.events
             assert ctx.private_only_skipped is True
             assert cache.check_al_id_in_cache(Arr.SONARR, al_id, entry) is True
 

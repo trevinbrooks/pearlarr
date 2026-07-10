@@ -24,7 +24,7 @@ from seadexarr.modules.discord import DiscordEmbed
 from seadexarr.modules.grab_pipeline import GrabPipeline, GrabRequest
 from seadexarr.modules.manual_import import ImportWaitMode, PendingImport
 from seadexarr.modules.notify import Notifier
-from seadexarr.modules.output import EntryDetail, Severity, install_hub
+from seadexarr.modules.output import GrabFailed, Severity, install_hub, severity_of
 from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.reporter import NeedsActionKind, RunContext
 from seadexarr.modules.seadex_types import SeadexDict, SeadexUrlItem
@@ -784,9 +784,9 @@ class TestGrabFailureContainment:
         ids=["parse", "add", "tracker", "pynyaa", "qbit"],
     )
     def test_failure_is_one_clean_warning_no_traceback(self, error: Exception) -> None:
-        # Every boundary failure mode lands as ONE WARNING detail event (the old
-        # path fell through to run_loop's per-id traceback arm; the typed
-        # EntryDetail carries no traceback by construction).
+        # Every boundary failure mode lands as ONE typed GrabFailed event (the
+        # old path fell through to run_loop's per-id traceback arm; the frozen
+        # fact carries no traceback by construction, and it tallies WARNING).
         torrents = FakeTorrents({}, raises={"h1": error})
         pipeline = _pipeline(torrents=torrents)
         recording = RecordingHub()
@@ -799,12 +799,11 @@ class TestGrabFailureContainment:
 
         assert n_added == 0
         assert results == []
-        warnings = [d for d in recording.of_type(EntryDetail) if d.severity is Severity.WARNING]
-        assert len(warnings) == 1
-        assert warnings[0].label == "failed"
-        message = warnings[0].value.text
-        assert "could not grab https://nyaa.si/view/1" in message
-        assert "will retry next run" in message
+        (failed,) = recording.of_type(GrabFailed)
+        assert failed.group == "NAN0"
+        assert failed.url == "https://nyaa.si/view/1"
+        assert failed.error == str(error)
+        assert severity_of(failed) is Severity.WARNING
 
     def test_failed_release_does_not_drop_the_next_one(self) -> None:
         # Containment is per release: the sibling url after the failure still grabs.

@@ -11,6 +11,8 @@ import httpx
 from pydantic import ValidationError
 
 from .json_narrow import is_json_list, is_json_obj
+from .log import LOG_NAME
+from .output import Diagnostic, Severity, emit_to_hub
 from .seadex_types import AniListError, AniListMediaNode, validation_summary
 
 API_URL = "https://graphql.anilist.co"
@@ -93,7 +95,7 @@ query ($ids: [Int]) {
 
 @dataclass
 class AniListRetryLog:
-    """Voices ``_post_with_retry``'s waits and give-ups through the run logger.
+    """Voices ``_post_with_retry``'s waits (hub Diagnostics) and give-ups (the run logger).
 
     Without it a rate-limit backoff sleeps up to 60s with zero output (the run
     looks hung) and a final give-up returns ``{}`` silently. One instance per
@@ -107,7 +109,13 @@ class AniListRetryLog:
     def waiting(self, reason: str, wait: float, retry: int, *, level: int = logging.INFO) -> None:
         """One backoff notice, so a long Retry-After wait doesn't look like a hang."""
 
-        self.logger.log(level, f"AniList {reason}; waiting {wait:.0f}s (retry {retry}/{MAX_RETRIES})")
+        emit_to_hub(
+            Diagnostic(
+                severity=Severity(level),
+                message=f"AniList {reason}; waiting {wait:.0f}s (retry {retry}/{MAX_RETRIES})",
+                origin=LOG_NAME,
+            ),
+        )
 
     def gave_up(self) -> None:
         """Warn ONCE per run that AniList lookups are degraded, then stay quiet."""

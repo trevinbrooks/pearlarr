@@ -31,13 +31,16 @@ from .events import (
     EntryHeader,
     GrabAction,
     GrabFact,
+    GrabFailed,
     GrabStatus,
     ItemStarted,
     LedgerRow,
     NeedsActionCause,
     NeedsActionFact,
+    ReleaseSkipped,
     RunSummaryReady,
     ScanStarted,
+    SkipReason,
 )
 from ..log import (
     DETAIL_INDENT,
@@ -62,7 +65,16 @@ from ..log import (
 )
 
 type ScanEvent = (
-    ScanStarted | ItemStarted | EntryHeader | EntryDetail | LedgerRow | GrabAction | CapReached | RunSummaryReady
+    ScanStarted
+    | ItemStarted
+    | EntryHeader
+    | EntryDetail
+    | LedgerRow
+    | ReleaseSkipped
+    | GrabFailed
+    | GrabAction
+    | CapReached
+    | RunSummaryReady
 )
 """The event subset rendered through the legacy-line builders (both seats)."""
 
@@ -222,6 +234,45 @@ def entry_detail_lines(event: EntryDetail) -> tuple[LegacyLine, ...]:
             value_style=accent_style(event.value.accent) or None,
             level=int(event.severity),
             tail=event.tail,
+        ),
+    )
+
+
+def _skip_text(event: ReleaseSkipped) -> str:
+    """The skip line's text by reason (``or event.group`` is the None-url fallback)."""
+
+    match event.reason:
+        case SkipReason.PRIVATE_ONLY:
+            return f"{event.group} on {event.tracker} (private-only)"
+        case SkipReason.TRACKER_NOT_SELECTED:
+            return f"{event.url or event.group} (tracker {event.tracker} not in your selected list)"
+        case SkipReason.UNSUPPORTED_TRACKER:
+            return f"{event.url or event.group} (tracker {event.tracker} not yet supported)"
+    assert_never(event.reason)
+
+
+def release_skipped_lines(event: ReleaseSkipped) -> tuple[LegacyLine, ...]:
+    """A per-release "skipped" detail row, level keyed on the reason's severity."""
+
+    return (
+        _detail_kv(
+            "skipped",
+            _skip_text(event),
+            value_style=accent_style(Accent.CAUTION),
+            level=int(event.reason.severity),
+        ),
+    )
+
+
+def grab_failed_lines(event: GrabFailed) -> tuple[LegacyLine, ...]:
+    """A contained grab failure's "failed" row; WARNING mirrors ``severity_of``."""
+
+    return (
+        _detail_kv(
+            "failed",
+            f"could not grab {event.url}: {event.error}; will retry next run",
+            value_style=accent_style(Accent.CAUTION),
+            level=logging.WARNING,
         ),
     )
 
@@ -392,6 +443,10 @@ def scan_event_lines(event: ScanEvent) -> tuple[LegacyLine, ...]:
             return entry_detail_lines(event)
         case LedgerRow():
             return ledger_row_lines(event)
+        case ReleaseSkipped():
+            return release_skipped_lines(event)
+        case GrabFailed():
+            return grab_failed_lines(event)
         case GrabAction():
             return grab_action_lines(event)
         case CapReached():

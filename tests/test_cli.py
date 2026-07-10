@@ -46,6 +46,7 @@ import signal
 import ssl
 import sys
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import NoReturn, cast
@@ -88,9 +89,12 @@ from seadexarr.modules.log import (
 )
 from seadexarr.modules.manual_import import ImportWaitMode, Outcome
 from seadexarr.modules.output import (
+    CycleStarted,
     Diagnostic,
+    Event,
     FileLogSink,
     ItemStarted,
+    NextRunScheduled,
     OutputHub,
     RunStarted,
     ScanStarted,
@@ -1011,6 +1015,42 @@ def _swallow_signal(signum: int, handler: object) -> None:
     real SIGTERM disposition (the registration itself is pinned separately)."""
 
 
+class _CycleStampingRenderer:
+    """Records each hub event with how many ``begin_cycle`` calls preceded it,
+    so post-begin ordering (CycleStarted lands in the fresh cycle) is assertable."""
+
+    def __init__(self) -> None:
+        self.cycles = 0
+        self.events: list[tuple[Event, int]] = []
+
+    def handle(self, event: Event, when: float) -> None:
+        self.events.append((event, self.cycles))
+
+    def begin_cycle(self) -> None:
+        self.cycles += 1
+
+    def set_level(self, level: int) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def _install_cycle_recorder(monkeypatch: pytest.MonkeyPatch) -> _CycleStampingRenderer:
+    """Swap ``cli._install_output_hub`` for a hub over one recording renderer."""
+
+    renderer = _CycleStampingRenderer()
+
+    def install(paths: AppPaths) -> OutputHub:
+        del paths
+        hub = OutputHub([renderer])
+        install_hub(hub)  # emit_to_hub resolves this hub; conftest restores
+        return hub
+
+    monkeypatch.setattr("seadexarr.modules.cli._install_output_hub", install)
+    return renderer
+
+
 class TestLogFormatWiring:
     """``advanced.log_format`` reaches ``setup_logger`` on both run commands.
 
@@ -1349,22 +1389,49 @@ class TestScheduledLifecycle:
         error = next(r for r in capture.records if r.levelno == logging.ERROR)
         assert "will retry in 6h" in error.getMessage()
 
-    def test_sigterm_handler_logs_and_exits_zero(self) -> None:
+    def test_sigterm_handler_emits_the_hub_notice_and_exits_zero(self) -> None:
         # Call the handler directly - never deliver a real signal in-process.
-        app_logger = logging.getLogger("SeaDexArr")
-        capture = CaptureHandler()
-        prior_level = app_logger.level
-        app_logger.addHandler(capture)
-        app_logger.setLevel(logging.INFO)
-        try:
-            with pytest.raises(SystemExit) as excinfo:
-                _handle_sigterm(signal.SIGTERM, None)
-        finally:
-            app_logger.removeHandler(capture)
-            app_logger.setLevel(prior_level)
+        recording = RecordingHub()
+        install_hub(recording.hub)  # conftest teardown restores the default
+        with pytest.raises(SystemExit) as excinfo:
+            _handle_sigterm(signal.SIGTERM, None)
 
         assert excinfo.value.code == 0
-        assert [r.getMessage() for r in capture.records] == ["Received SIGTERM; exiting."]
+        (note,) = recording.of_type(Diagnostic)
+        assert note.severity is Severity.INFO
+        assert note.message == "Received SIGTERM; exiting."
+        assert note.origin == LOG_NAME
+
+    def test_cycle_started_is_emitted_after_begin_cycle(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Post-begin (rotation): the boundary must land in the FRESH cycle's file.
+        monkeypatch.setattr(signal, "signal", _swallow_signal)
+        monkeypatch.setattr("seadexarr.modules.cli.setup_logger", _SetupLoggerRecorder())
+        monkeypatch.setattr("seadexarr.modules.bootstrap.run_arrs", _stop_loop)
+        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
+        renderer = _install_cycle_recorder(monkeypatch)
+
+        with pytest.raises(_StopScheduledLoop):
+            run_scheduled()
+
+        started = [(e, cycles) for e, cycles in renderer.events if isinstance(e, CycleStarted)]
+        assert [(e.number, cycles) for e, cycles in started] == [(1, 1)]
+
+    def test_next_run_scheduled_is_emitted_with_the_cadence_ahead(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # After a completed cycle the loop states the next run as a typed event
+        # (default cadence: 6h out on a missing config), then sleeps.
+        monkeypatch.setattr(signal, "signal", _swallow_signal)
+        monkeypatch.setattr("seadexarr.modules.cli.setup_logger", _SetupLoggerRecorder())
+        monkeypatch.setattr("seadexarr.modules.bootstrap.run_arrs", _RunArrsRecorder())
+        monkeypatch.setattr("seadexarr.modules.cli.time.sleep", _stop_loop)
+        monkeypatch.delenv("SCHEDULE_TIME", raising=False)
+        renderer = _install_cycle_recorder(monkeypatch)
+
+        before = datetime.now()
+        with pytest.raises(_StopScheduledLoop):
+            run_scheduled()
+
+        (scheduled,) = [e for e, _ in renderer.events if isinstance(e, NextRunScheduled)]
+        assert abs((scheduled.at - (before + timedelta(hours=6))).total_seconds()) < 60
 
     def test_run_scheduled_registers_the_sigterm_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:
         registered: list[tuple[int, object]] = []

@@ -6,13 +6,15 @@ boot section is open, wait indent while the wait region is open, column 0
 otherwise - including under bare RUN/ITEM nodes), the unwind close that empties
 the frontier for a leg-fatal error, the S4 floors (third-party WARNING floor
 unless DEBUG; first-party INFO renders dim), the ``file_only`` and
-no-rich-console no-ops, trace rendering without locals, markup literalness, and
-the begin_cycle fold reset. The ENTRY-indent arm is pinned in
+no-rich-console no-ops, trace rendering without locals, markup literalness,
+the begin_cycle fold reset, and the durable loop lines (NextRunScheduled; the
+ReleaseSkipped/GrabFailed scan routing). The ENTRY-indent arm is pinned in
 ``test_output_scan_render``.
 """
 
 import io
 import logging
+from datetime import datetime
 
 from rich.console import Console
 
@@ -22,7 +24,10 @@ from seadexarr.modules.output import (
     CapturedTrace,
     Diagnostic,
     Event,
+    GrabFailed,
     ItemStarted,
+    NextRunScheduled,
+    ReleaseSkipped,
     RichRenderer,
     RunFinished,
     ScanStarted,
@@ -31,6 +36,7 @@ from seadexarr.modules.output import (
     ScopeKind,
     ScopeOpened,
     Severity,
+    SkipReason,
     diagnostic_text,
     diagnostic_threshold,
 )
@@ -244,6 +250,44 @@ class TestNoOps:
         renderer = RichRenderer(lambda: None)
 
         _feed(renderer, ScopeOpened(scope=_BOOT, label="boot"), _warning("quiet"))
+
+
+class TestDurableLoopLines:
+    """PR6 Band D: the scheduled-loop footer arm + the flipped release facts."""
+
+    _AT = datetime(2026, 1, 1, 23, 5)  # a Thursday
+
+    def test_next_run_scheduled_prints_the_plain_footer(self) -> None:
+        renderer, stream = _renderer()
+
+        _feed(renderer, NextRunScheduled(at=self._AT))
+
+        assert _lines(stream) == ["Next scheduled run at Thu 23:05"]
+
+    def test_next_run_scheduled_is_hidden_by_a_raised_level(self) -> None:
+        # Matches the old raw INFO record's behavior at a configured WARNING.
+        renderer, stream = _renderer()
+        renderer.set_level(logging.WARNING)
+
+        _feed(renderer, NextRunScheduled(at=self._AT))
+
+        assert stream.getvalue() == ""
+
+    def test_release_skipped_and_grab_failed_render_on_the_scan_surface(self) -> None:
+        # No longer the pass arm: the flipped producers' events draw the same
+        # detail rows the raw warnings did (bytes pinned in test_scan_parity).
+        renderer, stream = _renderer()
+
+        _feed(
+            renderer,
+            ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.PRIVATE_ONLY, url="https://x/1"),
+            GrabFailed(group="GroupA", url="https://x/1", error="tracker down"),
+        )
+
+        assert _lines(stream) == [
+            "    skipped   GroupA on Nyaa (private-only)",
+            "    failed    could not grab https://x/1: tracker down; will retry next run",
+        ]
 
 
 class TestRendering:

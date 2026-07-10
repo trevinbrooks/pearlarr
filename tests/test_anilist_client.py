@@ -31,6 +31,9 @@ from seadexarr.modules.anilist_client import (
     extract_path,
     media_from,
 )
+from seadexarr.modules.log import LOG_NAME
+from seadexarr.modules.output import Diagnostic, Severity, install_hub
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.seadex_types import AniListError, AniListMediaNode
 
 from .builders import make_logger
@@ -330,11 +333,14 @@ def _narrated_client() -> tuple[AniListClient, CaptureHandler]:
 
 @respx.mock
 def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 429 backoff logs the (Retry-After) wait at INFO - the run no longer
-    looks hung - and a successful retry never fires the give-up warning."""
+    """A 429 backoff emits the (Retry-After) wait as an INFO hub Diagnostic - the
+    run no longer looks hung - and a successful retry never fires the give-up
+    warning (which still rides the logger)."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     client, handler = _narrated_client()
+    recording = RecordingHub()
+    install_hub(recording.hub)  # conftest teardown restores the default
     success: dict[str, object] = {"data": {"Media": {"id": 2, "episodes": 24}}}
     route = respx.post(API_URL)
     route.side_effect = [
@@ -345,8 +351,10 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
     body = client.query(2)
 
     assert body == success
-    infos = [r.getMessage() for r in handler.records if r.levelno == logging.INFO]
-    assert infos == [f"AniList rate-limited; waiting 42s (retry 1/{MAX_RETRIES})"]
+    (waited,) = recording.of_type(Diagnostic)
+    assert waited.severity is Severity.INFO
+    assert waited.message == f"AniList rate-limited; waiting 42s (retry 1/{MAX_RETRIES})"
+    assert waited.origin == LOG_NAME
     assert [r for r in handler.records if r.levelno == logging.WARNING] == []
 
 

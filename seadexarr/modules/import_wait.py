@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 import qbittorrentapi
 
 from .cache import UPDATED_AT_STR_FORMAT
-from .log import count_noun
+from .log import LOG_NAME, count_noun
 from .manual_import import (
     ImportProbe,
     ImportProgress,
@@ -37,7 +37,7 @@ from .manual_import import (
     classify_pending,
     sanitize_torrent_telemetry,
 )
-from .output import SPARK_SAMPLES, Phase, TorrentView, WaitSnapshot
+from .output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitSnapshot, emit_to_hub
 from .protocols import ImportCompleter
 from .reporter import RunContext
 from .run_services import RunDeps
@@ -425,7 +425,13 @@ class ImportWaitManager:
                     # the tally's elapsed reads interrupt time (the view is total,
                     # so the push can't raise past the break).
                     view.update(mp.snapshot())
-                    self.logger.info(f"Wait interrupted; {len(mp.active)} left pending")
+                    emit_to_hub(
+                        Diagnostic(
+                            severity=Severity.INFO,
+                            message=f"Wait interrupted; {len(mp.active)} left pending",
+                            origin=LOG_NAME,
+                        ),
+                    )
                     break
         finally:
             if own_view:
@@ -519,9 +525,13 @@ class ImportWaitManager:
                 self.drop_pending(infohash)
                 continue
             if added_at < cutoff:
-                self.logger.info(
-                    f"Pending import {pending.display_label} is older than "
-                    f"{count_noun(self._config.imports.pending_max_age_days, 'day')}; giving up on it",
+                emit_to_hub(
+                    Diagnostic(
+                        severity=Severity.INFO,
+                        message=f"Pending import {pending.display_label} is older than "
+                        f"{count_noun(self._config.imports.pending_max_age_days, 'day')}; giving up on it",
+                        origin=LOG_NAME,
+                    ),
                 )
                 self.drop_pending(infohash)
 

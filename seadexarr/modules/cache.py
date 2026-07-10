@@ -51,6 +51,8 @@ from typing import Any, NamedTuple, TypedDict, cast, override
 from seadex import EntryRecord
 
 from .config import Arr
+from .log import LOG_NAME
+from .output import Diagnostic, Severity, emit_to_hub
 from .sqlite_util import connect as _sqlite_connect
 from .sqlite_util import open_or_quarantine, rollback_and_close
 from .. import __version__
@@ -163,7 +165,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
 }
 
 
-def _ensure_schema(conn: sqlite3.Connection, path: str, logger: logging.Logger | None) -> None:
+def _ensure_schema(conn: sqlite3.Connection, path: str) -> None:
     """Ensure the schema and bring an older db up to :data:`SCHEMA_VERSION`.
 
     A brand-new db (no tables yet - the :memory: stand-in or the quarantine
@@ -201,8 +203,13 @@ def _ensure_schema(conn: sqlite3.Connection, path: str, logger: logging.Logger |
         except BaseException:
             conn.rollback()
             raise
-        if logger is not None:
-            logger.info(f"Upgraded cache database schema v{step} -> v{step + 1}")
+        emit_to_hub(
+            Diagnostic(
+                severity=Severity.INFO,
+                message=f"Upgraded cache database schema v{step} -> v{step + 1}",
+                origin=LOG_NAME,
+            ),
+        )
 
 
 def record_is_fresh(
@@ -457,7 +464,7 @@ class CacheStore(AbstractCacheStore):
         conn, fell_back = open_or_quarantine(
             path if exists else ":memory:",
             connect_fn=_connect,
-            ensure=lambda c: _ensure_schema(c, path, logger),
+            ensure=lambda c: _ensure_schema(c, path),
             logger=logger,
             what="Cache database",
             recovery="started a fresh cache (titles will be re-checked; grab-dedup and "
