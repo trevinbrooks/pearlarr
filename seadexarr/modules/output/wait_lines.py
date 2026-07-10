@@ -7,8 +7,9 @@ a rich-free layout brain the cockpit consumes. The :class:`LegacyLine`
 builders (:func:`wait_start_line` and friends) map each durable wait fact to
 the rich console's scrollback line (rendered by the WaitRegion via
 ``render_legacy_lines``); the file/plain/json surfaces take the same facts
-through the :mod:`.textline` grammar. :class:`PulseThrottle` carries the
-non-TTY digest cadence for the forced-rich-on-a-non-live-console niche.
+through the :mod:`.textline` grammar. :class:`PulseThrottle` carries the shared
+pulse cadence: the rich non-live digest and each textline grammar sink hold
+their own copy (the file/plain heartbeat renders regardless of console mode).
 """
 
 from __future__ import annotations
@@ -145,8 +146,10 @@ def wait_tally_lines(event: WaitFinished) -> list[LegacyLine]:
 
 @final
 class PulseThrottle:
-    """The non-TTY digest's pulse cadence - rich-free, deterministic, shared.
+    """The "still waiting" pulse cadence - rich-free, deterministic, shared.
 
+    One copy per seat: the rich non-live digest and each textline grammar sink
+    (the file is mode-independent, so its pulses render on live-TTY runs too).
     Parity with LogWaitView's throttle: :meth:`arm` (on WaitStarted) sets the
     interval; the FIRST :meth:`fire` returns False unconditionally (the old
     view's first render printed the start line and returned, so the start

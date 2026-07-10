@@ -6,8 +6,9 @@
 Golden-pin the ``ts LEVEL [path] message k=v`` grammar (the PR6 file contract),
 the quoting/escape rules, breadcrumb labels + the advisory during=/placed=frontier
 tail, line/file byte-parity (with the file_only carve-out), per-line admission,
-the rotation cascade + append-after-close, fold-in-finally, and the
-one-object-per-event json shape (stable key order, offset-bearing time).
+the throttled "still waiting" pulse, the rotation cascade + append-after-close,
+fold-in-finally, and the one-object-per-event json shape (stable key order,
+offset-bearing time).
 """
 
 import io
@@ -46,6 +47,7 @@ from seadexarr.modules.output import (
     LineRenderer,
     NeedsActionCause,
     NextRunScheduled,
+    Phase,
     PlacedBy,
     RecommendedGroup,
     ReleaseName,
@@ -65,6 +67,7 @@ from seadexarr.modules.output import (
     SkipReason,
     StyledValue,
     TorrentGraduated,
+    TorrentView,
     WaitFinished,
     WaitProgress,
     WaitSnapshot,
@@ -504,6 +507,27 @@ def test_an_idle_cycle_never_churns_the_cascade(tmp_path: Path) -> None:
     assert not (tmp_path / "SeaDexArr.log.1").exists()
 
 
+def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_path: Path) -> None:
+    # Only begin_cycle arms rotation — construction must not, or a record in the
+    # install→begin_cycle window would rotate twice and strand a one-line .log.1.
+    (tmp_path / "SeaDexArr.log").write_text("previous run\n", encoding="utf-8")
+    sink = FileLogSink(str(tmp_path))
+
+    sink.handle(RunStarted(version="pre-cycle", data_dir="/d"), _EPOCH)
+    assert not (tmp_path / "SeaDexArr.log.1").exists()  # appended, no rotation
+    log_text = (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8")
+    assert log_text.startswith("previous run\n") and "pre-cycle" in log_text
+
+    sink.begin_cycle()
+    sink.handle(RunStarted(version="cycle-one", data_dir="/d"), _EPOCH)
+    sink.close()
+
+    rotated = (tmp_path / "SeaDexArr.log.1").read_text(encoding="utf-8")
+    assert "previous run" in rotated and "pre-cycle" in rotated  # rotated as ONE file
+    assert not (tmp_path / "SeaDexArr.log.2").exists()  # exactly one rotation
+    assert "cycle-one" in (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8")
+
+
 def test_a_reopened_file_sink_appends_after_close(tmp_path: Path) -> None:
     sink = FileLogSink(str(tmp_path))
     sink.handle(RunStarted(version="one", data_dir="/d"), _EPOCH)
@@ -566,7 +590,7 @@ def test_file_sink_writes_utf8(tmp_path: Path) -> None:
     assert "Pokémon — ポケモン" in content
 
 
-def test_ephemeral_wait_progress_never_hits_the_text_sinks() -> None:
+def test_wait_progress_stays_silent_below_the_pulse_cadence() -> None:
     line_sink, stream = _line_sink()
     line_sink.handle(WaitStarted(total=1, pulse_s=300.0, scope=None), _EPOCH)
     line_sink.handle(Diagnostic(severity=Severity.DEBUG, message="hidden", origin="app"), _EPOCH)
@@ -575,6 +599,97 @@ def test_ephemeral_wait_progress_never_hits_the_text_sinks() -> None:
     line_sink.handle(WaitProgress(snapshot=WaitSnapshot(torrents=(), elapsed_s=1.0)), _EPOCH)
     assert stream.getvalue() == before
     assert "hidden" not in before  # DEBUG below the default INFO floor
+
+
+# --- the throttled "still waiting" pulse ---------------------------------------------
+
+
+def _wait_progress(elapsed: float) -> WaitProgress:
+    torrents = (
+        TorrentView(key="a", label="A", phase=Phase.DOWNLOADING, fraction=0.5),
+        TorrentView(key="b", label="B", phase=Phase.IMPORTING),
+        TorrentView(key="c", label="C", phase=Phase.QUEUED),
+    )
+    return WaitProgress(snapshot=WaitSnapshot(torrents=torrents, elapsed_s=elapsed), scope=_WAIT)
+
+
+def test_grammar_sinks_pulse_still_waiting_on_the_event_cadence() -> None:
+    # The anti-hang heartbeat: cadence is pure event content (pulse_s/elapsed_s,
+    # never wall clock), and the start snapshot never pulses.
+    line_sink, stream = _line_sink()
+    context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
+    for event in (*context, WaitStarted(total=3, pulse_s=300.0, scope=_WAIT)):
+        line_sink.handle(event, _EPOCH)
+    line_sink.handle(_wait_progress(0.0), _EPOCH)  # the start snapshot never pulses
+    line_sink.handle(_wait_progress(299.0), _EPOCH)  # within the interval
+    before = stream.getvalue()
+
+    line_sink.handle(_wait_progress(300.0), _EPOCH)  # due at pulse_s
+    assert stream.getvalue() == before + (
+        f"{_TS} INFO [sonarr › wait] still waiting downloading=1 importing=1 queued=1 elapsed_s=300.00\n"
+    )
+
+
+def test_pulse_lines_keep_line_and_file_byte_parity(tmp_path: Path) -> None:
+    events: list[Event] = [
+        ScanStarted(arr=Arr.SONARR, total=182),
+        ScopeOpened(scope=_WAIT, label="wait"),
+        WaitStarted(total=3, pulse_s=300.0, scope=_WAIT),
+        _wait_progress(0.0),
+        _wait_progress(300.0),
+        _wait_progress(650.0),
+        WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=700.0, scope=_WAIT),
+    ]
+    line_sink, stream = _line_sink()
+    file_sink = FileLogSink(str(tmp_path))
+    for event in events:
+        line_sink.handle(event, _EPOCH)
+        file_sink.handle(event, _EPOCH)
+    file_sink.close()
+
+    content = (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8")
+    assert stream.getvalue() == content
+    assert content.count("still waiting") == 2  # 300 and 650 pulse; the start snapshot never does
+
+
+def test_a_new_wait_pass_rearms_the_pulse_skip_first() -> None:
+    line_sink, stream = _line_sink()
+    line_sink.handle(WaitStarted(total=1, pulse_s=300.0), _EPOCH)
+    line_sink.handle(_wait_progress(300.0), _EPOCH)  # skip-first: even a late start snapshot never pulses
+    line_sink.handle(_wait_progress(300.0), _EPOCH)  # due
+
+    line_sink.handle(WaitStarted(total=1, pulse_s=300.0), _EPOCH)  # a second pass this run
+    line_sink.handle(_wait_progress(900.0), _EPOCH)  # skip-first again
+    line_sink.handle(_wait_progress(900.0), _EPOCH)  # due again
+
+    assert stream.getvalue().count("still waiting") == 2
+
+
+def test_begin_cycle_disarms_the_pulse_until_the_next_wait_pass() -> None:
+    line_sink, stream = _line_sink()
+    line_sink.handle(WaitStarted(total=1, pulse_s=300.0), _EPOCH)
+    line_sink.begin_cycle()
+
+    line_sink.handle(_wait_progress(10_000.0), _EPOCH)
+    line_sink.handle(_wait_progress(10_000.0), _EPOCH)  # disarmed: not even a late fire
+    assert "still waiting" not in stream.getvalue()
+
+
+def test_pulse_lines_drop_below_a_raised_threshold_but_the_cadence_advances() -> None:
+    # Line-granular admission applies to the pulse like any INFO line; the
+    # throttle state advances regardless of level (the PulseThrottle contract).
+    line_sink, stream = _line_sink()
+    line_sink.set_level(logging.WARNING)
+    line_sink.handle(WaitStarted(total=1, pulse_s=300.0), _EPOCH)
+    line_sink.handle(_wait_progress(0.0), _EPOCH)
+    line_sink.handle(_wait_progress(300.0), _EPOCH)  # due, but INFO drops at WARNING
+    assert stream.getvalue() == ""
+
+    line_sink.set_level(logging.INFO)
+    line_sink.handle(_wait_progress(400.0), _EPOCH)  # the dropped pulse still re-armed at 600
+    assert stream.getvalue() == ""
+    line_sink.handle(_wait_progress(600.0), _EPOCH)
+    assert "still waiting" in stream.getvalue()
 
 
 class _ExplodingStream(io.StringIO):
@@ -746,9 +861,10 @@ def _exemplars() -> list[Event]:
     ]
 
 
-# Events with no text-line form: pure boundaries + live-only ephemera.
+# Events with no format_line form: pure boundaries + per-event-fact-less ephemera
+# (WaitProgress's text form is the grammar sinks' throttled pulse, tested above).
 _TEXT_SILENT = {ScopeOpened, ScopeClosed, BootStepStarted, BootStepProgressed, WaitProgress, ScanFinished, RunFinished}
-# Events the json stream drops: live-only ephemera (json keeps the boundaries).
+# Events the json stream drops: ephemera (json keeps the boundaries).
 _JSON_SILENT = {BootStepStarted, BootStepProgressed, BootStepSlow, WaitProgress}
 
 

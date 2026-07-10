@@ -17,7 +17,10 @@ Every event's facts — (name, severity, message, fields) — are stated exactly
 event BEFORE folding it (so a closing event still renders with the path it is
 closing), and the fold advances even when rendering raises. Admission is
 line-granular on the text surfaces: a WARNING summary row reaches a WARNING-level
-file while its INFO siblings drop.
+file while its INFO siblings drop. WaitProgress is the one stateful carve-out:
+the grammar sinks throttle it into a "still waiting" pulse whose cadence is pure
+event content (WaitStarted.pulse_s, snapshot.elapsed_s — never wall clock), so
+the independently ticking file and plain sinks stay byte-identical.
 """
 
 from __future__ import annotations
@@ -50,6 +53,7 @@ from .events import (
     LedgerRow,
     NeedsActionFact,
     NextRunScheduled,
+    Phase,
     PlacedBy,
     ReleaseName,
     ReleaseSkipped,
@@ -69,6 +73,7 @@ from .events import (
     WaitStarted,
     severity_of,
 )
+from .wait_lines import PulseThrottle
 from ..log import LOG_NAME, MAX_LOG_FILES
 from ..manual_import import OutcomeCategory
 
@@ -254,6 +259,19 @@ def _fields_wait_finished(event: WaitFinished) -> tuple[Field, ...]:
     )
 
 
+def _pulse_fact(event: WaitProgress) -> _Fact:
+    """The "still waiting" heartbeat's facts — pure; the grammar sinks decide WHEN."""
+
+    counts = event.snapshot.counts()
+    fields = (
+        Field("downloading", counts[Phase.DOWNLOADING]),
+        Field("importing", counts[Phase.IMPORTING]),
+        Field("queued", counts[Phase.QUEUED]),
+        Field("elapsed_s", event.snapshot.elapsed_s),
+    )
+    return _Fact("wait_pulse", Severity.INFO, "still waiting", fields, event.scope, "wait")
+
+
 def _fields_summary_head(summary: RunSummary) -> tuple[Field, ...]:
     tally = summary.tally
     fields: list[Field] = [Field("arr", str(summary.arr))]
@@ -346,6 +364,7 @@ def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact 
         case ScopeClosed(scope=scope):
             return _Fact("scope_closed", severity, "scope closed", _scope_fields(scope), None, "scope")
         case BootStepStarted() | BootStepProgressed() | WaitProgress():
+            # WaitProgress has no per-event fact; the grammar sinks pulse it (throttled).
             return None
         case BootStepSlow(scope=scope):
             return _Fact("boot_step_slow", severity, "in progress", (), scope, "boot")
@@ -541,17 +560,46 @@ class _TextLineSink:
 
 
 class _GrammarSink(_TextLineSink):
-    """Chassis + the text grammar with line-granular admission (#7)."""
+    """Chassis + the text grammar with line-granular admission (#7).
+
+    Owns the per-sink wait-pulse throttle. Cadence is a pure function of event
+    content (WaitStarted.pulse_s, snapshot.elapsed_s — never wall clock), so the
+    independently ticking file and plain sinks stay byte-identical.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._pulse = PulseThrottle()
+
+    @override
+    def begin_cycle(self) -> None:
+        self._pulse.reset()
+        super().begin_cycle()
 
     @override
     def _render(self, event: Event, when: float, severity: Severity) -> None:
-        lines = _lines_of(event, self._crumbs, severity)
+        if isinstance(event, WaitStarted):
+            # A new pass (possibly several per run) restarts the cadence.
+            self._pulse.arm(event.pulse_s)
+        if isinstance(event, WaitProgress):
+            lines = self._pulse_lines(event)
+        else:
+            lines = _lines_of(event, self._crumbs, severity)
         kept = tuple(line for line in lines if line.severity >= self._threshold)
         if not kept:
             return
         ts = self._ts.format(when)
         text = "\n".join(_render_line(line, ts) for line in kept) + "\n"
         self._write(text)
+
+    def _pulse_lines(self, event: WaitProgress) -> tuple[_Line, ...]:
+        """The stateful throttle consult; the cadence advances regardless of level."""
+
+        if not self._pulse.fire(event.snapshot.elapsed_s):
+            return ()
+        fact = _pulse_fact(event)
+        bracket = _scope_bracket(fact.scope, self._crumbs, fact.component)
+        return (_Line(fact.severity, bracket, fact.message, fact.fields),)
 
     def _write(self, text: str) -> None:
         raise NotImplementedError
@@ -579,11 +627,12 @@ class LineRenderer(_GrammarSink):
 class FileLogSink(_GrammarSink):
     """The traditional structured log file; rotation mirrors setup_logger's cascade.
 
-    Rotation is pending at construction and re-armed by begin_cycle; it runs on the
-    first write after either, so an idle cycle never churns the cascade. Every line
-    flushes as written (crash fidelity: the tail is on disk when the process dies —
-    the old FileHandler's behavior). A reopen after close appends (never a silent
-    truncate without a pending rotation).
+    Rotation is armed ONLY by begin_cycle and runs on the first write after it, so
+    an idle cycle never churns the cascade and a pre-cycle record appends to the
+    PREVIOUS cycle's file (never a second rotation burning a cascade slot). Every
+    line flushes as written (crash fidelity: the tail is on disk when the process
+    dies — the old FileHandler's behavior). A reopen after close appends (never a
+    silent truncate without a pending rotation).
     """
 
     writes_file_only: ClassVar[bool] = True
@@ -592,7 +641,7 @@ class FileLogSink(_GrammarSink):
         super().__init__()
         self._dir = log_dir
         self._file: TextIO | None = None
-        self._rotate_pending = True
+        self._rotate_pending = False
 
     @property
     def path(self) -> str:

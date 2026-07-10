@@ -567,7 +567,9 @@ class WaitStarted:
 
 @dataclass(frozen=True, slots=True)
 class WaitProgress:
-    """Ephemeral: carries the engine's pure per-poll snapshot; text/json sinks drop it."""
+    """The engine's pure per-poll snapshot: json drops it; the text sinks render
+    only a throttled "still waiting" pulse from it (mode-independent, like every
+    text line — the file is the same whether stdout was a TTY or a pipe)."""
 
     snapshot: WaitSnapshot
     scope: ScopeId | None = None
