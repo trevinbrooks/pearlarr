@@ -38,13 +38,17 @@ and calls the command functions directly (they return ``bool``); the exit-code
 tests go through ``CliRunner`` since the callback only runs inside typer.
 """
 
+import io
+import json
 import logging
 import os
 import signal
 import ssl
+import sys
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, cast
 
 import pytest
 import truststore
@@ -55,7 +59,9 @@ from seadexarr.modules.bootstrap import configured_arrs, load_shared_config, run
 from seadexarr.modules.cache import CacheStore
 from seadexarr.modules.cli import (
     _console_format,
+    _console_seat,
     _handle_sigterm,
+    _resolved_format,
     _schedule_hours,
     _trust_os_certificates,
     cache_backup,
@@ -71,20 +77,34 @@ from seadexarr.modules.cli import (
     seadexarr_cli,
 )
 from seadexarr.modules.config import AppConfig, Arr, LogFormat, template_path
+from seadexarr.modules.console_caps import CapsCache
 from seadexarr.modules.log import (
+    LOG_NAME,
+    HubBridgeBase,
     LogLevel,
     RichConsoleHandler,
-    StyledLine,
     apply_log_level,
-    console_payload,
     setup_logger,
 )
-from seadexarr.modules.manual_import import ImportWaitMode
+from seadexarr.modules.manual_import import ImportWaitMode, Outcome
+from seadexarr.modules.output import (
+    Diagnostic,
+    FileLogSink,
+    ItemStarted,
+    OutputHub,
+    RunStarted,
+    ScanStarted,
+    Severity,
+    TorrentGraduated,
+    install_hub,
+)
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.paths import AppPaths, resolve_paths
 from seadexarr.modules.runlock import single_instance_lock
 
 from .builders import make_logger
-from .fakes import CaptureHandler
+from .fakes import CaptureHandler, TtyStringIO
+from .test_scan_parity import SUMMARY_MINIMAL
 
 
 def _build_cache(tmp_path: Path) -> None:
@@ -452,6 +472,8 @@ class TestConfiguredArrs:
         logger: logging.Logger,
         capture: CaptureHandler,
     ) -> None:
+        recording = RecordingHub()
+        install_hub(recording.hub)  # conftest teardown restores the default
         kept = configured_arrs(
             [(Arr.RADARR, None), (Arr.SONARR, None)],
             _config_with(sonarr=True),
@@ -460,13 +482,16 @@ class TestConfiguredArrs:
             logger=logger,
         )
         assert kept == [(Arr.SONARR, None)]
-        skip = next(r for r in capture.records if "adarr" in r.getMessage())
-        assert skip.levelno == logging.INFO  # a Sonarr-only setup is normal, not an error
-        # The note is styled to sit inside the boot ledger it lands in: indented,
-        # dimmed like the ledger's own secondary lines, not a bare column-0 line.
-        # The arr name is capitalized prose, not a lowercase config key.
-        assert skip.getMessage() == "  Radarr not configured - skipped"
-        assert console_payload(skip) == StyledLine(style="grey50")
+        # The note is a first-party INFO Diagnostic on the hub: a Sonarr-only
+        # setup is normal, not an error. The message is FLAT (the rich console
+        # indents it via placement inside the open boot section); the arr name
+        # is capitalized prose, not a lowercase config key.
+        (skip,) = recording.of_type(Diagnostic)
+        assert skip.severity is Severity.INFO
+        assert skip.message == "Radarr not configured - skipped"
+        assert skip.origin == LOG_NAME
+        assert not skip.file_only
+        assert capture.records == []  # nothing rides the logger anymore
 
     def test_a_half_configured_arr_warns_by_name(
         self,
@@ -884,10 +909,10 @@ class TestVersionAndHelp:
 
 
 class TestApplyLogLevel:
-    def test_repoints_logger_and_console_thresholds(self, tmp_path: Path) -> None:
+    def test_repoints_logger_and_console_thresholds(self) -> None:
         # Forced rich: "auto" resolves to plain under pytest's non-TTY stdout
         # (the plain twin of this pin lives in test_log_format.py).
-        logger = setup_logger(log_level="INFO", log_dir=str(tmp_path / "logs"), console_format="rich")
+        logger = setup_logger(log_level="INFO", console_format="rich")
         console = next(h for h in logger.handlers if isinstance(h, RichConsoleHandler))
 
         # Raising the level quiets the file log but the console keeps INFO+
@@ -952,13 +977,22 @@ class TestLogLevelWiring:
 
 
 class _SetupLoggerRecorder:
-    """A stand-in for ``cli.setup_logger`` recording the console_format it got."""
+    """A stand-in for ``cli.setup_logger`` recording each call's context.
+
+    Captures the console_format it got and whether the output bridge was
+    already installed on the app logger AT CALL TIME (the install-order pin:
+    a record fired from inside setup_logger must reach the hub).
+    """
 
     def __init__(self) -> None:
         self.console_formats: list[LogFormat] = []
+        self.bridge_installed_at_call: list[bool] = []
 
-    def __call__(self, log_level: str, log_dir: str, console_format: LogFormat = "auto") -> logging.Logger:
+    def __call__(self, log_level: str, console_format: LogFormat = "auto") -> logging.Logger:
         self.console_formats.append(console_format)
+        self.bridge_installed_at_call.append(
+            any(isinstance(h, HubBridgeBase) for h in logging.getLogger(LOG_NAME).handlers),
+        )
         return make_logger()
 
 
@@ -980,9 +1014,12 @@ def _swallow_signal(signum: int, handler: object) -> None:
 class TestLogFormatWiring:
     """``advanced.log_format`` reaches ``setup_logger`` on both run commands.
 
-    The renderers themselves are pinned in test_log_format.py; these pin only
-    that the run commands peek the config and thread ``console_format`` through
-    (scheduled mode re-peeks each cycle, before the logger is rebuilt).
+    The renderers themselves are pinned in test_log_format.py; these pin that
+    the run commands resolve the config format and thread ``console_format``
+    through (scheduled mode re-resolves each cycle, before the logger is
+    rebuilt), AND that the hub + bridge are installed BEFORE setup_logger runs
+    (advisor #17: an invalid-level complaint fired inside it must reach the
+    hub, never logging.lastResort).
     """
 
     @pytest.fixture
@@ -1006,6 +1043,7 @@ class TestLogFormatWiring:
         self._write_config_with_format()
         assert run_single() is True
         assert setup_recorder.console_formats == ["json"]
+        assert setup_recorder.bridge_installed_at_call == [True]  # hub+bridge first
 
     def test_run_scheduled_threads_the_config_format(
         self,
@@ -1019,6 +1057,7 @@ class TestLogFormatWiring:
         with pytest.raises(_StopScheduledLoop):
             run_scheduled()
         assert setup_recorder.console_formats == ["json"]
+        assert setup_recorder.bridge_installed_at_call == [True]  # installed pre-loop
 
 
 class TestConsoleFormat:
@@ -1045,6 +1084,95 @@ class TestConsoleFormat:
         path = tmp_path / "config.yml"
         path.write_text("advanced: [unclosed\n", encoding="utf-8")
         assert _console_format(str(path)) == "auto"
+
+
+class TestResolvedFormat:
+    """``_resolved_format``: the ONE "auto" fold — the same resolved value feeds
+    ``setup_logger`` and ``hub.begin_cycle``, so the two can never disagree."""
+
+    def test_auto_folds_to_plain_off_a_tty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "stdout", io.StringIO())
+        assert _resolved_format(str(tmp_path / "config.yml")) == "plain"  # missing config -> auto -> plain
+
+    def test_auto_folds_to_rich_on_a_tty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "stdout", TtyStringIO())
+        assert _resolved_format(str(tmp_path / "config.yml")) == "rich"
+
+    def test_a_configured_format_passes_through_unfolded(self, tmp_path: Path) -> None:
+        path = tmp_path / "config.yml"
+        path.write_text("advanced:\n  log_format: json\n", encoding="utf-8")
+        assert _resolved_format(str(path)) == "json"
+
+
+def _drive_representative(hub: OutputHub) -> None:
+    """Boot facts, scan lines, both diagnostic classes, a graduation, a summary."""
+
+    hub.emit(RunStarted(version="v9.9.9", data_dir="/data"))
+    hub.emit(ScanStarted(arr=Arr.SONARR, total=1))
+    hub.emit(ItemStarted(arr=Arr.SONARR, index=1, total=1, title="Frieren"))
+    hub.emit(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME))
+    hub.emit(Diagnostic(severity=Severity.WARNING, message="forensic note", origin="output.hub", file_only=True))
+    hub.emit(TorrentGraduated(label="Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=60.0))
+    hub.emit(SUMMARY_MINIMAL)
+
+
+class TestHubSeats:
+    """Band C's own pins: the REAL cli seat factory end-to-end — plain stdout is
+    the file's bytes minus exactly the file_only lines; json is event-per-line."""
+
+    @staticmethod
+    def _seated(
+        log_dir: Path,
+        console_format: LogFormat,
+        level: int,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> tuple[OutputHub, io.StringIO]:
+        stream = io.StringIO()
+        monkeypatch.setattr(sys, "stdout", stream)
+        hub = OutputHub(
+            [FileLogSink(str(log_dir))],
+            console_factory=partial(_console_seat, caps_cache=CapsCache()),
+        )
+        hub.begin_cycle(console_format=console_format, level=level)
+        return hub, stream
+
+    @pytest.mark.parametrize("level", [logging.INFO, logging.WARNING])
+    def test_plain_stdout_is_the_file_minus_exactly_the_file_only_lines(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        level: int,
+    ) -> None:
+        hub, stream = self._seated(tmp_path / "logs", "plain", level, monkeypatch)
+        _drive_representative(hub)
+        hub.close()
+
+        stdout_lines = stream.getvalue().splitlines()
+        file_lines = (tmp_path / "logs" / "SeaDexArr.log").read_text(encoding="utf-8").splitlines()
+        assert stdout_lines  # WARNING still keeps the diagnostic + the ERROR graduation
+        assert [line for line in file_lines if "forensic note" not in line] == stdout_lines
+        assert sum("forensic note" in line for line in file_lines) == 1  # the sole carve-out
+
+    def test_json_stdout_is_one_json_object_per_event(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hub, stream = self._seated(tmp_path / "logs", "json", logging.INFO, monkeypatch)
+        _drive_representative(hub)
+        hub.close()
+
+        events = [cast("dict[str, object]", json.loads(line)) for line in stream.getvalue().splitlines()]
+        assert [list(obj)[:4] for obj in events] == [["time", "event", "level", "message"]] * len(events)
+        # One object per EVENT, in emit order; the file_only diagnostic stays out.
+        assert [obj["event"] for obj in events] == [
+            "run_started",
+            "scan_started",
+            "item_started",
+            "diagnostic",
+            "torrent_graduated",
+            "run_summary",
+        ]
 
 
 class TestMissingConfigExitsNonzero:
@@ -1186,14 +1314,16 @@ class TestUnwritableDataDir:
 
 
 class TestDataDirLine:
-    """Every run logs the resolved data directory right after the banner."""
+    """Every run states the resolved data directory on its opening line."""
 
     def test_run_single_logs_the_resolved_data_dir(self) -> None:
         # Virgin data dir: the run exits 1 writing the template, but the
-        # data-dir line lands FIRST (after the banner, before the config read).
+        # run_started line (plain seat, structured grammar) carries the
+        # data_dir fact FIRST, before the config read fails.
         result = CliRunner().invoke(seadexarr_cli, ["run", "single"])
         assert result.exit_code == 1
-        assert f"Data directory: {resolve_paths().data_dir}" in result.output
+        assert "SeaDexArr started" in result.output
+        assert f"data_dir={resolve_paths().data_dir}" in result.output
 
 
 class TestScheduledLifecycle:
@@ -1261,9 +1391,9 @@ class TestScheduledLifecycle:
 class TestScheduleHours:
     """Cadence precedence: valid SCHEDULE_TIME env (deprecated) > config > 6.
 
-    The SCHEDULE_TIME notices go through the logger (its only caller runs after
-    ``setup_logger``), so they reach the log file and render styled - pinned
-    here via a capture handler rather than stdout.
+    The SCHEDULE_TIME notices are plain WARNINGs through the logger; in
+    production the bridge adopts them onto the hub (file line + console badge).
+    Pinned here via a capture handler on the record they emit.
     """
 
     @pytest.fixture

@@ -3,12 +3,12 @@
 Two families, no styled look decided here. The bounded live-frame model
 (:func:`live_model` and its row/aggregate helpers) and the graduation ledger's
 coda (:func:`graduation_tail`) reduce the wait value types in :mod:`.events` to
-a rich-free layout brain both cockpit seats share. The :class:`LegacyLine`
-builders (:func:`wait_start_line` and friends) map each durable wait fact to the
-exact log line the pre-hub views produced - pinned by the Band A goldens in
-``tests/test_wait_parity.py`` - so the file/plain echo and the console's
-durable lines can never drift. :class:`PulseThrottle` carries the non-TTY
-digest cadence, shared by both echo seats so the arithmetic can't diverge.
+a rich-free layout brain the cockpit consumes. The :class:`LegacyLine`
+builders (:func:`wait_start_line` and friends) map each durable wait fact to
+the rich console's scrollback line (rendered by the WaitRegion via
+``render_legacy_lines``); the file/plain/json surfaces take the same facts
+through the :mod:`.textline` grammar. :class:`PulseThrottle` carries the
+non-TTY digest cadence for the forced-rich-on-a-non-live-console niche.
 """
 
 from __future__ import annotations
@@ -18,7 +18,17 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, final
 
-from .events import Phase, TorrentGraduated, TorrentView, WaitFinished, WaitProgress, WaitSnapshot, WaitStarted, clamp01
+from .events import (
+    Phase,
+    TorrentGraduated,
+    TorrentView,
+    WaitFinished,
+    WaitProgress,
+    WaitSnapshot,
+    WaitStarted,
+    clamp01,
+    severity_of,
+)
 from .scan_lines import LegacyLine
 from ..log import (
     STATE_WIDTH,
@@ -72,10 +82,11 @@ def graduation_tail(outcome: Outcome, files: int | None, waited_s: float) -> str
     return "no longer tracked"
 
 
-# --- the durable ledger-line builders (console scrollback == file/plain echo) --------
+# --- the durable ledger-line builders (the rich console's scrollback) ----------------
 #
-# Transliterated from wait_view's LogWaitView/_DurableWaitView; every wait line
-# logs at INFO today (P7), failures included. Pinned by tests/test_wait_parity.py.
+# Transliterated from wait_view's LogWaitView/_DurableWaitView. Start/pulse/tally
+# lines carry INFO; a graduation carries severity_of's category-based level (P6),
+# so a FAILED graduation renders at ERROR and survives a raised level.
 
 
 def wait_start_line(event: WaitStarted) -> LegacyLine:
@@ -97,14 +108,22 @@ def wait_pulse_line(snapshot: WaitSnapshot) -> LegacyLine:
 
 
 def wait_graduation_line(event: TorrentGraduated, caps: Capabilities) -> LegacyLine:
-    """A finished torrent's durable ledger line: glyph + word + label + coda."""
+    """A finished torrent's durable ledger line: glyph + word + label + coda.
+
+    Carries severity_of's category-based level, so the rendered line and the
+    tally/sink admission agree (FAILED -> ERROR, DEFERRED -> WARNING).
+    """
 
     glyph = event.outcome.glyph(use_unicode=caps.unicode)
     line = f"{glyph} {event.outcome.word.ljust(STATE_WIDTH)} {event.label}"
     tail = graduation_tail(event.outcome, event.files, event.waited_s)
     if tail:
         line += f"  ({tail})"
-    return LegacyLine(logging.INFO, indent_string(line), StyledLine(style=event.outcome.style if caps.color else ""))
+    return LegacyLine(
+        int(severity_of(event)),
+        indent_string(line),
+        StyledLine(style=event.outcome.style if caps.color else ""),
+    )
 
 
 def wait_tally_lines(event: WaitFinished) -> list[LegacyLine]:
@@ -132,8 +151,7 @@ class PulseThrottle:
     interval; the FIRST :meth:`fire` returns False unconditionally (the old
     view's first render printed the start line and returned, so the start
     snapshot never pulses), then a pulse is due once elapsed reaches the
-    elapsed-anchored next mark. State advances regardless of log level, so both
-    echo seats stay in lockstep.
+    elapsed-anchored next mark. State advances regardless of log level.
     """
 
     __slots__ = ("_interval", "_next", "_skip_first")

@@ -1,30 +1,26 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # ^ the frame-text tests exercise BootRegion._frame_text (a pure render helper).
-"""Tests for the boot cockpit's renderer side (``output.boot_region``) + parity.
+"""Tests for the boot cockpit's renderer side (``output.boot_region``).
 
-Renderer half: the RichRenderer's boot region draws the banner, graduates
-finished steps to durable scrollback lines, prints the capstone, degrades to the
-heads-up digest on a non-live rich console, and tears its single Live slot down
-whenever the boot section leaves the fold's frontier (ScopeClosed, ScanStarted,
-run/cycle boundaries). Parity half: the file/plain ledger lines the LegacyRenderer echoes for
-a scripted boot flow are byte-identical to the pre-PR3 view's output - the
-goldens below were captured against ``boot_view`` at 78dd3e3, not derived from
-the new builders - and LogCounter's tallies are unchanged.
+The RichRenderer's boot region draws the banner, graduates finished steps to
+durable scrollback lines, prints the capstone, degrades to the heads-up digest
+on a non-live rich console, and tears its single Live slot down whenever the
+boot section leaves the fold's frontier (ScopeClosed, ScanStarted, run/cycle
+boundaries). The pure ledger-line builders are pinned directly; the file/plain
+surfaces render the same events through the ``output.textline`` grammar.
 """
 
 import io
 import logging
-from importlib.metadata import version
 
 import pytest
 from rich.console import Console
 from rich.live import Live
 
-from seadexarr.modules.boot_flow import BootFlow
 from seadexarr.modules.config import Arr
 from seadexarr.modules.console_caps import Capabilities
-from seadexarr.modules.log import LOG_NAME, LogCounter, RichConsoleHandler
+from seadexarr.modules.log import LOG_NAME
 from seadexarr.modules.manual_import import OutcomeCategory
 from seadexarr.modules.output import (
     BootReady,
@@ -35,8 +31,6 @@ from seadexarr.modules.output import (
     CycleStarted,
     Diagnostic,
     Event,
-    LegacyRenderer,
-    OutputHub,
     RichRenderer,
     RunFinished,
     RunStarted,
@@ -46,7 +40,6 @@ from seadexarr.modules.output import (
     ScopeKind,
     ScopeOpened,
     Severity,
-    install_hub,
 )
 from seadexarr.modules.output.boot_region import (
     BootRegion,
@@ -57,7 +50,7 @@ from seadexarr.modules.output.boot_region import (
 )
 
 from .builders import SEP
-from .fakes import FakeClock, strip_ansi
+from .fakes import strip_ansi
 
 _SECTION = ScopeId(ScopeKind.BOOT_SECTION, 900)
 _SECTION_TWO = ScopeId(ScopeKind.BOOT_SECTION, 901)
@@ -418,93 +411,3 @@ class TestFrameText:
 
     def test_bare_frame_degrades_the_ellipsis_to_ascii_dots(self) -> None:
         assert _frame("Reading config", _ASCII_CAPS, None, None) == "Reading config..."
-
-
-# --- strangler byte-parity: file/plain lines + LogCounter tallies ---------------------
-
-
-def _scripted_flow(clock: FakeClock) -> None:
-    """The parity script: banner, three steps (note/progress/warn), a mid-boot
-    warning, capstone - the exact sequence the pre-PR3 goldens were captured from."""
-
-    boot = BootFlow("/data/dir", clock=clock)
-    boot.banner()
-    with boot.step("Reading config") as step:
-        clock.tick(0.61)
-        step.note("config.yml")
-    logging.getLogger(LOG_NAME).warning("config file is readable by other users")
-    with boot.step("Refreshing mappings") as step:
-        clock.tick(0.30)
-        step.progress(0.5, "1/2 MB")
-        clock.tick(0.31)
-    with boot.step("Connecting to qBittorrent") as step:
-        clock.tick(0.05)
-        step.warn("not configured - preview mode")
-    boot.end_section()
-    boot.close()
-
-
-def _run_scripted(app_logger: logging.Logger, *, console: Console | None) -> list[str]:
-    """Run the script through the PR3 pipeline; return the file-surface lines."""
-
-    app_logger.setLevel(logging.INFO)  # the goldens were captured at INFO
-    buffer = io.StringIO()
-    file_handler = logging.StreamHandler(buffer)
-    file_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
-    app_logger.addHandler(file_handler)
-    if console is not None:
-        app_logger.addHandler(RichConsoleHandler(console))
-    install_hub(OutputHub([LegacyRenderer()]))
-    _scripted_flow(FakeClock())
-    return buffer.getvalue().splitlines()
-
-
-_BANNER = f"SeaDexArr v{version('seadexarr')}"
-
-# Captured from boot_view at 78dd3e3 (pre-PR3): no rich console -> LogBootView,
-# ascii glyphs, the one-time heads-up between the mid-boot warning and the
-# mappings graduation.
-_GOLDEN_PLAIN = [
-    f"INFO: {_BANNER}",
-    "INFO: ",
-    "INFO:   Data directory: /data/dir",
-    "INFO:   ok Reading config · config.yml · 0.61s",
-    "WARNING: config file is readable by other users",
-    "INFO:   Refreshing mappings...",
-    "INFO:   ok Refreshing mappings · 1/2 MB · 0.61s",
-    "INFO:   ~ Connecting to qBittorrent · not configured - preview mode · 0.05s",
-    "INFO:   ready in 1.27s",
-]
-
-# Captured from boot_view at 78dd3e3 (pre-PR3): live TTY -> LiveBootView,
-# unicode glyphs, NO heads-up line (the spinner carried liveness).
-_GOLDEN_TTY = [
-    f"INFO: {_BANNER}",
-    "INFO: ",
-    "INFO:   Data directory: /data/dir",
-    "INFO:   ✔ Reading config · config.yml · 0.61s",
-    "WARNING: config file is readable by other users",
-    "INFO:   ✔ Refreshing mappings · 1/2 MB · 0.61s",
-    "INFO:   ⚠ Connecting to qBittorrent · not configured - preview mode · 0.05s",
-    "INFO:   ready in 1.27s",
-]
-
-
-class TestLedgerParity:
-    def test_plain_surface_is_byte_identical_to_the_pre_pr3_golden(self, app_logger: logging.Logger) -> None:
-        assert _run_scripted(app_logger, console=None) == _GOLDEN_PLAIN
-
-    def test_live_tty_file_surface_is_byte_identical_to_the_pre_pr3_golden(self, app_logger: logging.Logger) -> None:
-        console = Console(file=io.StringIO(), force_terminal=True, width=100)
-        assert _run_scripted(app_logger, console=console) == _GOLDEN_TTY
-
-    def test_log_counter_tallies_are_unchanged(self, app_logger: logging.Logger) -> None:
-        # Pre-PR3 the view logged 8 INFO lines + the 1 direct WARNING on this
-        # script; the echo must keep feeding LogCounter identically.
-        counter = LogCounter()
-        app_logger.addFilter(counter)
-
-        _run_scripted(app_logger, console=None)
-
-        assert counter.counts.get(logging.INFO, 0) == 8
-        assert counter.counts.get(logging.WARNING, 0) == 1

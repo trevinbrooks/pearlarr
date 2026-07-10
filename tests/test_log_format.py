@@ -1,38 +1,32 @@
 # pyright: strict
-"""Tests for the ``advanced.log_format`` console renderers (the log.py side).
+"""Tests for ``setup_logger``'s post-flip handler graph (the log.py side).
 
-Pins the knob's contract:
+Pins the contract:
 
-* "plain" installs a :class:`PlainConsoleHandler` whose lines are byte-for-byte
-  the file log's (one shared timestamp+level format), so piped/Docker output
-  reads like the log file.
-* "json" emits one JSON object per line with stable key order (time, level,
-  message, then exc when a traceback rides along); ``time`` carries a UTC
-  offset so aggregators can order lines. Payload-only records keep their
-  file-log message text (blank separators as ``""``) by design.
-* "auto" resolves once at setup: rich on a TTY stdout, plain otherwise.
-* Under plain/json there is no rich console (``console_of`` -> None), so the
-  live cockpits degrade to their calm log digest - designed, not a bug.
-* ``apply_log_level`` re-points the plain/json console handler exactly like
-  the rich one, and never touches the file handler.
-* The PR2 seam (S5 pin 2): the rich handler badge-renders plain WARNING+
+* "rich" (and "auto" on a TTY) attaches exactly ONE :class:`RichConsoleHandler`;
+  it is the only non-bridge handler — no FileHandler anywhere (the hub's
+  FileLogSink owns the file), no logger filters (severity tallies live on the
+  hub's ``SeverityCounts``).
+* "plain"/"json" (and "auto" off a TTY) attach NO console handler at all:
+  level-only configuration; the bridge is the only handler, so records still
+  reach the hub and ``logging.lastResort`` can never fire.
+* ``console_of`` -> None under plain/json, so the live cockpits never build -
+  designed, not a bug (the hub seats LineRenderer/JsonRenderer instead).
+* ``apply_log_level`` re-points the rich console handler's threshold
+  (``console_level`` semantics) and forwards the raw level to the hub.
+* The badge seam (S5 pin 2): the rich handler badge-renders plain WARNING+
   records UNLESS the registered console owner answers True (the bridge adopts
   them; the hub's renderer places them) — no owner or a struck-out seat keeps
-  the legacy badge, so warnings can never vanish. ``HUB_EVENT``-marked
-  re-emissions are always skipped; the payload arms and plain INFO/DEBUG render
-  exactly as before. The badge + traceback rendering is also pinned on the
-  renderer side in test_output_rich_renderer.py.
+  the legacy badge, so warnings can never vanish.
+* The invalid-level complaint fires AFTER handler attach: on a rich console
+  with no owner the legacy badge renders it; under plain/json it arrives as a
+  hub Diagnostic through the bridge (advisor #17's early-record path).
 """
 
 import io
-import json
 import logging
-import re
 import sys
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-from typing import cast
 
 import pytest
 from rich.console import Console
@@ -40,28 +34,28 @@ from rich.console import Console
 from seadexarr.modules.config import LogFormat
 from seadexarr.modules.console_caps import console_of
 from seadexarr.modules.log import (
-    CONSOLE_EXTRA,
-    DETAIL_KEY_WIDTH,
-    HUB_EVENT,
-    JsonFormatter,
-    KvLine,
-    PlainConsoleHandler,
     RichConsoleHandler,
-    TitledRule,
     apply_log_level,
     register_console_owner,
     setup_logger,
 )
+from seadexarr.modules.output import (
+    Diagnostic,
+    OutputHub,
+    Severity,
+    install_bridge,
+    uninstall_bridge,
+)
+from seadexarr.modules.output.bridge import HubBridgeHandler
+from seadexarr.modules.output.recording import RecordingRenderer
 
-from .fakes import TtyStringIO, strip_ansi
+from .fakes import CaptureHandler, TtyStringIO, strip_ansi
 
 
-@dataclass(frozen=True, slots=True)
-class _Setup:
-    """A built logger plus the in-memory stream standing in for stdout."""
-
-    logger: logging.Logger
-    stream: io.StringIO
+@pytest.fixture
+def build(app_logger: logging.Logger, monkeypatch: pytest.MonkeyPatch) -> "_Builder":
+    del app_logger  # isolation + teardown ordering only
+    return _Builder(monkeypatch)
 
 
 class _Builder:
@@ -71,112 +65,88 @@ class _Builder:
     TTY probe deterministic: ``StringIO.isatty()`` is False even under ``-s``.
     """
 
-    def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        self._tmp_path = tmp_path
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._monkeypatch = monkeypatch
 
-    def __call__(self, console_format: LogFormat, stream: io.StringIO | None = None) -> _Setup:
-        stream = io.StringIO() if stream is None else stream
-        self._monkeypatch.setattr(sys, "stdout", stream)
-        logger = setup_logger(log_level="INFO", log_dir=str(self._tmp_path / "logs"), console_format=console_format)
-        return _Setup(logger=logger, stream=stream)
+    def __call__(self, console_format: LogFormat, stream: io.StringIO | None = None) -> logging.Logger:
+        self._monkeypatch.setattr(sys, "stdout", io.StringIO() if stream is None else stream)
+        return setup_logger(log_level="INFO", console_format=console_format)
 
 
-@pytest.fixture
-def build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Builder:
-    return _Builder(tmp_path, monkeypatch)
+def _non_bridge_handlers(logger: logging.Logger) -> list[logging.Handler]:
+    return [h for h in logger.handlers if not isinstance(h, HubBridgeHandler)]
 
 
-def _parsed_lines(setup: _Setup) -> list[dict[str, str]]:
-    """Each emitted stdout line parsed as a JSON object (all values are strings)."""
+class TestHandlerGraph:
+    def test_plain_attaches_no_handler_at_all(self, build: _Builder) -> None:
+        # Level-only configuration: the hub's LineRenderer owns plain stdout and
+        # the FileLogSink owns the file; the bridge is the only record path.
+        logger = build("plain")
+        assert _non_bridge_handlers(logger) == []
+        assert logger.level == logging.INFO
 
-    return [cast("dict[str, str]", json.loads(line)) for line in setup.stream.getvalue().splitlines()]
+    def test_json_attaches_no_handler_at_all(self, build: _Builder) -> None:
+        logger = build("json")
+        assert _non_bridge_handlers(logger) == []
 
+    def test_rich_attaches_exactly_one_rich_console_handler(self, build: _Builder) -> None:
+        logger = build("rich")
+        handlers = _non_bridge_handlers(logger)
+        assert len(handlers) == 1
+        assert isinstance(handlers[0], RichConsoleHandler)
 
-class TestPlainFormat:
-    def test_lines_are_byte_for_byte_the_file_logs(self, build: _Builder, tmp_path: Path) -> None:
-        setup = build("plain")
-        setup.logger.info("hello")
-        setup.logger.warning("watch out")
-        for handler in setup.logger.handlers:
-            handler.flush()
+    def test_no_file_handler_and_no_filters_anywhere(self, build: _Builder) -> None:
+        # The FileLogSink owns the file; SeverityCounts owns the tallies.
+        logger = build("rich")
+        assert not any(isinstance(h, logging.FileHandler) for h in logger.handlers)
+        assert logger.filters == []
 
-        out = setup.stream.getvalue()
-        stamp = r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}"
-        assert re.fullmatch(f"{stamp} INFO: hello\n{stamp} WARNING: watch out\n", out)
-        # One shared format constant, so console and file can never drift.
-        assert out == (tmp_path / "logs" / "SeaDexArr.log").read_text(encoding="utf-8")
+    def test_setup_logger_never_touches_the_filesystem(self, build: _Builder, tmp_path: Path) -> None:
+        # No makedirs, no rotation, no log file: the data dir stays untouched.
+        before = sorted(tmp_path.rglob("*"))
+        build("rich")
+        assert sorted(tmp_path.rglob("*")) == before
 
-    def test_no_rich_console_so_live_views_degrade(self, build: _Builder) -> None:
-        setup = build("plain")
-        assert not any(isinstance(h, RichConsoleHandler) for h in setup.logger.handlers)
-        assert console_of(setup.logger) is None
-
-
-class TestJsonFormat:
-    def test_lines_are_json_with_stable_key_order(self, build: _Builder) -> None:
-        setup = build("json")
-        setup.logger.info("hello")
-        setup.logger.info("")  # a blank separator: message "" by design (file-log parity)
-
-        first, blank = _parsed_lines(setup)
-        assert list(first) == ["time", "level", "message"]
-        assert first["level"] == "INFO"
-        assert first["message"] == "hello"
-        assert blank["message"] == ""
-
-    def test_time_carries_a_utc_offset(self, build: _Builder) -> None:
-        setup = build("json")
-        setup.logger.info("stamped")
-
-        (line,) = _parsed_lines(setup)
-        assert datetime.fromisoformat(line["time"]).utcoffset() is not None
-
-    def test_exceptions_ride_along_as_traceback_text(self, build: _Builder) -> None:
-        setup = build("json")
-        try:
-            raise ValueError("boom")
-        except ValueError:
-            setup.logger.error("failed", exc_info=True)
-
-        (line,) = _parsed_lines(setup)
-        assert list(line) == ["time", "level", "message", "exc"]
-        assert line["message"] == "failed"
-        assert line["exc"].startswith("Traceback")
-        assert "ValueError" in line["exc"]
+    def test_no_rich_console_under_plain_so_live_views_degrade(self, build: _Builder) -> None:
+        logger = build("plain")
+        assert console_of(logger) is None
 
 
 class TestFormatSelection:
-    def test_auto_on_a_non_tty_picks_plain(self, build: _Builder) -> None:
-        setup = build("auto")
-        console = next(h for h in setup.logger.handlers if isinstance(h, PlainConsoleHandler))
-        assert not isinstance(console.formatter, JsonFormatter)
+    def test_auto_on_a_non_tty_attaches_nothing(self, build: _Builder) -> None:
+        logger = build("auto")
+        assert _non_bridge_handlers(logger) == []
 
     def test_auto_on_a_tty_picks_rich(self, build: _Builder) -> None:
-        setup = build("auto", stream=TtyStringIO())
-        assert any(isinstance(h, RichConsoleHandler) for h in setup.logger.handlers)
-        assert not any(isinstance(h, PlainConsoleHandler) for h in setup.logger.handlers)
+        logger = build("auto", stream=TtyStringIO())
+        assert any(isinstance(h, RichConsoleHandler) for h in logger.handlers)
 
     def test_explicit_rich_forces_rich_off_a_tty(self, build: _Builder) -> None:
-        setup = build("rich")
-        assert any(isinstance(h, RichConsoleHandler) for h in setup.logger.handlers)
+        logger = build("rich")
+        assert any(isinstance(h, RichConsoleHandler) for h in logger.handlers)
 
 
-class TestApplyLogLevelPlain:
-    def test_repoints_the_plain_handler_but_never_the_file_handler(self, build: _Builder) -> None:
-        setup = build("json")
-        console = next(h for h in setup.logger.handlers if isinstance(h, PlainConsoleHandler))
-        file_handler = next(h for h in setup.logger.handlers if isinstance(h, logging.FileHandler))
+class TestApplyLogLevel:
+    def test_repoints_the_rich_console_threshold_but_not_below_info(self, build: _Builder) -> None:
+        logger = build("rich")
+        console = next(h for h in logger.handlers if isinstance(h, RichConsoleHandler))
 
-        # Same thresholds as the rich handler: raised levels keep INFO+ visible...
-        apply_log_level(setup.logger, "ERROR")
-        assert setup.logger.level == logging.ERROR
+        # Raising the level quiets the sinks but the console keeps INFO+
+        # (routine progress stays visible)...
+        apply_log_level(logger, "ERROR")
+        assert logger.level == logging.ERROR
         assert console.level == logging.INFO
         # ...while DEBUG moves the console threshold with the logger.
-        apply_log_level(setup.logger, "DEBUG")
+        apply_log_level(logger, "DEBUG")
         assert console.level == logging.DEBUG
-        # The file handler's level is the logger's job, not the console re-point's.
-        assert file_handler.level == logging.NOTSET
+
+    def test_plain_level_only_repoint(self, build: _Builder) -> None:
+        # No console handler to re-point: the logger level alone changes (the
+        # hub's set_level fan-out is pinned in test_output_hub).
+        logger = build("plain")
+        apply_log_level(logger, "ERROR")
+        assert logger.level == logging.ERROR
+        assert _non_bridge_handlers(logger) == []
 
 
 def _rich_setup(name: str) -> tuple[logging.Logger, io.StringIO]:
@@ -193,7 +163,7 @@ def _rich_setup(name: str) -> tuple[logging.Logger, io.StringIO]:
 
 
 class TestRichHandlerSeam:
-    """The PR2 seam: hub placement owns the badge class only while the registered
+    """The badge seam: hub placement owns the badge class only while the registered
     console owner answers True; otherwise the legacy badge renders (fallback)."""
 
     def test_plain_warning_and_error_records_skip_the_handler_when_the_hub_owns_the_console(self) -> None:
@@ -212,7 +182,7 @@ class TestRichHandlerSeam:
         assert stream.getvalue() == ""
 
     def test_plain_warning_renders_the_badge_without_a_console_owner(self) -> None:
-        """No bridge installed (library use, the pre-install window): pre-PR2 look."""
+        """No bridge installed (library use, the pre-install window): the fallback."""
 
         logger, stream = _rich_setup("seadexarr-test-rich-seam-no-owner")
 
@@ -232,36 +202,12 @@ class TestRichHandlerSeam:
 
         assert "WARNING  watch out" in strip_ansi(stream.getvalue())
 
-    def test_hub_event_marked_records_skip_the_handler(self) -> None:
-        """A LegacyRenderer re-emission was already placed by the hub's renderer."""
-
-        logger, stream = _rich_setup("seadexarr-test-rich-seam-hub-event")
-
-        logger.info("httpx: flaky pool", extra={HUB_EVENT: True})
-
-        assert stream.getvalue() == ""
-
     def test_plain_info_still_renders_without_a_badge(self) -> None:
         logger, stream = _rich_setup("seadexarr-test-rich-seam-info")
 
         logger.info("checking Frieren")
 
         assert stream.getvalue() == "checking Frieren\n"
-
-    def test_payload_arms_still_render_at_warning(self) -> None:
-        """A WARNING kv line keeps its aligned, badge-free legacy render (severity
-        is carried by LogCounter/the hub tally, not a column-0 badge)."""
-
-        logger, stream = _rich_setup("seadexarr-test-rich-seam-kv")
-
-        payload = KvLine(key="missing", value="S01E03", key_width=DETAIL_KEY_WIDTH, indent=2, sep="")
-        logger.warning("missing S01E03", extra={CONSOLE_EXTRA: payload})
-        logger.info("Sonarr", extra={CONSOLE_EXTRA: TitledRule(title="Sonarr", heavy=True)})
-
-        out = stream.getvalue()
-        assert "S01E03" in out
-        assert "WARNING" not in out
-        assert "Sonarr" in out  # the TitledRule arm is untouched
 
     def test_debug_exc_info_renders_the_traceback_but_never_frame_locals(self) -> None:
         """The handler-side secrets pin: exc_info tracebacks render with
@@ -284,16 +230,43 @@ class TestRichHandlerSeam:
 
 
 class TestInvalidLevelComplaint:
-    """setup_logger's invalid-level critical fires BEFORE any hub/bridge exists."""
+    """setup_logger's invalid-level critical fires AFTER handler attach, so it
+    always has a route: the rich console (badge fallback) or the bridge."""
 
     def test_complaint_renders_on_the_rich_console_without_an_owner(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, app_logger: logging.Logger, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # cli wires the hub AFTER setup_logger, so no console owner is registered
-        # yet and the legacy badge renders the complaint (the F2 default).
+        # No bridge installed (programmatic use): the legacy badge renders the
+        # complaint on the rich console (the F2 fallback).
+        del app_logger
         stream = TtyStringIO()
         monkeypatch.setattr(sys, "stdout", stream)
 
-        setup_logger(log_level="BOGUS", log_dir=str(tmp_path / "logs"), console_format="rich")
+        setup_logger(log_level="BOGUS", console_format="rich")
 
         assert "CRITICAL Invalid log level 'BOGUS'" in strip_ansi(stream.getvalue())
+
+    def test_complaint_reaches_the_hub_under_plain_and_never_last_resort(
+        self, app_logger: logging.Logger, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Advisor #17's early-record path: with hub+bridge installed FIRST (the
+        cli order) and no console handler, the CRITICAL complaint arrives as a
+        visible hub Diagnostic and logging.lastResort never fires."""
+
+        del app_logger
+        monkeypatch.setattr(sys, "stdout", io.StringIO())
+        last_resort = CaptureHandler()
+        monkeypatch.setattr(logging, "lastResort", last_resort)
+        recorder = RecordingRenderer()
+        install_bridge(OutputHub([recorder]))
+
+        try:
+            setup_logger(log_level="BOGUS", console_format="plain")
+        finally:
+            uninstall_bridge()
+
+        (diagnostic,) = recorder.of_type(Diagnostic)
+        assert diagnostic.severity is Severity.CRITICAL
+        assert "Invalid log level 'BOGUS'" in diagnostic.message
+        assert not diagnostic.file_only
+        assert last_resort.records == []

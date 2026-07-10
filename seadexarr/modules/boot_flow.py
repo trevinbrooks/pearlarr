@@ -8,7 +8,7 @@ ride a :class:`~.output.RunStarted` event, each IO step runs inside a
 :class:`~.output.StepScope` (timed + graduated by the renderers), and the
 section mark keeps diagnostics fired BETWEEN steps placed at the boot-ledger
 indent. Rendering lives entirely on the hub's surfaces (the RichRenderer's boot
-region, the LegacyRenderer file/plain echo) — this module emits facts only.
+region, the file/plain/json text sinks) — this module emits facts only.
 
 A run scans each configured arr in turn; each scan's per-item logging must start
 with no live region above it, so :meth:`end_section` caps a section (emitting

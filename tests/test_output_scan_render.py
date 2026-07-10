@@ -1,13 +1,12 @@
 # pyright: strict
 """Tests for the scan-surface rendering layer (PR4 Band C).
 
-Three halves over ONE golden spine (the data in ``test_scan_parity``, captured
+Two halves over ONE golden spine (the data in ``test_scan_parity``, captured
 from the live reporter): the pure ``scan_lines`` builders reproduce the exact
-``(level, message, payload)`` tuples per event; the LegacyRenderer's scan arms
-re-emit those records (HUB_EVENT-marked) through the app logger; and the
-RichRenderer's scan arm renders the same lines through the legacy payload
-renderers on the shared Console at LOGGER-parity gating. Plus the generalized
-ENTRY-indent placement rule for diagnostics.
+``(level, message, payload)`` tuples per event, and the RichRenderer's scan arm
+renders the same lines through the shared payload renderers on the shared
+Console at LOGGER-parity gating. Plus the generalized ENTRY-indent placement
+rule for diagnostics.
 """
 
 import io
@@ -17,31 +16,24 @@ from rich.console import Console
 
 from seadexarr.modules.config import Arr
 from seadexarr.modules.log import (
-    CONSOLE_EXTRA,
     LOG_NAME,
     EntryState,
     KvLine,
     SectionRule,
     StyledLine,
     TitledRule,
-    console_payload,
-    hub_event_marked,
 )
 from seadexarr.modules.output import (
     Accent,
     Diagnostic,
     EntryDetail,
     EntryHeader,
-    Event,
     GrabAction,
     GrabStatus,
     ItemStarted,
     LedgerRow,
-    LegacyRenderer,
     RecommendedGroup,
     RichRenderer,
-    RunFinished,
-    ScanFinished,
     ScanStarted,
     ScopeClosed,
     ScopeId,
@@ -63,7 +55,7 @@ from seadexarr.modules.output.scan_lines import (
     scan_started_lines,
 )
 
-from .fakes import CaptureHandler, strip_ansi
+from .fakes import strip_ansi
 from .test_scan_parity import (
     ACTION_DOWNLOADING_NO_WAIT,
     ACTION_DOWNLOADING_NO_WAIT_LINES,
@@ -261,69 +253,6 @@ class TestBuilders:
             Accent.FOCUS: "bold",
             Accent.NOTE: "blue",
         }
-
-
-# --- the LegacyRenderer echo arms -------------------------------------------------------
-
-
-def _echo(app_logger: logging.Logger, *events: Event) -> list[logging.LogRecord]:
-    handler = CaptureHandler()
-    app_logger.addHandler(handler)
-    renderer = LegacyRenderer()
-    for event in events:
-        renderer.handle(event, 0.0)
-    return handler.records
-
-
-class TestLegacyEchoScanArms:
-    def test_scan_events_echo_the_exact_records(self, app_logger: logging.Logger) -> None:
-        records = _echo(
-            app_logger,
-            SCAN_STARTED_SONARR,
-            ITEM_STARTED_SONARR,
-            UNMONITORED_ROW,
-            CHECKING_FULL,
-            NO_RELEASES_DETAIL,
-            ACTION_FRESH,
-            PENDING_IMPORTED,
-            CAP_REACHED,
-            SUMMARY_RICH,
-        )
-        expected = (
-            SCAN_STARTED_SONARR_LINES
-            + ITEM_STARTED_SONARR_LINES
-            + UNMONITORED_LINES
-            + CHECKING_FULL_LINES
-            + NO_RELEASES_LINES
-            + ACTION_FRESH_LINES
-            + PENDING_IMPORTED_LINES
-            + CAP_REACHED_LINES
-            + SUMMARY_RICH_LINES
-        )
-        assert tuple((r.levelno, r.getMessage(), console_payload(r)) for r in records) == expected
-        # Every echo is hub-marked: the bridge drops it (loop-proof) and the
-        # legacy rich handler skips it (the hub's console arm owns the look).
-        assert all(hub_event_marked(r) for r in records)
-
-    def test_blank_lines_carry_no_console_payload(self, app_logger: logging.Logger) -> None:
-        records = _echo(app_logger, SCAN_STARTED_SONARR)
-        assert not hasattr(records[0], CONSOLE_EXTRA)
-
-    def test_warning_level_suppresses_info_scan_echoes(self, app_logger: logging.Logger) -> None:
-        app_logger.setLevel(logging.WARNING)
-        assert _echo(app_logger, SCAN_STARTED_SONARR, CHECKING_FULL, SUMMARY_RICH) == []
-
-    def test_warning_detail_still_echoes_at_warning_level(self, app_logger: logging.Logger) -> None:
-        app_logger.setLevel(logging.WARNING)
-        detail = EntryDetail(
-            label="status", value=StyledValue("size mismatch", Accent.CAUTION), severity=Severity.WARNING
-        )
-        records = _echo(app_logger, detail)
-        assert [(r.levelno, r.getMessage()) for r in records] == [(logging.WARNING, "    status    size mismatch")]
-        assert hub_event_marked(records[0])
-
-    def test_scan_finished_and_run_finished_echo_nothing(self, app_logger: logging.Logger) -> None:
-        assert _echo(app_logger, ScanFinished(arr=Arr.SONARR), RunFinished(arr=Arr.SONARR)) == []
 
 
 # --- the RichRenderer scan console arm ---------------------------------------------------

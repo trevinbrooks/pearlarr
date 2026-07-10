@@ -3,9 +3,9 @@
 
 The engine pushes one immutable :class:`WaitSnapshot` per poll cycle; the view
 side is a single narrator (:class:`HubWaitView`) that turns those pushes into
-hub events - rendering lives behind the hub (WaitRegion for the console,
-LegacyRenderer for the file; byte parity proven in test_wait_parity /
-test_output_wait_region). These pin the narrator's event grammar (lazy open,
+hub events - rendering lives behind the hub (WaitRegion for the console, the
+textline sinks for file/plain/json; pinned in test_output_wait_region /
+test_output_textline). These pin the narrator's event grammar (lazy open,
 graduation dedup + exact field mapping, the close tally), the ``make_wait_view``
 probe (wants_telemetry + the pulse interval), the pure ``graduations`` helper,
 the WaitResult counting, and the no-throw contract.

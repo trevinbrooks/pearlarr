@@ -4,16 +4,16 @@ One :class:`HubBridgeHandler` per process, attached to the root logger AND to th
 app logger (its ``propagate`` stays False, so the app path needs its own seat).
 Adoption rules:
 
-* ``HUB_EVENT``-marked records (the LegacyRenderer's re-emissions) are dropped —
-  loop-proof (S5 pin 3).
-* App-logger records: ONLY plain records (no ``CONSOLE_EXTRA`` payload) at
-  WARNING+ are adopted — exactly the col-0 badge bug class. Payload records and
-  plain INFO/DEBUG stay fully legacy (byte parity); WARNING+ payload records
-  still bump the hub tally count-only (no event), so a styled error can never
-  slip past the boot capstone or the summary counts.
-* Root records (third-party: httpx, urllib3, pydantic, py.warnings, ...): ALL
-  levels are adopted with ``origin = record.name``; the renderer floors them
-  (S4) and the file path admits per the configured level.
+* App-logger records: WARNING+ adopt visible (the badge class); sub-WARNING
+  adopt ``file_only`` ALWAYS — DEBUG chatter and unmigrated INFO stragglers stay
+  in the file, the rich TTY still shows the raw record via RichConsoleHandler,
+  and plain/json stdout deliberately omit forensic chatter.
+* Root records (third-party: httpx, urllib3, pydantic, py.warnings, ...):
+  WARNING+ adopt visible with ``origin = record.name``; sub-WARNING records below
+  the hub's level are never constructed, at-or-above it they adopt ``file_only``
+  unless the configured level is DEBUG (at DEBUG the hub is a library record's
+  only console route, so today's visibility is preserved; at INFO+ the file
+  keeps the forensics and stdout loses library chatter).
 
 The bridge CONSTRUCTS new events and never mutates the LogRecord (caplog
 safety). A record fired from inside hub dispatch on the same thread (a renderer
@@ -36,8 +36,6 @@ from ..log import (
     LOG_NAME,
     HubBridgeBase,
     clear_console_owner,
-    console_payload,
-    hub_event_marked,
     register_console_owner,
 )
 
@@ -83,7 +81,7 @@ class HubBridgeHandler(HubBridgeBase):
     @override
     def handle(self, record: logging.LogRecord) -> bool:
         # No filter dance (final class, no filters ever attached) and no handler
-        # lock: waiting on the hub lock under it deadlocks against the echo path.
+        # lock: waiting on the hub lock under a handler lock invites inversion.
         self.emit(record)
         return True
 
@@ -106,27 +104,28 @@ class HubBridgeHandler(HubBridgeBase):
             self.handleError(record)
 
     def _adopt(self, record: logging.LogRecord) -> Diagnostic | None:
-        """The adoption table (module docstring); None = the record stays legacy."""
+        """The adoption table (module docstring); None = the record is dropped."""
 
-        if hub_event_marked(record):
+        if record.levelno >= logging.WARNING:
+            file_only = False
+        elif is_first_party(record.name):
+            # Forensics: filed, off plain/json stdout; the rich TTY still shows
+            # the raw record via RichConsoleHandler.
+            file_only = True
+        elif record.levelno < self._hub.level:
+            # Sub-threshold third-party records aren't constructed/counted.
             return None
-        if is_first_party(record.name):
-            if record.levelno < logging.WARNING:
-                return None
-            if console_payload(record) is not None:
-                # Legacy renders the payload whole; only the severity reaches the
-                # tally (else a styled ERROR would never dent the capstone counts).
-                self._hub.record_severity(_severity_of(record.levelno))
-                return None
-        elif record.levelno < logging.WARNING and record.levelno < self._hub.level:
-            # Sub-threshold third-party records aren't constructed/counted (pre-PR2 parity).
-            return None
+        else:
+            # At a configured DEBUG the hub is a library record's only console
+            # route, so it stays visible; at INFO+ the file alone keeps it.
+            file_only = self._hub.level > logging.DEBUG
         exc = record.exc_info[1] if record.exc_info is not None else None
         return Diagnostic(
             severity=_severity_of(record.levelno),
             message=record.getMessage(),
             origin=record.name,
             trace=CapturedTrace.from_exception(exc) if exc is not None else None,
+            file_only=file_only,
         )
 
 

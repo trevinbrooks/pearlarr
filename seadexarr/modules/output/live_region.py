@@ -31,12 +31,17 @@ class LiveRegion:
         level_source: Callable[[], int],
     ) -> None:
         self._console_source = console_source
-        # Production wiring (cli) shares ONE cache with the LegacyRenderer echo so
-        # both surfaces branch on the same probe; None builds a private cache.
+        # Production wiring (cli) shares ONE cache across the console seat's
+        # regions so they branch on the same probe; None builds a private cache.
         self._caps_cache = caps_cache if caps_cache is not None else CapsCache()
         # The RichRenderer's level store, read live (no duplicate _level here).
         self._level_source = level_source
-        # For contained teardown/render failures; never above DEBUG (see pr5_plan P4).
+        # For contained teardown failures. The refresh thread must never reach
+        # the bridge/hub at all (adoption makes ANY level dangerous — the ABBA
+        # pin); every log through this logger is main-thread-only: _stop_live
+        # runs on the dispatch thread, and WaitRegion's frame latch reports here
+        # from handle()/teardown (verified — the only custom __rich_console__ is
+        # _LiveFrame, which latches instead of logging).
         self._logger = logging.getLogger(LOG_NAME)
         self._live: Live | None = None
         self._spinner: Spinner | None = None

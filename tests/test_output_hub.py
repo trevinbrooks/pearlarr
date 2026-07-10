@@ -16,11 +16,13 @@ from typing import override
 
 import pytest
 
+from seadexarr.modules.cli import _install_output_hub
 from seadexarr.modules.config import Arr, LogFormat
 from seadexarr.modules.output import (
     STRIKE_LIMIT,
     Diagnostic,
     Event,
+    FileLogSink,
     NullRenderer,
     OutputHub,
     Renderer,
@@ -29,9 +31,14 @@ from seadexarr.modules.output import (
     Severity,
     SeverityCounts,
     SeverityTally,
+    emit_to_hub,
+    install_hub,
+    uninstall_bridge,
+    uninstall_hub,
 )
 from seadexarr.modules.output.hub import QUEUE_CAP
 from seadexarr.modules.output.recording import RecordingHub, RecordingRenderer
+from seadexarr.modules.paths import resolve_paths
 
 _EVENT = RunStarted(version="v1.0.0", data_dir="/data")
 
@@ -698,16 +705,6 @@ def test_severity_is_counted_at_enqueue_even_when_every_renderer_raises() -> Non
     assert hub.counts.counts_since(mark).errors == 1
 
 
-def test_cycle_counts_reads_the_delta_since_begin_cycle() -> None:
-    recording = RecordingHub()
-    recording.emit(Diagnostic(severity=Severity.WARNING, message="before"))
-
-    recording.hub.begin_cycle(console_format="plain", level=logging.INFO)
-    recording.emit(Diagnostic(severity=Severity.WARNING, message="after"))
-
-    assert recording.hub.cycle_counts().warnings == 1
-
-
 # --- levels + lifecycle -------------------------------------------------------------
 
 
@@ -837,3 +834,50 @@ def test_a_failing_console_factory_keeps_the_old_seat_and_notes_file_only() -> N
     assert notes[0].file_only
     assert "console factory failed" in notes[0].message
     assert "keeping the current console" in notes[0].message
+
+
+# --- the process registry (install/uninstall) + the cli seat order --------------------
+
+
+def test_cli_hub_seats_the_file_sink_first() -> None:
+    # The file-before-console dispatch pin: _subs[0] is the first-declared sink
+    # (the reader convention above), and cli declares FileLogSink first.
+    hub = _install_output_hub(resolve_paths())
+    try:
+        assert isinstance(hub._subs[0].renderer, FileLogSink)
+    finally:
+        uninstall_hub()
+        uninstall_bridge()
+
+
+def test_install_hub_closes_the_previously_installed_hub() -> None:
+    first_sink, second_sink = RecordingRenderer(), RecordingRenderer()
+    first, second = OutputHub([first_sink]), OutputHub([second_sink])
+
+    install_hub(first)
+    install_hub(second)
+    try:
+        # A repeat run single in one process must not leak the prior hub's
+        # open FileLogSink; a re-install of the SAME hub never self-closes.
+        assert first_sink.closed
+        install_hub(second)
+        second.emit(_EVENT)
+        assert second_sink.events == [_EVENT]
+    finally:
+        uninstall_hub()
+
+
+def test_uninstall_hub_closes_the_outgoing_hub_but_never_the_default() -> None:
+    sink = RecordingRenderer()
+    hub = OutputHub([sink])
+    install_hub(hub)
+
+    uninstall_hub()
+
+    assert sink.closed
+    # The renderer-less default survives repeated uninstalls (never closed):
+    # a post-uninstall emit still silently drops rather than raising.
+    uninstall_hub()
+    emit_to_hub(_EVENT)
+    hub.emit(_EVENT)  # drop-after-close is silent
+    assert sink.events == []

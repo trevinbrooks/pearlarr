@@ -1,9 +1,10 @@
 # pyright: strict
 """Tests for the shared caps cache (``console_caps.CapsCache``).
 
-One CapsCache instance is shared by the boot region and the legacy echo, so a
-mid-boot resize can never flip one surface's slow-heads-up decision only: these
-pin the identity-keyed hit, the re-probe on a new console, and the cycle reset.
+One CapsCache instance is shared by the console seat's regions (boot + wait),
+so a mid-boot resize can never flip one surface's slow-heads-up decision only:
+these pin the identity-keyed hit, the re-probe on a new console, and the cycle
+reset.
 """
 
 import io

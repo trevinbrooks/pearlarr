@@ -11,12 +11,13 @@ events (banner / steps / capstone) drive the :class:`~.boot_region.BootRegion`
 The scan events render through the shared :mod:`.scan_lines` builders at
 LOGGER-parity gating, so the console shows exactly what the file logs.
 
-During the strangler window the renderer resolves the CURRENT shared Console at
-render time from the live :class:`~..log.RichConsoleHandler` (``setup_logger``
-rebuilds handlers per cycle; the logger identity is stable, S3). Printing
-through that shared Console keeps Live reflow safe — the same mechanism as the
-cockpits' graduation lines. Under plain/json (no rich handler) it no-ops; the
-LegacyRenderer/file path still carries the record.
+The renderer resolves the CURRENT shared Console at render time from the live
+:class:`~..log.RichConsoleHandler` (``setup_logger`` rebuilds handlers per
+cycle; the logger identity is stable, S3). Printing through that shared Console
+keeps Live reflow safe — the same mechanism as the cockpits' graduation lines.
+Under plain/json (no rich handler) it no-ops; this seat is never built there
+(cli seats LineRenderer/JsonRenderer instead), and the FileLogSink always
+carries the record.
 """
 
 from __future__ import annotations
@@ -117,8 +118,8 @@ class RichRenderer:
         caps_cache: CapsCache | None = None,
         time_source: Callable[[], float] = time.monotonic,
     ) -> None:
-        # ``caps_cache`` must be the instance the LegacyRenderer echo shares in
-        # production (cli wiring); None builds the regions a private cache.
+        # ``caps_cache`` is the process-shared instance in production (cli
+        # wiring, stable across seat swaps); None builds a private cache.
         self._console_source = console_source
         self._crumbs = BreadcrumbFold()
         self._level = int(Severity.INFO)

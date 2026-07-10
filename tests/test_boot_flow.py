@@ -166,9 +166,8 @@ def test_capstone_measures_from_the_first_step() -> None:
 
 def test_error_recorded_mid_section_suppresses_the_capstone() -> None:
     # An ERROR that doesn't raise still means the section isn't "ready"; the
-    # facade sees it through the hub's severity counts (the LogCounter gate died
-    # with the view). Errors logged through the app logger reach these counts
-    # via the PR2 bridge in production.
+    # facade sees it through the hub's severity counts. Errors logged through
+    # the app logger reach these counts via the bridge in production.
     flow, recording, clock = _flow()
 
     with flow.step("Reading config"):

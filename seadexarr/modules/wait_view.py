@@ -8,11 +8,9 @@ push into hub events (``WaitStarted`` on the first snapshot via a
 torrent, ``WaitProgress`` per poll, the ``WaitFinished`` tally on close), and
 the renderers own every look decision: the RichRenderer's
 :class:`~.output.wait_region.WaitRegion` draws the live cockpit / non-TTY
-digest, and the :class:`~.output.legacy_echo.LegacyRenderer` echoes the durable
-lines to the file byte-identically to the pre-hub views
-(tests/test_wait_parity.py pins the bytes). Every method is total: a
-presentation bug degrades to a no-op, never aborting the wait loop or the
-end-of-run cache save.
+digest, and the hub's text sinks write the structured file/plain/json lines.
+Every method is total: a presentation bug degrades to a no-op, never aborting
+the wait loop or the end-of-run cache save.
 """
 
 import contextlib

@@ -9,7 +9,8 @@ scrollback while the cockpit is active, stops the Live before the closing tally
 prints, degrades to a start line + throttled pulses on a non-live console, and
 tears its slot down whenever the wait region leaves the fold's frontier
 (ScopeClosed, a RunFinished unwind). A raised level suppresses the durable lines
-but never the cockpit; a raising frame build degrades to an empty frame.
+but never the cockpit; a raising frame build degrades to an empty frame whose
+failure LATCHES for a main-thread report (the refresh thread never logs).
 """
 
 import io
@@ -177,6 +178,22 @@ class TestNonLiveDigest:
         )
         assert _plain(stream).strip() == ""
         assert renderer._wait._live is None
+
+    def test_failed_graduation_survives_a_raised_level(self) -> None:
+        # P6: the graduation line carries severity_of's category-based level,
+        # so a FAILED outcome renders at ERROR through render_legacy_lines'
+        # WARNING gate while the INFO wait lines around it vanish.
+        renderer, stream = _live_renderer(width=40)
+        renderer.set_level(logging.WARNING)
+
+        _feed(
+            renderer,
+            WaitStarted(total=1, pulse_s=300.0),
+            TorrentGraduated(label="Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=60),
+        )
+        out = _plain(stream)
+        assert "errored" in out and "Show" in out
+        assert "Waiting on" not in out  # the INFO start line stayed suppressed
 
 
 class TestFrontierTeardown:
@@ -351,32 +368,85 @@ def _boom() -> Group:
     raise RuntimeError("frame build failed")
 
 
-def test_live_frame_swallows_a_raising_group_build(app_logger: logging.Logger) -> None:
+def test_live_frame_latches_a_raising_group_build_without_logging(app_logger: logging.Logger) -> None:
     capture = CaptureHandler()
     app_logger.addHandler(capture)
     console = Console(file=io.StringIO())
-    frame = _LiveFrame(_boom, app_logger)
+    frame = _LiveFrame(_boom)
 
-    # A render bug degrades to an empty frame logged at debug, never a raise off
-    # the refresh thread (the ABBA-safe swallow stays below WARNING).
+    # A render bug degrades to an empty frame with NO log record: the refresh
+    # thread must never reach the bridge/hub at all (adoption makes any level
+    # dangerous — hub.emit under the Console lock is the ABBA inversion). The
+    # failure latches for the main thread instead.
     assert list(frame.__rich_console__(console, console.options)) == []
-    assert [record.levelno for record in capture.records] == [logging.DEBUG]
+    assert capture.records == []
 
-    # Once per Live session: rich retries every tick, and a persistent bug must
-    # not traceback-spam a DEBUG run at 12.5 records/s.
+    # Once per Live session: rich retries every tick, but only the FIRST
+    # failure latches, and take_failure is one-shot.
     assert list(frame.__rich_console__(console, console.options)) == []
-    assert len(capture.records) == 1
+    failure = frame.take_failure()
+    assert isinstance(failure, RuntimeError)
+    assert frame.take_failure() is None
 
 
 def test_a_raising_tick_emits_nothing_to_the_hub(app_logger: logging.Logger) -> None:
-    # The below-WARNING swallow is a proxy for the real rule: the refresh thread
-    # must NEVER reach the hub (hub.emit off a Live-lock-holding thread is the
-    # ABBA topology the pin exists to prevent).
+    # The latch is the real rule made structural: the refresh thread must NEVER
+    # reach the hub (hub.emit off a Console-lock-holding thread is the ABBA
+    # topology the pin exists to prevent).
+    del app_logger
     recording = RecordingHub()
     install_hub(recording.hub)
     console = Console(file=io.StringIO())
-    frame = _LiveFrame(_boom, app_logger)
+    frame = _LiveFrame(_boom)
 
     assert list(frame.__rich_console__(console, console.options)) == []
 
     assert recording.events == []
+
+
+def _latched_region(console: Console) -> tuple[WaitRegion, _LiveFrame]:
+    """A region with an active Live whose frame builder raises on every tick."""
+
+    region = WaitRegion(lambda: console, level_source=lambda: logging.INFO, time_source=lambda: 0.0)
+    region.handle(WaitStarted(total=1, pulse_s=300.0))
+    region.handle(_progress(_dl("Show"), elapsed=0))
+    frame = _LiveFrame(_boom)
+    region._live_frame = frame
+    return region, frame
+
+
+def test_wait_region_reports_a_latched_failure_once_on_the_next_handle(app_logger: logging.Logger) -> None:
+    capture = CaptureHandler()
+    app_logger.addHandler(capture)
+    console = Console(file=io.StringIO(), force_terminal=True, width=100)
+    region, frame = _latched_region(console)
+
+    # One refresh tick fails silently on the refresh thread...
+    assert list(frame.__rich_console__(console, console.options)) == []
+    assert capture.records == []
+
+    # ...and the NEXT main-thread handle() reports it exactly once, at DEBUG,
+    # carrying the latched exception instance as exc_info.
+    region.handle(_progress(_dl("Show"), elapsed=1))
+    (report,) = [r for r in capture.records if r.getMessage() == "wait frame render failed"]
+    assert report.levelno == logging.DEBUG
+    assert report.exc_info is not None and isinstance(report.exc_info[1], RuntimeError)
+
+    region.handle(_progress(_dl("Show"), elapsed=2))  # one-shot: nothing left to report
+    assert len([r for r in capture.records if r.getMessage() == "wait frame render failed"]) == 1
+    region.close()
+
+
+def test_wait_region_teardown_flushes_a_latched_failure(app_logger: logging.Logger) -> None:
+    # A failure from the session's last ticks must not die with the frame: the
+    # teardown routes (section_left/close/reset) also collect the latch.
+    capture = CaptureHandler()
+    app_logger.addHandler(capture)
+    console = Console(file=io.StringIO(), force_terminal=True, width=100)
+    region, frame = _latched_region(console)
+
+    assert list(frame.__rich_console__(console, console.options)) == []
+    region.section_left()
+
+    (report,) = [r for r in capture.records if r.getMessage() == "wait frame render failed"]
+    assert report.levelno == logging.DEBUG

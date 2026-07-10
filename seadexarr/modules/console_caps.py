@@ -4,8 +4,7 @@ The output package's live regions (:mod:`.output.boot_region`,
 :mod:`.output.wait_region`) drive an optional sticky ``rich.Live`` region over
 the SAME ``Console`` the logger already owns, and both must degrade to a calm
 log digest on a non-TTY (Docker / a pipe / a dumb or too-narrow terminal); the
-legacy echo and the wait narrator's ``wants_telemetry`` probe branch on the same
-signals. The probe lives here once: :func:`console_of` finds the logger's
+wait narrator's ``wants_telemetry`` probe branches on the same signals. The probe lives here once: :func:`console_of` finds the logger's
 console and :func:`detect_capabilities` folds rich's derived signals into the
 small :class:`Capabilities` value the seats branch on.
 """
@@ -84,7 +83,7 @@ def detect_capabilities(console: Console | None) -> Capabilities:
 class CapsCache:
     """An identity-keyed :func:`detect_capabilities` cache for the render seats.
 
-    The boot region and the legacy echo both branch on the probe (the slow
+    The console seat's regions (boot + wait) branch on the probe (the slow
     heads-up policy); they must share ONE instance per hub, or a mid-boot resize
     across ``MIN_LIVE_WIDTH`` could flip one surface's decision only.
     """

@@ -1,19 +1,17 @@
-"""The scan surface's shared line grammar, event-driven (PR4 Band C).
+"""The scan surface's rich-console line grammar, event-driven (PR4 Band C).
 
-Today every scan line the reporter produces is ONE log record: a plain message
-string (what the file/plain surfaces store) plus a typed ``ConsoleRender``
-payload under ``CONSOLE_EXTRA`` (how the rich console renders it).
-:class:`LegacyLine` freezes that pair, and the pure builders here map each scan
-event to the exact lines ``reporter.py`` renders today — pinned by the goldens
-in ``tests/test_scan_parity.py``, captured against the live reporter FIRST.
+Every scan line is a :class:`LegacyLine`: a level, a plain message, and a typed
+``ConsoleRender`` payload (how the rich console draws it). The pure builders
+here map each scan event to the exact lines the pre-hub reporter rendered —
+pinned by the goldens in ``tests/test_scan_parity.py``, captured against the
+live reporter FIRST.
 
-Two seats consume the same lines, so file/plain bytes and the console look can
-never drift: the :class:`~.legacy_echo.LegacyRenderer` re-emits each line
-through the app logger (byte-identical file/plain), and the
-:class:`~.rich_renderer.RichRenderer` renders each payload via
-:func:`render_legacy_lines` through the SAME payload renderers the legacy
-console handler uses (``render_kv`` / ``render_rule`` / ``print_titled_rule``).
-Renderer-side module: importing rich is fine here, unlike ``events.py``.
+Two consumers: the :class:`~.rich_renderer.RichRenderer`'s scan arm renders the
+payloads via :func:`render_legacy_lines` (through the shared payload renderers
+``render_kv`` / ``render_rule`` / ``print_titled_rule``), and the WaitRegion's
+durable prints ride the same route. The file/plain/json surfaces take the same
+events through the :mod:`.textline` grammar instead. Renderer-side module:
+importing rich is fine here, unlike ``events.py``.
 """
 
 from __future__ import annotations
@@ -71,7 +69,7 @@ type ScanEvent = (
 
 @dataclass(frozen=True, slots=True)
 class LegacyLine:
-    """One legacy log line: level + plain message (file/plain) + console payload."""
+    """One rich-console line: level (gates rendering) + plain message + payload."""
 
     level: int
     message: str

@@ -7,7 +7,7 @@ Every constant below was captured by RUNNING the current ``RunReporter`` (not
 hand-derived): each scenario pins the exact ``(level, message, payload)`` records
 the reporter emits today. The harness tests in this file re-drive the real
 reporter and assert byte/payload equality, so the goldens stay honest; the
-builder/echo/console tests in ``test_output_scan_render`` reuse the same data,
+builder/console tests in ``test_output_scan_render`` reuse the same data,
 pinning the new event-driven rendering layer to this grammar. The producer
 rewrite (a later band) must keep every one of these green.
 
@@ -38,7 +38,6 @@ from seadexarr.modules.log import (
     SectionRule,
     StyledLine,
     TitledRule,
-    console_payload,
     group_highlight,
 )
 from seadexarr.modules.manual_import import ImportWaitMode, PendingState
@@ -52,9 +51,7 @@ from seadexarr.modules.output import (
     GrabStatus,
     ItemStarted,
     LedgerRow,
-    LegacyRenderer,
     NeedsActionCause,
-    OutputHub,
     RecommendedGroup,
     ReleaseName,
     RunSummary,
@@ -66,8 +63,6 @@ from seadexarr.modules.output import (
     Severity,
     SeverityCounts,
     StyledValue,
-    emit_to_hub,
-    install_hub,
 )
 from seadexarr.modules.output.scan_lines import _TIP_TEXTS, ScanEvent
 from seadexarr.modules.reporter import (
@@ -82,10 +77,10 @@ from seadexarr.modules.reporter import (
 from seadexarr.modules.torrents import AddOutcome, ReleaseOutcome
 
 from .builders import FakeCacheStore, make_entry_record, pending_import, rg_group, url_item
-from .fakes import SCAN_EVENT_TYPES, CaptureHandler, scan_lines_from_events
+from .fakes import SCAN_EVENT_TYPES, scan_lines_from_events
 
 type Line = tuple[int, str, ConsoleRender | None]
-"""One pinned record: (levelno, plain message, CONSOLE_EXTRA payload)."""
+"""One pinned line: (levelno, plain message, ConsoleRender payload)."""
 
 _I = logging.INFO
 _W = logging.WARNING
@@ -969,8 +964,9 @@ class TestExternalDetailParity:
     """PR6 Band A: the 7 ``LogFormatter.detail`` producer sites (grab pipeline /
     release filter / episode mapper) now post through ``reporter.detail``. Each
     golden was captured by RUNNING the pre-migration ``LogFormatter.detail`` with
-    the site's literal args at fc58aef; the reporter must reproduce every record
-    byte-identically through the live LegacyRenderer echo.
+    the site's literal args at fc58aef; the reporter must reproduce every line
+    byte-identically through the shipped ``scan_lines`` builders (the grammar
+    every rendering surface consumes).
     """
 
     SITES: tuple[_DetailSite, ...] = (
@@ -1067,29 +1063,15 @@ class TestExternalDetailParity:
         ),
     )
 
-    def test_reporter_detail_reproduces_the_goldens(self, app_logger: logging.Logger) -> None:
-        # The production wiring: reporter -> emit_to_hub -> LegacyRenderer echo
-        # back through the app logger, where the capture pins the exact records.
-        capture = CaptureHandler()
-        app_logger.addHandler(capture)
-        install_hub(OutputHub([LegacyRenderer()]))
-        counts = SeverityCounts()
-        reporter = RunReporter(
-            emit=emit_to_hub,
-            counts=lambda: counts,
-            cache_store=FakeCacheStore(),
-            anilist=AniListGateway(
-                cache_store=FakeCacheStore(),
-                logger=app_logger,
-                client=_ScriptedTitleClient(app_logger, None),
-            ),
-        )
+    def test_reporter_detail_reproduces_the_goldens(self) -> None:
+        # The real reporter emits EntryDetail events; the shipped builders
+        # re-derive the exact (level, message, payload) lines the sites pinned.
+        harness = _Harness()
 
         for site in self.SITES:
-            reporter.detail(site.label, site.value, severity=site.severity)
+            harness.reporter.detail(site.label, site.value, severity=site.severity)
 
-        lines = tuple((r.levelno, r.getMessage(), console_payload(r)) for r in capture.records)
-        assert lines == tuple(site.golden for site in self.SITES)
+        assert harness.lines() == tuple(site.golden for site in self.SITES)
 
 
 class TestActionBlockParity:

@@ -295,10 +295,11 @@ The feature is controlled by `imports.wait_mode`:
   the end
 
 On a terminal, the wait pass renders a live progress view (download bars, speeds, a
-files-imported bar); under Docker or cron it degrades to periodic digest lines
-(`imports.digest_interval`). The remaining `imports.*` keys (timeouts, poll cadence, import mode,
-languages) are described in [the config reference](#import-settings). To get a push notification
-when a wait pass finishes, see [Notifications](#notifications).
+files-imported bar); piped or under Docker/cron the log shows the wait's start line, each
+download's outcome as it finishes, and the closing tally. The remaining `imports.*` keys
+(timeouts, poll cadence, import mode, languages) are described in
+[the config reference](#import-settings). To get a push notification when a wait pass
+finishes, see [Notifications](#notifications).
 
 ## Notifications
 
@@ -418,8 +419,9 @@ These control the wait-for-completion and Sonarr manual-import feature (see
   `[Japanese]`
 - `imports.pending_max_age_days` — drop pending-import records older than this many days.
   Defaults to 14
-- `imports.digest_interval` — target seconds between wait-progress digests on a non-TTY
-  (Docker/cron). Defaults to 300
+- `imports.digest_interval` — target seconds between "still waiting" digest lines when the
+  rich console is forced (`advanced.log_format: rich`) on a terminal that can't render the
+  live view. Defaults to 300
 
 ### Notification settings
 
@@ -465,9 +467,10 @@ The general user should leave all three blank (auto-download):
 - `advanced.log_level` — `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL` (case-insensitive).
   Defaults to INFO
 - `advanced.log_format` — console output format. `auto` (the default) renders the rich styled
-  console on a terminal and plain timestamped lines when piped or under Docker; `rich`, `plain`
-  and `json` (one JSON object per line) force a renderer. `plain` and `json` also disable the
-  live progress views (expected). The log file always uses the plain timestamped format
+  console on a terminal and structured log lines (timestamp, level, context, message) when
+  piped or under Docker; `rich`, `plain` and `json` force a renderer. `plain` output matches
+  the log file byte for byte; `json` emits one JSON object per event. `plain` and `json` also
+  disable the live progress views (expected). The log file always uses the structured format
 
 ## Scripting
 

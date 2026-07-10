@@ -21,7 +21,6 @@ that id actually flowed end to end (a vacuous run that resolved nothing would
 still return True - the recorded calls are what make this non-hollow).
 """
 
-import logging
 from pathlib import Path
 from typing import cast
 
@@ -34,8 +33,8 @@ from seadex import EntryRecord
 import seadexarr.modules.run_services as run_services
 import seadexarr.modules.torrents as torrents
 from seadexarr.modules.cli import run_single
-from seadexarr.modules.log import log_counter
 from seadexarr.modules.manual_import import ImportWaitMode
+from seadexarr.modules.output import current_hub
 
 from .builders import make_config, make_entry_record, make_torrent_record
 from .http_mock import register_sonarr_reads, sonarr_fixture
@@ -153,13 +152,13 @@ def test_sonarr_run_drives_real_composition_root(
     assert f"GET {_BASE}/parse" in respx_fired
     # The resolved entry's release reached the (preview) grab at the torrent source.
     assert nyaa_calls == [_NYAA_RELEASE_URL]
-    # ...and the whole pass logged no error (a swallowed failure would tally here).
-    counter = log_counter(logging.getLogger("SeaDexArr"))
-    assert counter.counts.get(logging.ERROR, 0) == 0
-    assert counter.counts.get(logging.CRITICAL, 0) == 0
+    # ...and the whole pass logged no error (a swallowed failure would tally on
+    # the run's installed hub, which run_single seated).
+    assert current_hub().counts.mark().errors == 0
     # The reporter is actually wired into the run (test_reporter covers rendering in
-    # isolation; only here does it run through run_single). Reading capsys also keeps
-    # the cockpit off the terminal under `-s`.
+    # isolation; only here does it run through run_single) and the REAL plain
+    # stdout seat rendered the summary's structured line. Reading capsys also
+    # keeps the cockpit off the terminal under `-s`.
     assert "run complete" in capsys.readouterr().out
 
 
@@ -280,11 +279,11 @@ def test_radarr_run_drives_real_composition_root(
     assert moviefile_route.call_count == 1
     # The resolved entry's release reached the (preview) grab at the torrent source.
     assert nyaa_calls == [_NYAA_RELEASE_URL]
-    # ...and the whole pass logged no error (a swallowed failure would tally here).
-    counter = log_counter(logging.getLogger("SeaDexArr"))
-    assert counter.counts.get(logging.ERROR, 0) == 0
-    assert counter.counts.get(logging.CRITICAL, 0) == 0
+    # ...and the whole pass logged no error (a swallowed failure would tally on
+    # the run's installed hub, which run_single seated).
+    assert current_hub().counts.mark().errors == 0
     # The reporter is actually wired into the run (test_reporter covers rendering in
-    # isolation; only here does it run through run_single). Reading capsys also keeps
-    # the cockpit off the terminal under `-s`.
+    # isolation; only here does it run through run_single) and the REAL plain
+    # stdout seat rendered the summary's structured line. Reading capsys also
+    # keeps the cockpit off the terminal under `-s`.
     assert "run complete" in capsys.readouterr().out

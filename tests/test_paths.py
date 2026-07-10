@@ -1,4 +1,6 @@
 # pyright: strict
+# pyright: reportPrivateUsage=false
+# ^ the log-routing tests wire the real (private) cli hub installer.
 """Tests for the unified data-directory resolver and its CLI surface.
 
 Pins the behaviours the rest of the app relies on:
@@ -10,14 +12,16 @@ Pins the behaviours the rest of the app relies on:
 * Logs route to the resolved ``log_dir`` rather than the current working directory.
 """
 
+import io
 import logging
 import os
+import sys
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from seadexarr.modules.cli import seadexarr_cli
+from seadexarr.modules.cli import _install_output_hub, seadexarr_cli
 from seadexarr.modules.log import setup_logger
 from seadexarr.modules.paths import APP_NAME, ensure_data_dir, resolve_paths
 
@@ -85,54 +89,48 @@ class TestPathsCommand:
 
 
 class TestLogRouting:
-    def test_logs_route_to_log_dir_not_cwd(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    """Log-file routing through the REAL cli wiring (hub + bridge, then setup_logger)."""
+
+    @staticmethod
+    def _install(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        """The production install against ``data_dir``; stdout swapped off the tty."""
+
+        monkeypatch.setattr(sys, "stdout", io.StringIO())
+        _install_output_hub(resolve_paths(str(data_dir)))
+        return data_dir / "logs" / "SeaDexArr.log"
+
+    def test_logs_route_to_log_dir_not_cwd(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # Run from an empty cwd so a stray "logs/" there would be unambiguous.
         monkeypatch.chdir(tmp_path)
-        log_dir = str(tmp_path / "data" / "logs")
+        log_file = self._install(tmp_path / "data", monkeypatch)
 
-        logger = setup_logger(log_level="INFO", log_dir=log_dir)
+        logger = setup_logger(log_level="INFO", console_format="plain")
         logger.info("routed")
-        logging.shutdown()
 
-        assert os.path.isfile(os.path.join(log_dir, "SeaDexArr.log"))
+        assert log_file.is_file()
+        assert "routed" in log_file.read_text(encoding="utf-8")
         assert not os.path.exists(tmp_path / "logs")
-        # This test is about file routing; setup_logger also attaches a real console
-        # handler, so drain it to keep the line off the terminal under `-s`.
-        capsys.readouterr()
 
-    def test_error_level_is_honored(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_error_level_is_honored(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # ERROR is a first-class level now (it used to warn-and-default to INFO).
-        log_dir = str(tmp_path / "logs")
+        log_file = self._install(tmp_path / "data", monkeypatch)
 
-        logger = setup_logger(log_level="ERROR", log_dir=log_dir)
+        logger = setup_logger(log_level="ERROR", console_format="plain")
         logger.error("kept")
 
         assert logger.level == logging.ERROR
-        for handler in logger.handlers:
-            handler.flush()
-        content = Path(log_dir, "SeaDexArr.log").read_text(encoding="utf-8")
+        content = log_file.read_text(encoding="utf-8")
         assert "Invalid log level" not in content
         assert "kept" in content
-        # This test is about the log file; drain setup_logger's console handler so its
-        # line stays off the terminal under `-s`.
-        capsys.readouterr()
 
     def test_invalid_log_level_complaint_reaches_the_file_log(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # The complaint used to fire before the handlers were attached, so it only
-        # reached logging.lastResort (stderr) - never the file log it warns about.
-        log_dir = str(tmp_path / "logs")
+        # The complaint fires inside setup_logger; with the hub + bridge already
+        # installed (the cli order) it reaches the FileLogSink, never lastResort.
+        log_file = self._install(tmp_path / "data", monkeypatch)
 
-        logger = setup_logger(log_level="BOGUS", log_dir=log_dir)
+        logger = setup_logger(log_level="BOGUS", console_format="plain")
 
         assert logger.level == logging.INFO  # fell back exactly as before
-        for handler in logger.handlers:
-            handler.flush()
-        content = Path(log_dir, "SeaDexArr.log").read_text(encoding="utf-8")
-        assert "Invalid log level 'BOGUS'" in content
-        # This test is about the log file; drain setup_logger's console handler so the
-        # complaint stays off the terminal under `-s`.
-        capsys.readouterr()
+        assert "Invalid log level 'BOGUS'" in log_file.read_text(encoding="utf-8")

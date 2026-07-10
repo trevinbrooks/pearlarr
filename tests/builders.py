@@ -36,7 +36,6 @@ from seadexarr.modules.cache import (
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.grab_pipeline import GrabPipeline
 from seadexarr.modules.import_wait import ImportWaitManager
-from seadexarr.modules.log import LogCounter
 from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport
 from seadexarr.modules.mappings import MappingResolver, MappingSources
 from seadexarr.modules.notify import Notifier
@@ -421,16 +420,13 @@ def make_logger(name: str = "seadexarr-test") -> logging.Logger:
 
     Attaches a NullHandler, disables propagation, and resets the level to
     WARNING on every call so the hot-path debug f-strings aren't formatted and a
-    test that bumps the level can't leak into the next. A ``LogCounter`` filter
-    rides along (as on a ``setup_logger`` logger), so the run-summary /
-    run-loop counter readers (``log_counter``) work against test loggers too.
+    test that bumps the level can't leak into the next. (Severity tallies live
+    on the hub — ``SeverityCounts`` — not on the logger.)
     """
 
     logger = logging.getLogger(name)
     if not logger.handlers:
         logger.addHandler(logging.NullHandler())
-    if not any(isinstance(f, LogCounter) for f in logger.filters):
-        logger.addFilter(LogCounter())
     logger.propagate = False
     logger.setLevel(logging.WARNING)
     return logger

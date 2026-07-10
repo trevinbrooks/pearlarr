@@ -8,12 +8,12 @@ anchor-advance timer trick), the graduation of finished torrents to durable
 scrollback lines, and the closing tally. On a live-capable console
 ``WaitProgress`` feeds the cockpit; a non-live console degrades the way
 ``LogWaitView`` did - a start line + throttled aggregate pulses, no Live. Under
-plain/json there is no rich console and every event no-ops (the
-:class:`~.legacy_echo.LegacyRenderer` echo carries those surfaces).
+plain/json there is no rich console and every event no-ops (the hub's text
+sinks carry those surfaces).
 
 The durable lines here come from the shared :mod:`.wait_lines` builders and
-render through :func:`~.scan_lines.render_legacy_lines`, so the console's
-scrollback and the file/plain ledger can never drift. The single Live slot is
+render through :func:`~.scan_lines.render_legacy_lines`, LOGGER-parity gated
+per line's own level. The single Live slot is
 torn down by :meth:`section_left` when the wait region leaves the renderer's
 fold frontier (whatever event evicted it), so later output never lands under a
 stale region.
@@ -21,7 +21,6 @@ stale region.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import assert_never, final
@@ -99,27 +98,34 @@ class _LiveFrame:
     rich re-renders this on its background refresh thread, so it rebuilds the
     frame from the region's current anchor each tick - ticking timers and
     animating the spinner between the producer's polls. Total by contract: a
-    render bug degrades to an empty frame logged at debug, it never crashes the
-    refresh thread.
+    render bug degrades to an empty frame; the failure is LATCHED for the main
+    thread (never logged here) and never crashes the refresh thread.
     """
 
-    def __init__(self, get_group: Callable[[], Group], logger: logging.Logger) -> None:
+    def __init__(self, get_group: Callable[[], Group]) -> None:
         self._get_group = get_group
-        self._logger = logger
-        self._logged = False
+        self._failure: Exception | None = None
+        self._latched = False
+
+    def take_failure(self) -> Exception | None:
+        """One-shot read of the latched render failure (None once collected)."""
+
+        failure, self._failure = self._failure, None
+        return failure
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         del console, options
         try:
             group = self._get_group()
-        except Exception:
-            # Must stay below WARNING: the bridge adopts WARNING+, and hub.emit off
-            # this Console-lock-holding thread is an ABBA deadlock (see pr5_plan P4).
-            # Once per Live session (a fresh frame per start): rich retries at
-            # 12.5 ticks/s, so a persistent bug would traceback-spam a DEBUG run.
-            if not self._logged:
-                self._logged = True
-                self._logger.debug("wait frame render failed", exc_info=True)
+        except Exception as exc:
+            # NEVER log here: the refresh thread must never reach the bridge/hub
+            # at all - the bridge adopts EVERY first-party level now, and hub.emit
+            # off this Console-lock-holding thread is an ABBA deadlock. Latch the
+            # first failure per Live session (rich retries at 12.5 ticks/s, so a
+            # persistent bug would otherwise spam); WaitRegion reports main-thread.
+            if not self._latched:
+                self._latched = True
+                self._failure = exc
             return
         yield group
 
@@ -147,7 +153,7 @@ class WaitRegion(LiveRegion):
     ) -> None:
         super().__init__(console_source, caps_cache, level_source=level_source)
         self._time_source = time_source
-        # The non-TTY digest cadence; the echo seat runs its own copy in lockstep.
+        # The non-TTY digest cadence (forced-rich on a non-live console).
         self._throttle = PulseThrottle()
         # The frame snapshot the refresh thread reads: caps/layout are set once at
         # Live start (a null-probe placeholder until then; the anchor guard means
@@ -155,8 +161,11 @@ class WaitRegion(LiveRegion):
         self._caps = detect_capabilities(None)
         self._layout = _TableLayout.for_width(self._caps.width)
         self._anchor: _FrameAnchor | None = None
+        self._live_frame: _LiveFrame | None = None
 
     def handle(self, event: WaitEvent) -> None:
+        # Main-thread report of any refresh-thread render failure (the latch).
+        self._collect_frame_failure()
         console = self._console_source()
         if console is None:
             return
@@ -207,7 +216,29 @@ class WaitRegion(LiveRegion):
             self._live.start()
             # One persistent self-recomputing renderable; the producer only swaps the
             # anchor from here on, rich's thread re-renders this between polls.
-            self._live.update(_LiveFrame(self._current_group, self._logger), refresh=True)
+            self._live_frame = _LiveFrame(self._current_group)
+            self._live.update(self._live_frame, refresh=True)
+
+    def _stop_live(self) -> None:
+        # Teardown routes (section_left/close/reset) also flush the latch: a
+        # failure from the session's last ticks must not die with the frame.
+        super()._stop_live()
+        self._collect_frame_failure()
+
+    def _collect_frame_failure(self) -> None:
+        """Report a latched refresh-thread render failure, from the MAIN thread.
+
+        If this lands mid-hub-dispatch the drain queue handles it; mid-BRIDGE-
+        dispatch the N2 path enqueues it file-only. Either way: never the
+        refresh thread.
+        """
+
+        frame = self._live_frame
+        if frame is None:
+            return
+        failure = frame.take_failure()
+        if failure is not None:
+            self._logger.debug("wait frame render failed", exc_info=failure)
 
     def _reset_frame(self) -> None:
         """Drop any stale live slot + frame snapshot (per pass and per cycle)."""

@@ -239,7 +239,7 @@ class TestNoOps:
         assert stream.getvalue() == ""
 
     def test_without_a_rich_console_the_renderer_no_ops(self) -> None:
-        """plain/json mode: the LegacyRenderer/file path still carries the record."""
+        """plain/json mode: the FileLogSink/text seats still carry the record."""
 
         renderer = RichRenderer(lambda: None)
 

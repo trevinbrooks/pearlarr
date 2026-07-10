@@ -351,7 +351,7 @@ class RunReporter:
 
     # The two close boundaries carry no ``log_`` prefix and return nothing: they
     # state a boundary rather than report one, and no renderer draws a line for
-    # either (rich passes, legacy echoes nothing, the text sink skips them).
+    # either (rich passes, the text sinks skip them).
 
     def scan_finished(self, arr: Arr) -> None:
         """Close the scan and its open entry (the per-arr scan-close boundary).

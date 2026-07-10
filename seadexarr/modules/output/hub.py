@@ -114,7 +114,7 @@ class SeverityTally:
 class SeverityCounts:
     """Monotonic per-process tallies; runs take a mark() and read counts_since().
 
-    Replaces LogCounter: N13 — never "reset per cycle", always deltas via marks.
+    N13 — never "reset per cycle", always deltas via marks.
     """
 
     def __init__(self) -> None:
@@ -181,7 +181,6 @@ class OutputHub:
         self._strike_limit = strike_limit
         self._once_keys: set[tuple[str, str]] = set()
         self._counts = SeverityCounts()
-        self._cycle_mark = SeverityTally()
         self._level = int(Severity.INFO)
         self._closed = False
         self._pending: deque[tuple[Event, float]] = deque()
@@ -210,19 +209,6 @@ class OutputHub:
 
         sub = self._console_sub
         return sub is not None and sub.strikes < self._strike_limit
-
-    def cycle_counts(self) -> SeverityTally:
-        """Severity deltas since the last begin_cycle."""
-
-        return self._counts.counts_since(self._cycle_mark)
-
-    def record_severity(self, severity: Severity) -> None:
-        """Count-only bump, no event: first-party WARNING+ payload records render
-        fully legacy, but their severity must still reach the capstone/summary tallies."""
-
-        if self._closed:
-            return
-        self._counts.record(severity)
 
     def emit(self, event: Event) -> None:
         """Enqueue under the hub lock; the combiner dispatches outside it.
@@ -323,7 +309,7 @@ class OutputHub:
 
     def begin_cycle(self, *, console_format: LogFormat, level: int) -> None:
         """Per-cycle turnover: re-arm strikes, clear once-keys, swap the console
-        renderer when the re-peeked format changed, rotate/reset sinks, mark counts."""
+        renderer when the re-peeked format changed, rotate/reset sinks."""
 
         with self._lock:
             self._await_no_drainer()
@@ -340,7 +326,6 @@ class OutputHub:
                 except Exception:
                     self._strike(sub)
             self.set_level(level)
-            self._cycle_mark = self._counts.mark()
 
     def set_level(self, level: int) -> None:
         """Forward the configured level; each surface applies its own floor semantics (S4)."""

@@ -1,19 +1,16 @@
-"""SeaDexArr's output architecture (PR3: diagnostics + the boot flow are LIVE).
+"""SeaDexArr's output architecture (PR6: the hub's sinks own every surface).
 
 An event-stream chassis: producers emit the closed union of frozen event
 dataclasses (:mod:`.events`) through typed scope handles (:mod:`.scopes`) into one
 synchronous :class:`~.hub.OutputHub`; surfaces subscribe as renderers. The shared
 :class:`~.breadcrumbs.BreadcrumbFold` folds scope boundaries into the open path
 (labels for the text sinks in :mod:`.textline`; the placement authority is the
-:class:`~.rich_renderer.RichRenderer`'s instance). Live since PR2: the logging
-bridge (:mod:`.bridge`) adopts stdlib records, the RichRenderer places adopted
-diagnostics against the boot/wait cockpit scopes, and the
-:class:`~.legacy_echo.LegacyRenderer` echoes third-party records to the legacy
-file path. Live since PR3: the boot flow (banner / steps / capstone) is
-event-driven — ``boot_flow.BootFlow`` produces, the RichRenderer's
-:class:`~.boot_region.BootRegion` owns the cockpit, and the LegacyRenderer
-echoes the ledger lines byte-identically for file/plain. The text sinks in
-:mod:`.textline` stay dark until PR6.
+:class:`~.rich_renderer.RichRenderer`'s instance). The logging bridge
+(:mod:`.bridge`) adopts stdlib records into Diagnostic events; the RichRenderer
+owns the rich console (boot/scan/wait cockpits + diagnostic placement); the
+:mod:`.textline` sinks own the structured log file (:class:`FileLogSink`), plain
+stdout (:class:`LineRenderer`) and json stdout (:class:`JsonRenderer`) — one
+grammar, plain == file by construction.
 """
 
 from .breadcrumbs import KIND_DEPTH, PATH_SEP, SEGMENT_WORD, BreadcrumbFold, OpenNode
@@ -70,7 +67,6 @@ from .events import (
     severity_of,
 )
 from .hub import STRIKE_LIMIT, NullRenderer, OutputHub, Renderer, SeverityCounts, SeverityTally
-from .legacy_echo import LegacyRenderer
 from .rich_renderer import RichRenderer, diagnostic_text, diagnostic_threshold
 from .runtime import current_hub, emit_to_hub, hub_counts, install_hub, uninstall_hub
 from .scopes import (
@@ -125,7 +121,6 @@ __all__ = [
     "ItemStarted",
     "JsonRenderer",
     "LedgerRow",
-    "LegacyRenderer",
     "LineRenderer",
     "NeedsActionCause",
     "NeedsActionFact",

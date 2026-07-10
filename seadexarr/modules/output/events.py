@@ -680,9 +680,7 @@ def severity_of(event: Event) -> Severity:
             # problem itself, so an outcome-based tally would double-count it.
             return Severity.INFO
         case TorrentGraduated(outcome=outcome):
-            # Deliberately diverges from the P7 all-INFO legacy echo until PR6's
-            # fidelity flip aligns the two; hub counts have no post-boot reader
-            # this side of PR6, so nothing can double-count meanwhile.
+            # Category-based; wait_graduation_line carries the same level (P6).
             return _category_severity(outcome.category)
         case (
             RunStarted()

@@ -7,11 +7,7 @@ the graduation of finished steps to durable scrollback lines, and the capstone.
 On a live-capable console the spinner shows liveness (``BootStepSlow`` is
 ignored); a non-live rich console degrades the way ``LogBootView`` did — no
 Live, a one-time heads-up line per slow step. Under plain/json there is no rich
-console and every event no-ops (the :class:`~.legacy_echo.LegacyRenderer` echo
-carries those surfaces).
-
-The pure line builders here are shared with the echo, so the file/plain ledger
-lines and the console's durable lines can never drift.
+console and every event no-ops (the hub's text sinks carry those surfaces).
 """
 
 from __future__ import annotations

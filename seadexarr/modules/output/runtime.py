@@ -38,16 +38,28 @@ def hub_counts() -> SeverityCounts:
 
 
 def install_hub(hub: OutputHub) -> None:
-    """Make ``hub`` the process hub (cli, once; a repeat call re-wires the seam)."""
+    """Make ``hub`` the process hub, closing any previously installed one.
+
+    A repeat ``run single`` in one process must not leak the prior hub's open
+    FileLogSink (or double-rotate its cascade); the DEFAULT hub is never closed.
+    """
 
     global _hub
+    if _hub is not _DEFAULT_HUB and _hub is not hub:
+        _hub.close()
     _hub = hub
 
 
 def uninstall_hub() -> None:
-    """Restore the renderer-less default (tests)."""
+    """Close the installed hub and restore the renderer-less default (tests).
+
+    Closing releases the outgoing hub's sink resources (an open FileLogSink
+    handle); emits on a closed hub drop silently. NEVER closes the default.
+    """
 
     global _hub
+    if _hub is not _DEFAULT_HUB:
+        _hub.close()
     _hub = _DEFAULT_HUB
 
 

@@ -387,6 +387,21 @@ def test_file_sink_honors_the_configured_level_but_still_folds(tmp_path: Path) -
     )
 
 
+def test_a_failed_graduation_admits_through_a_warning_level_sink(tmp_path: Path) -> None:
+    # P6: severity_of(TorrentGraduated) is category-based, so a FAILED
+    # graduation (ERROR) survives a raised file level while a success drops.
+    sink = FileLogSink(str(tmp_path))
+    sink.set_level(logging.WARNING)
+
+    sink.handle(TorrentGraduated(label="Ok Show", outcome=Outcome.IMPORTED, files=1, waited_s=5.0), _EPOCH)
+    sink.handle(TorrentGraduated(label="Bad Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=5.0), _EPOCH)
+    sink.close()
+
+    content = (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8")
+    assert "Ok Show" not in content
+    assert f'{_TS} ERROR [wait] errored title="Bad Show" waited_s=5.00\n' in content
+
+
 def test_a_warning_file_level_admits_per_line_within_the_summary(tmp_path: Path) -> None:
     sink = FileLogSink(str(tmp_path))
     sink.set_level(logging.WARNING)
