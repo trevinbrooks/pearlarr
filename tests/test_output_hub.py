@@ -457,6 +457,51 @@ def test_a_propagating_interrupt_never_strands_the_baton() -> None:
     assert follow in survivor.events
 
 
+def test_an_interrupt_before_the_drain_loop_cannot_wedge_the_baton(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An interrupt landing before _drain runs must leave no stale baton behind.
+
+    Emit only checks-and-calls; the baton is taken inside _drain's try. With the
+    old take-in-emit shape this KI left _drainer set forever and the follow-up
+    emit dispatched nothing (the silent-dark-hub wedge).
+    """
+
+    survivor = RecordingRenderer()
+    hub = OutputHub([survivor])
+
+    def interrupted_drain() -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(hub, "_drain", interrupted_drain)
+    with pytest.raises(KeyboardInterrupt):
+        hub.emit(_EVENT)
+    monkeypatch.undo()
+
+    assert hub._drainer is None  # nothing to strand: the baton was never taken
+    follow = Diagnostic(severity=Severity.INFO, message="after")
+    hub.emit(follow)  # drains the stranded event AND the new one, in order
+    assert [type(event).__name__ for event in survivor.events] == ["RunStarted", "Diagnostic"]
+
+
+def test_drain_is_a_no_op_loser_when_another_thread_holds_the_baton() -> None:
+    """The take race's loser returns without dispatching or touching the owner's baton."""
+
+    survivor = RecordingRenderer()
+    hub = OutputHub([survivor])
+    other = threading.Thread(target=lambda: None)
+    with hub._lock:
+        hub._pending.append((_EVENT, 0.0))
+        hub._drainer = other
+
+    hub._drain()
+
+    assert survivor.events == []  # the loser dispatched nothing
+    assert hub._drainer is other  # and left the owner's baton alone
+    with hub._lock:  # hand the baton back so the follow-up emit can drain
+        hub._drainer = None
+    hub.emit(Diagnostic(severity=Severity.INFO, message="after"))
+    assert [type(event).__name__ for event in survivor.events] == ["RunStarted", "Diagnostic"]
+
+
 def test_lifecycle_waits_for_the_active_drain_to_finish() -> None:
     gated = _GatedRenderer()
     hub = OutputHub([gated])

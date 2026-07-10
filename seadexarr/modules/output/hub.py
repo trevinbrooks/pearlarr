@@ -229,10 +229,11 @@ class OutputHub:
 
         Under the lock: closed/once-key gating, the severity tally (at enqueue,
         so counts survive a dying renderer), one clock read, one queue append.
-        If no drain is active the caller takes the baton and drains synchronously
-        before returning; otherwise the active drainer picks the event up (its
-        loop re-checks the queue before releasing the baton) — this covers both
-        cross-thread emits and re-entrant emits from inside a renderer's handle.
+        If no drain is active the caller enters the combiner, which takes the
+        baton interrupt-safely and drains synchronously before returning;
+        otherwise the active drainer picks the event up (its loop re-checks the
+        queue before releasing the baton) — this covers both cross-thread emits
+        and re-entrant emits from inside a renderer's handle.
         Overflow past the cap sheds only diagnostics — the unbounded bridge-fed
         class; structural/scan events are appended even past the cap (fold inputs
         must never be lost), and never blocks (bounded blocking would re-form the
@@ -266,17 +267,23 @@ class OutputHub:
                 self._pending.append((event, when))
             if self._drainer is not None:
                 return
-            self._drainer = threading.current_thread()
         self._drain()
 
     def _drain(self) -> None:
         """The combiner loop: pop + snapshot under the lock, dispatch outside it.
 
-        The empty re-check before releasing the baton is the combiner guarantee:
-        no event ever waits for a future emit.
+        The baton is taken INSIDE the try (emit only checks-and-calls), so an
+        interrupt can never strand it between assignment and the clearing
+        finally; a loser of the take race just returns, its event already
+        queued for the winner. The empty re-check before releasing the baton
+        is the combiner guarantee: no event ever waits for a future emit.
         """
 
         try:
+            with self._lock:
+                if self._drainer is not None:
+                    return
+                self._drainer = threading.current_thread()
             while True:
                 with self._lock:
                     if self._closed or not self._pending:
