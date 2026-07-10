@@ -250,6 +250,29 @@ class TestHubWaitViewNarration:
         (finished,) = recording.of_type(WaitFinished)
         assert finished.elapsed_s == 95.0
 
+    def test_interrupted_finish_still_closes_the_scope(self) -> None:
+        # A KeyboardInterrupt inside finish's synchronous dispatch propagates
+        # (never swallowed), but the placement scope still closes on the way out
+        # (the finally), so WAIT_REGION can't leak open behind the unwind.
+        recording = RecordingHub()
+        install_hub(recording.hub)
+        real_emit = recording.hub.emit
+
+        def interrupt_on_finish(event: Event) -> None:
+            if isinstance(event, WaitFinished):
+                raise KeyboardInterrupt
+            real_emit(event)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("seadexarr.modules.wait_view.emit_to_hub", interrupt_on_finish)
+            view = self._view()
+            view.update(WaitSnapshot((_downloading("h1", "A"),), elapsed_s=5))
+            with pytest.raises(KeyboardInterrupt):
+                view.close()
+
+        assert recording.of_type(WaitFinished) == []
+        assert len(recording.of_type(ScopeClosed)) == 1  # the finally's fallback close
+
     def test_update_after_close_emits_nothing(self) -> None:
         # Defensive: the engine never updates a closed view, but a bug there must
         # not re-open the scope or emit past the finish.

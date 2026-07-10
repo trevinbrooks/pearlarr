@@ -369,13 +369,15 @@ class ImportWaitManager:
         downloads (the user's "monitor ALL" choice). Each cycle advances every
         active torrent once (so a fast torrent isn't stuck behind a slow one) into a
         ``dict[infohash -> TorrentView]``, then pushes ONE :class:`WaitSnapshot` to
-        the view (which graduates any newly-terminal torrent to scrollback).
+        the view (which emits a graduation per newly-terminal torrent; the
+        renderers scroll it back).
         ``imported`` is reported ONLY when the episode files are verified present
         (``probe.files_present``), so an in-flight remote-mount copy reads
         ``importing`` until it lands. Per-torrent timeouts: ``imports.wait_timeout``
         for the download, ``imports.ready_timeout`` for the import (from the first
-        COMPLETE). Ctrl-C breaks the loop (the ``finally`` restores the terminal and
-        the caller still saves the cache); the terminal outcomes are returned as a
+        COMPLETE). Ctrl-C pushes one final snapshot (so that cycle's terminals
+        still graduate) then breaks the loop (the ``finally`` restores the terminal
+        and the caller still saves the cache); the terminal outcomes are returned as a
         :class:`WaitResult` for the run report + completion notification. The clock /
         sleep / view are injectable for tests.
         """
@@ -420,6 +422,10 @@ class ImportWaitManager:
                     if mp.active:
                         self._progress_wait(mp, view, nap)
                 except KeyboardInterrupt:
+                    # One final push so this cycle's terminals still graduate and
+                    # the tally's elapsed reads interrupt time (the view is total,
+                    # so the push can't raise past the break).
+                    view.update(mp.snapshot())
                     self.logger.info(f"Wait interrupted; {len(mp.active)} left pending")
                     break
         finally:

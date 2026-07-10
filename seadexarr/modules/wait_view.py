@@ -148,6 +148,8 @@ class HubWaitView(WaitView):
         try:
             if self._closed:  # defensive; the engine never updates after close
                 return
+            # Stamped first, so an interrupted narration still reports fresh elapsed.
+            self._last_elapsed = snapshot.elapsed_s
             if self._scope is None:
                 # Deliberate order flip vs the old views: WaitStarted now precedes
                 # any first-snapshot graduations (they logged graduations first).
@@ -167,7 +169,6 @@ class HubWaitView(WaitView):
                         waited_s=torrent.phase_elapsed_s,
                     ),
                 )
-            self._last_elapsed = snapshot.elapsed_s
             scope.progress(snapshot)
         except Exception:
             # Total by contract: a narration bug degrades to a no-op, it never
@@ -196,8 +197,11 @@ class HubWaitView(WaitView):
             )
         except Exception:
             self._logger.debug("wait view close failed", exc_info=True)
-            # The placement scope must still close (the old unconditional close).
-            with contextlib.suppress(Exception):
+        finally:
+            # The placement scope must still close (the old unconditional close),
+            # even when an interrupt aborts finish mid-dispatch; a no-op after a
+            # clean finish, and suppress keeps a propagating interrupt intact.
+            with contextlib.suppress(BaseException):
                 scope.close()
 
 

@@ -175,6 +175,21 @@ class FakeQbit:
         return rows
 
 
+class _InterruptOnHash(FakeQbit):
+    """Raises KeyboardInterrupt when the heavy poll reaches the given hash —
+    a Ctrl-C landing mid-advance-loop, after earlier records already advanced."""
+
+    def __init__(self, torrents: dict[str, list[QbitStep]], *, interrupt_on: str) -> None:
+        super().__init__(torrents)
+        self._interrupt_on = interrupt_on.casefold()
+
+    @override
+    def torrents_info(self, *, torrent_hashes: str | list[str]) -> list[FakeTorrent]:
+        if isinstance(torrent_hashes, str) and torrent_hashes.casefold() == self._interrupt_on:
+            raise KeyboardInterrupt
+        return super().torrents_info(torrent_hashes=torrent_hashes)
+
+
 def make_wait_manager(qbit: FakeQbit) -> ImportWaitManager:
     """A bare ``ImportWaitManager`` wired only with the ``qbit`` the poll reads."""
 
@@ -1189,6 +1204,31 @@ class TestRunMonitor:
         assert result is not None and result.waited == 0
         assert set(mgr._pending_records()) == {"h"}  # left pending for next run
         assert view.saw("h", Phase.DOWNLOADING)
+
+    def test_interrupt_mid_cycle_still_graduates_that_cycles_terminals(self) -> None:
+        # A torrent that turned terminal in the SAME cycle the interrupt lands in
+        # must still reach the view (the except arm pushes one final snapshot), so
+        # the console tally/ledger can never undercount the returned WaitResult.
+        first = pending_import(infohash="h1", added_at=_FRESH)
+        second = pending_import(infohash="h2", added_at=_FRESH)
+        # h1 is unscripted -> gone -> MISSING terminal on its first advance; the
+        # interrupt then lands on h2's poll, before that cycle's snapshot push.
+        qbit = _InterruptOnHash({"h2": [FakeTorrent(progress=0.3)]}, interrupt_on="h2")
+        mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=_RecordingStrategy(),
+            store_records=[first, second],
+            pending=[first, second],
+            import_wait_timeout=3600,
+            import_ready_timeout=600,
+            import_poll_interval=30,
+        )
+        view = RecordingWaitView()
+
+        result = mgr.run_monitor(now=lambda: 0.0, sleep=lambda _s: None, view=view)  # must not raise
+
+        assert result is not None and result.waited == 1
+        assert view.final("h1").outcome is Outcome.MISSING  # the interrupt-time push carried it
 
     def test_import_exception_is_swallowed_and_record_left(self) -> None:
         # A failing import (e.g. malformed Sonarr response) must NOT propagate and
