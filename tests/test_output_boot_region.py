@@ -17,7 +17,9 @@ import io
 import logging
 from importlib.metadata import version
 
+import pytest
 from rich.console import Console
+from rich.live import Live
 
 from seadexarr.modules.boot_flow import BootFlow
 from seadexarr.modules.config import Arr
@@ -293,6 +295,23 @@ class TestBootRegion:
         _feed(renderer, _opened(), _started("Two", serial=2))
         renderer.close()
         _feed(renderer, _opened(), _started("Three", serial=3), ScopeClosed(scope=_SECTION))
+
+    def test_a_raising_live_stop_still_prints_the_capstone(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The shared spine (LiveRegion._stop_live) contains a stop() raise so a
+        # failed teardown can't eat the durable print that follows it.
+        real_stop = Live.stop
+
+        def exploding_stop(live: Live) -> None:
+            real_stop(live)  # the real teardown, so the console leaves live mode
+            raise RuntimeError("live stop exploded")
+
+        monkeypatch.setattr(Live, "stop", exploding_stop)
+        renderer, stream = _renderer()
+
+        _feed(renderer, _opened(), _started("Fetching library"), BootReady(elapsed_s=0.61))
+
+        assert renderer._boot._live is None
+        assert "ready in 0.61s" in _plain(stream)
 
     def test_progress_updates_never_raise_and_stay_transient(self) -> None:
         renderer, stream = _renderer()

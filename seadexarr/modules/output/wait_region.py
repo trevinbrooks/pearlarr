@@ -27,13 +27,13 @@ from dataclasses import dataclass, replace
 from typing import assert_never, final
 
 from rich.console import Console, ConsoleOptions, Group, RenderResult
-from rich.live import Live
 from rich.padding import Padding
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
 from .events import Phase, TorrentGraduated, WaitFinished, WaitProgress, WaitSnapshot, WaitStarted
+from .live_region import LiveRegion
 from .scan_lines import LegacyLine, render_legacy_lines
 from .wait_lines import (
     LiveModel,
@@ -54,7 +54,7 @@ from ..console_caps import (
     make_live,
     spinner_name,
 )
-from ..log import INDENT, LOG_NAME, indent_string
+from ..log import INDENT, indent_string
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,7 +125,7 @@ class _LiveFrame:
 
 
 @final
-class WaitRegion:
+class WaitRegion(LiveRegion):
     """One live slot + durable prints over the shared Console (PR5).
 
     Durable lines (start, pulses, graduations, tally) print the moment their
@@ -145,24 +145,15 @@ class WaitRegion:
         level_source: Callable[[], int],
         time_source: Callable[[], float],
     ) -> None:
-        self._console_source = console_source
-        # Production wiring (cli) shares ONE cache with the LegacyRenderer echo so
-        # both surfaces branch on the same probe; None builds a private cache.
-        self._caps_cache = caps_cache if caps_cache is not None else CapsCache()
-        # The RichRenderer's level store, read live (no duplicate _level here).
-        self._level_source = level_source
+        super().__init__(console_source, caps_cache, level_source=level_source)
         self._time_source = time_source
         # The non-TTY digest cadence; the echo seat runs its own copy in lockstep.
         self._throttle = PulseThrottle()
-        # For the _LiveFrame debug swallow; the refresh thread logs nothing above it.
-        self._logger = logging.getLogger(LOG_NAME)
         # The frame snapshot the refresh thread reads: caps/layout are set once at
         # Live start (a null-probe placeholder until then; the anchor guard means
         # a frame never builds before the first live progress).
         self._caps = detect_capabilities(None)
         self._layout = _TableLayout.for_width(self._caps.width)
-        self._spinner: Spinner | None = None
-        self._live: Live | None = None
         self._anchor: _FrameAnchor | None = None
 
     def handle(self, event: WaitEvent) -> None:
@@ -193,22 +184,9 @@ class WaitRegion:
             case _:
                 assert_never(event)
 
-    def section_left(self) -> None:
-        """The wait region left the renderer's frontier: tear the live slot down.
-
-        A safe no-op when no Live ever started (the non-TTY digest path), so the
-        generalized frontier-departure loop can call it unconditionally.
-        """
-
-        self._stop_live()
-
-    def begin_cycle(self) -> None:
+    def _reset(self) -> None:
         self._reset_frame()
-        self._caps_cache.reset()
         self._throttle.reset()
-
-    def close(self) -> None:
-        self._stop_live()
 
     def _durable(self, console: Console, lines: list[LegacyLine]) -> None:
         # LOGGER-parity gating: at a configured WARNING the wait INFO lines vanish
@@ -238,16 +216,6 @@ class WaitRegion:
         self._anchor = None
         self._caps = detect_capabilities(None)
         self._layout = _TableLayout.for_width(self._caps.width)
-
-    def _stop_live(self) -> None:
-        # Take-and-clear; the stop() raise is contained so a failed stop can't
-        # eat the tally print that follows on WaitFinished.
-        live, self._live, self._spinner = self._live, None, None
-        if live is not None:
-            try:
-                live.stop()
-            except Exception:
-                self._logger.debug("wait live stop failed", exc_info=True)
 
     def _current_group(self) -> Group:
         """Build the frame for the CURRENT instant - ticks timers + spinner forward.

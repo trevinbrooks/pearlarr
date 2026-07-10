@@ -21,7 +21,6 @@ from collections.abc import Callable
 from typing import assert_never, final
 
 from rich.console import Console
-from rich.live import Live
 from rich.padding import Padding
 from rich.spinner import Spinner
 from rich.text import Text
@@ -34,6 +33,7 @@ from .events import (
     BootStepStarted,
     RunStarted,
 )
+from .live_region import LiveRegion
 from ..console_caps import Capabilities, CapsCache, block_bar, make_live, spinner_name
 from ..log import INDENT, format_elapsed, indent_string, print_titled_rule
 
@@ -100,7 +100,7 @@ def ready_line(elapsed_s: float) -> str:
 
 
 @final
-class BootRegion:
+class BootRegion(LiveRegion):
     """One live slot + durable prints over the shared Console (PR3).
 
     Durable lines (banner, graduations, heads-up, capstone) print the moment
@@ -118,14 +118,7 @@ class BootRegion:
         *,
         level_source: Callable[[], int],
     ) -> None:
-        self._console_source = console_source
-        # Production wiring (cli) shares ONE cache with the LegacyRenderer echo so
-        # both surfaces branch on the same probe; None builds a private cache.
-        self._caps_cache = caps_cache if caps_cache is not None else CapsCache()
-        # The RichRenderer's level store, read live (no duplicate _level here).
-        self._level_source = level_source
-        self._live: Live | None = None
-        self._spinner: Spinner | None = None
+        super().__init__(console_source, caps_cache, level_source=level_source)
         # The only cross-event frame state: Progressed events carry no label.
         self._label = ""
 
@@ -160,18 +153,9 @@ class BootRegion:
             case _:
                 assert_never(event)
 
-    def section_left(self) -> None:
-        """The boot section left the renderer's frontier: tear the live slot down."""
-
-        self._stop_live()
-
-    def begin_cycle(self) -> None:
-        self._stop_live()
-        self._caps_cache.reset()
+    def _reset(self) -> None:
+        super()._reset()
         self._label = ""
-
-    def close(self) -> None:
-        self._stop_live()
 
     def _admits_durable(self) -> bool:
         """Level parity with the logger-driven ledger: INFO lines need level <= INFO.
@@ -218,12 +202,6 @@ class BootRegion:
         else:
             line.append(_ellipsis(caps), style="bold")
         return line
-
-    def _stop_live(self) -> None:
-        # Take-and-clear; Live.stop() itself no-ops once stopped (its _started guard).
-        live, self._live, self._spinner = self._live, None, None
-        if live is not None:
-            live.stop()
 
     @staticmethod
     def _print(console: Console, text: Text) -> None:

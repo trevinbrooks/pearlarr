@@ -65,6 +65,7 @@ from .events import (
     WaitProgress,
     WaitStarted,
 )
+from .live_region import LiveRegion
 from .scan_lines import ScanEvent, render_legacy_lines, scan_event_lines
 from .trace import CapturedTrace
 from .wait_region import WaitRegion
@@ -130,7 +131,7 @@ class RichRenderer:
         )
         # Each region owns one Live slot; a frontier departure tears its slot down
         # no matter which event evicted the node (ScopeClosed, a RunFinished unwind).
-        self._regions: tuple[tuple[ScopeKind, BootRegion | WaitRegion], ...] = (
+        self._regions: tuple[tuple[ScopeKind, LiveRegion], ...] = (
             (ScopeKind.BOOT_SECTION, self._boot),
             (ScopeKind.WAIT_REGION, self._wait),
         )
