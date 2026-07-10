@@ -1,23 +1,42 @@
-"""Pure, rich-free reducers for the wait pass's rendering (PR5).
+"""Pure builders + reducers for the wait pass's rendering (PR5).
 
-The bounded live-frame model (:func:`live_model` and its row/aggregate helpers)
-and the graduation ledger's coda (:func:`graduation_tail`) - pure functions of
-the wait value types in :mod:`.events`, so both render seats share one layout
-brain. No rich imports here; the views/renderers own every styled look.
+Two families, no styled look decided here. The bounded live-frame model
+(:func:`live_model` and its row/aggregate helpers) and the graduation ledger's
+coda (:func:`graduation_tail`) reduce the wait value types in :mod:`.events` to
+a rich-free layout brain both cockpit seats share. The :class:`LegacyLine`
+builders (:func:`wait_start_line` and friends) map each durable wait fact to the
+exact log line today's views produce - pinned by the Band A goldens in
+``tests/test_wait_parity.py`` - so the file/plain echo and the console's
+durable lines can never drift. :class:`PulseThrottle` carries the non-TTY
+digest cadence, shared by both echo seats so the arithmetic can't diverge.
 """
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, final
 
-from .events import Phase, TorrentView, WaitSnapshot, clamp01
-from ..log import count_noun, format_elapsed, human_bytes
+from .events import Phase, TorrentGraduated, TorrentView, WaitFinished, WaitProgress, WaitSnapshot, WaitStarted, clamp01
+from .scan_lines import LegacyLine
+from ..log import (
+    STATE_WIDTH,
+    SectionRule,
+    StyledLine,
+    count_noun,
+    format_elapsed,
+    human_bytes,
+    indent_string,
+    rule_string,
+)
 from ..manual_import import Outcome
 
 if TYPE_CHECKING:
     from ..console_caps import Capabilities
+
+type WaitEvent = WaitStarted | WaitProgress | TorrentGraduated | WaitFinished
+"""The event subset both wait render seats consume."""
 
 # The live cockpit never grows past this many in-flight rows; the rest collapse
 # into a one-line "+ N more ..." overflow, so a large carried-over backlog can't
@@ -54,6 +73,101 @@ def graduation_tail(outcome: Outcome, files: int | None, waited_s: float) -> str
         return "retries next run"
     # MISSING: the torrent vanished from qBittorrent, so the record went with it.
     return "no longer tracked"
+
+
+# --- the durable ledger-line builders (console scrollback == file/plain echo) --------
+#
+# Transliterated from wait_view's LogWaitView/_DurableWaitView; every wait line
+# logs at INFO today (P7), failures included. Pinned by tests/test_wait_parity.py.
+
+
+def wait_start_line(event: WaitStarted) -> LegacyLine:
+    """The non-TTY digest's opening line (LogWaitView's first render)."""
+
+    return LegacyLine(logging.INFO, f"Waiting on {count_noun(event.total, 'download')} to complete and import...")
+
+
+def wait_pulse_line(snapshot: WaitSnapshot) -> LegacyLine:
+    """One throttled "still waiting" aggregate pulse (LogWaitView's later renders)."""
+
+    counts = snapshot.counts()
+    message = indent_string(
+        f"still waiting · {counts[Phase.DOWNLOADING]} downloading · "
+        f"{counts[Phase.IMPORTING]} importing · {counts[Phase.QUEUED]} queued · "
+        f"{format_elapsed(snapshot.elapsed_s)}",
+    )
+    return LegacyLine(logging.INFO, message)
+
+
+def wait_graduation_line(event: TorrentGraduated, caps: Capabilities) -> LegacyLine:
+    """A finished torrent's durable ledger line: glyph + word + label + coda."""
+
+    glyph = event.outcome.glyph(use_unicode=caps.unicode)
+    line = f"{glyph} {event.outcome.word.ljust(STATE_WIDTH)} {event.label}"
+    tail = graduation_tail(event.outcome, event.files, event.waited_s)
+    if tail:
+        line += f"  ({tail})"
+    return LegacyLine(logging.INFO, indent_string(line), StyledLine(style=event.outcome.style if caps.color else ""))
+
+
+def wait_tally_lines(event: WaitFinished) -> list[LegacyLine]:
+    """The closing wait summary (rule + tally); ``[]`` when nothing graduated."""
+
+    if event.imported == 0 and event.deferred == 0 and event.failed == 0:
+        return []
+    parts = [f"{event.imported} imported"]
+    if event.deferred:
+        parts.append(f"{event.deferred} left")
+    if event.failed:
+        parts.append(f"{event.failed} failed")
+    parts.append(format_elapsed(event.elapsed_s))
+    return [
+        LegacyLine(logging.INFO, rule_string("-", 80), SectionRule(char="-")),
+        LegacyLine(logging.INFO, indent_string("wait complete · " + " · ".join(parts))),
+    ]
+
+
+@final
+class PulseThrottle:
+    """The non-TTY digest's pulse cadence - rich-free, deterministic, shared.
+
+    Parity with LogWaitView's throttle: :meth:`arm` (on WaitStarted) sets the
+    interval; the FIRST :meth:`fire` returns False unconditionally (the old
+    view's first render printed the start line and returned, so the start
+    snapshot never pulses), then a pulse is due once elapsed reaches the
+    elapsed-anchored next mark. State advances regardless of log level, so both
+    echo seats stay in lockstep.
+    """
+
+    __slots__ = ("_interval", "_next", "_skip_first")
+
+    def __init__(self) -> None:
+        self._interval: float | None = None
+        self._next = 0.0
+        self._skip_first = False
+
+    def arm(self, interval_s: float) -> None:
+        self._interval = interval_s
+        self._next = interval_s
+        self._skip_first = True
+
+    def fire(self, elapsed_s: float) -> bool:
+        """Advance the cadence; True when a pulse is due at ``elapsed_s``."""
+
+        if self._interval is None:
+            return False
+        if self._skip_first:
+            self._skip_first = False
+            return False
+        if elapsed_s < self._next:
+            return False
+        self._next = elapsed_s + self._interval
+        return True
+
+    def reset(self) -> None:
+        self._interval = None
+        self._next = 0.0
+        self._skip_first = False
 
 
 @dataclass(frozen=True, slots=True)

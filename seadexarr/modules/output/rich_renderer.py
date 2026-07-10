@@ -22,6 +22,7 @@ LegacyRenderer/file path still carries the record.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from typing import assert_never, final
 
@@ -66,6 +67,7 @@ from .events import (
 )
 from .scan_lines import ScanEvent, render_legacy_lines, scan_event_lines
 from .trace import CapturedTrace
+from .wait_region import WaitRegion
 from ..console_caps import CapsCache, console_of
 from ..log import INDENT, LOG_NAME, RichConsoleHandler, badge_line, console_level
 
@@ -106,29 +108,44 @@ def diagnostic_text(event: Diagnostic, *, indented: bool) -> Text:
 
 @final
 class RichRenderer:
-    """The hub's console seat (PR3: diagnostics + boot; scan/wait arms land in PR4-5)."""
+    """The hub's console seat (diagnostics + the boot/scan/wait cockpit arms)."""
 
     def __init__(
         self,
         console_source: Callable[[], Console | None] = live_console,
         caps_cache: CapsCache | None = None,
+        time_source: Callable[[], float] = time.monotonic,
     ) -> None:
         # ``caps_cache`` must be the instance the LegacyRenderer echo shares in
-        # production (cli wiring); None builds the BootRegion a private cache.
+        # production (cli wiring); None builds the regions a private cache.
         self._console_source = console_source
         self._crumbs = BreadcrumbFold()
         self._level = int(Severity.INFO)
         self._boot = BootRegion(console_source, caps_cache, level_source=self._current_level)
+        self._wait = WaitRegion(
+            console_source,
+            caps_cache,
+            level_source=self._current_level,
+            time_source=time_source,
+        )
+        # Each region owns one Live slot; a frontier departure tears its slot down
+        # no matter which event evicted the node (ScopeClosed, a RunFinished unwind).
+        self._regions: tuple[tuple[ScopeKind, BootRegion | WaitRegion], ...] = (
+            (ScopeKind.BOOT_SECTION, self._boot),
+            (ScopeKind.WAIT_REGION, self._wait),
+        )
 
     def handle(self, event: Event, when: float) -> None:
         del when
         # Placement must be settled BEFORE rendering (fold-first also keeps the
-        # fold advancing when rendering raises); a boot-section departure tears
-        # the live slot down no matter which event evicted the node.
-        boot_was_open = self._boot_section_open()
+        # fold advancing when rendering raises); a region departure tears its live
+        # slot down no matter which event evicted the node (ScopeClosed, a
+        # RunFinished unwind, anything).
+        open_before = tuple(self._frontier_has(kind) for kind, _ in self._regions)
         self._crumbs.apply(event)
-        if boot_was_open and not self._boot_section_open():
-            self._boot.section_left()
+        for was_open, (kind, region) in zip(open_before, self._regions, strict=True):
+            if was_open and not self._frontier_has(kind):
+                region.section_left()
         match event:
             case Diagnostic():
                 self._diagnostic(event)
@@ -155,20 +172,12 @@ class RichRenderer:
                 | RunSummaryReady()
             ):
                 self._scan(event)
-            case (
-                CycleStarted()
-                | NextRunScheduled()
-                | ReleaseSkipped()
-                | GrabFailed()
-                | ScanFinished()
-                | WaitStarted()
-                | WaitProgress()
-                | TorrentGraduated()
-                | WaitFinished()
-                | RunFinished()
-            ):
+            case WaitStarted() | WaitProgress() | TorrentGraduated() | WaitFinished():
+                self._wait.handle(event)
+            case CycleStarted() | NextRunScheduled() | ReleaseSkipped() | GrabFailed() | ScanFinished() | RunFinished():
                 # ReleaseSkipped/GrabFailed producers are still raw logger
-                # warnings the bridge adopts; the wait arms arrive with PR5.
+                # warnings the bridge adopts; ScanFinished/RunFinished/cycle
+                # boundaries have no console line of their own.
                 pass
             case _:
                 assert_never(event)
@@ -176,12 +185,14 @@ class RichRenderer:
     def begin_cycle(self) -> None:
         self._crumbs.reset()
         self._boot.begin_cycle()
+        self._wait.begin_cycle()
 
     def set_level(self, level: int) -> None:
         self._level = level
 
     def close(self) -> None:
         self._boot.close()
+        self._wait.close()
 
     def _current_level(self) -> int:
         """The single level store, read live by the boot region's level_source."""
@@ -231,8 +242,3 @@ class RichRenderer:
         indented contexts a diagnostic folds into (RUN/ITEM alone stays column-0)."""
 
         return self._frontier_has(ScopeKind.BOOT_SECTION, ScopeKind.WAIT_REGION, ScopeKind.ENTRY)
-
-    def _boot_section_open(self) -> bool:
-        """Whether the boot section sits on the frontier (the stack is <=3 nodes)."""
-
-        return self._frontier_has(ScopeKind.BOOT_SECTION)

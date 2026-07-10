@@ -6,7 +6,7 @@ to be persisted. Every re-emission carries the ``HUB_EVENT`` mark: the bridge
 drops it (loop-proof) and the rich console handler skips it (the hub's renderer
 already owns the console); the FileHandler writes it and LogCounter counts it.
 
-Three event families echo here:
+Four event families echo here:
 
 * Adopted third-party diagnostics — so stragglers now reach the file and the
   run's issue tally (N1, a deliberate fix). ``file_only`` diagnostics (hub
@@ -26,11 +26,17 @@ Three event families echo here:
   a record is indistinguishable from the reporter's own). ``ReleaseSkipped`` /
   ``GrabFailed`` stay pass-arms: their producers are still raw logger warnings
   the bridge adopts (a later band converts them).
+* The wait surface (PR5, P3) — graduations and the closing tally always echo;
+  the digest start line + throttled "still waiting" pulses echo ONLY on a
+  non-live console (a live-TTY run's file never carried them). The pulse cadence
+  runs on a :class:`~.wait_lines.PulseThrottle` kept in lockstep with the
+  WaitRegion's copy, via the shared :mod:`.wait_lines` builders.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from typing import assert_never, final
 
 from .boot_region import banner_title, data_dir_line, graduation_line, ready_line, slow_line
@@ -65,7 +71,15 @@ from .events import (
     WaitProgress,
     WaitStarted,
 )
-from .scan_lines import ScanEvent, scan_event_lines
+from .scan_lines import LegacyLine, ScanEvent, scan_event_lines
+from .wait_lines import (
+    PulseThrottle,
+    WaitEvent,
+    wait_graduation_line,
+    wait_pulse_line,
+    wait_start_line,
+    wait_tally_lines,
+)
 from ..console_caps import Capabilities, CapsCache, console_of
 from ..log import CONSOLE_EXTRA, HUB_EVENT, HUB_FILE_ONLY, LOG_NAME
 
@@ -81,6 +95,8 @@ class LegacyRenderer:
         self._caps_cache = caps_cache if caps_cache is not None else CapsCache()
         # Logger identity is stable across cycles; only its handlers rebuild.
         self._logger = logging.getLogger(LOG_NAME)
+        # The non-TTY digest cadence; kept in lockstep with the WaitRegion's copy.
+        self._pulse = PulseThrottle()
 
     def handle(self, event: Event, when: float) -> None:
         del when
@@ -100,6 +116,8 @@ class LegacyRenderer:
                 | RunSummaryReady()
             ):
                 self._scan(event)
+            case WaitStarted() | WaitProgress() | TorrentGraduated() | WaitFinished():
+                self._wait(event)
             case (
                 CycleStarted()
                 | NextRunScheduled()
@@ -110,10 +128,6 @@ class LegacyRenderer:
                 | ReleaseSkipped()
                 | GrabFailed()
                 | ScanFinished()
-                | WaitStarted()
-                | WaitProgress()
-                | TorrentGraduated()
-                | WaitFinished()
                 | RunFinished()
             ):
                 # The legacy producers still render these surfaces themselves
@@ -124,6 +138,7 @@ class LegacyRenderer:
 
     def begin_cycle(self) -> None:
         self._caps_cache.reset()
+        self._pulse.reset()
 
     def set_level(self, level: int) -> None:
         pass
@@ -165,7 +180,44 @@ class LegacyRenderer:
         gate = int(event.severity) if isinstance(event, EntryDetail) else logging.INFO
         if not self._logger.isEnabledFor(gate):
             return
-        for line in scan_event_lines(event):
+        self._echo_lines(scan_event_lines(event))
+
+    def _wait(self, event: WaitEvent) -> None:
+        """Echo the wait surface (P3): start/pulse only when NOT live, graduations
+        and the tally always. The throttle mirrors the WaitRegion's copy so the
+        cadence can't drift; fire() advances even when the pulse is level-gated."""
+
+        match event:
+            case WaitStarted():
+                self._pulse.arm(event.pulse_s)
+                # Parity: the live cockpit never logged the start line (the spinner
+                # showed liveness); only the non-TTY digest did. Gate before caps.
+                if self._logger.isEnabledFor(logging.INFO) and not self._caps().live:
+                    self._echo_lines([wait_start_line(event)])
+            case WaitProgress(snapshot=snapshot):
+                # fire() must advance regardless of level; only the non-TTY digest
+                # pulses (a live console shows liveness through the cockpit).
+                if not self._caps().live and self._pulse.fire(snapshot.elapsed_s):
+                    self._echo_lines([wait_pulse_line(snapshot)])
+            case TorrentGraduated():
+                if self._logger.isEnabledFor(logging.INFO):
+                    self._echo_lines([wait_graduation_line(event, self._caps())])
+            case WaitFinished():
+                if self._logger.isEnabledFor(logging.INFO):
+                    self._echo_lines(wait_tally_lines(event))
+            case _:
+                assert_never(event)
+
+    def _echo_lines(self, lines: Iterable[LegacyLine]) -> None:
+        """Re-emit shared legacy lines through the app logger (HUB_EVENT-marked).
+
+        Each line carries its exact message AND its ``CONSOLE_EXTRA`` payload, so
+        the record is indistinguishable from a producer's own on every legacy
+        surface (file bytes, plain/json stdout, LogCounter). logger.log re-gates
+        per line, so a raised level still drops the INFO lines.
+        """
+
+        for line in lines:
             extra: dict[str, object] = {HUB_EVENT: True}
             if line.payload is not None:
                 extra[CONSOLE_EXTRA] = line.payload

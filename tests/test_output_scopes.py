@@ -270,15 +270,15 @@ def test_every_late_fact_kind_describes_itself() -> None:
 def test_wait_opens_scope_then_announces_totals() -> None:
     factory, recorder, _ = _factory()
 
-    wait = factory.wait(total=4)
+    wait = factory.wait(total=4, pulse_s=300.0)
 
     assert isinstance(recorder.events[0], ScopeOpened)
-    assert recorder.events[1] == WaitStarted(total=4, scope=wait.scope_id)
+    assert recorder.events[1] == WaitStarted(total=4, pulse_s=300.0, scope=wait.scope_id)
 
 
 def test_wait_progress_and_graduations_are_stamped() -> None:
     factory, recorder, _ = _factory()
-    wait = factory.wait(total=1)
+    wait = factory.wait(total=1, pulse_s=300.0)
 
     wait.progress(WaitSnapshot(torrents=(), elapsed_s=30.0))
     wait.graduated(TorrentGraduated(label="T", outcome=Outcome.IMPORTED, files=12, waited_s=243.0))
@@ -291,7 +291,7 @@ def test_wait_progress_and_graduations_are_stamped() -> None:
 
 def test_wait_finish_emits_tally_then_closes() -> None:
     factory, recorder, _ = _factory()
-    wait = factory.wait(total=4)
+    wait = factory.wait(total=4, pulse_s=300.0)
 
     wait.finish(WaitFinished(imported=3, deferred=1, failed=0, elapsed_s=730.0))
 
@@ -302,7 +302,7 @@ def test_wait_finish_emits_tally_then_closes() -> None:
 
 def test_late_wait_emissions_demote() -> None:
     factory, recorder, _ = _factory()
-    wait = factory.wait(total=1)
+    wait = factory.wait(total=1, pulse_s=300.0)
     wait.close()
 
     wait.progress(WaitSnapshot(torrents=(), elapsed_s=1.0))

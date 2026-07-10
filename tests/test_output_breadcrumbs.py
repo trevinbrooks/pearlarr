@@ -170,7 +170,7 @@ def test_wait_started_closes_only_entry_depth() -> None:
     fold = _fold(
         ScanStarted(arr=Arr.SONARR, total=1),
         ScopeOpened(scope=_WAIT, label="wait"),
-        WaitStarted(total=4, scope=_WAIT),
+        WaitStarted(total=4, pulse_s=300.0, scope=_WAIT),
     )
     assert _kinds(fold) == [ScopeKind.RUN, ScopeKind.WAIT_REGION]
     assert fold.path_text() == "sonarr › wait"

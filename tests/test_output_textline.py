@@ -217,7 +217,9 @@ def test_multi_line_messages_and_field_values_stay_one_line() -> None:
 
 def test_wait_lines_ride_the_wait_breadcrumb() -> None:
     context = (ScanStarted(arr=Arr.SONARR, total=182), ScopeOpened(scope=_WAIT, label="wait"))
-    assert _format(WaitStarted(total=4, scope=_WAIT), *context) == (f"{_TS} INFO [sonarr › wait] waiting total=4")
+    assert _format(WaitStarted(total=4, pulse_s=300.0, scope=_WAIT), *context) == (
+        f"{_TS} INFO [sonarr › wait] waiting total=4"
+    )
     graduated = TorrentGraduated(
         label="Sousou no Frieren",
         outcome=Outcome.DOWNLOAD_TIMED_OUT,
@@ -512,7 +514,7 @@ def test_file_sink_writes_utf8(tmp_path: Path) -> None:
 
 def test_ephemeral_wait_progress_never_hits_the_text_sinks() -> None:
     line_sink, stream = _line_sink()
-    line_sink.handle(WaitStarted(total=1, scope=None), _EPOCH)
+    line_sink.handle(WaitStarted(total=1, pulse_s=300.0, scope=None), _EPOCH)
     line_sink.handle(Diagnostic(severity=Severity.DEBUG, message="hidden", origin="app"), _EPOCH)
     before = stream.getvalue()
 
@@ -681,7 +683,7 @@ def _exemplars() -> list[Event]:
         CapReached(cap=25),
         ScanFinished(arr=Arr.SONARR),
         _summary_ready(),
-        WaitStarted(total=1),
+        WaitStarted(total=1, pulse_s=300.0),
         WaitProgress(snapshot=WaitSnapshot(torrents=(), elapsed_s=1.0)),
         TorrentGraduated(label="T", outcome=Outcome.IMPORTED, files=1, waited_s=1.0),
         WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=1.0),

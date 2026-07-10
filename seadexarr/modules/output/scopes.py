@@ -288,11 +288,11 @@ class WaitScope(_ScopeBase):
 
     _KIND_WORD: ClassVar[str] = "wait"
 
-    def __init__(self, emit: Emit, scope: ScopeId, total: int) -> None:
+    def __init__(self, emit: Emit, scope: ScopeId, total: int, *, pulse_s: float) -> None:
         super().__init__(emit, "wait")
         self._scope = scope
         emit(ScopeOpened(scope=scope, label="wait"))
-        emit(WaitStarted(total=total, scope=scope))
+        emit(WaitStarted(total=total, pulse_s=pulse_s, scope=scope))
 
     @property
     def scope_id(self) -> ScopeId:
@@ -395,8 +395,8 @@ class ScopeFactory:
     def entry(self, header: EntryHeader) -> EntryScope:
         return EntryScope(self._emit, self._ids.mint(ScopeKind.ENTRY), header)
 
-    def wait(self, total: int) -> WaitScope:
-        return WaitScope(self._emit, self._ids.mint(ScopeKind.WAIT_REGION), total)
+    def wait(self, total: int, *, pulse_s: float) -> WaitScope:
+        return WaitScope(self._emit, self._ids.mint(ScopeKind.WAIT_REGION), total, pulse_s=pulse_s)
 
     def diagnostics(self, origin: str) -> Diagnostics:
         return Diagnostics(self._emit, origin)

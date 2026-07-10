@@ -551,6 +551,9 @@ class WaitSnapshot:
 @dataclass(frozen=True, slots=True)
 class WaitStarted:
     total: int
+    # The renderer's pulse throttle interval (max(poll_s, digest_interval)); the
+    # producer computes it (Band C). No default: the producer must supply it.
+    pulse_s: float
     scope: ScopeId | None = None
 
 
