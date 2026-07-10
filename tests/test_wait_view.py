@@ -24,23 +24,26 @@ from rich.text import Text
 from seadexarr.modules.console_caps import Capabilities, TerminalEnv
 from seadexarr.modules.log import RichConsoleHandler
 from seadexarr.modules.manual_import import Outcome, OutcomeCategory
-from seadexarr.modules.output import ScopeClosed, ScopeKind, ScopeOpened, install_hub
+from seadexarr.modules.output import (
+    Phase,
+    ScopeClosed,
+    ScopeKind,
+    ScopeOpened,
+    TorrentView,
+    WaitSnapshot,
+    install_hub,
+)
 from seadexarr.modules.output.recording import RecordingHub
+from seadexarr.modules.output.wait_lines import graduation_tail, live_model, sparkline
 from seadexarr.modules.wait_view import (
     LiveWaitView,
     LogWaitView,
-    Phase,
-    TorrentView,
     WaitOutcomeRow,
     WaitResult,
-    WaitSnapshot,
     _DurableWaitView,
     _FrameAnchor,
-    graduation_tail,
     graduations,
-    live_model,
     make_wait_view,
-    sparkline,
 )
 
 from .builders import SEP
@@ -494,23 +497,17 @@ def test_sparkline_needs_two_samples() -> None:
 
 
 def test_graduation_tail_states_files_and_elapsed_for_an_import() -> None:
-    row = _terminal("h", "A", Outcome.IMPORTED, files=12, elapsed=192)
-
-    assert graduation_tail(row, Outcome.IMPORTED) == f"12 files{SEP}3m 12s"
+    assert graduation_tail(Outcome.IMPORTED, 12, 192) == f"12 files{SEP}3m 12s"
 
 
 def test_graduation_tail_is_empty_when_an_import_has_no_detail() -> None:
     # No files count (incomplete seed) and a sub-second wait -> nothing to say.
-    row = _terminal("h", "A", Outcome.IMPORTED)
-
-    assert graduation_tail(row, Outcome.IMPORTED) == ""
+    assert graduation_tail(Outcome.IMPORTED, None, 0.0) == ""
 
 
 def test_graduation_tail_elapsed_alone_when_files_unknown() -> None:
     # An incomplete seed map hides the files count but the wait clock still shows.
-    row = _terminal("h", "A", Outcome.IMPORTED, elapsed=192)
-
-    assert graduation_tail(row, Outcome.IMPORTED) == "3m 12s"
+    assert graduation_tail(Outcome.IMPORTED, None, 192) == "3m 12s"
 
 
 def test_graduation_tail_says_left_pending_outcomes_retry() -> None:
@@ -521,14 +518,11 @@ def test_graduation_tail_says_left_pending_outcomes_retry() -> None:
         Outcome.NOT_READY,
         Outcome.NOTHING_TO_IMPORT,
     ):
-        row = _terminal("h", "A", outcome)
-        assert graduation_tail(row, outcome) == "retries next run"
+        assert graduation_tail(outcome, None, 0.0) == "retries next run"
 
 
 def test_graduation_tail_says_a_missing_record_is_gone() -> None:
-    row = _terminal("h", "A", Outcome.MISSING)
-
-    assert graduation_tail(row, Outcome.MISSING) == "no longer tracked"
+    assert graduation_tail(Outcome.MISSING, None, 0.0) == "no longer tracked"
 
 
 # --- WaitResult ----------------------------------------------------------------

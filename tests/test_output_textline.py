@@ -67,6 +67,7 @@ from seadexarr.modules.output import (
     TorrentGraduated,
     WaitFinished,
     WaitProgress,
+    WaitSnapshot,
     WaitStarted,
     console_threshold,
     format_line,
@@ -75,7 +76,6 @@ from seadexarr.modules.output.textline import _JSON_SKIP, _TEXT_SKIP
 from seadexarr.modules.output.trace import CapturedTrace
 from seadexarr.modules.reporter import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
 from seadexarr.modules.seadex_types import Json
-from seadexarr.modules.wait_view import WaitSnapshot
 
 _EPOCH = 1_751_990_000.0
 _WHEN = datetime.fromtimestamp(_EPOCH)

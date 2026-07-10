@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 from types import TracebackType
-from typing import TYPE_CHECKING, ClassVar, Final, assert_never, final
+from typing import ClassVar, Final, assert_never, final
 
 from .events import (
     Accent,
@@ -42,15 +42,13 @@ from .events import (
     TorrentGraduated,
     WaitFinished,
     WaitProgress,
+    WaitSnapshot,
     WaitStarted,
     severity_of,
 )
 from .runtime import emit_to_hub
 from .trace import CapturedTrace
 from ..manual_import import OutcomeCategory
-
-if TYPE_CHECKING:
-    from ..wait_view import WaitSnapshot
 
 type Emit = Callable[[Event], None]
 """The one producer-side seam: the hub satisfies it; tests pass a recorder."""

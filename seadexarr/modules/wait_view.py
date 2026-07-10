@@ -25,7 +25,6 @@ from collections import Counter
 from collections.abc import Callable
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, replace
-from enum import Enum, auto
 from typing import ClassVar, final, override
 
 from rich.console import Console, ConsoleOptions, Group, RenderResult
@@ -49,124 +48,13 @@ from .log import (
     STATE_WIDTH,
     count_noun,
     format_elapsed,
-    human_bytes,
     indent_string,
     log_section_rule,
     log_styled,
 )
 from .manual_import import Outcome, OutcomeCategory
-from .output import ScopeKind, ScopeMark
-
-# The live cockpit never grows past this many in-flight rows; the rest collapse
-# into a one-line "+ N more ..." overflow, so a large carried-over backlog can't
-# blow the region past the screen. Clamped against the real terminal height too.
-MAX_LIVE_ROWS = 12
-MIN_LIVE_ROWS = 4
-# Rows reserved for the banner, header, overflow line and a little breathing room
-# when clamping the body to the terminal height.
-_RESERVED_ROWS = 8
-# Speed samples a downloading row keeps for its sparkline (one per heavy poll,
-# so the default 30s cadence holds the last ~4 minutes).
-SPARK_SAMPLES = 8
-# The sparkline needs unicode blocks and enough width not to crowd the label.
-MIN_SPARK_WIDTH = 80
-
-
-class Phase(Enum):
-    """The lifecycle phase of one torrent in the wait pass.
-
-    ``QUEUED`` -> still downloading (or not yet polled). ``DOWNLOADING`` ->
-    downloading with live telemetry. ``IMPORTING`` -> the download finished and an
-    import is in flight (indeterminate). ``TERMINAL`` -> a terminal outcome was
-    reached (carries the :class:`~.manual_import.Outcome`); these GRADUATE to
-    scrollback and leave the live region.
-    """
-
-    QUEUED = auto()
-    DOWNLOADING = auto()
-    IMPORTING = auto()
-    TERMINAL = auto()
-
-
-@dataclass(frozen=True, slots=True)
-class TorrentView:
-    """One torrent's state for a single frame - the engine's per-poll snapshot row.
-
-    Immutable so a snapshot is a value: the engine rebuilds the row each cycle
-    (``dataclasses.replace`` off the prior one) and the view renders it. Telemetry
-    fields are already sanitized (see :class:`~.manual_import.TorrentProbe`);
-    ``outcome`` is non-None iff ``phase`` is ``TERMINAL``.
-    """
-
-    key: str
-    label: str
-    phase: Phase = Phase.QUEUED
-    fraction: float = 0.0
-    speed_bps: int | None = None
-    eta_s: int | None = None
-    bytes_done: int | None = None
-    bytes_total: int | None = None
-    phase_elapsed_s: float = 0.0
-    command_issued: bool = False
-    # "Files inserted" bar for an IMPORTING row: both set -> a determinate
-    # done/total bar; both None -> indeterminate (just the "importing" word).
-    # On a TERMINAL imported row they carry the final files count for the ledger,
-    # and phase_elapsed_s freezes as the ledger's wait clock (LiveWaitView's
-    # between-poll ticking skips TERMINAL rows, so it can't drift).
-    import_done: int | None = None
-    import_total: int | None = None
-    # Speed samples (bytes/s, stalled -> 0), one per heavy poll, newest last -
-    # the sparkline showing slow-but-moving vs wedged. Bounded to SPARK_SAMPLES.
-    speed_history: tuple[int, ...] = ()
-    outcome: Outcome | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class WaitSnapshot:
-    """An immutable description of the whole wait pass at one poll cycle.
-
-    The single value the engine pushes to :meth:`WaitView.update`; the view is a
-    pure function of it. Derived aggregates are computed here so they can be
-    unit-tested without any rendering.
-    """
-
-    torrents: tuple[TorrentView, ...]
-    elapsed_s: float = 0.0
-
-    def counts(self) -> dict[Phase, int]:
-        """Count of torrents in each phase (every phase present, 0 by default)."""
-
-        tally: dict[Phase, int] = dict.fromkeys(Phase, 0)
-        for torrent in self.torrents:
-            tally[torrent.phase] += 1
-        return tally
-
-    def done(self) -> int:
-        """How many torrents have reached a terminal outcome."""
-
-        return sum(1 for t in self.torrents if t.phase is Phase.TERMINAL)
-
-    def total(self) -> int:
-        """How many torrents the pass is (or was) waiting on."""
-
-        return len(self.torrents)
-
-    def overall_fraction(self) -> float:
-        """An aggregate 0-1 progress for the header bar (download-completion based).
-
-        Terminal and importing rows count as a finished download (1.0); a still
-        downloading/queued row contributes its download fraction. Guards /0.
-        """
-
-        if not self.torrents:
-            return 0.0
-        total = 0.0
-        for torrent in self.torrents:
-            if torrent.phase in (Phase.TERMINAL, Phase.IMPORTING):
-                total += 1.0
-            else:
-                total += _clamp01(torrent.fraction)
-        return total / len(self.torrents)
+from .output import Phase, ScopeKind, ScopeMark, TorrentView, WaitSnapshot
+from .output.wait_lines import LiveModel, RowModel, graduation_tail, live_model
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,12 +105,6 @@ class WaitResult:
         return sum(1 for row in self.rows if row.outcome.category is category)
 
 
-def _clamp01(value: float) -> float:
-    """Clamp a progress fraction into [0, 1]."""
-
-    return max(0.0, min(1.0, value))
-
-
 def graduations(seen: AbstractSet[str], snapshot: WaitSnapshot) -> list[TorrentView]:
     """The terminal torrents not yet printed - pure, deterministic.
 
@@ -235,66 +117,6 @@ def graduations(seen: AbstractSet[str], snapshot: WaitSnapshot) -> list[TorrentV
         for torrent in snapshot.torrents
         if torrent.phase is Phase.TERMINAL and torrent.outcome is not None and torrent.key not in seen
     ]
-
-
-def graduation_tail(torrent: TorrentView, outcome: Outcome) -> str:
-    """The ledger line's parenthesized coda - pure, "" when there is nothing to say.
-
-    Baked into the logged message (not a console-only ``tail`` extra), so the
-    file log carries it too. An import states its scale and how long the wait
-    took; a left-pending outcome says it will be retried; a dropped failure says
-    the record is gone - so no outcome word reads as a dead end.
-    """
-
-    if outcome is Outcome.IMPORTED:
-        parts: list[str] = []
-        if torrent.import_total:
-            parts.append(count_noun(torrent.import_total, "file"))
-        if torrent.phase_elapsed_s >= 1.0:
-            parts.append(format_elapsed(torrent.phase_elapsed_s))
-        return " · ".join(parts)
-    if not outcome.dropped:
-        return "retries next run"
-    # MISSING: the torrent vanished from qBittorrent, so the record went with it.
-    return "no longer tracked"
-
-
-@dataclass(frozen=True, slots=True)
-class RowModel:
-    """One rendered in-flight row, as plain strings - the pure-render unit.
-
-    ``live_model`` formats every value here (no rich), so the row layout is
-    unit-testable; the view turns these into styled cells. Every column keeps ONE
-    meaning across all row kinds: ``count`` is progress ("61%" / "8/12" files),
-    ``speed`` is the download rate (sparkline + rate, or "stalled"), ``time`` is
-    the ETA for a download or the elapsed clock for an import, ``size`` is the
-    total download size. A row without a bar shows its ``status`` word instead.
-    """
-
-    label: str
-    phase: Phase
-    fraction: float
-    # The status word drawn in the bar column when there is no bar: "queued",
-    # "importing", or "copying" (an accepted import command's copy in flight).
-    status: str = ""
-    count: str = ""
-    speed: str = ""
-    time: str = ""
-    size: str = ""
-    # Draw a determinate block bar for ``fraction`` (downloads always; an importing
-    # row only when its files-inserted count is known). Else the status word.
-    show_bar: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class LiveModel:
-    """A bounded, ordered, rich-free description of the live cockpit frame."""
-
-    left_text: str
-    right_text: str
-    overall_fraction: float
-    rows: tuple[RowModel, ...]
-    overflow: str = ""
 
 
 def make_wait_view(
@@ -327,174 +149,6 @@ def make_wait_view(
         poll_s=poll_s,
         digest_interval=digest_interval,
     )
-
-
-def live_model(snapshot: WaitSnapshot, caps: Capabilities) -> LiveModel:
-    """Reduce a snapshot to a bounded, ordered cockpit frame - pure, no rich.
-
-    Orders in-flight rows ``importing`` first, then ``downloading`` by soonest
-    ETA (unknown/stalled last), then ``queued``; caps the visible rows to a
-    height budget and collapses the rest into an overflow tally. Terminal rows
-    are excluded (they graduate to scrollback).
-    """
-
-    in_flight = [t for t in snapshot.torrents if t.phase is not Phase.TERMINAL]
-    in_flight.sort(key=_row_sort_key)
-
-    budget = max(MIN_LIVE_ROWS, min(MAX_LIVE_ROWS, caps.height - _RESERVED_ROWS))
-    visible = in_flight[:budget]
-    hidden = in_flight[budget:]
-
-    spark = caps.unicode and caps.width >= MIN_SPARK_WIDTH
-    rows = tuple(_row_model(t, spark=spark) for t in visible)
-    overflow = _overflow_text(hidden)
-
-    counts = snapshot.counts()
-    left = f"waiting {snapshot.done()}/{snapshot.total()}"
-    arrow = "↓" if caps.unicode else "dl"
-    meta: list[str] = [format_elapsed(snapshot.elapsed_s)]
-    agg_speed = _aggregate_speed(snapshot)
-    if agg_speed:
-        meta.append(f"{arrow} {human_bytes(agg_speed)}/s")
-    agg_eta = _aggregate_eta(snapshot, agg_speed)
-    if agg_eta is not None:
-        meta.append(f"{_compact_eta(agg_eta)} left")
-    if counts[Phase.IMPORTING]:
-        meta.append(f"{counts[Phase.IMPORTING]} importing")
-
-    return LiveModel(
-        left_text=left,
-        right_text=" · ".join(meta),
-        overall_fraction=snapshot.overall_fraction(),
-        rows=rows,
-        overflow=overflow,
-    )
-
-
-_PHASE_RANK = {Phase.IMPORTING: 0, Phase.DOWNLOADING: 1, Phase.QUEUED: 2}
-
-
-def _row_sort_key(torrent: TorrentView) -> tuple[int, float]:
-    """Order key: importing first, downloads by soonest ETA, queued last."""
-
-    rank = _PHASE_RANK.get(torrent.phase, 3)
-    eta = float(torrent.eta_s) if torrent.eta_s is not None else float("inf")
-    return rank, eta
-
-
-def _row_model(torrent: TorrentView, *, spark: bool) -> RowModel:
-    """Format one in-flight torrent's cells for the cockpit."""
-
-    if torrent.phase is Phase.DOWNLOADING:
-        rate = "stalled" if torrent.speed_bps is None else f"{human_bytes(torrent.speed_bps)}/s"
-        if spark and len(torrent.speed_history) >= 2:
-            rate = f"{sparkline(torrent.speed_history)} {rate}"
-        return RowModel(
-            label=torrent.label,
-            phase=torrent.phase,
-            fraction=_clamp01(torrent.fraction),
-            count=f"{round(torrent.fraction * 100)}%",
-            speed=rate,
-            time="" if torrent.eta_s is None else _compact_eta(torrent.eta_s),
-            size="" if torrent.bytes_total is None else human_bytes(torrent.bytes_total),
-            show_bar=True,
-        )
-    if torrent.phase is Phase.IMPORTING:
-        elapsed = format_elapsed(torrent.phase_elapsed_s)
-        if torrent.import_total:
-            # Determinate "files inserted" bar (the speed column stays blank -
-            # an import has no download rate).
-            return RowModel(
-                label=torrent.label,
-                phase=torrent.phase,
-                fraction=_clamp01(torrent.fraction),
-                count=f"{torrent.import_done}/{torrent.import_total}",
-                time=elapsed,
-                show_bar=True,
-            )
-        # Indeterminate: no bar, so the status word carries the phase - "copying"
-        # once an import command's async copy is in flight, "importing" before.
-        return RowModel(
-            label=torrent.label,
-            phase=torrent.phase,
-            fraction=1.0,
-            status="copying" if torrent.command_issued else "importing",
-            time=elapsed,
-        )
-    return RowModel(label=torrent.label, phase=Phase.QUEUED, fraction=0.0, status="queued")
-
-
-def _overflow_text(hidden: list[TorrentView]) -> str:
-    """A "+ N more downloading · M queued" tally for the rows past the budget."""
-
-    if not hidden:
-        return ""
-    counts: Counter[Phase] = Counter(t.phase for t in hidden)
-    parts: list[str] = []
-    if counts[Phase.IMPORTING]:
-        parts.append(f"{counts[Phase.IMPORTING]} more importing")
-    if counts[Phase.DOWNLOADING]:
-        parts.append(f"{counts[Phase.DOWNLOADING]} more downloading")
-    if counts[Phase.QUEUED]:
-        parts.append(f"{counts[Phase.QUEUED]} queued")
-    return "+ " + " · ".join(parts)
-
-
-def _aggregate_speed(snapshot: WaitSnapshot) -> int:
-    """Total download speed across the downloading rows (bytes/s)."""
-
-    return sum(t.speed_bps for t in snapshot.torrents if t.phase is Phase.DOWNLOADING and t.speed_bps is not None)
-
-
-def _aggregate_eta(snapshot: WaitSnapshot, agg_speed: int) -> int | None:
-    """An honest "downloads done" ETA: remaining bytes over the shared pipe."""
-
-    if agg_speed <= 0:
-        return None
-    remaining = 0
-    for torrent in snapshot.torrents:
-        if (
-            torrent.phase is Phase.DOWNLOADING
-            and torrent.bytes_total is not None
-            and torrent.bytes_done is not None
-            and torrent.bytes_total >= torrent.bytes_done
-        ):
-            remaining += torrent.bytes_total - torrent.bytes_done
-    if remaining <= 0:
-        return None
-    return int(remaining / agg_speed)
-
-
-_SPARK_CHARS = "▁▂▃▄▅▆▇█"
-
-
-def sparkline(samples: tuple[int, ...]) -> str:
-    """The speed-history glyph run, scaled to the window's own peak.
-
-    A wedged download reads as a decay to the floor ("▆▄▁▁"); a slow-but-moving
-    one keeps a steady band. All-zero history stays on the floor glyph (never
-    blank), so a stall is visible rather than invisible.
-    """
-
-    if not samples:
-        return ""
-    peak = max(samples)
-    top = len(_SPARK_CHARS) - 1
-    if peak <= 0:
-        return _SPARK_CHARS[0] * len(samples)
-    return "".join(_SPARK_CHARS[round(sample / peak * top)] for sample in samples)
-
-
-def _compact_eta(seconds: float) -> str:
-    """A short ``~`` ETA, e.g. ``"~2m"`` / ``"~1h05m"`` / ``"~40s"``."""
-
-    total = int(seconds)
-    if total >= 3600:
-        hours, minutes = divmod(total // 60, 60)
-        return f"~{hours}h{minutes:02d}m"
-    if total >= 60:
-        return f"~{total // 60}m"
-    return f"~{total}s"
 
 
 class WaitView(ABC):
@@ -576,7 +230,7 @@ class _DurableWaitView(WaitView):
             self._tally[outcome.category] += 1
             glyph = outcome.glyph(use_unicode=self._caps.unicode)
             line = f"{glyph} {outcome.word.ljust(STATE_WIDTH)} {torrent.label}"
-            tail = graduation_tail(torrent, outcome)
+            tail = graduation_tail(outcome, torrent.import_total, torrent.phase_elapsed_s)
             if tail:
                 line += f"  ({tail})"
             log_styled(

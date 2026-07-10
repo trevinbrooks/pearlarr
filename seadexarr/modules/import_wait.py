@@ -37,19 +37,12 @@ from .manual_import import (
     classify_pending,
     sanitize_torrent_telemetry,
 )
+from .output import Phase, TorrentView, WaitSnapshot
+from .output.wait_lines import SPARK_SAMPLES
 from .protocols import ImportCompleter
 from .reporter import RunContext
 from .run_services import RunDeps
-from .wait_view import (
-    SPARK_SAMPLES,
-    Phase,
-    TorrentView,
-    WaitOutcomeRow,
-    WaitResult,
-    WaitSnapshot,
-    WaitView,
-    make_wait_view,
-)
+from .wait_view import WaitOutcomeRow, WaitResult, WaitView, make_wait_view
 
 
 def _info_row_telemetry(row: object) -> TorrentTelemetry:

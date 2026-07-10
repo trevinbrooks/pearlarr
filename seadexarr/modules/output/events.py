@@ -25,7 +25,6 @@ from ..manual_import import Outcome, OutcomeCategory
 
 if TYPE_CHECKING:
     from ..reporter import RunStats
-    from ..wait_view import WaitSnapshot
 
 
 class Severity(IntEnum):
@@ -446,6 +445,109 @@ class RunSummaryReady:
 # --- wait pass ------------------------------------------------------------------
 
 
+def clamp01(value: float) -> float:
+    """Clamp a progress fraction into [0, 1]."""
+
+    return max(0.0, min(1.0, value))
+
+
+class Phase(Enum):
+    """The lifecycle phase of one torrent in the wait pass.
+
+    ``QUEUED`` -> still downloading (or not yet polled). ``DOWNLOADING`` ->
+    downloading with live telemetry. ``IMPORTING`` -> the download finished and an
+    import is in flight (indeterminate). ``TERMINAL`` -> a terminal ``Outcome``
+    was reached; these GRADUATE to scrollback and leave the live region.
+    """
+
+    QUEUED = auto()
+    DOWNLOADING = auto()
+    IMPORTING = auto()
+    TERMINAL = auto()
+
+
+@dataclass(frozen=True, slots=True)
+class TorrentView:
+    """One torrent's state for a single frame - the engine's per-poll snapshot row.
+
+    Immutable so a snapshot is a value: the engine rebuilds the row each cycle
+    (``dataclasses.replace`` off the prior one) and the view renders it. Telemetry
+    fields are already sanitized (``manual_import.TorrentProbe``); ``outcome`` is
+    non-None iff ``phase`` is ``TERMINAL``.
+    """
+
+    key: str
+    label: str
+    phase: Phase = Phase.QUEUED
+    fraction: float = 0.0
+    speed_bps: int | None = None
+    eta_s: int | None = None
+    bytes_done: int | None = None
+    bytes_total: int | None = None
+    phase_elapsed_s: float = 0.0
+    command_issued: bool = False
+    # "Files inserted" bar for an IMPORTING row: both set -> a determinate
+    # done/total bar; both None -> indeterminate (just the "importing" word).
+    # On a TERMINAL imported row they carry the final files count for the ledger,
+    # and phase_elapsed_s freezes as the ledger's wait clock (the live view's
+    # between-poll ticking skips TERMINAL rows, so it can't drift).
+    import_done: int | None = None
+    import_total: int | None = None
+    # Speed samples (bytes/s, stalled -> 0), one per heavy poll, newest last -
+    # the sparkline showing slow-but-moving vs wedged. Bounded by the producer
+    # to the sparkline window (SPARK_SAMPLES, output/wait_lines.py).
+    speed_history: tuple[int, ...] = ()
+    outcome: Outcome | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class WaitSnapshot:
+    """An immutable description of the whole wait pass at one poll cycle.
+
+    The single value the engine pushes per poll cycle; the wait views/renderers
+    are pure functions of it. Derived aggregates are computed here so they can
+    be unit-tested without any rendering.
+    """
+
+    torrents: tuple[TorrentView, ...]
+    elapsed_s: float = 0.0
+
+    def counts(self) -> dict[Phase, int]:
+        """Count of torrents in each phase (every phase present, 0 by default)."""
+
+        tally: dict[Phase, int] = dict.fromkeys(Phase, 0)
+        for torrent in self.torrents:
+            tally[torrent.phase] += 1
+        return tally
+
+    def done(self) -> int:
+        """How many torrents have reached a terminal outcome."""
+
+        return sum(1 for t in self.torrents if t.phase is Phase.TERMINAL)
+
+    def total(self) -> int:
+        """How many torrents the pass is (or was) waiting on."""
+
+        return len(self.torrents)
+
+    def overall_fraction(self) -> float:
+        """An aggregate 0-1 progress for the header bar (download-completion based).
+
+        Terminal and importing rows count as a finished download (1.0); a still
+        downloading/queued row contributes its download fraction. Guards /0.
+        """
+
+        if not self.torrents:
+            return 0.0
+        total = 0.0
+        for torrent in self.torrents:
+            if torrent.phase in (Phase.TERMINAL, Phase.IMPORTING):
+                total += 1.0
+            else:
+                total += clamp01(torrent.fraction)
+        return total / len(self.torrents)
+
+
 @dataclass(frozen=True, slots=True)
 class WaitStarted:
     total: int
@@ -454,11 +556,7 @@ class WaitStarted:
 
 @dataclass(frozen=True, slots=True)
 class WaitProgress:
-    """Ephemeral: carries the engine's pure per-poll snapshot; text/json sinks drop it.
-
-    ``WaitSnapshot`` stays a TYPE_CHECKING import (annotations are stringified);
-    PR5 revisits its home when wait_view's machinery moves into the renderer.
-    """
+    """Ephemeral: carries the engine's pure per-poll snapshot; text/json sinks drop it."""
 
     snapshot: WaitSnapshot
     scope: ScopeId | None = None

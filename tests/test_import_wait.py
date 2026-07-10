@@ -43,17 +43,12 @@ from seadexarr.modules.manual_import import (
     TorrentTelemetry,
     WaitOutcome,
 )
+from seadexarr.modules.output import Phase, TorrentView, WaitSnapshot
+from seadexarr.modules.output.wait_lines import SPARK_SAMPLES
 from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.run_loop import RunLoop
 from seadexarr.modules.torrents import AddOutcome
-from seadexarr.modules.wait_view import (
-    SPARK_SAMPLES,
-    Phase,
-    TorrentView,
-    WaitResult,
-    WaitSnapshot,
-    WaitView,
-)
+from seadexarr.modules.wait_view import WaitResult, WaitView
 
 from .builders import (
     CLIENT_SENTINEL,

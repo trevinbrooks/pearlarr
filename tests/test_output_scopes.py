@@ -38,9 +38,9 @@ from seadexarr.modules.output import (
     TorrentGraduated,
     WaitFinished,
     WaitProgress,
+    WaitSnapshot,
     WaitStarted,
 )
-from seadexarr.modules.wait_view import WaitSnapshot
 
 from .fakes import FakeClock
 
