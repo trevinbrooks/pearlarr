@@ -20,7 +20,8 @@ Coming from upstream 0.9.x:
 - **The data location moved** off the install directory to one OS-standard data directory (`~/.local/share/pearlarr` on Linux, `~/Library/Application Support/pearlarr` on macOS).
   Move your existing `config.yml` and cache there, or set `PEARLARR_DATA_DIR`.
   Logs follow the data directory instead of the working directory; `pearlarr paths` prints every resolved location.
-- **The cache moved** from `cache.json` to a SQLite `cache.db`, migrated automatically on first run (the legacy file is kept beside it as `cache.json.migrated`).
+- **The cache is not carried over**: the SQLite `cache.db` replaces `cache.json`, and the old file is not read.
+  The first run re-evaluates the library from scratch - cheap in the default matching mode, which checks what the arrs already have on disk; see [docs/deployment.md](docs/deployment.md#migrating-from-upstream-seadexarr) before enabling hash matching.
 - **Python 3.13 or newer is required** (3.12 support dropped); the Docker image runs 3.14.
 - `SCHEDULE_TIME` is deprecated in favor of `schedule.interval_hours` (a still-set `SCHEDULE_TIME` wins, with a deprecation warning).
 

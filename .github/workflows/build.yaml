@@ -86,6 +86,16 @@ jobs:
       - name: Pytest
         run: uv run pytest tests/ -q
 
+  # The compose example is documentation that can rot; docker compose config
+  # parses + interpolates it (services, PUID/PGID defaults) without running anything.
+  compose_example:
+    name: Validate docker-compose.example.yml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: docker compose config
+        run: docker compose -f docker-compose.example.yml config -q
+
   build_sdist_and_wheel:
     name: Build source distribution
     runs-on: ubuntu-latest
