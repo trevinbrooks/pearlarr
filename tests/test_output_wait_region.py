@@ -50,8 +50,10 @@ from .fakes import CaptureHandler, install_recording_hub, strip_ansi
 def _render_group(group: Group) -> str:
     """A group's plain rendering — what one refresh tick would draw."""
 
+    # legacy_windows pinned here and file-wide: Windows CI auto-detects a
+    # legacy console, dropping the caps to ASCII and breaking glyph asserts.
     stream = io.StringIO()
-    Console(file=stream, force_terminal=True, width=100).print(group)
+    Console(file=stream, force_terminal=True, legacy_windows=False, width=100).print(group)
     return strip_ansi(stream.getvalue())
 
 
@@ -61,7 +63,7 @@ _WAIT_TWO = ScopeId(ScopeKind.WAIT_REGION, 701)
 
 def _live_renderer(width: int = 100) -> tuple[RichRenderer, io.StringIO]:
     stream = io.StringIO()
-    console = Console(file=stream, force_terminal=True, width=width)
+    console = Console(file=stream, force_terminal=True, legacy_windows=False, width=width)
     # A frozen clock: the cockpit's between-poll ticking stays deterministic.
     return RichRenderer(lambda: console, time_source=lambda: 0.0), stream
 
@@ -295,7 +297,7 @@ class TestFrontierTeardown:
 class TestWaitRegionDirect:
     @staticmethod
     def _region() -> WaitRegion:
-        console = Console(file=io.StringIO(), force_terminal=True, width=100)
+        console = Console(file=io.StringIO(), force_terminal=True, legacy_windows=False, width=100)
         return WaitRegion(lambda: console, level_source=lambda: logging.INFO, time_source=lambda: 0.0)
 
     def test_section_left_no_ops_when_no_live_ever_started(self) -> None:
@@ -322,7 +324,7 @@ class TestWaitRegionDirect:
         # with the clock's advance folded into the overall elapsed and every
         # in-flight row's phase clock (TERMINAL rows would stay frozen).
         clock = {"now": 100.0}
-        console = Console(file=io.StringIO(), force_terminal=True, width=100)
+        console = Console(file=io.StringIO(), force_terminal=True, legacy_windows=False, width=100)
         region = WaitRegion(lambda: console, level_source=lambda: logging.INFO, time_source=lambda: clock["now"])
         importing = TorrentView(key="h", label="Copy", phase=Phase.IMPORTING, phase_elapsed_s=4.0)
         region.handle(WaitStarted(total=1, pulse_s=300.0))
@@ -357,7 +359,7 @@ class TestWaitRegionDirect:
         # No bar column below the width threshold: a barless row still says what
         # it is doing via the count column.
         clock = {"now": 0.0}
-        console = Console(file=io.StringIO(), force_terminal=True, width=60)
+        console = Console(file=io.StringIO(), force_terminal=True, legacy_windows=False, width=60)
         region = WaitRegion(lambda: console, level_source=lambda: logging.INFO, time_source=lambda: clock["now"])
         copying = TorrentView(key="c", label="Copy", phase=Phase.IMPORTING, command_issued=True)
         region.handle(WaitStarted(total=1, pulse_s=300.0))
@@ -376,7 +378,7 @@ def _boom() -> Group:
 def test_live_frame_latches_a_raising_group_build_without_logging(app_logger: logging.Logger) -> None:
     capture = CaptureHandler()
     app_logger.addHandler(capture)
-    console = Console(file=io.StringIO())
+    console = Console(file=io.StringIO(), legacy_windows=False)
     frame = _LiveFrame(_boom)
 
     # A render bug degrades to an empty frame with NO log record: the refresh
@@ -401,7 +403,7 @@ def test_a_raising_tick_emits_nothing_to_the_hub(app_logger: logging.Logger) -> 
     del app_logger
     recording = RecordingHub()
     install_hub(recording.hub)
-    console = Console(file=io.StringIO())
+    console = Console(file=io.StringIO(), legacy_windows=False)
     frame = _LiveFrame(_boom)
 
     assert list(frame.__rich_console__(console, console.options)) == []
@@ -422,7 +424,7 @@ def _latched_region(console: Console) -> tuple[WaitRegion, _LiveFrame]:
 
 def test_wait_region_reports_a_latched_failure_once_on_the_next_handle() -> None:
     recording = install_recording_hub()
-    console = Console(file=io.StringIO(), force_terminal=True, width=100)
+    console = Console(file=io.StringIO(), force_terminal=True, legacy_windows=False, width=100)
     region, frame = _latched_region(console)
 
     # One refresh tick fails silently on the refresh thread...
@@ -448,7 +450,7 @@ def test_wait_region_teardown_flushes_a_latched_failure() -> None:
     # A failure from the session's last ticks must not die with the frame: the
     # teardown routes (section_left/close/reset) also collect the latch.
     recording = install_recording_hub()
-    console = Console(file=io.StringIO(), force_terminal=True, width=100)
+    console = Console(file=io.StringIO(), force_terminal=True, legacy_windows=False, width=100)
     region, frame = _latched_region(console)
 
     assert list(frame.__rich_console__(console, console.options)) == []

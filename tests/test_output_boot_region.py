@@ -88,8 +88,10 @@ def _finished(
 
 
 def _renderer(*, width: int = 100) -> tuple[RichRenderer, io.StringIO]:
+    # legacy_windows pinned: Windows CI auto-detects a legacy console, which
+    # would drop the caps to ASCII glyphs and break the unicode assertions.
     stream = io.StringIO()
-    console = Console(file=stream, force_terminal=True, width=width)
+    console = Console(file=stream, force_terminal=True, legacy_windows=False, width=width)
     return RichRenderer(lambda: console), stream
 
 

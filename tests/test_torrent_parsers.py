@@ -37,7 +37,7 @@ _RUTRACKER_TITLE = "[BDRemux 1080p] Cool Anime / クールアニメ [RUS+JAP] (1
 def _torrent_fixture(name: str) -> str:
     """Read a saved tracker-page HTML fixture by file name."""
 
-    return (_TORRENT_FIXTURES / name).read_text()
+    return (_TORRENT_FIXTURES / name).read_text(encoding="utf-8")
 
 
 def _stub_retry_sleep(monkeypatch: pytest.MonkeyPatch) -> None:

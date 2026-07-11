@@ -862,7 +862,7 @@ class TestConfigInspection:
             "sonarr:\n  url: http://user:basicpass@sonarr:8989\n  api_key: k\n"
             "qbittorrent:\n"
             "  host: http://qbit:8080\n"
-            "  username: admin\n"
+            "  username: qbcanaryuser\n"
             "  password: hunter2\n"
             "  options:\n    REQUESTS_ARGS:\n      headers:\n        Authorization: Bearer sekrit\n",
             encoding="utf-8",
@@ -875,8 +875,10 @@ class TestConfigInspection:
         assert "REQUESTS_ARGS: REDACTED" in out
         # ...as are qBittorrent credentials and a login embedded in a URL (the
         # host survives, so the dump still shows where the arr points).
+        # The username canary must not collide with legitimate output - a
+        # literal "admin" false-positives on Windows CI's runneradmin paths.
         assert "hunter2" not in out
-        assert "admin" not in out
+        assert "qbcanaryuser" not in out
         assert "basicpass" not in out
         assert "url: http://REDACTED@sonarr:8989" in out
 
@@ -1294,6 +1296,14 @@ class TestUnexpectedConfigErrorSkips:
         assert error.trace is not None  # unexpected -> the traceback is kept
 
 
+# chmod can't produce a read-only DIRECTORY or an unreadable file on Windows
+# (only the file read-only attribute binds), so these scenarios need POSIX.
+_needs_posix_permissions = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="chmod-based access denial does not bind on Windows",
+)
+
+
 class TestUnwritableDataDir:
     """An unwritable data directory: one actionable stderr line + exit 1, no traceback.
 
@@ -1303,6 +1313,7 @@ class TestUnwritableDataDir:
     skip+retry contract - exiting would kill the scheduled daemon.
     """
 
+    @_needs_posix_permissions
     def test_run_single_reports_and_exits_one(
         self,
         tmp_path: Path,
@@ -1345,6 +1356,7 @@ class TestUnwritableDataDir:
         assert f"Cannot write to the data directory {data_dir}" in result.stderr
         assert "Traceback" not in result.output
 
+    @_needs_posix_permissions
     def test_config_init_into_a_readonly_dir_reports_cleanly(
         self,
         tmp_path: Path,
@@ -1365,6 +1377,7 @@ class TestUnwritableDataDir:
         assert f"Cannot write to the data directory {data_dir}" in result.stderr
         assert "Traceback" not in result.output
 
+    @_needs_posix_permissions
     def test_an_unreadable_config_skips_the_run_instead_of_exiting(
         self,
         capsys: pytest.CaptureFixture[str],
