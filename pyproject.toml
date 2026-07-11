@@ -85,7 +85,7 @@ build = [
 static-analysis = [
     "basedpyright>=1.39.8",
     "pyrefly>=1.1.1",
-    "ruff~=0.15.0",
+    "ruff~=0.15.21",
 ]
 test = [
     "diff-cover>=10.3.0",
