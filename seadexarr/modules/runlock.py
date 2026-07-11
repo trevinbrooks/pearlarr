@@ -21,7 +21,7 @@ from collections.abc import Generator
 
 from filelock import FileLock, Timeout
 
-from .output import Severity, hub_note
+from .output import hub_warn
 
 LOCK_FILENAME = ".seadexarr.lock"
 
@@ -57,7 +57,7 @@ def single_instance_lock(
     except OSError as e:
         # Degrade to a no-op lock so the run proceeds to config validation,
         # which surfaces the real, clean error - best-effort by design.
-        hub_note(f"Could not take the run lock at {lock_path} ({e}); proceeding without it", severity=Severity.WARNING)
+        hub_warn(f"Could not take the run lock at {lock_path} ({e}); proceeding without it")
         yield True
         return
     if logger is not None:

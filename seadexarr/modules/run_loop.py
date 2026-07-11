@@ -9,7 +9,7 @@ from .manual_import import (
     ImportWaitMode,
     resolve_wait_mode,
 )
-from .output import Severity, hub_note
+from .output import hub_error, hub_warn
 from .protocols import ArrSync, ImportCompleter
 from .reporter import RunContext
 from .run_services import RunDeps, RunServices
@@ -324,11 +324,7 @@ class RunLoop:
                     except Exception as e:
                         # Contain a per-id failure to THIS AniList id: a transient error
                         # on one season must not skip the item's other seasons.
-                        hub_note(
-                            f"{item_title} (AniList #{al_id}): unexpected error: {e}",
-                            severity=Severity.ERROR,
-                            exc=e,
-                        )
+                        hub_error(f"{item_title} (AniList #{al_id}): unexpected error: {e}", exc=e)
                         continue
 
                 if cap_reached:
@@ -350,11 +346,7 @@ class RunLoop:
 
             except Exception as e:
                 title = getattr(item, "title", "unknown title")
-                hub_note(
-                    f"{title}: unexpected error: {e}",
-                    severity=Severity.ERROR,
-                    exc=e,
-                )
+                hub_error(f"{title}: unexpected error: {e}", exc=e)
                 continue
 
         # Advance the history checkpoint only when the pass covered the whole
@@ -447,4 +439,4 @@ class RunLoop:
         try:
             _ = self._notifier.push_wait_summary(arr=self._ctx.arr, result=result)
         except Exception as e:
-            hub_note("Wait completion notification failed unexpectedly", severity=Severity.WARNING, exc=e)
+            hub_warn("Wait completion notification failed unexpectedly", exc=e)

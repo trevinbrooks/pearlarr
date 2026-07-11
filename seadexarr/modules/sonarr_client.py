@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from .arr_http import ArrHttp
 from .log import indent_string
 from .manual_import import PendingImport
-from .output import Severity, hub_note
+from .output import hub_warn
 from .seadex_types import (
     CommandBody,
     CommandResource,
@@ -285,9 +285,8 @@ class SonarrClient(AbstractSonarrClient):
         try:
             return ParsedFileInfo.model_validate(payload)
         except ValidationError as e:
-            hub_note(
-                indent_string(f"Could not parse {filename} via Sonarr (malformed response: {validation_summary(e)})"),
-                severity=Severity.WARNING,
+            hub_warn(
+                indent_string(f"Could not parse {filename} via Sonarr (malformed response: {validation_summary(e)})")
             )
             return None
 
@@ -415,10 +414,7 @@ class SonarrClient(AbstractSonarrClient):
         if not isinstance(payload, dict):
             # A 2xx whose body carries no readable id: Sonarr may still have
             # queued the command, so leave a breadcrumb before reporting None.
-            hub_note(
-                indent_string(f"Could not queue {body.name} command (unexpected payload)"),
-                severity=Severity.WARNING,
-            )
+            hub_warn(indent_string(f"Could not queue {body.name} command (unexpected payload)"))
             return None
 
         # The returned CommandResource's "id" is the queued command id (0 when
@@ -426,9 +422,8 @@ class SonarrClient(AbstractSonarrClient):
         try:
             command = CommandResource.model_validate(payload)
         except ValidationError as e:
-            hub_note(
-                indent_string(f"Could not queue {body.name} command (malformed response: {validation_summary(e)})"),
-                severity=Severity.WARNING,
+            hub_warn(
+                indent_string(f"Could not queue {body.name} command (malformed response: {validation_summary(e)})")
             )
             return None
         return command.id or None
@@ -570,10 +565,7 @@ class SonarrClient(AbstractSonarrClient):
         try:
             return CommandResource.model_validate(payload)
         except ValidationError as e:
-            hub_note(
-                indent_string(f"Could not read status for command {command_id} ({validation_summary(e)})"),
-                severity=Severity.WARNING,
-            )
+            hub_warn(indent_string(f"Could not read status for command {command_id} ({validation_summary(e)})"))
             return CommandResource()
 
     @override

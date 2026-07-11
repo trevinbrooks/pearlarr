@@ -22,7 +22,7 @@ import sqlite3
 from collections.abc import Callable
 from datetime import datetime
 
-from .output import Severity, hub_note
+from .output import hub_warn
 
 # Wait this long for a write lock before raising, instead of failing instantly on
 # a momentarily-locked db. The single-instance run lock makes contention rare, but
@@ -196,4 +196,4 @@ def quarantine_corrupt(
     for suffix in ("-wal", "-shm"):
         with contextlib.suppress(OSError):
             os.replace(path + suffix, dest + suffix)
-    hub_note(f"{what} at {path} was unreadable/corrupt; moved it to {dest} and {recovery}", severity=Severity.WARNING)
+    hub_warn(f"{what} at {path} was unreadable/corrupt; moved it to {dest} and {recovery}")

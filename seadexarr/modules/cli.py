@@ -37,9 +37,9 @@ from .output import (
     NextRunScheduled,
     OutputHub,
     Renderer,
-    Severity,
     emit_to_hub,
     hub_note,
+    hub_warn,
     install_hub,
 )
 from .output.bridge import install_bridge
@@ -393,16 +393,13 @@ def _schedule_hours(config_path: str) -> float:
         except ValueError:
             hours = math.nan
         if math.isfinite(hours) and hours > 0:
-            hub_note(
-                "SCHEDULE_TIME is deprecated; set schedule.interval_hours in the config instead.",
-                severity=Severity.WARNING,
-            )
+            hub_warn("SCHEDULE_TIME is deprecated; set schedule.interval_hours in the config instead.")
             return hours
 
     peeked = _peek_config(config_path)
     fallback = peeked.schedule.interval_hours if peeked is not None else _DEFAULT_SCHEDULE_HOURS
     if raw is not None:
-        hub_note(f"Invalid SCHEDULE_TIME {raw!r}; using {fallback:g} hours.", severity=Severity.WARNING)
+        hub_warn(f"Invalid SCHEDULE_TIME {raw!r}; using {fallback:g} hours.")
     return fallback
 
 

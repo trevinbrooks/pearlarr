@@ -22,7 +22,7 @@ from typing import Protocol, override
 import httpx
 from seadex import EntryNotFoundError, EntryRecord
 
-from .output import Severity, hub_note
+from .output import hub_warn
 from .seadex_types import ProgressSink
 
 # Ids per batched ``from_filter`` query. Mirrors ANILIST_BATCH_SIZE; ~50
@@ -111,10 +111,7 @@ class SeaDexGateway(SeaDexSource):
         """Warn ONCE that SeaDex is unreachable; the flag mutes every later call."""
 
         if not self._outage:
-            hub_note(
-                f"SeaDex request failed ({type(e).__name__}); affected titles will be skipped this run",
-                severity=Severity.WARNING,
-            )
+            hub_warn(f"SeaDex request failed ({type(e).__name__}); affected titles will be skipped this run")
         self._outage = True
 
     @override

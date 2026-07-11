@@ -15,7 +15,7 @@ from typing import cast
 
 import httpx
 
-from .output import Severity, hub_note
+from .output import hub_warn
 from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord, Json, validate_each
 
 # Transient statuses worth another try on an idempotent GET - shared with the
@@ -333,5 +333,5 @@ class ArrHttp:
         """
 
         if warn is not None:
-            hub_note(warn.replace("{detail}", detail), severity=Severity.WARNING)
+            hub_warn(warn.replace("{detail}", detail))
         return None

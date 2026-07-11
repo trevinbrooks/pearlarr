@@ -8,7 +8,7 @@ from seadex import EntryRecord, TorrentRecord
 from .config import PRIVATE_TRACKERS, PrivateReleaseAction
 from .console_caps import console_of
 from .log import indent_string
-from .output import Accent, Severity, StyledValue, hub_note
+from .output import Accent, StyledValue, hub_warn
 from .reporter import RunContext
 from .seadex_types import (
     ArrReleaseDict,
@@ -250,14 +250,14 @@ class SeadexReleaseFilter:
                 except (ValueError, IndexError):
                     # ValueError: a non-numeric entry (a typo); IndexError: out of
                     # range. Skip the bad token instead of abandoning the whole entry.
-                    hub_note(indent_string(f"Skipping invalid selection: {srg_idx!r}"), severity=Severity.WARNING)
+                    hub_warn(indent_string(f"Skipping invalid selection: {srg_idx!r}"))
                     continue
                 seadex_dict_filtered[srg] = copy.deepcopy(seadex_dict[srg])
 
             # Every token was invalid (blank input means "all" and never gets
             # here), so the title proceeds with zero releases - say so.
             if not seadex_dict_filtered:
-                hub_note(indent_string("No valid selection; skipping this title"), severity=Severity.WARNING)
+                hub_warn(indent_string("No valid selection; skipping this title"))
 
             seadex_dict = seadex_dict_filtered
 

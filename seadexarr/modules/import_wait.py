@@ -37,7 +37,7 @@ from .manual_import import (
     classify_pending,
     sanitize_torrent_telemetry,
 )
-from .output import SPARK_SAMPLES, Phase, Severity, TorrentView, WaitSnapshot, hub_note
+from .output import SPARK_SAMPLES, Phase, TorrentView, WaitSnapshot, hub_error, hub_note, hub_warn
 from .protocols import ImportCompleter
 from .reporter import RunContext
 from .run_services import RunDeps
@@ -210,11 +210,7 @@ class ImportWaitManager:
                 at_deadline=at_deadline,
             )
         except Exception as e:
-            hub_note(
-                f"Manual import failed for {pending.display_label}; leaving it for a later run",
-                severity=Severity.ERROR,
-                exc=e,
-            )
+            hub_error(f"Manual import failed for {pending.display_label}; leaving it for a later run", exc=e)
             return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
 
     def import_progress(self, pending: PendingImport) -> ImportProgress:
@@ -552,10 +548,7 @@ class ImportWaitManager:
                 self.qbit.torrents_create_category(name=category)
                 self.qbit.torrents_set_category(category=category, torrent_hashes=infohash)
         except (qbittorrentapi.APIError, qbittorrentapi.APIConnectionError) as e:
-            hub_note(
-                f"Could not move imported torrent {label} to category {category!r}: {e}",
-                severity=Severity.WARNING,
-            )
+            hub_warn(f"Could not move imported torrent {label} to category {category!r}: {e}")
 
 
 class MonitorPass:

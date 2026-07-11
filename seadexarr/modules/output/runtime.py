@@ -45,6 +45,18 @@ def hub_note(message: str, *, severity: Severity = Severity.INFO, exc: BaseExcep
     current_hub().emit(Diagnostic(severity=severity, message=message, origin=LOG_NAME, trace=trace))
 
 
+def hub_warn(message: str, *, exc: BaseException | None = None) -> None:
+    """:func:`hub_note` at WARNING - the ``logger.warning`` replacement."""
+
+    hub_note(message, severity=Severity.WARNING, exc=exc)
+
+
+def hub_error(message: str, *, exc: BaseException | None = None) -> None:
+    """:func:`hub_note` at ERROR - the ``logger.error`` replacement."""
+
+    hub_note(message, severity=Severity.ERROR, exc=exc)
+
+
 def hub_counts() -> SeverityCounts:
     """The process hub's severity counts, resolved at call time (emit_to_hub's twin)."""
 

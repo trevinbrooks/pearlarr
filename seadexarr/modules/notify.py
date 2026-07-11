@@ -26,7 +26,7 @@ from .discord import (
 )
 from .log import count_noun, format_elapsed, human_bytes
 from .manual_import import OutcomeCategory
-from .output import Severity, hub_note
+from .output import hub_warn
 from .seadex_types import SeadexDict, SeadexUrlItem
 from .torrents import AddOutcome, ReleaseOutcome
 from .wait_view import WaitResult
@@ -406,10 +406,7 @@ class Notifier:
         try:
             self.web.post(url, json=payload, timeout=10)
         except httpx.HTTPError as exc:
-            hub_note(
-                f"Wait-report webhook POST failed ({_failure_detail(exc)}) - check notifications.wait_webhook_url",
-                severity=Severity.WARNING,
-            )
+            hub_warn(f"Wait-report webhook POST failed ({_failure_detail(exc)}) - check notifications.wait_webhook_url")
             return False
         return True
 
@@ -454,16 +451,12 @@ class Notifier:
                 return self._retry_rate_limited(url=self.discord_url, embed=embed, exc=exc)
             if status is not None and 400 <= status < 500:
                 self.discord_url = None
-                hub_note(
+                hub_warn(
                     f"Discord notification failed ({detail}) - disabling Discord notifications "
-                    f"for this run; check notifications.discord_url",
-                    severity=Severity.WARNING,
+                    f"for this run; check notifications.discord_url"
                 )
             else:
-                hub_note(
-                    f"Discord notification failed ({detail}) - check notifications.discord_url",
-                    severity=Severity.WARNING,
-                )
+                hub_warn(f"Discord notification failed ({detail}) - check notifications.discord_url")
             return False
         return True
 
@@ -485,9 +478,8 @@ class Notifier:
                 exc = retry_exc
             else:
                 return True
-        hub_note(
+        hub_warn(
             f"Discord notification failed ({_failure_detail(exc)}) - rate limited by Discord; "
-            f"this notification was dropped",
-            severity=Severity.WARNING,
+            f"this notification was dropped"
         )
         return False

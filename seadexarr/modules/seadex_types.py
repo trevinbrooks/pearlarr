@@ -304,12 +304,9 @@ def validate_each[ModelT: _ApiModel](
             # Deferred: a top-level .output import would cycle back here via
             # output.events -> manual_import -> seadex_types. Skip-arm only,
             # so the all-valid hot path never touches the import machinery.
-            from .output import Severity, hub_note
+            from .output import hub_warn
 
-            hub_note(
-                f"Skipping malformed {model.__name__} record [{index}] ({validation_summary(e)})",
-                severity=Severity.WARNING,
-            )
+            hub_warn(f"Skipping malformed {model.__name__} record [{index}] ({validation_summary(e)})")
     if strict and raw and not validated:
         msg = f"none of the {len(raw)} {model.__name__} records validated; refusing to treat it as empty"
         raise BoundaryContractError(msg)

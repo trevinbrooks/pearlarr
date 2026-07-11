@@ -9,7 +9,7 @@ import httpx
 from pydantic import ValidationError
 
 from .json_narrow import is_json_list, is_json_obj
-from .output import Severity, hub_note
+from .output import Severity, hub_note, hub_warn
 from .seadex_types import AniListError, AniListMediaNode, validation_summary
 
 API_URL = "https://graphql.anilist.co"
@@ -111,10 +111,9 @@ class AniListRetryLog:
         """Warn ONCE per run that AniList lookups are degraded, then stay quiet."""
 
         if not self._gave_up:
-            hub_note(
+            hub_warn(
                 f"AniList request failed after {MAX_RETRIES} retries; "
-                "some titles/episode counts may be missing this run",
-                severity=Severity.WARNING,
+                "some titles/episode counts may be missing this run"
             )
         self._gave_up = True
 
@@ -202,7 +201,7 @@ def media_node_from(raw: dict[str, Any]) -> AniListMediaNode:
     try:
         return AniListMediaNode.model_validate(raw)
     except ValidationError as e:
-        hub_note(f"Ignoring malformed AniList Media node ({validation_summary(e)})", severity=Severity.WARNING)
+        hub_warn(f"Ignoring malformed AniList Media node ({validation_summary(e)})")
         return AniListMediaNode()
 
 

@@ -23,7 +23,7 @@ from pydantic import ValidationError
 from .boot_flow import BootFlow
 from .config import KNOWN_TRACKERS, AppConfig, Arr, config_permissions_loose
 from .log import apply_log_level
-from .output import RunFinished, Severity, emit_to_hub, hub_note
+from .output import RunFinished, emit_to_hub, hub_error, hub_note, hub_warn
 from .runlock import single_instance_lock
 
 if TYPE_CHECKING:
@@ -86,27 +86,22 @@ def load_shared_config(
         # An existing config predating the 0600-on-create hardening may still
         # expose its API keys; warn (after the boot step closes) but keep running.
         if config_permissions_loose(config):
-            hub_note(
+            hub_warn(
                 f"Config file {config} is readable by other users and holds API keys - "
-                f"tighten it with: chmod 600 {config}",
-                severity=Severity.WARNING,
+                f"tighten it with: chmod 600 {config}"
             )
         # An unknown tracker name silently matches nothing on SeaDex, so a typo would
         # quietly filter out every release from that tracker - warn, don't reject.
         unknown_trackers = sorted(loaded.seadex.trackers - KNOWN_TRACKERS)
         if unknown_trackers:
-            hub_note(
+            hub_warn(
                 f"Unknown seadex.trackers value(s) ignored by matching: "
                 f"{', '.join(unknown_trackers)} (known, case-insensitive: "
-                f"{', '.join(sorted(KNOWN_TRACKERS))})",
-                severity=Severity.WARNING,
+                f"{', '.join(sorted(KNOWN_TRACKERS))})"
             )
         return loaded
     except FileNotFoundError:
-        hub_note(
-            f"No config file at {config} - a starter template was written; fill it in and re-run.",
-            severity=Severity.ERROR,
-        )
+        hub_error(f"No config file at {config} - a starter template was written; fill it in and re-run.")
         # typer.Exit is an Exception subclass, but it escapes cleanly: sibling
         # arms can't catch a raise from THIS arm, and run_arrs wraps this call
         # in try/FINALLY only - so the boot view, web client and run lock all
@@ -117,28 +112,25 @@ def load_shared_config(
         # the template copy): report + skip like the invalid-config arms below -
         # exiting would kill a scheduled daemon over a possibly transient error.
         # Must sit after FileNotFoundError (its subclass) and before Exception.
-        hub_note(
+        hub_error(
             f"Could not access config {config} ({e}); check permissions on it and the data directory. "
-            f"Skipping this run{retry}.",
-            severity=Severity.ERROR,
+            f"Skipping this run{retry}."
         )
     except ValidationError as e:
         # Surface the specific bad keys (nested path -> message) without a traceback,
         # then skip + retry next cycle - same contract as the missing-file branch.
-        hub_note(
+        hub_error(
             f"Invalid configuration in {config}:\n{format_validation_errors(e)}\n"
-            f"Fix the listed keys and re-run. Skipping this run{retry}.",
-            severity=Severity.ERROR,
+            f"Fix the listed keys and re-run. Skipping this run{retry}."
         )
     except yaml.YAMLError as e:
         # Malformed YAML is a user-facing config problem like a failed validation:
         # a clean report + retry, not the unexpected-error traceback arm below.
-        hub_note(
-            f"Unreadable YAML in {config} ({format_yaml_error(e)}). Fix the file and re-run. Skipping this run{retry}.",
-            severity=Severity.ERROR,
+        hub_error(
+            f"Unreadable YAML in {config} ({format_yaml_error(e)}). Fix the file and re-run. Skipping this run{retry}."
         )
     except Exception as e:
-        hub_note(f"Could not load config {config}; skipping this run{retry}", severity=Severity.ERROR, exc=e)
+        hub_error(f"Could not load config {config}; skipping this run{retry}", exc=e)
     return None
 
 
@@ -184,17 +176,12 @@ def build_resolver(
         # A first-ever source download with no network lands here (a failed
         # refresh of an existing copy falls open inside the resolver): a clean
         # one-liner, not a traceback.
-        hub_note(
-            f"Could not download the id-mapping sources ({e}); check your network connection. Skipping this run{retry}",
-            severity=Severity.ERROR,
+        hub_error(
+            f"Could not download the id-mapping sources ({e}); check your network connection. Skipping this run{retry}"
         )
         return None
     except Exception as e:
-        hub_note(
-            f"Could not fetch/parse the id-mapping sources; skipping this run{retry}",
-            severity=Severity.ERROR,
-            exc=e,
-        )
+        hub_error(f"Could not fetch/parse the id-mapping sources; skipping this run{retry}", exc=e)
         return None
 
     return resolver
@@ -223,16 +210,15 @@ def configured_arrs(
     missing = {arr: keys for arr, _ in arrs if (keys := app_config.missing_arr_keys(arr))}
     if explicit and missing:
         for arr, keys in missing.items():
-            hub_note(
-                f"{arr.capitalize()} was selected but is not configured - set {' and '.join(keys)} in {config_path}",
-                severity=Severity.ERROR,
+            hub_error(
+                f"{arr.capitalize()} was selected but is not configured - set {' and '.join(keys)} in {config_path}"
             )
         return None
 
     for arr, keys in missing.items():
         if len(keys) == 1:
             other = f"{arr}.api_key" if keys[0] == f"{arr}.url" else f"{arr}.url"
-            hub_note(f"{other} is set but {keys[0]} is not - skipping {arr.capitalize()}", severity=Severity.WARNING)
+            hub_warn(f"{other} is set but {keys[0]} is not - skipping {arr.capitalize()}")
         else:
             # Flat message: the rich console indents it via placement (the open
             # boot section); the file/plain surfaces take a structured line.
@@ -240,10 +226,7 @@ def configured_arrs(
 
     kept = [(arr, item_id) for arr, item_id in arrs if arr not in missing]
     if not kept:
-        hub_note(
-            f"Neither sonarr nor radarr is configured - set url and api_key for at least one in {config_path}",
-            severity=Severity.ERROR,
-        )
+        hub_error(f"Neither sonarr nor radarr is configured - set url and api_key for at least one in {config_path}")
         return None
     return kept
 
@@ -306,10 +289,7 @@ def run_arrs(
     # instances are still fine.
     with single_instance_lock(paths.data_dir, logger=logger) as acquired:
         if not acquired:
-            hub_note(
-                f"Another SeaDexArr run is active in {paths.data_dir}; skipping this run.",
-                severity=Severity.WARNING,
-            )
+            hub_warn(f"Another SeaDexArr run is active in {paths.data_dir}; skipping this run.")
             return False
 
         # The banner names the data dir every cycle: scheduled mode rotates the
@@ -407,45 +387,36 @@ def run_arrs(
                         # a stack trace under "unexpected error". The two arr-client
                         # arms below get the same treatment.
                         all_arrs_completed = False
-                        hub_note(str(e), severity=Severity.ERROR)
+                        hub_error(str(e))
                     except ArrConnectionError as e:
                         # The error's message names the URL it couldn't reach, which
                         # disambiguates when this leg contacted more than one arr.
                         all_arrs_completed = False
                         keys = " / ".join(f"{a}.url" for a in implicated_arrs(arr_name, app_config))
-                        hub_note(
-                            f"{arr_name.capitalize()} run failed: {e} - check {keys} in your config",
-                            severity=Severity.ERROR,
-                        )
+                        hub_error(f"{arr_name.capitalize()} run failed: {e} - check {keys} in your config")
                     except BoundaryContractError as e:
                         # The arr answered but its library payload validated to
                         # nothing: a one-line contract error, never a traceback.
                         all_arrs_completed = False
-                        hub_note(f"{arr_name.capitalize()} run failed: {e}", severity=Severity.ERROR)
+                        hub_error(f"{arr_name.capitalize()} run failed: {e}")
                     except ArrAuthError:
                         all_arrs_completed = False
                         implicated = implicated_arrs(arr_name, app_config)
                         if len(implicated) == 1:
-                            hub_note(
-                                f"{arr_name.capitalize()} rejected the API key - check {arr_name}.api_key in your config",
-                                severity=Severity.ERROR,
+                            hub_error(
+                                f"{arr_name.capitalize()} rejected the API key - check {arr_name}.api_key in your config"
                             )
                         else:
                             # This leg presented more than one key - name every
                             # candidate (the config keys are what the user edits).
                             keys = " / ".join(f"{a}.api_key" for a in implicated)
-                            hub_note(
+                            hub_error(
                                 f"An arr rejected the API key during the {arr_name.capitalize()} run - "
-                                f"check {keys} in your config",
-                                severity=Severity.ERROR,
+                                f"check {keys} in your config"
                             )
                     except Exception as e:
                         all_arrs_completed = False
-                        hub_note(
-                            f"Unexpected error during {arr_name.capitalize()} run",
-                            severity=Severity.ERROR,
-                            exc=e,
-                        )
+                        hub_error(f"Unexpected error during {arr_name.capitalize()} run", exc=e)
                     finally:
                         # Cap this arr's boot section so the next arr opens a fresh
                         # one; a no-op on the happy path (run_sync already ended it

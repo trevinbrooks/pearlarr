@@ -31,7 +31,7 @@ from .manual_import import (
     normalize_basename,
     normalize_group,
 )
-from .output import Severity, hub_note
+from .output import hub_warn
 from .run_services import RunDeps
 from .seadex_types import (
     CommandResource,
@@ -297,7 +297,7 @@ class ImportExecutor:
                 f"not visible to Sonarr for {pending.display_label}; will retry",
             )
             if at_deadline:
-                hub_note(message, severity=Severity.WARNING)
+                hub_warn(message)
             else:
                 self.logger.debug(message)
 
@@ -345,12 +345,11 @@ class ImportExecutor:
         self._warned_unplaceable.add(pending.infohash)
         label = pending.display_label
         coverage = f" ({pending.coverage})" if pending.coverage else ""
-        hub_note(
+        hub_warn(
             indent_string(
                 f"{label}{coverage}: {count_noun(len(unplaceable), 'file')} could not be matched "
                 f"to an episode and {pluralize(len(unplaceable), 'was', 'were')} not imported",
-            ),
-            severity=Severity.WARNING,
+            )
         )
 
     def _import_language_objects(self, pending: PendingImport) -> list[Language]:
@@ -404,10 +403,7 @@ class ImportExecutor:
         # surface the (likely) typo once per run instead of staying silent.
         if default_name and default_axes == ParsedQuality() and not self._warned_default_quality:
             self._warned_default_quality = True
-            hub_note(
-                f"imports.default_quality '{default_name}' matches no Sonarr quality definition; ignoring it",
-                severity=Severity.WARNING,
-            )
+            hub_warn(f"imports.default_quality '{default_name}' matches no Sonarr quality definition; ignoring it")
         quality = resolve_quality(
             sonarr_axes,
             our_axes,
@@ -419,11 +415,10 @@ class ImportExecutor:
         # nested quality already folded to None at the parse boundary).
         resolved = quality.quality
         if resolved is None or QualitySource.parse(resolved.source) is None:
-            hub_note(
+            hub_warn(
                 indent_string(
                     f"{content_path}: could not confidently resolve quality for {base}; importing as Unknown (re-grab risk)",
-                ),
-                severity=Severity.WARNING,
+                )
             )
         return ManualImportFile(
             path=path,
