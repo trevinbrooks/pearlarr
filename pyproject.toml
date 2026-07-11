@@ -50,7 +50,7 @@ classifiers = [
 
 dependencies = [
     "beautifulsoup4 == 4.15.0",
-    "filelock == 3.29.6",
+    "filelock == 3.29.7",
     "httpx == 0.28.1",
     "platformdirs == 4.10.0",
     "pydantic == 2.13.4",
