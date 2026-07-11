@@ -3,7 +3,6 @@
 import contextlib
 import random
 import time
-from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -91,7 +90,6 @@ query ($ids: [Int]) {
 )
 
 
-@dataclass
 class AniListRetryLog:
     """Voices ``_post_with_retry``'s waits and give-ups as hub Diagnostics.
 
@@ -101,7 +99,8 @@ class AniListRetryLog:
     warning fires once per run rather than once per title.
     """
 
-    _gave_up: bool = field(default=False, init=False)
+    def __init__(self) -> None:
+        self._gave_up = False
 
     def waiting(self, reason: str, wait: float, retry: int, *, severity: Severity = Severity.INFO) -> None:
         """One backoff notice, so a long Retry-After wait doesn't look like a hang."""

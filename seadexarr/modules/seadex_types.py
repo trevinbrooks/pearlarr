@@ -296,15 +296,16 @@ def validate_each[ModelT: _ApiModel](
         strict (bool): Raise on a non-empty-but-zero-valid payload.
     """
 
-    # Deferred: a top-level .output import would cycle back here via
-    # output.events -> manual_import -> seadex_types.
-    from .output import Severity, hub_note
-
     validated: list[ModelT] = []
     for index, record in enumerate(raw):
         try:
             validated.append(model.model_validate(record))
         except ValidationError as e:
+            # Deferred: a top-level .output import would cycle back here via
+            # output.events -> manual_import -> seadex_types. Skip-arm only,
+            # so the all-valid hot path never touches the import machinery.
+            from .output import Severity, hub_note
+
             hub_note(
                 f"Skipping malformed {model.__name__} record [{index}] ({validation_summary(e)})",
                 severity=Severity.WARNING,
