@@ -317,9 +317,11 @@ class SeadexSettings(_ConfigBase):
     # grabbed: they're filtered later, after the overlap check against what's
     # already downloaded.
     trackers: set[str] = Field(default_factory=lambda: PUBLIC_TRACKERS | PRIVATE_TRACKERS)
-    """Tracker names releases may be grabbed from, case-insensitive.
+    """Tracker names considered during release selection, case-insensitive.
 
-    Empty or absent allows every supported tracker.
+    Empty or absent considers every supported tracker. A listed tracker is not
+    necessarily grabbable: private releases are never downloaded, and grabs come
+    only from the public trackers Pearlarr can parse.
     """
 
     ignore_anilist_ids: set[int] = Field(default_factory=set[int])

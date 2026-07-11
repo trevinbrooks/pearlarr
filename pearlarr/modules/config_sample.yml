@@ -89,8 +89,9 @@ seadex:
   # SeaDex release tags to skip, e.g. Dolby Vision or Deband Required. Empty skips none.
   ignore_tags:
 
-  # Tracker names releases may be grabbed from, case-insensitive. Empty or absent allows every
-  # supported tracker.
+  # Tracker names considered during release selection, case-insensitive. Empty or absent considers
+  # every supported tracker. A listed tracker is not necessarily grabbable: private releases are
+  # never downloaded, and grabs come only from the public trackers Pearlarr can parse.
   # Known: Nyaa, AnimeTosho, AniDex, RuTracker, AB, BeyondHD, PassThePopcorn, BroadcastTheNet,
   # HDBits, Blutopia, Aither, Other, OtherPrivate
   trackers:

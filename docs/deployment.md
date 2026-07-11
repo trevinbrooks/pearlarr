@@ -11,7 +11,7 @@ It runs as the unprivileged `pearlarr` user (uid 1000) unless the compose `user:
 | Tag | Meaning |
 | --- | --- |
 | `vX.Y.Z` | A pinned release - the recommended choice. |
-| `latest` | The newest release tag. |
+| `latest` | The most recently pushed release tag. |
 | `main` | Every push to `main` - the cutting edge, may break. |
 
 For stronger pinning, reference the image by digest (`ghcr.io/trevinbrooks/pearlarr@sha256:...`).
@@ -29,7 +29,7 @@ Started bare (the normal service), it walks four steps:
 1. **Writability check** - if `/config` is not writable by the container's uid, it stops immediately with the message `ERROR: /config is not writable by uid 1000 (gid 1000).` and the fix (chown the host directory, or point `user:`/PUID/PGID at its owner).
    A bind-mount directory auto-created by Docker is root-owned, which is why the quick start says to `mkdir -p ./config` yourself.
 2. **First boot** - if `/config/config.yml` does not exist, `pearlarr config init` writes the starter template and the container exits so you can fill it in.
-   With `restart: unless-stopped` Docker restarts it; the file now exists, so the container stays up.
+   With `restart: unless-stopped` Docker restarts it; the file now exists, so the container stays up (each run fails with a one-line error until the file is filled in).
 3. **Catch-up run** - with `PEARLARR_RUN_ON_START=true` (the default) one `pearlarr run single` pass runs at container start.
    Its failure does not stop the container; the exit code is logged and the schedule proceeds.
 4. **Schedule** - [supercronic](https://github.com/aptible/supercronic) becomes PID 1 and runs `pearlarr run single` on the `PEARLARR_CRON` schedule.
@@ -66,8 +66,8 @@ environment:
 
 ### Stopping, and `stop_grace_period`
 
-`docker stop` sends SIGTERM, which Pearlarr treats as a clean shutdown (exit 0) - see [Interruption semantics](#interruption-semantics) for what a mid-run stop leaves behind.
-Docker escalates to SIGKILL after `stop_grace_period`, default ten seconds.
+`docker stop` sends SIGTERM to supercronic, which stops scheduling and waits for an in-flight run to finish; Docker escalates to SIGKILL after `stop_grace_period`, default ten seconds.
+See [Interruption semantics](#interruption-semantics) for what a killed run leaves behind.
 That is fine for the default configuration, but a blocking `imports.wait_mode` can legitimately hold a run for up to `imports.wait_timeout` (default one hour) - raise the grace period so a routine `docker stop` does not SIGKILL a mid-import run:
 
 ```yaml
@@ -88,7 +88,7 @@ Two options:
 - **Your own scheduler** - cron or a systemd timer invoking `pearlarr run single`.
   Failed runs exit non-zero, so cron mail and `OnFailure=` hooks work as expected.
 
-If two invocations pointed at the same data directory ever overlap, the second warns `Another Pearlarr run is active in <data_dir>; skipping this run.` and exits non-zero (in scheduled mode, the loop simply retries next cycle).
+If two invocations pointed at the same data directory ever overlap, the second warns `Another Pearlarr run is active in <data_dir>; skipping this run.` and exits non-zero (in scheduled mode, the loop retries next cycle).
 Running multiple instances *intentionally* is fine - give each its own data directory (`--data-dir` or `PEARLARR_DATA_DIR`), which also gives each its own lock.
 
 ## The data directory
@@ -169,7 +169,8 @@ Pearlarr 1.0 is a renamed fork of [bbtufty/seadexarr](https://github.com/bbtufty
 
 - **The image and package moved**: `ghcr.io/trevinbrooks/pearlarr` replaces `ghcr.io/bbtufty/seadexarr`, the PyPI package is `pearlarr`, the command is `pearlarr`, and the environment variables are `PEARLARR_*`.
 - **Rewrite the config**: the format changed wholesale from flat keys to nested groups, and unknown keys now fail at load instead of being ignored.
-  Run `pearlarr config init` for a commented starter and transfer your values - for example `sonarr_url` is now `sonarr.url`, `qbit_info` is the `qbittorrent` group, `torrent_tags` is `qbittorrent.tags`, and `public_only` is replaced by the `seadex.private_releases` policy.
+  Move your old `config.yml` aside first - `config init` refuses to overwrite an existing file, and following its `--force` hint would destroy the values you are about to transfer.
+  Then run `pearlarr config init` for a commented starter and transfer your values - for example `sonarr_url` is now `sonarr.url`, `qbit_info` is the `qbittorrent` group, `torrent_tags` is `qbittorrent.tags`, and `public_only` is replaced by the `seadex.private_releases` policy.
   [docs/configuration.md](configuration.md) documents every key.
 - **The data directory is new**: upstream kept files beside the install; Pearlarr uses one OS-standard directory (see [above](#the-data-directory)).
   In Docker, mount `/config` as before - the layout inside it is Pearlarr's own.
@@ -177,5 +178,5 @@ Pearlarr 1.0 is a renamed fork of [bbtufty/seadexarr](https://github.com/bbtufty
   That is cheap in the default matching mode - the first run re-evaluates the library against what the arrs already have on disk and downloads nothing it finds there.
   Only with `seadex.use_torrent_hash_to_filter: true` does a fresh cache mean re-grabbing, since hash matching only knows what Pearlarr itself added.
 - **`SCHEDULE_TIME` is deprecated**: set `schedule.interval_hours` (bare metal) or `PEARLARR_CRON` (Docker) instead.
-  A still-set `SCHEDULE_TIME` wins for now, with a deprecation warning.
+  On bare metal a still-set `SCHEDULE_TIME` wins for now, with a deprecation warning; the container never reads it.
 - **Python 3.13 or newer** is required for a pip install; the Docker image brings its own interpreter.

@@ -36,7 +36,8 @@ $ mkdir -p ./config
 $ docker compose up -d pearlarr
 ```
 
-On first boot the container writes a starter `config.yml` into `./config` and stops; fill the file in, then:
+On first boot the container writes a starter `config.yml` into `./config` and restarts; each run fails with a one-line error until the file is filled in.
+Fill it in, then:
 
 ```console
 $ docker compose restart pearlarr
@@ -121,7 +122,7 @@ The config is validated on load: an unknown or misspelled key fails with an erro
 | Radarr | 5.x (the v3 API) |
 | qBittorrent | 4.1 or newer, WebUI enabled |
 | Python | 3.13+ (the Docker image ships its own 3.14) |
-| OS | Linux, macOS, Windows - all CI-tested; Docker images for amd64 and arm64 |
+| OS | Linux, macOS, Windows (CI covers Linux and Windows); Docker images for amd64 and arm64 |
 
 Coming from upstream SeaDexArr? The config format and data locations changed - see [migrating from upstream](docs/deployment.md#migrating-from-upstream-seadexarr).
 
@@ -137,6 +138,6 @@ Coming from upstream SeaDexArr? The config format and data locations changed - s
 ## Acknowledgements
 
 Pearlarr is a fork of [seadexarr](https://github.com/bbtufty/seadexarr), originally created by [bbtufty](https://github.com/bbtufty).
-Release data comes from the [SeaDex](https://releases.moe) project, which Pearlarr is not affiliated with; ID mappings come from [PlexAniBridge-Mappings](https://github.com/eliasbenb/PlexAniBridge-Mappings), [Kometa Anime-IDs](https://github.com/Kometa-Team/Anime-IDs) and [Anime-Lists](https://github.com/Anime-Lists/anime-lists).
+Release data comes from the [SeaDex](https://releases.moe) project, which Pearlarr is not affiliated with; ID mappings come from [AniBridge Mappings](https://github.com/anibridge/anibridge-mappings), [Kometa Anime-IDs](https://github.com/Kometa-Team/Anime-IDs) and [Anime-Lists](https://github.com/Anime-Lists/anime-lists).
 
 Pearlarr is licensed under the [GPL-3.0-or-later](LICENSE).
