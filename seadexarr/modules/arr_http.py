@@ -15,6 +15,7 @@ from typing import cast
 
 import httpx
 
+from .config import strip_userinfo
 from .output import hub_warn
 from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord, Json, validate_each
 
@@ -86,6 +87,18 @@ class ArrHttp:
     label: str  # "Sonarr" / "Radarr", for warnings
     headers: Mapping[str, str]
     sleep: Callable[[float], None] = time.sleep  # injectable so tests don't wait out backoffs
+
+    @property
+    def display_url(self) -> str:
+        """The base URL as messages may show it: any embedded login masked.
+
+        Requests ride ``base_url`` verbatim (a ``user:pass@`` login there is
+        real basic auth, e.g. an arr behind a protected reverse proxy); every
+        error/warning string uses this instead - the login is a credential
+        under the redaction guarantee.
+        """
+
+        return strip_userinfo(self.base_url)
 
     @classmethod
     def bind(
@@ -278,7 +291,7 @@ class ArrHttp:
 
         response, detail = self._get_with_retries(path, params)
         if response is not None and response.status_code in (401, 403):
-            raise ArrAuthError(f"{self.label} at {self.base_url} rejected the API key ({detail})")
+            raise ArrAuthError(f"{self.label} at {self.display_url} rejected the API key ({detail})")
         if response is None or response.status_code != 200:
             raise self._strict_error(detail)
         try:
@@ -323,7 +336,7 @@ class ArrHttp:
     def _strict_error(self, detail: str) -> ArrConnectionError:
         """The strict path's uniform could-not-reach error, naming url + cause."""
 
-        return ArrConnectionError(f"Could not reach {self.label} at {self.base_url} ({detail})")
+        return ArrConnectionError(f"Could not reach {self.label} at {self.display_url} ({detail})")
 
     def _fail(self, warn: str | None, detail: str) -> None:
         """The single fail-open tail: warn (when wanted) and return None.

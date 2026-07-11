@@ -22,6 +22,7 @@ from .config import (
     AppConfig,
     Arr,
     LogFormat,
+    strip_userinfo,
     write_starter_config,
 )
 from .console_caps import CapsCache
@@ -672,19 +673,6 @@ _SECRET_KEY_MARKERS = ("api_key", "password", "webhook", "discord", "username")
 _MASK_ALL_SUBTREES = ("options",)
 
 
-def _strip_userinfo(value: str) -> str:
-    """Mask a ``user:pass@`` login embedded in a URL/host config value."""
-
-    scheme, sep, rest = value.partition("://")
-    if not sep:
-        scheme, rest = "", value
-    authority, slash, tail = rest.partition("/")
-    if "@" not in authority:
-        return value
-    prefix = f"{scheme}://" if sep else ""
-    return f"{prefix}REDACTED@{authority.rpartition('@')[2]}{slash}{tail}"
-
-
 def _redact_secrets(node: object, *, mask_values: bool = False) -> object:
     """A deep copy of a dumped config with every set secret value masked.
 
@@ -702,7 +690,7 @@ def _redact_secrets(node: object, *, mask_values: bool = False) -> object:
             if value is not None and (mask_values or any(marker in lowered for marker in _SECRET_KEY_MARKERS)):
                 redacted[key] = "REDACTED"
             elif isinstance(value, str) and ("url" in lowered or "host" in lowered):
-                redacted[key] = _strip_userinfo(value)
+                redacted[key] = strip_userinfo(value)
             else:
                 redacted[key] = _redact_secrets(value, mask_values=mask_values or lowered in _MASK_ALL_SUBTREES)
         return redacted

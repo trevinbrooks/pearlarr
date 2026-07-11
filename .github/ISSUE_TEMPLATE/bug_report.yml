@@ -18,8 +18,30 @@ body:
   - type: input
     id: version
     attributes:
-      label: Version and install method
-      description: "`seadexarr --version`, plus how it's installed (Docker / pip / source)."
+      label: Version
+      description: "The output of `seadexarr --version`."
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Install method
+      options:
+        - Docker
+        - uv / pipx
+        - pip
+        - From source
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other
     validations:
       required: true
   - type: textarea
@@ -32,11 +54,13 @@ body:
     id: config
     attributes:
       label: Config
-      description: Paste the output of `seadexarr config show` — it redacts API keys, passwords and webhook URLs, so it is safe to share. Never paste a raw config.yml.
+      description: Paste the output of `seadexarr config show` — it redacts API keys, passwords and webhook URLs by design, so it is safe to share. Never paste a raw config.yml.
       render: yaml
+    validations:
+      required: true
   - type: textarea
     id: logs
     attributes:
       label: Log excerpt
-      description: The relevant lines from `logs/` in the data directory (see the paths output above). Redact anything sensitive.
+      description: "The relevant lines from the `logs/` folder in the data directory (`seadexarr paths` prints it; typically `~/.local/share/seadexarr/logs` on Linux, `~/Library/Application Support/seadexarr/logs` on macOS, `/config/logs` in Docker). Log files never contain your keys or webhook URLs, so excerpts are safe to paste."
       render: text

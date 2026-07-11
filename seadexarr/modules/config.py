@@ -143,6 +143,24 @@ def secret_value(secret: SecretStr | None) -> str | None:
     return secret.get_secret_value() if secret is not None else None
 
 
+def strip_userinfo(value: str) -> str:
+    """Mask a ``user:pass@`` login embedded in a URL/host value.
+
+    Every user-facing rendering of a configured URL (``config show``, arr
+    connection errors) goes through this: the login is a credential, the
+    host is what the user needs to see.
+    """
+
+    scheme, sep, rest = value.partition("://")
+    if not sep:
+        scheme, rest = "", value
+    authority, slash, tail = rest.partition("/")
+    if "@" not in authority:
+        return value
+    prefix = f"{scheme}://" if sep else ""
+    return f"{prefix}REDACTED@{authority.rpartition('@')[2]}{slash}{tail}"
+
+
 class _ConfigBase(BaseModel):
     """Shared base for every settings group: strict, immutable, blank-tolerant.
 
