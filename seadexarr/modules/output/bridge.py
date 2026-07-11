@@ -4,11 +4,14 @@ One :class:`HubBridgeHandler` per process, attached to the root logger AND to th
 app logger (its ``propagate`` stays False, so the app path needs its own seat).
 Adoption rules:
 
-* App-logger records: WARNING+ adopt visible (the badge class); sub-WARNING
-  adopt ``file_only`` at INFO+ config (DEBUG chatter and unmigrated INFO
-  stragglers stay forensic) and under a rich seat (RichConsoleHandler already
-  prints the raw record). At a configured DEBUG with a plain/json seat they
-  adopt visible — the bridge is the only console route there.
+* App-logger records: WARNING+ adopt visible (the badge class) — post-PR7 a
+  defensive arm, since first-party WARNING+ emits hub Diagnostics directly
+  (tests/test_logging_ban.py enforces it; log.py's invalid-level critical is
+  the one sanctioned raw site). Sub-WARNING (DEBUG chatter, which stays raw
+  forever) adopts ``file_only`` at INFO+ config and under a rich seat
+  (RichConsoleHandler already prints the raw record). At a configured DEBUG
+  with a plain/json seat it adopts visible — the bridge is the only console
+  route there.
 * Root records (third-party: httpx, urllib3, pydantic, py.warnings, ...):
   WARNING+ adopt visible with ``origin = record.name``; sub-WARNING records below
   the hub's level are never constructed, at-or-above it they adopt ``file_only``

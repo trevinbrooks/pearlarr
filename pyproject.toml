@@ -231,6 +231,7 @@ select = [
     "FA",     # flake8-future-annotations
     "ISC",    # flake8-implicit-str-concat
     "ICN003", # banned-import-from
+    "LOG015", # root-logger-call: raw logging.* calls; tests/test_logging_ban.py owns the instance-call arm
     "PIE",    # flake8-pie
     "T20",    # flake8-print
     "RSE",    # flake8-raise

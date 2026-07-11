@@ -5,10 +5,10 @@ indents, styles). Emphasis rides the semantic :class:`Accent`/:class:`Span`/
 :class:`StyledValue` value model — never a rich style string, never a pre-formatted
 display string. ``EntryState`` (log.py) and ``Outcome``/``OutcomeCategory``
 (manual_import.py) are reused, not mirrored, so the vocabulary can't drift from the
-domain enums. PR7 relocation caution (verified): moving ``Outcome`` INTO this module
-would cycle — manual_import -> output.events -> config -> manual_import (config
-imports ``ImportWaitMode``) — so PR7 must first move ``ImportWaitMode`` out of
-config's import, or leave ``Outcome`` where it is.
+domain enums. ``Outcome`` deliberately stays in manual_import (settled at PR7):
+moving it INTO this module would cycle — manual_import -> output.events -> config
+-> manual_import (config imports ``ImportWaitMode``) — and reuse already prevents
+the drift that relocation would have bought.
 """
 
 from __future__ import annotations
@@ -609,7 +609,7 @@ class RunFinished:
 
 @dataclass(frozen=True, slots=True)
 class Diagnostic:
-    """A position-free problem/notice: our stragglers + adopted stdlib records.
+    """A position-free problem/notice: our one-liners (hub_note) + adopted stdlib records.
 
     ``file_only`` routes hub-containment notes (and, later, bridge-adopted
     third-party DEBUG/INFO) past the console surfaces to the file sink alone.

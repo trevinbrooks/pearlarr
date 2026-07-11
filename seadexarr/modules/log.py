@@ -387,6 +387,8 @@ def setup_logger(
         logger.addHandler(console_handler)
 
     # Only now can the invalid-level complaint reach the hub (and a rich console).
+    # Deliberately raw — the sanctioned straggler the bridge adopts (this module
+    # cannot lean on the hub it configures); allowlisted in tests/test_logging_ban.py.
     if invalid_log_level is not None:
         logger.critical(f"Invalid log level '{invalid_log_level}', defaulting to 'INFO'")
 

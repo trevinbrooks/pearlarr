@@ -1,4 +1,4 @@
-"""The process-global hub registry — the strangler seam (S3; PR7 revisits ownership).
+"""The process-global hub registry (S3).
 
 Mirrors stdlib logging's process-global registry: cli installs the real hub once
 pre-loop; scope producers (the boot flow's mark, the wait narrator's factory) and
@@ -22,7 +22,7 @@ _hub: OutputHub = _DEFAULT_HUB
 
 
 def emit_to_hub(event: Event) -> None:
-    """Emit through the process hub, resolved at call time (the strangler seam).
+    """Emit through the process hub, resolved at call time.
 
     THE late-resolver emit for every producer without a bound handle - the
     reporter's ``emit`` seam, boot_flow's ledger/mark, the wait narrator's
