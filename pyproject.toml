@@ -200,6 +200,14 @@ ignore = [
     "TD001",   # invalid-todo-tag
     "TD002",   # missing-todo-author
     "TD003",   # missing-todo-link
+    # Docstring presence floor is modules/packages/classes only: leaf-function
+    # gates under zero-suppressions manufacture ceremony; the rubric owns leaves.
+    "D202",   # blank-line-after-function: the house style separates docstring from body
+    "D102",    # undocumented-public-method
+    "D103",    # undocumented-public-function
+    "D105",    # undocumented-magic-method
+    "D106",    # undocumented-public-nested-class
+    "D107",    # undocumented-public-init
     "PLC0415", # import-outside-top-level
     "PLE0604", # invalid-all-object (false positives)
     "PLE0643", # potential-index-error (false positives)
@@ -209,7 +217,6 @@ ignore = [
     "PLW2901", # redefined-loop-name
     "RUF001",  # ambiguous-unicode-character-string
     "RUF012",  # mutable-class-default
-    "RUF100",  # unused-noqa (flake8 has slightly different behavior)
     # Owned by `ruff format` (it adds trailing commas and normalises implicit string
     # concatenation), so enforcing them as lint rules fights the formatter. ruff's own
     # `format` conflict warning names exactly these two; the rest of COM/ISC stays on.
@@ -229,6 +236,10 @@ select = [
     "A",      # flake8-builtins
     "COM",    # flake8-commas
     "C4",     # flake8-comprehensions
+    "D",      # pydocstyle (google convention; presence floor D100/D101/D104)
+    "DOC202", # docstring-extraneous-returns (preview): Returns section with no return
+    "DOC403", # docstring-extraneous-yields (preview): Yields section with no yield
+    "DOC502", # docstring-extraneous-exception (preview): Raises names an unraised type
     "FA",     # flake8-future-annotations
     "ISC",    # flake8-implicit-str-concat
     "ICN003", # banned-import-from
@@ -252,6 +263,9 @@ select = [
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "requests" = { msg = "owned HTTP is httpx-only via the shared clients (Tier 2.6)" }
 "urllib.request" = { msg = "use the shared web client (Tier 2.6)" }
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.ruff.lint.isort]
 known-first-party = [

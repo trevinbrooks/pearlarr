@@ -642,7 +642,7 @@ class CacheStore(AbstractCacheStore):
             placeholders = ", ".join("?" for _ in scalar)
             assignments = ", ".join(f"{c} = excluded.{c}" for c in scalar)
             self._conn.execute(
-                f"INSERT INTO entries (arr, al_id, {cols}) VALUES (?, ?, {placeholders}) "  # noqa: S608
+                f"INSERT INTO entries (arr, al_id, {cols}) VALUES (?, ?, {placeholders}) "
                 f"ON CONFLICT (arr, al_id) DO UPDATE SET {assignments}",
                 (arr_key, al_id, *(details[c] for c in scalar)),
             )
@@ -679,7 +679,7 @@ class CacheStore(AbstractCacheStore):
 
         where = " AND ".join(f"{c} = ?" for c in block.key_cols)
         row = self._conn.execute(
-            f"SELECT json(record) FROM {block.table} WHERE {where}",  # noqa: S608
+            f"SELECT json(record) FROM {block.table} WHERE {where}",
             key,
         ).fetchone()
         return json.loads(row[0]) if row else None
@@ -690,7 +690,7 @@ class CacheStore(AbstractCacheStore):
         cols = ", ".join(block.key_cols)
         placeholders = ", ".join("?" for _ in block.key_cols)
         self._conn.execute(
-            f"INSERT INTO {block.table} ({cols}, record) VALUES ({placeholders}, jsonb(?)) "  # noqa: S608
+            f"INSERT INTO {block.table} ({cols}, record) VALUES ({placeholders}, jsonb(?)) "
             f"ON CONFLICT ({cols}) DO UPDATE SET record = excluded.record",
             (*key, json.dumps(record)),
         )
@@ -706,7 +706,7 @@ class CacheStore(AbstractCacheStore):
         """
 
         cursor = self._conn.execute(
-            f"DELETE FROM {block.table} WHERE fetched_at < ? OR fetched_at IS NULL",  # noqa: S608
+            f"DELETE FROM {block.table} WHERE fetched_at < ? OR fetched_at IS NULL",
             (cutoff.strftime(UPDATED_AT_STR_FORMAT),),
         )
         return cursor.rowcount
@@ -874,7 +874,7 @@ class CacheStore(AbstractCacheStore):
     def _count(self, table: str) -> int:
         """Row count of one table; the name comes from stats()'s closed literals."""
 
-        row = self._conn.execute(f"SELECT count(*) FROM {table}").fetchone()  # noqa: S608
+        row = self._conn.execute(f"SELECT count(*) FROM {table}").fetchone()
         return int(row[0]) if row else 0
 
     @override

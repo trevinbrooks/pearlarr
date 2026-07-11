@@ -112,10 +112,12 @@ def strip_ticks(text: str) -> str:
     return text.replace("`", "")
 
 
-def normalize_ticks(text: str) -> str:
-    """Collapse reST-style double backticks to markdown single backticks."""
+def reject_double_ticks(text: str) -> str:
+    """Refuse reST-style double backticks - the compiled dialect is single-backtick only."""
 
-    return re.sub(r"``([^`]+)``", r"`\1`", text)
+    if "``" in text:
+        raise GenerationError(f"double backticks in a config docstring: {text[:60]!r}")
+    return text
 
 
 def enum_member_docs(enum_cls: type[Enum]) -> dict[str, str]:
@@ -326,7 +328,7 @@ def _normalize_descriptions(node: object) -> None:
         typed = cast("dict[str, object]", node)
         for key, value in typed.items():
             if key == "description" and isinstance(value, str):
-                typed[key] = normalize_ticks(flatten(value))
+                typed[key] = reject_double_ticks(flatten(value))
             else:
                 _normalize_descriptions(value)
     elif isinstance(node, list):

@@ -392,7 +392,7 @@ class OutputHub:
                         sub.renderer.handle(event, when)
                     except Exception:
                         self._strike(sub)
-                    except BaseException:  # noqa: S112 - already unwinding; best-effort
+                    except BaseException:  # already unwinding; best-effort
                         continue
             self._drain_loop()
         finally:
