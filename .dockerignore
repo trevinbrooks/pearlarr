@@ -25,4 +25,4 @@ Dockerfile
 .pre-commit-config.yaml
 docker-compose.example.yml
 CODEOWNERS
-example_post.png
+docs/

@@ -1,7 +1,7 @@
 # Deployment
 
 Running Pearlarr in production: the Docker image in detail, bare-metal scheduling, what lives in the data directory, backups, upgrades, what an interruption does, and how to uninstall cleanly.
-For the ten-minute first run, start with the [README quick start](../README.md#quick-start) instead.
+For the ten-minute first run, start with the README's [Install](../README.md#install) and [First run](../README.md#first-run) sections instead.
 
 ## The Docker image
 
@@ -93,7 +93,15 @@ Running multiple instances *intentionally* is fine - give each its own data dire
 
 ## The data directory
 
-Everything Pearlarr reads and writes lives under one directory (`/config` in Docker, the OS-standard per-user location otherwise - `pearlarr paths` prints the resolved locations).
+Everything Pearlarr reads and writes lives under one directory.
+The `--data-dir` flag wins over the `PEARLARR_DATA_DIR` environment variable (which the Docker image sets to `/config`), which wins over the OS-standard per-user default; `pearlarr paths` prints the resolved locations.
+
+| OS | Default data directory |
+| --- | --- |
+| Linux | `~/.local/share/pearlarr` (honors `$XDG_DATA_HOME`) |
+| macOS | `~/Library/Application Support/pearlarr` |
+| Windows | `%LOCALAPPDATA%\pearlarr` |
+
 What is in it, and what deleting each piece costs:
 
 | File | What it holds | If you delete it |
@@ -163,7 +171,7 @@ Pearlarr 1.0 is a renamed fork of [bbtufty/seadexarr](https://github.com/bbtufty
 - **Rewrite the config**: the format changed wholesale from flat keys to nested groups, and unknown keys now fail at load instead of being ignored.
   Run `pearlarr config init` for a commented starter and transfer your values - for example `sonarr_url` is now `sonarr.url`, `qbit_info` is the `qbittorrent` group, `torrent_tags` is `qbittorrent.tags`, and `public_only` is replaced by the `seadex.private_releases` policy.
   [docs/configuration.md](configuration.md) documents every key.
-- **The data directory is new**: upstream kept files beside the install; Pearlarr uses one OS-standard directory (see [the README](../README.md#the-data-directory)).
+- **The data directory is new**: upstream kept files beside the install; Pearlarr uses one OS-standard directory (see [above](#the-data-directory)).
   In Docker, mount `/config` as before - the layout inside it is Pearlarr's own.
 - **The cache is not carried over**: the old `cache.json` is not read, and Pearlarr starts fresh.
   That is cheap in the default matching mode - the first run re-evaluates the library against what the arrs already have on disk and downloads nothing it finds there.

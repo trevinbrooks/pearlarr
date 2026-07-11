@@ -1,3 +1,11 @@
+"""Pearlarr: grab the best SeaDex-tagged anime releases for Sonarr and Radarr.
+
+The supported interfaces are the CLI (``pearlarr``), the config schema, and the
+notification payloads. Every Python import path - including the names
+re-exported here - is internal and may change without notice; pin your exact
+version if you script against it anyway.
+"""
+
 from typing import TYPE_CHECKING
 
 from .modules import pearlarr_cli, setup_logger
