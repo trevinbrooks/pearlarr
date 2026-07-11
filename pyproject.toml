@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27.0"]
+requires = ["hatchling>=1.31.0"]
 build-backend = "hatchling.build"
 
 [project]
@@ -80,7 +80,7 @@ Changelog = "https://github.com/trevinbrooks/pearlarr/blob/main/CHANGELOG.md"
 [dependency-groups]
 build = [
     "build",
-    "hatchling>=1.27.0",
+    "hatchling>=1.31.0",
 ]
 static-analysis = [
     "basedpyright>=1.39.8",
