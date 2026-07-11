@@ -54,6 +54,7 @@ SAMPLE_PATH = REPO_ROOT / "seadexarr" / "modules" / "config_sample.yml"
 SCHEMA_PATH = REPO_ROOT / "schemas" / "config.schema.json"
 CONFIGURATION_PATH = REPO_ROOT / "docs" / "configuration.md"
 CONTRIBUTING_PATH = REPO_ROOT / "CONTRIBUTING.md"
+ARCHITECTURE_PATH = REPO_ROOT / "docs" / "architecture.md"
 
 # Comments in the sample wrap so the whole line stays inside this width.
 SAMPLE_WIDTH = 100
@@ -428,6 +429,52 @@ def render_contributing() -> str:
     return stitch(document, "env-vars", render_env_table(), "seadexarr/modules/env_registry.py")
 
 
+def collect_invariants() -> tuple[tuple[str, str], ...]:
+    """Every ``# Invariant:`` comment block in the package, as (module, text) pairs.
+
+    A block runs from its ``# Invariant:`` line through the directly following
+    comment lines; blocks appear in path order, then file order.
+    """
+
+    found: list[tuple[str, str]] = []
+    for path in sorted((REPO_ROOT / "seadexarr").rglob("*.py")):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        index = 0
+        while index < len(lines):
+            stripped = lines[index].strip()
+            if stripped.startswith("# Invariant:"):
+                block = [stripped.removeprefix("# Invariant:").strip()]
+                index += 1
+                while index < len(lines):
+                    cont = lines[index].strip()
+                    if cont.startswith("# Invariant:") or not cont.startswith("#"):
+                        break
+                    block.append(cont.removeprefix("#").strip())
+                    index += 1
+                found.append((str(path.relative_to(REPO_ROOT)), flatten(" ".join(block))))
+            else:
+                index += 1
+    return tuple(found)
+
+
+def render_invariant_index() -> str:
+    """The invariant index for architecture.md, from the enforcement-site comments."""
+
+    invariants = collect_invariants()
+    if not invariants:
+        raise GenerationError("no # Invariant: comments found under seadexarr/")
+    return "\n".join(f"- `{module}` - {md_cell(text)}" for module, text in invariants) + "\n"
+
+
+def render_architecture() -> str:
+    """docs/architecture.md with its invariant island refreshed."""
+
+    if not ARCHITECTURE_PATH.exists():
+        raise GenerationError(f"{ARCHITECTURE_PATH} does not exist; author its prose skeleton first")
+    document = ARCHITECTURE_PATH.read_text(encoding="utf-8")
+    return stitch(document, "invariants", render_invariant_index(), "the # Invariant: comments in seadexarr/")
+
+
 def artifacts() -> dict[Path, str]:
     """Every generated artifact, rendered."""
 
@@ -437,6 +484,7 @@ def artifacts() -> dict[Path, str]:
         SCHEMA_PATH: render_schema(groups),
         CONFIGURATION_PATH: render_configuration(groups),
         CONTRIBUTING_PATH: render_contributing(),
+        ARCHITECTURE_PATH: render_architecture(),
     }
 
 

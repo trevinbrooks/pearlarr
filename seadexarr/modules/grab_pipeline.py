@@ -196,10 +196,11 @@ class GrabPipeline:
             )
             return None
 
-        # Skip trackers we have no parser for. Handing one to the service would
-        # raise, unwinding this id's whole url loop (dropping any later grabbable
-        # release too); skip+warn here so the loop continues, and flag the title so
-        # it's not cached as done (re-checked once a parser / config change lands).
+        # Invariant: a tracker without a registered parser never reaches
+        # TorrentService.add - this skip+warn is the enforcement; the service's
+        # raise is a defensive contract. Handing one through would unwind the id's
+        # whole url loop (dropping later grabbable releases too); the title is
+        # flagged so it's not cached as done (re-checked once a parser lands).
         if tracker not in PARSEABLE_TRACKERS:
             self._reporter.post(
                 ReleaseSkipped(group=srg, tracker=tracker, reason=SkipReason.UNSUPPORTED_TRACKER, url=url),

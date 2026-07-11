@@ -840,6 +840,8 @@ class DownloadPlanner:
             # here means an owned-at-stale-size preferred pick it must not
             # replace (only reachable upgrade-pending; the soft-skip consumed
             # the other case): mark the stale hold for the summary row.
+            # Invariant: a fallback substitute never replaces an owned copy of the
+            # preferred private release - those sets hold and warn every run.
             if fallback_rides:
                 reason = (
                     "private-only; your copy is outdated (its file size no longer matches the release) "

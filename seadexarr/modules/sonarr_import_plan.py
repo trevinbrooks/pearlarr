@@ -102,8 +102,8 @@ def classify_queue(states: list[str]) -> QueueVerdict:
     clean_pending = False
     for raw_state in states:
         state = raw_state.casefold()
-        # Bucket by state only: an importPending record must always wait
-        # (routing it to STEP_IN would race Sonarr's import and double-import).
+        # Invariant: every importPending queue row buckets as wait, never STEP_IN -
+        # stepping in races Sonarr's own import and double-imports the files.
         if state in _QUEUE_IN_MOTION_STATES:
             in_motion = True
         elif state in _QUEUE_STEP_IN_STATES:
@@ -859,6 +859,8 @@ def resolve_quality(
         QualityModel: The quality to POST; never omitted.
     """
 
+    # Invariant: the import payload always carries a quality key - omitting it
+    # crashes Sonarr in FileNameBuilder.AddQualityTokens (observed on Sonarr 4.x).
     source = sonarr.source or ours.source or default.source
     resolution = sonarr.resolution or ours.resolution or default.resolution
     revision = _candidate_revision(candidate_model)

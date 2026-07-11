@@ -119,6 +119,8 @@ class MappingEntry:
         key-presence check was.
         """
 
+        # Invariant: an empty tvdb_mappings dict is still ANIBRIDGE - a truthiness
+        # check would fall back to Anime-IDs season heuristics and over-grab.
         return MappingMode.ANIBRIDGE if self.tvdb_mappings is not None else MappingMode.ANIME_IDS
 
 

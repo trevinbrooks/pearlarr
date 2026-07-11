@@ -499,6 +499,8 @@ class CacheStore(AbstractCacheStore):
                 close) so the run persists nothing.
         """
 
+        # Invariant: a preview run never commits - every staged write is discarded
+        # on close, so preview mode can never mark a title as handled.
         if preview:
             return
         if self._on_memory:

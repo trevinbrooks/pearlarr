@@ -326,7 +326,9 @@ class SonarrSync(ArrSync[SonarrItem]):
         ):
             return False
 
-        # Also check if it's in the Radarr cache, if we have that option
+        # Also check if it's in the Radarr cache, if we have that option.
+        # Invariant: this dedup names Arr.RADARR explicitly while running Sonarr -
+        # folding the arr param into the run's bound arr breaks the cross-arr read.
         if self.ignore_movies_in_radarr and not self._config.seadex.ignore_seadex_update_times:
             al_id_in_radarr_cache = run.check_al_id_in_cache(
                 arr=Arr.RADARR,
