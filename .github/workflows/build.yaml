@@ -28,7 +28,7 @@ jobs:
           # Full history so diff-cover can diff against the PR base branch.
           fetch-depth: 0
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.1
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Sync dependencies
@@ -77,7 +77,7 @@ jobs:
         with:
           submodules: true
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.1
+        uses: astral-sh/setup-uv@v8.3.2
         with:
           enable-cache: true
       - name: Sync dependencies
