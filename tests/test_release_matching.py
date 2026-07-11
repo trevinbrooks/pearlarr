@@ -2,7 +2,7 @@
 """Characterization tests for the pure release-matching helpers.
 
 These functions move to ``planner.py`` in Phase 1; pinning them here proves the
-relocation is behaviour-preserving.
+relocation is behavior-preserving.
 """
 
 from pearlarr.modules.coverage import format_episode_ranges

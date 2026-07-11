@@ -3,9 +3,9 @@
 # ^ the log-routing tests wire the real (private) cli hub installer.
 """Tests for the unified data-directory resolver and its CLI surface.
 
-Pins the behaviours the rest of the app relies on:
+Pins the behaviors the rest of the app relies on:
 
-* ``resolve_paths`` honours the precedence ``--data-dir`` arg > ``PEARLARR_DATA_DIR``
+* ``resolve_paths`` honors the precedence ``--data-dir`` arg > ``PEARLARR_DATA_DIR``
   env > the OS-standard ``platformdirs`` default, and lays every file under one dir.
 * The global ``--data-dir`` flag folds into the env so each command (called directly in
   tests, not via ``ctx.obj``) sees it, and the flag wins over a pre-set env.

@@ -95,7 +95,7 @@ class MappingEntry:
     Built at the raw->typed boundary from the two producers: the AniBridge graph
     attaches ``tvdb_mappings`` (season -> episode ranges) only on a TVDB lookup,
     while the Kometa Anime-IDs records carry the flat ``tvdb_season`` /
-    ``tvdb_epoffset`` fields. Both normalise into one typed record with attribute
+    ``tvdb_epoffset`` fields. Both normalize into one typed record with attribute
     reads; the ``tvdb_mappings``-present-or-not distinction becomes the typed
     :attr:`mode` discriminant.
     """
@@ -221,7 +221,7 @@ ANIBRIDGE_MAPPINGS_FILE = f"anibridge_mappings_{ANIBRIDGE_RELEASE}.json"
 
 # Per-read socket timeout for a source download. A stalled connection raises after
 # this many seconds (reported, then the run skips and retries) instead of hanging
-# forever, which is the behaviour the previous timeout-less urlretrieve had.
+# forever, which is the behavior the previous timeout-less urlretrieve had.
 DOWNLOAD_TIMEOUT_S = 30
 
 # Hard cap on one source download: ~6x the largest real mapping file, so a
@@ -309,7 +309,7 @@ def _anidb_rows(root: ElementTree.Element) -> _AnidbParse:
     """Flatten the AniDB XML into ``anidb_mapping`` rows + the ambiguous-id set.
 
     Reproduces the former ``anidb_anime_by_id`` + ``_parse_anidb_mapping_dict``
-    behaviour exactly, but once at populate time:
+    behavior exactly, but once at populate time:
 
     * An anidb id appearing in more than one ``<anime>`` element is *ambiguous*
       (the former ``len(...) > 1`` -> raise case); it is recorded and stored with
@@ -805,7 +805,7 @@ class MappingResolver:
 
         # Add the first row seen for each AniList id (rows come back in first-seen
         # order), matching the previous "don't clobber an id another query already
-        # produced" behaviour.
+        # produced" behavior.
         def merge(column: AnimeIdColumn, value: object) -> None:
             for row in self._store.anime_ids_lookup(column, value):
                 if row.anilist_id not in anilist_mappings:

@@ -401,7 +401,7 @@ class CaptureHandler(logging.Handler):
 
     Attach to a test's logger, run the code, then assert over ``records`` (e.g. a
     contained per-id failure logged at ``ERROR``) - the no-throw, structured way to
-    pin logging behaviour without coupling to exact message strings.
+    pin logging behavior without coupling to exact message strings.
     """
 
     def __init__(self) -> None:

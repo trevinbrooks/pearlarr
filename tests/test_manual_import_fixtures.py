@@ -1,7 +1,7 @@
 # pyright: strict
 """Real-API-fixture tests for the resolved-mapping manual import.
 
-These pin the behaviour the *old* code got wrong, using JSON captured verbatim
+These pin the behavior the *old* code got wrong, using JSON captured verbatim
 from a live Sonarr (``tests/fixtures/sonarr/``). The headline failure that
 motivated the rewrite: a specials/alias release Sonarr can't match to a series
 (``Yamada-kun and the Seven Witches`` vs ``... (2015)``) returns an empty

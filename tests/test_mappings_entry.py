@@ -4,7 +4,7 @@
 These pin the two producer paths (Kometa Anime-IDs and AniBridge) end-to-end
 through ``MappingResolver.get_anilist_ids``, plus the ``.mode`` discriminant and
 the field defaults. The boundary had no coverage before the TypedDict ->
-dataclass deepening, so these guard the behaviour the dataclass must preserve:
+dataclass deepening, so these guard the behavior the dataclass must preserve:
 which mode an entry drives, and the exact ``.get(..., default)`` values the
 former dict reads produced.
 """

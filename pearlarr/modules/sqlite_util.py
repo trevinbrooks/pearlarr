@@ -2,7 +2,7 @@
 
 Both :mod:`pearlarr.modules.cache` (``cache.db``) and
 :mod:`pearlarr.modules.mapping_store` (``mappings.db``) need the same low-level
-behaviour: a connection pinned to *explicit* legacy/deferred transaction control,
+behavior: a connection pinned to *explicit* legacy/deferred transaction control,
 a busy timeout, a corruption predicate that distinguishes a genuinely torn file
 from a transient lock, and a fail-open quarantine of an unreadable file. Those
 primitives live here so the two stores share ONE copy - a change to the
@@ -36,7 +36,7 @@ def connect(path: str, *, ensure_wal: bool = True, foreign_keys: bool = False) -
     The single place these connections are created, so every caller shares
     identical settings instead of re-typing the pragma trio. ``busy_timeout`` is
     applied FIRST so the WAL-mode switch and the schema statements that follow
-    already honour it (rather than racing with a zero timeout).
+    already honor it (rather than racing with a zero timeout).
 
     Transaction control is pinned *explicitly* to legacy/deferred rather than
     leaning on the sqlite3 defaults: legacy mode means an implicit ``BEGIN``
@@ -137,7 +137,7 @@ def open_or_quarantine(
 def rollback_and_close(conn: sqlite3.Connection) -> None:
     """Roll back anything uncommitted and close ``conn``, swallowing sqlite errors.
 
-    The shared ``close()`` tail for both stores, so their error behaviour on a
+    The shared ``close()`` tail for both stores, so their error behavior on a
     torn-down connection can't diverge. Idempotent enough for a ``finally`` block.
     """
 

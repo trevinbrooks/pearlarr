@@ -5,7 +5,7 @@
 # re-enables it, so restore the repo's test policy here.
 """Tests for the Pearlarr CLI commands.
 
-Pins the behaviours the commands must guarantee:
+Pins the behaviors the commands must guarantee:
 
 * A corrupt / not-a-database ``cache.db`` is *reported*, never crashed on - the
   ``stats`` and ``check`` diagnostics (and ``backup``) return a clean False instead

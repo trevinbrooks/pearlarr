@@ -1,7 +1,7 @@
 # pyright: strict
 """Parity net for the Tier-2.75 boundary-type port (2.75a).
 
-Pins today's read -> resolve -> re-emit behaviour AT THE WIRE so the pydantic
+Pins today's read -> resolve -> re-emit behavior AT THE WIRE so the pydantic
 port cannot change it: golden ManualImport POST bodies across
 ``resolve_quality``'s branches (verbatim unknown-key passthrough, the
 dict-falsy empty-quality fallbacks), per-field fail-open folding on

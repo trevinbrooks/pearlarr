@@ -165,7 +165,7 @@ class TestUnwindEmitsRunFinished:
         app_logger: logging.Logger,
     ) -> None:
         # The ordering is a property of the inner finally, not of which except arm
-        # catches: an unrecognised failure takes the "Unexpected error" arm and the
+        # catches: an unrecognized failure takes the "Unexpected error" arm and the
         # close still precedes it.
         completed, recording = _run_failing_leg(monkeypatch, app_logger, RuntimeError("boom"))
 

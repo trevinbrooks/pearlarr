@@ -1,7 +1,7 @@
 # pyright: strict
-"""Behavioural tests for the SQLite-backed ``CacheStore``.
+"""Behavioral tests for the SQLite-backed ``CacheStore``.
 
-Pins behaviour, not internals: the per-entry records + torrent-hash child rows,
+Pins behavior, not internals: the per-entry records + torrent-hash child rows,
 the JSONB meta/parse caches, pending imports, the descriptor, and - critically -
 the staged-write / preview gate (a preview never persists; a real save does) and
 the in-memory -> file promotion for a missing cache.

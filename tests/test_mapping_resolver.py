@@ -6,7 +6,7 @@
 The SQL backings must reproduce the in-memory implementations exactly. AniBridge's
 graph-backed view is used directly as the oracle (the unchanged parser); anime_ids
 is checked against an inline reconstruction of the former reverse-index merge; and
-the anidb + digest-gate behaviours are pinned. These are the safety net for the
+the anidb + digest-gate behaviors are pinned. These are the safety net for the
 "parse once, serve from SQL" migration - the resolver lookups had no direct
 coverage before.
 """
@@ -120,7 +120,7 @@ class TestAniBridgeParity:
 
     def test_present_but_empty_season_roundtrips(self) -> None:
         # The {season: []} ("whole season covered") vs {} ("not covered") distinction
-        # is opposite behaviour downstream; it must survive the SQL round-trip.
+        # is opposite behavior downstream; it must survive the SQL round-trip.
         graph_ab, sql_ab, store = _ab_pair(GRAPH)
         try:
             assert graph_ab.lookup_by_tvdb(74796)[270]["tvdb_mappings"] == {1: []}

@@ -200,7 +200,7 @@ class _ConfigBase(BaseModel):
 
 
 class ArrSettings(_ConfigBase):
-    """Connection + per-arr behaviour, shared by the ``sonarr`` and ``radarr`` groups.
+    """Connection + per-arr behavior, shared by the ``sonarr`` and ``radarr`` groups.
 
     ``api_key`` is a ``SecretStr`` so a dumped/logged model masks it;
     ``AppConfig.require_connection`` (and the Sonarr->Radarr cross-check)
@@ -260,7 +260,7 @@ class QbittorrentSettings(_ConfigBase):
     host: str | None = None
     """WebUI address of qBittorrent, e.g. `http://localhost:8080`.
 
-    Leave any of `host`, `username` or `password` blank to run in preview mode:
+    Leave any of `host`, `username`, or `password` blank to run in preview mode:
     runs report what they would grab, but nothing is added.
     """
 
@@ -607,14 +607,14 @@ class AppConfig(_ConfigBase):
     """The full validated config: one submodel per settings group."""
 
     sonarr: SonarrSettings = Field(default_factory=SonarrSettings)
-    """Sonarr connection and behaviour.
+    """Sonarr connection and behavior.
 
     `url` and `api_key` are required only when a Sonarr run actually executes;
     a Radarr-only config still loads.
     """
 
     radarr: ArrSettings = Field(default_factory=ArrSettings)
-    """Radarr connection and behaviour.
+    """Radarr connection and behavior.
 
     `url` and `api_key` are required only when a Radarr run actually executes;
     a Sonarr-only config still loads.
@@ -623,7 +623,7 @@ class AppConfig(_ConfigBase):
     qbittorrent: QbittorrentSettings = Field(default_factory=QbittorrentSettings)
     """qBittorrent connection.
 
-    All of `host`, `username` and `password` are needed to grab; leave any
+    All of `host`, `username`, and `password` are needed to grab; leave any
     blank to run in preview mode (everything is reported, nothing is added).
     """
 
@@ -683,7 +683,7 @@ class AppConfig(_ConfigBase):
         return self._checksum
 
     def for_arr(self, arr: Arr) -> ArrSettings:
-        """The per-arr connection/behaviour submodel (one load serves both arrs)."""
+        """The per-arr connection/behavior submodel (one load serves both arrs)."""
 
         return self.sonarr if arr is Arr.SONARR else self.radarr
 

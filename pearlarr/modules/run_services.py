@@ -63,7 +63,7 @@ class RunDeps:
     and injection at the root means none of them constructs another's
     dependencies - each receives the subset it needs. ``anime_mappings`` /
     ``anidb_mappings`` / ``anibridge`` are read off ``mappings`` by consumers, not
-    stored separately. ``arr_config`` is the per-arr connection/behaviour submodel
+    stored separately. ``arr_config`` is the per-arr connection/behavior submodel
     (``config.for_arr(arr)``); ``config`` is the shared root reused by both arrs.
     """
 
@@ -114,7 +114,7 @@ class RunDeps:
                 (a no-op unless a hub renders).
         """
 
-        # ``arr_config`` is this arr's connection/behaviour submodel, injected
+        # ``arr_config`` is this arr's connection/behavior submodel, injected
         # alongside the shared root.
         arr_config = app_config.for_arr(arr)
 

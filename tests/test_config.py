@@ -1,7 +1,7 @@
 # pyright: strict
 """Characterization tests for the Pydantic ``AppConfig`` model tree.
 
-Pins the validated-settings behaviour: per-group defaults, blank-YAML coalescing,
+Pins the validated-settings behavior: per-group defaults, blank-YAML coalescing,
 strict validation (extra-forbid + strict enum), the lazy point-of-use connection
 requirement, and the file lifecycle (template copy + checksum).
 """

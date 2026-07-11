@@ -12,7 +12,7 @@ body:
   - type: textarea
     id: proposal
     attributes:
-      label: Proposed behaviour
+      label: Proposed behavior
       description: What you'd like to happen instead.
     validations:
       required: true

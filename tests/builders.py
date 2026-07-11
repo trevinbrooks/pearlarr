@@ -5,7 +5,7 @@
 # reportPrivateUsage for tests.
 """Builders and a bare-instance factory for the characterization tests.
 
-These tests pin the *current* behaviour of the run machinery. The planner tests
+These tests pin the *current* behavior of the run machinery. The planner tests
 build its inputs (typed episode records, flat release dicts) via the helpers
 here, and ``make_services`` builds a ``RunServices`` without running its heavy
 ``__init__`` (network downloads, qBittorrent login, disk I/O), assigning only
@@ -184,7 +184,7 @@ class FakeCacheStore(AbstractCacheStore):
     Backs every facade block - the per-entry ``entries`` scalars plus their
     ``torrent_hashes`` child set, the ``anilist_meta`` and ``sonarr_parse`` JSONB
     caches, and ``pending_imports`` - with plain dicts, so a driven path that
-    reaches ANY facade method gets the real store's behaviour instead of an
+    reaches ANY facade method gets the real store's behavior instead of an
     ``AttributeError`` or a silent no-op. Semantics are matched, not just the
     names: ``update_cache`` partial-merges the supplied scalars and (when given)
     REPLACES the whole hash set while keeping a single ``None`` marker;

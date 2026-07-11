@@ -81,7 +81,7 @@ $ pearlarr run single
 
 Without qBittorrent credentials, every run is a **preview**: Pearlarr evaluates your whole library and reports everything it *would* grab, but grabs nothing and records nothing.
 That is the recommended way to check a new setup - read the preview's summary, adjust the config, repeat.
-When the preview picks what you'd pick, add `qbittorrent.host`, `username` and `password`, and the same command grabs for real.
+When the preview picks what you'd pick, add `qbittorrent.host`, `username`, and `password`, and the same command grabs for real.
 (`run single --dry-run` simulates a run with no side effects even after credentials are set.)
 
 Bare `pearlarr` runs the scheduled loop, one cycle every `schedule.interval_hours`; under Docker the container's cron owns the cadence instead.
@@ -99,7 +99,7 @@ Bare `pearlarr` runs the scheduled loop, one cycle every `schedule.interval_hour
 - `mappings` - override or disable the ID-mapping sources.
 - `advanced` - request pacing, cache lifetime, arr-activity detection, log level and format.
 
-Every key, with its default, allowed values and description, is in [docs/configuration.md](docs/configuration.md) - generated from the source, so it is always current.
+Every key, with its default, allowed values, and description, is in [docs/configuration.md](docs/configuration.md) - generated from the source, so it is always current.
 The starter config carries the same documentation as comments, and a `$schema` line gives editors completion and validation.
 The config is validated on load: an unknown or misspelled key fails with an error naming it rather than being silently ignored.
 
@@ -107,7 +107,7 @@ The config is validated on load: an unknown or misspelled key fails with an erro
 
 ## Scope and limitations
 
-- **Downloads come from public trackers only**, currently Nyaa, AnimeTosho and RuTracker.
+- **Downloads come from public trackers only**, currently Nyaa, AnimeTosho, and RuTracker.
   A winning release on another public tracker is skipped with a warning and re-considered once support lands.
 - **Private releases are never grabbed** - SeaDex carries no download link for them, and no private-tracker auth is supported.
   `seadex.private_releases` decides what happens when a title's preferred release is private-only: warn every run, or fall back to the best public alternative.
@@ -140,6 +140,6 @@ The config is validated on load: an unknown or misspelled key fails with an erro
 ## Acknowledgements
 
 Pearlarr is a fork of [SeaDexArr](https://github.com/bbtufty/seadexarr), originally created by [bbtufty](https://github.com/bbtufty).
-Release data comes from the [SeaDex](https://releases.moe) project, which Pearlarr is not affiliated with; ID mappings come from [AniBridge Mappings](https://github.com/anibridge/anibridge-mappings), [Kometa Anime-IDs](https://github.com/Kometa-Team/Anime-IDs) and [Anime-Lists](https://github.com/Anime-Lists/anime-lists).
+Release data comes from the [SeaDex](https://releases.moe) project, which Pearlarr is not affiliated with; ID mappings come from [AniBridge Mappings](https://github.com/anibridge/anibridge-mappings), [Kometa Anime-IDs](https://github.com/Kometa-Team/Anime-IDs), and [Anime-Lists](https://github.com/Anime-Lists/anime-lists).
 
 Pearlarr is licensed under the [GPL-3.0-or-later](LICENSE).

@@ -35,7 +35,7 @@ Coming from upstream 0.9.x:
   The first scan covers the last 30 days; a coverage gap re-checks everything once.
 - AniBridge mappings as the primary ID/episode mapping source, mopping up titles the other sources miss.
 - `seadex.ignore_anilist_ids` (skip specific AniList IDs), `seadex.ignore_tags` (filter releases by SeaDex tag), and `qbittorrent.tags` (tag every added torrent).
-- Discord notifications are rich embeds with colors, links and a version footer.
+- Discord notifications are rich embeds with colors, links, and a version footer.
 - The console shows a live cockpit during startup and the import-wait pass (spinners, ticking timers, files-imported progress).
 - New CLI surface:
   - `run single --dry-run` (simulate without grabbing, caching, or notifying), `--movie-id`/`--series-id` (single-title runs by TMDB/TVDB ID), and `--import-wait-mode`/`--log-level` per-run overrides.

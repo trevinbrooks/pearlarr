@@ -469,7 +469,7 @@ class GrabPipeline:
         return False
 
     def _grab(self, req: GrabRequest) -> bool:
-        """Add this title's torrents, notify, and honour the run-wide cap.
+        """Add this title's torrents, notify, and honor the run-wide cap.
 
         Runs only when there's something to download. Returns True once
         max_torrents_to_add has been reached (the cap notice is logged here; the

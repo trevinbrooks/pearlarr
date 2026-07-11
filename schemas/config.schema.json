@@ -72,7 +72,7 @@
     },
     "ArrSettings": {
       "additionalProperties": false,
-      "description": "Radarr connection and behaviour. `url` and `api_key` are required only when a Radarr run actually executes; a Sonarr-only config still loads.",
+      "description": "Radarr connection and behavior. `url` and `api_key` are required only when a Radarr run actually executes; a Sonarr-only config still loads.",
       "properties": {
         "url": {
           "anyOf": [
@@ -372,7 +372,7 @@
     },
     "QbittorrentSettings": {
       "additionalProperties": false,
-      "description": "qBittorrent connection. All of `host`, `username` and `password` are needed to grab; leave any blank to run in preview mode (everything is reported, nothing is added).",
+      "description": "qBittorrent connection. All of `host`, `username`, and `password` are needed to grab; leave any blank to run in preview mode (everything is reported, nothing is added).",
       "properties": {
         "host": {
           "anyOf": [
@@ -384,7 +384,7 @@
             }
           ],
           "default": null,
-          "description": "WebUI address of qBittorrent, e.g. `http://localhost:8080`. Leave any of `host`, `username` or `password` blank to run in preview mode: runs report what they would grab, but nothing is added.",
+          "description": "WebUI address of qBittorrent, e.g. `http://localhost:8080`. Leave any of `host`, `username`, or `password` blank to run in preview mode: runs report what they would grab, but nothing is added.",
           "title": "Host"
         },
         "username": {
@@ -521,7 +521,7 @@
     },
     "SonarrSettings": {
       "additionalProperties": false,
-      "description": "Sonarr connection and behaviour. `url` and `api_key` are required only when a Sonarr run actually executes; a Radarr-only config still loads.",
+      "description": "Sonarr connection and behavior. `url` and `api_key` are required only when a Sonarr run actually executes; a Radarr-only config still loads.",
       "properties": {
         "url": {
           "anyOf": [
@@ -592,15 +592,15 @@
   "properties": {
     "sonarr": {
       "$ref": "#/$defs/SonarrSettings",
-      "description": "Sonarr connection and behaviour. `url` and `api_key` are required only when a Sonarr run actually executes; a Radarr-only config still loads."
+      "description": "Sonarr connection and behavior. `url` and `api_key` are required only when a Sonarr run actually executes; a Radarr-only config still loads."
     },
     "radarr": {
       "$ref": "#/$defs/ArrSettings",
-      "description": "Radarr connection and behaviour. `url` and `api_key` are required only when a Radarr run actually executes; a Sonarr-only config still loads."
+      "description": "Radarr connection and behavior. `url` and `api_key` are required only when a Radarr run actually executes; a Sonarr-only config still loads."
     },
     "qbittorrent": {
       "$ref": "#/$defs/QbittorrentSettings",
-      "description": "qBittorrent connection. All of `host`, `username` and `password` are needed to grab; leave any blank to run in preview mode (everything is reported, nothing is added)."
+      "description": "qBittorrent connection. All of `host`, `username`, and `password` are needed to grab; leave any blank to run in preview mode (everything is reported, nothing is added)."
     },
     "seadex": {
       "$ref": "#/$defs/SeadexSettings"

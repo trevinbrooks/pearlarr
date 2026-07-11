@@ -5,7 +5,7 @@ and the persisted ``anilist_meta`` block in the cache file: it seeds the cache
 from disk, batch-fetches everything still missing, persists newly seen
 responses (respecting a TTL), and resolves titles / thumbnails.
 
-Extracted from ``RunLoop`` during the refactor; behaviour-preserving. The
+Extracted from ``RunLoop`` during the refactor; behavior-preserving. The
 gateway is deliberately
 side-effect-free with respect to the orchestrator's run state - ``title`` no
 longer stamps ``current_title``; the caller does that.

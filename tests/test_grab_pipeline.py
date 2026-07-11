@@ -307,7 +307,7 @@ def _nyaa_release(*, url: str, infohash: str) -> SeadexUrlItem:
 
 
 class TestAddTorrentCap:
-    """add_torrent honours max_torrents_to_add within ONE title's url loop."""
+    """add_torrent honors max_torrents_to_add within ONE title's url loop."""
 
     def test_cap_stops_after_exactly_cap_adds(self) -> None:
         # MUTATION PIN: `cap = None` and `>= cap` -> `> cap` both over-grab. Three

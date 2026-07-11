@@ -6,7 +6,7 @@ For the ten-minute first run, start with the README's [Install](../README.md#ins
 ## The Docker image
 
 `ghcr.io/trevinbrooks/pearlarr` is a multi-arch image (linux/amd64 and linux/arm64) on a `python:3.14-slim` base.
-It runs as the unprivileged `pearlarr` user (uid 1000) unless the compose `user:` key says otherwise, and sets `PEARLARR_DATA_DIR=/config`, so the single `/config` mount holds the config, caches and logs together.
+It runs as the unprivileged `pearlarr` user (uid 1000) unless the compose `user:` key says otherwise, and sets `PEARLARR_DATA_DIR=/config`, so the single `/config` mount holds the config, caches, and logs together.
 
 | Tag | Meaning |
 | --- | --- |
@@ -46,7 +46,7 @@ Overlapping runs are double-guarded: supercronic will not start a run while the 
 The compose example's `user: "${PUID:-1000}:${PGID:-1000}"` line sets the uid/gid the container runs as.
 PUID and PGID are compose *interpolation* variables - set them in an `.env` file next to the compose file or in the shell.
 They are **not** `environment:` keys; an `environment:` entry is silently ignored for this.
-Match them to the owner of the `./config` host directory so the container can write its config, caches and logs there.
+Match them to the owner of the `./config` host directory so the container can write its config, caches, and logs there.
 
 The starter config is written with mode `600`, which works when your host editor runs as the same uid as the container.
 If you loosen it (say `chmod 644`), Pearlarr warns on every run that the file - which holds API keys - is readable by other users.

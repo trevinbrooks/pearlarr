@@ -372,7 +372,7 @@ class RunLoop:
 
         Bracketed by the two run-lifecycle close boundaries (the scan closes at
         the top, the run at the very end). The ordering corrects the old "exited
-        right away" + detached-tally behaviour. In order:
+        right away" + detached-tally behavior. In order:
 
           1. deferred-mode pre-summary reconcile of any carried-over records not
              already snapshotted inline (non-blocking; feeds the counters);
