@@ -56,7 +56,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      # GitHub refuses attestations on user-owned private repos; the guard
+      # self-heals - the step starts running the moment the repo goes public.
       - name: Generate artifact attestation
+        if: ${{ !github.event.repository.private }}
         uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
