@@ -451,7 +451,8 @@ def collect_invariants() -> tuple[tuple[str, str], ...]:
                         break
                     block.append(cont.removeprefix("#").strip())
                     index += 1
-                found.append((str(path.relative_to(REPO_ROOT)), flatten(" ".join(block))))
+                # as_posix: the generated index must not grow \ separators on Windows.
+                found.append((path.relative_to(REPO_ROOT).as_posix(), flatten(" ".join(block))))
             else:
                 index += 1
     return tuple(found)
