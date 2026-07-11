@@ -35,17 +35,15 @@ _KEY = "testkey"
 def _make_sonarr_client() -> SonarrClient:
     """A real ``SonarrClient`` over respx (backoffs stubbed out)."""
 
-    logger = logging.getLogger("seadexarr.test.boundary-parity")
     return SonarrClient(
         http=ArrHttp.bind(
             client=httpx.Client(),
             url=_URL,
             api_key=_KEY,
             label="Sonarr",
-            logger=logger,
             sleep=lambda _s: None,
         ),
-        logger=logger,
+        logger=logging.getLogger("seadexarr.test.boundary-parity"),
     )
 
 
@@ -56,7 +54,6 @@ def _make_radarr() -> RadarrClient:
         url="http://radarr.test",
         api_key=_KEY,
         http=httpx.Client(),
-        logger=logging.getLogger("seadexarr.test.boundary-parity"),
     )
 
 

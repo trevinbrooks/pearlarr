@@ -6,7 +6,6 @@ tracker filtering, the want_best / prefer_dual_audio narrowing, the is_public
 computation, and the per-group private-url drop.
 """
 
-import logging
 from datetime import datetime
 
 import pytest
@@ -15,6 +14,8 @@ from seadex import EntryRecord, Tag, TorrentRecord, Tracker
 from seadexarr.modules import seadex_filter
 from seadexarr.modules.config import Arr
 from seadexarr.modules.mappings import MappingEntry
+from seadexarr.modules.output import Diagnostic, Severity, install_hub
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.run_services import RunServices
 from seadexarr.modules.seadex_radarr import RadarrSync
 
@@ -28,7 +29,7 @@ from .builders import (
     make_torrent_record,
     rg_group,
 )
-from .fakes import CaptureHandler, FakeRadarrClient
+from .fakes import FakeRadarrClient
 
 
 def _torrent(
@@ -479,20 +480,16 @@ class TestInteractivePick:
             return "x"
 
         monkeypatch.setattr("builtins.input", fake_input)
-        handler = CaptureHandler()
-        filt.logger.addHandler(handler)
-        filt.logger.setLevel(logging.WARNING)
-        try:
-            result = filt.interactive_pick(seadex_dict, sd_entry)
-        finally:
-            filt.logger.removeHandler(handler)
+        recording = RecordingHub()
+        install_hub(recording.hub)  # conftest teardown restores the default
+        result = filt.interactive_pick(seadex_dict, sd_entry)
         assert result == {}
         # The prompt rows are printed, not logged, so they stay visible even at
         # log_level WARNING (a demoted INFO row would vanish and leave input() blind).
         assert "[0]: GroupA" in capsys.readouterr().out
         # Only genuine problems warn (the hub's SeverityCounts tallies WARNINGs
         # into the run's issues summary): the invalid token, then the empty pick.
-        warnings = [r.getMessage() for r in handler.records if r.levelno >= logging.WARNING]
+        warnings = [d.message for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
         assert len(warnings) == 2
         assert "invalid selection" in warnings[0]
         assert "No valid selection" in warnings[1]

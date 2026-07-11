@@ -51,8 +51,8 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     opened: list[MappingStore] = []
     real_open = MappingStore.open
 
-    def tracking_open(path: str, *, logger: logging.Logger | None = None) -> MappingStore:
-        store = real_open(path, logger=logger)
+    def tracking_open(path: str) -> MappingStore:
+        store = real_open(path)
         opened.append(store)
         return store
 

@@ -11,7 +11,6 @@ at all; ``AniListClient``'s retry loop is exercised through its public queries,
 faked at the ``httpx`` boundary with the ``respx`` library (no ``unittest.mock``).
 """
 
-import logging
 import re
 import time
 
@@ -36,18 +35,15 @@ from seadexarr.modules.output import Diagnostic, Severity, install_hub
 from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.seadex_types import AniListError, AniListMediaNode
 
-from .builders import make_logger
-from .fakes import CaptureHandler
-
 
 def _no_sleep(_seconds: float) -> None:
     """Replace ``time.sleep`` so the retry backoffs don't actually wait."""
 
 
 def _client() -> AniListClient:
-    """A wire client over a quiet logger, for tests with no narration asserts."""
+    """A wire client for tests with no narration asserts."""
 
-    return AniListClient(client=httpx.Client(), logger=make_logger())
+    return AniListClient(client=httpx.Client())
 
 
 # --- _errors_are_retryable --------------------------------------------------
@@ -320,25 +316,19 @@ def test_query_json_array_body_is_no_data(monkeypatch: pytest.MonkeyPatch) -> No
 # --- retry narration (backoff waits + the once-per-run give-up warning) ------
 
 
-def _narrated_client() -> tuple[AniListClient, CaptureHandler]:
-    """A wire client over a captured logger (DEBUG so every narration records)."""
+def _warnings(recording: RecordingHub) -> list[Diagnostic]:
+    """The WARNING Diagnostics only (the waiting notes ride at INFO/DEBUG)."""
 
-    logger = logging.getLogger("test_anilist_retry")
-    handler = CaptureHandler()
-    logger.handlers = [handler]
-    logger.propagate = False
-    logger.setLevel(logging.DEBUG)
-    return AniListClient(client=httpx.Client(), logger=logger), handler
+    return [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
 
 
 @respx.mock
 def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
     """A 429 backoff emits the (Retry-After) wait as an INFO hub Diagnostic - the
     run no longer looks hung - and a successful retry never fires the give-up
-    warning (which still rides the logger)."""
+    warning."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
-    client, handler = _narrated_client()
     recording = RecordingHub()
     install_hub(recording.hub)  # conftest teardown restores the default
     success: dict[str, object] = {"data": {"Media": {"id": 2, "episodes": 24}}}
@@ -348,14 +338,13 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
         httpx.Response(200, json=success),
     ]
 
-    body = client.query(2)
+    body = _client().query(2)
 
     assert body == success
     (waited,) = recording.of_type(Diagnostic)
     assert waited.severity is Severity.INFO
     assert waited.message == f"AniList rate-limited; waiting 42s (retry 1/{MAX_RETRIES})"
     assert waited.origin == LOG_NAME
-    assert [r for r in handler.records if r.levelno == logging.WARNING] == []
 
 
 @respx.mock
@@ -364,16 +353,18 @@ def test_give_up_warns_once_per_run_not_per_title(monkeypatch: pytest.MonkeyPatc
     title, same run) stays quiet - the flag is per client, i.e. per run."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
-    client, handler = _narrated_client()
+    recording = RecordingHub()
+    install_hub(recording.hub)  # conftest teardown restores the default
+    client = _client()
     route = respx.post(API_URL).respond(status_code=429, json={"data": None})
 
     client.query(1)
     client.query(2)
 
     assert route.call_count == 2 * (MAX_RETRIES + 1)
-    warnings = [r.getMessage() for r in handler.records if r.levelno == logging.WARNING]
+    warnings = _warnings(recording)
     assert len(warnings) == 1
-    assert f"AniList request failed after {MAX_RETRIES} retries" in warnings[0]
+    assert f"AniList request failed after {MAX_RETRIES} retries" in warnings[0].message
 
 
 @respx.mock
@@ -382,12 +373,12 @@ def test_network_give_up_returns_empty_and_warns(monkeypatch: pytest.MonkeyPatch
     instead of total silence."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
-    client, handler = _narrated_client()
+    recording = RecordingHub()
+    install_hub(recording.hub)  # conftest teardown restores the default
     route = respx.post(API_URL).mock(side_effect=httpx.ConnectError("down"))
 
-    body = client.query(1)
+    body = _client().query(1)
 
     assert body == {}
     assert route.call_count == MAX_RETRIES + 1
-    warnings = [r for r in handler.records if r.levelno == logging.WARNING]
-    assert len(warnings) == 1
+    assert len(_warnings(recording)) == 1

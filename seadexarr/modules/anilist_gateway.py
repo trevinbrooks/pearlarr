@@ -188,7 +188,7 @@ class AniListGateway:
         # Cache hit: parse the stored body's Media node.
         body = self.al_cache.get(al_id)
         if body is not None:
-            return media_from(body, logger=self.logger)
+            return media_from(body)
 
         # Miss: query AniList. Extract the raw Media dict once to gate the cache
         # store, then parse it into the typed node for the return. The cached
@@ -198,7 +198,7 @@ class AniListGateway:
         if raw_media:
             self.al_cache[al_id] = fetched
 
-        return media_node_from(raw_media, logger=self.logger)
+        return media_node_from(raw_media)
 
     def title(self, al_id: int) -> str | None:
         """Resolve the AniList title for an id (cache or live query), or None.

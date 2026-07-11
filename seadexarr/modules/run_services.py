@@ -166,7 +166,6 @@ class RunDeps:
             cache_store = CacheStore.load(
                 cache,
                 config_checksum=app_config.checksum(),
-                logger=logger,
             )
 
         # AniList client gateway: owns the in-memory meta cache (al_cache) and the
@@ -174,7 +173,7 @@ class RunDeps:
         anilist = AniListGateway(
             cache_store=cache_store,
             logger=logger,
-            client=AniListClient(client=web, logger=logger),
+            client=AniListClient(client=web),
         )
 
         # qBittorrent adapter: parses a release URL by tracker and adds it. A None
@@ -196,7 +195,7 @@ class RunDeps:
             mappings=mappings,
             logger=logger,
             # SeaDex API gateway (entry lookups, with connection-error handling)
-            seadex=SeaDexGateway(client=SeaDexEntry(), logger=logger),
+            seadex=SeaDexGateway(client=SeaDexEntry()),
             cache_store=cache_store,
             anilist=anilist,
             torrents=torrents,
@@ -206,7 +205,6 @@ class RunDeps:
                 discord_url=secret_value(app_config.notifications.discord_url),
                 webhook_url=secret_value(app_config.notifications.wait_webhook_url),
                 web=web,
-                logger=logger,
             ),
             # Download-decision engine: flips each release's download flag.
             planner=DownloadPlanner(

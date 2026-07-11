@@ -6,7 +6,6 @@ outbound webhook POST of the wait report). It's gated on a configured url;
 with none, every push is a no-op.
 """
 
-import logging
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -27,6 +26,7 @@ from .discord import (
 )
 from .log import count_noun, format_elapsed, human_bytes
 from .manual_import import OutcomeCategory
+from .output import Severity, hub_note
 from .seadex_types import SeadexDict, SeadexUrlItem
 from .torrents import AddOutcome, ReleaseOutcome
 from .wait_view import WaitResult
@@ -300,7 +300,6 @@ class Notifier:
         discord_url: str | None,
         webhook_url: str | None = None,
         web: httpx.Client,
-        logger: logging.Logger,
     ) -> None:
         """Configure the notifier.
 
@@ -309,13 +308,11 @@ class Notifier:
             webhook_url (str | None): A generic outbound webhook POSTed the
                 wait-complete report JSON (ntfy/gotify/Home-Assistant), or None.
             web (httpx.Client): The shared web client every POST rides.
-            logger (logging.Logger): For the failed-push warnings.
         """
 
         self.discord_url = discord_url
         self.webhook_url = webhook_url
         self.web = web
-        self.logger = logger
         # Monotonic instant of the last Discord POST, for burst pacing.
         self._last_push: float | None = None
 
@@ -409,8 +406,9 @@ class Notifier:
         try:
             self.web.post(url, json=payload, timeout=10)
         except httpx.HTTPError as exc:
-            self.logger.warning(
+            hub_note(
                 f"Wait-report webhook POST failed ({_failure_detail(exc)}) - check notifications.wait_webhook_url",
+                severity=Severity.WARNING,
             )
             return False
         return True
@@ -456,12 +454,16 @@ class Notifier:
                 return self._retry_rate_limited(url=self.discord_url, embed=embed, exc=exc)
             if status is not None and 400 <= status < 500:
                 self.discord_url = None
-                self.logger.warning(
+                hub_note(
                     f"Discord notification failed ({detail}) - disabling Discord notifications "
                     f"for this run; check notifications.discord_url",
+                    severity=Severity.WARNING,
                 )
             else:
-                self.logger.warning(f"Discord notification failed ({detail}) - check notifications.discord_url")
+                hub_note(
+                    f"Discord notification failed ({detail}) - check notifications.discord_url",
+                    severity=Severity.WARNING,
+                )
             return False
         return True
 
@@ -483,8 +485,9 @@ class Notifier:
                 exc = retry_exc
             else:
                 return True
-        self.logger.warning(
+        hub_note(
             f"Discord notification failed ({_failure_detail(exc)}) - rate limited by Discord; "
             f"this notification was dropped",
+            severity=Severity.WARNING,
         )
         return False

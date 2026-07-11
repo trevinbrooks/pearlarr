@@ -57,8 +57,8 @@ class _ScriptedClient(AniListClient):
     """
 
     def __init__(self, absent: frozenset[int] = frozenset(), *, full: bool = False) -> None:
-        # The real ctor is network-free: it just binds the client and logger.
-        super().__init__(client=httpx.Client(), logger=make_logger())
+        # The real ctor is network-free: it just binds the client.
+        super().__init__(client=httpx.Client())
         self._absent = absent
         self._full = full
         self.query_calls: list[int] = []

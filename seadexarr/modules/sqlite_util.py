@@ -17,11 +17,12 @@ mapping store does atomic per-source digest-gated replaces with a rebuild-on-for
 """
 
 import contextlib
-import logging
 import os
 import sqlite3
 from collections.abc import Callable
 from datetime import datetime
+
+from .output import Severity, hub_note
 
 # Wait this long for a write lock before raising, instead of failing instantly on
 # a momentarily-locked db. The single-instance run lock makes contention rare, but
@@ -79,7 +80,6 @@ def open_or_quarantine(
     *,
     connect_fn: Callable[[str], sqlite3.Connection],
     ensure: Callable[[sqlite3.Connection], object],
-    logger: logging.Logger | None,
     what: str,
     recovery: str,
 ) -> tuple[sqlite3.Connection, bool]:
@@ -97,7 +97,6 @@ def open_or_quarantine(
         connect_fn (Callable): The store's own connection factory (keeps its
             pragma choices and the tests' patch point).
         ensure (Callable): Ensures the schema on a fresh connection.
-        logger (logging.Logger | None): For the one-line quarantine notice.
         what (str): Human noun for the quarantine log line.
         recovery (str): Trailing recovery clause for the quarantine log line.
 
@@ -116,7 +115,7 @@ def open_or_quarantine(
                 conn.close()
         if not is_corruption(exc):
             raise
-        quarantine_corrupt(path, logger=logger, what=what, recovery=recovery)
+        quarantine_corrupt(path, what=what, recovery=recovery)
         conn = connect_fn(":memory:")
         try:
             ensure(conn)
@@ -174,7 +173,6 @@ def is_corruption(exc: sqlite3.DatabaseError) -> bool:
 def quarantine_corrupt(
     path: str,
     *,
-    logger: logging.Logger | None,
     what: str,
     recovery: str,
 ) -> None:
@@ -186,7 +184,6 @@ def quarantine_corrupt(
 
     Args:
         path (str): Path to the unreadable database.
-        logger (logging.Logger | None): For the one-line quarantine notice.
         what (str): Human noun for the log line (e.g. ``"Cache database"``).
         recovery (str): Trailing clause describing the recovery (e.g.
             ``"started a fresh cache (...)."``, ending with the period).
@@ -199,5 +196,4 @@ def quarantine_corrupt(
     for suffix in ("-wal", "-shm"):
         with contextlib.suppress(OSError):
             os.replace(path + suffix, dest + suffix)
-    if logger is not None:
-        logger.warning(f"{what} at {path} was unreadable/corrupt; moved it to {dest} and {recovery}")
+    hub_note(f"{what} at {path} was unreadable/corrupt; moved it to {dest} and {recovery}", severity=Severity.WARNING)

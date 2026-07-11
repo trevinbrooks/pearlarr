@@ -65,12 +65,11 @@ def _record(
     network.
     """
 
-    logger = make_logger()
     store: AbstractCacheStore = cache_store if cache_store is not None else FakeCacheStore()
     anilist = AniListGateway(
         cache_store=FakeCacheStore(),
-        logger=logger,
-        client=client if client is not None else AniListClient(client=httpx.Client(), logger=logger),
+        logger=make_logger(),
+        client=client if client is not None else AniListClient(client=httpx.Client()),
     )
     events: list[Event] = []
     counts = SeverityCounts()
@@ -198,7 +197,7 @@ class _ScriptedTitleClient(AniListClient):
     """
 
     def __init__(self) -> None:
-        super().__init__(client=httpx.Client(), logger=make_logger())
+        super().__init__(client=httpx.Client())
         self.query_calls: list[int] = []
 
     @override
@@ -347,11 +346,10 @@ class TestRunSummary:
         """A counter swapped in between mark and summary (a re-installed hub) can't
         feed the diff: the mark carries the ORIGINAL counter."""
 
-        logger = make_logger()
         anilist = AniListGateway(
             cache_store=FakeCacheStore(),
-            logger=logger,
-            client=AniListClient(client=httpx.Client(), logger=logger),
+            logger=make_logger(),
+            client=AniListClient(client=httpx.Client()),
         )
         counters = [SeverityCounts()]
         events: list[Event] = []

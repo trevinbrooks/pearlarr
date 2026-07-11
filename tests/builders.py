@@ -554,7 +554,7 @@ def _real_reporter(
         emit=emit_to_hub,
         counts=lambda: counts,
         cache_store=cache_store,
-        anilist=AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=web, logger=logger)),
+        anilist=AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=web)),
     )
 
 
@@ -643,11 +643,9 @@ def make_run_deps(
         # retires the old make_bare_instance(SeaDexGateway) Any-launder.
         seadex=seadex or FakeSeaDexSource(),
         cache_store=cache_store,
-        anilist=AniListGateway(
-            cache_store=cache_store, logger=logger, client=AniListClient(client=http, logger=logger)
-        ),
+        anilist=AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=http)),
         torrents=_real_torrents(logger, http),
-        notifier=Notifier(discord_url=None, webhook_url=None, web=http, logger=logger),
+        notifier=Notifier(discord_url=None, webhook_url=None, web=http),
         planner=make_planner(),
         reporter=_real_reporter(logger, cache_store, http),
     )
@@ -744,11 +742,9 @@ def make_grab_pipeline(**overrides: Any) -> GrabPipeline:
         "_planner": make_planner(),
         "cache_store": cache_store,
         "_torrents": _real_torrents(logger, web),
-        "_anilist": AniListGateway(
-            cache_store=cache_store, logger=logger, client=AniListClient(client=web, logger=logger)
-        ),
+        "_anilist": AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=web)),
         # No discord/webhook url -> a disabled, best-effort no-op notifier.
-        "_notifier": Notifier(discord_url=None, webhook_url=None, web=web, logger=logger),
+        "_notifier": Notifier(discord_url=None, webhook_url=None, web=web),
         "_reporter": _real_reporter(logger, cache_store, web),
         "qbit": CLIENT_SENTINEL,
         "_ctx": RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING),

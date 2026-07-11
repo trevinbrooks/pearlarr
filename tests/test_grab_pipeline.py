@@ -37,7 +37,6 @@ from .builders import (
     FakeTorrents,
     make_entry_record,
     make_grab_pipeline,
-    make_logger,
     one_release_dict,
     pending_import,
     rg_group,
@@ -142,7 +141,6 @@ class TestGrabPushesNotice:
                 discord_url="https://discord.example",
                 webhook_url=None,
                 web=httpx.Client(),
-                logger=make_logger(),
             ),
         )
         # Warm the gateway cache so the art lookups never hit AniList.

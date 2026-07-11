@@ -13,7 +13,6 @@ serves from the warmed per-run cache. The gateway is rebuilt per arr run, so the
 cache never crosses runs (entries are stable within a run, may change between).
 """
 
-import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from enum import Enum, auto
@@ -23,6 +22,7 @@ from typing import Protocol, override
 import httpx
 from seadex import EntryNotFoundError, EntryRecord
 
+from .output import Severity, hub_note
 from .seadex_types import ProgressSink
 
 # Ids per batched ``from_filter`` query. Mirrors ANILIST_BATCH_SIZE; ~50
@@ -82,16 +82,13 @@ class SeaDexEntryApi(Protocol):
 class SeaDexGateway(SeaDexSource):
     """Thin wrapper over the SeaDex client: bulk prefetch + by-id lookups."""
 
-    def __init__(self, *, client: SeaDexEntryApi, logger: logging.Logger) -> None:
+    def __init__(self, *, client: SeaDexEntryApi) -> None:
         """Wire the gateway to the SeaDex client it decorates.
 
         Args:
             client (SeaDexEntryApi): The SeaDex API client every lookup rides.
-            logger (logging.Logger): For the prefetch notice and the
-                connection-error warning.
         """
 
-        self.logger = logger
         self._client = client
         # Per-run bulk-fetch cache: entries keyed by AniList id, plus the set of ids
         # we successfully prefetched - so an id that was requested but not returned
@@ -114,8 +111,9 @@ class SeaDexGateway(SeaDexSource):
         """Warn ONCE that SeaDex is unreachable; the flag mutes every later call."""
 
         if not self._outage:
-            self.logger.warning(
+            hub_note(
                 f"SeaDex request failed ({type(e).__name__}); affected titles will be skipped this run",
+                severity=Severity.WARNING,
             )
         self._outage = True
 

@@ -7,7 +7,6 @@ library fetch and its typed errors, and the shared history read both arr
 clients delegate to).
 """
 
-import logging
 import random
 import time
 from collections.abc import Callable, Mapping
@@ -16,6 +15,7 @@ from typing import cast
 
 import httpx
 
+from .output import Severity, hub_note
 from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord, Json, validate_each
 
 # Transient statuses worth another try on an idempotent GET - shared with the
@@ -84,7 +84,6 @@ class ArrHttp:
     client: httpx.Client
     base_url: str  # no trailing slash (a "//api" join redirects to the login page)
     label: str  # "Sonarr" / "Radarr", for warnings
-    logger: logging.Logger
     headers: Mapping[str, str]
     sleep: Callable[[float], None] = time.sleep  # injectable so tests don't wait out backoffs
 
@@ -96,7 +95,6 @@ class ArrHttp:
         url: str,
         api_key: str,
         label: str,
-        logger: logging.Logger,
         sleep: Callable[[float], None] = time.sleep,
     ) -> "ArrHttp":
         """Bind the shared client to one arr's url + key.
@@ -109,7 +107,6 @@ class ArrHttp:
             client=client,
             base_url=url.rstrip("/"),
             label=label,
-            logger=logger,
             headers={"X-Api-Key": api_key},
             sleep=sleep,
         )
@@ -321,7 +318,7 @@ class ArrHttp:
             return None
 
         # Every field folds junk independently, so only a non-object stray skips.
-        return validate_each(HistoryRecord, raw, logger=self.logger)
+        return validate_each(HistoryRecord, raw)
 
     def _strict_error(self, detail: str) -> ArrConnectionError:
         """The strict path's uniform could-not-reach error, naming url + cause."""
@@ -336,5 +333,5 @@ class ArrHttp:
         """
 
         if warn is not None:
-            self.logger.warning(warn.replace("{detail}", detail))
+            hub_note(warn.replace("{detail}", detail), severity=Severity.WARNING)
         return None

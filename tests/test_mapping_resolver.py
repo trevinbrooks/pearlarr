@@ -42,6 +42,8 @@ from seadexarr.modules.mappings import (
     MappingSources,
     _entry_from_raw,
 )
+from seadexarr.modules.output import Diagnostic, Severity, install_hub
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.paths import resolve_paths
 from seadexarr.modules.seadex_types import TvdbMappings
 from seadexarr.modules.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge
@@ -942,9 +944,7 @@ def _boom(*_a: object, **_k: object) -> None:
 class TestMaybeDownloadFailOpen:
     """A refresh blip falls open to the cached file; a first-ever download stays fatal."""
 
-    def test_refresh_failure_falls_open_to_cached_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_refresh_failure_falls_open_to_cached_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # A stale-but-valid cached source whose refresh download fails on a transient
         # error must NOT abort the run: fall open to the on-disk copy and warn.
         source = tmp_path / "anime_ids.json"
@@ -953,12 +953,14 @@ class TestMaybeDownloadFailOpen:
         os.utime(source, (old, old))
         monkeypatch.setattr(MappingResolver, "_download_file", _boom)
 
-        logger = logging.getLogger("seadexarr-test-maybe-download")
-        resolver = make_bare_instance(MappingResolver, logger=logger, _progress=None, cache_time=1, _web=_WEB)
-        with caplog.at_level(logging.WARNING, logger=logger.name):
-            resolver._maybe_download(str(source), "https://example/anime_ids.json", "anime_ids.json")
+        recording = RecordingHub()
+        install_hub(recording.hub)  # conftest teardown restores the default
+        resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, cache_time=1, _web=_WEB)
+        resolver._maybe_download(str(source), "https://example/anime_ids.json", "anime_ids.json")
 
-        assert any(record.levelno == logging.WARNING for record in caplog.records)  # warned, not aborted
+        # Warned (not aborted): the fall-open notice rides the hub.
+        [warning] = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
+        assert "Could not refresh anime_ids.json" in warning.message
         assert source.exists()  # the cached copy is left intact
 
     def test_first_ever_download_failure_still_propagates(

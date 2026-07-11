@@ -794,8 +794,8 @@ def _fresh_logger() -> logging.Logger:
 class _ScriptedTitleClient(AniListClient):
     """Scripted AniList wire client: a fixed resolvable title, or none at all."""
 
-    def __init__(self, logger: logging.Logger, title: str | None) -> None:
-        super().__init__(client=httpx.Client(), logger=logger)
+    def __init__(self, title: str | None) -> None:
+        super().__init__(client=httpx.Client())
         self._title = title
 
     @override
@@ -823,7 +823,7 @@ class _Harness:
             anilist=AniListGateway(
                 cache_store=FakeCacheStore(),
                 logger=self.logger,
-                client=_ScriptedTitleClient(self.logger, title),
+                client=_ScriptedTitleClient(title),
             ),
         )
 

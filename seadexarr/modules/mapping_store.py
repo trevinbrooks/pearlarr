@@ -35,7 +35,6 @@ concurrent repopulation across processes is already prevented; the connection is
 not shared across threads.
 """
 
-import logging
 import sqlite3
 from collections.abc import Callable, Iterable
 from typing import Literal, NamedTuple, overload
@@ -271,7 +270,7 @@ class MappingStore:
     # -- lifecycle -----------------------------------------------------------
 
     @classmethod
-    def open(cls, path: str, *, logger: logging.Logger | None = None) -> "MappingStore":
+    def open(cls, path: str) -> "MappingStore":
         """Open (or create) the mappings db, quarantining a corrupt file.
 
         A missing file is created in place (this is a derived cache we *want* on
@@ -282,14 +281,12 @@ class MappingStore:
 
         Args:
             path (str): Path to ``mappings.db`` (or ``":memory:"`` for tests).
-            logger (logging.Logger | None): For the one-line quarantine notice.
         """
 
         conn, _ = open_or_quarantine(
             path,
             connect_fn=connect,
             ensure=_ensure_schema,
-            logger=logger,
             what="Mappings database",
             recovery="started a fresh one (sources will be re-parsed this run).",
         )

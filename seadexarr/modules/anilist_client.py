@@ -1,7 +1,6 @@
 """AniList GraphQL wire layer: the bound client, retry policy, and parse helpers."""
 
 import contextlib
-import logging
 import random
 import time
 from dataclasses import dataclass, field
@@ -94,7 +93,7 @@ query ($ids: [Int]) {
 
 @dataclass
 class AniListRetryLog:
-    """Voices ``_post_with_retry``'s waits (hub Diagnostics) and give-ups (the run logger).
+    """Voices ``_post_with_retry``'s waits and give-ups as hub Diagnostics.
 
     Without it a rate-limit backoff sleeps up to 60s with zero output (the run
     looks hung) and a final give-up returns ``{}`` silently. One instance per
@@ -102,7 +101,6 @@ class AniListRetryLog:
     warning fires once per run rather than once per title.
     """
 
-    logger: logging.Logger
     _gave_up: bool = field(default=False, init=False)
 
     def waiting(self, reason: str, wait: float, retry: int, *, severity: Severity = Severity.INFO) -> None:
@@ -114,9 +112,10 @@ class AniListRetryLog:
         """Warn ONCE per run that AniList lookups are degraded, then stay quiet."""
 
         if not self._gave_up:
-            self.logger.warning(
+            hub_note(
                 f"AniList request failed after {MAX_RETRIES} retries; "
                 "some titles/episode counts may be missing this run",
+                severity=Severity.WARNING,
             )
         self._gave_up = True
 
@@ -191,27 +190,24 @@ def extract_path(body: dict[str, Any] | None, *path: str) -> dict[str, Any]:
     return node
 
 
-def media_node_from(raw: dict[str, Any], *, logger: logging.Logger | None = None) -> AniListMediaNode:
+def media_node_from(raw: dict[str, Any]) -> AniListMediaNode:
     """Validate a raw ``Media`` dict into the typed node (single-object fail-open).
 
     A miss (``{}``) validates to the all-``None`` node; a malformed node
-    degrades to the same all-``None`` miss with one scrubbed warning (when a
-    logger is provided - the production callers always pass one).
+    degrades to the same all-``None`` miss with one scrubbed warning.
 
     Args:
         raw (dict[str, Any]): The raw ``Media`` dict (``{}`` on a miss).
-        logger (logging.Logger | None): Voices the malformed-node warning.
     """
 
     try:
         return AniListMediaNode.model_validate(raw)
     except ValidationError as e:
-        if logger is not None:
-            logger.warning(f"Ignoring malformed AniList Media node ({validation_summary(e)})")
+        hub_note(f"Ignoring malformed AniList Media node ({validation_summary(e)})", severity=Severity.WARNING)
         return AniListMediaNode()
 
 
-def media_from(body: dict[str, Any] | None, *, logger: logging.Logger | None = None) -> AniListMediaNode:
+def media_from(body: dict[str, Any] | None) -> AniListMediaNode:
     """Parse the Media node from a single-id body into an AniListMediaNode
 
     The raw ``{"data": {"Media": {...}}}`` body is the dynamic GraphQL boundary;
@@ -221,10 +217,9 @@ def media_from(body: dict[str, Any] | None, *, logger: logging.Logger | None = N
 
     Args:
         body (dict[str, Any] | None): The parsed JSON response body
-        logger (logging.Logger | None): Voices the malformed-node warning.
     """
 
-    return media_node_from(extract_path(body, "data", "Media"), logger=logger)
+    return media_node_from(extract_path(body, "data", "Media"))
 
 
 class AniListClient:
@@ -237,18 +232,16 @@ class AniListClient:
     on top; this class is deliberately cache-blind.
     """
 
-    def __init__(self, *, client: httpx.Client, logger: logging.Logger) -> None:
-        """Bind the wire client to the shared web client and run logger.
+    def __init__(self, *, client: httpx.Client) -> None:
+        """Bind the wire client to the shared web client.
 
         Args:
             client (httpx.Client): The shared web client every POST rides (its
                 defaults carry the identifying User-Agent and timeout bounds).
-            logger (logging.Logger): Voices the retry waits / give-ups via the
-                bound :class:`AniListRetryLog` (one give-up warning per run).
         """
 
         self._client = client
-        self._retry_log = AniListRetryLog(logger=logger)
+        self._retry_log = AniListRetryLog()
 
     def query(self, al_id: int) -> dict[str, Any]:
         """Fetch one AniList Media by id (see _post_with_retry for the retry policy)

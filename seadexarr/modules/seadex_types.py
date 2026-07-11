@@ -57,7 +57,6 @@ for constructed payloads and the :mod:`~.json_narrow` guards), and the
 structural protocols (:class:`ArrItem` and friends).
 """
 
-import logging
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -280,12 +279,11 @@ def validate_each[ModelT: _ApiModel](
     model: type[ModelT],
     raw: list[object],
     *,
-    logger: logging.Logger,
     strict: bool = False,
 ) -> list[ModelT]:
     """Validate each raw record into ``model``, skipping the ones that fail.
 
-    The fail-open list read: every skipped record logs one scrubbed warning
+    The fail-open list read: every skipped record warns once, scrubbed
     (index + field locs + error types; never the payload). With ``strict=True``
     a non-empty ``raw`` that validates to NOTHING raises
     :class:`BoundaryContractError` instead of degrading to an empty list - the
@@ -295,16 +293,22 @@ def validate_each[ModelT: _ApiModel](
     Args:
         model (type[ModelT]): The ``_ApiModel`` subclass to validate into.
         raw (list[object]): The unvalidated JSON array elements.
-        logger (logging.Logger): The owning client's logger for the skip warnings.
         strict (bool): Raise on a non-empty-but-zero-valid payload.
     """
+
+    # Deferred: a top-level .output import would cycle back here via
+    # output.events -> manual_import -> seadex_types.
+    from .output import Severity, hub_note
 
     validated: list[ModelT] = []
     for index, record in enumerate(raw):
         try:
             validated.append(model.model_validate(record))
         except ValidationError as e:
-            logger.warning(f"Skipping malformed {model.__name__} record [{index}] ({validation_summary(e)})")
+            hub_note(
+                f"Skipping malformed {model.__name__} record [{index}] ({validation_summary(e)})",
+                severity=Severity.WARNING,
+            )
     if strict and raw and not validated:
         msg = f"none of the {len(raw)} {model.__name__} records validated; refusing to treat it as empty"
         raise BoundaryContractError(msg)

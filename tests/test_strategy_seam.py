@@ -26,6 +26,8 @@ from seadexarr.modules.grab_pipeline import GrabRequest
 from seadexarr.modules.log import EntryState
 from seadexarr.modules.manual_import import ImportProgress, ImportReadiness, ImportWaitMode, PendingImport
 from seadexarr.modules.mappings import ExternalIds, MappingEntry, MappingSource
+from seadexarr.modules.output import Diagnostic, Severity, install_hub
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.run_services import RunServices
 from seadexarr.modules.seadex_filter import FilterResult
 from seadexarr.modules.seadex_radarr import RadarrSync
@@ -60,7 +62,7 @@ from .builders import (
     sonarr_ep,
     url_item,
 )
-from .fakes import CaptureHandler, FakeSonarrClient
+from .fakes import FakeSonarrClient
 
 
 class _Item:
@@ -324,16 +326,18 @@ class _PassThroughParse:
         return seadex_dict
 
 
-def _capture_logger(name: str) -> tuple[logging.Logger, CaptureHandler]:
-    """A fresh, isolated DEBUG logger plus the handler that captures its records."""
+def _recording() -> RecordingHub:
+    """A fresh RecordingHub (the strategies' warnings ride the hub)."""
 
-    logger = logging.getLogger(name)
-    logger.handlers.clear()
-    capture = CaptureHandler()
-    logger.addHandler(capture)
-    logger.propagate = False
-    logger.setLevel(logging.DEBUG)
-    return logger, capture
+    recording = RecordingHub()
+    install_hub(recording.hub)  # conftest teardown restores the default
+    return recording
+
+
+def _hub_warnings(recording: RecordingHub) -> list[str]:
+    """The recorded WARNING-severity Diagnostic messages."""
+
+    return [d.message for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
 
 
 class TestItemAnilistIdsDelegates:
@@ -458,14 +462,14 @@ class TestProcessAlIdThreadsServices:
         # and never falling through to grab orphans - and NO AniBridge warning.
         run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
         episodes = _FakeEpisodes(ep_list=[])
-        logger, capture = _capture_logger("seadexarr-seam-no-episodes")
+        recording = _recording()
         strat = make_bare_instance(
             SonarrSync,
             _services=run,
             _episodes=episodes,
             _config=make_config(sleep_time=0),
             ignore_movies_in_radarr=False,
-            logger=logger,
+            logger=make_logger(),
         )
 
         result = strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
@@ -474,7 +478,7 @@ class TestProcessAlIdThreadsServices:
         assert run.log_entry_status_calls == [(EntryState.NO_EPISODES, "Title")]
         assert run.log_al_title_calls == []
         # anime-id empty is NOT the AniBridge case -> no warning surfaced.
-        assert not any(r.levelno >= logging.WARNING for r in capture.records)
+        assert _hub_warnings(recording) == []
 
     def test_sonarr_anibridge_empty_map_skips_with_warning(self) -> None:
         # The AniBridge no-usable-ranges case (a real empty-{} tvdb entry: source
@@ -484,14 +488,14 @@ class TestProcessAlIdThreadsServices:
         # real one does. Fails on the unfixed path, which silently grabbed nothing.
         run = _FakeRunServices(prologue_entry=make_entry_record(), anilist_title="Title")
         episodes = _FakeEpisodes(ep_list=[])
-        logger, capture = _capture_logger("seadexarr-seam-anibridge")
+        recording = _recording()
         strat = make_bare_instance(
             SonarrSync,
             _services=run,
             _episodes=episodes,
             _config=make_config(sleep_time=0),
             ignore_movies_in_radarr=False,
-            logger=logger,
+            logger=make_logger(),
         )
 
         result = strat.process_al_id(
@@ -504,7 +508,7 @@ class TestProcessAlIdThreadsServices:
         assert run.log_entry_status_calls == [(EntryState.NO_EPISODES, "Title")]
         assert run.log_al_title_calls == []
         # AniBridge-specific notice surfaced.
-        assert any(r.levelno >= logging.WARNING for r in capture.records)
+        assert any("AniBridge has no usable season ranges" in message for message in _hub_warnings(recording))
 
     def test_sonarr_all_invalid_selection_routes_to_shared_skip(self) -> None:
         # The interactive pick rejected every token: the strategy must route to
@@ -547,7 +551,7 @@ class TestProcessAlIdThreadsServices:
             _episodes=_FakeEpisodes(ep_list=[]),
             _config=make_config(sleep_time=0),
             ignore_movies_in_radarr=True,
-            logger=_capture_logger("seadexarr-seam-radarr-dedup")[0],
+            logger=make_logger(),
         )
 
         result = strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
@@ -1285,23 +1289,23 @@ class TestManualImportWarningGating:
 
     def test_missing_off_deadline_is_debug_not_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         strat, pending = self._strat_with_missing_file()
+        recording = _recording()
 
         with caplog.at_level("DEBUG"):
             probe = strat.import_completed(pending, "/d", at_deadline=False)
 
         assert probe.readiness is ImportReadiness.RETRY
-        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
-        assert not any("not visible to Sonarr" in r.message for r in warnings)
+        assert not any("not visible to Sonarr" in message for message in _hub_warnings(recording))
         assert any("not visible to Sonarr" in r.message and r.levelname == "DEBUG" for r in caplog.records)
 
-    def test_missing_at_deadline_warns_loudly(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_missing_at_deadline_warns_loudly(self) -> None:
         strat, pending = self._strat_with_missing_file()
+        recording = _recording()
 
-        with caplog.at_level("DEBUG"):
-            probe = strat.import_completed(pending, "/d", at_deadline=True)
+        probe = strat.import_completed(pending, "/d", at_deadline=True)
 
         assert probe.readiness is ImportReadiness.RETRY
-        assert any("not visible to Sonarr" in r.message and r.levelname == "WARNING" for r in caplog.records)
+        assert any("not visible to Sonarr" in message for message in _hub_warnings(recording))
 
 
 class TestDefaultQualityWarning:
@@ -1313,7 +1317,7 @@ class TestDefaultQualityWarning:
     """
 
     @staticmethod
-    def _strat_with_default(name: str | None) -> tuple[SonarrSync, FakeSonarrClient, CaptureHandler]:
+    def _strat_with_default(name: str | None) -> tuple[SonarrSync, FakeSonarrClient, RecordingHub]:
         # The candidate + definitions resolve cleanly, so the only quality-related
         # warning in play is the unmatched-default one.
         quality = {"quality": {"id": 3, "name": "WEBDL-1080p", "source": "web", "resolution": 1080}}
@@ -1323,51 +1327,45 @@ class TestDefaultQualityWarning:
             quality_defs=[QualityDefinition.model_validate(quality)],
             config_overrides=overrides,
         )
-        logger, capture = _capture_logger("seadexarr-default-quality")
-        strat._executor.logger = logger
-        return strat, sonarr, capture
+        return strat, sonarr, _recording()
 
     @staticmethod
-    def _default_quality_warnings(capture: CaptureHandler) -> list[str]:
-        return [
-            r.getMessage()
-            for r in capture.records
-            if r.levelno == logging.WARNING and "default_quality" in r.getMessage()
-        ]
+    def _default_quality_warnings(recording: RecordingHub) -> list[str]:
+        return [message for message in _hub_warnings(recording) if "default_quality" in message]
 
     def test_unmatched_name_warns_once_per_run(self) -> None:
         pending = pending_import()
-        strat, sonarr, capture = self._strat_with_default("Blueray-1080p")
+        strat, sonarr, recording = self._strat_with_default("Blueray-1080p")
 
         strat.import_completed(pending, "/d")
         strat.import_completed(pending, "/d")
 
         # Both polls stepped in (rebuilt the payload), yet the typo warned once.
         assert len(sonarr.execute_calls) == 2
-        assert self._default_quality_warnings(capture) == [
+        assert self._default_quality_warnings(recording) == [
             "imports.default_quality 'Blueray-1080p' matches no Sonarr quality definition; ignoring it",
         ]
 
         # The guard is per-run scratch: the run-start reset re-arms it.
         strat._executor.reset()
         strat.import_completed(pending, "/d")
-        assert len(self._default_quality_warnings(capture)) == 2
+        assert len(self._default_quality_warnings(recording)) == 2
 
     def test_matched_name_does_not_warn(self) -> None:
-        strat, sonarr, capture = self._strat_with_default("WEBDL-1080p")
+        strat, sonarr, recording = self._strat_with_default("WEBDL-1080p")
 
         strat.import_completed(pending_import(), "/d")
 
         assert len(sonarr.execute_calls) == 1
-        assert self._default_quality_warnings(capture) == []
+        assert self._default_quality_warnings(recording) == []
 
     def test_unset_name_does_not_warn(self) -> None:
-        strat, sonarr, capture = self._strat_with_default(None)
+        strat, sonarr, recording = self._strat_with_default(None)
 
         strat.import_completed(pending_import(), "/d")
 
         assert len(sonarr.execute_calls) == 1
-        assert self._default_quality_warnings(capture) == []
+        assert self._default_quality_warnings(recording) == []
 
 
 class TestResolveLanguageObjects:

@@ -15,6 +15,7 @@ from .manual_import import (
     PendingImport,
 )
 from .mappings import ExternalIds, MappingEntry, MappingSource
+from .output import Severity, hub_note
 from .planner import get_episode_keys
 from .protocols import ArrSync
 from .radarr_client import (
@@ -159,7 +160,6 @@ class SonarrSync(ArrSync[SonarrItem]):
                     url=sonarr_url,
                     api_key=sonarr_api_key,
                     label="Sonarr",
-                    logger=self.logger,
                 ),
                 logger=self.logger,
             )
@@ -223,7 +223,6 @@ class SonarrSync(ArrSync[SonarrItem]):
                             url=radarr_url,
                             api_key=radarr_api_key,
                             http=radarr_http,
-                            logger=self.logger,
                         ),
                         self._mappings,
                         self.anibridge,
@@ -250,9 +249,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         filtered = [s for s in items if s.tvdbId == item_id]
         if len(filtered) == 0:
-            self.logger.warning(
-                f"No anime series with TVDB ID {item_id} found in Sonarr",
-            )
+            hub_note(f"No anime series with TVDB ID {item_id} found in Sonarr", severity=Severity.WARNING)
         return filtered
 
     @override
@@ -389,8 +386,9 @@ class SonarrSync(ArrSync[SonarrItem]):
                 # Keys off source, so it covers BOTH an empty-{} tvdb entry (mode
                 # ANIBRIDGE) and a degraded imdb/tmdb-resolved entry (mode ANIME_IDS),
                 # while a legit Kometa whole-series entry (source ANIME_IDS) stays quiet.
-                self.logger.warning(
+                hub_note(
                     indent_string(f"AniBridge has no usable season ranges for {anilist_title}; skipping"),
+                    severity=Severity.WARNING,
                 )
             time.sleep(self._config.advanced.sleep_time)
             return False

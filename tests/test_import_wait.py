@@ -1893,20 +1893,17 @@ class TestPostImportCategory:
 
     def test_configured_category_without_client_is_a_silent_noop(self) -> None:
         # Category configured but no qBittorrent client (preview): nothing to
-        # call and nothing logged - not even the best-effort warning.
+        # call and nothing emitted - not even the best-effort warning.
         mgr = make_orchestration_manager(
             qbit=None,
             strategy=_RecordingStrategy(),
             post_import_category="seadexarr-done",
         )
-        handler = CaptureHandler()
-        mgr.logger.addHandler(handler)
-        try:
-            mgr.apply_post_import_category("h", "Show S01")  # must not raise
-        finally:
-            mgr.logger.removeHandler(handler)
+        recording = RecordingHub()
+        install_hub(recording.hub)  # conftest teardown restores the default
+        mgr.apply_post_import_category("h", "Show S01")  # must not raise
 
-        assert handler.records == []
+        assert recording.of_type(Diagnostic) == []
 
     def test_reconcile_missing_is_not_recategorized(self) -> None:
         # The reconcile twin of the monitor-path MISSING test: the record is

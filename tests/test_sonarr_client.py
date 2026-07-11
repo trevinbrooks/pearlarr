@@ -22,6 +22,8 @@ import respx
 
 from seadexarr.modules.arr_http import ArrHttp
 from seadexarr.modules.manual_import import PendingImport
+from seadexarr.modules.output import Diagnostic, Severity, install_hub
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.seadex_types import (
     BoundaryContractError,
     CommandResource,
@@ -35,7 +37,6 @@ from seadexarr.modules.seadex_types import (
 )
 from seadexarr.modules.sonarr_client import SonarrClient
 
-from .fakes import CaptureHandler
 from .http_mock import sonarr_fixture
 
 _URL = "http://sonarr.test"
@@ -51,18 +52,28 @@ def _make_client() -> SonarrClient:
     don't wait out real backoffs.
     """
 
-    logger = logging.getLogger("seadexarr.test")
     return SonarrClient(
         http=ArrHttp.bind(
             client=httpx.Client(),
             url=_URL,
             api_key=_KEY,
             label="Sonarr",
-            logger=logger,
             sleep=lambda _s: None,
         ),
-        logger=logger,
+        logger=logging.getLogger("seadexarr.test"),
     )
+
+
+def _recording() -> RecordingHub:
+    """A fresh RecordingHub (the client's warnings ride the hub)."""
+
+    recording = RecordingHub()
+    install_hub(recording.hub)  # conftest teardown restores the default
+    return recording
+
+
+def _warnings(recording: RecordingHub) -> list[Diagnostic]:
+    return [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
 
 
 def _make_pending(*, infohash: str, title: str) -> PendingImport:
@@ -298,32 +309,30 @@ def test_episodes_skips_non_dict_elements() -> None:
 
 
 @respx.mock
-def test_episodes_non_200_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+def test_episodes_non_200_returns_none_and_warns() -> None:
     """A non-200 episode read returns None and warns (the caller skips the id)."""
 
     respx.get(f"{_BASE}/episode").respond(status_code=500)
-    client = _make_client()
-    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-        result = client.episodes(228)
+    recording = _recording()
+    result = _make_client().episodes(228)
 
     assert result is None
-    warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
-    assert warning.getMessage() == "Could not fetch episodes for series 228 from Sonarr (status code 500); skipping"
+    [warning] = _warnings(recording)
+    assert warning.message == "Could not fetch episodes for series 228 from Sonarr (status code 500); skipping"
 
 
 @respx.mock
-def test_episodes_quiet_suppresses_unreachable_warning(caplog: pytest.LogCaptureFixture) -> None:
+def test_episodes_quiet_suppresses_unreachable_warning() -> None:
     """``quiet=True`` still returns None on a non-200 but emits NO warning - the
     concurrent prefetch path, retried/logged on the main thread instead.
     """
 
     respx.get(f"{_BASE}/episode").respond(status_code=500)
-    client = _make_client()
-    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-        result = client.episodes(228, quiet=True)
+    recording = _recording()
+    result = _make_client().episodes(228, quiet=True)
 
     assert result is None
-    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+    assert _warnings(recording) == []
 
 
 @respx.mock
@@ -592,24 +601,12 @@ def test_post_command_2xx_non_object_warns_and_returns_none() -> None:
     None - Sonarr may still have queued the command, so leave a breadcrumb.
     """
 
-    logger = logging.getLogger("seadexarr.test.post-command-payload")
-    capture = CaptureHandler()
-    logger.addHandler(capture)
-    client = SonarrClient(
-        http=ArrHttp.bind(
-            client=httpx.Client(),
-            url=_URL,
-            api_key=_KEY,
-            label="Sonarr",
-            logger=logger,
-            sleep=lambda _s: None,
-        ),
-        logger=logger,
-    )
+    recording = _recording()
+    client = _make_client()
 
     respx.post(f"{_BASE}/command").respond(status_code=201, json=[])
     assert client.refresh_monitored_downloads() is None
-    assert any(r.levelno == logging.WARNING and "unexpected payload" in r.getMessage() for r in capture.records)
+    assert any("unexpected payload" in d.message for d in _warnings(recording))
 
 
 @respx.mock
@@ -742,20 +739,18 @@ def test_history_since_decodes_records_and_builds_request() -> None:
 
 
 @respx.mock
-def test_history_since_non_200_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+def test_history_since_non_200_returns_none_and_warns() -> None:
     """A non-200 history read returns None (the activity scan fails open)."""
 
     respx.get(f"{_BASE}/history/since").respond(status_code=500)
-    client = _make_client()
-    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-        result = client.history_since("2026-06-30T08:00:00Z")
+    recording = _recording()
+    result = _make_client().history_since("2026-06-30T08:00:00Z")
 
     assert result is None
     # The single warning for a failed history fetch states its consequence too
     # (the activity monitor only debug-logs, so this line is all the user sees).
-    warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
-    expected = "Could not fetch Sonarr history (status code 500); skipping activity detection this run"
-    assert warning.getMessage() == expected
+    [warning] = _warnings(recording)
+    assert warning.message == "Could not fetch Sonarr history (status code 500); skipping activity detection this run"
 
 
 @respx.mock
@@ -767,29 +762,27 @@ def test_history_since_request_error_returns_none() -> None:
 
 
 @respx.mock
-def test_history_since_non_json_body_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+def test_history_since_non_json_body_returns_none_and_warns() -> None:
     """A 200 with a non-JSON body (e.g. a proxy login page) fails open to None."""
 
     respx.get(f"{_BASE}/history/since").respond(content=b"<html>login</html>", content_type="text/html")
-    client = _make_client()
-    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-        result = client.history_since("2026-06-30T08:00:00Z")
+    recording = _recording()
+    result = _make_client().history_since("2026-06-30T08:00:00Z")
 
     assert result is None
-    assert any(r.levelno == logging.WARNING for r in caplog.records)
+    assert _warnings(recording)
 
 
 @respx.mock
-def test_history_since_non_array_payload_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+def test_history_since_non_array_payload_returns_none_and_warns() -> None:
     """A JSON object (not the expected array) fails open to None."""
 
     respx.get(f"{_BASE}/history/since").respond(json={"message": "unauthorized"})
-    client = _make_client()
-    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-        result = client.history_since("2026-06-30T08:00:00Z")
+    recording = _recording()
+    result = _make_client().history_since("2026-06-30T08:00:00Z")
 
     assert result is None
-    assert any(r.levelno == logging.WARNING for r in caplog.records)
+    assert _warnings(recording)
 
 
 @respx.mock
@@ -813,10 +806,9 @@ def test_trailing_slash_url_is_normalized() -> None:
     302s that to the login page, breaking every raw endpoint.
     """
 
-    logger = logging.getLogger("seadexarr.test")
     client = SonarrClient(
-        http=ArrHttp.bind(client=httpx.Client(), url=f"{_URL}/", api_key=_KEY, label="Sonarr", logger=logger),
-        logger=logger,
+        http=ArrHttp.bind(client=httpx.Client(), url=f"{_URL}/", api_key=_KEY, label="Sonarr"),
+        logger=logging.getLogger("seadexarr.test"),
     )
     respx.get(f"{_BASE}/history/since").respond(json=[])
     assert client.history_since("2026-06-30T08:00:00Z") == []

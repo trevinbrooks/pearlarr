@@ -39,7 +39,6 @@ the *file*. Do not share one ``CacheStore`` / connection across arrs or threads.
 
 import contextlib
 import json
-import logging
 import os
 import sqlite3
 from abc import ABC, abstractmethod
@@ -432,7 +431,6 @@ class CacheStore(AbstractCacheStore):
         path: str,
         *,
         config_checksum: str,
-        logger: logging.Logger | None = None,
     ) -> "CacheStore":
         """Open the cache db (or an in-memory stand-in) and reconcile the descriptor.
 
@@ -446,7 +444,6 @@ class CacheStore(AbstractCacheStore):
             config_checksum (str): Current config-file checksum, stamped into the
                 descriptor so a changed config is recorded (informational; not used
                 to invalidate records - entries are freshness-keyed already).
-            logger (logging.Logger | None): For the quarantine-recovery notice.
         """
 
         exists = os.path.exists(path)
@@ -458,7 +455,6 @@ class CacheStore(AbstractCacheStore):
             path if exists else ":memory:",
             connect_fn=_connect,
             ensure=lambda c: _ensure_schema(c, path),
-            logger=logger,
             what="Cache database",
             recovery="started a fresh cache (titles will be re-checked; grab-dedup and "
             "pending-import tracking reset, so recent grabs may be re-offered).",

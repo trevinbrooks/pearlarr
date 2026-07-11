@@ -1,6 +1,5 @@
 """Radarr REST client: the HTTP surface the Radarr syncer talks to."""
 
-import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from collections.abc import Set as AbstractSet
@@ -20,9 +19,8 @@ def make_radarr_client(
     url: str,
     api_key: str,
     http: httpx.Client,
-    logger: logging.Logger,
 ) -> "RadarrClient":
-    """Build a :class:`RadarrClient` from the shared client/logger and a url/key.
+    """Build a :class:`RadarrClient` from the shared client and a url/key.
 
     Hoisted so the two Arr strategies share one construction site (and the one
     ``label="Radarr"`` bind). The url/key lookup policy stays with each caller
@@ -33,11 +31,10 @@ def make_radarr_client(
         url (str): Radarr base URL.
         api_key (str): Radarr API key.
         http (httpx.Client): The run's shared client for the raw endpoints.
-        logger (logging.Logger): For request warnings.
     """
 
     return RadarrClient(
-        http=ArrHttp.bind(client=http, url=url, api_key=api_key, label="Radarr", logger=logger),
+        http=ArrHttp.bind(client=http, url=url, api_key=api_key, label="Radarr"),
     )
 
 
@@ -73,8 +70,8 @@ class RadarrClient(AbstractRadarrClient):
         Construction is network-free (no connection probe): the first request
         happens on the first method call, so an unreachable Radarr surfaces as
         that call's typed error / fail-open path, never a constructor hang.
-        All logging happens in the bound transport, which carries its own
-        logger — unlike Sonarr, this client emits no non-transport lines.
+        Warnings ride the hub — unlike Sonarr, this client emits no lines of
+        its own, so it holds no logger at all.
 
         Args:
             http (ArrHttp): The transport already bound to Radarr's url + key
@@ -96,7 +93,7 @@ class RadarrClient(AbstractRadarrClient):
         raw = self._http.get_json_list_strict("/api/v3/movie")
         # Strict validation to match: a non-empty payload with zero valid
         # records raises BoundaryContractError instead of reading as empty.
-        return list[RadarrItem](validate_each(RadarrMovie, raw, logger=self._http.logger, strict=True))
+        return list[RadarrItem](validate_each(RadarrMovie, raw, strict=True))
 
     @override
     def movie_files(self, movie_id: int) -> list[MovieFile]:
@@ -122,7 +119,7 @@ class RadarrClient(AbstractRadarrClient):
             return []
 
         # Validate each record at this boundary (junk records skip with a warning).
-        return validate_each(MovieFile, raw, logger=self._http.logger)
+        return validate_each(MovieFile, raw)
 
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:

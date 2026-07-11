@@ -6,6 +6,7 @@ from .grab_pipeline import GrabRequest
 from .log import indent_string
 from .manual_import import ImportProbe, ImportProgress, ImportReadiness, PendingImport
 from .mappings import ExternalIds, MappingEntry
+from .output import Severity, hub_note
 from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, collect_anime_movies, make_radarr_client
 from .run_services import RunDeps, RunServices
@@ -59,7 +60,6 @@ class RadarrSync(ArrSync[RadarrItem]):
                 url=radarr_url,
                 api_key=radarr_api_key,
                 http=deps.http,
-                logger=self.logger,
             )
 
     # --- ArrSync hooks ------------------------------------------------------
@@ -80,9 +80,7 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         filtered = [m for m in items if m.tmdbId == item_id]
         if len(filtered) == 0:
-            self.logger.warning(
-                f"No anime movie with TMDB ID {item_id} found in Radarr",
-            )
+            hub_note(f"No anime movie with TMDB ID {item_id} found in Radarr", severity=Severity.WARNING)
         return filtered
 
     @override

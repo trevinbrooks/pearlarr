@@ -8,11 +8,11 @@ contract the AniList gateway depends on), and the frozen-model violation shape
 (pydantic ``ValidationError``, not ``FrozenInstanceError``).
 """
 
-import logging
-
 import pytest
 from pydantic import ValidationError
 
+from seadexarr.modules.output import Diagnostic, Severity, install_hub
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.seadex_types import (
     AniListMediaNode,
     BoundaryContractError,
@@ -25,19 +25,6 @@ from seadexarr.modules.seadex_types import (
     validate_each,
 )
 
-from .fakes import CaptureHandler
-
-
-def _capture_logger(name: str) -> tuple[logging.Logger, CaptureHandler]:
-    """An isolated logger with a recording handler attached."""
-
-    logger = logging.getLogger(name)
-    logger.propagate = False
-    capture = CaptureHandler()
-    logger.handlers = [capture]
-    return logger, capture
-
-
 # --- validate_each ------------------------------------------------------------
 
 
@@ -46,16 +33,17 @@ def test_validate_each_skips_bad_records_and_scrubs_the_warning() -> None:
     failing field - never the payload value itself (it may carry titles/paths).
     """
 
-    logger, capture = _capture_logger("seadexarr.test.validate-each")
+    recording = RecordingHub()
+    install_hub(recording.hub)  # conftest teardown restores the default
     records = validate_each(
         MovieFile,
         [{"releaseGroup": "SubsPlease", "size": 1}, {"size": "not-a-number-SECRET"}],
-        logger=logger,
     )
 
     assert records == [MovieFile(release_group="SubsPlease", size=1)]
-    [warning] = [r for r in capture.records if r.levelno == logging.WARNING]
-    message = warning.getMessage()
+    [warning] = recording.of_type(Diagnostic)
+    assert warning.severity is Severity.WARNING
+    message = warning.message
     assert "MovieFile" in message
     assert "[1]" in message
     assert "size" in message
@@ -65,9 +53,10 @@ def test_validate_each_skips_bad_records_and_scrubs_the_warning() -> None:
 def test_validate_each_empty_list_is_empty() -> None:
     """An empty payload validates to an empty list (an empty library is legal)."""
 
-    logger, capture = _capture_logger("seadexarr.test.validate-each-empty")
-    assert validate_each(MovieFile, [], logger=logger) == []
-    assert capture.records == []
+    recording = RecordingHub()
+    install_hub(recording.hub)  # conftest teardown restores the default
+    assert validate_each(MovieFile, []) == []
+    assert recording.of_type(Diagnostic) == []
 
 
 def test_validate_each_strict_raises_when_nothing_validates() -> None:
@@ -75,9 +64,8 @@ def test_validate_each_strict_raises_when_nothing_validates() -> None:
     BoundaryContractError - an all-invalid library must never read as empty.
     """
 
-    logger, _ = _capture_logger("seadexarr.test.validate-each-strict")
     with pytest.raises(BoundaryContractError):
-        validate_each(SonarrSeries, ["junk", 42], logger=logger, strict=True)
+        validate_each(SonarrSeries, ["junk", 42], strict=True)
 
 
 def test_validate_each_strict_accepts_empty_and_partial_payloads() -> None:
@@ -85,12 +73,10 @@ def test_validate_each_strict_accepts_empty_and_partial_payloads() -> None:
     library) and keeps the valid records of a partially-junk one.
     """
 
-    logger, _ = _capture_logger("seadexarr.test.validate-each-partial")
-    assert validate_each(SonarrSeries, [], logger=logger, strict=True) == []
+    assert validate_each(SonarrSeries, [], strict=True) == []
     records = validate_each(
         SonarrSeries,
         [{"id": 1, "title": "Show", "tvdbId": 7}, {"id": None, "title": "Null id"}],
-        logger=logger,
         strict=True,
     )
     assert records == [SonarrSeries(id=1, title="Show", tvdbId=7)]

@@ -9,14 +9,14 @@ request error -> ``[]`` + a warning), so a Radarr outage never unwinds the
 run; plus the ``collect_anime_movies`` wiring.
 """
 
-import logging
 from collections.abc import Set as AbstractSet
 
 import httpx
-import pytest
 import respx
 
 from seadexarr.modules.arr_http import ArrHttp
+from seadexarr.modules.output import Diagnostic, Severity, install_hub
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.radarr_client import RadarrClient, collect_anime_movies
 from seadexarr.modules.seadex_types import HistoryRecord, MovieFile, RadarrItem, RadarrMovie
 
@@ -40,10 +40,21 @@ def _make_client() -> RadarrClient:
             url=_URL,
             api_key=_KEY,
             label="Radarr",
-            logger=logging.getLogger("seadexarr.test"),
             sleep=lambda _s: None,
         ),
     )
+
+
+def _recording() -> RecordingHub:
+    """A fresh RecordingHub (the fail-open warnings ride the hub)."""
+
+    recording = RecordingHub()
+    install_hub(recording.hub)  # conftest teardown restores the default
+    return recording
+
+
+def _warnings(recording: RecordingHub) -> list[Diagnostic]:
+    return [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
 
 
 @respx.mock
@@ -63,17 +74,16 @@ def test_movie_files_decodes_records_and_builds_request() -> None:
 
 
 @respx.mock
-def test_movie_files_non_200_returns_empty_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+def test_movie_files_non_200_returns_empty_and_warns() -> None:
     """A Radarr 404 degrades to [] with a warning (was a JSONDecodeError mid-run)."""
 
     respx.get(f"{_BASE}/moviefile").respond(status_code=404)
-    client = _make_client()
-    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-        files = client.movie_files(7)
+    recording = _recording()
+    files = _make_client().movie_files(7)
 
     assert files == []
-    warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
-    assert warning.getMessage() == "Could not fetch files for movie 7 from Radarr (status code 404); assuming none"
+    [warning] = _warnings(recording)
+    assert warning.message == "Could not fetch files for movie 7 from Radarr (status code 404); assuming none"
 
 
 @respx.mock
@@ -85,17 +95,16 @@ def test_movie_files_request_error_returns_empty() -> None:
 
 
 @respx.mock
-def test_movie_files_non_json_body_returns_empty_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+def test_movie_files_non_json_body_returns_empty_and_warns() -> None:
     """A 200 with an HTML body (reverse-proxy page) fails open to [] - never an abort."""
 
     respx.get(f"{_BASE}/moviefile").respond(content=b"<html>login</html>", content_type="text/html")
-    client = _make_client()
-    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-        files = client.movie_files(7)
+    recording = _recording()
+    files = _make_client().movie_files(7)
 
     assert files == []
-    warning = next(r for r in caplog.records if r.levelno == logging.WARNING)
-    assert "non-JSON body" in warning.getMessage()
+    [warning] = _warnings(recording)
+    assert "non-JSON body" in warning.message
 
 
 @respx.mock
@@ -150,16 +159,15 @@ def test_history_since_decodes_records_and_builds_request() -> None:
 
 
 @respx.mock
-def test_history_since_non_200_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+def test_history_since_non_200_returns_none_and_warns() -> None:
     """A non-200 history read returns None with a warning (fail-open)."""
 
     respx.get(f"{_BASE}/history/since").respond(status_code=500)
-    client = _make_client()
-    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-        result = client.history_since("2026-06-30T08:00:00Z")
+    recording = _recording()
+    result = _make_client().history_since("2026-06-30T08:00:00Z")
 
     assert result is None
-    assert any(r.levelno == logging.WARNING for r in caplog.records)
+    assert _warnings(recording)
 
 
 @respx.mock
@@ -171,25 +179,23 @@ def test_history_since_request_error_returns_none() -> None:
 
 
 @respx.mock
-def test_history_since_non_json_body_returns_none_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+def test_history_since_non_json_body_returns_none_and_warns() -> None:
     """A 200 with a non-JSON body fails open to None (the shared-helper hardening)."""
 
     respx.get(f"{_BASE}/history/since").respond(content=b"<html>login</html>", content_type="text/html")
-    client = _make_client()
-    with caplog.at_level(logging.WARNING, logger="seadexarr.test"):
-        result = client.history_since("2026-06-30T08:00:00Z")
+    recording = _recording()
+    result = _make_client().history_since("2026-06-30T08:00:00Z")
 
     assert result is None
-    assert any(r.levelno == logging.WARNING for r in caplog.records)
+    assert _warnings(recording)
 
 
 @respx.mock
 def test_trailing_slash_url_is_normalized() -> None:
     """A trailing-slash base url must not become a ``//api`` join (login redirect)."""
 
-    logger = logging.getLogger("seadexarr.test")
     client = RadarrClient(
-        http=ArrHttp.bind(client=httpx.Client(), url=f"{_URL}/", api_key=_KEY, label="Radarr", logger=logger),
+        http=ArrHttp.bind(client=httpx.Client(), url=f"{_URL}/", api_key=_KEY, label="Radarr"),
     )
     respx.get(f"{_BASE}/history/since").respond(json=[])
     assert client.history_since("2026-06-30T08:00:00Z") == []

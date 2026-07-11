@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from .arr_http import ArrHttp
 from .log import indent_string
 from .manual_import import PendingImport
+from .output import Severity, hub_note
 from .seadex_types import (
     CommandBody,
     CommandResource,
@@ -130,8 +131,8 @@ class SonarrClient(AbstractSonarrClient):
         Args:
             http (ArrHttp): The transport already bound to Sonarr's url + key
                 (``ArrHttp.bind`` with ``label="Sonarr"``).
-            logger (logging.Logger): For the client's own non-transport warnings
-                (the bound transport carries its own logger for request lines).
+            logger (logging.Logger): For the client's DEBUG breadcrumbs (the
+                parse skip notes); warnings ride the hub.
         """
 
         self._http = http
@@ -150,7 +151,7 @@ class SonarrClient(AbstractSonarrClient):
         raw = self._http.get_json_list_strict("/api/v3/series")
         # Strict validation to match: a non-empty payload with zero valid
         # records raises BoundaryContractError instead of reading as empty.
-        return list[SonarrItem](validate_each(SonarrSeries, raw, logger=self._logger, strict=True))
+        return list[SonarrItem](validate_each(SonarrSeries, raw, strict=True))
 
     @override
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None:
@@ -180,7 +181,7 @@ class SonarrClient(AbstractSonarrClient):
         # Validate each record at this client boundary (junk records skip with a
         # warning), then sort by season/episode for slicing later. A record
         # missing either number sorts first (-1), never a None<int TypeError.
-        episodes = validate_each(SonarrEpisode, raw, logger=self._logger)
+        episodes = validate_each(SonarrEpisode, raw)
         episodes.sort(
             key=lambda ep: (
                 ep.season_number if ep.season_number is not None else -1,
@@ -284,8 +285,9 @@ class SonarrClient(AbstractSonarrClient):
         try:
             return ParsedFileInfo.model_validate(payload)
         except ValidationError as e:
-            self._logger.warning(
+            hub_note(
                 indent_string(f"Could not parse {filename} via Sonarr (malformed response: {validation_summary(e)})"),
+                severity=Severity.WARNING,
             )
             return None
 
@@ -343,7 +345,7 @@ class SonarrClient(AbstractSonarrClient):
 
         # Validate each ManualImportResource at this boundary (junk candidates
         # skip with a warning), narrowing to the fields planning reads.
-        return validate_each(ManualImportCandidate, raw, logger=self._logger)
+        return validate_each(ManualImportCandidate, raw)
 
     @override
     def manual_import_execute(
@@ -413,7 +415,10 @@ class SonarrClient(AbstractSonarrClient):
         if not isinstance(payload, dict):
             # A 2xx whose body carries no readable id: Sonarr may still have
             # queued the command, so leave a breadcrumb before reporting None.
-            self._logger.warning(indent_string(f"Could not queue {body.name} command (unexpected payload)"))
+            hub_note(
+                indent_string(f"Could not queue {body.name} command (unexpected payload)"),
+                severity=Severity.WARNING,
+            )
             return None
 
         # The returned CommandResource's "id" is the queued command id (0 when
@@ -421,8 +426,9 @@ class SonarrClient(AbstractSonarrClient):
         try:
             command = CommandResource.model_validate(payload)
         except ValidationError as e:
-            self._logger.warning(
+            hub_note(
                 indent_string(f"Could not queue {body.name} command (malformed response: {validation_summary(e)})"),
+                severity=Severity.WARNING,
             )
             return None
         return command.id or None
@@ -472,11 +478,7 @@ class SonarrClient(AbstractSonarrClient):
             # validate each at this boundary (a stray non-object entry is skipped
             # with a warning, never crashed on).
             raw = paged.get("records")
-            page_records = (
-                validate_each(QueueRecord, cast("list[object]", raw), logger=self._logger)
-                if isinstance(raw, list)
-                else []
-            )
+            page_records = validate_each(QueueRecord, cast("list[object]", raw)) if isinstance(raw, list) else []
             records.extend(page_records)
 
             total = paged.get("totalRecords")
@@ -509,7 +511,7 @@ class SonarrClient(AbstractSonarrClient):
 
         # Validate each definition at this boundary (junk records skip with a
         # warning); the nested quality keeps its unknown keys for the re-emit.
-        return validate_each(QualityDefinition, raw, logger=self._logger)
+        return validate_each(QualityDefinition, raw)
 
     @override
     def languages(self) -> list[Language]:
@@ -535,7 +537,7 @@ class SonarrClient(AbstractSonarrClient):
 
         # Validate each language at this boundary (junk records skip with a
         # warning); the resolver matches by name and re-builds {id, name}.
-        return validate_each(Language, raw, logger=self._logger)
+        return validate_each(Language, raw)
 
     @override
     def command_status(self, command_id: int) -> CommandResource:
@@ -568,8 +570,9 @@ class SonarrClient(AbstractSonarrClient):
         try:
             return CommandResource.model_validate(payload)
         except ValidationError as e:
-            self._logger.warning(
+            hub_note(
                 indent_string(f"Could not read status for command {command_id} ({validation_summary(e)})"),
+                severity=Severity.WARNING,
             )
             return CommandResource()
 
@@ -602,7 +605,7 @@ class SonarrClient(AbstractSonarrClient):
             return []
 
         # Validate each command at this boundary (strays skip with a warning).
-        return validate_each(CommandResource, raw, logger=self._logger)
+        return validate_each(CommandResource, raw)
 
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:
