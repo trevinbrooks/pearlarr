@@ -16,14 +16,14 @@ import logging
 import httpx
 import respx
 
-from seadexarr.modules.arr_http import ArrHttp
-from seadexarr.modules.manual_import import ImportReadiness
-from seadexarr.modules.radarr_client import RadarrClient, make_radarr_client
-from seadexarr.modules.seadex_types import HistoryRecord, ImportRejection, QueueRecord
-from seadexarr.modules.sonarr_client import SonarrClient
-from seadexarr.modules.sonarr_import import ImportExecutor
-from seadexarr.modules.sonarr_import_plan import EpisodeSnapshot, QueueVerdict, classify_queue
-from seadexarr.modules.sonarr_mapper import FileEpisodeMapper
+from pearlarr.modules.arr_http import ArrHttp
+from pearlarr.modules.manual_import import ImportReadiness
+from pearlarr.modules.radarr_client import RadarrClient, make_radarr_client
+from pearlarr.modules.seadex_types import HistoryRecord, ImportRejection, QueueRecord
+from pearlarr.modules.sonarr_client import SonarrClient
+from pearlarr.modules.sonarr_import import ImportExecutor
+from pearlarr.modules.sonarr_import_plan import EpisodeSnapshot, QueueVerdict, classify_queue
+from pearlarr.modules.sonarr_mapper import FileEpisodeMapper
 
 from .builders import make_run_deps, pending_import
 
@@ -43,7 +43,7 @@ def _make_sonarr_client() -> SonarrClient:
             label="Sonarr",
             sleep=lambda _s: None,
         ),
-        logger=logging.getLogger("seadexarr.test.boundary-parity"),
+        logger=logging.getLogger("pearlarr.test.boundary-parity"),
     )
 
 

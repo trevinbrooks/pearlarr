@@ -20,10 +20,10 @@ import httpx
 import pytest
 import respx
 
-from seadexarr.modules.arr_http import ArrHttp
-from seadexarr.modules.manual_import import PendingImport
-from seadexarr.modules.output import Severity
-from seadexarr.modules.seadex_types import (
+from pearlarr.modules.arr_http import ArrHttp
+from pearlarr.modules.manual_import import PendingImport
+from pearlarr.modules.output import Severity
+from pearlarr.modules.seadex_types import (
     BoundaryContractError,
     CommandResource,
     HistoryRecord,
@@ -34,7 +34,7 @@ from seadexarr.modules.seadex_types import (
     QueueRecord,
     SonarrItem,
 )
-from seadexarr.modules.sonarr_client import SonarrClient
+from pearlarr.modules.sonarr_client import SonarrClient
 
 from .fakes import diagnostic_messages, install_recording_hub
 from .http_mock import sonarr_fixture
@@ -60,7 +60,7 @@ def _make_client() -> SonarrClient:
             label="Sonarr",
             sleep=lambda _s: None,
         ),
-        logger=logging.getLogger("seadexarr.test"),
+        logger=logging.getLogger("pearlarr.test"),
     )
 
 
@@ -796,7 +796,7 @@ def test_trailing_slash_url_is_normalized() -> None:
 
     client = SonarrClient(
         http=ArrHttp.bind(client=httpx.Client(), url=f"{_URL}/", api_key=_KEY, label="Sonarr"),
-        logger=logging.getLogger("seadexarr.test"),
+        logger=logging.getLogger("pearlarr.test"),
     )
     respx.get(f"{_BASE}/history/since").respond(json=[])
     assert client.history_since("2026-06-30T08:00:00Z") == []

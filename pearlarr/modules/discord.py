@@ -17,7 +17,7 @@ from .seadex_types import Json
 from .. import __version__
 
 # The SeaDex logo, sent as the webhook's avatar so every notification posts
-# under a consistent SeaDexArr identity regardless of the webhook's own setup.
+# under a consistent Pearlarr identity regardless of the webhook's own setup.
 _SEADEX_ICON = "https://cdn.discordapp.com/icons/771790175591333909/529b324695b60f65abb7aaa31c114c7b.webp?size=2048"
 
 # Embed accent colors (the strip Discord renders along the embed's left edge).
@@ -82,7 +82,7 @@ class DiscordEmbed:
         author = _clamp(self.author_name, _MAX_NAME_LEN)
         title = _clamp(self.title, _MAX_NAME_LEN)
         description = _clamp(self.description, _MAX_DESCRIPTION_LEN) if self.description else ""
-        footer = f"SeaDexArr v{__version__}"
+        footer = f"Pearlarr v{__version__}"
 
         # Keep fields while the embed total stays under the limit; a grab embed
         # has one field per release group, so a fat entry sheds trailing groups
@@ -122,7 +122,7 @@ class DiscordEmbed:
 def discord_push(url: str, embed: DiscordEmbed, *, client: httpx.Client) -> None:
     """POST one embed to the webhook - a pure POST, pacing lives in the Notifier.
 
-    The payload overrides the webhook's display identity (SeaDexArr name +
+    The payload overrides the webhook's display identity (Pearlarr name +
     SeaDex avatar) so posts look the same on any webhook. Raises
     ``httpx.HTTPError`` (incl. HTTP error statuses) so the caller's containment
     decides; a webhook failure must never abort a grab. The hung-webhook bound
@@ -130,7 +130,7 @@ def discord_push(url: str, embed: DiscordEmbed, *, client: httpx.Client) -> None
     """
 
     payload = {
-        "username": "SeaDexArr",
+        "username": "Pearlarr",
         "avatar_url": _SEADEX_ICON,
         "embeds": [embed.to_payload()],
     }

@@ -57,7 +57,7 @@ def format_step_secs(seconds: float) -> str:
 def banner_title(version: str) -> str:
     """The banner/title text (version may be "")."""
 
-    return f"SeaDexArr {version}".rstrip()
+    return f"Pearlarr {version}".rstrip()
 
 
 def data_dir_line(data_dir: str) -> str:

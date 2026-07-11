@@ -14,8 +14,8 @@ import logging
 
 from rich.console import Console
 
-from seadexarr.modules.config import Arr
-from seadexarr.modules.log import (
+from pearlarr.modules.config import Arr
+from pearlarr.modules.log import (
     LOG_NAME,
     EntryState,
     KvLine,
@@ -23,7 +23,7 @@ from seadexarr.modules.log import (
     StyledLine,
     TitledRule,
 )
-from seadexarr.modules.output import (
+from pearlarr.modules.output import (
     Accent,
     Diagnostic,
     EntryDetail,
@@ -42,7 +42,7 @@ from seadexarr.modules.output import (
     Severity,
     StyledValue,
 )
-from seadexarr.modules.output.scan_lines import (
+from pearlarr.modules.output.scan_lines import (
     LegacyLine,
     accent_style,
     cap_reached_lines,
@@ -310,7 +310,7 @@ class TestRichRendererScanArm:
         lines = _plain_lines(stream)
         assert lines == _expected_console(SUMMARY_DRY_HAS_CLIENT_LINES)
         # The DRY RUN note the file log drops rides the console title.
-        assert "SeaDexArr (Sonarr) run complete   (DRY RUN — nothing grabbed)" in lines
+        assert "Pearlarr (Sonarr) run complete   (DRY RUN — nothing grabbed)" in lines
 
     def test_renders_the_rich_summary(self) -> None:
         renderer, stream = _renderer()

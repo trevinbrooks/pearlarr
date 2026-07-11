@@ -3,7 +3,7 @@
 # ``_schedule_hours`` is a deliberately under-test private helper; the repo already
 # disables reportPrivateUsage for all of tests/, but the strict directive above
 # re-enables it, so restore the repo's test policy here.
-"""Tests for the SeaDexArr CLI commands.
+"""Tests for the Pearlarr CLI commands.
 
 Pins the behaviours the commands must guarantee:
 
@@ -15,7 +15,7 @@ Pins the behaviours the commands must guarantee:
   lock first and refuse while a run is active, so they never unlink or replace the
   live db out from under it (finding #5).
 * Failure paths report cleanly (missing files echo one hint line, not a traceback),
-  failure text goes to stderr (so `seadexarr config show > cfg.yml` stays clean)
+  failure text goes to stderr (so `pearlarr config show > cfg.yml` stays clean)
   while success output stays on stdout, and a False return maps to exit code 1
   through the Typer apps' result callback.
 * ``config init`` never overwrites a filled-in config.yml without ``--force``.
@@ -33,7 +33,7 @@ Pins the behaviours the commands must guarantee:
   skip-and-retry); an invalid config keeps the skip+retry contract in scheduled
   mode; SIGTERM stops the scheduled loop with exit code 0.
 
-Each test points ``resolve_paths()`` at its own ``tmp_path`` via ``SEADEXARR_DATA_DIR``
+Each test points ``resolve_paths()`` at its own ``tmp_path`` via ``PEARLARR_DATA_DIR``
 and calls the command functions directly (they return ``bool``); the exit-code
 tests go through ``CliRunner`` since the callback only runs inside typer.
 """
@@ -55,10 +55,10 @@ import pytest
 import truststore
 from typer.testing import CliRunner
 
-from seadexarr.modules.boot_flow import BootFlow
-from seadexarr.modules.bootstrap import configured_arrs, load_shared_config, run_arrs
-from seadexarr.modules.cache import CacheStore
-from seadexarr.modules.cli import (
+from pearlarr.modules.boot_flow import BootFlow
+from pearlarr.modules.bootstrap import configured_arrs, load_shared_config, run_arrs
+from pearlarr.modules.cache import CacheStore
+from pearlarr.modules.cli import (
     _console_format,
     _console_seat,
     _handle_sigterm,
@@ -73,13 +73,13 @@ from seadexarr.modules.cli import (
     config_init,
     config_show,
     config_validate,
+    pearlarr_cli,
     run_scheduled,
     run_single,
-    seadexarr_cli,
 )
-from seadexarr.modules.config import AppConfig, Arr, LogFormat, template_path
-from seadexarr.modules.console_caps import CapsCache
-from seadexarr.modules.log import (
+from pearlarr.modules.config import AppConfig, Arr, LogFormat, template_path
+from pearlarr.modules.console_caps import CapsCache
+from pearlarr.modules.log import (
     LOG_NAME,
     HubBridgeBase,
     LogLevel,
@@ -87,8 +87,8 @@ from seadexarr.modules.log import (
     apply_log_level,
     setup_logger,
 )
-from seadexarr.modules.manual_import import ImportWaitMode, Outcome
-from seadexarr.modules.output import (
+from pearlarr.modules.manual_import import ImportWaitMode, Outcome
+from pearlarr.modules.output import (
     CycleStarted,
     Diagnostic,
     Event,
@@ -102,9 +102,9 @@ from seadexarr.modules.output import (
     TorrentGraduated,
     install_hub,
 )
-from seadexarr.modules.output.recording import RecordingHub
-from seadexarr.modules.paths import AppPaths, resolve_paths
-from seadexarr.modules.runlock import single_instance_lock
+from pearlarr.modules.output.recording import RecordingHub
+from pearlarr.modules.paths import AppPaths, resolve_paths
+from pearlarr.modules.runlock import single_instance_lock
 
 from .builders import make_logger
 from .fakes import TtyStringIO, diagnostic_messages, install_recording_hub
@@ -139,7 +139,7 @@ class TestCacheRoundTrip:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
 
         assert cache_backup() is True
@@ -178,7 +178,7 @@ class TestCacheRoundTrip:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
         (tmp_path / "cache.db-wal").write_text("stale")
         (tmp_path / "cache.db-shm").write_text("stale")
@@ -197,7 +197,7 @@ class TestHealthyDiagnostics:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
 
         assert cache_stats() is True
@@ -214,7 +214,7 @@ class TestCorruptDatabaseIsReportedNotCrashed:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         (tmp_path / "cache.db").write_text("not a database")
 
         # Reporting bad integrity is this command's whole job, so it must not crash
@@ -228,7 +228,7 @@ class TestCorruptDatabaseIsReportedNotCrashed:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         (tmp_path / "cache.db").write_text("not a database")
 
         assert cache_stats() is False
@@ -240,7 +240,7 @@ class TestCorruptDatabaseIsReportedNotCrashed:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         (tmp_path / "cache.db").write_text("not a database")
 
         # backup reads the source through the online-backup API, so a corrupt source
@@ -258,7 +258,7 @@ class TestActiveRunGuard:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
 
         # Holding the single-instance lock on the data dir simulates an active run;
@@ -268,7 +268,7 @@ class TestActiveRunGuard:
         assert (tmp_path / "cache.db").exists()
         # The refusal is a user-facing stderr line, not a silent no-op (capturing
         # it also keeps it off the terminal under `-s`).
-        assert "another seadexarr run is active" in capsys.readouterr().err.lower()
+        assert "another pearlarr run is active" in capsys.readouterr().err.lower()
 
     def test_restore_refuses_while_a_run_holds_the_lock(
         self,
@@ -276,7 +276,7 @@ class TestActiveRunGuard:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
         assert cache_backup() is True
 
@@ -287,7 +287,7 @@ class TestActiveRunGuard:
         assert (tmp_path / "cache.db").exists()
         # The refusal is a user-facing stderr line, not a silent no-op (capturing
         # it also keeps it off the terminal under `-s`).
-        assert "another seadexarr run is active" in capsys.readouterr().err.lower()
+        assert "another pearlarr run is active" in capsys.readouterr().err.lower()
 
 
 class TestMissingFilesAreReportedNotRaised:
@@ -299,7 +299,7 @@ class TestMissingFilesAreReportedNotRaised:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
 
         # Each message names what's missing and hints at how to get one, so a
         # fresh install isn't met with a bare "No file at ...".
@@ -310,7 +310,7 @@ class TestMissingFilesAreReportedNotRaised:
             (cache_backup, "it is created by the first run"),
             (cache_remove, "nothing to remove"),
             (cache_restore, "No backup at"),
-            (cache_restore, "run 'seadexarr cache backup' first"),
+            (cache_restore, "run 'pearlarr cache backup' first"),
         ]
         for command, expected in checks:
             assert command() is False
@@ -326,7 +326,7 @@ class TestMissingFilesAreReportedNotRaised:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         (tmp_path / "cache.db").write_text("not a database")
 
         # A torn snapshot must not survive a failed backup: a later restore would
@@ -342,7 +342,7 @@ class TestMissingFilesAreReportedNotRaised:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         _build_cache(tmp_path)
         assert cache_backup() is True
 
@@ -372,7 +372,7 @@ class TestConfigInit:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         config = tmp_path / "config.yml"
 
         assert config_init() is True
@@ -434,7 +434,7 @@ class TestRunSingleSelection:
     @pytest.fixture
     def recorder(self, monkeypatch: pytest.MonkeyPatch) -> _RunArrsRecorder:
         recorder = _RunArrsRecorder()
-        monkeypatch.setattr("seadexarr.modules.bootstrap.run_arrs", recorder)
+        monkeypatch.setattr("pearlarr.modules.bootstrap.run_arrs", recorder)
         return recorder
 
     def test_no_selection_requests_both_arrs_implicitly(self, recorder: _RunArrsRecorder) -> None:
@@ -603,9 +603,9 @@ class TestRunFailuresAreCleanAndNonzero:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        from seadexarr.modules.arr_http import ArrAuthError, ArrConnectionError
-        from seadexarr.modules.run_services import QbitConnectionError, RunDeps
-        from seadexarr.modules.seadex_types import BoundaryContractError
+        from pearlarr.modules.arr_http import ArrAuthError, ArrConnectionError
+        from pearlarr.modules.run_services import QbitConnectionError, RunDeps
+        from pearlarr.modules.seadex_types import BoundaryContractError
 
         exceptions: dict[str, Exception] = {
             "qbit": QbitConnectionError("qBittorrent connection failed - check the host and credentials"),
@@ -650,8 +650,8 @@ class TestRunFailuresAreCleanAndNonzero:
         # Under ignore_movies_in_radarr a Sonarr leg also builds a Radarr client,
         # so a connection/auth failure there must not be pinned on Sonarr alone: a
         # Radarr outage would otherwise read "check sonarr.url" - confidently wrong.
-        from seadexarr.modules.arr_http import ArrAuthError, ArrConnectionError
-        from seadexarr.modules.run_services import RunDeps
+        from pearlarr.modules.arr_http import ArrAuthError, ArrConnectionError
+        from pearlarr.modules.run_services import RunDeps
 
         exceptions: dict[str, Exception] = {
             "unreachable": ArrConnectionError(
@@ -697,7 +697,7 @@ class TestRunFailuresAreCleanAndNonzero:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        import seadexarr.modules.mappings as mappings_mod
+        import pearlarr.modules.mappings as mappings_mod
 
         def fail_resolver(*args: object, **kwargs: object) -> NoReturn:
             raise RuntimeError("source down")
@@ -717,7 +717,7 @@ class TestRunFailuresAreCleanAndNonzero:
         # (the refresh path falls open to the cached copy; a first download has
         # none): the downloader translates the httpx failure into an OSError,
         # which must surface as a one-line hint, not a ten-frame traceback.
-        import seadexarr.modules.mappings as mappings_mod
+        import pearlarr.modules.mappings as mappings_mod
 
         def fail_resolver(*args: object, **kwargs: object) -> NoReturn:
             raise OSError("download failed: ConnectError")
@@ -756,7 +756,7 @@ class TestSelectionSettlesBeforeMappingFetch:
         def fail_build(*args: object, **kwargs: object) -> NoReturn:
             raise AssertionError("mapping sources must not be fetched when nothing can run")
 
-        monkeypatch.setattr("seadexarr.modules.bootstrap.build_resolver", fail_build)
+        monkeypatch.setattr("pearlarr.modules.bootstrap.build_resolver", fail_build)
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
         Path(paths.config).write_text("", encoding="utf-8")  # valid config, neither arr configured
@@ -875,18 +875,18 @@ class TestConfigInspection:
 
 class TestVersionAndHelp:
     def test_version_flag_prints_the_package_version(self) -> None:
-        result = CliRunner().invoke(seadexarr_cli, ["--version"])
+        result = CliRunner().invoke(pearlarr_cli, ["--version"])
         assert result.exit_code == 0
-        assert result.output.startswith("seadexarr ")
+        assert result.output.startswith("pearlarr ")
 
     def test_short_help_alias_works(self) -> None:
-        result = CliRunner().invoke(seadexarr_cli, ["-h"])
+        result = CliRunner().invoke(pearlarr_cli, ["-h"])
         assert result.exit_code == 0
         assert "Usage" in result.output
 
     def test_bare_group_shows_its_help(self) -> None:
-        # no_args_is_help: a bare `seadexarr run` teaches instead of erroring opaquely.
-        result = CliRunner().invoke(seadexarr_cli, ["run"])
+        # no_args_is_help: a bare `pearlarr run` teaches instead of erroring opaquely.
+        result = CliRunner().invoke(pearlarr_cli, ["run"])
         assert "scheduled" in result.output
         assert "single" in result.output
 
@@ -927,7 +927,7 @@ class TestLogLevelWiring:
         def record(logger: logging.Logger, log_level: str) -> None:
             calls.append(log_level)
 
-        monkeypatch.setattr("seadexarr.modules.bootstrap.apply_log_level", record)
+        monkeypatch.setattr("pearlarr.modules.bootstrap.apply_log_level", record)
         return calls
 
     @staticmethod
@@ -1028,7 +1028,7 @@ def _install_cycle_recorder(monkeypatch: pytest.MonkeyPatch) -> _CycleStampingRe
         install_hub(hub)  # emit_to_hub resolves this hub; conftest restores
         return hub
 
-    monkeypatch.setattr("seadexarr.modules.cli._install_output_hub", install)
+    monkeypatch.setattr("pearlarr.modules.cli._install_output_hub", install)
     return renderer
 
 
@@ -1046,7 +1046,7 @@ class TestLogFormatWiring:
     @pytest.fixture
     def setup_recorder(self, monkeypatch: pytest.MonkeyPatch) -> _SetupLoggerRecorder:
         recorder = _SetupLoggerRecorder()
-        monkeypatch.setattr("seadexarr.modules.cli.setup_logger", recorder)
+        monkeypatch.setattr("pearlarr.modules.cli.setup_logger", recorder)
         return recorder
 
     @staticmethod
@@ -1060,7 +1060,7 @@ class TestLogFormatWiring:
         setup_recorder: _SetupLoggerRecorder,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr("seadexarr.modules.bootstrap.run_arrs", _RunArrsRecorder())
+        monkeypatch.setattr("pearlarr.modules.bootstrap.run_arrs", _RunArrsRecorder())
         self._write_config_with_format()
         assert run_single() is True
         assert setup_recorder.console_formats == ["json"]
@@ -1073,7 +1073,7 @@ class TestLogFormatWiring:
     ) -> None:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         monkeypatch.setattr(signal, "signal", _swallow_signal)
-        monkeypatch.setattr("seadexarr.modules.bootstrap.run_arrs", _stop_loop)
+        monkeypatch.setattr("pearlarr.modules.bootstrap.run_arrs", _stop_loop)
         self._write_config_with_format()
         with pytest.raises(_StopScheduledLoop):
             run_scheduled()
@@ -1169,7 +1169,7 @@ class TestHubSeats:
         hub.close()
 
         stdout_lines = stream.getvalue().splitlines()
-        file_lines = (tmp_path / "logs" / "SeaDexArr.log").read_text(encoding="utf-8").splitlines()
+        file_lines = (tmp_path / "logs" / "Pearlarr.log").read_text(encoding="utf-8").splitlines()
         assert stdout_lines  # WARNING still keeps the diagnostic + the ERROR graduation
         assert [line for line in file_lines if "forensic note" not in line] == stdout_lines
         assert sum("forensic note" in line for line in file_lines) == 1  # the sole carve-out
@@ -1206,7 +1206,7 @@ class TestMissingConfigExitsNonzero:
     """
 
     def test_run_single_writes_the_template_and_exits_one(self) -> None:
-        result = CliRunner().invoke(seadexarr_cli, ["run", "single"])
+        result = CliRunner().invoke(pearlarr_cli, ["run", "single"])
         assert result.exit_code == 1
 
         config = Path(resolve_paths().config)
@@ -1295,16 +1295,16 @@ class TestUnwritableDataDir:
         ro_parent = tmp_path / "ro"
         ro_parent.mkdir()
         data_dir = ro_parent / "data"
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(data_dir))
         ro_parent.chmod(0o500)
         try:
-            result = CliRunner().invoke(seadexarr_cli, ["run", "single"])
+            result = CliRunner().invoke(pearlarr_cli, ["run", "single"])
         finally:
             ro_parent.chmod(0o755)
 
         assert result.exit_code == 1
         assert f"Cannot write to the data directory {data_dir}" in result.stderr
-        assert "SEADEXARR_DATA_DIR" in result.stderr  # the remedy is named
+        assert "PEARLARR_DATA_DIR" in result.stderr  # the remedy is named
         assert "Traceback" not in result.output
 
     def test_an_unwritable_log_file_reports_and_exits_one(
@@ -1312,16 +1312,16 @@ class TestUnwritableDataDir:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # The Docker shape: dir writable, SeaDexArr.log left root-owned by a prior
+        # The Docker shape: dir writable, Pearlarr.log left root-owned by a prior
         # run. The install-time probe must abort cleanly, not strike the sink.
         data_dir = tmp_path / "data"
-        log = data_dir / "logs" / "SeaDexArr.log"
+        log = data_dir / "logs" / "Pearlarr.log"
         log.parent.mkdir(parents=True)
         log.write_text("root-owned\n", encoding="utf-8")
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(data_dir))
         log.chmod(0o400)
         try:
-            result = CliRunner().invoke(seadexarr_cli, ["run", "single"])
+            result = CliRunner().invoke(pearlarr_cli, ["run", "single"])
         finally:
             log.chmod(0o644)
 
@@ -1338,10 +1338,10 @@ class TestUnwritableDataDir:
         # template copy is what fails - it needs the same one-line treatment.
         data_dir = tmp_path / "data"
         data_dir.mkdir()
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(data_dir))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(data_dir))
         data_dir.chmod(0o500)
         try:
-            result = CliRunner().invoke(seadexarr_cli, ["config", "init"])
+            result = CliRunner().invoke(pearlarr_cli, ["config", "init"])
         finally:
             data_dir.chmod(0o755)
 
@@ -1379,9 +1379,9 @@ class TestDataDirLine:
         # Virgin data dir: the run exits 1 writing the template, but the
         # run_started line (plain seat, structured grammar) carries the
         # data_dir fact FIRST, before the config read fails.
-        result = CliRunner().invoke(seadexarr_cli, ["run", "single"])
+        result = CliRunner().invoke(pearlarr_cli, ["run", "single"])
         assert result.exit_code == 1
-        assert "SeaDexArr started" in result.output
+        assert "Pearlarr started" in result.output
         assert f"data_dir={resolve_paths().data_dir}" in result.output
 
 
@@ -1422,8 +1422,8 @@ class TestScheduledLifecycle:
     def test_cycle_started_is_emitted_after_begin_cycle(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Post-begin (rotation): the boundary must land in the FRESH cycle's file.
         monkeypatch.setattr(signal, "signal", _swallow_signal)
-        monkeypatch.setattr("seadexarr.modules.cli.setup_logger", _SetupLoggerRecorder())
-        monkeypatch.setattr("seadexarr.modules.bootstrap.run_arrs", _stop_loop)
+        monkeypatch.setattr("pearlarr.modules.cli.setup_logger", _SetupLoggerRecorder())
+        monkeypatch.setattr("pearlarr.modules.bootstrap.run_arrs", _stop_loop)
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         renderer = _install_cycle_recorder(monkeypatch)
 
@@ -1437,9 +1437,9 @@ class TestScheduledLifecycle:
         # After a completed cycle the loop states the next run as a typed event
         # (default cadence: 6h out on a missing config), then sleeps.
         monkeypatch.setattr(signal, "signal", _swallow_signal)
-        monkeypatch.setattr("seadexarr.modules.cli.setup_logger", _SetupLoggerRecorder())
-        monkeypatch.setattr("seadexarr.modules.bootstrap.run_arrs", _RunArrsRecorder())
-        monkeypatch.setattr("seadexarr.modules.cli.time.sleep", _stop_loop)
+        monkeypatch.setattr("pearlarr.modules.cli.setup_logger", _SetupLoggerRecorder())
+        monkeypatch.setattr("pearlarr.modules.bootstrap.run_arrs", _RunArrsRecorder())
+        monkeypatch.setattr("pearlarr.modules.cli.time.sleep", _stop_loop)
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         renderer = _install_cycle_recorder(monkeypatch)
 
@@ -1458,8 +1458,8 @@ class TestScheduledLifecycle:
             registered.append((signum, handler))
 
         monkeypatch.setattr(signal, "signal", record_signal)
-        monkeypatch.setattr("seadexarr.modules.cli.setup_logger", _SetupLoggerRecorder())
-        monkeypatch.setattr("seadexarr.modules.bootstrap.run_arrs", _stop_loop)
+        monkeypatch.setattr("pearlarr.modules.cli.setup_logger", _SetupLoggerRecorder())
+        monkeypatch.setattr("pearlarr.modules.bootstrap.run_arrs", _stop_loop)
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
 
         with pytest.raises(_StopScheduledLoop):
@@ -1468,7 +1468,7 @@ class TestScheduledLifecycle:
         assert registered == [(signal.SIGTERM, _handle_sigterm)]
 
     def test_scheduled_help_names_the_bare_metal_fallback(self) -> None:
-        result = CliRunner().invoke(seadexarr_cli, ["run", "scheduled", "--help"])
+        result = CliRunner().invoke(pearlarr_cli, ["run", "scheduled", "--help"])
         assert result.exit_code == 0
         assert "bare-metal" in result.output
 
@@ -1490,7 +1490,7 @@ class TestRunLockContention:
 
         assert result is False
         assert diagnostic_messages(recording, Severity.WARNING) == [
-            f"Another SeaDexArr run is active in {paths.data_dir}; skipping this run.",
+            f"Another Pearlarr run is active in {paths.data_dir}; skipping this run.",
         ]
 
 
@@ -1612,17 +1612,17 @@ class TestExitCodes:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         runner = CliRunner()
 
         # No cache.db yet: the command reports the missing file (on stderr,
         # keeping stdout clean for scripts) and must exit 1.
-        result = runner.invoke(seadexarr_cli, ["cache", "stats"])
+        result = runner.invoke(pearlarr_cli, ["cache", "stats"])
         assert result.exit_code == 1
         assert "No cache database at" in result.stderr
         assert result.stdout == ""
 
         _build_cache(tmp_path)
-        result = runner.invoke(seadexarr_cli, ["cache", "stats"])
+        result = runner.invoke(pearlarr_cli, ["cache", "stats"])
         assert result.exit_code == 0
         assert "entries:" in result.stdout

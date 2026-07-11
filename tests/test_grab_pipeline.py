@@ -18,18 +18,18 @@ import pytest
 import qbittorrentapi
 from seadex import Tracker
 
-from seadexarr.modules import notify
-from seadexarr.modules.config import Arr
-from seadexarr.modules.discord import DiscordEmbed
-from seadexarr.modules.grab_pipeline import GrabPipeline, GrabRequest
-from seadexarr.modules.manual_import import ImportWaitMode, PendingImport
-from seadexarr.modules.notify import Notifier
-from seadexarr.modules.output import GrabFailed, Severity, install_hub, severity_of
-from seadexarr.modules.output.recording import RecordingHub
-from seadexarr.modules.reporter import NeedsActionKind, RunContext
-from seadexarr.modules.seadex_types import SeadexDict, SeadexUrlItem
-from seadexarr.modules.torrent import TorrentParseError
-from seadexarr.modules.torrents import ReleaseOutcome, TorrentAddError
+from pearlarr.modules import notify
+from pearlarr.modules.config import Arr
+from pearlarr.modules.discord import DiscordEmbed
+from pearlarr.modules.grab_pipeline import GrabPipeline, GrabRequest
+from pearlarr.modules.manual_import import ImportWaitMode, PendingImport
+from pearlarr.modules.notify import Notifier
+from pearlarr.modules.output import GrabFailed, Severity, install_hub, severity_of
+from pearlarr.modules.output.recording import RecordingHub
+from pearlarr.modules.reporter import NeedsActionKind, RunContext
+from pearlarr.modules.seadex_types import SeadexDict, SeadexUrlItem
+from pearlarr.modules.torrent import TorrentParseError
+from pearlarr.modules.torrents import ReleaseOutcome, TorrentAddError
 
 from .builders import (
     CLIENT_SENTINEL,

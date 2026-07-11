@@ -31,10 +31,10 @@ across sets onto ONE result - the multi-set tests pin that accumulation.
 
 import logging
 
-from seadexarr.modules.config import Arr
-from seadexarr.modules.output import Severity
-from seadexarr.modules.planner import DownloadPlanner
-from seadexarr.modules.seadex_types import EpisodeRecord, SeadexReleaseGroupItem
+from pearlarr.modules.config import Arr
+from pearlarr.modules.output import Severity
+from pearlarr.modules.planner import DownloadPlanner
+from pearlarr.modules.seadex_types import EpisodeRecord, SeadexReleaseGroupItem
 
 from .builders import make_planner, rg_group, sonarr_ep, url_item
 

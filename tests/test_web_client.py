@@ -7,7 +7,7 @@
 ``make_web_client`` is the second process-wide client (tracker pages, AniList,
 webhooks, mapping downloads): these pin its transport policy - redirects
 followed (no credential header rides it), verification always on, the
-``seadexarr/<version>`` User-Agent default, and the (5, 30) timeout split -
+``pearlarr/<version>`` User-Agent default, and the (5, 30) timeout split -
 mirroring ``test_make_httpx_client_pins_the_transport_policy`` for the arr
 client. ``get_with_retries`` replaces the urllib3 ``Retry`` adapter the old
 requests session mounted, so its matrix is pinned too: transient statuses and
@@ -23,9 +23,9 @@ import httpx
 import pytest
 import respx
 
-from seadexarr import __version__
-from seadexarr.modules.arr_http import GET_RETRIES
-from seadexarr.modules.web_client import RETRY_AFTER_CAP_S, USER_AGENT, get_with_retries, make_web_client
+from pearlarr import __version__
+from pearlarr.modules.arr_http import GET_RETRIES
+from pearlarr.modules.web_client import RETRY_AFTER_CAP_S, USER_AGENT, get_with_retries, make_web_client
 
 _URL = "https://web.test/page"
 
@@ -50,7 +50,7 @@ def test_make_web_client_pins_the_transport_policy() -> None:
     try:
         assert client.follow_redirects is True
         assert client.headers["User-Agent"] == USER_AGENT
-        assert USER_AGENT == f"seadexarr/{__version__}"
+        assert USER_AGENT == f"pearlarr/{__version__}"
         assert client.timeout.connect == 5
         assert client.timeout.read == 30
         assert client.timeout.write == 30

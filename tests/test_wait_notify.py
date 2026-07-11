@@ -18,9 +18,9 @@ import pytest
 import respx
 from seadex import EntryRecord, Tag, Tracker
 
-from seadexarr.modules import notify
-from seadexarr.modules.config import Arr
-from seadexarr.modules.discord import (
+from pearlarr.modules import notify
+from pearlarr.modules.config import Arr
+from pearlarr.modules.discord import (
     COLOR_DEFERRED,
     COLOR_FAILED,
     COLOR_GRAB,
@@ -28,12 +28,12 @@ from seadexarr.modules.discord import (
     DiscordEmbed,
     EmbedField,
 )
-from seadexarr.modules.manual_import import Outcome
-from seadexarr.modules.notify import GrabNotice, Notifier
-from seadexarr.modules.output import Severity
-from seadexarr.modules.seadex_types import SeadexDict
-from seadexarr.modules.torrents import AddOutcome, ReleaseOutcome
-from seadexarr.modules.wait_view import WaitOutcomeRow, WaitResult
+from pearlarr.modules.manual_import import Outcome
+from pearlarr.modules.notify import GrabNotice, Notifier
+from pearlarr.modules.output import Severity
+from pearlarr.modules.seadex_types import SeadexDict
+from pearlarr.modules.torrents import AddOutcome, ReleaseOutcome
+from pearlarr.modules.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import SEP, make_entry_record, rg_group, url_item
 from .fakes import diagnostic_messages, install_recording_hub

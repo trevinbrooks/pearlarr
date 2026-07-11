@@ -4,7 +4,7 @@
 Anime-IDs JSON, the AniDB anime-list XML, and the anibridge graph). It
 downloads/refreshes each file, and - only when a file's *content* changes -
 parses and indexes it once into a dedicated SQLite store (``mappings.db``, via
-:class:`~seadexarr.modules.mapping_store.MappingStore`). Lookups are then served
+:class:`~pearlarr.modules.mapping_store.MappingStore`). Lookups are then served
 from SQL, so a process whose source files are unchanged never re-parses or holds
 the ~50MB of parsed structures resident. It resolves an Arr's external ids (TVDB /
 TMDB / IMDb) to the AniList ids they map to.
@@ -53,7 +53,7 @@ A loosely-shaped producer dict: a flat record carrying mixed-typed fields
 ``tvdb_season``/``tvdb_epoffset`` ints). It is read at the raw->typed boundary
 (:func:`_entry_from_raw` / :func:`_anime_ids_rows`) and never modeled as a domain
 object, so it stays a loose ``dict[str, Any]`` like
-:data:`~seadexarr.modules.anibridge.AniBridgeEntry`.
+:data:`~pearlarr.modules.anibridge.AniBridgeEntry`.
 """
 
 type AnimeIdsMap = dict[str, AnimeIdsRecord]

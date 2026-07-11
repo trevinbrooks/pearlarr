@@ -21,12 +21,12 @@ from typing import Any, override
 import httpx
 from seadex import Tag
 
-from seadexarr.modules.anilist_client import AniListClient
-from seadexarr.modules.anilist_gateway import AniListGateway
-from seadexarr.modules.cache import AbstractCacheStore, CacheRecord
-from seadexarr.modules.config import Arr
-from seadexarr.modules.manual_import import ImportWaitMode, PendingState
-from seadexarr.modules.output import (
+from pearlarr.modules.anilist_client import AniListClient
+from pearlarr.modules.anilist_gateway import AniListGateway
+from pearlarr.modules.cache import AbstractCacheStore, CacheRecord
+from pearlarr.modules.config import Arr
+from pearlarr.modules.manual_import import ImportWaitMode, PendingState
+from pearlarr.modules.output import (
     EntryHeader,
     Event,
     GrabAction,
@@ -39,7 +39,7 @@ from seadexarr.modules.output import (
     Severity,
     SeverityCounts,
 )
-from seadexarr.modules.reporter import (
+from pearlarr.modules.reporter import (
     GrabRecord,
     NeedsActionKind,
     NeedsActionRecord,
@@ -47,7 +47,7 @@ from seadexarr.modules.reporter import (
     RunReporter,
     RunStats,
 )
-from seadexarr.modules.torrents import AddOutcome, ReleaseOutcome
+from pearlarr.modules.torrents import AddOutcome, ReleaseOutcome
 
 from .builders import FakeCacheStore, make_entry_record, make_logger, pending_import, rg_group, url_item
 from .fakes import scan_lines_from_events

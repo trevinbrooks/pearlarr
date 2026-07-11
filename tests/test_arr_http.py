@@ -1,5 +1,5 @@
 # pyright: strict
-"""Direct tests for :class:`~seadexarr.modules.arr_http.ArrHttp`.
+"""Direct tests for :class:`~pearlarr.modules.arr_http.ArrHttp`.
 
 The httpx-native transport the raw arr endpoints share. Pins the fail-open
 matrix (request error / non-200 / non-JSON / wrong shape -> None + ONE warning
@@ -20,15 +20,15 @@ import httpx
 import pytest
 import respx
 
-from seadexarr.modules.arr_http import (
+from pearlarr.modules.arr_http import (
     GET_RETRIES,
     ArrAuthError,
     ArrConnectionError,
     ArrHttp,
     make_httpx_client,
 )
-from seadexarr.modules.output import Diagnostic, Severity, install_hub
-from seadexarr.modules.output.recording import RecordingHub
+from pearlarr.modules.output import Diagnostic, Severity, install_hub
+from pearlarr.modules.output.recording import RecordingHub
 
 _URL = "http://arr.test"
 

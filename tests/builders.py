@@ -22,9 +22,9 @@ from typing import Any, override
 import httpx
 from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
-from seadexarr.modules.anilist_client import AniListClient
-from seadexarr.modules.anilist_gateway import AniListGateway
-from seadexarr.modules.cache import (
+from pearlarr.modules.anilist_client import AniListClient
+from pearlarr.modules.anilist_gateway import AniListGateway
+from pearlarr.modules.cache import (
     _ENTRY_SCALAR_COLUMNS,
     UPDATED_AT_STR_FORMAT,
     AbstractCacheStore,
@@ -33,20 +33,20 @@ from seadexarr.modules.cache import (
     CacheStats,
     HistoryCheckpoint,
 )
-from seadexarr.modules.config import AppConfig, Arr
-from seadexarr.modules.grab_pipeline import GrabPipeline
-from seadexarr.modules.import_wait import ImportWaitManager
-from seadexarr.modules.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport
-from seadexarr.modules.mappings import MappingResolver, MappingSources
-from seadexarr.modules.notify import Notifier
-from seadexarr.modules.output import SeverityCounts, emit_to_hub
-from seadexarr.modules.planner import DownloadPlanner
-from seadexarr.modules.reporter import RunContext, RunReporter
-from seadexarr.modules.run_services import RunDeps, RunServices
-from seadexarr.modules.seadex_filter import SeadexReleaseFilter
-from seadexarr.modules.seadex_gateway import SeaDexMiss, SeaDexSource
-from seadexarr.modules.seadex_sonarr import SonarrSync
-from seadexarr.modules.seadex_types import (
+from pearlarr.modules.config import AppConfig, Arr
+from pearlarr.modules.grab_pipeline import GrabPipeline
+from pearlarr.modules.import_wait import ImportWaitManager
+from pearlarr.modules.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport
+from pearlarr.modules.mappings import MappingResolver, MappingSources
+from pearlarr.modules.notify import Notifier
+from pearlarr.modules.output import SeverityCounts, emit_to_hub
+from pearlarr.modules.planner import DownloadPlanner
+from pearlarr.modules.reporter import RunContext, RunReporter
+from pearlarr.modules.run_services import RunDeps, RunServices
+from pearlarr.modules.seadex_filter import SeadexReleaseFilter
+from pearlarr.modules.seadex_gateway import SeaDexMiss, SeaDexSource
+from pearlarr.modules.seadex_sonarr import SonarrSync
+from pearlarr.modules.seadex_types import (
     EpisodeRecord,
     ManualImportCandidate,
     ProgressSink,
@@ -55,11 +55,11 @@ from seadexarr.modules.seadex_types import (
     SeadexUrlItem,
     SonarrEpisode,
 )
-from seadexarr.modules.sonarr_client import AbstractSonarrClient
-from seadexarr.modules.sonarr_episodes import SonarrEpisodes
-from seadexarr.modules.sonarr_mapper import FileEpisodeMapper
-from seadexarr.modules.sonarr_parse import SonarrParseCache
-from seadexarr.modules.torrents import AddOutcome, AddResult, TorrentService
+from pearlarr.modules.sonarr_client import AbstractSonarrClient
+from pearlarr.modules.sonarr_episodes import SonarrEpisodes
+from pearlarr.modules.sonarr_mapper import FileEpisodeMapper
+from pearlarr.modules.sonarr_parse import SonarrParseCache
+from pearlarr.modules.torrents import AddOutcome, AddResult, TorrentService
 
 from .fakes import FakeSonarrClient
 
@@ -415,7 +415,7 @@ class FakeSeaDexSource(SeaDexSource):
         return self._outage
 
 
-def make_logger(name: str = "seadexarr-test") -> logging.Logger:
+def make_logger(name: str = "pearlarr-test") -> logging.Logger:
     """A quiet logger for the characterization tests.
 
     Attaches a NullHandler, disables propagation, and resets the level to

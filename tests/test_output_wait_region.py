@@ -19,9 +19,9 @@ import logging
 from rich.console import Console, Group
 from rich.spinner import Spinner
 
-from seadexarr.modules.config import Arr
-from seadexarr.modules.manual_import import Outcome
-from seadexarr.modules.output import (
+from pearlarr.modules.config import Arr
+from pearlarr.modules.manual_import import Outcome
+from pearlarr.modules.output import (
     Diagnostic,
     Event,
     Phase,
@@ -40,9 +40,9 @@ from seadexarr.modules.output import (
     WaitStarted,
     install_hub,
 )
-from seadexarr.modules.output.recording import RecordingHub
-from seadexarr.modules.output.wait_lines import live_model
-from seadexarr.modules.output.wait_region import WaitRegion, _LiveFrame
+from pearlarr.modules.output.recording import RecordingHub
+from pearlarr.modules.output.wait_lines import live_model
+from pearlarr.modules.output.wait_region import WaitRegion, _LiveFrame
 
 from .fakes import CaptureHandler, install_recording_hub, strip_ansi
 

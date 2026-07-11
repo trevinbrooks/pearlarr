@@ -3,7 +3,7 @@
 
 from pathlib import Path
 
-from seadexarr.modules.runlock import single_instance_lock
+from pearlarr.modules.runlock import single_instance_lock
 
 
 class TestSingleInstanceLock:

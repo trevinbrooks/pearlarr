@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from seadexarr.modules.mapping_store import (
+from pearlarr.modules.mapping_store import (
     SCHEMA_VERSION,
     SOURCE_ANIDB,
     SOURCE_ANIME_IDS,

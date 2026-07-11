@@ -16,9 +16,9 @@ AniDB map bypasses it entirely; an empty one falls through to it), and the
 None-key skip (an episode without a season/episode number can't hit the map).
 """
 
-from seadexarr.modules.mappings import MappingEntry
-from seadexarr.modules.seadex_types import SonarrEpisode
-from seadexarr.modules.sonarr_episodes import check_ep_by_anibridge, check_ep_by_anime_ids
+from pearlarr.modules.mappings import MappingEntry
+from pearlarr.modules.seadex_types import SonarrEpisode
+from pearlarr.modules.sonarr_episodes import check_ep_by_anibridge, check_ep_by_anime_ids
 
 from .builders import make_sonarr_episodes, sonarr_ep
 

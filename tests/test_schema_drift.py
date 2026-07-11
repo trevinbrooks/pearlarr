@@ -1,7 +1,7 @@
 # pyright: strict
 """Drift net: our boundary models vs the vendored Sonarr/Radarr OpenAPI captures.
 
-Every :mod:`~seadexarr.modules.seadex_types` model that mirrors an arr resource
+Every :mod:`~pearlarr.modules.seadex_types` model that mirrors an arr resource
 is pinned to its component in ``schemas/sonarr.schema`` / ``schemas/radarr.schema``:
 each declared field's wire name must exist in the component's ``properties``, and
 the :class:`QualitySource` vocabulary must match the schema enum. A regen of the
@@ -22,8 +22,8 @@ import pytest
 from pydantic import AliasChoices, AliasPath, BaseModel
 from pydantic.fields import FieldInfo
 
-from seadexarr.modules.json_narrow import is_json_list, is_json_obj
-from seadexarr.modules.seadex_types import (
+from pearlarr.modules.json_narrow import is_json_list, is_json_obj
+from pearlarr.modules.seadex_types import (
     CommandResource,
     HistoryRecord,
     ImportRejection,

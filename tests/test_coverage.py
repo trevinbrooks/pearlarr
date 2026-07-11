@@ -4,12 +4,12 @@
 These helpers live in ``coverage.py``.
 """
 
-from seadexarr.modules.coverage import (
+from pearlarr.modules.coverage import (
     coverage_string,
     episodes_from_ep_list,
     format_episode_coverage,
 )
-from seadexarr.modules.seadex_types import EpisodeRecord
+from pearlarr.modules.seadex_types import EpisodeRecord
 
 from .builders import sonarr_ep
 

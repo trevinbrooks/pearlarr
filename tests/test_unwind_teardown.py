@@ -29,23 +29,23 @@ import httpx
 import pytest
 import yaml
 
-import seadexarr.modules.bootstrap as bootstrap
-from seadexarr.modules.boot_flow import BootFlow
-from seadexarr.modules.bootstrap import run_arrs
-from seadexarr.modules.cache import CacheSchemaError
-from seadexarr.modules.config import AppConfig, Arr
-from seadexarr.modules.manual_import import ImportWaitMode
-from seadexarr.modules.mappings import MappingResolver, MappingSources
-from seadexarr.modules.output import Diagnostic, RunFinished, Severity, install_bridge, install_hub
-from seadexarr.modules.output.recording import RecordingHub
-from seadexarr.modules.paths import resolve_paths
-from seadexarr.modules.run_services import RunDeps
+import pearlarr.modules.bootstrap as bootstrap
+from pearlarr.modules.boot_flow import BootFlow
+from pearlarr.modules.bootstrap import run_arrs
+from pearlarr.modules.cache import CacheSchemaError
+from pearlarr.modules.config import AppConfig, Arr
+from pearlarr.modules.manual_import import ImportWaitMode
+from pearlarr.modules.mappings import MappingResolver, MappingSources
+from pearlarr.modules.output import Diagnostic, RunFinished, Severity, install_bridge, install_hub
+from pearlarr.modules.output.recording import RecordingHub
+from pearlarr.modules.paths import resolve_paths
+from pearlarr.modules.run_services import RunDeps
 
 from .builders import make_config
 
 # The message each scripted failure carries, so the adopted ERROR is identifiable
 # in the recorded stream (the clean arm logs ``str(e)``; the traceback arm doesn't).
-_SCHEMA_ERROR = "cache.db was written by a newer SeaDexArr"
+_SCHEMA_ERROR = "cache.db was written by a newer Pearlarr"
 
 
 def _memory_resolver(
@@ -250,9 +250,9 @@ def _run_completing_leg(
     _write_config()
     monkeypatch.setattr(bootstrap, "build_resolver", _memory_resolver)
     monkeypatch.setattr(RunDeps, "build", _completing_build())
-    monkeypatch.setattr("seadexarr.modules.run_services.RunServices", _FakeRunServices)
-    monkeypatch.setattr("seadexarr.modules.run_loop.RunLoop", _FakeRunLoop)
-    monkeypatch.setattr("seadexarr.modules.seadex_sonarr.SonarrSync", _FakeSonarrSync)
+    monkeypatch.setattr("pearlarr.modules.run_services.RunServices", _FakeRunServices)
+    monkeypatch.setattr("pearlarr.modules.run_loop.RunLoop", _FakeRunLoop)
+    monkeypatch.setattr("pearlarr.modules.seadex_sonarr.SonarrSync", _FakeSonarrSync)
 
     recording = RecordingHub()
     install_hub(recording.hub)

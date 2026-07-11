@@ -6,10 +6,10 @@ deterministic close-deeper behavior, unwind close-all, idempotent defensive
 closes, and the label-only read APIs (path text, path_for, during).
 """
 
-from seadexarr.modules.config import Arr
-from seadexarr.modules.log import EntryState
-from seadexarr.modules.manual_import import OutcomeCategory
-from seadexarr.modules.output import (
+from pearlarr.modules.config import Arr
+from pearlarr.modules.log import EntryState
+from pearlarr.modules.manual_import import OutcomeCategory
+from pearlarr.modules.output import (
     KIND_DEPTH,
     BootStepFinished,
     BootStepStarted,
@@ -33,7 +33,7 @@ from seadexarr.modules.output import (
     Severity,
     WaitStarted,
 )
-from seadexarr.modules.reporter import RunStats
+from pearlarr.modules.reporter import RunStats
 
 _BOOT = ScopeId(ScopeKind.BOOT_SECTION, 1)
 _STEP = ScopeId(ScopeKind.BOOT_STEP, 2)

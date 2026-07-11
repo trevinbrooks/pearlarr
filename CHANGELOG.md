@@ -1,9 +1,9 @@
 # Changelog
 
-All notable, user-observable changes to SeaDexArr are documented here.
+All notable, user-observable changes to Pearlarr are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-SeaDexArr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr); everything up to and including 0.9.0 is inherited upstream history.
+Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr); everything up to and including 0.9.0 is inherited upstream history.
 
 ## [1.0.0] - Unreleased
 
@@ -13,12 +13,13 @@ The first release of the fork.
 
 Coming from upstream 0.9.x:
 
+- **The project is renamed** from SeaDexArr to Pearlarr: the package, the `pearlarr` command, the data directory, and the `PEARLARR_*` environment variables all follow (the `seadexarr` PyPI name stays with upstream).
 - **The config format changed wholesale**, from flat keys to nested groups with strict validation.
-  Rewrite your `config.yml` against the new layout (`seadexarr config init` writes a commented starter, and [docs/configuration.md](docs/configuration.md) documents every key): `sonarr_url` is now `sonarr.url`, `qbit_info` is `qbittorrent.*`, `torrent_tags` is `qbittorrent.tags`, `seadex.public_only` is replaced by `seadex.private_releases`.
+  Rewrite your `config.yml` against the new layout (`pearlarr config init` writes a commented starter, and [docs/configuration.md](docs/configuration.md) documents every key): `sonarr_url` is now `sonarr.url`, `qbit_info` is `qbittorrent.*`, `torrent_tags` is `qbittorrent.tags`, `seadex.public_only` is replaced by `seadex.private_releases`.
   Unknown or misspelled keys now fail at load instead of being ignored.
-- **The data location moved** off the install directory to one OS-standard data directory (`~/.local/share/seadexarr` on Linux, `~/Library/Application Support/seadexarr` on macOS).
-  Move your existing `config.yml` and cache there, or set `SEADEXARR_DATA_DIR`.
-  Logs follow the data directory instead of the working directory; `seadexarr paths` prints every resolved location.
+- **The data location moved** off the install directory to one OS-standard data directory (`~/.local/share/pearlarr` on Linux, `~/Library/Application Support/pearlarr` on macOS).
+  Move your existing `config.yml` and cache there, or set `PEARLARR_DATA_DIR`.
+  Logs follow the data directory instead of the working directory; `pearlarr paths` prints every resolved location.
 - **The cache moved** from `cache.json` to a SQLite `cache.db`, migrated automatically on first run (the legacy file is kept beside it as `cache.json.migrated`).
 - **Python 3.13 or newer is required** (3.12 support dropped); the Docker image runs 3.14.
 - `SCHEDULE_TIME` is deprecated in favor of `schedule.interval_hours` (a still-set `SCHEDULE_TIME` wins, with a deprecation warning).
@@ -34,7 +35,7 @@ Coming from upstream 0.9.x:
 - AniBridge mappings as the primary ID/episode mapping source, mopping up titles the other sources miss.
 - `seadex.ignore_anilist_ids` (skip specific AniList IDs), `seadex.ignore_tags` (filter releases by SeaDex tag), and `qbittorrent.tags` (tag every added torrent).
 - Discord notifications are rich embeds with colors, links and a version footer; the console shows a live cockpit during startup and the import-wait pass (spinners, ticking timers, files-imported progress).
-- New CLI surface: `run single --dry-run` (simulate without grabbing, caching, or notifying), `--movie-id`/`--series-id` (single-title runs by TMDB/TVDB ID), `--import-wait-mode` and `--log-level` per-run overrides; `config validate` and `config show` (effective config with secrets redacted, safe to paste into a bug report); `cache stats` and `cache check`; `seadexarr --version`, `-h` everywhere, group commands print their help.
+- New CLI surface: `run single --dry-run` (simulate without grabbing, caching, or notifying), `--movie-id`/`--series-id` (single-title runs by TMDB/TVDB ID), `--import-wait-mode` and `--log-level` per-run overrides; `config validate` and `config show` (effective config with secrets redacted, safe to paste into a bug report); `cache stats` and `cache check`; `pearlarr --version`, `-h` everywhere, group commands print their help.
 - The scheduled-run cadence is a config field, `schedule.interval_hours` (default 6), re-read each cycle so an edit takes effect without a restart.
 
 ### Changed

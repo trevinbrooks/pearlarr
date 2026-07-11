@@ -215,7 +215,7 @@ __marimo__/
 # uv lockfile
 # uv.lock
 
-# SeaDexArr runtime / user files (root-anchored: .github/ISSUE_TEMPLATE/config.yml
+# Pearlarr runtime / user files (root-anchored: .github/ISSUE_TEMPLATE/config.yml
 # is a tracked GitHub file, not a runtime config)
 /config.yml
 cache.json
@@ -229,7 +229,7 @@ mappings.db
 mappings.db-wal
 mappings.db-shm
 mappings.db.corrupt-*
-.seadexarr.lock
+.pearlarr.lock
 logs/
 
 # Downloaded mapping data

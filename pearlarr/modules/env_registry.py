@@ -1,16 +1,16 @@
-"""Registry of every environment variable SeaDexArr or its Docker entrypoint reads.
+"""Registry of every environment variable Pearlarr or its Docker entrypoint reads.
 
 The one authored home for the inventory: the docs generator renders it into the
 configuration reference, a parity test greps the tree against it, and ``paths``
-reads the data-dir variable name from it. New variables use the ``SEADEXARR_``
+reads the data-dir variable name from it. New variables use the ``PEARLARR_``
 prefix with ``__`` as the nesting delimiter, so names stay unambiguous under a
-future pydantic-settings split (``SEADEXARR_SONARR__URL`` -> ``sonarr.url``).
+future pydantic-settings split (``PEARLARR_SONARR__URL`` -> ``sonarr.url``).
 """
 
 from dataclasses import dataclass
 from typing import Literal
 
-DATA_DIR_ENV = "SEADEXARR_DATA_DIR"
+DATA_DIR_ENV = "PEARLARR_DATA_DIR"
 """The data-directory override variable (also read by the Docker entrypoint)."""
 
 
@@ -30,9 +30,9 @@ class EnvVar:
 
 ENV_VARS: tuple[EnvVar, ...] = (
     EnvVar(DATA_DIR_ENV, "app", "Override the data directory; the global `--data-dir` flag wins over it."),
-    EnvVar("SEADEXARR_CRON", "docker", "Cron schedule for the container's recurring runs."),
+    EnvVar("PEARLARR_CRON", "docker", "Cron schedule for the container's recurring runs."),
     EnvVar(
-        "SEADEXARR_RUN_ON_START",
+        "PEARLARR_RUN_ON_START",
         "docker",
         "Whether the container runs a catch-up pass at start, before the cron cadence takes over.",
     ),

@@ -33,22 +33,22 @@ jobs:
       - name: Sync dependencies
         run: uv sync --group dev --python ${{ matrix.python-version }}
       - name: Ruff (lint)
-        run: uv run ruff check seadexarr/ tests/
+        run: uv run ruff check pearlarr/ tests/
       - name: Ruff (format)
-        run: uv run ruff format --check seadexarr/ tests/
+        run: uv run ruff format --check pearlarr/ tests/
       - name: Basedpyright (src + tests, strict)
-        run: uv run basedpyright seadexarr tests
+        run: uv run basedpyright pearlarr tests
       # The type gate is vanilla pyright (pinned for reproducible CI). It reads
       # [tool.pyright] in pyproject.toml (typeCheckingMode = strict for BOTH the
       # package and tests/) and resolves imports against the .venv that `uv sync`
       # just created.
       - name: Pyright (type check, strict)
-        run: uvx pyright@1.1.411 seadexarr tests
+        run: uvx pyright@1.1.411 pearlarr tests
       - name: Pyrefly (type check)
-        run: uv run pyrefly check seadexarr tests --preset strict
+        run: uv run pyrefly check pearlarr tests --preset strict
       # Branch coverage with the fail_under floor from [tool.coverage.report].
       - name: Pytest (with coverage gate)
-        run: uv run pytest tests/ --cov=seadexarr --cov-report=term-missing --cov-report=xml
+        run: uv run pytest tests/ --cov=pearlarr --cov-report=term-missing --cov-report=xml
       # Changed-line coverage gate: diff against the PR base (base_ref on PRs,
       # main on branch pushes); skipped on main itself, which has no base to diff.
       - name: Diff coverage (changed lines, 90% floor)

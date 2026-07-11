@@ -578,6 +578,105 @@ wheels = [
 ]
 
 [[package]]
+name = "pearlarr"
+version = "1.0.0"
+source = { editable = "." }
+dependencies = [
+    { name = "beautifulsoup4" },
+    { name = "filelock" },
+    { name = "httpx" },
+    { name = "platformdirs" },
+    { name = "pydantic" },
+    { name = "pynyaa" },
+    { name = "pyyaml" },
+    { name = "qbittorrent-api" },
+    { name = "rich" },
+    { name = "seadex" },
+    { name = "truststore" },
+    { name = "typer" },
+    { name = "urllib3" },
+]
+
+[package.dev-dependencies]
+build = [
+    { name = "build" },
+    { name = "hatchling" },
+]
+dev = [
+    { name = "basedpyright" },
+    { name = "diff-cover" },
+    { name = "hypothesis" },
+    { name = "pre-commit" },
+    { name = "pyrefly" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-randomly" },
+    { name = "respx" },
+    { name = "ruff" },
+]
+static-analysis = [
+    { name = "basedpyright" },
+    { name = "pyrefly" },
+    { name = "ruff" },
+]
+test = [
+    { name = "diff-cover" },
+    { name = "hypothesis" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-randomly" },
+    { name = "respx" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "beautifulsoup4", specifier = "==4.15.0" },
+    { name = "filelock", specifier = "==3.29.6" },
+    { name = "httpx", specifier = "==0.28.1" },
+    { name = "platformdirs", specifier = "==4.10.0" },
+    { name = "pydantic", specifier = "==2.13.4" },
+    { name = "pynyaa", specifier = "==3.0.0" },
+    { name = "pyyaml", specifier = "==6.0.3" },
+    { name = "qbittorrent-api", specifier = "==2026.6.1" },
+    { name = "rich", specifier = "==15.0.0" },
+    { name = "seadex", specifier = "==0.7.2" },
+    { name = "truststore", specifier = "==0.10.4" },
+    { name = "typer", specifier = "==0.26.8" },
+    { name = "urllib3", specifier = ">=2.7.0" },
+]
+
+[package.metadata.requires-dev]
+build = [
+    { name = "build" },
+    { name = "hatchling", specifier = ">=1.27.0" },
+]
+dev = [
+    { name = "basedpyright", specifier = ">=1.39.8" },
+    { name = "diff-cover", specifier = ">=10.3.0" },
+    { name = "hypothesis", specifier = ">=6.155.7" },
+    { name = "pre-commit" },
+    { name = "pyrefly", specifier = ">=1.1.1" },
+    { name = "pytest", specifier = "~=9.0" },
+    { name = "pytest-cov", specifier = ">=7.1.0" },
+    { name = "pytest-randomly", specifier = ">=4.1.0" },
+    { name = "respx", specifier = ">=0.23.1" },
+    { name = "ruff", specifier = "~=0.15.0" },
+]
+static-analysis = [
+    { name = "basedpyright", specifier = ">=1.39.8" },
+    { name = "pyrefly", specifier = ">=1.1.1" },
+    { name = "ruff", specifier = "~=0.15.0" },
+]
+test = [
+    { name = "diff-cover", specifier = ">=10.3.0" },
+    { name = "hypothesis", specifier = ">=6.155.7" },
+    { name = "pytest", specifier = "~=9.0" },
+    { name = "pytest-cov", specifier = ">=7.1.0" },
+    { name = "pytest-randomly", specifier = ">=4.1.0" },
+    { name = "respx", specifier = ">=0.23.1" },
+]
+
+[[package]]
 name = "platformdirs"
 version = "4.10.0"
 source = { registry = "https://pypi.org/simple" }
@@ -914,105 +1013,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1f/1e/4d7c38c7b3fed295e6169a483c0876d7b868ad0efafc0a7f3ffcae0f0b4a/seadex-0.7.2.tar.gz", hash = "sha256:6cb3a07a06a7bea21d8e5a30046d0c058fe4b6328666a1523bd92a423cffde71", size = 1220123, upload-time = "2025-08-05T20:32:10.941Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/59/98/97f0f8da8c7ab5a40302adf0549ea200fbbc94af41dc8c04f51fc0fab9cf/seadex-0.7.2-py3-none-any.whl", hash = "sha256:cc0882403519c4f9739d5a9771b35d18c1eb504fea9bcfb29c74107b6aa2ba07", size = 21364, upload-time = "2025-08-05T20:32:09.722Z" },
-]
-
-[[package]]
-name = "seadexarr"
-version = "1.0.0"
-source = { editable = "." }
-dependencies = [
-    { name = "beautifulsoup4" },
-    { name = "filelock" },
-    { name = "httpx" },
-    { name = "platformdirs" },
-    { name = "pydantic" },
-    { name = "pynyaa" },
-    { name = "pyyaml" },
-    { name = "qbittorrent-api" },
-    { name = "rich" },
-    { name = "seadex" },
-    { name = "truststore" },
-    { name = "typer" },
-    { name = "urllib3" },
-]
-
-[package.dev-dependencies]
-build = [
-    { name = "build" },
-    { name = "hatchling" },
-]
-dev = [
-    { name = "basedpyright" },
-    { name = "diff-cover" },
-    { name = "hypothesis" },
-    { name = "pre-commit" },
-    { name = "pyrefly" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "pytest-randomly" },
-    { name = "respx" },
-    { name = "ruff" },
-]
-static-analysis = [
-    { name = "basedpyright" },
-    { name = "pyrefly" },
-    { name = "ruff" },
-]
-test = [
-    { name = "diff-cover" },
-    { name = "hypothesis" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "pytest-randomly" },
-    { name = "respx" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "beautifulsoup4", specifier = "==4.15.0" },
-    { name = "filelock", specifier = "==3.29.6" },
-    { name = "httpx", specifier = "==0.28.1" },
-    { name = "platformdirs", specifier = "==4.10.0" },
-    { name = "pydantic", specifier = "==2.13.4" },
-    { name = "pynyaa", specifier = "==3.0.0" },
-    { name = "pyyaml", specifier = "==6.0.3" },
-    { name = "qbittorrent-api", specifier = "==2026.6.1" },
-    { name = "rich", specifier = "==15.0.0" },
-    { name = "seadex", specifier = "==0.7.2" },
-    { name = "truststore", specifier = "==0.10.4" },
-    { name = "typer", specifier = "==0.26.8" },
-    { name = "urllib3", specifier = ">=2.7.0" },
-]
-
-[package.metadata.requires-dev]
-build = [
-    { name = "build" },
-    { name = "hatchling", specifier = ">=1.27.0" },
-]
-dev = [
-    { name = "basedpyright", specifier = ">=1.39.8" },
-    { name = "diff-cover", specifier = ">=10.3.0" },
-    { name = "hypothesis", specifier = ">=6.155.7" },
-    { name = "pre-commit" },
-    { name = "pyrefly", specifier = ">=1.1.1" },
-    { name = "pytest", specifier = "~=9.0" },
-    { name = "pytest-cov", specifier = ">=7.1.0" },
-    { name = "pytest-randomly", specifier = ">=4.1.0" },
-    { name = "respx", specifier = ">=0.23.1" },
-    { name = "ruff", specifier = "~=0.15.0" },
-]
-static-analysis = [
-    { name = "basedpyright", specifier = ">=1.39.8" },
-    { name = "pyrefly", specifier = ">=1.1.1" },
-    { name = "ruff", specifier = "~=0.15.0" },
-]
-test = [
-    { name = "diff-cover", specifier = ">=10.3.0" },
-    { name = "hypothesis", specifier = ">=6.155.7" },
-    { name = "pytest", specifier = "~=9.0" },
-    { name = "pytest-cov", specifier = ">=7.1.0" },
-    { name = "pytest-randomly", specifier = ">=4.1.0" },
-    { name = "respx", specifier = ">=0.23.1" },
 ]
 
 [[package]]

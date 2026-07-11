@@ -18,14 +18,14 @@ end-to-end test drives the real Yamada fixtures through ``import_completed``.
 import json
 from pathlib import Path
 
-from seadexarr.modules.config import AppConfig
-from seadexarr.modules.manual_import import (
+from pearlarr.modules.config import AppConfig
+from pearlarr.modules.manual_import import (
     ImportProgress,
     ImportReadiness,
     normalize_basename,
 )
-from seadexarr.modules.seadex_sonarr import SonarrSync
-from seadexarr.modules.seadex_types import (
+from pearlarr.modules.seadex_sonarr import SonarrSync
+from pearlarr.modules.seadex_types import (
     CommandResource,
     ManualImportCandidate,
     ParsedFileInfo,
@@ -33,7 +33,7 @@ from seadexarr.modules.seadex_types import (
     QualitySource,
     SonarrEpisode,
 )
-from seadexarr.modules.sonarr_import_plan import (
+from pearlarr.modules.sonarr_import_plan import (
     CandidateFile,
     EpisodeAssignment,
     ParsedQuality,
@@ -472,14 +472,14 @@ class TestClassifyRealQueue:
 class TestPendingImportOrderedIds:
     def test_round_trip_preserves_ordered_episode_ids(self) -> None:
         rec = pending_import(ordered_episode_ids=[8030, 8031, 8032])
-        from seadexarr.modules.manual_import import PendingImport
+        from pearlarr.modules.manual_import import PendingImport
 
         again = PendingImport.from_json(rec.to_json())
         assert again.ordered_episode_ids == [8030, 8031, 8032]
         assert again == rec
 
     def test_legacy_record_without_ordered_ids_rehydrates_empty(self) -> None:
-        from seadexarr.modules.manual_import import PendingImport
+        from pearlarr.modules.manual_import import PendingImport
 
         raw = pending_import().to_json()
         del raw["ordered_episode_ids"]

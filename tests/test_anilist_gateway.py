@@ -13,9 +13,9 @@ from typing import Any, override
 
 import httpx
 
-from seadexarr.modules.anilist_client import ANILIST_BATCH_SIZE, AniListCache, AniListClient
-from seadexarr.modules.anilist_gateway import ANILIST_CACHE_TTL_DAYS, AniListGateway
-from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
+from pearlarr.modules.anilist_client import ANILIST_BATCH_SIZE, AniListCache, AniListClient
+from pearlarr.modules.anilist_gateway import ANILIST_CACHE_TTL_DAYS, AniListGateway
+from pearlarr.modules.cache import UPDATED_AT_STR_FORMAT
 
 from .builders import FakeCacheStore, make_logger
 from .fakes import CaptureHandler

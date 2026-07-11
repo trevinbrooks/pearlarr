@@ -15,7 +15,7 @@ import yaml
 from pydantic import SecretStr, ValidationError
 from seadex import Tracker
 
-from seadexarr.modules.config import (
+from pearlarr.modules.config import (
     KNOWN_TRACKERS,
     PRIVATE_TRACKERS,
     PUBLIC_TRACKERS,
@@ -30,7 +30,7 @@ from seadexarr.modules.config import (
     config_permissions_loose,
     secret_value,
 )
-from seadexarr.modules.manual_import import ImportWaitMode
+from pearlarr.modules.manual_import import ImportWaitMode
 
 
 class TestFileLifecycle:

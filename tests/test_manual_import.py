@@ -2,9 +2,9 @@
 """Characterization tests for the pure manual-import helpers.
 
 Pins the deterministic decision helpers in
-:mod:`seadexarr.modules.manual_import` (the wait vocabulary, the normalizers,
+:mod:`pearlarr.modules.manual_import` (the wait vocabulary, the normalizers,
 the :class:`PendingImport` JSON round-trip) and
-:mod:`seadexarr.modules.sonarr_import_plan` (the ``(season, episode) -> id``
+:mod:`pearlarr.modules.sonarr_import_plan` (the ``(season, episode) -> id``
 map, the authoritative file->episode mapping and import planning (strict-honor
 + never-overwrite + never-skip), the queue classifier and episode-file status,
 the filename quality parse, and the layered quality/language selection). All
@@ -14,7 +14,7 @@ pure, no network or disk; :class:`SonarrEpisode` is built directly via
 
 import pytest
 
-from seadexarr.modules.manual_import import (
+from pearlarr.modules.manual_import import (
     ImportProbe,
     ImportReadiness,
     ImportWaitMode,
@@ -28,8 +28,8 @@ from seadexarr.modules.manual_import import (
     resolve_wait_mode,
     sanitize_torrent_telemetry,
 )
-from seadexarr.modules.planner import normalize_rg
-from seadexarr.modules.seadex_types import (
+from pearlarr.modules.planner import normalize_rg
+from pearlarr.modules.seadex_types import (
     SONARR_MISSING_KEY,
     CommandResource,
     Quality,
@@ -39,7 +39,7 @@ from seadexarr.modules.seadex_types import (
     Revision,
     SonarrEpisode,
 )
-from seadexarr.modules.sonarr_import_plan import (
+from pearlarr.modules.sonarr_import_plan import (
     CandidateFile,
     EpisodeFileStatus,
     EpisodeSnapshot,

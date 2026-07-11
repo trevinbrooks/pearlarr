@@ -15,13 +15,13 @@ import pytest
 import respx
 from typer.testing import CliRunner
 
-from seadexarr.modules.arr_http import ArrConnectionError, ArrHttp
-from seadexarr.modules.cli import seadexarr_cli
-from seadexarr.modules.config import Arr
-from seadexarr.modules.manual_import import Outcome
-from seadexarr.modules.notify import Notifier
-from seadexarr.modules.paths import resolve_paths
-from seadexarr.modules.wait_view import WaitOutcomeRow, WaitResult
+from pearlarr.modules.arr_http import ArrConnectionError, ArrHttp
+from pearlarr.modules.cli import pearlarr_cli
+from pearlarr.modules.config import Arr
+from pearlarr.modules.manual_import import Outcome
+from pearlarr.modules.notify import Notifier
+from pearlarr.modules.paths import resolve_paths
+from pearlarr.modules.wait_view import WaitOutcomeRow, WaitResult
 
 from .fakes import diagnostic_messages, install_recording_hub
 
@@ -86,14 +86,14 @@ def _data_dir_text() -> str:
 class TestCliSurfaces:
     def test_config_show_is_canary_free(self) -> None:
         _write_canary_config()
-        result = CliRunner().invoke(seadexarr_cli, ["config", "show"])
+        result = CliRunner().invoke(pearlarr_cli, ["config", "show"])
         assert result.exit_code == 0
         assert "REDACTED" in result.output
         _assert_clean(result.output)
 
     def test_config_validate_is_canary_free(self) -> None:
         _write_canary_config()
-        result = CliRunner().invoke(seadexarr_cli, ["config", "validate"])
+        result = CliRunner().invoke(pearlarr_cli, ["config", "validate"])
         assert result.exit_code == 0
         _assert_clean(result.output)
 
@@ -104,7 +104,7 @@ class TestCliSurfaces:
         os.makedirs(paths.data_dir, exist_ok=True)
         pasted = "CANARY-pasted-secret-0d11f3"
         Path(paths.config).write_text(f"advanced:\n  sleep_time: {pasted}\n", encoding="utf-8")
-        result = CliRunner().invoke(seadexarr_cli, ["config", "validate"])
+        result = CliRunner().invoke(pearlarr_cli, ["config", "validate"])
         assert result.exit_code == 1
         assert "sleep_time" in result.output
         assert pasted not in result.output
@@ -116,7 +116,7 @@ class TestCliSurfaces:
         _write_canary_config()
         with respx.mock(assert_all_called=False) as router:
             router.route().mock(side_effect=httpx.ConnectError("blocked by test"))
-            result = CliRunner().invoke(seadexarr_cli, ["run", "single"])
+            result = CliRunner().invoke(pearlarr_cli, ["run", "single"])
         assert result.exit_code == 1
         _assert_clean(result.output)
         log_text = _data_dir_text()

@@ -18,7 +18,7 @@ import httpx
 import pytest
 import respx
 
-from seadexarr.modules.anilist_client import (
+from pearlarr.modules.anilist_client import (
     _MEDIA_FIELDS,
     API_URL,
     MAX_RETRIES,
@@ -30,10 +30,10 @@ from seadexarr.modules.anilist_client import (
     extract_path,
     media_from,
 )
-from seadexarr.modules.log import LOG_NAME
-from seadexarr.modules.output import Diagnostic, Severity, install_hub
-from seadexarr.modules.output.recording import RecordingHub
-from seadexarr.modules.seadex_types import AniListError, AniListMediaNode
+from pearlarr.modules.log import LOG_NAME
+from pearlarr.modules.output import Diagnostic, Severity, install_hub
+from pearlarr.modules.output.recording import RecordingHub
+from pearlarr.modules.seadex_types import AniListError, AniListMediaNode
 
 
 def _no_sleep(_seconds: float) -> None:

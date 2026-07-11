@@ -16,10 +16,10 @@ from typing import ClassVar, override
 
 import pytest
 
-from seadexarr.modules.cli import _install_output_hub
-from seadexarr.modules.config import Arr, LogFormat
-from seadexarr.modules.log import LOG_NAME
-from seadexarr.modules.output import (
+from pearlarr.modules.cli import _install_output_hub
+from pearlarr.modules.config import Arr, LogFormat
+from pearlarr.modules.log import LOG_NAME
+from pearlarr.modules.output import (
     STRIKE_LIMIT,
     Diagnostic,
     Event,
@@ -38,9 +38,9 @@ from seadexarr.modules.output import (
     uninstall_bridge,
     uninstall_hub,
 )
-from seadexarr.modules.output.hub import QUEUE_CAP
-from seadexarr.modules.output.recording import RecordingHub, RecordingRenderer
-from seadexarr.modules.paths import resolve_paths
+from pearlarr.modules.output.hub import QUEUE_CAP
+from pearlarr.modules.output.recording import RecordingHub, RecordingRenderer
+from pearlarr.modules.paths import resolve_paths
 
 _EVENT = RunStarted(version="v1.0.0", data_dir="/data")
 
@@ -710,7 +710,7 @@ def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch
     even past the cap, so the breadcrumb frontier can never be corrupted."""
 
     cap = 3
-    monkeypatch.setattr("seadexarr.modules.output.hub.QUEUE_CAP", cap)
+    monkeypatch.setattr("pearlarr.modules.output.hub.QUEUE_CAP", cap)
     gated, observer = _GatedRenderer(), RecordingRenderer()
     hub = OutputHub([gated, observer])
 
@@ -740,7 +740,7 @@ def test_overflow_sheds_diagnostics_and_re_arms_the_note_per_episode(
     one note per episode; the note re-arms once a drain empties the queue."""
 
     cap = 3
-    monkeypatch.setattr("seadexarr.modules.output.hub.QUEUE_CAP", cap)
+    monkeypatch.setattr("pearlarr.modules.output.hub.QUEUE_CAP", cap)
     gate, observer = _ReArmableGate(), RecordingRenderer()
     hub = OutputHub([gate, observer])
     mark = hub.counts.mark()

@@ -1,4 +1,4 @@
-"""SeaDexArr's output architecture (PR6: the hub's sinks own every surface).
+"""Pearlarr's output architecture (PR6: the hub's sinks own every surface).
 
 An event-stream chassis: producers emit the closed union of frozen event
 dataclasses (:mod:`.events`) through typed scope handles (:mod:`.scopes`) into one

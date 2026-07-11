@@ -17,14 +17,14 @@ from pathlib import Path
 import httpx
 import pytest
 
-from seadexarr.modules import run_services
-from seadexarr.modules.boot_flow import BootFlow
-from seadexarr.modules.config import Arr
-from seadexarr.modules.mappings import MappingResolver
-from seadexarr.modules.run_loop import RunLoop
-from seadexarr.modules.run_services import RunDeps, RunServices
-from seadexarr.modules.seadex_radarr import RadarrSync
-from seadexarr.modules.seadex_sonarr import SonarrSync
+from pearlarr.modules import run_services
+from pearlarr.modules.boot_flow import BootFlow
+from pearlarr.modules.config import Arr
+from pearlarr.modules.mappings import MappingResolver
+from pearlarr.modules.run_loop import RunLoop
+from pearlarr.modules.run_services import RunDeps, RunServices
+from pearlarr.modules.seadex_radarr import RadarrSync
+from pearlarr.modules.seadex_sonarr import SonarrSync
 
 from .builders import make_bare_instance, make_config, make_run_deps
 from .fakes import FakeRadarrClient, FakeSonarrClient
@@ -117,7 +117,7 @@ def test_rundeps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest.Monk
     deps = RunDeps.build(
         Arr.SONARR,
         cache=str(tmp_path / "cache.db"),
-        logger=logging.getLogger("seadexarr.test"),
+        logger=logging.getLogger("pearlarr.test"),
         mappings=make_bare_instance(MappingResolver),
         app_config=make_config(verify_ssl=False),
         web=httpx.Client(),

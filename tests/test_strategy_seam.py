@@ -20,19 +20,19 @@ from typing import NamedTuple, override
 import pytest
 from seadex import EntryRecord
 
-from seadexarr.modules.cache import CacheRecord
-from seadexarr.modules.config import Arr
-from seadexarr.modules.grab_pipeline import GrabRequest
-from seadexarr.modules.log import EntryState
-from seadexarr.modules.manual_import import ImportProgress, ImportReadiness, ImportWaitMode, PendingImport
-from seadexarr.modules.mappings import ExternalIds, MappingEntry, MappingSource
-from seadexarr.modules.output import Severity
-from seadexarr.modules.output.recording import RecordingHub
-from seadexarr.modules.run_services import RunServices
-from seadexarr.modules.seadex_filter import FilterResult
-from seadexarr.modules.seadex_radarr import RadarrSync
-from seadexarr.modules.seadex_sonarr import SonarrSync
-from seadexarr.modules.seadex_types import (
+from pearlarr.modules.cache import CacheRecord
+from pearlarr.modules.config import Arr
+from pearlarr.modules.grab_pipeline import GrabRequest
+from pearlarr.modules.log import EntryState
+from pearlarr.modules.manual_import import ImportProgress, ImportReadiness, ImportWaitMode, PendingImport
+from pearlarr.modules.mappings import ExternalIds, MappingEntry, MappingSource
+from pearlarr.modules.output import Severity
+from pearlarr.modules.output.recording import RecordingHub
+from pearlarr.modules.run_services import RunServices
+from pearlarr.modules.seadex_filter import FilterResult
+from pearlarr.modules.seadex_radarr import RadarrSync
+from pearlarr.modules.seadex_sonarr import SonarrSync
+from pearlarr.modules.seadex_types import (
     ArrReleaseDict,
     CommandResource,
     Language,
@@ -46,8 +46,8 @@ from seadexarr.modules.seadex_types import (
     SonarrEpisode,
     SonarrItem,
 )
-from seadexarr.modules.sonarr_episodes import sonarr_series_fingerprint
-from seadexarr.modules.sonarr_import_plan import resolve_language_objects
+from pearlarr.modules.sonarr_episodes import sonarr_series_fingerprint
+from pearlarr.modules.sonarr_import_plan import resolve_language_objects
 
 from .builders import (
     FakeCacheStore,
@@ -1264,7 +1264,7 @@ class TestManualImportWarningGating:
         # missing-file line is logged by the import executor, which holds the same
         # logger as the strat in production - so set both (the strat's plus the
         # executor's) to mirror that and let caplog see the executor's record.
-        logger = logging.getLogger("seadexarr-warning-gating")
+        logger = logging.getLogger("pearlarr-warning-gating")
         logger.handlers.clear()
         logger.propagate = True
         logger.setLevel(logging.DEBUG)

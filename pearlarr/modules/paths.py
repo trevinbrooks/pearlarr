@@ -9,13 +9,13 @@ from .env_registry import DATA_DIR_ENV
 
 # The env var stays the canonical override (Docker sets it to /config); the
 # CLI's --data-dir flag folds into it (see cli.main).
-APP_NAME = "seadexarr"
+APP_NAME = "pearlarr"
 
 # The single in-code source for the project's repository URL (the CLI epilog and
 # Discord embeds read it). pyproject.toml's [project.urls] can't import it, so
 # change the two together. NOTE for any future APP_NAME rename: APP_NAME is also
 # the platformdirs directory, so a rename must ship a data-dir migration.
-PROJECT_URL = "https://github.com/trevinbrooks/seadexarr"
+PROJECT_URL = "https://github.com/trevinbrooks/pearlarr"
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,9 +37,9 @@ class AppPaths:
 def resolve_paths(data_dir: str | None = None) -> AppPaths:
     """Resolve every path under the data directory.
 
-    Precedence: explicit ``data_dir`` arg > ``SEADEXARR_DATA_DIR`` env >
-    ``platformdirs.user_data_dir`` (``~/Library/Application Support/seadexarr`` on
-    macOS, ``~/.local/share/seadexarr`` on Linux, ``%LOCALAPPDATA%\\seadexarr`` on
+    Precedence: explicit ``data_dir`` arg > ``PEARLARR_DATA_DIR`` env >
+    ``platformdirs.user_data_dir`` (``~/Library/Application Support/pearlarr`` on
+    macOS, ``~/.local/share/pearlarr`` on Linux, ``%LOCALAPPDATA%\\pearlarr`` on
     Windows). ``appauthor=False`` drops the Windows author subfolder.
     """
 

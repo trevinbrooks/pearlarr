@@ -17,15 +17,15 @@ import httpx
 import pytest
 import respx
 
-import seadexarr.modules.torrent as torrent
-from seadexarr.modules.torrent import (
+import pearlarr.modules.torrent as torrent
+from pearlarr.modules.torrent import (
     ANIMETOSHO_FEED_URL,
     TorrentParseError,
     get_animetosho_torrent,
     get_nyaa_torrent,
     get_rutracker_torrent,
 )
-from seadexarr.modules.web_client import get_with_retries
+from pearlarr.modules.web_client import get_with_retries
 
 _TORRENT_FIXTURES = Path(__file__).parent / "fixtures" / "torrent"
 

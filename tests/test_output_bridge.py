@@ -22,9 +22,9 @@ from typing import ClassVar
 
 import pytest
 
-from seadexarr.modules.boot_flow import BootFlow
-from seadexarr.modules.log import LOG_NAME, setup_logger
-from seadexarr.modules.output import (
+from pearlarr.modules.boot_flow import BootFlow
+from pearlarr.modules.log import LOG_NAME, setup_logger
+from pearlarr.modules.output import (
     Diagnostic,
     Event,
     FileLogSink,
@@ -41,7 +41,7 @@ from seadexarr.modules.output import (
     uninstall_bridge,
     uninstall_hub,
 )
-from seadexarr.modules.output.recording import RecordingRenderer
+from pearlarr.modules.output.recording import RecordingRenderer
 
 from .fakes import TtyStringIO, strip_ansi
 
@@ -451,7 +451,7 @@ def full_stack(
     install_hub(hub)
     install_bridge()
     logger = setup_logger(log_level="INFO", console_format="rich")
-    yield logger, stream, tmp_path / "logs" / "SeaDexArr.log"
+    yield logger, stream, tmp_path / "logs" / "Pearlarr.log"
     uninstall_bridge()
     uninstall_hub()
 
@@ -469,7 +469,7 @@ class TestFullStackSeams:
         assert "WARNING  watch out" in console  # the hub renderer's badge line
         file_text = _file_text(log_file)
         assert file_text.count("watch out") == 1  # the FileLogSink's grammar line
-        assert "WARNING [SeaDexArr] watch out" in file_text
+        assert "WARNING [Pearlarr] watch out" in file_text
 
     def test_first_party_info_reaches_the_file_and_the_raw_tty_once_each(
         self, full_stack: tuple[logging.Logger, TtyStringIO, Path]

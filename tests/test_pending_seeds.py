@@ -11,9 +11,9 @@ cached ``/parse`` results and the ``(season, episode) -> id`` index. Built bare
 (no live Sonarr) with a seeded in-memory parse cache.
 """
 
-from seadexarr.modules.manual_import import normalize_basename
-from seadexarr.modules.seadex_sonarr import SonarrSync
-from seadexarr.modules.seadex_types import SonarrEpisode
+from pearlarr.modules.manual_import import normalize_basename
+from pearlarr.modules.seadex_sonarr import SonarrSync
+from pearlarr.modules.seadex_types import SonarrEpisode
 
 from .builders import FakeCacheStore, make_config, make_sonarr_sync, rg_group, url_item
 from .fakes import FakeSonarrClient

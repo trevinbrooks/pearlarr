@@ -27,7 +27,7 @@ RETRY_AFTER_CAP_S = 60
 # Identify ourselves to the hosts we scrape/post to (AniList's API terms ask
 # clients to be identifiable); also what a maintainer would see if this client
 # ever misbehaves.
-USER_AGENT = f"seadexarr/{__version__}"
+USER_AGENT = f"pearlarr/{__version__}"
 
 
 def make_web_client() -> httpx.Client:

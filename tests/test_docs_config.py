@@ -14,8 +14,8 @@ from pathlib import Path
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-from seadexarr.modules.config import AppConfig
-from seadexarr.modules.env_registry import ENV_VARS
+from pearlarr.modules.config import AppConfig
+from pearlarr.modules.env_registry import ENV_VARS
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -58,10 +58,10 @@ def test_config_docstrings_never_restate_defaults() -> None:
 
 
 def test_env_registry_matches_the_tree() -> None:
-    # Every SEADEXARR_* variable mentioned anywhere (code, Docker, docs) is
+    # Every PEARLARR_* variable mentioned anywhere (code, Docker, docs) is
     # registered, and every registered variable is actually mentioned.
     # The one exemption: the hypothetical the naming-scheme rule is explained with.
-    hypothetical = {"SEADEXARR_SONARR__URL"}
+    hypothetical = {"PEARLARR_SONARR__URL"}
     scanned: set[str] = set()
     files = [
         REPO_ROOT / "Dockerfile",
@@ -69,10 +69,10 @@ def test_env_registry_matches_the_tree() -> None:
         REPO_ROOT / "README.md",
         REPO_ROOT / "CONTRIBUTING.md",
         *sorted((REPO_ROOT / "docker").glob("*")),
-        *sorted((REPO_ROOT / "seadexarr").rglob("*.py")),
+        *sorted((REPO_ROOT / "pearlarr").rglob("*.py")),
         *sorted((REPO_ROOT / "docs").rglob("*.md")),
     ]
     for path in files:
         if path.is_file():
-            scanned.update(re.findall(r"SEADEXARR_[A-Z_]+", path.read_text(encoding="utf-8")))
+            scanned.update(re.findall(r"PEARLARR_[A-Z_]+", path.read_text(encoding="utf-8")))
     assert scanned - hypothetical == {var.name for var in ENV_VARS}

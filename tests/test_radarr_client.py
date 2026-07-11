@@ -14,10 +14,10 @@ from collections.abc import Set as AbstractSet
 import httpx
 import respx
 
-from seadexarr.modules.arr_http import ArrHttp
-from seadexarr.modules.output import Severity
-from seadexarr.modules.radarr_client import RadarrClient, collect_anime_movies
-from seadexarr.modules.seadex_types import HistoryRecord, MovieFile, RadarrItem, RadarrMovie
+from pearlarr.modules.arr_http import ArrHttp
+from pearlarr.modules.output import Severity
+from pearlarr.modules.radarr_client import RadarrClient, collect_anime_movies
+from pearlarr.modules.seadex_types import HistoryRecord, MovieFile, RadarrItem, RadarrMovie
 
 from .fakes import FakeRadarrClient, diagnostic_messages, install_recording_hub
 

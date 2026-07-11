@@ -24,14 +24,14 @@ import pytest
 import qbittorrentapi
 from seadex import Tracker
 
-import seadexarr.modules.torrents as torrents
-from seadexarr.modules.boot_flow import BootFlow
-from seadexarr.modules.config import Arr
-from seadexarr.modules.mappings import MappingResolver
-from seadexarr.modules.run_services import QbitConnectionError, RunDeps
-from seadexarr.modules.seadex_types import SeadexUrlItem
-from seadexarr.modules.torrent import TorrentParseError
-from seadexarr.modules.torrents import (
+import pearlarr.modules.torrents as torrents
+from pearlarr.modules.boot_flow import BootFlow
+from pearlarr.modules.config import Arr
+from pearlarr.modules.mappings import MappingResolver
+from pearlarr.modules.run_services import QbitConnectionError, RunDeps
+from pearlarr.modules.seadex_types import SeadexUrlItem
+from pearlarr.modules.torrent import TorrentParseError
+from pearlarr.modules.torrents import (
     GRAB_FAILURES,
     PARSEABLE_TRACKERS,
     AddOutcome,
@@ -105,7 +105,7 @@ def _service(qbit: _FakeQbit, *, category: str | None = "anime", tags: list[str]
         web=httpx.Client(),
         category=category,
         tags=tags if tags is not None else ["seadex"],
-        logger=logging.getLogger("seadexarr.test"),
+        logger=logging.getLogger("pearlarr.test"),
     )
 
 
@@ -297,7 +297,7 @@ def test_qbit_login_failure_maps_to_qbit_connection_error(monkeypatch: pytest.Mo
         RunDeps.build(
             Arr.SONARR,
             app_config=config,
-            logger=logging.getLogger("seadexarr.test"),
+            logger=logging.getLogger("pearlarr.test"),
             mappings=make_bare_instance(MappingResolver),
             web=httpx.Client(),
             boot=BootFlow(),

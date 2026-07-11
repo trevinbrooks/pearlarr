@@ -352,7 +352,7 @@ def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact 
 
     match event:
         case RunStarted():
-            return _Fact("run_started", severity, "SeaDexArr started", _fields_run_started(event), None, "run")
+            return _Fact("run_started", severity, "Pearlarr started", _fields_run_started(event), None, "run")
         case CycleStarted(number=number):
             return _Fact("cycle_started", severity, "cycle started", (Field("number", number),), None, "run")
         case NextRunScheduled(at=at):

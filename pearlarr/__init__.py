@@ -1,12 +1,12 @@
 from typing import TYPE_CHECKING
 
-from .modules import seadexarr_cli, setup_logger
+from .modules import pearlarr_cli, setup_logger
 
 # ``__version__`` and the run-machinery re-exports are resolved LAZILY (PEP 562):
-# the ``seadexarr`` entry point imports this package only to reach
-# ``seadexarr_cli``, so it must not eagerly pay the ``importlib.metadata`` lookup
+# the ``pearlarr`` entry point imports this package only to reach
+# ``pearlarr_cli``, so it must not eagerly pay the ``importlib.metadata`` lookup
 # or pull the heavy run machinery (qBittorrent / the SeaDex+httpx chain).
-# ``from .. import __version__`` in cache.py and ``seadexarr.<Sync>`` for
+# ``from .. import __version__`` in cache.py and ``pearlarr.<Sync>`` for
 # programmatic use both still resolve through ``__getattr__``.
 _LAZY_EXPORTS = frozenset({"RadarrSync", "RunDeps", "RunLoop", "RunServices", "SonarrSync"})
 
@@ -23,7 +23,7 @@ __all__ = [
     "RunServices",
     "SonarrSync",
     "__version__",
-    "seadexarr_cli",
+    "pearlarr_cli",
     "setup_logger",
 ]
 
@@ -32,7 +32,7 @@ def __getattr__(name: str) -> object:
     if name == "__version__":
         from importlib.metadata import version
 
-        return version("seadexarr")
+        return version("pearlarr")
     if name in _LAZY_EXPORTS:
         from . import modules
 

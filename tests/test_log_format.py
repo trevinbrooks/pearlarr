@@ -31,15 +31,15 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from seadexarr.modules.config import LogFormat
-from seadexarr.modules.console_caps import console_of
-from seadexarr.modules.log import (
+from pearlarr.modules.config import LogFormat
+from pearlarr.modules.console_caps import console_of
+from pearlarr.modules.log import (
     RichConsoleHandler,
     apply_log_level,
     mark_hub_console_owner,
     setup_logger,
 )
-from seadexarr.modules.output import (
+from pearlarr.modules.output import (
     Diagnostic,
     OutputHub,
     Severity,
@@ -47,8 +47,8 @@ from seadexarr.modules.output import (
     install_hub,
     uninstall_bridge,
 )
-from seadexarr.modules.output.bridge import HubBridgeHandler
-from seadexarr.modules.output.recording import RecordingRenderer
+from pearlarr.modules.output.bridge import HubBridgeHandler
+from pearlarr.modules.output.recording import RecordingRenderer
 
 from .fakes import CaptureHandler, TtyStringIO, strip_ansi
 
@@ -172,7 +172,7 @@ class TestRichHandlerSeam:
         """Plain WARNING+ (incl. exc_info) never render here while a bridge is
         installed - the hub places the badge (double render otherwise)."""
 
-        logger, stream = _rich_setup("seadexarr-test-rich-seam-badge")
+        logger, stream = _rich_setup("pearlarr-test-rich-seam-badge")
         mark_hub_console_owner()  # conftest's uninstall_bridge clears it
 
         logger.warning("watch out")
@@ -186,7 +186,7 @@ class TestRichHandlerSeam:
     def test_plain_warning_renders_the_badge_without_a_console_owner(self) -> None:
         """No bridge installed (library use, the pre-install window): the fallback."""
 
-        logger, stream = _rich_setup("seadexarr-test-rich-seam-no-owner")
+        logger, stream = _rich_setup("pearlarr-test-rich-seam-no-owner")
 
         logger.warning("watch out")
 
@@ -197,7 +197,7 @@ class TestRichHandlerSeam:
         strike-out the hub's STDERR fallback is the single net - the handler
         rendering here too printed the same warning twice (once per net)."""
 
-        logger, stream = _rich_setup("seadexarr-test-rich-seam-struck-out")
+        logger, stream = _rich_setup("pearlarr-test-rich-seam-struck-out")
         mark_hub_console_owner()
 
         logger.warning("watch out")
@@ -205,7 +205,7 @@ class TestRichHandlerSeam:
         assert stream.getvalue() == ""
 
     def test_plain_info_still_renders_without_a_badge(self) -> None:
-        logger, stream = _rich_setup("seadexarr-test-rich-seam-info")
+        logger, stream = _rich_setup("pearlarr-test-rich-seam-info")
 
         logger.info("checking Frieren")
 
@@ -215,7 +215,7 @@ class TestRichHandlerSeam:
         """The handler-side secrets pin: exc_info tracebacks render with
         show_locals=False, so a frame local's VALUE (an api key) can never leak."""
 
-        logger, stream = _rich_setup("seadexarr-test-rich-secrets")
+        logger, stream = _rich_setup("pearlarr-test-rich-secrets")
         sentinel = "hun" + "ter2"  # runtime-assembled: never a contiguous string here
 
         try:

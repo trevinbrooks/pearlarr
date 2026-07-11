@@ -2,10 +2,10 @@
 
 Two halves live here. The first is the ``seadex_dict`` domain vocabulary: the
 central ``seadex_dict`` is a four-level mapping built once per AniList entry
-by :meth:`seadexarr.modules.seadex_filter.SeadexReleaseFilter.build` (reached via
+by :meth:`pearlarr.modules.seadex_filter.SeadexReleaseFilter.build` (reached via
 the ``RunServices.get_seadex_dict`` delegator) and threaded through the decision engine
-(:mod:`seadexarr.modules.planner`) and the Discord notifier
-(:mod:`seadexarr.modules.notify`). The two keyed levels stay plain ``dict``\\ s
+(:mod:`pearlarr.modules.planner`) and the Discord notifier
+(:mod:`pearlarr.modules.notify`). The two keyed levels stay plain ``dict``\\ s
 (release groups keyed by name, urls keyed by url string), but the *value
 records* at each level are modeled as :func:`dataclasses.dataclass`: a real
 domain model with attribute access (``item.download`` rather than

@@ -14,13 +14,13 @@ import httpx
 import pytest
 import respx
 
-from seadexarr.modules.discord import (
+from pearlarr.modules.discord import (
     PROJECT_URL,
     DiscordEmbed,
     EmbedField,
     discord_push,
 )
-from seadexarr.modules.seadex_types import Json
+from pearlarr.modules.seadex_types import Json
 
 
 def _str_at(payload: dict[str, Json], key: str) -> str:
@@ -100,7 +100,7 @@ def test_to_payload_carries_optional_keys_and_stamp() -> None:
         {"name": "i", "value": "w", "inline": True},
     ]
     assert "timestamp" in payload
-    assert _obj_at(payload, "footer")["text"].startswith("SeaDexArr v")
+    assert _obj_at(payload, "footer")["text"].startswith("Pearlarr v")
 
 
 def test_to_payload_clamps_item_limits() -> None:
@@ -186,8 +186,8 @@ def test_discord_push_posts_the_wrapped_embed() -> None:
     discord_push(url="https://discord.example/hook", embed=embed, client=httpx.Client())
 
     body = cast("dict[str, Json]", json.loads(route.calls.last.request.content))
-    # The wire shape: the SeaDexArr display identity riding beside the embed.
-    assert body["username"] == "SeaDexArr"
+    # The wire shape: the Pearlarr display identity riding beside the embed.
+    assert body["username"] == "Pearlarr"
     assert _str_at(body, "avatar_url").startswith("https://")
     embeds = body["embeds"]
     assert isinstance(embeds, list)

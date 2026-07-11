@@ -29,10 +29,10 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn
 
-import seadexarr.modules.mappings as m
-from seadexarr.modules.anibridge import AniBridge, AniBridgeGraph, _parse_ranges
-from seadexarr.modules.mapping_store import AnidbMappingRow, AnimeIdRow, MappingStore
-from seadexarr.modules.mappings import (
+import pearlarr.modules.mappings as m
+from pearlarr.modules.anibridge import AniBridge, AniBridgeGraph, _parse_ranges
+from pearlarr.modules.mapping_store import AnidbMappingRow, AnimeIdRow, MappingStore
+from pearlarr.modules.mappings import (
     AnimeIdsMap,
     AnimeIdsRecord,
     ExternalIds,
@@ -43,10 +43,10 @@ from seadexarr.modules.mappings import (
     MappingSources,
     _entry_from_raw,
 )
-from seadexarr.modules.output import Severity
-from seadexarr.modules.paths import resolve_paths
-from seadexarr.modules.seadex_types import TvdbMappings
-from seadexarr.modules.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge
+from pearlarr.modules.output import Severity
+from pearlarr.modules.paths import resolve_paths
+from pearlarr.modules.seadex_types import TvdbMappings
+from pearlarr.modules.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge
 
 from .builders import make_bare_instance, sonarr_ep
 from .fakes import CaptureHandler, diagnostic_messages, install_recording_hub
@@ -673,7 +673,7 @@ class TestAnidbSkipTallies:
             encoding="utf-8",
         )
         monkeypatch.setattr(m, "ANIDB_MAPPINGS_FILE", str(source))
-        logger = logging.getLogger("seadexarr-test-anidb-summary")
+        logger = logging.getLogger("pearlarr-test-anidb-summary")
         logger.propagate = False
         logger.setLevel(logging.DEBUG)
         capture = CaptureHandler()
@@ -859,7 +859,7 @@ def _real_source_paths() -> _RealSources:
 
     ``TestRealDataParity`` carries ``@pytest.mark.real_data_dir`` so the autouse tmp
     data-dir override is off for it and ``resolve_paths()`` sees the developer's
-    real ``SEADEXARR_DATA_DIR``; evaluating this at import would instead capture
+    real ``PEARLARR_DATA_DIR``; evaluating this at import would instead capture
     whatever dir was active before the fixtures ran.
     """
 

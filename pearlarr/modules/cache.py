@@ -136,7 +136,7 @@ SCHEMA_VERSION = 1
 
 
 class CacheSchemaError(RuntimeError):
-    """The cache db was written by a newer seadexarr; refuse to open it.
+    """The cache db was written by a newer pearlarr; refuse to open it.
 
     Deliberately NOT a ``sqlite3.DatabaseError``: the file is healthy, so the
     quarantine path must never eat this - the run fails closed with a clear
@@ -177,8 +177,8 @@ def _ensure_schema(conn: sqlite3.Connection, path: str) -> None:
     version = int(conn.execute("PRAGMA user_version").fetchone()[0])
     if version > SCHEMA_VERSION:
         raise CacheSchemaError(
-            f"Cache database at {path} uses schema v{version}, newer than this seadexarr understands "
-            f"(v{SCHEMA_VERSION}) - it was written by a newer release. Upgrade seadexarr, or move the "
+            f"Cache database at {path} uses schema v{version}, newer than this pearlarr understands "
+            f"(v{SCHEMA_VERSION}) - it was written by a newer release. Upgrade pearlarr, or move the "
             "file away to start a fresh cache.",
         )
     fresh = conn.execute("SELECT count(*) FROM sqlite_master WHERE type = 'table'").fetchone()[0] == 0
@@ -483,7 +483,7 @@ class CacheStore(AbstractCacheStore):
     def _reconcile(self, config_checksum: str) -> None:
         """Stamp the current package version and config checksum into ``kv``."""
 
-        self._set_kv("seadexarr_version", __version__)
+        self._set_kv("pearlarr_version", __version__)
         self._set_kv("config_checksum", config_checksum)
 
     @override

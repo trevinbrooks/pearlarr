@@ -19,7 +19,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: "The output of `seadexarr --version`."
+      description: "The output of `pearlarr --version`."
     validations:
       required: true
   - type: dropdown
@@ -47,14 +47,14 @@ body:
   - type: textarea
     id: paths
     attributes:
-      label: seadexarr paths output
-      description: "Paste the output of `seadexarr paths` (Docker: `docker compose run --rm seadexarr paths`)."
+      label: pearlarr paths output
+      description: "Paste the output of `pearlarr paths` (Docker: `docker compose run --rm pearlarr paths`)."
       render: text
   - type: textarea
     id: config
     attributes:
       label: Config
-      description: Paste the output of `seadexarr config show` — it redacts API keys, passwords and webhook URLs by design, so it is safe to share. Never paste a raw config.yml.
+      description: Paste the output of `pearlarr config show` — it redacts API keys, passwords and webhook URLs by design, so it is safe to share. Never paste a raw config.yml.
       render: yaml
     validations:
       required: true
@@ -62,5 +62,5 @@ body:
     id: logs
     attributes:
       label: Log excerpt
-      description: "The relevant lines from the `logs/` folder in the data directory (`seadexarr paths` prints it; typically `~/.local/share/seadexarr/logs` on Linux, `~/Library/Application Support/seadexarr/logs` on macOS, `/config/logs` in Docker). Log files never contain your keys or webhook URLs, so excerpts are safe to paste."
+      description: "The relevant lines from the `logs/` folder in the data directory (`pearlarr paths` prints it; typically `~/.local/share/pearlarr/logs` on Linux, `~/Library/Application Support/pearlarr/logs` on macOS, `/config/logs` in Docker). Log files never contain your keys or webhook URLs, so excerpts are safe to paste."
       render: text

@@ -12,19 +12,19 @@ from datetime import datetime, timedelta
 
 from seadex import EntryRecord
 
-from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
-from seadexarr.modules.config import Arr
-from seadexarr.modules.mappings import ExternalIds, MappingEntry
-from seadexarr.modules.run_services import RunServices
-from seadexarr.modules.seadex_gateway import SeaDexMiss
-from seadexarr.modules.seadex_types import SeadexDict, SonarrEpisode
-from seadexarr.modules.sonarr_episodes import (
+from pearlarr.modules.cache import UPDATED_AT_STR_FORMAT
+from pearlarr.modules.config import Arr
+from pearlarr.modules.mappings import ExternalIds, MappingEntry
+from pearlarr.modules.run_services import RunServices
+from pearlarr.modules.seadex_gateway import SeaDexMiss
+from pearlarr.modules.seadex_types import SeadexDict, SonarrEpisode
+from pearlarr.modules.sonarr_episodes import (
     SONARR_FETCH_WORKERS,
     SonarrEpisodes,
     fetch_workers,
     sonarr_series_fingerprint,
 )
-from seadexarr.modules.sonarr_parse import (
+from pearlarr.modules.sonarr_parse import (
     SONARR_PARSE_CACHE_TTL_DAYS,
     SONARR_PARSE_NEG_CACHE_TTL_DAYS,
     ParseWindow,

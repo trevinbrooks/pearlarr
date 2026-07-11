@@ -11,13 +11,13 @@ from datetime import datetime
 import pytest
 from seadex import EntryRecord, Tag, TorrentRecord, Tracker
 
-from seadexarr.modules import seadex_filter
-from seadexarr.modules.config import Arr
-from seadexarr.modules.mappings import MappingEntry
-from seadexarr.modules.output import Diagnostic, Severity, install_hub
-from seadexarr.modules.output.recording import RecordingHub
-from seadexarr.modules.run_services import RunServices
-from seadexarr.modules.seadex_radarr import RadarrSync
+from pearlarr.modules import seadex_filter
+from pearlarr.modules.config import Arr
+from pearlarr.modules.mappings import MappingEntry
+from pearlarr.modules.output import Diagnostic, Severity, install_hub
+from pearlarr.modules.output.recording import RecordingHub
+from pearlarr.modules.run_services import RunServices
+from pearlarr.modules.seadex_radarr import RadarrSync
 
 from .builders import (
     FakeCacheStore,

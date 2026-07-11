@@ -12,10 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from seadexarr.modules.log import LOG_NAME
-from seadexarr.modules.mapping_store import MappingStore
-from seadexarr.modules.output import uninstall_bridge, uninstall_hub
-from seadexarr.modules.paths import DATA_DIR_ENV
+from pearlarr.modules.log import LOG_NAME
+from pearlarr.modules.mapping_store import MappingStore
+from pearlarr.modules.output import uninstall_bridge, uninstall_hub
+from pearlarr.modules.paths import DATA_DIR_ENV
 
 from .builders import make_logger
 
@@ -33,11 +33,11 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
       builder (they query ``deps.mappings`` after construction). Wrapping the
       ``open`` factory registers every store regardless of construction path;
       ``close()`` is idempotent, so stores that already close themselves are fine.
-    * The file handler ``setup_logger`` attaches to the ``"SeaDexArr"``
+    * The file handler ``setup_logger`` attaches to the ``"Pearlarr"``
       logger (only the e2e smoke drives the real logging path); left open, its
       file handle leaks.
 
-    The process-global ``"SeaDexArr"`` logger is also fully reset (all handlers
+    The process-global ``"Pearlarr"`` logger is also fully reset (all handlers
     removed, level back to NOTSET): a test that ran ``setup_logger`` /
     ``apply_log_level`` would otherwise leak a console handler bound to its own
     captured stdout and a raised level into whichever test runs next under
@@ -62,7 +62,7 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         store.close()
     uninstall_bridge()
     uninstall_hub()
-    app_logger = logging.getLogger("SeaDexArr")
+    app_logger = logging.getLogger("Pearlarr")
     for handler in list(app_logger.handlers):
         handler.close()
         app_logger.removeHandler(handler)
@@ -76,7 +76,7 @@ def isolate_data_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Point ``SEADEXARR_DATA_DIR`` at a per-test tmp dir for every test.
+    """Point ``PEARLARR_DATA_DIR`` at a per-test tmp dir for every test.
 
     A backstop: ``resolve_paths()`` is read at runtime across ``cli.py`` and
     ``mappings.py``, and ``test_cli`` does destructive cache ops keyed off it - one
@@ -90,7 +90,7 @@ def isolate_data_dir(
     # pytestmark); ``FixtureRequest.node`` is untyped, so read markers off it.
     if "real_data_dir" in request.keywords:
         return
-    monkeypatch.setenv(DATA_DIR_ENV, str(tmp_path / "seadexarr_data"))
+    monkeypatch.setenv(DATA_DIR_ENV, str(tmp_path / "pearlarr_data"))
 
 
 @pytest.fixture

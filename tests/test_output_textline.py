@@ -20,11 +20,11 @@ from typing import get_args, override
 
 import pytest
 
-from seadexarr.modules.config import Arr
-from seadexarr.modules.json_narrow import is_json_list, is_json_obj
-from seadexarr.modules.log import EntryState
-from seadexarr.modules.manual_import import Outcome, OutcomeCategory
-from seadexarr.modules.output import (
+from pearlarr.modules.config import Arr
+from pearlarr.modules.json_narrow import is_json_list, is_json_obj
+from pearlarr.modules.log import EntryState
+from pearlarr.modules.manual_import import Outcome, OutcomeCategory
+from pearlarr.modules.output import (
     BootReady,
     BootStepFinished,
     BootStepProgressed,
@@ -72,10 +72,10 @@ from seadexarr.modules.output import (
     WaitSnapshot,
     WaitStarted,
 )
-from seadexarr.modules.output.textline import _JSON_SKIP, _TEXT_SKIP
-from seadexarr.modules.output.trace import CapturedTrace
-from seadexarr.modules.reporter import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
-from seadexarr.modules.seadex_types import Json
+from pearlarr.modules.output.textline import _JSON_SKIP, _TEXT_SKIP
+from pearlarr.modules.output.trace import CapturedTrace
+from pearlarr.modules.reporter import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
+from pearlarr.modules.seadex_types import Json
 
 _EPOCH = 1_751_990_000.0
 _WHEN = datetime.fromtimestamp(_EPOCH)
@@ -119,13 +119,13 @@ def _entry_context() -> tuple[Event, Event, Event]:
 
 
 def test_run_started_line() -> None:
-    line = _format(RunStarted(version="v1.0.0", data_dir="/data/seadexarr"))
-    assert line == f"{_TS} INFO [run] SeaDexArr started version=v1.0.0 data_dir=/data/seadexarr"
+    line = _format(RunStarted(version="v1.0.0", data_dir="/data/pearlarr"))
+    assert line == f"{_TS} INFO [run] Pearlarr started version=v1.0.0 data_dir=/data/pearlarr"
 
 
 def test_run_started_omits_an_empty_version() -> None:
     line = _format(RunStarted(version="", data_dir="/data"))
-    assert line == f"{_TS} INFO [run] SeaDexArr started data_dir=/data"
+    assert line == f"{_TS} INFO [run] Pearlarr started data_dir=/data"
 
 
 def test_next_run_scheduled_at_keeps_the_offset_and_drops_microseconds() -> None:
@@ -400,7 +400,7 @@ def test_file_sink_honors_the_configured_level_but_still_folds(tmp_path: Path) -
     sink.handle(Diagnostic(severity=Severity.WARNING, message="late warning", origin="anilist"), _EPOCH)
     sink.close()
 
-    content = (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8")
+    content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert content == (
         f'{_TS} WARNING [anilist] late warning during="Frieren: Beyond Journey\'s End" placed=frontier\n'
     )
@@ -416,7 +416,7 @@ def test_a_failed_graduation_admits_through_a_warning_level_sink(tmp_path: Path)
     sink.handle(TorrentGraduated(label="Bad Show", outcome=Outcome.DOWNLOAD_ERRORED, files=None, waited_s=5.0), _EPOCH)
     sink.close()
 
-    content = (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8")
+    content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert "Ok Show" not in content
     assert f'{_TS} ERROR [wait] errored title="Bad Show" waited_s=5.00\n' in content
 
@@ -430,7 +430,7 @@ def test_a_warning_file_level_admits_per_line_within_the_summary(tmp_path: Path)
 
     # Line-granular admission: the WARNING needs-action row lands; the INFO
     # head line and the INFO added row drop.
-    lines = (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8").splitlines()
+    lines = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8").splitlines()
     assert lines == [
         f"{_TS} WARNING [summary] needs action title=Monogatari group=Okay-Subs "
         f'reason="private tracker" kind=private_only link=https://releases.moe/98765',
@@ -447,7 +447,7 @@ def test_file_only_diagnostics_reach_the_file_but_not_stdout(tmp_path: Path) -> 
     file_sink.close()
 
     assert stream.getvalue() == ""
-    assert "renderer failed" in (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8")
+    assert "renderer failed" in (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
 
 
 def test_line_and_file_output_are_byte_identical(tmp_path: Path) -> None:
@@ -468,7 +468,7 @@ def test_line_and_file_output_are_byte_identical(tmp_path: Path) -> None:
         file_sink.handle(event, _EPOCH)
     file_sink.close()
 
-    assert stream.getvalue() == (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8")
+    assert stream.getvalue() == (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert stream.getvalue() != ""
 
 
@@ -490,7 +490,7 @@ def test_line_and_file_parity_holds_at_a_warning_level(tmp_path: Path) -> None:
         file_sink.handle(event, _EPOCH)
     file_sink.close()
 
-    file_lines = (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8").splitlines(keepends=True)
+    file_lines = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8").splitlines(keepends=True)
     assert sum("renderer failed" in line for line in file_lines) == 1
     # stdout bytes == file bytes minus exactly the file_only line.
     assert stream.getvalue() == "".join(line for line in file_lines if "renderer failed" not in line)
@@ -507,9 +507,9 @@ def test_file_rotation_mirrors_the_log_cascade(tmp_path: Path) -> None:
     sink.handle(RunStarted(version="three", data_dir="/d"), _EPOCH)
     sink.close()
 
-    assert "three" in (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8")
-    assert "two" in (tmp_path / "SeaDexArr.log.1").read_text(encoding="utf-8")
-    assert "one" in (tmp_path / "SeaDexArr.log.2").read_text(encoding="utf-8")
+    assert "three" in (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
+    assert "two" in (tmp_path / "Pearlarr.log.1").read_text(encoding="utf-8")
+    assert "one" in (tmp_path / "Pearlarr.log.2").read_text(encoding="utf-8")
 
 
 def test_an_idle_cycle_never_churns_the_cascade(tmp_path: Path) -> None:
@@ -519,29 +519,29 @@ def test_an_idle_cycle_never_churns_the_cascade(tmp_path: Path) -> None:
     sink.handle(RunStarted(version="only", data_dir="/d"), _EPOCH)
     sink.close()
 
-    assert (tmp_path / "SeaDexArr.log").exists()
-    assert not (tmp_path / "SeaDexArr.log.1").exists()
+    assert (tmp_path / "Pearlarr.log").exists()
+    assert not (tmp_path / "Pearlarr.log.1").exists()
 
 
 def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_path: Path) -> None:
     # Only begin_cycle arms rotation — construction must not, or a record in the
     # install→begin_cycle window would rotate twice and strand a one-line .log.1.
-    (tmp_path / "SeaDexArr.log").write_text("previous run\n", encoding="utf-8")
+    (tmp_path / "Pearlarr.log").write_text("previous run\n", encoding="utf-8")
     sink = FileLogSink(str(tmp_path))
 
     sink.handle(RunStarted(version="pre-cycle", data_dir="/d"), _EPOCH)
-    assert not (tmp_path / "SeaDexArr.log.1").exists()  # appended, no rotation
-    log_text = (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8")
+    assert not (tmp_path / "Pearlarr.log.1").exists()  # appended, no rotation
+    log_text = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert log_text.startswith("previous run\n") and "pre-cycle" in log_text
 
     sink.begin_cycle()
     sink.handle(RunStarted(version="cycle-one", data_dir="/d"), _EPOCH)
     sink.close()
 
-    rotated = (tmp_path / "SeaDexArr.log.1").read_text(encoding="utf-8")
+    rotated = (tmp_path / "Pearlarr.log.1").read_text(encoding="utf-8")
     assert "previous run" in rotated and "pre-cycle" in rotated  # rotated as ONE file
-    assert not (tmp_path / "SeaDexArr.log.2").exists()  # exactly one rotation
-    assert "cycle-one" in (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8")
+    assert not (tmp_path / "Pearlarr.log.2").exists()  # exactly one rotation
+    assert "cycle-one" in (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
 
 
 def test_a_reopened_file_sink_appends_after_close(tmp_path: Path) -> None:
@@ -552,19 +552,19 @@ def test_a_reopened_file_sink_appends_after_close(tmp_path: Path) -> None:
     sink.close()
 
     # Reopen without a pending rotation appends - never a silent truncate.
-    content = (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8")
+    content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert "one" in content
     assert "two" in content
-    assert not (tmp_path / "SeaDexArr.log.1").exists()
+    assert not (tmp_path / "Pearlarr.log.1").exists()
 
 
 def test_every_line_is_on_disk_immediately(tmp_path: Path) -> None:
     # Per-line flush (crash fidelity): the tail is on disk before close or any WARNING.
     sink = FileLogSink(str(tmp_path))
-    log = tmp_path / "SeaDexArr.log"
+    log = tmp_path / "Pearlarr.log"
 
     sink.handle(RunStarted(version="v1.0.0", data_dir="/d"), _EPOCH)
-    assert "SeaDexArr started" in log.read_text(encoding="utf-8")
+    assert "Pearlarr started" in log.read_text(encoding="utf-8")
 
     sink.handle(Diagnostic(severity=Severity.WARNING, message="crash imminent", origin="app"), _EPOCH)
     assert "crash imminent" in log.read_text(encoding="utf-8")
@@ -574,16 +574,16 @@ def test_every_line_is_on_disk_immediately(tmp_path: Path) -> None:
 def test_probe_leaves_no_file_behind_and_keeps_existing_content(tmp_path: Path) -> None:
     sink = FileLogSink(str(tmp_path))
     sink.probe()
-    assert not (tmp_path / "SeaDexArr.log").exists()  # the probe's own file is removed
+    assert not (tmp_path / "Pearlarr.log").exists()  # the probe's own file is removed
 
-    (tmp_path / "SeaDexArr.log").write_text("previous run\n", encoding="utf-8")
+    (tmp_path / "Pearlarr.log").write_text("previous run\n", encoding="utf-8")
     sink.probe()
-    assert (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8") == "previous run\n"
+    assert (tmp_path / "Pearlarr.log").read_text(encoding="utf-8") == "previous run\n"
 
 
 def test_probe_raises_on_an_unwritable_log_file(tmp_path: Path) -> None:
     # The Docker shape: the DIRECTORY is writable, the file (another uid's) is not.
-    log = tmp_path / "SeaDexArr.log"
+    log = tmp_path / "Pearlarr.log"
     log.write_text("root-owned\n", encoding="utf-8")
     log.chmod(0o400)
     sink = FileLogSink(str(tmp_path))
@@ -602,7 +602,7 @@ def test_file_sink_writes_utf8(tmp_path: Path) -> None:
     )
     sink.close()
 
-    content = (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8")
+    content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert "Pokémon — ポケモン" in content
 
 
@@ -663,7 +663,7 @@ def test_pulse_lines_keep_line_and_file_byte_parity(tmp_path: Path) -> None:
         file_sink.handle(event, _EPOCH)
     file_sink.close()
 
-    content = (tmp_path / "SeaDexArr.log").read_text(encoding="utf-8")
+    content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert stream.getvalue() == content
     assert content.count("still waiting") == 2  # 300 and 650 pulse; the start snapshot never does
 
@@ -758,7 +758,7 @@ def test_json_emits_one_object_per_event_with_stable_key_order() -> None:
     assert list(payload) == ["time", "event", "level", "message", "version", "data_dir"]
     assert payload["event"] == "run_started"
     assert payload["level"] == "INFO"
-    assert payload["message"] == "SeaDexArr started"
+    assert payload["message"] == "Pearlarr started"
 
 
 def test_json_time_carries_a_utc_offset() -> None:
@@ -908,7 +908,7 @@ def test_no_fact_field_key_can_collide_with_the_json_envelope() -> None:
     import ast
     import inspect
 
-    from seadexarr.modules.output import textline as _textline
+    from pearlarr.modules.output import textline as _textline
 
     tree = ast.parse(inspect.getsource(_textline))
     offenders: list[str] = []

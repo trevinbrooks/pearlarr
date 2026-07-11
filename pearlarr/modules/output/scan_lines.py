@@ -186,7 +186,7 @@ def _ledger_line(state: EntryState, label: str, style: str) -> LegacyLine:
 def scan_started_lines(event: ScanStarted) -> tuple[LegacyLine, ...]:
     """The run banner: a blank, then the heavy titled rule."""
 
-    banner = f"Starting SeaDexArr ({event.arr.capitalize()}) for {arr_item_noun(event.arr, event.total)}"
+    banner = f"Starting Pearlarr ({event.arr.capitalize()}) for {arr_item_noun(event.arr, event.total)}"
     return _BLANK, _info(banner, TitledRule(title=banner, heavy=True))
 
 
@@ -365,7 +365,7 @@ def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
     summary = event.summary
     tally = summary.tally
 
-    title = f"SeaDexArr ({summary.arr.capitalize()}) run complete"
+    title = f"Pearlarr ({summary.arr.capitalize()}) run complete"
     rule_title = title
     if summary.dry_run_note is not None:
         rule_title += f"   (DRY RUN — {summary.dry_run_note})"

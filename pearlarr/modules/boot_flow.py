@@ -132,6 +132,6 @@ def _app_version() -> str:
     """The installed package version as ``"vX.Y.Z"`` (empty if undeterminable)."""
 
     try:
-        return f"v{version('seadexarr')}"
+        return f"v{version('pearlarr')}"
     except PackageNotFoundError:  # pragma: no cover - only when run from a non-install
         return ""

@@ -18,9 +18,9 @@ import re
 from collections.abc import Callable, Iterable
 from typing import override
 
-from seadexarr.modules.manual_import import ImportProbe, ImportProgress, PendingImport
-from seadexarr.modules.mappings import MappingEntry
-from seadexarr.modules.output import (
+from pearlarr.modules.manual_import import ImportProbe, ImportProgress, PendingImport
+from pearlarr.modules.mappings import MappingEntry
+from pearlarr.modules.output import (
     CapReached,
     Diagnostic,
     EntryDetail,
@@ -36,11 +36,11 @@ from seadexarr.modules.output import (
     Severity,
     install_hub,
 )
-from seadexarr.modules.output.recording import RecordingHub
-from seadexarr.modules.output.scan_lines import LegacyLine, scan_event_lines
-from seadexarr.modules.protocols import ArrSync
-from seadexarr.modules.radarr_client import AbstractRadarrClient
-from seadexarr.modules.seadex_types import (
+from pearlarr.modules.output.recording import RecordingHub
+from pearlarr.modules.output.scan_lines import LegacyLine, scan_event_lines
+from pearlarr.modules.protocols import ArrSync
+from pearlarr.modules.radarr_client import AbstractRadarrClient
+from pearlarr.modules.seadex_types import (
     CommandResource,
     HistoryRecord,
     Language,
@@ -55,7 +55,7 @@ from seadexarr.modules.seadex_types import (
     SonarrEpisode,
     SonarrItem,
 )
-from seadexarr.modules.sonarr_client import AbstractSonarrClient
+from pearlarr.modules.sonarr_client import AbstractSonarrClient
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
 

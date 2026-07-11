@@ -13,10 +13,10 @@ re-processed.
 
 from datetime import datetime
 
-from seadexarr.modules.config import Arr
-from seadexarr.modules.log import EntryState
-from seadexarr.modules.reporter import RunContext
-from seadexarr.modules.run_services import RunServices
+from pearlarr.modules.config import Arr
+from pearlarr.modules.log import EntryState
+from pearlarr.modules.reporter import RunContext
+from pearlarr.modules.run_services import RunServices
 
 from .builders import FakeCacheStore, FakeSeaDexSource, make_entry_record, make_services
 

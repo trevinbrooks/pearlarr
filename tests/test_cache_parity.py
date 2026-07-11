@@ -16,8 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from seadexarr.modules.cache import AbstractCacheStore, CacheRecord, CacheStore, HistoryCheckpoint
-from seadexarr.modules.config import Arr
+from pearlarr.modules.cache import AbstractCacheStore, CacheRecord, CacheStore, HistoryCheckpoint
+from pearlarr.modules.config import Arr
 
 from .builders import FakeCacheStore, make_entry_record
 

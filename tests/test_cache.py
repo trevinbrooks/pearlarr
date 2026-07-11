@@ -14,13 +14,13 @@ from pathlib import Path
 
 import pytest
 
-import seadexarr
-from seadexarr.modules.cache import SCHEMA_VERSION, CacheSchemaError, CacheStore, HistoryCheckpoint
-from seadexarr.modules.config import Arr
-from seadexarr.modules.log import LOG_NAME
-from seadexarr.modules.output import Diagnostic, Severity, install_hub
-from seadexarr.modules.output.recording import RecordingHub
-from seadexarr.modules.sqlite_util import is_corruption
+import pearlarr
+from pearlarr.modules.cache import SCHEMA_VERSION, CacheSchemaError, CacheStore, HistoryCheckpoint
+from pearlarr.modules.config import Arr
+from pearlarr.modules.log import LOG_NAME
+from pearlarr.modules.output import Diagnostic, Severity, install_hub
+from pearlarr.modules.output.recording import RecordingHub
+from pearlarr.modules.sqlite_util import is_corruption
 
 from .builders import make_entry_record
 
@@ -75,7 +75,7 @@ class TestSchemaAndDescriptor:
             rows = dict(raw.execute("SELECT key, value FROM kv").fetchall())
         finally:
             raw.close()
-        assert rows.get("seadexarr_version") == seadexarr.__version__
+        assert rows.get("pearlarr_version") == pearlarr.__version__
         assert rows.get("config_checksum") == CHECKSUM
 
 
@@ -484,7 +484,7 @@ class TestPromoteFailure:
         store.update_cache(Arr.SONARR, 7, {"name": "T"})
         # Scope the patch to this save only: the later ``again.save`` must promote for real.
         with monkeypatch.context() as mp, contextlib.suppress(OSError):
-            mp.setattr("seadexarr.modules.cache.os.replace", _raise_os_replace)
+            mp.setattr("pearlarr.modules.cache.os.replace", _raise_os_replace)
             store.save(preview=False)
         store.close()
 
@@ -615,7 +615,7 @@ class TestCorruptStore:
 
         # Simulate a transient lock at open time (e.g. the WAL switch hitting BUSY).
         with monkeypatch.context() as mp:
-            mp.setattr("seadexarr.modules.cache._connect", _raise_locked)
+            mp.setattr("pearlarr.modules.cache._connect", _raise_locked)
             raised = False
             try:
                 CacheStore.load(str(db), config_checksum=CHECKSUM)

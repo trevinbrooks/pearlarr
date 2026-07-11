@@ -18,11 +18,11 @@ import pytest
 from rich.console import Console
 from rich.live import Live
 
-from seadexarr.modules.config import Arr
-from seadexarr.modules.console_caps import Capabilities
-from seadexarr.modules.log import LOG_NAME
-from seadexarr.modules.manual_import import OutcomeCategory
-from seadexarr.modules.output import (
+from pearlarr.modules.config import Arr
+from pearlarr.modules.console_caps import Capabilities
+from pearlarr.modules.log import LOG_NAME
+from pearlarr.modules.manual_import import OutcomeCategory
+from pearlarr.modules.output import (
     BootReady,
     BootStepFinished,
     BootStepProgressed,
@@ -41,7 +41,7 @@ from seadexarr.modules.output import (
     ScopeOpened,
     Severity,
 )
-from seadexarr.modules.output.boot_region import (
+from pearlarr.modules.output.boot_region import (
     BootRegion,
     format_step_secs,
     graduation_line,
@@ -141,7 +141,7 @@ class TestBootRegion:
         _feed(renderer, RunStarted(version="v9.9.9", data_dir="/data/dir"))
 
         lines = _plain(stream).splitlines()
-        assert "SeaDexArr v9.9.9" in lines
+        assert "Pearlarr v9.9.9" in lines
         assert "  Data directory: /data/dir" in lines
 
     def test_steps_graduate_to_durable_scrollback_lines(self) -> None:
@@ -338,7 +338,7 @@ class TestBootRegion:
         )
 
         out = _plain(stream)
-        assert "SeaDexArr" not in out
+        assert "Pearlarr" not in out
         assert "✔" not in out  # no graduated ledger line (spinner frames may remain)
         assert "ready in" not in out
 

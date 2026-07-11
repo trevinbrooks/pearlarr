@@ -6,7 +6,7 @@ not appear anywhere in the value), the bounded rich frame count, and the full
 plain-text rendering the file sink stores.
 """
 
-from seadexarr.modules.output import CapturedTrace
+from pearlarr.modules.output import CapturedTrace
 
 _SECRET = "hunter2-super-secret-key"
 

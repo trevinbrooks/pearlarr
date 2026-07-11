@@ -17,9 +17,9 @@ import logging
 import pytest
 from rich.console import Console
 
-from seadexarr.modules.log import RichConsoleHandler
-from seadexarr.modules.manual_import import Outcome, OutcomeCategory
-from seadexarr.modules.output import (
+from pearlarr.modules.log import RichConsoleHandler
+from pearlarr.modules.manual_import import Outcome, OutcomeCategory
+from pearlarr.modules.output import (
     Event,
     Phase,
     ScopeClosed,
@@ -33,8 +33,8 @@ from seadexarr.modules.output import (
     WaitStarted,
     install_hub,
 )
-from seadexarr.modules.output.recording import RecordingHub
-from seadexarr.modules.wait_view import HubWaitView, WaitOutcomeRow, WaitResult, graduations, make_wait_view
+from pearlarr.modules.output.recording import RecordingHub
+from pearlarr.modules.wait_view import HubWaitView, WaitOutcomeRow, WaitResult, graduations, make_wait_view
 
 from .fakes import CaptureHandler
 
@@ -264,7 +264,7 @@ class TestHubWaitViewNarration:
             real_emit(event)
 
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("seadexarr.modules.wait_view.emit_to_hub", interrupt_on_finish)
+            mp.setattr("pearlarr.modules.wait_view.emit_to_hub", interrupt_on_finish)
             view = self._view()
             view.update(WaitSnapshot((_downloading("h1", "A"),), elapsed_s=5))
             with pytest.raises(KeyboardInterrupt):
@@ -307,7 +307,7 @@ class _FlakyEmit:
 def test_narrator_is_total_when_emission_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     # An emission raise must degrade to a debug no-op, never propagate (which
     # would abort the engine's wait loop or the end-of-run cache save).
-    monkeypatch.setattr("seadexarr.modules.wait_view.emit_to_hub", _FlakyEmit(allow=3))
+    monkeypatch.setattr("pearlarr.modules.wait_view.emit_to_hub", _FlakyEmit(allow=3))
     logger = _quiet_logger("wait-narrator-boom")
     logger.setLevel(logging.DEBUG)
     capture = CaptureHandler()

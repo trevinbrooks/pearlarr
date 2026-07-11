@@ -10,7 +10,7 @@ keyed by each source's content digest, so a process whose source files are
 unchanged answers lookups straight from SQL without re-parsing - and never has to
 hold the full parsed structures in memory.
 
-How this differs from :class:`~seadexarr.modules.cache.CacheStore` (deliberately a
+How this differs from :class:`~pearlarr.modules.cache.CacheStore` (deliberately a
 separate file and a separate db):
 
 * **Never preview-gated.** ``cache.db`` stages writes and only commits on a

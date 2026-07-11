@@ -15,7 +15,7 @@ import ast
 from pathlib import Path
 from typing import NamedTuple
 
-PACKAGE = Path(__file__).resolve().parent.parent / "seadexarr"
+PACKAGE = Path(__file__).resolve().parent.parent / "pearlarr"
 
 BANNED_METHODS = frozenset({"warning", "warn", "error", "critical", "fatal", "exception", "info", "log"})
 
@@ -108,7 +108,7 @@ def test_no_raw_first_party_logging_above_debug() -> None:
     assert not offenders, (
         "raw first-party logging is retired; emit through output.runtime.hub_note "
         "(DEBUG stays raw; see this file's docstring):\n"
-        + "\n".join(f"seadexarr/{c.rel}:{c.line} .{c.method}(...) in {c.function or '<module>'}" for c in offenders)
+        + "\n".join(f"pearlarr/{c.rel}:{c.line} .{c.method}(...) in {c.function or '<module>'}" for c in offenders)
     )
     # The straggler stays EXACTLY one call: a second raw site sharing its
     # (file, function, method) key must trip, not slide under the allowlist.

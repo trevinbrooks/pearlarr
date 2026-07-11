@@ -335,7 +335,7 @@ def apply_log_level(logger: logging.Logger, log_level: str) -> None:
 
 # Logger name; MAX_LOG_FILES caps the FileLogSink's rotation cascade
 # (.log -> .log.1 ... .log.9 in output/textline.py).
-LOG_NAME = "SeaDexArr"
+LOG_NAME = "Pearlarr"
 MAX_LOG_FILES = 9
 
 

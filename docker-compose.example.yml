@@ -1,19 +1,19 @@
 # Copy to docker-compose.yml (or fold into an existing stack) and adjust.
 # First run: `mkdir -p ./config` yourself - a bind-mount dir auto-created by
 # Docker is root-owned, and the container will refuse to start against it.
-# One-off commands: `docker compose run --rm seadexarr run single --sonarr`.
+# One-off commands: `docker compose run --rm pearlarr run single --sonarr`.
 services:
 
-  seadexarr:
-    image: ghcr.io/trevinbrooks/seadexarr:latest  # or :main for the cutting edge
-    container_name: seadexarr
+  pearlarr:
+    image: ghcr.io/trevinbrooks/pearlarr:latest  # or :main for the cutting edge
+    container_name: pearlarr
     # PUID/PGID are compose interpolation vars (.env file or shell) consumed
     # HERE - not environment: keys. Match them to the ./config owner.
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
-      - TZ=America/New_York            # SEADEXARR_CRON fires in this zone (default UTC)
-      # - SEADEXARR_CRON=0 */6 * * *   # cron schedule (default: every 6 hours)
-      # - SEADEXARR_RUN_ON_START=true  # also run once at container start (default true)
+      - TZ=America/New_York            # PEARLARR_CRON fires in this zone (default UTC)
+      # - PEARLARR_CRON=0 */6 * * *   # cron schedule (default: every 6 hours)
+      # - PEARLARR_RUN_ON_START=true  # also run once at container start (default true)
     volumes:
       - ./config:/config               # config.yml, caches and logs, all in one dir
     restart: unless-stopped
@@ -21,7 +21,7 @@ services:
     # SIGTERM room before Docker's 10s default SIGKILLs a mid-import run.
     # stop_grace_period: 1h
 
-  # Reference sidecars: seadexarr reaches compose services by DNS name, so
+  # Reference sidecars: pearlarr reaches compose services by DNS name, so
   # config.yml would carry e.g. sonarr.url: http://sonarr:8989.
   # sonarr:
   #   image: lscr.io/linuxserver/sonarr:latest

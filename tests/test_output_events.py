@@ -11,10 +11,10 @@ from typing import Final
 
 import pytest
 
-from seadexarr.modules.config import Arr
-from seadexarr.modules.log import EntryState
-from seadexarr.modules.manual_import import Outcome, OutcomeCategory
-from seadexarr.modules.output import (
+from pearlarr.modules.config import Arr
+from pearlarr.modules.log import EntryState
+from pearlarr.modules.manual_import import Outcome, OutcomeCategory
+from pearlarr.modules.output import (
     Accent,
     BootStepFinished,
     Diagnostic,
@@ -41,7 +41,7 @@ from seadexarr.modules.output import (
     TorrentGraduated,
     severity_of,
 )
-from seadexarr.modules.reporter import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
+from pearlarr.modules.reporter import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
 
 # --- value model -----------------------------------------------------------------
 

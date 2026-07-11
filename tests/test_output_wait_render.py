@@ -4,7 +4,7 @@
 """Tests for the wait surface's pure line builders + throttle + reducers.
 
 The byte guarantees on the wait ledger live in the builders (consumed by the
-WaitRegion's durable prints) and the :mod:`~seadexarr.modules.output.textline`
+WaitRegion's durable prints) and the :mod:`~pearlarr.modules.output.textline`
 grammar; the region-side rendering is pinned in test_output_wait_region. Here:
 the :class:`PulseThrottle` unit contract, the builder edge cases (including the
 P6 category-based graduation level), and the pure cockpit reducers
@@ -14,10 +14,10 @@ test_wait_view at the PR5 Band C flip.
 
 import logging
 
-from seadexarr.modules.console_caps import Capabilities, detect_capabilities
-from seadexarr.modules.log import StyledLine
-from seadexarr.modules.manual_import import Outcome
-from seadexarr.modules.output import (
+from pearlarr.modules.console_caps import Capabilities, detect_capabilities
+from pearlarr.modules.log import StyledLine
+from pearlarr.modules.manual_import import Outcome
+from pearlarr.modules.output import (
     Phase,
     TorrentGraduated,
     TorrentView,
@@ -25,7 +25,7 @@ from seadexarr.modules.output import (
     WaitSnapshot,
     WaitStarted,
 )
-from seadexarr.modules.output.wait_lines import (
+from pearlarr.modules.output.wait_lines import (
     _PHASE_RANK,
     PulseThrottle,
     _compact_eta,

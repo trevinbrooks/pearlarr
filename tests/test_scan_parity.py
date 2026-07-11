@@ -27,11 +27,11 @@ import pytest
 from rich.text import Span, Text
 from seadex import Tag
 
-from seadexarr.modules.anilist_client import AniListClient
-from seadexarr.modules.anilist_gateway import AniListGateway
-from seadexarr.modules.cache import AbstractCacheStore, CacheRecord
-from seadexarr.modules.config import Arr
-from seadexarr.modules.log import (
+from pearlarr.modules.anilist_client import AniListClient
+from pearlarr.modules.anilist_gateway import AniListGateway
+from pearlarr.modules.cache import AbstractCacheStore, CacheRecord
+from pearlarr.modules.config import Arr
+from pearlarr.modules.log import (
     ConsoleRender,
     EntryState,
     KvLine,
@@ -40,8 +40,8 @@ from seadexarr.modules.log import (
     TitledRule,
     group_highlight,
 )
-from seadexarr.modules.manual_import import ImportWaitMode, PendingState
-from seadexarr.modules.output import (
+from pearlarr.modules.manual_import import ImportWaitMode, PendingState
+from pearlarr.modules.output import (
     Accent,
     CapReached,
     EntryDetail,
@@ -67,8 +67,8 @@ from seadexarr.modules.output import (
     SkipReason,
     StyledValue,
 )
-from seadexarr.modules.output.scan_lines import _TIP_TEXTS, ScanEvent
-from seadexarr.modules.reporter import (
+from pearlarr.modules.output.scan_lines import _TIP_TEXTS, ScanEvent
+from pearlarr.modules.reporter import (
     _TIP_PRECEDENCE,
     GrabRecord,
     NeedsActionKind,
@@ -77,7 +77,7 @@ from seadexarr.modules.reporter import (
     RunReporter,
     RunStats,
 )
-from seadexarr.modules.torrents import AddOutcome, ReleaseOutcome
+from pearlarr.modules.torrents import AddOutcome, ReleaseOutcome
 
 from .builders import FakeCacheStore, make_entry_record, pending_import, rg_group, url_item
 from .fakes import SCAN_EVENT_TYPES, scan_lines_from_events
@@ -138,13 +138,13 @@ def _torrent_text(name: str | None, group: str, *, dry: bool) -> str | Text:
 SCAN_STARTED_SONARR = ScanStarted(arr=Arr.SONARR, total=3)
 SCAN_STARTED_SONARR_LINES: tuple[Line, ...] = (
     _blank(),
-    _titled("Starting SeaDexArr (Sonarr) for 3 series", heavy=True),
+    _titled("Starting Pearlarr (Sonarr) for 3 series", heavy=True),
 )
 
 SCAN_STARTED_RADARR = ScanStarted(arr=Arr.RADARR, total=1)
 SCAN_STARTED_RADARR_LINES: tuple[Line, ...] = (
     _blank(),
-    _titled("Starting SeaDexArr (Radarr) for 1 movie", heavy=True),
+    _titled("Starting Pearlarr (Radarr) for 1 movie", heavy=True),
 )
 
 ITEM_STARTED_SONARR = ItemStarted(arr=Arr.SONARR, index=2, total=3, title="Frieren: Beyond Journey's End")
@@ -507,7 +507,7 @@ SUMMARY_RICH = RunSummaryReady(
 )
 SUMMARY_RICH_LINES: tuple[Line, ...] = (
     _blank(),
-    _titled("SeaDexArr (Sonarr) run complete", heavy=True),
+    _titled("Pearlarr (Sonarr) run complete", heavy=True),
     _blank(),
     _srow("  checked      : 8", "checked", "8"),
     _srow("  needs action : 2", "needs action", "2", style="yellow"),
@@ -597,8 +597,8 @@ SUMMARY_DRY_HAS_CLIENT_LINES: tuple[Line, ...] = (
     _blank(),
     # The DRY RUN note rides the console title only; the file keeps the plain title.
     _titled(
-        "SeaDexArr (Sonarr) run complete",
-        title="SeaDexArr (Sonarr) run complete   (DRY RUN — nothing grabbed)",
+        "Pearlarr (Sonarr) run complete",
+        title="Pearlarr (Sonarr) run complete   (DRY RUN — nothing grabbed)",
         heavy=True,
     ),
     _blank(),
@@ -663,8 +663,8 @@ SUMMARY_DRY_NO_CLIENT = RunSummaryReady(
 SUMMARY_DRY_NO_CLIENT_LINES: tuple[Line, ...] = (
     _blank(),
     _titled(
-        "SeaDexArr (Radarr) run complete",
-        title="SeaDexArr (Radarr) run complete   (DRY RUN — qBittorrent not configured; nothing grabbed)",
+        "Pearlarr (Radarr) run complete",
+        title="Pearlarr (Radarr) run complete   (DRY RUN — qBittorrent not configured; nothing grabbed)",
         heavy=True,
     ),
     _blank(),
@@ -701,7 +701,7 @@ SUMMARY_MINIMAL = RunSummaryReady(
 )
 SUMMARY_MINIMAL_LINES: tuple[Line, ...] = (
     _blank(),
-    _titled("SeaDexArr (Sonarr) run complete", heavy=True),
+    _titled("Pearlarr (Sonarr) run complete", heavy=True),
     _blank(),
     _srow("  checked      : 0", "checked", "0"),
     _srow("  needs action : 0", "needs action", "0"),
@@ -749,7 +749,7 @@ SUMMARY_WAIT_OFF = RunSummaryReady(
 )
 SUMMARY_WAIT_OFF_LINES: tuple[Line, ...] = (
     _blank(),
-    _titled("SeaDexArr (Sonarr) run complete", heavy=True),
+    _titled("Pearlarr (Sonarr) run complete", heavy=True),
     _blank(),
     _srow("  checked      : 6", "checked", "6"),
     _srow("  needs action : 1", "needs action", "1", style="yellow"),

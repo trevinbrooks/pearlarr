@@ -353,7 +353,7 @@ class Notifier:
         elapsed = format_elapsed(result.elapsed_s)
         posted = self._push(
             DiscordEmbed(
-                author_name="SeaDexArr",
+                author_name="Pearlarr",
                 title=f"{arr.capitalize()} wait complete",
                 color=_wait_color(result),
                 description=f"{result.imported} imported · {result.left} left · {result.failed} failed · {elapsed}",

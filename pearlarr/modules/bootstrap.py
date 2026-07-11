@@ -289,7 +289,7 @@ def run_arrs(
     # instances are still fine.
     with single_instance_lock(paths.data_dir, logger=logger) as acquired:
         if not acquired:
-            hub_warn(f"Another SeaDexArr run is active in {paths.data_dir}; skipping this run.")
+            hub_warn(f"Another Pearlarr run is active in {paths.data_dir}; skipping this run.")
             return False
 
         # The banner names the data dir every cycle: scheduled mode rotates the

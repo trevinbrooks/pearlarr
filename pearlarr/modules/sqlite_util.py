@@ -1,7 +1,7 @@
 """Shared SQLite primitives for the project's on-disk stores.
 
-Both :mod:`seadexarr.modules.cache` (``cache.db``) and
-:mod:`seadexarr.modules.mapping_store` (``mappings.db``) need the same low-level
+Both :mod:`pearlarr.modules.cache` (``cache.db``) and
+:mod:`pearlarr.modules.mapping_store` (``mappings.db``) need the same low-level
 behaviour: a connection pinned to *explicit* legacy/deferred transaction control,
 a busy timeout, a corruption predicate that distinguishes a genuinely torn file
 from a transient lock, and a fail-open quarantine of an unreadable file. Those

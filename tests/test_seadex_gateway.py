@@ -4,8 +4,8 @@
 import httpx
 from seadex import EntryNotFoundError, EntryRecord
 
-from seadexarr.modules.output import Severity
-from seadexarr.modules.seadex_gateway import SEADEX_BATCH_SIZE, SeaDexGateway, SeaDexMiss
+from pearlarr.modules.output import Severity
+from pearlarr.modules.seadex_gateway import SEADEX_BATCH_SIZE, SeaDexGateway, SeaDexMiss
 
 from .builders import make_entry_record
 from .fakes import diagnostic_messages, install_recording_hub

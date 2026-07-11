@@ -2,7 +2,7 @@
 """Tests for the boot flow's producer facade (``boot_flow``).
 
 ``BootFlow`` is render-free: it opens/closes the boot-section scope mark, runs
-each IO step as a :class:`~seadexarr.modules.output.StepScope`, and emits the
+each IO step as a :class:`~pearlarr.modules.output.StepScope`, and emits the
 capstone when the section earned one. These pin the emitted event stream
 (RecordingHub), the capstone gate (empty/failed sections and ERROR+ recorded on
 the hub since the first step suppress it; a DEFERRED warn does not), the
@@ -16,12 +16,12 @@ from pathlib import Path
 import httpx
 import pytest
 
-from seadexarr.modules.boot_flow import BootFlow
-from seadexarr.modules.config import Arr
-from seadexarr.modules.log import LOG_NAME
-from seadexarr.modules.manual_import import OutcomeCategory
-from seadexarr.modules.mappings import MappingResolver
-from seadexarr.modules.output import (
+from pearlarr.modules.boot_flow import BootFlow
+from pearlarr.modules.config import Arr
+from pearlarr.modules.log import LOG_NAME
+from pearlarr.modules.manual_import import OutcomeCategory
+from pearlarr.modules.mappings import MappingResolver
+from pearlarr.modules.output import (
     BootReady,
     BootStepFinished,
     BootStepSlow,
@@ -35,8 +35,8 @@ from seadexarr.modules.output import (
     install_bridge,
     install_hub,
 )
-from seadexarr.modules.output.recording import RecordingHub
-from seadexarr.modules.run_services import RunDeps
+from pearlarr.modules.output.recording import RecordingHub
+from pearlarr.modules.run_services import RunDeps
 
 from .builders import make_bare_instance, make_config
 from .fakes import FakeClock

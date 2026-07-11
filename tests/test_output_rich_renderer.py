@@ -18,9 +18,9 @@ from datetime import datetime, timedelta, timezone
 
 from rich.console import Console
 
-from seadexarr.modules.config import Arr
-from seadexarr.modules.log import INDENT, LOG_NAME
-from seadexarr.modules.output import (
+from pearlarr.modules.config import Arr
+from pearlarr.modules.log import INDENT, LOG_NAME
+from pearlarr.modules.output import (
     CapturedTrace,
     Diagnostic,
     Event,
@@ -164,10 +164,10 @@ class TestUnwindPlacement:
             renderer,
             ScopeOpened(scope=_BOOT, label="boot"),
             RunFinished(arr=Arr.SONARR),
-            _warning("cache.db was written by a newer SeaDexArr"),
+            _warning("cache.db was written by a newer Pearlarr"),
         )
 
-        assert _lines(stream) == ["WARNING  cache.db was written by a newer SeaDexArr"]
+        assert _lines(stream) == ["WARNING  cache.db was written by a newer Pearlarr"]
 
     def test_a_repeat_run_finished_is_a_no_op(self) -> None:
         # A repeat close must not disturb an already-empty frontier (defense in

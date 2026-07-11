@@ -23,7 +23,7 @@ from filelock import FileLock, Timeout
 
 from .output import hub_warn
 
-LOCK_FILENAME = ".seadexarr.lock"
+LOCK_FILENAME = ".pearlarr.lock"
 
 
 @contextlib.contextmanager

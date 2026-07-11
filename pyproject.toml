@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "seadexarr"
+name = "pearlarr"
 version = "1.0.0"
 description = "Automatically grab the best anime releases tagged on SeaDex for your Sonarr and Radarr libraries"
 readme = "README.md"
@@ -66,14 +66,14 @@ dependencies = [
 ]
 
 [project.scripts]
-seadexarr = "seadexarr:seadexarr_cli"
+pearlarr = "pearlarr:pearlarr_cli"
 
-# Keep in step with PROJECT_URL in seadexarr/modules/paths.py (TOML can't import it).
+# Keep in step with PROJECT_URL in pearlarr/modules/paths.py (TOML can't import it).
 [project.urls]
-Homepage = "https://github.com/trevinbrooks/seadexarr"
-Repository = "https://github.com/trevinbrooks/seadexarr"
-Changelog = "https://github.com/trevinbrooks/seadexarr/blob/main/CHANGELOG.md"
-"Bug Reports" = "https://github.com/trevinbrooks/seadexarr/issues"
+Homepage = "https://github.com/trevinbrooks/pearlarr"
+Repository = "https://github.com/trevinbrooks/pearlarr"
+Changelog = "https://github.com/trevinbrooks/pearlarr/blob/main/CHANGELOG.md"
+"Bug Reports" = "https://github.com/trevinbrooks/pearlarr/issues"
 
 # Dev tooling lives in PEP 735 dependency-groups (read natively by uv and pip),
 # so it never ships as a runtime extra. Install with e.g. `uv sync --group dev`.
@@ -105,7 +105,7 @@ dev = [
 # package automatically, so no package-data wiring is needed.
 [tool.hatch.build.targets.sdist]
 include = [
-    "/seadexarr",
+    "/pearlarr",
     "/CHANGELOG.md",
     "/LICENSE",
     "/README.md",
@@ -113,7 +113,7 @@ include = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["seadexarr"]
+packages = ["pearlarr"]
 
 # Point the type checkers at the project virtualenv so third-party imports
 # resolve (pyrefly reads these pyright-compatible settings too). Both the package
@@ -133,7 +133,7 @@ testpaths = ["tests"]
 addopts = ["--strict-markers", "--strict-config", "--import-mode=importlib"]
 markers = [
     "realdata: exercises gitignored real mapping/data files; skipped unless present",
-    "real_data_dir: opts out of the autouse tmp data-dir isolation; reads/manages the real SEADEXARR_DATA_DIR",
+    "real_data_dir: opts out of the autouse tmp data-dir isolation; reads/manages the real PEARLARR_DATA_DIR",
 ]
 # Warnings are errors: a silent resource leak (unclosed sqlite/log handle) or a
 # dependency deprecation must fail the suite, not scroll past. The autouse
@@ -146,8 +146,8 @@ filterwarnings = ["error"]
 # (~78.8%); raise it as the untested I/O adapters / composition root get covered.
 [tool.coverage.run]
 branch = true
-source = ["seadexarr"]
-omit = ["seadexarr/__main__.py"]
+source = ["pearlarr"]
+omit = ["pearlarr/__main__.py"]
 
 [tool.coverage.report]
 fail_under = 78
@@ -255,7 +255,7 @@ select = [
 
 [tool.ruff.lint.isort]
 known-first-party = [
-    "seadexarr",
+    "pearlarr",
 ]
 relative-imports-order = "closest-to-furthest"
 

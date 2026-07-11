@@ -27,12 +27,12 @@ from typing import override
 import pytest
 import qbittorrentapi
 
-from seadexarr.modules.cache import UPDATED_AT_STR_FORMAT
-from seadexarr.modules.config import Arr
-from seadexarr.modules.grab_pipeline import GrabPipeline
-from seadexarr.modules.import_wait import ImportWaitManager, MonitorPass
-from seadexarr.modules.log import LOG_NAME
-from seadexarr.modules.manual_import import (
+from pearlarr.modules.cache import UPDATED_AT_STR_FORMAT
+from pearlarr.modules.config import Arr
+from pearlarr.modules.grab_pipeline import GrabPipeline
+from pearlarr.modules.import_wait import ImportWaitManager, MonitorPass
+from pearlarr.modules.log import LOG_NAME
+from pearlarr.modules.manual_import import (
     ImportProbe,
     ImportProgress,
     ImportReadiness,
@@ -44,11 +44,11 @@ from seadexarr.modules.manual_import import (
     TorrentTelemetry,
     WaitOutcome,
 )
-from seadexarr.modules.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitSnapshot
-from seadexarr.modules.reporter import RunContext
-from seadexarr.modules.run_loop import RunLoop
-from seadexarr.modules.torrents import AddOutcome
-from seadexarr.modules.wait_view import WaitResult, WaitView
+from pearlarr.modules.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitSnapshot
+from pearlarr.modules.reporter import RunContext
+from pearlarr.modules.run_loop import RunLoop
+from pearlarr.modules.torrents import AddOutcome
+from pearlarr.modules.wait_view import WaitResult, WaitView
 
 from .builders import (
     CLIENT_SENTINEL,
@@ -1080,7 +1080,7 @@ class TestRunMonitor:
             strategy=strategy,
             store_records=[pending],
             pending=[pending],
-            post_import_category="seadexarr-done",
+            post_import_category="pearlarr-done",
             import_wait_timeout=60,
             import_ready_timeout=600,
             import_poll_interval=30,
@@ -1810,11 +1810,11 @@ class TestPostImportCategory:
         # The inline snapshot confirms the import -> the torrent moves category
         # BEFORE the record is dropped.
         qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
-        mgr = self._imported_manager(qbit, "seadexarr-done")
+        mgr = self._imported_manager(qbit, "pearlarr-done")
 
         mgr.snapshot_pending_for_series(7)
 
-        assert qbit.set_category_calls == [("seadexarr-done", "h")]
+        assert qbit.set_category_calls == [("pearlarr-done", "h")]
         assert qbit.created_categories == []  # no 409 -> no create
         assert mgr._pending_records() == {}
 
@@ -1829,7 +1829,7 @@ class TestPostImportCategory:
             strategy=strategy,
             store_records=[pending],
             pending=[pending],
-            post_import_category="seadexarr-done",
+            post_import_category="pearlarr-done",
             import_wait_timeout=3600,
             import_ready_timeout=600,
             import_poll_interval=30,
@@ -1840,7 +1840,7 @@ class TestPostImportCategory:
         mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
         assert view.final("h").outcome is Outcome.IMPORTED
-        assert qbit.set_category_calls == [("seadexarr-done", "h")]
+        assert qbit.set_category_calls == [("pearlarr-done", "h")]
 
     def test_missing_torrent_is_not_recategorized(self) -> None:
         # MISSING also drops the record, but only a verified IMPORT moves category.
@@ -1851,7 +1851,7 @@ class TestPostImportCategory:
             strategy=_RecordingStrategy(),
             store_records=[pending],
             pending=[pending],
-            post_import_category="seadexarr-done",
+            post_import_category="pearlarr-done",
             import_wait_timeout=3600,
             import_ready_timeout=600,
             import_poll_interval=30,
@@ -1871,12 +1871,12 @@ class TestPostImportCategory:
             {"h": [FakeTorrent(is_complete=True, content_path="/d")]},
             set_errors=[qbittorrentapi.Conflict409Error("unknown category")],
         )
-        mgr = self._imported_manager(qbit, "seadexarr-done")
+        mgr = self._imported_manager(qbit, "pearlarr-done")
 
         mgr.snapshot_pending_for_series(7)
 
-        assert qbit.created_categories == ["seadexarr-done"]
-        assert qbit.set_category_calls == [("seadexarr-done", "h")]
+        assert qbit.created_categories == ["pearlarr-done"]
+        assert qbit.set_category_calls == [("pearlarr-done", "h")]
 
     def test_client_error_warns_and_import_still_lands(self) -> None:
         # Best-effort: a client error must not undo the import - the record is
@@ -1885,7 +1885,7 @@ class TestPostImportCategory:
             {"h": [FakeTorrent(is_complete=True, content_path="/d")]},
             set_errors=[qbittorrentapi.APIConnectionError("down")],
         )
-        mgr = self._imported_manager(qbit, "seadexarr-done")
+        mgr = self._imported_manager(qbit, "pearlarr-done")
 
         mgr.snapshot_pending_for_series(7)  # must not raise
 
@@ -1909,7 +1909,7 @@ class TestPostImportCategory:
         mgr = make_orchestration_manager(
             qbit=None,
             strategy=_RecordingStrategy(),
-            post_import_category="seadexarr-done",
+            post_import_category="pearlarr-done",
         )
         recording = install_recording_hub()
         mgr.apply_post_import_category("h", "Show S01")  # must not raise
@@ -1924,7 +1924,7 @@ class TestPostImportCategory:
             qbit=qbit,
             strategy=_RecordingStrategy(),
             store_records=[pending_import(infohash="h", series_id=7, added_at=_FRESH)],
-            post_import_category="seadexarr-done",
+            post_import_category="pearlarr-done",
         )
 
         mgr.snapshot_pending_for_series(7)

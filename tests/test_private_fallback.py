@@ -18,13 +18,13 @@ from contextlib import contextmanager
 
 from seadex import EntryRecord, TorrentRecord, Tracker
 
-from seadexarr.modules.config import Arr
-from seadexarr.modules.grab_pipeline import GrabRequest
-from seadexarr.modules.log import EntryState
-from seadexarr.modules.output import EntryDetail, ReleaseSkipped, Severity, SkipReason, install_hub, uninstall_hub
-from seadexarr.modules.output.recording import RecordingHub
-from seadexarr.modules.reporter import NeedsActionKind, RunContext
-from seadexarr.modules.seadex_types import EpisodeRecord, SeadexDict
+from pearlarr.modules.config import Arr
+from pearlarr.modules.grab_pipeline import GrabRequest
+from pearlarr.modules.log import EntryState
+from pearlarr.modules.output import EntryDetail, ReleaseSkipped, Severity, SkipReason, install_hub, uninstall_hub
+from pearlarr.modules.output.recording import RecordingHub
+from pearlarr.modules.reporter import NeedsActionKind, RunContext
+from pearlarr.modules.seadex_types import EpisodeRecord, SeadexDict
 
 from .builders import (
     AddOutcome,

@@ -1,5 +1,5 @@
 # Keep the build context to what the image build needs: the manifests
-# (pyproject.toml, uv.lock, README.md, LICENSE), seadexarr/ and docker/.
+# (pyproject.toml, uv.lock, README.md, LICENSE), pearlarr/ and docker/.
 .git
 .github
 .claude
@@ -15,7 +15,7 @@ coverage.xml
 tests/
 stubs/
 schemas/
-seadexarr.egg-info/
+pearlarr.egg-info/
 *.egg-info/
 __pycache__/
 *.pyc

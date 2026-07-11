@@ -30,11 +30,11 @@ import yaml
 from respx.models import Call
 from seadex import EntryRecord
 
-import seadexarr.modules.run_services as run_services
-import seadexarr.modules.torrents as torrents
-from seadexarr.modules.cli import run_single
-from seadexarr.modules.manual_import import ImportWaitMode
-from seadexarr.modules.output import current_hub
+import pearlarr.modules.run_services as run_services
+import pearlarr.modules.torrents as torrents
+from pearlarr.modules.cli import run_single
+from pearlarr.modules.manual_import import ImportWaitMode
+from pearlarr.modules.output import current_hub
 
 from .builders import make_config, make_entry_record, make_torrent_record
 from .http_mock import register_sonarr_reads, sonarr_fixture
@@ -112,7 +112,7 @@ def test_sonarr_run_drives_real_composition_root(
     # A real config.yml on disk (run_single reads it via resolve_paths): Sonarr creds,
     # qBittorrent unset -> preview, and the one inline tvdb->anilist mapping that lets
     # the REAL resolver resolve a live id with no network (anidb/anibridge disabled).
-    monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
     config = make_config(
         url="http://sonarr.test",
         api_key="testkey",
@@ -246,7 +246,7 @@ def test_radarr_run_drives_real_composition_root(
     # A real config.yml on disk: Radarr creds, qBittorrent unset -> preview, and
     # the one inline tmdb->anilist mapping that lets the REAL resolver resolve a
     # live id with no network (anidb/anibridge disabled).
-    monkeypatch.setenv("SEADEXARR_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
     config = make_config(
         radarr_url="http://radarr.test",
         radarr_api_key="testkey",

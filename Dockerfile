@@ -12,7 +12,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 # README/LICENSE feed hatchling's project metadata.
 COPY README.md LICENSE ./
-COPY seadexarr/ seadexarr/
+COPY pearlarr/ pearlarr/
 RUN uv sync --frozen --no-dev --no-editable
 
 # Supercronic (the runtime scheduler): pinned release, per-arch sha256-verified.
@@ -35,23 +35,23 @@ RUN case "${TARGETARCH}" in \
 
 # Final: the venv, supercronic and the entrypoint on the same slim base.
 FROM python:3.14-slim
-LABEL org.opencontainers.image.source="https://github.com/trevinbrooks/seadexarr"
+LABEL org.opencontainers.image.source="https://github.com/trevinbrooks/pearlarr"
 # tzdata so TZ drives supercronic's local-time schedule; /config pre-created
 # writable so a volume-less or named-volume run works out of the box.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tzdata \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --uid 1000 --user-group --no-create-home seadexarr \
+    && useradd --uid 1000 --user-group --no-create-home pearlarr \
     && mkdir /config \
-    && chown seadexarr:seadexarr /config
+    && chown pearlarr:pearlarr /config
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=supercronic /usr/local/bin/supercronic /usr/local/bin/supercronic
 COPY --chmod=755 docker/entrypoint.sh /entrypoint.sh
-# One mounted volume holds config, caches and logs (see seadexarr paths).
+# One mounted volume holds config, caches and logs (see pearlarr paths).
 # HOME=/tmp is a backstop for arbitrary-uid runs (the run path never needs it).
 ENV PATH="/app/.venv/bin:${PATH}" \
-    SEADEXARR_DATA_DIR=/config \
+    PEARLARR_DATA_DIR=/config \
     HOME=/tmp
-USER seadexarr
-HEALTHCHECK --interval=5m --timeout=30s --start-period=30s CMD ["seadexarr", "paths"]
+USER pearlarr
+HEALTHCHECK --interval=5m --timeout=30s --start-period=30s CMD ["pearlarr", "paths"]
 ENTRYPOINT ["/entrypoint.sh"]
