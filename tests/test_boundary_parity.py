@@ -3,10 +3,10 @@
 
 Pins today's read -> resolve -> re-emit behavior AT THE WIRE so the pydantic
 port cannot change it: golden ManualImport POST bodies across
-``resolve_quality``'s branches (verbatim unknown-key passthrough, the
+`resolve_quality`'s branches (verbatim unknown-key passthrough, the
 dict-falsy empty-quality fallbacks), per-field fail-open folding on
 queue/history records, and the candidate rejections folding. Every test drives
-a REAL client over ``respx`` (no network) - the seams that survive the port
+a REAL client over `respx` (no network) - the seams that survive the port
 unchanged.
 """
 
@@ -33,7 +33,7 @@ _KEY = "testkey"
 
 
 def _make_sonarr_client() -> SonarrClient:
-    """A real ``SonarrClient`` over respx (backoffs stubbed out)."""
+    """A real `SonarrClient` over respx (backoffs stubbed out)."""
 
     return SonarrClient(
         http=ArrHttp.bind(
@@ -48,7 +48,7 @@ def _make_sonarr_client() -> SonarrClient:
 
 
 def _make_radarr() -> RadarrClient:
-    """A real ``RadarrClient`` over respx."""
+    """A real `RadarrClient` over respx."""
 
     return make_radarr_client(
         url="http://radarr.test",
@@ -59,8 +59,8 @@ def _make_radarr() -> RadarrClient:
 
 # --- golden ManualImport POST bodies (resolve_quality branches) ---------------
 #
-# Each test drives ``ImportExecutor.run_manual_import`` end-to-end - raw
-# candidate JSON in, exact ``/api/v3/command`` body out - so the golden pins the
+# Each test drives `ImportExecutor.run_manual_import` end-to-end - raw
+# candidate JSON in, exact `/api/v3/command` body out - so the golden pins the
 # full read -> resolve -> re-emit round-trip at the wire, not the in-memory
 # shapes the port replaces.
 
@@ -95,7 +95,7 @@ def _drive_manual_import(
 
 
 def _golden_body(*, quality: dict[str, object], languages: list[object]) -> dict[str, object]:
-    """The exact expected ``/api/v3/command`` body for the one-file import."""
+    """The exact expected `/api/v3/command` body for the one-file import."""
 
     return {
         "name": "ManualImport",
@@ -126,7 +126,7 @@ _UNKNOWN_QUALITY: dict[str, object] = {
 def test_golden_body_matched_definition_reemits_definition_quality() -> None:
     """A resolved (source, resolution) re-emits the matched definition's nested
     quality VERBATIM (unknown keys included) plus the default revision; a
-    language definition with no id resolves to an explicit ``"id": null``.
+    language definition with no id resolves to an explicit `"id": null`.
     """
 
     definition_quality: dict[str, object] = {
@@ -158,8 +158,8 @@ def test_golden_body_matched_definition_reemits_definition_quality() -> None:
 @respx.mock
 def test_golden_body_no_match_reemits_candidate_verbatim_with_unknown_keys() -> None:
     """With no matching definition, Sonarr's own candidate model is re-emitted
-    verbatim - unknown keys survive at BOTH nesting levels (inside ``quality``
-    and inside ``quality.quality``).
+    verbatim - unknown keys survive at BOTH nesting levels (inside `quality`
+    and inside `quality.quality`).
     """
 
     candidate_quality: dict[str, object] = {
@@ -202,7 +202,7 @@ def test_golden_body_quality_absent_synthesizes_unknown() -> None:
 
 @respx.mock
 def test_golden_body_empty_quality_object_synthesizes_unknown() -> None:
-    """``"quality": {}`` on the candidate is falsy TODAY and must keep
+    """`"quality": {}` on the candidate is falsy TODAY and must keep
     synthesizing Unknown after the port (the dict-falsy -> model-truthy trap at
     the candidate level).
     """
@@ -218,8 +218,8 @@ def test_golden_body_empty_quality_object_synthesizes_unknown() -> None:
 
 @respx.mock
 def test_golden_body_empty_inner_quality_synthesizes_unknown() -> None:
-    """``"quality": {"quality": {}}`` - present model, empty INNER quality - is
-    falsy today in ``resolve_quality``'s fallback tail and must keep
+    """`"quality": {"quality": {}}` - present model, empty INNER quality - is
+    falsy today in `resolve_quality`'s fallback tail and must keep
     synthesizing Unknown after the port (the same trap one level down).
     """
 
@@ -268,7 +268,7 @@ def test_queue_record_folds_junk_per_field_without_dropping_the_record() -> None
 
 @respx.mock
 def test_import_pending_always_classifies_pending_clean() -> None:
-    """Live invariant: EVERY ``importPending`` record - even with a warning
+    """Live invariant: EVERY `importPending` record - even with a warning
     status - classifies as PENDING_CLEAN (wait), never STEP_IN (stepping in
     double-imports).
     """
@@ -297,7 +297,7 @@ def test_import_pending_always_classifies_pending_clean() -> None:
 
 @respx.mock
 def test_history_junk_item_id_folds_to_zero_and_the_record_is_kept() -> None:
-    """A junk ``seriesId`` folds to 0 without dropping the record - a dropped
+    """A junk `seriesId` folds to 0 without dropping the record - a dropped
     record would be a missed dirty-mark and a lagging checkpoint.
     """
 
@@ -326,7 +326,7 @@ def test_history_junk_item_id_folds_to_zero_and_the_record_is_kept() -> None:
 
 @respx.mock
 def test_history_reason_key_resolves_case_insensitively() -> None:
-    """The ``data`` reason key is found regardless of case (nets a naive
+    """The `data` reason key is found regardless of case (nets a naive
     fixed-alias port - an alias cannot do case-insensitivity).
     """
 
@@ -344,8 +344,8 @@ def test_history_reason_key_resolves_case_insensitively() -> None:
 
 @respx.mock
 def test_history_missing_item_id_defaults_to_zero() -> None:
-    """A record with neither ``seriesId`` nor ``movieId`` keeps item_id 0 (the
-    downstream ``item_id <= 0`` drop applies later, never at the parse).
+    """A record with neither `seriesId` nor `movieId` keeps item_id 0 (the
+    downstream `item_id <= 0` drop applies later, never at the parse).
     """
 
     respx.get(f"{_BASE}/history/since").respond(
@@ -359,7 +359,7 @@ def test_history_missing_item_id_defaults_to_zero() -> None:
 
 @respx.mock
 def test_radarr_history_item_id_reads_movie_id_and_junk_folds() -> None:
-    """Radarr's item id comes from ``movieId``; a null one folds to 0 with the
+    """Radarr's item id comes from `movieId`; a null one folds to 0 with the
     record kept (same per-field posture as Sonarr's).
     """
 
@@ -382,8 +382,8 @@ def test_radarr_history_item_id_reads_movie_id_and_junk_folds() -> None:
 @respx.mock
 def test_rejections_fold_strings_and_dicts_and_skip_other_shapes() -> None:
     """One rejections list mixing a bare string (older Sonarr), a proper
-    ``{reason}`` object, a reason-less object, and non-str/non-dict junk: the
-    first three fold to ``ImportRejection``s, the junk entries are skipped.
+    `{reason}` object, a reason-less object, and non-str/non-dict junk: the
+    first three fold to `ImportRejection`s, the junk entries are skipped.
     """
 
     respx.get(f"{_BASE}/manualimport").respond(
@@ -416,9 +416,9 @@ def test_rejections_fold_strings_and_dicts_and_skip_other_shapes() -> None:
 
 @respx.mock
 def test_junk_path_drops_the_candidate_but_keeps_siblings() -> None:
-    """A candidate whose ``path`` is a type lie (non-str) fails validation and
+    """A candidate whose `path` is a type lie (non-str) fails validation and
     is dropped whole (skip + warn); well-formed siblings survive. The old dict
-    walk passed the lie through and crashed later at ``os.path.basename``.
+    walk passed the lie through and crashed later at `os.path.basename`.
     """
 
     respx.get(f"{_BASE}/manualimport").respond(

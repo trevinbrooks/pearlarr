@@ -14,7 +14,7 @@ from rich.traceback import Trace, Traceback
 class CapturedTrace:
     """A traceback extracted once from a live exception; holding it never pins frames.
 
-    ``show_locals=False`` at extraction means frame locals (API keys, webhook URLs)
+    `show_locals=False` at extraction means frame locals (API keys, webhook URLs)
     are never copied out of the frames — the secrets guarantee is structural.
     """
 
@@ -27,7 +27,7 @@ class CapturedTrace:
 
     @classmethod
     def from_exception(cls, exc: BaseException) -> CapturedTrace:
-        """Capture ``exc`` now: a bounded rich trace + the full stdlib plain text."""
+        """Capture `exc` now: a bounded rich trace + the full stdlib plain text."""
 
         trace = Traceback.extract(type(exc), exc, exc.__traceback__, show_locals=False)
         for stack in trace.stacks:

@@ -1,20 +1,20 @@
 """The rich console's wait cockpit region, event-driven (PR5).
 
-The machinery that was ``wait_view.LiveWaitView`` now lives behind the hub:
-:class:`WaitRegion` is driven by :class:`~.rich_renderer.RichRenderer`'s
-exhaustive match and owns the single self-animating ``rich.Live`` cockpit
-(:class:`_FrameAnchor`/:class:`_LiveFrame`/:class:`_TableLayout` + the
+The machinery that was `wait_view.LiveWaitView` now lives behind the hub:
+`WaitRegion` is driven by `rich_renderer.RichRenderer`'s
+exhaustive match and owns the single self-animating `rich.Live` cockpit
+(`_FrameAnchor`/`_LiveFrame`/`_TableLayout` + the
 anchor-advance timer trick), the graduation of finished torrents to durable
 scrollback lines, and the closing tally. On a live-capable console
-``WaitProgress`` feeds the cockpit; a non-live console degrades the way
-``LogWaitView`` did - a start line + throttled aggregate pulses, no Live. Under
+`WaitProgress` feeds the cockpit; a non-live console degrades the way
+`LogWaitView` did - a start line + throttled aggregate pulses, no Live. Under
 plain/json there is no rich console and every event no-ops (the hub's text
 sinks carry those surfaces).
 
-The durable lines here come from the shared :mod:`.wait_lines` builders and
-render through :func:`~.scan_lines.render_legacy_lines`, LOGGER-parity gated
+The durable lines here come from the shared `wait_lines` builders and
+render through `scan_lines.render_legacy_lines`, LOGGER-parity gated
 per line's own level. The single Live slot is
-torn down by :meth:`section_left` when the wait region leaves the renderer's
+torn down by `section_left` when the wait region leaves the renderer's
 fold frontier (whatever event evicted it), so later output never lands under a
 stale region.
 """
@@ -60,7 +60,7 @@ from ..log import INDENT, indent_string
 class _FrameAnchor:
     """The last snapshot the producer pushed + the monotonic instant it was pushed.
 
-    Swapped atomically by :meth:`WaitRegion._advance_frame` and read by the
+    Swapped atomically by `WaitRegion._advance_frame` and read by the
     refresh thread, so a render pairs the latest snapshot with the time to roll
     it forward.
     """
@@ -74,8 +74,8 @@ class _TableLayout:
     """The width-derived column plan for the cockpit table.
 
     A pure function of the terminal width, so it's computed once at Live start
-    and read by both the column setup (``_body``) and the per-row cell builder
-    (``_row_cells``) - the two sides can't disagree per frame.
+    and read by both the column setup (`_body`) and the per-row cell builder
+    (`_row_cells`) - the two sides can't disagree per frame.
     """
 
     bar_width: int
@@ -93,7 +93,7 @@ class _TableLayout:
 
 @final
 class _LiveFrame:
-    """A self-recomputing renderable for :class:`WaitRegion`'s ``rich.Live``.
+    """A self-recomputing renderable for `WaitRegion`'s `rich.Live`.
 
     rich re-renders this on its background refresh thread, so it rebuilds the
     frame from the region's current anchor each tick - ticking timers and
@@ -137,10 +137,10 @@ class WaitRegion(LiveRegion):
     Durable lines (start, pulses, graduations, tally) print the moment their
     event arrives - they reflow ABOVE the transient cockpit via the shared
     Console lock, exactly like the PR2 diagnostics. The Live is torn down by
-    :meth:`section_left` when the renderer's fold evicts the wait-region node
-    (whatever event evicted it), by a new pass's ``WaitStarted`` reset - the
+    `section_left` when the renderer's fold evicts the wait-region node
+    (whatever event evicted it), by a new pass's `WaitStarted` reset - the
     load-bearing route when back-to-back passes replace the frontier node in
-    one fold step - and defensively by ``begin_cycle``/``close``.
+    one fold step - and defensively by `begin_cycle`/`close`.
     """
 
     # The frame snapshot the refresh thread reads: caps/layout are set once at
@@ -236,7 +236,7 @@ class WaitRegion(LiveRegion):
     def _collect_frame_failure(self) -> None:
         """Report a latched refresh-thread render failure, from the MAIN thread.
 
-        A file-only WARNING through the hub (``_report_contained``): mid-dispatch
+        A file-only WARNING through the hub (`_report_contained`): mid-dispatch
         it enqueues under the baton and lands in the file — never the refresh
         thread, and never silently dropped at a logger level gate.
         """
@@ -262,9 +262,9 @@ class WaitRegion(LiveRegion):
     def _current_group(self) -> Group:
         """Build the frame for the CURRENT instant - ticks timers + spinner forward.
 
-        Called on each of rich's refresh ticks (via :class:`_LiveFrame`). Rolls the
+        Called on each of rich's refresh ticks (via `_LiveFrame`). Rolls the
         last pushed snapshot's elapsed clocks forward by the time since it was
-        pushed, so the timers advance between polls; the pure :func:`live_model`
+        pushed, so the timers advance between polls; the pure `live_model`
         reducer still sees explicit elapsed values (no clock of its own).
         """
 
@@ -276,7 +276,7 @@ class WaitRegion(LiveRegion):
 
     @staticmethod
     def _advance(snapshot: WaitSnapshot, offset: float) -> WaitSnapshot:
-        """The snapshot with its in-flight elapsed clocks rolled forward by ``offset``."""
+        """The snapshot with its in-flight elapsed clocks rolled forward by `offset`."""
 
         if offset <= 0.0:
             return snapshot

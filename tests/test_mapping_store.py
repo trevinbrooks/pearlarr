@@ -1,5 +1,5 @@
 # pyright: strict
-"""Unit tests for ``MappingStore``: the freshness gate, atomic populate, schema
+"""Unit tests for `MappingStore`: the freshness gate, atomic populate, schema
 rebuild on version change, corruption fail-open, and cross-open durability.
 
 These pin the guarantees the parse-once-per-download cache relies on - in

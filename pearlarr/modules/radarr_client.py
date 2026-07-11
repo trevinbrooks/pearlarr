@@ -20,17 +20,17 @@ def make_radarr_client(
     api_key: str,
     http: httpx.Client,
 ) -> "RadarrClient":
-    """Build a :class:`RadarrClient` from the shared client and a url/key.
+    """Build a `RadarrClient` from the shared client and a url/key.
 
     Hoisted so the two Arr strategies share one construction site (and the one
-    ``label="Radarr"`` bind). The url/key lookup policy stays with each caller
+    `label="Radarr"` bind). The url/key lookup policy stays with each caller
     (Radarr requires them, Sonarr reads them optionally for its cross-check), so
     they're passed in already resolved rather than re-derived here.
 
     Args:
-        url (str): Radarr base URL.
-        api_key (str): Radarr API key.
-        http (httpx.Client): The run's shared client for the raw endpoints.
+        url: Radarr base URL.
+        api_key: Radarr API key.
+        http: The run's shared client for the raw endpoints.
     """
 
     return RadarrClient(
@@ -41,11 +41,11 @@ def make_radarr_client(
 class AbstractRadarrClient(ABC):
     """The Radarr read surface the Radarr syncer consumes.
 
-    The nominal seam mirroring :class:`~.sonarr_client.AbstractSonarrClient`:
-    the strategy and ``collect_anime_movies`` take this type, so tests inject a
+    The nominal seam mirroring `sonarr_client.AbstractSonarrClient`:
+    the strategy and `collect_anime_movies` take this type, so tests inject a
     subclassed fake that is statically checked against the real client's
-    surface (a missing method is a ``reportAbstractUsage`` error, not a
-    silently-absorbed ``Any``).
+    surface (a missing method is a `reportAbstractUsage` error, not a
+    silently-absorbed `Any`).
     """
 
     @abstractmethod
@@ -54,11 +54,11 @@ class AbstractRadarrClient(ABC):
 
     @abstractmethod
     def movie_files(self, movie_id: int) -> list[MovieFile]:
-        """Movie-file records for a movie (``/api/v3/moviefile``)."""
+        """Movie-file records for a movie (`/api/v3/moviefile`)."""
 
     @abstractmethod
     def history_since(self, date: str) -> list[HistoryRecord] | None:
-        """History records since ``date`` (``/api/v3/history/since``)."""
+        """History records since `date` (`/api/v3/history/since`)."""
 
 
 class RadarrClient(AbstractRadarrClient):
@@ -74,19 +74,19 @@ class RadarrClient(AbstractRadarrClient):
         its own, so it holds no logger at all.
 
         Args:
-            http (ArrHttp): The transport already bound to Radarr's url + key
-                (:func:`make_radarr_client` does the ``label="Radarr"`` bind).
+            http: The transport already bound to Radarr's url + key
+                (`make_radarr_client` does the `label="Radarr"` bind).
         """
 
         self._http = http
 
     @override
     def all_movies(self) -> list[RadarrItem]:
-        """Every movie in Radarr (``/api/v3/movie``, unfiltered).
+        """Every movie in Radarr (`/api/v3/movie`, unfiltered).
 
         The one fail-CLOSED read: the library list is the run's ground truth
         (an outage reading as an empty library would silently no-op the leg),
-        so a failure raises the typed :mod:`~.arr_http` errors for the CLI
+        so a failure raises the typed `arr_http` errors for the CLI
         containment arms instead of degrading to an empty list.
         """
 
@@ -97,9 +97,9 @@ class RadarrClient(AbstractRadarrClient):
 
     @override
     def movie_files(self, movie_id: int) -> list[MovieFile]:
-        """Movie-file records for a movie (``/api/v3/moviefile``).
+        """Movie-file records for a movie (`/api/v3/moviefile`).
 
-        Each ``MovieFileResource`` is parsed into a :class:`~.seadex_types.MovieFile`
+        Each `MovieFileResource` is parsed into a `seadex_types.MovieFile`
         view at this client boundary.
 
         Returns an empty list (with a warning) on a non-200 or a transient request
@@ -107,7 +107,7 @@ class RadarrClient(AbstractRadarrClient):
         files" instead of unwinding the run.
 
         Args:
-            movie_id (int): ID for the movie in Radarr.
+            movie_id: ID for the movie in Radarr.
         """
 
         raw = self._http.get_json_list(
@@ -123,7 +123,7 @@ class RadarrClient(AbstractRadarrClient):
 
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:
-        """History since ``date``, or None on failure (fail-open; shared helper)."""
+        """History since `date`, or None on failure (fail-open; shared helper)."""
 
         return self._http.history_since(
             date,
@@ -136,7 +136,7 @@ class IdField:
     """One id space to filter an Arr library by.
 
     Pairs the Kometa Anime-IDs map key with the live Arr item attribute that
-    holds the same id, so ``collect_anime_items`` matches each item against the
+    holds the same id, so `collect_anime_items` matches each item against the
     candidate set built for that id space.
     """
 
@@ -158,9 +158,9 @@ class IdFilter(NamedTuple):
 
 
 class AnimeIdSets(Protocol):
-    """The slice of ``MappingResolver`` the library filter needs.
+    """The slice of `MappingResolver` the library filter needs.
 
-    A structural type so this module needn't import ``MappingResolver`` (which
+    A structural type so this module needn't import `MappingResolver` (which
     imports this one). Supplies the DISTINCT Anime-IDs id set for a given column.
     """
 
@@ -174,18 +174,18 @@ def collect_anime_items[ItemT: ArrItem](
     """Arr library items that have an AniList mapping, sorted by title.
 
     Per filter, unions the precomputed Anime-IDs and AniBridge candidate sets
-    (the Anime-IDs sets come from ``MappingResolver.anime_id_set``, no longer a
+    (the Anime-IDs sets come from `MappingResolver.anime_id_set`, no longer a
     scan of the full map), then keeps each item that matches at least one id
     space.
 
-    Generic in ``ItemT`` (a :class:`~.seadex_types.SonarrItem` /
-    :class:`~.seadex_types.RadarrItem`), so the filtered list returns the same
+    Generic in `ItemT` (a `seadex_types.SonarrItem` /
+    `seadex_types.RadarrItem`), so the filtered list returns the same
     concrete item type the caller fetched.
 
     Args:
-        list_fn (Callable[[], list[ItemT]]): Returns the unfiltered Arr item list.
-        filters (tuple[IdFilter, ...]): Id spaces to filter by, in order, each
-            carrying its own candidate sets (pass ``set()`` for a disabled source).
+        list_fn: Returns the unfiltered Arr item list.
+        filters: Id spaces to filter by, in order, each
+            carrying its own candidate sets (pass `set()` for a disabled source).
     """
 
     # One candidate set per id space: the two sources' sets unioned.
@@ -221,14 +221,14 @@ def collect_anime_movies(
 
     Gathers the candidate TMDB/IMDb id sets from the two mapping sources, then
     keeps each Radarr movie that matches one of them. Shared by
-    ``RadarrSync.get_all_radarr_movies`` and Sonarr's ``ignore_movies_in_radarr``
+    `RadarrSync.get_all_radarr_movies` and Sonarr's `ignore_movies_in_radarr`
     path.
 
     Args:
-        radarr_client (RadarrClient): Client to fetch the movie list from.
-        mappings (AnimeIdSets): Resolver exposing ``anime_id_set(column)`` for the
+        radarr_client: Client to fetch the movie list from.
+        mappings: Resolver exposing `anime_id_set(column)` for the
             Anime-IDs candidate sets.
-        anibridge (AniBridge | None): AniBridge view, exposing ``id_set(mapping_key)``
+        anibridge: AniBridge view, exposing `id_set(mapping_key)`
             for its precomputed candidate sets.
     """
 

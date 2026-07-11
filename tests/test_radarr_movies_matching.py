@@ -1,10 +1,10 @@
 # pyright: strict
-"""Truth table for ``radarr_movies_matching`` (the ignore_movies_in_radarr check).
+"""Truth table for `radarr_movies_matching` (the ignore_movies_in_radarr check).
 
-The season-0 gate + id-match loop extracted from ``SonarrSync.process_al_id``:
+The season-0 gate + id-match loop extracted from `SonarrSync.process_al_id`:
 only a specials (season-0) mapping can match a Radarr movie, an unset mapping id
-never matches (the ``is not None`` guards make None == None a non-match), and a
-movie matching on both ids appears once. ``process_al_id`` keeps the outer
+never matches (the `is not None` guards make None == None a non-match), and a
+movie matching on both ids appears once. `process_al_id` keeps the outer
 feature guard and the skip logging; this pins the matching itself.
 """
 
@@ -53,8 +53,8 @@ def test_a_movie_matching_both_ids_appears_once() -> None:
 def test_unset_mapping_ids_never_match() -> None:
     """Mapping ids of None match nothing - None == None is NOT a match.
 
-    Pins the ``is not None`` guards: a movie whose ``imdbId`` is also None (and
-    one carrying the ``tmdbId=0`` model default) must not pair with an id-less
+    Pins the `is not None` guards: a movie whose `imdbId` is also None (and
+    one carrying the `tmdbId=0` model default) must not pair with an id-less
     mapping, or every id-less special would "already be in Radarr".
     """
 

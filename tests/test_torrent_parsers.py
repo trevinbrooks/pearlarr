@@ -1,10 +1,10 @@
 # pyright: strict
-"""Direct tests for the tracker HTML/feed parsers in ``torrent``.
+"""Direct tests for the tracker HTML/feed parsers in `torrent`.
 
-The three ``get_*_torrent`` helpers scrape a release page (and, for AnimeTosho,
-a JSON feed) into ``(download_url, title)``. AnimeTosho and RuTracker take an
-``httpx.Client``, so they are driven with saved HTML fixtures over a
-``respx``-mocked boundary; Nyaa uses ``pynyaa`` (its own httpx client), so its
+The three `get_*_torrent` helpers scrape a release page (and, for AnimeTosho,
+a JSON feed) into `(download_url, title)`. AnimeTosho and RuTracker take an
+`httpx.Client`, so they are driven with saved HTML fixtures over a
+`respx`-mocked boundary; Nyaa uses `pynyaa` (its own httpx client), so its
 module-level session is swapped for a typed stub. The documented error raises
 are exercised alongside the success paths; the 5xx paths stub the retry
 helper's backoff sleep so retry exhaustion doesn't wait for real.
@@ -43,8 +43,8 @@ def _torrent_fixture(name: str) -> str:
 def _stub_retry_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     """Re-point the parsers' retry helper at a no-sleep twin.
 
-    A 5xx response is transient, so ``get_with_retries`` retries it with real
-    backoff sleeps; the retry policy itself is pinned in ``test_web_client``,
+    A 5xx response is transient, so `get_with_retries` retries it with real
+    backoff sleeps; the retry policy itself is pinned in `test_web_client`,
     so these tests only need the exhausted response, not the waits.
     """
 
@@ -58,14 +58,14 @@ def _stub_retry_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _StubNyaaTorrent:
-    """The ``.torrent`` sub-object pynyaa exposes (only ``.url`` is read)."""
+    """The `.torrent` sub-object pynyaa exposes (only `.url` is read)."""
 
     def __init__(self, url: str) -> None:
         self.url = url
 
 
 class _StubNyaaRelease:
-    """A pynyaa release: ``.torrent.url`` (download link) + ``.title``."""
+    """A pynyaa release: `.torrent.url` (download link) + `.title`."""
 
     def __init__(self, torrent_url: str, title: str) -> None:
         self.torrent = _StubNyaaTorrent(torrent_url)
@@ -73,7 +73,7 @@ class _StubNyaaRelease:
 
 
 class _StubNyaa:
-    """Stand-in for ``pynyaa.Nyaa`` recording the URL it was asked to fetch."""
+    """Stand-in for `pynyaa.Nyaa` recording the URL it was asked to fetch."""
 
     def __init__(self, release: _StubNyaaRelease) -> None:
         self._release = release
@@ -85,7 +85,7 @@ class _StubNyaa:
 
 
 def test_get_nyaa_torrent_returns_download_and_title(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The Nyaa parser returns ``(release.torrent.url, release.title)`` verbatim."""
+    """The Nyaa parser returns `(release.torrent.url, release.title)` verbatim."""
 
     release = _StubNyaaRelease(
         torrent_url="https://nyaa.si/download/1.torrent",
@@ -105,8 +105,8 @@ def test_get_nyaa_torrent_returns_download_and_title(monkeypatch: pytest.MonkeyP
 
 @respx.mock
 def test_get_animetosho_torrent_success() -> None:
-    """The scraped page title plus the feed entry whose ``link`` matches the URL
-    yield ``(torrent_url, title)``.
+    """The scraped page title plus the feed entry whose `link` matches the URL
+    yield `(torrent_url, title)`.
     """
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
@@ -126,8 +126,8 @@ def test_get_animetosho_torrent_success() -> None:
 
 @respx.mock
 def test_get_animetosho_torrent_no_feed_match_returns_none_url() -> None:
-    """When no feed entry's ``link`` matches the page URL, the download URL is
-    ``None`` but the scraped title is still returned.
+    """When no feed entry's `link` matches the page URL, the download URL is
+    `None` but the scraped title is still returned.
     """
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
@@ -144,7 +144,7 @@ def test_get_animetosho_torrent_no_feed_match_returns_none_url() -> None:
 
 @respx.mock
 def test_get_animetosho_torrent_non_str_url_folds_to_none() -> None:
-    """A matching feed entry with a junk (non-str) ``torrent_url`` yields ``None``
+    """A matching feed entry with a junk (non-str) `torrent_url` yields `None`
     instead of leaking the junk value downstream as a fake download URL.
     """
 
@@ -160,7 +160,7 @@ def test_get_animetosho_torrent_non_str_url_folds_to_none() -> None:
 
 @respx.mock
 def test_get_animetosho_torrent_missing_title_raises() -> None:
-    """A page with no ``<h2 id="title">`` raises before the feed is queried."""
+    """A page with no `<h2 id="title">` raises before the feed is queried."""
 
     page_url = "https://animetosho.org/view/no-title.1"
 
@@ -171,7 +171,7 @@ def test_get_animetosho_torrent_missing_title_raises() -> None:
 
 @respx.mock
 def test_get_animetosho_torrent_two_titles_raises() -> None:
-    """A page with more than one ``<h2 id="title">`` is ambiguous and raises."""
+    """A page with more than one `<h2 id="title">` is ambiguous and raises."""
 
     page_url = "https://animetosho.org/view/two-titles.1"
 
@@ -183,7 +183,7 @@ def test_get_animetosho_torrent_two_titles_raises() -> None:
 @respx.mock
 def test_get_animetosho_torrent_http_500_raises_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """A 5xx page (still 5xx once the transient retries run out) raises
-    ``HTTPStatusError`` (a contained grab failure) instead of scraping the
+    `HTTPStatusError` (a contained grab failure) instead of scraping the
     error body into a misleading "no title" parse error."""
 
     _stub_retry_sleep(monkeypatch)
@@ -197,7 +197,7 @@ def test_get_animetosho_torrent_http_500_raises_http_error(monkeypatch: pytest.M
 @respx.mock
 def test_get_animetosho_torrent_non_json_feed_is_a_parse_error() -> None:
     """An HTML error body from the feed (HTTP 200 but not JSON) surfaces as a
-    ``TorrentParseError`` naming the feed URL, not a raw ``JSONDecodeError``."""
+    `TorrentParseError` naming the feed URL, not a raw `JSONDecodeError`."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
 
@@ -210,7 +210,7 @@ def test_get_animetosho_torrent_non_json_feed_is_a_parse_error() -> None:
 @respx.mock
 def test_get_animetosho_torrent_non_list_json_is_a_parse_error() -> None:
     """A JSON error OBJECT from the feed (rate limit / API error) surfaces as a
-    ``TorrentParseError``, not an AttributeError from iterating its keys."""
+    `TorrentParseError`, not an AttributeError from iterating its keys."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
 
@@ -226,7 +226,7 @@ def test_get_animetosho_torrent_non_list_json_is_a_parse_error() -> None:
 @respx.mock
 def test_get_rutracker_torrent_builds_magnet() -> None:
     """The RuTracker parser scrapes the maintitle and builds the magnet from the
-    hash, the fixed announce, and the title as ``dn``.
+    hash, the fixed announce, and the title as `dn`.
     """
 
     url = "https://rutracker.org/forum/viewtopic.php?t=1234567"
@@ -243,7 +243,7 @@ def test_get_rutracker_torrent_builds_magnet() -> None:
 
 @respx.mock
 def test_get_rutracker_torrent_missing_title_raises() -> None:
-    """A page with no ``h1.maintitle`` raises."""
+    """A page with no `h1.maintitle` raises."""
 
     url = "https://rutracker.org/forum/viewtopic.php?t=7654321"
 
@@ -254,7 +254,7 @@ def test_get_rutracker_torrent_missing_title_raises() -> None:
 
 @respx.mock
 def test_get_rutracker_torrent_http_500_raises_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 5xx topic page raises ``HTTPStatusError`` rather than a misleading parse error."""
+    """A 5xx topic page raises `HTTPStatusError` rather than a misleading parse error."""
 
     _stub_retry_sleep(monkeypatch)
     url = "https://rutracker.org/forum/viewtopic.php?t=1234567"

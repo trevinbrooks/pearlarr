@@ -2,11 +2,11 @@
 # pyright: reportPrivateUsage=false
 # These read the hub's private run context (run._ctx); strict re-flags that and
 # the repo disables reportPrivateUsage for tests.
-"""The cached-entry short-circuit (``RunServices.cached_entry_skip``).
+"""The cached-entry short-circuit (`RunServices.cached_entry_skip`).
 
-Pins the skip decision after it was folded onto a single ``CacheStore.get_entry``
-read (was a ``check_al_id_in_cache`` + a per-field ``get_cached_field``): a cached
-entry whose SeaDex ``updated_at`` still matches is skipped (and its url/coverage
+Pins the skip decision after it was folded onto a single `CacheStore.get_entry`
+read (was a `check_al_id_in_cache` + a per-field `get_cached_field`): a cached
+entry whose SeaDex `updated_at` still matches is skipped (and its url/coverage
 backfilled once if the record predates those fields); an absent or stale entry is
 re-processed.
 """
@@ -22,7 +22,7 @@ from .builders import FakeCacheStore, FakeSeaDexSource, make_entry_record, make_
 
 
 class _RecordingReporter:
-    """Records ``log_cached_entry`` calls, so the cross-arr param is asserted on
+    """Records `log_cached_entry` calls, so the cross-arr param is asserted on
     recorded state."""
 
     def __init__(self) -> None:
@@ -161,20 +161,20 @@ class TestFallbackSatisfiedResurfacing:
 
 
 class _CtxBind:
-    """A no-op ctx-bind collaborator for driving ``begin_run`` on a bare hub."""
+    """A no-op ctx-bind collaborator for driving `begin_run` on a bare hub."""
 
     def begin_run(self, ctx: RunContext) -> None:
         del ctx
 
 
 class TestCrossArrLookupHonorsParam:
-    """``check_al_id_in_cache`` / ``log_cached_entry`` read the ``arr`` PARAMETER,
-    never ``self._ctx.arr``.
+    """`check_al_id_in_cache` / `log_cached_entry` read the `arr` PARAMETER,
+    never `self._ctx.arr`.
 
-    The run-arr consolidation drops ``arr`` from methods that only ever act on the
+    The run-arr consolidation drops `arr` from methods that only ever act on the
     run's own arr, but these two stay parameterised because the Sonarr run's
-    ``ignore_movies_in_radarr`` dedup calls them with ``Arr.RADARR`` to hit the
-    Radarr cache while ``ctx.arr`` is SONARR. If either ever read ``ctx.arr``
+    `ignore_movies_in_radarr` dedup calls them with `Arr.RADARR` to hit the
+    Radarr cache while `ctx.arr` is SONARR. If either ever read `ctx.arr`
     instead of the param, that cross-arr check silently reads the wrong cache -
     a regression the all-SONARR tests above physically cannot catch.
     """

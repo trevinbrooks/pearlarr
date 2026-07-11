@@ -26,11 +26,11 @@ if TYPE_CHECKING:
 class FilterResult(NamedTuple):
     """The applied download plan, as the strategies consume it.
 
-    The strategy-facing slice of the planner's :class:`~.planner.PlanResult`:
+    The strategy-facing slice of the planner's `PlanResult`:
     the unique hashes to remember in the cache record (None for a hash-less
-    private torrent) plus the same ``seadex_dict`` annotated in place with
-    per-url ``download`` flags. The plan's skip outcome is not carried - it is
-    folded onto the run context here, in ``filter_downloads``.
+    private torrent) plus the same `seadex_dict` annotated in place with
+    per-url `download` flags. The plan's skip outcome is not carried - it is
+    folded onto the run context here, in `filter_downloads`.
     """
 
     torrent_hashes: list[str | None]
@@ -40,7 +40,7 @@ class FilterResult(NamedTuple):
 def _is_public_torrent(torrent: TorrentRecord) -> bool:
     """Whether a torrent is on a public tracker (the run's is_public computation).
 
-    ``PRIVATE_TRACKERS`` is read at call time, so the characterization tests can
+    `PRIVATE_TRACKERS` is read at call time, so the characterization tests can
     pin it on this module.
     """
 
@@ -48,13 +48,13 @@ def _is_public_torrent(torrent: TorrentRecord) -> bool:
 
 
 class SeadexReleaseFilter:
-    """Turns a SeaDex ``EntryRecord`` into the run's filtered/ranked release dict.
+    """Turns a SeaDex `EntryRecord` into the run's filtered/ranked release dict.
 
-    Owns no per-run caches; it binds the run :class:`RunContext` (``begin_run``)
-    only so ``filter_downloads`` can stamp the private-only skip flags the grab tail
-    later reads. :class:`~.run_services.RunServices` keeps same-named thin
-    delegators (``get_seadex_dict`` / ``filter_seadex_interactive`` /
-    ``filter_seadex_downloads``) forwarding here, so the strategy<->services
+    Owns no per-run caches; it binds the run `RunContext` (`begin_run`)
+    only so `filter_downloads` can stamp the private-only skip flags the grab tail
+    later reads. `RunServices` keeps same-named thin
+    delegators (`get_seadex_dict` / `filter_seadex_interactive` /
+    `filter_seadex_downloads`) forwarding here, so the strategy<->services
     contract is unchanged.
     """
 
@@ -75,7 +75,7 @@ class SeadexReleaseFilter:
         self._ctx = ctx
 
     def begin_run(self, ctx: RunContext) -> None:
-        """Bind the run context ``filter_downloads`` stamps private-only flags onto."""
+        """Bind the run context `filter_downloads` stamps private-only flags onto."""
 
         self._ctx = ctx
 
@@ -179,8 +179,8 @@ class SeadexReleaseFilter:
         """Narrow one candidate pool via the want_best -> audio-preference cascade.
 
         Each cut only applies when it leaves at least one torrent: narrow to
-        'best'-tagged releases (when ``want_best``), then to the preferred audio
-        (dual when ``prefer_dual_audio``, else single).
+        'best'-tagged releases (when `want_best`), then to the preferred audio
+        (dual when `prefer_dual_audio`, else single).
         """
 
         best = [t for t in torrents if t.is_best]
@@ -272,7 +272,7 @@ class SeadexReleaseFilter:
     ) -> FilterResult:
         """Flip the switch on whether we're downloading each torrent or not.
 
-        Thin orchestrator seam over the :class:`DownloadPlanner`: pass it the
+        Thin orchestrator seam over the `DownloadPlanner`: pass it the
         entry's cached hashes, then apply the plan's private-only skip outcome back
         onto the run context the grab/cache tail still reads (the SkipNotice log
         lines, the private_only_skipped flag, and the skipped group names).

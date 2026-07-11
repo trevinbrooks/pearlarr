@@ -1,10 +1,10 @@
 """The download-decision engine: which SeaDex releases to grab.
 
-``DownloadPlanner`` is near-pure: it consumes the shaped ``seadex_dict``, the
+`DownloadPlanner` is near-pure: it consumes the shaped `seadex_dict`, the
 Arr's current release info, an optional episode list, and the cached torrent
-hashes, and returns a :class:`PlanResult`. It flips the per-url ``download``
-flags in place and reports *what to log* (``skip_notices``) and *what was skipped
-for being private-only* (``private_only_*``) as data, rather than reaching into
+hashes, and returns a `PlanResult`. It flips the per-url `download`
+flags in place and reports *what to log* (`skip_notices`) and *what was skipped
+for being private-only* (`private_only_*`) as data, rather than reaching into
 the orchestrator's run state or its log formatter.
 """
 
@@ -33,7 +33,7 @@ from .seadex_types import (
 class SkipNotice:
     """A release dropped for being private, for the caller to log.
 
-    Rendered by the orchestrator as ``"<groups> <reason>"`` on a ``skipped``
+    Rendered by the orchestrator as `"<groups> <reason>"` on a `skipped`
     detail line, replacing the inline detail call this used to make from
     deep inside the decision engine. A warn-and-hold skip logs at WARNING; a
     drop covered by a public fallback logs at INFO.
@@ -46,14 +46,14 @@ class SkipNotice:
 
 @dataclass
 class PrivateOnlySkips:
-    """The private-only skip outcome of ``reduce_overlapping_downloads``.
+    """The private-only skip outcome of `reduce_overlapping_downloads`.
 
-    ``skipped`` is True when at least one set of same-files release groups was
+    `skipped` is True when at least one set of same-files release groups was
     dropped because none were available publicly and no public fallback
-    covered the same files; ``groups`` names them (for the run summary) and
-    ``notices`` is what to log. ``stale_held`` marks a hold where the Arr owns
+    covered the same files; `groups` names them (for the run summary) and
+    `notices` is what to log. `stale_held` marks a hold where the Arr owns
     the preferred private release at a stale size and only a fallback could
-    stand in (a fallback never replaces an owned copy). ``fallback_covered``
+    stand in (a fallback never replaces an owned copy). `fallback_covered`
     marks the owned-fallback soft-skip (the Arr genuinely owns a public
     fallback's files), which drives the cache's fallback-satisfied marker.
     """
@@ -69,8 +69,8 @@ class PrivateOnlySkips:
 class PlanResult:
     """The download-decision engine's output.
 
-    ``seadex_dict`` is the same dict passed in, annotated in place with per-url
-    ``download`` flags. ``torrent_hashes`` is the unique set to remember in the
+    `seadex_dict` is the same dict passed in, annotated in place with per-url
+    `download` flags. `torrent_hashes` is the unique set to remember in the
     cache record. The remaining fields surface the private-only skip outcome so
     the orchestrator can log it, name it in the summary, and decide whether to
     cache the title as done.
@@ -94,13 +94,13 @@ class PlanResult:
 def normalize_rg(name: str | None) -> str | None:
     """Normalize a release group name for comparison
 
-    Delegates to :func:`~.manual_import.normalize_group` (strip whitespace and
+    Delegates to `normalize_group` (strip whitespace and
     wrapping dashes, casefold) so the grab-time filter and the import-time
     never-overwrite check share ONE normalization; this wrapper only adds the
     None-tolerance. Returns None for a missing/blank name.
 
     Args:
-        name (str | None): Release group name
+        name: Release group name
     """
 
     if not name:
@@ -109,7 +109,7 @@ def normalize_rg(name: str | None) -> str | None:
 
 
 def _render_groups(groups: Iterable[str | None]) -> str:
-    """Comma-join release group names for a log line, rendering None as ``(none)``."""
+    """Comma-join release group names for a log line, rendering None as `(none)`."""
 
     return ", ".join(rg or "(none)" for rg in groups)
 
@@ -124,7 +124,7 @@ def get_episode_keys(
     what files they cover.
 
     Args:
-        all_episodes (iterable): Parsed episode dicts with "season"/"episode"
+        all_episodes: Parsed episode dicts with "season"/"episode"
     """
 
     return {(ep.season, ep.episode) for ep in all_episodes}
@@ -147,7 +147,7 @@ def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
     silently drop content. Returns a list of lists of release group names.
 
     Args:
-        seadex_dict (dict): Dictionary of SeaDex releases
+        seadex_dict: Dictionary of SeaDex releases
     """
 
     # The grouping key is one of three shapes: a shared "all cover one movie"
@@ -258,9 +258,9 @@ def get_all_seadex_rgs_per_episode(
 class _MatchContext:
     """Per-entry invariants for the URL match loop.
 
-    Computed once per entry in ``filter_by_release_group`` and shared by both
+    Computed once per entry in `filter_by_release_group` and shared by both
     per-URL matchers; nothing here changes inside the loop (only each
-    ``url_item``'s ``download``/``size_mismatch`` flags flip).
+    `url_item`'s `download`/`size_mismatch` flags flip).
     """
 
     arr_release_dict: ArrReleaseDict
@@ -279,10 +279,10 @@ class DownloadPlanner:
 
     Constructed once per Arr run with the arr it plans for and the two config
     flags it consults; every decision method takes the already-shaped
-    ``seadex_dict`` plus the Arr's release info as arguments and returns a
-    :class:`PlanResult`. The planner keeps a logger only for the per-release
+    `seadex_dict` plus the Arr's release info as arguments and returns a
+    `PlanResult`. The planner keeps a logger only for the per-release
     debug breadcrumbs; the user-facing private-only skip is returned as a
-    :class:`SkipNotice`, never logged here.
+    `SkipNotice`, never logged here.
     """
 
     def __init__(
@@ -528,7 +528,7 @@ class DownloadPlanner:
     ) -> None:
         """Decide a single url with no parsed episodes, by release group + size.
 
-        Flips ``url_item.download`` in place. The blunt fallback used for
+        Flips `url_item.download` in place. The blunt fallback used for
         Radarr and weirdly named TV: if the group isn't in the Arr's releases
         (and nothing overlaps) grab it; if it is, grab it only when the file
         sizes are disjoint.
@@ -591,7 +591,7 @@ class DownloadPlanner:
     ) -> None:
         """Decide a single url against its parsed episodes, per episode.
 
-        Flips ``url_item.download`` in place. For each parsed SeaDex episode
+        Flips `url_item.download` in place. For each parsed SeaDex episode
         we check whether it exists in the Sonarr index, whether the release
         group matches, and whether the file sizes match; a release-group
         mismatch with no covering alternative, or an all-sizes mismatch among
@@ -727,12 +727,12 @@ class DownloadPlanner:
         record a warning SkipNotice and skip the title (without caching it as
         done) rather than grabbing a private release - unless an unflagged
         public group covering the same files rides along (a
-        ``private_releases: fallback`` stand-in or a preferred public pick).
+        `private_releases: fallback` stand-in or a preferred public pick).
         Then the private groups are dropped with an INFO notice instead: a
         *preferred* public group is promoted (grabbed) when a private flag was
         a size-mismatch upgrade, and left alone when the Arr genuinely already
         owns its files. A fallback is never promoted over an owned copy of the
-        preferred private release - those sets warn and hold (``stale_held``).
+        preferred private release - those sets warn and hold (`stale_held`).
 
         After each set resolves, just-dropped public urls whose coverage no
         surviving url carries are re-flagged (group-atomic drops must not lose
@@ -746,7 +746,7 @@ class DownloadPlanner:
         hand-picked what to grab.
 
         Args:
-            seadex_dict (dict): Dictionary of SeaDex releases
+            seadex_dict: Dictionary of SeaDex releases
         """
 
         skips = PrivateOnlySkips()
@@ -792,7 +792,7 @@ class DownloadPlanner:
     ) -> list[SeadexUrlItem]:
         """Resolve ONE same-files set down to a single keeper (or a skip).
 
-        Appends any notices/skip state to ``skips`` and returns the urls this
+        Appends any notices/skip state to `skips` and returns the urls this
         pass unflagged, for the coverage rescue.
         """
 
@@ -1018,7 +1018,7 @@ class DownloadPlanner:
         """Check if any torrents are marked as to download
 
         Args:
-            seadex_dict (dict): Dictionary of SeaDex releases
+            seadex_dict: Dictionary of SeaDex releases
         """
 
         return any(url_item.download for rg_item in seadex_dict.values() for url_item in rg_item.urls.values())

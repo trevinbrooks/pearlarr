@@ -1,13 +1,13 @@
 """Pure builders + reducers for the wait pass's rendering (PR5).
 
 Two families, no styled look decided here. The bounded live-frame model
-(:func:`live_model` and its row/aggregate helpers) and the graduation ledger's
-coda (:func:`graduation_tail`) reduce the wait value types in :mod:`.events` to
-a rich-free layout brain the cockpit consumes. The :class:`LegacyLine`
-builders (:func:`wait_start_line` and friends) map each durable wait fact to
+(`live_model` and its row/aggregate helpers) and the graduation ledger's
+coda (`graduation_tail`) reduce the wait value types in `events` to
+a rich-free layout brain the cockpit consumes. The `LegacyLine`
+builders (`wait_start_line` and friends) map each durable wait fact to
 the rich console's scrollback line (rendered by the WaitRegion via
-``render_legacy_lines``); the file/plain/json surfaces take the same facts
-through the :mod:`.textline` grammar. :class:`PulseThrottle` carries the shared
+`render_legacy_lines`); the file/plain/json surfaces take the same facts
+through the `textline` grammar. `PulseThrottle` carries the shared
 pulse cadence: the rich non-live digest and each textline grammar sink hold
 their own copy (the file/plain heartbeat renders regardless of console mode).
 """
@@ -64,8 +64,8 @@ MIN_SPARK_WIDTH = 80
 def graduation_tail(outcome: Outcome, files: int | None, waited_s: float) -> str:
     """The ledger line's parenthesized coda - pure, "" when there is nothing to say.
 
-    Baked into the logged message (not a console-only ``tail`` extra), so the
-    file log carries it too. An import states its scale (``files``) and how long
+    Baked into the logged message (not a console-only `tail` extra), so the
+    file log carries it too. An import states its scale (`files`) and how long
     the wait took; a left-pending outcome says it will be retried; a dropped
     failure says the record is gone - so no outcome word reads as a dead end.
     """
@@ -128,7 +128,7 @@ def wait_graduation_line(event: TorrentGraduated, caps: Capabilities) -> LegacyL
 
 
 def wait_tally_lines(event: WaitFinished) -> list[LegacyLine]:
-    """The closing wait summary (rule + tally); ``[]`` when nothing graduated."""
+    """The closing wait summary (rule + tally); `[]` when nothing graduated."""
 
     if event.imported == 0 and event.deferred == 0 and event.failed == 0:
         return []
@@ -150,8 +150,8 @@ class PulseThrottle:
 
     One copy per seat: the rich non-live digest and each textline grammar sink
     (the file is mode-independent, so its pulses render on live-TTY runs too).
-    Parity with LogWaitView's throttle: :meth:`arm` (on WaitStarted) sets the
-    interval; the FIRST :meth:`fire` returns False unconditionally (the old
+    Parity with LogWaitView's throttle: `arm` (on WaitStarted) sets the
+    interval; the FIRST `fire` returns False unconditionally (the old
     view's first render printed the start line and returned, so the start
     snapshot never pulses), then a pulse is due once elapsed reaches the
     elapsed-anchored next mark. State advances regardless of log level.
@@ -170,7 +170,7 @@ class PulseThrottle:
         self._skip_first = True
 
     def fire(self, elapsed_s: float) -> bool:
-        """Advance the cadence; True when a pulse is due at ``elapsed_s``."""
+        """Advance the cadence; True when a pulse is due at `elapsed_s`."""
 
         if self._interval is None:
             return False
@@ -192,12 +192,12 @@ class PulseThrottle:
 class RowModel:
     """One rendered in-flight row, as plain strings - the pure-render unit.
 
-    :func:`live_model` formats every value here (no rich), so the row layout is
+    `live_model` formats every value here (no rich), so the row layout is
     unit-testable; the view turns these into styled cells. Every column keeps ONE
-    meaning across all row kinds: ``count`` is progress ("61%" / "8/12" files),
-    ``speed`` is the download rate (sparkline + rate, or "stalled"), ``time`` is
-    the ETA for a download or the elapsed clock for an import, ``size`` is the
-    total download size. A row without a bar shows its ``status`` word instead.
+    meaning across all row kinds: `count` is progress ("61%" / "8/12" files),
+    `speed` is the download rate (sparkline + rate, or "stalled"), `time` is
+    the ETA for a download or the elapsed clock for an import, `size` is the
+    total download size. A row without a bar shows its `status` word instead.
     """
 
     label: str
@@ -210,7 +210,7 @@ class RowModel:
     speed: str = ""
     time: str = ""
     size: str = ""
-    # Draw a determinate block bar for ``fraction`` (downloads always; an importing
+    # Draw a determinate block bar for `fraction` (downloads always; an importing
     # row only when its files-inserted count is known). Else the status word.
     show_bar: bool = False
 
@@ -229,8 +229,8 @@ class LiveModel:
 def live_model(snapshot: WaitSnapshot, caps: Capabilities) -> LiveModel:
     """Reduce a snapshot to a bounded, ordered cockpit frame - pure, no rich.
 
-    Orders in-flight rows ``importing`` first, then ``downloading`` by soonest
-    ETA (unknown/stalled last), then ``queued``; caps the visible rows to a
+    Orders in-flight rows `importing` first, then `downloading` by soonest
+    ETA (unknown/stalled last), then `queued`; caps the visible rows to a
     height budget and collapses the rest into an overflow tally. Terminal rows
     are excluded (they graduate to scrollback).
     """
@@ -388,7 +388,7 @@ def sparkline(samples: tuple[int, ...]) -> str:
 
 
 def _compact_eta(seconds: float) -> str:
-    """A short ``~`` ETA, e.g. ``"~2m"`` / ``"~1h05m"`` / ``"~40s"``."""
+    """A short `~` ETA, e.g. `"~2m"` / `"~1h05m"` / `"~40s"`."""
 
     # Floor at 0: a negative ETA (an unsanitized producer edge) must never
     # render "~-5s".

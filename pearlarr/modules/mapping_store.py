@@ -1,36 +1,35 @@
-"""SQLite cache of the parsed + indexed id-mapping sources (``mappings.db``).
+"""SQLite cache of the parsed + indexed id-mapping sources (`mappings.db`).
 
 The three immutable mapping sources - the Kometa Anime-IDs JSON, the AniDB
 anime-list XML and the anibridge graph - are large, read-only files whose
 parsed+indexed forms never change until the file is re-downloaded *with new
 content*. Re-parsing and re-indexing them on every fresh process start is wasted
 CPU (~1.2s) and resident memory (~51MB held for the process lifetime). This store
-persists the indexed forms in a dedicated ``mappings.db`` (next to ``cache.db``),
+persists the indexed forms in a dedicated `mappings.db` (next to `cache.db`),
 keyed by each source's content digest, so a process whose source files are
 unchanged answers lookups straight from SQL without re-parsing - and never has to
 hold the full parsed structures in memory.
 
-How this differs from :class:`~pearlarr.modules.cache.CacheStore` (deliberately a
-separate file and a separate db):
+How this differs from `CacheStore` (deliberately a separate file and a separate db):
 
-* **Never preview-gated.** ``cache.db`` stages writes and only commits on a
+* **Never preview-gated.** `cache.db` stages writes and only commits on a
   non-preview save; this store is a pure derived cache of an *immutable download*,
-  so a freshly parsed index is always committed, even on ``--dry-run``. Each
-  ``replace_*`` is its own atomic transaction.
-* **Atomic populate.** A source's rows and its ``meta`` digest stamp are written
+  so a freshly parsed index is always committed, even on `--dry-run`. Each
+  `replace_*` is its own atomic transaction.
+* **Atomic populate.** A source's rows and its `meta` digest stamp are written
   and committed in *one* transaction. Stamping the digest separately would risk a
-  kill leaving *digest-fresh + tables-empty*, which :meth:`is_fresh` would then
+  kill leaving *digest-fresh + tables-empty*, which `is_fresh` would then
   trust and silently serve as empty mappings. The single transaction makes that
   state unreachable.
-* **No migration; rebuild on format change.** There is no ``ALTER`` path. The
-  table format is guarded by :data:`SCHEMA_VERSION` (stored in ``PRAGMA
-  user_version``); a mismatch simply DROPs and recreates the tables - safe, because
+* **No migration; rebuild on format change.** There is no `ALTER` path. The
+  table format is guarded by `SCHEMA_VERSION` (stored in `PRAGMA
+  user_version`); a mismatch simply DROPs and recreates the tables - safe, because
   every row is re-derivable from the source files on the next run.
 * **Fail-open.** A corrupt/not-a-database file is quarantined and a fresh
-  ``:memory:`` store started (one re-parse, the safe direction), mirroring
-  ``CacheStore``.
+  `:memory:` store started (one re-parse, the safe direction), mirroring
+  `CacheStore`.
 
-``MappingResolver`` builds this once per cycle inside ``single_instance_lock``, so
+`MappingResolver` builds this once per cycle inside `single_instance_lock`, so
 concurrent repopulation across processes is already prevented; the connection is
 not shared across threads.
 """
@@ -41,11 +40,11 @@ from typing import Literal, NamedTuple, overload
 
 from .sqlite_util import connect, open_or_quarantine, rollback_and_close
 
-# Bump when the table layout below changes; a stored ``user_version`` that differs
+# Bump when the table layout below changes; a stored `user_version` that differs
 # triggers a DROP+rebuild (the data is a pure cache, re-derived from the sources).
 SCHEMA_VERSION = 2
 
-# Source names used as ``meta`` keys and to select which tables a ``replace_*``
+# Source names used as `meta` keys and to select which tables a `replace_*`
 # clears. Kept as constants so the resolver and the store agree on the spelling.
 SOURCE_ANIME_IDS = "anime_ids"
 SOURCE_ANIBRIDGE = "anibridge"
@@ -134,7 +133,7 @@ CREATE TABLE IF NOT EXISTS anidb_ambiguous (
 );
 """
 
-# Which tables a source owns, so ``replace_<source>`` clears exactly its own rows.
+# Which tables a source owns, so `replace_<source>` clears exactly its own rows.
 _SOURCE_TABLES: dict[str, tuple[str, ...]] = {
     SOURCE_ANIME_IDS: ("anime_ids",),
     SOURCE_ANIBRIDGE: ("anibridge_entry", "anibridge_xref", "anibridge_tvdb_range"),
@@ -142,7 +141,7 @@ _SOURCE_TABLES: dict[str, tuple[str, ...]] = {
 }
 
 # Drop in FK-free order; all tables are independent so any order works. Derived
-# from _SOURCE_TABLES (plus the shared ``meta`` table) so a new source's tables are
+# from _SOURCE_TABLES (plus the shared `meta` table) so a new source's tables are
 # dropped on a SCHEMA_VERSION rebuild automatically - no parallel hand-maintained
 # list to forget (which would leave a stale table that CREATE IF NOT EXISTS skips).
 _DROP_ALL = "".join(
@@ -153,7 +152,7 @@ _DROP_ALL = "".join(
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     """Create the tables, rebuilding from scratch if the stored format is stale.
 
-    A fresh db has ``user_version`` 0, which never equals :data:`SCHEMA_VERSION`, so
+    A fresh db has `user_version` 0, which never equals `SCHEMA_VERSION`, so
     the rebuild branch creates everything. An existing db at the current version
     just re-ensures the (already present) tables.
     """
@@ -170,14 +169,14 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 
 
 class AnimeIdRow(NamedTuple):
-    """One stored ``anime_ids`` row, in column order.
+    """One stored `anime_ids` row, in column order.
 
-    A typed record (not a positional ``tuple[object, ...]``) shared by the whole
-    pipeline - ``_anime_ids_rows`` builds it, ``replace_anime_ids`` inserts it,
-    ``anime_ids_lookup`` returns it, ``_entry_from_anime_row`` reads named fields -
-    so the four column lists can't silently transpose. ``anilist_id`` is typed
-    ``int`` because the only consumer (``anime_ids_lookup``) filters
-    ``anilist_id IS NOT NULL``, even though the column itself is nullable.
+    A typed record (not a positional `tuple[object, ...]`) shared by the whole
+    pipeline - `_anime_ids_rows` builds it, `replace_anime_ids` inserts it,
+    `anime_ids_lookup` returns it, `_entry_from_anime_row` reads named fields -
+    so the four column lists can't silently transpose. `anilist_id` is typed
+    `int` because the only consumer (`anime_ids_lookup`) filters
+    `anilist_id IS NOT NULL`, even though the column itself is nullable.
     """
 
     anilist_id: int
@@ -190,12 +189,12 @@ class AnimeIdRow(NamedTuple):
 
 
 class AniBridgeEntryRow(NamedTuple):
-    """One ``anibridge_entry`` row: the computed ``_consumer_entry`` picks.
+    """One `anibridge_entry` row: the computed `_consumer_entry` picks.
 
-    A typed record (not a positional ``tuple[object, ...]``) shared by the producer
-    (``AniBridge.to_rows``) and the consumer (``anibridge_entries_for``), so the two
+    A typed record (not a positional `tuple[object, ...]`) shared by the producer
+    (`AniBridge.to_rows`) and the consumer (`anibridge_entries_for`), so the two
     column lists agree by construction. Tuple-compatible, so it's built straight
-    from a fetched row with ``AniBridgeEntryRow(*row)``.
+    from a fetched row with `AniBridgeEntryRow(*row)`.
     """
 
     anilist_id: int
@@ -205,7 +204,7 @@ class AniBridgeEntryRow(NamedTuple):
 
 
 class AniBridgeXrefRow(NamedTuple):
-    """One ``anibridge_xref`` reverse-index row (``axis`` -> ext id -> AniList id)."""
+    """One `anibridge_xref` reverse-index row (`axis` -> ext id -> AniList id)."""
 
     axis: str
     ext_id: int | str
@@ -213,7 +212,7 @@ class AniBridgeXrefRow(NamedTuple):
 
 
 class AniBridgeRangeRow(NamedTuple):
-    """One ``anibridge_tvdb_range`` row; a NULL ``start_ep`` marks an empty season."""
+    """One `anibridge_tvdb_range` row; a NULL `start_ep` marks an empty season."""
 
     anilist_id: int
     tvdb_id: int
@@ -223,7 +222,7 @@ class AniBridgeRangeRow(NamedTuple):
 
 
 class AniBridgeRows(NamedTuple):
-    """The three anibridge row tables one graph flattens to (``AniBridge.to_rows``)."""
+    """The three anibridge row tables one graph flattens to (`AniBridge.to_rows`)."""
 
     entries: list[AniBridgeEntryRow]
     xrefs: list[AniBridgeXrefRow]
@@ -231,7 +230,7 @@ class AniBridgeRows(NamedTuple):
 
 
 class AniBridgeRangeHit(NamedTuple):
-    """One :meth:`MappingStore.anibridge_ranges_for` result row (tvdb-scoped)."""
+    """One `MappingStore.anibridge_ranges_for` result row (tvdb-scoped)."""
 
     anilist_id: int
     season: int
@@ -240,7 +239,7 @@ class AniBridgeRangeHit(NamedTuple):
 
 
 class AnidbMappingRow(NamedTuple):
-    """One ``anidb_mapping`` row: a tvdb episode -> anidb episode pair."""
+    """One `anidb_mapping` row: a tvdb episode -> anidb episode pair."""
 
     anidb_id: int
     tvdb_season: int
@@ -261,7 +260,7 @@ def _ext_id_as[T: (int, str)](value: object, kind: type[T], axis: str) -> T:
 
 
 class MappingStore:
-    """Owns ``mappings.db``: schema, per-source freshness, atomic populate, queries."""
+    """Owns `mappings.db`: schema, per-source freshness, atomic populate, queries."""
 
     def __init__(self, conn: sqlite3.Connection, path: str) -> None:
         self._conn = conn
@@ -274,13 +273,13 @@ class MappingStore:
         """Open (or create) the mappings db, quarantining a corrupt file.
 
         A missing file is created in place (this is a derived cache we *want* on
-        disk, so there is no preview/in-memory staging like ``CacheStore``). A
-        not-a-database/torn file is moved aside and a fresh ``:memory:`` store is
+        disk, so there is no preview/in-memory staging like `CacheStore`). A
+        not-a-database/torn file is moved aside and a fresh `:memory:` store is
         returned so the run fails open (re-parsing into memory) instead of
         crash-looping.
 
         Args:
-            path (str): Path to ``mappings.db`` (or ``":memory:"`` for tests).
+            path: Path to `mappings.db` (or `":memory:"` for tests).
         """
 
         conn, _ = open_or_quarantine(
@@ -300,7 +299,7 @@ class MappingStore:
     # -- freshness -----------------------------------------------------------
 
     def is_fresh(self, name: str, digest: str) -> bool:
-        """True iff ``name``'s stored digest equals ``digest`` (so no re-parse)."""
+        """True iff `name`'s stored digest equals `digest` (so no re-parse)."""
 
         row = self._conn.execute("SELECT digest FROM meta WHERE name = ?", (name,)).fetchone()
         return row is not None and row[0] == digest
@@ -308,11 +307,11 @@ class MappingStore:
     # -- atomic populate -----------------------------------------------------
 
     def _replace(self, name: str, digest: str, write: Callable[[sqlite3.Connection], None]) -> None:
-        """Clear ``name``'s tables, run ``write`` to repopulate, stamp the digest.
+        """Clear `name`'s tables, run `write` to repopulate, stamp the digest.
 
         All in ONE transaction (legacy/deferred control means the first DELETE opens
-        it and ``commit`` closes it), so a kill mid-populate rolls back to the prior
-        state - never digest-fresh + empty. ``write`` is a callback given the live
+        it and `commit` closes it), so a kill mid-populate rolls back to the prior
+        state - never digest-fresh + empty. `write` is a callback given the live
         connection; it only inserts rows.
         """
 
@@ -334,8 +333,8 @@ class MappingStore:
         """Atomically replace the anime_ids rows.
 
         Args:
-            digest (str): sha256 of the source file (or :data:`INLINE_DIGEST`).
-            rows: :class:`AnimeIdRow` tuples (column order), one per Kometa record.
+            digest: sha256 of the source file (or `INLINE_DIGEST`).
+            rows: `AnimeIdRow` tuples (column order), one per Kometa record.
         """
 
         def write(conn: sqlite3.Connection) -> None:
@@ -355,9 +354,9 @@ class MappingStore:
         """Atomically replace the anibridge tables.
 
         Args:
-            digest (str): sha256 of the source file (or :data:`INLINE_DIGEST`).
-            rows (AniBridgeRows): The three row tables one graph flattens to
-                (a ``range`` row's ``start_ep`` NULL marks a present-but-empty
+            digest: sha256 of the source file (or `INLINE_DIGEST`).
+            rows: The three row tables one graph flattens to
+                (a `range` row's `start_ep` NULL marks a present-but-empty
                 season).
         """
 
@@ -387,9 +386,9 @@ class MappingStore:
         """Atomically replace the anidb tables.
 
         Args:
-            digest (str): sha256 of the source file (or :data:`INLINE_DIGEST`).
-            mappings: :class:`AnidbMappingRow` tuples (column order).
-            ambiguous: anidb ids appearing in more than one ``<anime>`` element.
+            digest: sha256 of the source file (or `INLINE_DIGEST`).
+            mappings: `AnidbMappingRow` tuples (column order).
+            ambiguous: anidb ids appearing in more than one `<anime>` element.
         """
 
         def write(conn: sqlite3.Connection) -> None:
@@ -407,12 +406,12 @@ class MappingStore:
     # -- anime_ids queries ---------------------------------------------------
 
     def anime_ids_lookup(self, column: AnimeIdColumn, value: object) -> list[AnimeIdRow]:
-        """:class:`AnimeIdRow`s matching ``column == value``, in first-seen (rowid) order.
+        """`AnimeIdRow`s matching `column == value`, in first-seen (rowid) order.
 
-        Returns the full row so the caller can build a ``MappingEntry``. Rows with no
-        ``anilist_id`` are excluded (the former reverse index skipped them); ``column``
-        must be one of :data:`_ANIME_ID_COLUMNS` (it is interpolated, so it is
-        allowlisted). The SELECT column order matches :class:`AnimeIdRow`'s fields.
+        Returns the full row so the caller can build a `MappingEntry`. Rows with no
+        `anilist_id` are excluded (the former reverse index skipped them); `column`
+        must be one of `_ANIME_ID_COLUMNS` (it is interpolated, so it is
+        allowlisted). The SELECT column order matches `AnimeIdRow`'s fields.
         """
 
         if column not in _ANIME_ID_COLUMNS:
@@ -430,7 +429,7 @@ class MappingStore:
     @overload
     def anime_ids_distinct(self, column: Literal["imdb_id"]) -> set[str]: ...
     def anime_ids_distinct(self, column: AnimeIdColumn) -> set[int] | set[str]:
-        """The set of DISTINCT non-null ``column`` values in anime_ids.
+        """The set of DISTINCT non-null `column` values in anime_ids.
 
         Used to build the library-filter candidate sets without scanning the map.
         Third-party Kometa JSON reaches these columns un-coerced, so a junk-typed
@@ -450,11 +449,11 @@ class MappingStore:
     # -- anibridge queries ---------------------------------------------------
 
     def anibridge_entries_for(self, axis: str, ext_id: object) -> list[AniBridgeEntryRow]:
-        """Every :class:`AniBridgeEntryRow` mapped to ``ext_id`` on ``axis``.
+        """Every `AniBridgeEntryRow` mapped to `ext_id` on `axis`.
 
         One xref->entry JOIN so a lookup that resolves k AniList ids costs a single
         query instead of k per-id point lookups. The INNER JOIN drops any xref row
-        lacking an entry, but ``to_rows`` writes both from the same ``by_anilist``
+        lacking an entry, but `to_rows` writes both from the same `by_anilist`
         map, so that pairing is structurally guaranteed.
         """
 
@@ -472,14 +471,14 @@ class MappingStore:
         ext_id: object,
         tvdb_id: int,
     ) -> list[AniBridgeRangeHit]:
-        """:class:`AniBridgeRangeHit` rows for an (axis, ext_id) set, scoped to
-        ``tvdb_id``, in ``(anilist_id, populate)`` order.
+        """`AniBridgeRangeHit` rows for an (axis, ext_id) set, scoped to
+        `tvdb_id`, in `(anilist_id, populate)` order.
 
         The batched twin of the former per-id range lookup: one xref->range JOIN
         fetches the ranges for every AniList id a tvdb lookup resolves, so the caller
-        groups them by ``anilist_id`` and rebuilds each season's list in insertion
-        order (``ORDER BY x.anilist_id, r.rowid`` -> parity with the in-memory build).
-        A NULL ``start_ep`` row is the present-but-empty-season marker.
+        groups them by `anilist_id` and rebuilds each season's list in insertion
+        order (`ORDER BY x.anilist_id, r.rowid` -> parity with the in-memory build).
+        A NULL `start_ep` row is the present-but-empty-season marker.
         """
 
         rows = self._conn.execute(
@@ -496,7 +495,7 @@ class MappingStore:
     @overload
     def anibridge_distinct(self, axis: Literal["imdb"]) -> set[str]: ...
     def anibridge_distinct(self, axis: AniBridgeAxis) -> set[int] | set[str]:
-        """The set of all ext ids on ``axis`` (for the library-filter id sets).
+        """The set of all ext ids on `axis` (for the library-filter id sets).
 
         Unlike the anime_ids columns, the AniBridge write path coerces every ext
         id per axis before it reaches the store, so a mismatched stored type is
@@ -512,14 +511,14 @@ class MappingStore:
         return {_ext_id_as(r[0], int, axis) for r in rows}
 
     def anibridge_len(self) -> int:
-        """Number of AniList entries (backs ``AniBridge.__len__`` / ``__bool__``)."""
+        """Number of AniList entries (backs `AniBridge.__len__` / `__bool__`)."""
 
         return self._conn.execute("SELECT COUNT(*) FROM anibridge_entry").fetchone()[0]
 
     # -- anidb queries -------------------------------------------------------
 
     def anidb_is_ambiguous(self, anidb_id: int) -> bool:
-        """True iff ``anidb_id`` appeared in more than one ``<anime>`` element."""
+        """True iff `anidb_id` appeared in more than one `<anime>` element."""
 
         row = self._conn.execute(
             "SELECT 1 FROM anidb_ambiguous WHERE anidb_id = ?",
@@ -528,7 +527,7 @@ class MappingStore:
         return row is not None
 
     def anidb_rows(self, anidb_id: int, tvdb_season: int) -> list[tuple[int, int]]:
-        """``(tvdb_ep, anidb_ep)`` rows for ``anidb_id`` scoped to ``tvdb_season``."""
+        """`(tvdb_ep, anidb_ep)` rows for `anidb_id` scoped to `tvdb_season`."""
 
         return self._conn.execute(
             "SELECT tvdb_ep, anidb_ep FROM anidb_mapping WHERE anidb_id = ? AND tvdb_season = ?",

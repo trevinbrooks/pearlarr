@@ -12,7 +12,7 @@ def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
     are kept as-is (e.g. [5] -> "E05"), and gaps split into multiple comma-separated ranges (e.g. [1, 2, 3, 7, 8] -> "E01-E03, E07-E08").
 
     Args:
-        episode_numbers (iterable): Episode numbers within a single season
+        episode_numbers: Episode numbers within a single season
     """
 
     episodes = sorted(set(episode_numbers))
@@ -46,7 +46,7 @@ def format_episode_coverage(episodes: list[EpisodeRecord]) -> list[tuple[str, st
     or a Sonarr parse failure).
 
     Args:
-        episodes (list): List of ``EpisodeRecord``\\ s, as parsed onto each
+        episodes: List of `EpisodeRecord`s, as parsed onto each
             torrent's url_item
     """
 
@@ -76,7 +76,7 @@ def coverage_string(episodes: list[EpisodeRecord]) -> str:
     (e.g., a Radarr movie), so callers can treat it as "URL only".
 
     Args:
-        episodes (list): List of ``EpisodeRecord``\\ s
+        episodes: List of `EpisodeRecord`s
     """
 
     coverage = format_episode_coverage(episodes)
@@ -89,15 +89,15 @@ def episodes_from_ep_list(
     ep_list: list[SonarrEpisode] | None,
     missing_only: bool = False,
 ) -> list[EpisodeRecord]:
-    """Convert a Sonarr ep_list into ``EpisodeRecord`` coverage records
+    """Convert a Sonarr ep_list into `EpisodeRecord` coverage records
 
     Sonarr episodes carry "seasonNumber"/"episodeNumber"; the coverage helpers
-    read ``EpisodeRecord.season``/``.episode``. Optionally, keep only missing
+    read `EpisodeRecord.season`/`.episode`. Optionally, keep only missing
     episodes (no file on disk) to summarize what is still needed.
 
     Args:
-        ep_list (list): Sonarr episode dicts
-        missing_only (bool): Keep only episodes with no file. Defaults to False
+        ep_list: Sonarr episode dicts
+        missing_only: Keep only episodes with no file. Defaults to False
     """
 
     episodes: list[EpisodeRecord] = []

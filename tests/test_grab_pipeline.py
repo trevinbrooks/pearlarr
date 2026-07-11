@@ -2,13 +2,13 @@
 # pyright: reportPrivateUsage=false
 # The add-path assertions read the pipeline's private wiring (_grab / _ctx), which
 # strict re-flags; the repo disables reportPrivateUsage for tests.
-"""Unit tests for the grab "produce" side (:class:`GrabPipeline`).
+"""Unit tests for the grab "produce" side (`GrabPipeline`).
 
-Pin the add path - ``_add_one_url`` registering durable :class:`PendingImport`
-records, ``add_torrent``'s cap bookkeeping, and ``_grab`` returning a pure
+Pin the add path - `_add_one_url` registering durable `PendingImport`
+records, `add_torrent`'s cap bookkeeping, and `_grab` returning a pure
 cap-reached bool (it never finalizes; the engine owns the single finalize site).
-Built bare (``object.__new__`` via ``make_bare_instance``) so no live qBittorrent
-login happens; the client ``add`` is faked by ``FakeTorrents``.
+Built bare (`object.__new__` via `make_bare_instance`) so no live qBittorrent
+login happens; the client `add` is faked by `FakeTorrents`.
 """
 
 from collections.abc import Mapping
@@ -48,9 +48,9 @@ def _stub_add_torrent(
     torrent_dict: SeadexDict,
     pending_seeds: dict[str, PendingImport] | None = None,
 ) -> tuple[int, list[ReleaseOutcome]]:
-    """Replaces ``GrabPipeline.add_torrent`` for the cap-return test.
+    """Replaces `GrabPipeline.add_torrent` for the cap-return test.
 
-    Returns a fixed ``(n_added, results)`` so ``_grab``'s cap-reached return is
+    Returns a fixed `(n_added, results)` so `_grab`'s cap-reached return is
     exercised without a real qBittorrent add - the bool the engine's single
     finalize site keys off.
     """
@@ -67,7 +67,7 @@ def _pipeline(
     dry_run: bool = False,
     **config: object,
 ) -> GrabPipeline:
-    """A bare ``GrabPipeline`` wired for the add path (a non-preview blocking run)."""
+    """A bare `GrabPipeline` wired for the add path (a non-preview blocking run)."""
 
     return make_grab_pipeline(
         _torrents=torrents,
@@ -87,7 +87,7 @@ class TestGrabReturnsPureBool:
     """_grab signals cap-reached as a bool and never finalizes itself.
 
     GrabPipeline holds no reference back to the engine, so "without finalizing" is
-    now a structural property - the pipeline can't reach ``_finalize_run`` at all;
+    now a structural property - the pipeline can't reach `_finalize_run` at all;
     the test pins the cap-reached return value the engine's single finalize site
     keys off.
     """
@@ -414,7 +414,7 @@ class TestUpToDateTally:
 
 def _anidex_release(*, url: str, infohash: str) -> SeadexUrlItem:
     """A download-flagged release on AniDex - public (clears the private-only gate) and in the
-    default tracker set, but with no parser, so it hits ``_add_one_url``'s new skip."""
+    default tracker set, but with no parser, so it hits `_add_one_url`'s new skip."""
 
     item = url_item(url=url, infohash=infohash, download=True)
     item.tracker = Tracker.ANIDEX

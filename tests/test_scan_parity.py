@@ -3,15 +3,15 @@
 # _TIP_PRECEDENCE and the builder's _TIP_TEXTS are deliberately private twins.
 """Golden harness for the scan surface (PR4 Band C): the grammar contract.
 
-Every constant below was captured by RUNNING the current ``RunReporter`` (not
-hand-derived): each scenario pins the exact ``(level, message, payload)`` records
+Every constant below was captured by RUNNING the current `RunReporter` (not
+hand-derived): each scenario pins the exact `(level, message, payload)` records
 the reporter emits today. The harness tests in this file re-drive the real
 reporter and assert byte/payload equality, so the goldens stay honest; the
-builder/console tests in ``test_output_scan_render`` reuse the same data,
+builder/console tests in `test_output_scan_render` reuse the same data,
 pinning the new event-driven rendering layer to this grammar. The producer
 rewrite (a later band) must keep every one of these green.
 
-Each scenario also carries its EVENT form (the ``output.events`` value a future
+Each scenario also carries its EVENT form (the `output.events` value a future
 producer will emit), so the golden is one shared spine: reporter call -> lines,
 event -> the same lines.
 """
@@ -943,14 +943,14 @@ class TestDetailParity:
 
 
 def _xdetail(level: int, message: str, key: str, value: str, style: str) -> Line:
-    """An external detail row at the site's own level (else exactly ``_detail``'s shape)."""
+    """An external detail row at the site's own level (else exactly `_detail`'s shape)."""
 
     return (level, message, KvLine(key=key, value=value, key_width=9, value_style=style, indent=2, sep=""))
 
 
 @dataclass(frozen=True, slots=True)
 class _DetailSite:
-    """One migrated producer site: the ``reporter.detail`` args + its pinned record."""
+    """One migrated producer site: the `reporter.detail` args + its pinned record."""
 
     label: str
     value: StyledValue
@@ -960,7 +960,7 @@ class _DetailSite:
 
 @dataclass(frozen=True, slots=True)
 class _FactSite:
-    """One flipped producer site: the typed fact ``reporter.post`` takes + its pinned record."""
+    """One flipped producer site: the typed fact `reporter.post` takes + its pinned record."""
 
     fact: ReleaseSkipped | GrabFailed
     golden: Line
@@ -969,12 +969,12 @@ class _FactSite:
 class TestExternalDetailParity:
     """The external producer sites (grab pipeline / release filter / episode
     mapper). Each golden was captured by RUNNING the pre-migration
-    ``LogFormatter.detail`` with the site's literal args at fc58aef; the reporter
-    must reproduce every line byte-identically through the shipped ``scan_lines``
+    `LogFormatter.detail` with the site's literal args at fc58aef; the reporter
+    must reproduce every line byte-identically through the shipped `scan_lines`
     builders (the grammar every rendering surface consumes). PR6 Band D flipped
-    the four grab-pipeline sites to typed ``reporter.post`` facts - the golden
-    ``Line`` tuples stay verbatim; the planner notice / missing / status sites
-    stay ``reporter.detail``-driven (D3).
+    the four grab-pipeline sites to typed `reporter.post` facts - the golden
+    `Line` tuples stay verbatim; the planner notice / missing / status sites
+    stay `reporter.detail`-driven (D3).
     """
 
     FACT_SITES: tuple[_FactSite, ...] = (

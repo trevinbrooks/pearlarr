@@ -1,21 +1,21 @@
 # pyright: strict
 """End-to-end smoke tests: one full pass per arr through the REAL composition root.
 
-These are the tests that prove ``cli.run_single`` -> ``bootstrap.run_arrs`` ->
-``RunDeps.build`` -> ``RunServices`` -> ``RunLoop.run_sync`` -> ``SonarrSync``
-/ ``RadarrSync`` hooks actually run a sync wired together, with ONLY the
+These are the tests that prove `cli.run_single` -> `bootstrap.run_arrs` ->
+`RunDeps.build` -> `RunServices` -> `RunLoop.run_sync` -> `SonarrSync`
+/ `RadarrSync` hooks actually run a sync wired together, with ONLY the
 external network leaves faked:
 
-* the SeaDex library, faked at the composition root's ``SeaDexEntry`` leaf;
+* the SeaDex library, faked at the composition root's `SeaDexEntry` leaf;
 * qBittorrent, left unconfigured so the whole run is a perpetual preview;
-* the Arr HTTP (every raw endpoint rides the httpx-based ``ArrHttp``) and the
-  AniList POST (on the shared web client), both mocked via ``respx``;
-* the Nyaa source (``pynyaa``'s own httpx client), faked at
-  ``torrents.get_nyaa_torrent``.
+* the Arr HTTP (every raw endpoint rides the httpx-based `ArrHttp`) and the
+  AniList POST (on the shared web client), both mocked via `respx`;
+* the Nyaa source (`pynyaa`'s own httpx client), faked at
+  `torrents.get_nyaa_torrent`.
 
 Everything in between is the real wiring. The id flows by hand-wired three-way
-agreement: the Arr item's external id (the ``series`` fixture's ``tvdbId``, the
-inline movie body's ``tmdbId``) -> an inline ``anime_mappings`` entry -> an
+agreement: the Arr item's external id (the `series` fixture's `tvdbId`, the
+inline movie body's `tmdbId`) -> an inline `anime_mappings` entry -> an
 AniList id -> the faked SeaDex entry. The fakes record, so the assertions prove
 that id actually flowed end to end (a vacuous run that resolved nothing would
 still return True - the recorded calls are what make this non-hollow).
@@ -90,7 +90,7 @@ def test_sonarr_run_drives_real_composition_root(
     nyaa_calls: list[str] = []
 
     class _FakeSeaDexEntry:
-        """Stand-in for the SeaDex lib's ``SeaDexEntry`` (injected into the gateway)."""
+        """Stand-in for the SeaDex lib's `SeaDexEntry` (injected into the gateway)."""
 
         def __init__(self) -> None: ...
 
@@ -188,9 +188,9 @@ _RADARR_ANILIST_BODY: dict[str, object] = {
     },
 }
 
-# A minimal ``/api/v3/movie`` record: the item fields the run reads
+# A minimal `/api/v3/movie` record: the item fields the run reads
 # (id/title/tmdbId/imdbId/monitored) plus a couple of extras proving
-# ``RadarrMovie.from_api`` ignores unknown keys.
+# `RadarrMovie.from_api` ignores unknown keys.
 _MOVIE_BODY: dict[str, object] = {
     "id": 42,
     "title": "Your Name.",
@@ -224,7 +224,7 @@ def test_radarr_run_drives_real_composition_root(
     nyaa_calls: list[str] = []
 
     class _FakeSeaDexEntry:
-        """Stand-in for the SeaDex lib's ``SeaDexEntry`` (injected into the gateway)."""
+        """Stand-in for the SeaDex lib's `SeaDexEntry` (injected into the gateway)."""
 
         def __init__(self) -> None: ...
 

@@ -1,14 +1,14 @@
 # pyright: strict
-"""Direct tests for :class:`~pearlarr.modules.arr_http.ArrHttp`.
+"""Direct tests for `ArrHttp`.
 
 The httpx-native transport the raw arr endpoints share. Pins the fail-open
 matrix (request error / non-200 / non-JSON / wrong shape -> None + ONE warning
 naming the cause), the strict library-fetch matrix (the same failures RAISE
-typed ``ArrConnectionError``/``ArrAuthError`` instead), the GET retry policy
+typed `ArrConnectionError`/`ArrAuthError` instead), the GET retry policy
 (transient statuses retry with backoff, terminal ones don't), the POST policy
-(``post_json`` NEVER retries - not idempotent), the per-request GET timeout
+(`post_json` NEVER retries - not idempotent), the per-request GET timeout
 override, and the two
-security invariants: the API key rides the ``X-Api-Key`` header (never the
+security invariants: the API key rides the `X-Api-Key` header (never the
 URL) and a redirect is NEVER followed (a 3xx must not replay the key at a new
 location).
 """
@@ -167,7 +167,7 @@ def test_warn_none_fails_open_silently() -> None:
 
 @respx.mock
 def test_get_timeout_override_rides_the_request() -> None:
-    """``timeout=`` overrides the client-level timeout for that request only
+    """`timeout=` overrides the client-level timeout for that request only
     (the 120s manual-import scans); the default rides the client's timeout.
     """
 

@@ -1,12 +1,12 @@
 # pyright: strict
-"""Direct tests for the ``radarr_client`` module's contracts.
+"""Direct tests for the `radarr_client` module's contracts.
 
-Mirrors ``test_sonarr_client``: a REAL ``RadarrClient`` (construction is
-network-free) with every endpoint riding the httpx-based ``ArrHttp``, mocked
-via ``respx``. Pins the decode into the typed ``MovieFile`` /
-``RadarrMovie`` views and the degrade-to-empty guard (non-200 / transient
-request error -> ``[]`` + a warning), so a Radarr outage never unwinds the
-run; plus the ``collect_anime_movies`` wiring.
+Mirrors `test_sonarr_client`: a REAL `RadarrClient` (construction is
+network-free) with every endpoint riding the httpx-based `ArrHttp`, mocked
+via `respx`. Pins the decode into the typed `MovieFile` /
+`RadarrMovie` views and the degrade-to-empty guard (non-200 / transient
+request error -> `[]` + a warning), so a Radarr outage never unwinds the
+run; plus the `collect_anime_movies` wiring.
 """
 
 from collections.abc import Set as AbstractSet
@@ -27,9 +27,9 @@ _KEY = "testkey"
 
 
 def _make_client() -> RadarrClient:
-    """Build a real ``RadarrClient`` (construction is network-free).
+    """Build a real `RadarrClient` (construction is network-free).
 
-    The bind's ``sleep`` is stubbed out so fail-open tests don't wait out real
+    The bind's `sleep` is stubbed out so fail-open tests don't wait out real
     retry backoffs.
     """
 
@@ -96,8 +96,8 @@ def test_movie_files_non_json_body_returns_empty_and_warns() -> None:
 
 @respx.mock
 def test_history_since_decodes_records_and_builds_request() -> None:
-    """``history_since()`` keys the item id on ``movieId`` and the request pins
-    ``includeMovie=false``; a record with no ``data`` map parses to a None reason.
+    """`history_since()` keys the item id on `movieId` and the request pins
+    `includeMovie=false`; a record with no `data` map parses to a None reason.
     """
 
     body: list[object] = [
@@ -179,7 +179,7 @@ def test_history_since_non_json_body_returns_none_and_warns() -> None:
 
 @respx.mock
 def test_trailing_slash_url_is_normalized() -> None:
-    """A trailing-slash base url must not become a ``//api`` join (login redirect)."""
+    """A trailing-slash base url must not become a `//api` join (login redirect)."""
 
     client = RadarrClient(
         http=ArrHttp.bind(client=httpx.Client(), url=f"{_URL}/", api_key=_KEY, label="Radarr"),
@@ -188,8 +188,8 @@ def test_trailing_slash_url_is_normalized() -> None:
     assert client.history_since("2026-06-30T08:00:00Z") == []
 
 
-# A minimal ``/api/v3/movie`` record: the consumed item fields plus a couple of
-# extras proving unknown keys are ignored by ``RadarrMovie.from_api``.
+# A minimal `/api/v3/movie` record: the consumed item fields plus a couple of
+# extras proving unknown keys are ignored by `RadarrMovie.from_api`.
 _MOVIE_BODY: dict[str, object] = {
     "id": 9,
     "title": "Your Name.",
@@ -203,8 +203,8 @@ _MOVIE_BODY: dict[str, object] = {
 
 @respx.mock
 def test_all_movies_parses_into_radarr_item_shape() -> None:
-    """``all_movies`` parses each raw record into a ``RadarrMovie`` satisfying
-    the ``RadarrItem`` protocol (checked from ``object``: the runtime
+    """`all_movies` parses each raw record into a `RadarrMovie` satisfying
+    the `RadarrItem` protocol (checked from `object`: the runtime
     counterpart of the client's typed claim), with correctly-typed id fields.
     """
 
@@ -236,7 +236,7 @@ def test_all_movies_skips_non_dict_elements() -> None:
 
 
 class _RecordingIdSets:
-    """Recording ``AnimeIdSets``: preset per-column id sets, calls recorded."""
+    """Recording `AnimeIdSets`: preset per-column id sets, calls recorded."""
 
     def __init__(self, sets: dict[str, set[int | str]]) -> None:
         self._sets = sets
@@ -249,7 +249,7 @@ class _RecordingIdSets:
 
 def test_collect_anime_movies_wires_id_spaces() -> None:
     """The candidate sets are pulled for (tmdb_movie_id, imdb_id), in that order,
-    an imdb-only match is kept, and ``anibridge=None`` degrades to empty sets."""
+    an imdb-only match is kept, and `anibridge=None` degrades to empty sets."""
 
     movies: list[RadarrItem] = [
         RadarrMovie(id=1, title="Imdb Only", tmdbId=111, imdbId="tt1"),

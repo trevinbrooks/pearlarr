@@ -1,9 +1,9 @@
 """Arr-side activity detection between SeaDex passes.
 
-The cached-entry skip keys only on SeaDex's ``updated_at``, so a file the arr
+The cached-entry skip keys only on SeaDex's `updated_at`, so a file the arr
 replaced under an *unchanged* SeaDex entry (quality upgrade, manual grab,
 re-download after delete) would never be re-detected. Each run therefore polls
-the arr's ``/api/v3/history/since`` once, maps the file-state-changing records
+the arr's `/api/v3/history/since` once, maps the file-state-changing records
 to touched item ids, and the run loop marks their AniList ids dirty - bypassing
 the skip for exactly those ids.
 
@@ -39,10 +39,10 @@ _HISTORY_DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 class ActivityScan:
     """One scan's outcome: the touched item ids, or a re-scan-everything signal.
 
-    ``rescan_all`` is set when history coverage is broken - a checkpoint older
+    `rescan_all` is set when history coverage is broken - a checkpoint older
     than the lookback window, or an unreadable stored date - so the id cursor
     may have skipped file changes; the caller must treat every entry as dirty
-    once (``touched`` is empty then).
+    once (`touched` is empty then).
     """
 
     touched: frozenset[int]
@@ -71,9 +71,9 @@ def format_history_date(value: datetime) -> str:
 class ArrActivityMonitor:
     """One arr's per-run history scan + checkpoint advance.
 
-    ``scan`` reads the stored checkpoint, queries the overlapped window, dedups
+    `scan` reads the stored checkpoint, queries the overlapped window, dedups
     on the id cursor and stashes the advanced checkpoint;
-    ``commit_checkpoint`` stages it through the cache store - only called by the
+    `commit_checkpoint` stages it through the cache store - only called by the
     run loop when the pass covered the whole library, and only persisted at a
     non-preview save point (so a dry run never advances the cursor).
     """
@@ -97,15 +97,14 @@ class ArrActivityMonitor:
         fetch helper owns the user-facing warning, so only a debug line lands
         here. An
         empty window stashes no checkpoint either (the bootstrap retries next
-        pass). Own grabs - records whose ``downloadId`` matches a remembered or
+        pass). Own grabs - records whose `downloadId` matches a remembered or
         pending infohash - are suppressed. Broken coverage (checkpoint beyond
-        the lookback, or an unreadable stored date) returns ``rescan_all``
+        the lookback, or an unreadable stored date) returns `rescan_all`
         instead of a touched set.
 
         Args:
-            fetch (Callable[[str], list[HistoryRecord] | None]): The strategy's
-                ``history_since`` (takes the ISO8601 query date).
-            now (datetime | None): Injectable clock for tests (aware UTC).
+            fetch: The strategy's `history_since` (takes the ISO8601 query date).
+            now: Injectable clock for tests (aware UTC).
         """
 
         now = now if now is not None else datetime.now(UTC)

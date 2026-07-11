@@ -2,13 +2,13 @@
 # pyright: reportPrivateUsage=false
 # The run-loop section reads the services hub's private dirty set (the wiring
 # under test); strict re-flags that and the repo disables it for tests.
-"""The arr-side activity scan (``ArrActivityMonitor``) and its run-loop wiring.
+"""The arr-side activity scan (`ArrActivityMonitor`) and its run-loop wiring.
 
 Unit half: the checkpoint window math (lookback bootstrap / overlap / clamp),
 the id-cursor dedup, the coverage-gap rescan signal, the event + upgrade-reason
 + own-hash + item-id filters, and the fail-open contract. Run-loop half (reusing
-``test_run_finalize``'s ``_engine`` harness): touched items flow into
-``RunServices._dirty_al_ids`` (all items on a gap), the checkpoint is staged
+`test_run_finalize`'s `_engine` harness): touched items flow into
+`RunServices._dirty_al_ids` (all items on a gap), the checkpoint is staged
 only on full-library non-capped runs, and either config toggle disables the
 fetch entirely.
 """
@@ -57,7 +57,7 @@ def _rec(
 
 
 class _Fetch:
-    """A recording ``history_since`` stand-in: scripted records, dates recorded."""
+    """A recording `history_since` stand-in: scripted records, dates recorded."""
 
     def __init__(self, records: list[HistoryRecord] | None) -> None:
         self.records = records
@@ -291,7 +291,7 @@ class TestScan:
 
 
 class TestRunLoopActivityWiring:
-    """The run loop's activity block, driven through the ``_engine`` harness."""
+    """The run loop's activity block, driven through the `_engine` harness."""
 
     @staticmethod
     def _strategy(

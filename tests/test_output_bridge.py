@@ -1,12 +1,12 @@
 # pyright: strict
-"""Tests for the logging bridge (``output.bridge``) + the real-seat wiring.
+"""Tests for the logging bridge (`output.bridge`) + the real-seat wiring.
 
 Pin the adoption table (WARNING+ visible; first-party sub-WARNING file_only at
 INFO+ config or under a rich seat, visible at DEBUG config on plain/json;
 third-party sub-WARNING gated by the hub level, then file_only unless
-configured DEBUG), the root-logger gate ``setup_logger`` opens for the bridge,
+configured DEBUG), the root-logger gate `setup_logger` opens for the bridge,
 construct-never-mutate (caplog safety), warnings capture,
-idempotent install surviving ``setup_logger`` rebuilds, the per-thread
+idempotent install surviving `setup_logger` rebuilds, the per-thread
 reentrancy downgrade, and the full-stack seams over the REAL sinks: one console
 render + one structured file line per record. The motivating scenario - a
 plain WARNING fired between boot steps - is pinned end-to-end through the real

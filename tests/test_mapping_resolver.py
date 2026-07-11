@@ -1,7 +1,7 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # Drives module-private resolver internals under test (_entry_from_raw, m._parse_*, resolver._(maybe_)download*).
-"""Parity + edge tests for the SQL-backed ``MappingResolver`` / ``AniBridge``.
+"""Parity + edge tests for the SQL-backed `MappingResolver` / `AniBridge`.
 
 The SQL backings must reproduce the in-memory implementations exactly. AniBridge's
 graph-backed view is used directly as the oracle (the unchanged parser); anime_ids
@@ -175,8 +175,8 @@ def _anibridge_graph(draw: DrawFn) -> AniBridgeGraph:
 
     The tiny external-id range forces shared tvdb/tmdb/imdb ids across AniList
     entries (reverse-index sets + first-pick), and every tvdb season is drawn
-    either empty (present-but-empty ``{season: []}``) or range-bearing - the exact
-    round-trip dimensions ``to_rows``/``from_store`` must preserve.
+    either empty (present-but-empty `{season: []}`) or range-bearing - the exact
+    round-trip dimensions `to_rows`/`from_store` must preserve.
     """
 
     graph: AniBridgeGraph = {}
@@ -240,10 +240,10 @@ class TestAniBridgeParityProperty:
 
 
 class TestAniBridgeRangeContainment:
-    """``_parse_ranges`` -> ``check_ep_by_anibridge`` boundary classification.
+    """`_parse_ranges` -> `check_ep_by_anibridge` boundary classification.
 
-    ``_parse_ranges`` has no direct test and ``check_ep_by_anibridge`` only trivial
-    ones; a ``<=``->``<`` regression drops the last episode of every closed cour and
+    `_parse_ranges` has no direct test and `check_ep_by_anibridge` only trivial
+    ones; a `<=`->`<` regression drops the last episode of every closed cour and
     passes the example suite. These pin the boundary set for both range shapes.
     """
 
@@ -611,7 +611,7 @@ _HEALTHY_ANIME = '<anime anidbid="1"><mapping-list><mapping tvdbseason="1">;1-1;
 
 
 class TestAnidbSkipTallies:
-    """``_anidb_rows`` tallies what it skips, split by kind.
+    """`_anidb_rows` tallies what it skips, split by kind.
 
     Id-level drops (missing/non-int anidbid) are *malformed* - 0 on healthy
     upstream data; mapping-level drops are *unsupported* forms the parser
@@ -784,7 +784,7 @@ class TestConstructionFailureClosesStore:
 
 
 class TestUnwritableDbFallback:
-    """An unwritable on-disk mapping db falls back to ``:memory:`` with one warning."""
+    """An unwritable on-disk mapping db falls back to `:memory:` with one warning."""
 
     def test_file_db_write_failure_warns_and_rebuilds_in_memory(
         self,
@@ -857,9 +857,9 @@ class _RealSources(NamedTuple):
 def _real_source_paths() -> _RealSources:
     """Resolve the real source paths lazily (at test time, not import).
 
-    ``TestRealDataParity`` carries ``@pytest.mark.real_data_dir`` so the autouse tmp
-    data-dir override is off for it and ``resolve_paths()`` sees the developer's
-    real ``PEARLARR_DATA_DIR``; evaluating this at import would instead capture
+    `TestRealDataParity` carries `@pytest.mark.real_data_dir` so the autouse tmp
+    data-dir override is off for it and `resolve_paths()` sees the developer's
+    real `PEARLARR_DATA_DIR`; evaluating this at import would instead capture
     whatever dir was active before the fixtures ran.
     """
 
@@ -1068,7 +1068,7 @@ class TestDownloadFile:
     def test_http_failure_raises_a_url_free_oserror_and_writes_nothing(self, tmp_path: Path) -> None:
         """A 500 raises OSError carrying only the status - never the URL - and writes no file.
 
-        ``raise_for_status`` fires before the ``.part`` open, so nothing lands on
+        `raise_for_status` fires before the `.part` open, so nothing lands on
         disk; the exact-message assert pins the containment contract (the httpx
         message embeds the URL, ours must not).
         """
@@ -1088,10 +1088,10 @@ class TestDownloadFile:
     def test_mid_stream_failure_preserves_the_preexisting_dest(self, tmp_path: Path) -> None:
         """A transport error mid-body leaves the cached copy intact and cleans the .part.
 
-        Pins the atomicity contract ``_maybe_download``'s fall-open relies on: a
+        Pins the atomicity contract `_maybe_download`'s fall-open relies on: a
         failed refresh writes only the temp (one chunk lands before the wire dies,
         verified live: respx streams the generator lazily), never the dest it
-        falls back to; the ``finally`` sweeps the temp.
+        falls back to; the `finally` sweeps the temp.
         """
 
         def _chunks() -> Iterator[bytes]:

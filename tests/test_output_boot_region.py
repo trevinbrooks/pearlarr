@@ -1,14 +1,14 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # ^ the frame-text tests exercise BootRegion._frame_text (a pure render helper).
-"""Tests for the boot cockpit's renderer side (``output.boot_region``).
+"""Tests for the boot cockpit's renderer side (`output.boot_region`).
 
 The RichRenderer's boot region draws the banner, graduates finished steps to
 durable scrollback lines, prints the capstone, degrades to the heads-up digest
 on a non-live rich console, and tears its single Live slot down whenever the
 boot section leaves the fold's frontier (ScopeClosed, ScanStarted, run/cycle
 boundaries). The pure ledger-line builders are pinned directly; the file/plain
-surfaces render the same events through the ``output.textline`` grammar.
+surfaces render the same events through the `output.textline` grammar.
 """
 
 import io

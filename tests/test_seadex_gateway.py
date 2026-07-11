@@ -16,10 +16,10 @@ def _rec(al_id: int) -> EntryRecord:
 
 
 class FakeSeaDex:
-    """Stands in for ``SeaDexEntry``: ``from_filter`` (batch) + ``from_id`` (single).
+    """Stands in for `SeaDexEntry`: `from_filter` (batch) + `from_id` (single).
 
-    ``fail_filter`` / ``fail_from_id`` fail every call (a full outage);
-    ``filter_blips`` / ``from_id_blips`` fail just the first N calls then
+    `fail_filter` / `fail_from_id` fail every call (a full outage);
+    `filter_blips` / `from_id_blips` fail just the first N calls then
     recover (a transient blip the retry absorbs).
     """
 
@@ -63,7 +63,7 @@ class FakeSeaDex:
 
 
 class _Recorder:
-    """A ``ProgressSink`` that records every ``progress`` call."""
+    """A `ProgressSink` that records every `progress` call."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[float, str | None]] = []

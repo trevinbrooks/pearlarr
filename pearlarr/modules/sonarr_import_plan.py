@@ -1,15 +1,15 @@
 """Pure decision logic for Sonarr manual imports.
 
 The deterministic planning vocabulary the import subsystem shares: the queue
-verdict (:func:`classify_queue`) and the in-flight ManualImport guard, the
-``(season, episode) -> id`` index and the episode-file status / never-overwrite
-checks, the file -> episode assignment (:func:`assign_episode_ids`), the
-per-file import plan (:func:`plan_import_files`), and the layered
+verdict (`classify_queue`) and the in-flight ManualImport guard, the
+`(season, episode) -> id` index and the episode-file status / never-overwrite
+checks, the file -> episode assignment (`assign_episode_ids`), the
+per-file import plan (`plan_import_files`), and the layered
 quality/language resolution.
 
 Everything here is deliberately side-effect free - no network, no disk, no
 qBittorrent - so every rule can be unit-tested without I/O. This module imports
-from :mod:`.manual_import` (the wait/outcome vocabulary and the normalizers);
+from `manual_import` (the wait/outcome vocabulary and the normalizers);
 the dependency is strictly one-way.
 """
 
@@ -37,20 +37,20 @@ from .seadex_types import (
 class QueueVerdict(Enum):
     """What Sonarr's queue says to do with a tracked download THIS poll.
 
-    Derived purely from the queue records sharing a ``downloadId`` (a season pack
-    has one record per episode), reading only ``trackedDownloadState``. "Already
+    Derived purely from the queue records sharing a `downloadId` (a season pack
+    has one record per episode), reading only `trackedDownloadState`. "Already
     imported" is NOT decided here (a successful import is removed from the queue);
     the caller reads the episode files.
 
-    ``WAIT`` -> something is genuinely in motion (downloading / importing); let
+    `WAIT` -> something is genuinely in motion (downloading / importing); let
     Sonarr finish so we never race an in-flight import.
-    ``PENDING_CLEAN`` -> any ``importPending`` record, regardless of its status or
+    `PENDING_CLEAN` -> any `importPending` record, regardless of its status or
     status messages: Sonarr parsed it and is waiting to import. With Completed
     Download Handling on it will import shortly; with CDH off it sits here forever -
     so the caller waits a grace, then forces our import. Stepping in on a still-
     pending record would race Sonarr's own import and double-import.
-    ``STEP_IN`` -> Sonarr can't / won't progress it (``importBlocked`` / ``failed`` /
-    ``failedPending`` / ``ignored``), or it isn't tracking the download at all
+    `STEP_IN` -> Sonarr can't / won't progress it (`importBlocked` / `failed` /
+    `failedPending` / `ignored`), or it isn't tracking the download at all
     (empty); drive our authoritative manual import.
     """
 
@@ -61,7 +61,7 @@ class QueueVerdict(Enum):
 
 # trackedDownloadState values (camelCase from Sonarr, compared case-folded) that
 # mean Sonarr is genuinely working the download right now - wait rather than race
-# it. ``queued``/``delay``/``paused`` are QueueStatus-ish transients Sonarr may
+# it. `queued`/`delay`/`paused` are QueueStatus-ish transients Sonarr may
 # surface in the same field; treat them as "still working" too.
 _QUEUE_IN_MOTION_STATES = frozenset(
     {"downloading", "importing", "queued", "delay", "paused"},
@@ -77,19 +77,19 @@ def classify_queue(states: list[str]) -> QueueVerdict:
     Side-effect free so the decision can be unit-tested without any HTTP.
     Priority, highest first:
 
-      1. anything in motion (downloading / importing / ...) -> ``WAIT`` (never race
+      1. anything in motion (downloading / importing / ...) -> `WAIT` (never race
          an in-flight Sonarr import; re-evaluate next poll).
-      2. any troubled record (``importBlocked`` / ``failed`` / ``failedPending`` /
-         ``ignored``) -> ``STEP_IN``.
-      3. any ``importPending`` -> ``PENDING_CLEAN``, regardless of its status or
+      2. any troubled record (`importBlocked` / `failed` / `failedPending` /
+         `ignored`) -> `STEP_IN`.
+      3. any `importPending` -> `PENDING_CLEAN`, regardless of its status or
          status messages. Sonarr is mid-import, so we wait for it to settle rather
          than step in - stepping in on a still-pending record races Sonarr's own
          import and double-imports the torrent.
-      4. otherwise (empty because Sonarr isn't tracking it, all ``imported``, or an
-         unknown state) -> ``STEP_IN``.
+      4. otherwise (empty because Sonarr isn't tracking it, all `imported`, or an
+         unknown state) -> `STEP_IN`.
 
     Args:
-        states (list[str]): Every matching queue record's ``trackedDownloadState``
+        states: Every matching queue record's `trackedDownloadState`
             (matched + reduced by the caller; case preserved, folded here).
 
     Returns:
@@ -121,7 +121,7 @@ def classify_queue(states: list[str]) -> QueueVerdict:
 
 
 # A command counts as a ManualImport only under this name (Sonarr's command
-# ``name``, compared case-folded), and only these statuses mean it is still
+# `name`, compared case-folded), and only these statuses mean it is still
 # running - a terminal command (completed / failed / aborted / cancelled /
 # orphaned) is no longer in flight, so it never wedges a re-import.
 _MANUAL_IMPORT_COMMAND_NAME = "manualimport"
@@ -129,7 +129,7 @@ _COMMAND_IN_FLIGHT_STATES = frozenset({"queued", "started"})
 
 
 def _norm_path(path: str) -> str:
-    """Normalize a path for a pure (no-disk) prefix compare: ``\\`` -> ``/``, folded."""
+    """Normalize a path for a pure (no-disk) prefix compare: `\\` -> `/`, folded."""
 
     return path.replace("\\", "/").casefold()
 
@@ -142,35 +142,35 @@ def manual_import_in_flight(
 ) -> bool:
     """Whether a ManualImport already in flight covers THIS download.
 
-    Pure, no I/O (mirrors :func:`classify_queue`): the strategy reads the
-    ``/api/v3/command`` list and asks this whether to re-issue our import. A
+    Pure, no I/O (mirrors `classify_queue`): the strategy reads the
+    `/api/v3/command` list and asks this whether to re-issue our import. A
     ManualImport command's copy is async and Sonarr drops the torrent from the
     regular queue while importing it server-side, so the queue alone reads
     "empty -> step in" and we'd stack a duplicate every poll. Matching the durable
-    ``infohash`` against the still-running commands closes that loop, and because
+    `infohash` against the still-running commands closes that loop, and because
     the match key lives in the command (not an in-memory id) it also survives a
     process restart - so a carried-over record re-driven on a LATER run won't
     re-stack a command run A POSTed that is still running.
 
-    A command qualifies only when its ``name`` is ``ManualImport`` and its
-    ``status`` is ``queued``/``started`` (a terminal command is not in flight).
+    A command qualifies only when its `name` is `ManualImport` and its
+    `status` is `queued`/`started` (a terminal command is not in flight).
     Such a command is taken to cover this download when:
 
-      * PRIMARY: any of its files' ``download_id`` equals ``infohash``
+      * PRIMARY: any of its files' `download_id` equals `infohash`
         (case-insensitively) - the infohash a queue-driven import carries; this is
         the common, robust case.
       * FALLBACK (a folder / season-pack import whose files carry NO download id):
-        any file path sits under ``content_path``, OR any file's episode id is one
-        of ``target_ep_ids`` (our intended set). This is deliberately broad: a
+        any file path sits under `content_path`, OR any file's episode id is one
+        of `target_ep_ids` (our intended set). This is deliberately broad: a
         false positive only makes us WAIT (bounded by the import deadline, which
         forces through), whereas a missed match re-opens the duplicate-import loop.
 
     Args:
-        commands (list[CommandResource]): The parsed ``/api/v3/command`` list.
-        infohash (str): This download's infohash (the Sonarr download id).
-        content_path (str): The qBittorrent ``content_path`` we import from, used
+        commands: The parsed `/api/v3/command` list.
+        infohash: This download's infohash (the Sonarr download id).
+        content_path: The qBittorrent `content_path` we import from, used
             for the no-download-id folder-import fallback.
-        target_ep_ids (set[int]): Our intended episode ids, for the same fallback.
+        target_ep_ids: Our intended episode ids, for the same fallback.
 
     Returns:
         bool: True when a still-running ManualImport already covers this download.
@@ -200,19 +200,19 @@ def manual_import_in_flight(
 
 
 def build_episode_id_map(ep_list: list[SonarrEpisode]) -> dict[tuple[int, int], int]:
-    """Index Sonarr episodes by ``(season, episode)`` -> episode id.
+    """Index Sonarr episodes by `(season, episode)` -> episode id.
 
-    Mirrors the planner's keying: a missing ``season_number``/``episode_number``
-    collapses to :data:`SONARR_MISSING_KEY` (an out-of-range value that never
+    Mirrors the planner's keying: a missing `season_number`/`episode_number`
+    collapses to `SONARR_MISSING_KEY` (an out-of-range value that never
     collides with a real key). On a duplicate key the first episode wins
-    (``setdefault``), and episodes with a falsy id (0) are skipped - a 0 id can
+    (`setdefault`), and episodes with a falsy id (0) are skipped - a 0 id can
     never be POSTed to Sonarr.
 
     Args:
-        ep_list (list[SonarrEpisode]): Episodes parsed from ``/api/v3/episode``.
+        ep_list: Episodes parsed from `/api/v3/episode`.
 
     Returns:
-        dict[tuple[int, int], int]: ``(season, episode) -> ep.id`` for every
+        dict[tuple[int, int], int]: `(season, episode) -> ep.id` for every
         episode carrying a real id.
     """
 
@@ -230,13 +230,13 @@ class EpisodeFileStatus(Enum):
     One read of the episode list drives both invariants - never overwrite a
     recommended file, never skip an episode we intended to import:
 
-    ``ABSENT`` -> no file yet; import ours.
-    ``RECOMMENDED`` -> already holds a file from a recommended group (ours, or
+    `ABSENT` -> no file yet; import ours.
+    `RECOMMENDED` -> already holds a file from a recommended group (ours, or
     another preferred torrent we grabbed for this series); it is done - do NOT
     overwrite it.
-    ``OTHER_GROUP`` -> holds a file from a non-recommended group; import ours over
+    `OTHER_GROUP` -> holds a file from a non-recommended group; import ours over
     it (the user's intended replacement).
-    ``UNKNOWN_GROUP`` -> holds a file whose group Sonarr couldn't parse; import
+    `UNKNOWN_GROUP` -> holds a file whose group Sonarr couldn't parse; import
     ours rather than trust an unidentifiable file as recommended.
     """
 
@@ -267,9 +267,9 @@ def episode_file_statuses(
     Sonarr drops an imported item from its queue almost immediately.
 
     Args:
-        target_ep_ids (list[int]): The episode ids our mapping intends to fill.
-        snapshot (EpisodeSnapshot): The same-poll episode index + recommended
-            groups (via :func:`normalize_group`).
+        target_ep_ids: The episode ids our mapping intends to fill.
+        snapshot: The same-poll episode index + recommended
+            groups (via `normalize_group`).
 
     Returns:
         dict[int, EpisodeFileStatus]: One status per de-duplicated target id.
@@ -318,10 +318,10 @@ def episode_ids_for_parsed(
     parsed: list[dict[str, Any]],
     ep_id_map: dict[tuple[int, int], int],
 ) -> list[int]:
-    """Map Sonarr ``/parse`` ``(season, episode)`` dicts to OUR episode ids.
+    """Map Sonarr `/parse` `(season, episode)` dicts to OUR episode ids.
 
-    The season/episode numbers come from Sonarr ``/parse`` (an internal tool of
-    our pipeline), but the assignment stays ours: the ``(season, episode) -> id``
+    The season/episode numbers come from Sonarr `/parse` (an internal tool of
+    our pipeline), but the assignment stays ours: the `(season, episode) -> id`
     index is built from the episode list OUR mapping selected. Numbers that don't
     resolve (or resolve to a 0 id) are dropped.
     """
@@ -342,11 +342,11 @@ _SXXEXX: re.Pattern[str] = re.compile(r"[Ss](\d{1,2})[\s._-]*[Ee](\d{1,3})")
 
 
 def parse_se_from_filename(name: str) -> ParsedFileInfo | None:
-    """Offline ``SxxExx`` fallback for when Sonarr's ``/parse`` is unreachable.
+    """Offline `SxxExx` fallback for when Sonarr's `/parse` is unreachable.
 
-    Pure + regex-only: pulls a single ``SxxExx`` out of a leaf and returns it as a
-    :class:`ParsedFileInfo` (season + episode). Returns None when the name carries
-    no ``SxxExx`` (an absolute-numbered or unparseable leaf) - those are left to
+    Pure + regex-only: pulls a single `SxxExx` out of a leaf and returns it as a
+    `ParsedFileInfo` (season + episode). Returns None when the name carries
+    no `SxxExx` (an absolute-numbered or unparseable leaf) - those are left to
     Sonarr's parse or the absolute-index leg, never guessed from a bare number.
     """
 
@@ -363,9 +363,9 @@ def parse_se_from_filename(name: str) -> ParsedFileInfo | None:
 class EpisodeAssignment:
     """The outcome of assigning a torrent's on-disk files to resolved episode ids.
 
-    ``assigned`` is ``normalized basename -> [episode id]`` for every file we could
+    `assigned` is `normalized basename -> [episode id]` for every file we could
     place with confidence (each id is in the resolved set and used exactly once).
-    ``skipped`` lists the files we could NOT place - the caller warns on these and
+    `skipped` lists the files we could NOT place - the caller warns on these and
     leaves them, rather than risk a wrong assignment (the chosen safe posture).
     """
 
@@ -379,20 +379,20 @@ def _exact_episode_ids(
     resolved_set: set[int],
     allow_unscoped: bool = False,
 ) -> list[int]:
-    """The ids for a file's exact ``(season, episode)`` parse.
+    """The ids for a file's exact `(season, episode)` parse.
 
     Honors a file only when EVERY parsed episode resolves to a real series episode
     id (a partial hit means the file spans an episode we can't place, so it is
     treated as unplaced and skipped rather than half-imported). A missing season
-    collapses to :data:`SONARR_MISSING_KEY`, matching :func:`build_episode_id_map`.
+    collapses to `SONARR_MISSING_KEY`, matching `build_episode_id_map`.
 
-    Normally an id must also be inside ``resolved_set`` (our per-entry scope, which
-    keeps an episode another preferred torrent owns out). When ``allow_unscoped`` is
+    Normally an id must also be inside `resolved_set` (our per-entry scope, which
+    keeps an episode another preferred torrent owns out). When `allow_unscoped` is
     set - only when we have NO resolved set to scope against (an empty
-    ``ordered_episode_ids``, e.g. a record grabbed before specials resolution
+    `ordered_episode_ids`, e.g. a record grabbed before specials resolution
     populated it) - the membership check is dropped so a correctly-named file still
     lands on its real series episode instead of sticking forever. This trusts Sonarr
-    for an UNAMBIGUOUS ``(season, episode)`` only; absolute numbers never reach here.
+    for an UNAMBIGUOUS `(season, episode)` only; absolute numbers never reach here.
     """
 
     if info is None or not info.episode_numbers:
@@ -422,16 +422,16 @@ def assign_episode_ids(
 ) -> EpisodeAssignment:
     """Map a torrent's on-disk files to OUR resolved episode ids - names never override.
 
-    The resolved set (``ordered_episode_ids``, season-sorted, lifted from the
-    add-flow ``ep_list``) is authoritative; a release's own numbering is only ever
+    The resolved set (`ordered_episode_ids`, season-sorted, lifted from the
+    add-flow `ep_list`) is authoritative; a release's own numbering is only ever
     used to *index into* it, never to decide identity. Two legs, in strict
     precedence, then skip:
 
-    1. **Exact (season, episode):** a file whose parsed ``(season, episode)``
+    1. **Exact (season, episode):** a file whose parsed `(season, episode)`
        resolves to an id *inside* the resolved set is placed there (handles
        correctly-named files Sonarr just couldn't match to the series, and
        per-season multi-season packs). With NO resolved set (an empty
-       ``ordered_episode_ids``), this leg places against the live series episode
+       `ordered_episode_ids`), this leg places against the live series episode
        map directly, so a correctly-named file still imports rather than sticking.
     2. **Absolute index:** the leftover files are mapped onto the leftover resolved
        ids by absolute number - but ONLY when every leftover file carries a single
@@ -440,21 +440,20 @@ def assign_episode_ids(
        season boundary, e.g. a "... - 01" from two different sub-series, and is
        refused rather than scrambled). Handles mis-numbered specials and
        continuous absolute batches.
-    3. **Skip:** anything still unplaced is returned in ``skipped`` for the caller
+    3. **Skip:** anything still unplaced is returned in `skipped` for the caller
        to warn on - never guessed.
 
     Args:
-        ordered_files (Sequence[str]): On-disk video files (normalized basenames)
+        ordered_files: On-disk video files (normalized basenames)
             in SeaDex order - the order only fixes deterministic output.
-        parsed_by_file (Mapping[str, ParsedFileInfo | None]): Series-agnostic parse
-            per file (None when Sonarr's parse was unavailable and no SxxExx fell
-            out of the name).
-        ordered_episode_ids (Sequence[int]): The resolved episode ids, season-order.
-        ep_id_map (Mapping[tuple[int, int], int]): ``(season, episode) -> id`` over
-            ALL the series' episodes; membership in the resolved set does the
-            scoping, so an exact parse outside our entry is rejected.
-        allow_unscoped (bool | None): Scope-gate override; None (default) derives it
-            from an empty ``ordered_episode_ids``. A caller that pre-subtracts
+        parsed_by_file: Series-agnostic parse per file (None when Sonarr's
+            parse was unavailable and no SxxExx fell out of the name).
+        ordered_episode_ids: The resolved episode ids, season-order.
+        ep_id_map: `(season, episode) -> id` over ALL the series' episodes;
+            membership in the resolved set does the scoping, so an exact parse
+            outside our entry is rejected.
+        allow_unscoped: Scope-gate override; None (default) derives it
+            from an empty `ordered_episode_ids`. A caller that pre-subtracts
             already-placed ids passes it explicitly (off its FULL resolved set) so a
             fully-seeded record isn't mistaken for "no scope to enforce".
 
@@ -534,8 +533,8 @@ class CandidateFile:
     """An on-disk manual-import candidate, reduced to what planning needs.
 
     Built by the strategy from one raw ManualImportResource. The normalized
-    ``basename`` is the match key against our authoritative map; ``path`` is what
-    we POST; ``quality`` is reused if our own quality parse comes up empty; the
+    `basename` is the match key against our authoritative map; `path` is what
+    we POST; `quality` is reused if our own quality parse comes up empty; the
     two rejection flags fold Sonarr's per-file rejections into the plan.
     """
 
@@ -547,20 +546,20 @@ class CandidateFile:
 
 
 class ImportAction(StrEnum):
-    """What :func:`plan_import_files` decided for one entry in OUR map.
+    """What `plan_import_files` decided for one entry in OUR map.
 
-    A ``StrEnum`` (so each member IS its rendered word, matching the
-    :class:`PendingState` / :class:`QueueVerdict` / :class:`EpisodeFileStatus`
+    A `StrEnum` (so each member IS its rendered word, matching the
+    `PendingState` / `QueueVerdict` / `EpisodeFileStatus`
     style) - the consumer branches on a typed value instead of a magic string.
-    Only ``IMPORT`` and ``MISSING`` drive behavior; the three "nothing to import
+    Only `IMPORT` and `MISSING` drive behavior; the three "nothing to import
     for this file" members are kept distinct purely for reporting:
 
-    ``IMPORT`` -> POST a manual import for this file.
-    ``MISSING`` -> our map intends this file but it isn't on disk (surfaced, never
+    `IMPORT` -> POST a manual import for this file.
+    `MISSING` -> our map intends this file but it isn't on disk (surfaced, never
     silently skipped).
-    ``SAMPLE`` -> a sample (never our intended file).
-    ``ALREADY`` -> not needed, and Sonarr flagged an already-imported rejection.
-    ``SKIP_DONE`` -> not needed (every target already holds a recommended file),
+    `SAMPLE` -> a sample (never our intended file).
+    `ALREADY` -> not needed, and Sonarr flagged an already-imported rejection.
+    `SKIP_DONE` -> not needed (every target already holds a recommended file),
     with no Sonarr rejection.
     """
 
@@ -575,9 +574,9 @@ class ImportAction(StrEnum):
 class ImportDecision:
     """One decision per entry in OUR authoritative map (the source of truth).
 
-    Candidates only supply the on-disk ``path`` + rejection flags; the episode
-    assignment is strictly ``episode_ids`` from our map. ``action`` is an
-    :class:`ImportAction`.
+    Candidates only supply the on-disk `path` + rejection flags; the episode
+    assignment is strictly `episode_ids` from our map. `action` is an
+    `ImportAction`.
     """
 
     basename: str
@@ -596,30 +595,30 @@ def plan_import_files(
 
     Iterates OUR map (never the candidates): a file Sonarr found that isn't in our
     map is never imported, and a file our map intends that isn't on disk is
-    surfaced as ``missing`` (never silently skipped). For a present file both
-    invariants are honored via ``needing_import`` (the non-recommended target
+    surfaced as `missing` (never silently skipped). For a present file both
+    invariants are honored via `needing_import` (the non-recommended target
     set): a file whose every episode already holds a recommended release is
-    ``skip_done`` (not overwritten); otherwise it is imported for exactly its
+    `skip_done` (not overwritten); otherwise it is imported for exactly its
     needing-import episodes.
 
-    ``needing_import`` (derived from the EPISODE FILES via
-    :func:`episode_file_statuses`) - not Sonarr's per-candidate already-imported
+    `needing_import` (derived from the EPISODE FILES via
+    `episode_file_statuses`) - not Sonarr's per-candidate already-imported
     rejection - is authoritative for whether we still want a file. Sonarr raises
     that rejection whenever the episode already holds *any* file on disk, including
     a non-recommended or unidentifiable-group one we flagged as still-needing
     replacement; honoring it as a skip there is the grab-then-skip bug (we grab a
     missing-group replacement, then Sonarr's "already imported" makes us skip
-    importing it). So ``is_already_imported`` only yields ``already`` when NONE of
+    importing it). So `is_already_imported` only yields `already` when NONE of
     the file's episodes still need us (every target already holds a recommended
     file - Sonarr and our episode-file check agree); when a target still needs us
-    we import over it, as the never-skip invariant requires. ``is_sample`` still
+    we import over it, as the never-skip invariant requires. `is_sample` still
     wins (a sample is never our intended file).
 
     Args:
-        authoritative_map (dict[str, list[int]]): normalized basename -> our ids.
-        candidates_by_basename (dict[str, CandidateFile]): on-disk files by key.
-        needing_import (set[int]): episode ids still needing our file (from
-            :func:`targets_needing_import`).
+        authoritative_map: normalized basename -> our ids.
+        candidates_by_basename: on-disk files by key.
+        needing_import: episode ids still needing our file (from
+            `targets_needing_import`).
 
     Returns:
         list[ImportDecision]: one decision per map entry, in map order.
@@ -638,7 +637,7 @@ def plan_import_files(
         if not import_ids:
             # Nothing of ours still needs this file. Sonarr's already-imported
             # rejection and our episode-file done-check agree here, so report the
-            # more specific ``ALREADY`` when Sonarr flagged it, else ``SKIP_DONE``.
+            # more specific `ALREADY` when Sonarr flagged it, else `SKIP_DONE`.
             action = ImportAction.ALREADY if candidate.is_already_imported else ImportAction.SKIP_DONE
             decisions.append(
                 ImportDecision(basename, action, candidate.path, None, ep_ids),
@@ -679,12 +678,12 @@ _RESOLUTION_PATTERN: re.Pattern[str] = re.compile(r"(2160|1080|720|480)p", re.IG
 
 @dataclass(frozen=True, slots=True)
 class ParsedQuality:
-    """Quality as two independent axes: ``source`` and ``resolution``.
+    """Quality as two independent axes: `source` and `resolution`.
 
-    Either axis is ``None`` when it could not be authoritatively determined, which
+    Either axis is `None` when it could not be authoritatively determined, which
     is what lets the quality decision layer the axes across Sonarr's parse, our
     filename parse, and the configured default (each fills only the axes the
-    higher-precedence layers left ``None``). The resulting ``(source, resolution)``
+    higher-precedence layers left `None`). The resulting `(source, resolution)`
     pair is matched against Sonarr's quality definitions to pick the real quality.
     """
 
@@ -693,19 +692,19 @@ class ParsedQuality:
 
 
 def parse_quality_from_filename(filename: str) -> ParsedQuality:
-    """Best-effort ``(source, resolution)`` parse of a SeaDex filename.
+    """Best-effort `(source, resolution)` parse of a SeaDex filename.
 
-    Detects a resolution (``2160``/``1080``/``720``/``480``) and a source
+    Detects a resolution (`2160`/`1080`/`720`/`480`) and a source
     (Remux, BluRay, WEB-DL, WEBRip, WEB, HDTV, DVD), case-insensitively and
-    independently. Either axis is ``None`` when not found - notably an
-    unrecognized source is left ``None`` (NOT defaulted to WEB), so the configured
+    independently. Either axis is `None` when not found - notably an
+    unrecognized source is left `None` (NOT defaulted to WEB), so the configured
     default can fill it rather than the file being silently mislabeled.
 
     Args:
-        filename (str): The SeaDex filename (or full path; only the text matched).
+        filename: The SeaDex filename (or full path; only the text matched).
 
     Returns:
-        ParsedQuality: The parsed axes; either may be ``None``.
+        ParsedQuality: The parsed axes; either may be `None`.
     """
 
     res_match = _RESOLUTION_PATTERN.search(filename)
@@ -720,17 +719,17 @@ def parse_quality_from_filename(filename: str) -> ParsedQuality:
 
 
 def quality_axes_from_model(model: QualityModel | None) -> ParsedQuality:
-    """The ``(source, resolution)`` axes of a Sonarr ``QualityModel``.
+    """The `(source, resolution)` axes of a Sonarr `QualityModel`.
 
-    Reads the canonical schema path ``model.quality.source`` /
-    ``model.quality.resolution`` (every field defaults to None on the partial
-    models the helpers build). An ``"unknown"`` source or a ``0``/absent
-    resolution maps to ``None`` (undetermined), so an unparsed candidate
-    cleanly yields ``ParsedQuality()`` and falls through to the next
+    Reads the canonical schema path `model.quality.source` /
+    `model.quality.resolution` (every field defaults to None on the partial
+    models the helpers build). An `"unknown"` source or a `0`/absent
+    resolution maps to `None` (undetermined), so an unparsed candidate
+    cleanly yields `ParsedQuality()` and falls through to the next
     precedence layer.
 
     Args:
-        model (QualityModel | None): A candidate's in-context quality model.
+        model: A candidate's in-context quality model.
 
     Returns:
         ParsedQuality: The structured axes Sonarr determined, each possibly None.
@@ -751,18 +750,17 @@ def quality_axes_from_name(
     name: str | None,
     quality_defs: list[QualityDefinition],
 ) -> ParsedQuality:
-    """The ``(source, resolution)`` axes of a configured default quality NAME.
+    """The `(source, resolution)` axes of a configured default quality NAME.
 
-    Resolves the user's ``imports.default_quality`` (a Sonarr quality name like
-    ``"Bluray-2160p"``) to its structured axes by matching it, case-insensitively,
-    against the ``/api/v3/qualitydefinition`` list - so the default contributes a
-    real ``(source, resolution)`` the decision fills gaps from. An unset name, or
-    one that matches no definition, yields ``ParsedQuality()`` (no default).
+    Resolves the user's `imports.default_quality` (a Sonarr quality name like
+    `"Bluray-2160p"`) to its structured axes by matching it, case-insensitively,
+    against the `/api/v3/qualitydefinition` list - so the default contributes a
+    real `(source, resolution)` the decision fills gaps from. An unset name, or
+    one that matches no definition, yields `ParsedQuality()` (no default).
 
     Args:
-        name (str | None): The configured default quality name, if any.
-        quality_defs (list[QualityDefinition]): The ``/api/v3/qualitydefinition``
-            list.
+        name: The configured default quality name, if any.
+        quality_defs: The `/api/v3/qualitydefinition` list.
 
     Returns:
         ParsedQuality: The default's axes, or empty when unset/unmatched.
@@ -786,7 +784,7 @@ def derive_languages(
     dual: list[str],
     single: list[str],
 ) -> list[str]:
-    """Pick the import language list: ``dual`` when dual-audio, else ``single``."""
+    """Pick the import language list: `dual` when dual-audio, else `single`."""
 
     return dual if is_dual_audio else single
 
@@ -796,10 +794,10 @@ def _find_definition(
     resolution: int,
     quality_defs: list[QualityDefinition],
 ) -> Quality | None:
-    """The nested ``Quality`` whose ``(source, resolution)`` matches, or None.
+    """The nested `Quality` whose `(source, resolution)` matches, or None.
 
-    Scans the ``/api/v3/qualitydefinition`` list for the definition whose nested
-    quality has the given structured source and resolution. ``(source, resolution)``
+    Scans the `/api/v3/qualitydefinition` list for the definition whose nested
+    quality has the given structured source and resolution. `(source, resolution)`
     is unique across Sonarr's standard definitions (the only near-collision, Raw-HD
     vs HDTV-1080p, differs by source), so the pair identifies the quality without
     ever matching on its display name.
@@ -815,7 +813,7 @@ def _find_definition(
 
 
 def _candidate_revision(candidate_model: QualityModel | None) -> Revision:
-    """The candidate's revision (proper/repack), or a fresh ``version 1`` default."""
+    """The candidate's revision (proper/repack), or a fresh `version 1` default."""
 
     if candidate_model is not None and candidate_model.revision is not None:
         return candidate_model.revision
@@ -829,30 +827,29 @@ def resolve_quality(
     quality_defs: list[QualityDefinition],
     candidate_model: QualityModel | None,
 ) -> QualityModel:
-    """Resolve the final manual-import ``QualityModel`` - never omitted.
+    """Resolve the final manual-import `QualityModel` - never omitted.
 
     The source and resolution axes are decided independently, each taking the
     first authoritative value in precedence order: Sonarr's parse, then our
     filename parse, then the configured default. When both axes are determined the
-    quality definition matching the ``(source, resolution)`` pair is emitted, so
+    quality definition matching the `(source, resolution)` pair is emitted, so
     the payload always carries a quality Sonarr actually defines (a valid id+name).
-    A determined ``BLURAY_RAW``/``TELEVISION_RAW`` with no matching remux/raw
-    definition at that resolution gracefully downgrades to ``BLURAY``/``TELEVISION``
+    A determined `BLURAY_RAW`/`TELEVISION_RAW` with no matching remux/raw
+    definition at that resolution gracefully downgrades to `BLURAY`/`TELEVISION`
     rather than failing.
 
-    Crucially this never returns ``None`` and the caller never omits the quality:
+    Crucially this never returns `None` and the caller never omits the quality:
     omitting it is exactly what made Sonarr crash in
-    ``FileNameBuilder.AddQualityTokens``. When nothing resolves, Sonarr's own
+    `FileNameBuilder.AddQualityTokens`. When nothing resolves, Sonarr's own
     candidate model (valid by construction) is re-emitted verbatim; only if the
-    candidate carries no quality at all is an explicit ``Unknown`` synthesized.
+    candidate carries no quality at all is an explicit `Unknown` synthesized.
 
     Args:
-        sonarr (ParsedQuality): Axes from Sonarr's candidate parse (highest).
-        ours (ParsedQuality): Axes from our filename parse.
-        default (ParsedQuality): Axes from the configured default quality.
-        quality_defs (list[QualityDefinition]): The ``/api/v3/qualitydefinition``
-            list to match against.
-        candidate_model (QualityModel | None): Sonarr's in-context model, the
+        sonarr: Axes from Sonarr's candidate parse (highest).
+        ours: Axes from our filename parse.
+        default: Axes from the configured default quality.
+        quality_defs: The `/api/v3/qualitydefinition` list to match against.
+        candidate_model: Sonarr's in-context model, the
             last-resort verbatim fallback.
 
     Returns:
@@ -888,9 +885,9 @@ def resolve_language_objects(
     names: list[str],
     lang_defs: list[Language],
 ) -> list[Language]:
-    """Resolve configured language names to Sonarr ``{id, name}`` objects.
+    """Resolve configured language names to Sonarr `{id, name}` objects.
 
-    Case-insensitive match against the ``/api/v3/language`` list, in request
+    Case-insensitive match against the `/api/v3/language` list, in request
     order; a name with no match is dropped rather than failing the import.
     """
 

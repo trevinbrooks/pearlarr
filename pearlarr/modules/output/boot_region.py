@@ -1,11 +1,11 @@
 """The rich console's boot cockpit region, event-driven (PR3).
 
-The machinery that was ``boot_view.LiveBootView``/``LogBootView`` now lives
-behind the hub: :class:`BootRegion` is driven by :class:`~.rich_renderer.RichRenderer`'s
+The machinery that was `boot_view.LiveBootView`/`LogBootView` now lives
+behind the hub: `BootRegion` is driven by `rich_renderer.RichRenderer`'s
 exhaustive match and owns the banner, the single live spinner + download bar,
 the graduation of finished steps to durable scrollback lines, and the capstone.
-On a live-capable console the spinner shows liveness (``BootStepSlow`` is
-ignored); a non-live rich console degrades the way ``LogBootView`` did — no
+On a live-capable console the spinner shows liveness (`BootStepSlow` is
+ignored); a non-live rich console degrades the way `LogBootView` did — no
 Live, a one-time heads-up line per slow step. Under plain/json there is no rich
 console and every event no-ops (the hub's text sinks carry those surfaces).
 """
@@ -42,7 +42,7 @@ type BootEvent = RunStarted | BootStepStarted | BootStepProgressed | BootStepSlo
 
 
 def format_step_secs(seconds: float) -> str:
-    """A compact step duration: ``"0.02s"`` / ``"1.3s"`` / ``"1m 04s"``."""
+    """A compact step duration: `"0.02s"` / `"1.3s"` / `"1m 04s"`."""
 
     if seconds < 10:
         return f"{seconds:.2f}s"
@@ -102,8 +102,8 @@ class BootRegion(LiveRegion):
     Durable lines (banner, graduations, heads-up, capstone) print the moment
     their event arrives — they reflow ABOVE the transient spinner via the shared
     Console lock, exactly like the PR2 diagnostics. The spinner is torn down by
-    :meth:`section_left` when the renderer's fold evicts the boot-section node
-    (whatever event evicted it — and defensively by ``begin_cycle``/``close``),
+    `section_left` when the renderer's fold evicts the boot-section node
+    (whatever event evicted it — and defensively by `begin_cycle`/`close`),
     so scan output never lands under a stale live region.
     """
 
@@ -157,7 +157,7 @@ class BootRegion(LiveRegion):
     def _admits_durable(self) -> bool:
         """Level parity with the logger-driven ledger: INFO lines need level <= INFO.
 
-        Deliberately NOT the diagnostics' ``diagnostic_threshold`` gate: at a
+        Deliberately NOT the diagnostics' `diagnostic_threshold` gate: at a
         configured WARNING the boot ledger vanishes, matching the file log.
         """
 

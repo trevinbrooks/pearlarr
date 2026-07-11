@@ -1,9 +1,9 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # ^ the lifecycle tests read RichRenderer._wait._live and drive WaitRegion/_LiveFrame.
-"""Tests for the wait cockpit's renderer side (``output.wait_region``) + routing.
+"""Tests for the wait cockpit's renderer side (`output.wait_region`) + routing.
 
-The RichRenderer's wait region opens its single ``rich.Live`` on the FIRST
+The RichRenderer's wait region opens its single `rich.Live` on the FIRST
 WaitProgress (never on WaitStarted), graduates finished torrents to durable
 scrollback while the cockpit is active, stops the Live before the closing tally
 prints, degrades to a start line + throttled pulses on a non-live console, and

@@ -1,17 +1,17 @@
 """The completion-wait "consume" side: poll, reconcile, and the blocking monitor.
 
-Extracted from :class:`~.run_loop.RunLoop`. ``ImportWaitManager`` owns the
+Extracted from `RunLoop`. `ImportWaitManager` owns the
 wait-for-completion machinery: one-shot qBittorrent polls, the carried-over
 pending-record reconciliation (the per-series inline snapshot + the deferred
 reconcile + the pre-summary tally), the durable-store TTL prune, and the
 interleaved end-of-run blocking monitor that drives + verifies each import. The
-engine keeps ``_finalize_run`` / ``run_sync`` as the orchestrator, calling the
+engine keeps `_finalize_run` / `run_sync` as the orchestrator, calling the
 manager's passes in order.
 
-Binds the run :class:`RunContext` AND the active strategy via :meth:`begin_run`
-(the same objects the engine holds): the strategy's ``import_completed`` is the
+Binds the run `RunContext` AND the active strategy via `begin_run`
+(the same objects the engine holds): the strategy's `import_completed` is the
 only thing the engine drives off the strategy, so the manager holds it under the
-narrow :class:`~.protocols.ImportCompleter` protocol.
+narrow `ImportCompleter` protocol.
 """
 
 import time
@@ -48,8 +48,8 @@ def _info_row_telemetry(row: object) -> TorrentTelemetry:
     """Sanitized telemetry off one qBittorrent info row.
 
     The one place the getattr-read field list lives, shared by the heavy
-    :meth:`ImportWaitManager.poll_torrent` and the batched
-    :meth:`ImportWaitManager.poll_telemetry`.
+    `ImportWaitManager.poll_torrent` and the batched
+    `ImportWaitManager.poll_telemetry`.
     """
 
     return sanitize_torrent_telemetry(
@@ -64,13 +64,13 @@ def _info_row_telemetry(row: object) -> TorrentTelemetry:
 class ImportWaitManager:
     """Polls, reconciles, and runs the blocking monitor for one Arr run.
 
-    Constructed once per run in :class:`~.run_loop.RunLoop` from the unpacked
-    deps + the placeholder ctx; :meth:`begin_run` rebinds the ctx + active strategy
-    each run. The five passes the engine drives are the public surface: ``run_sync``
-    calls :meth:`prune_expired_pending` (run start) and
-    :meth:`snapshot_pending_for_series` (per item); ``_finalize_run`` calls
-    :meth:`reconcile_remaining` / :meth:`tally_carried_over_into_stats` /
-    :meth:`run_monitor`. The poll/import/drop helpers stay private to the subsystem.
+    Constructed once per run in `RunLoop` from the unpacked
+    deps + the placeholder ctx; `begin_run` rebinds the ctx + active strategy
+    each run. The five passes the engine drives are the public surface: `run_sync`
+    calls `prune_expired_pending` (run start) and
+    `snapshot_pending_for_series` (per item); `_finalize_run` calls
+    `reconcile_remaining` / `tally_carried_over_into_stats` /
+    `run_monitor`. The poll/import/drop helpers stay private to the subsystem.
     """
 
     def __init__(
@@ -98,14 +98,14 @@ class ImportWaitManager:
         self._active_strategy = strategy
 
     def _pending_records(self) -> dict[str, PendingImport]:
-        """A rehydrated snapshot of the per-Arr ``{infohash -> PendingImport}`` store.
+        """A rehydrated snapshot of the per-Arr `{infohash -> PendingImport}` store.
 
-        Thin read wrapper over :meth:`CacheStore.get_pending` (the raw-JSON SQLite
+        Thin read wrapper over `CacheStore.get_pending` (the raw-JSON SQLite
         boundary): a fresh copy each call, with every value rehydrated ONCE via
-        :meth:`PendingImport.from_json` so the wait passes only ever handle typed
+        `PendingImport.from_json` so the wait passes only ever handle typed
         records. Read-only - the two mutators go straight through the facade
-        (:meth:`CacheStore.put_pending` in ``_register_pending_import`` and
-        :meth:`CacheStore.drop_pending` in :meth:`drop_pending`).
+        (`CacheStore.put_pending` in `_register_pending_import` and
+        `CacheStore.drop_pending` in `drop_pending`).
         """
 
         return {
@@ -116,17 +116,17 @@ class ImportWaitManager:
     def poll_torrent(self, infohash: str) -> TorrentProbe:
         """Poll qBittorrent once for a torrent's terminal/in-progress state.
 
-        Returns a :class:`TorrentProbe`: a terminal :class:`WaitOutcome` (COMPLETE
-        carries the ``content_path``; ERRORED/MISSING carry None), or
-        ``outcome=None`` for "still waiting" - either the torrent is still
+        Returns a `TorrentProbe`: a terminal `WaitOutcome` (COMPLETE
+        carries the `content_path`; ERRORED/MISSING carry None), or
+        `outcome=None` for "still waiting" - either the torrent is still
         downloading or the qBittorrent call failed transiently (auto-reauth /
         connection drop), which the wait loop treats as keep-waiting. This is the
         ONE place that reads qBittorrent AND the one place that sanitizes its junk
-        telemetry (via :func:`sanitize_torrent_telemetry`), so nothing downstream
+        telemetry (via `sanitize_torrent_telemetry`), so nothing downstream
         ever sees a sentinel ETA / idle-speed / over-count.
 
         Args:
-            infohash (str): The qBittorrent tracking key to poll.
+            infohash: The qBittorrent tracking key to poll.
         """
 
         if self.qbit is None:
@@ -154,7 +154,7 @@ class ImportWaitManager:
     def poll_telemetry(self, infohashes: list[str]) -> dict[str, TorrentTelemetry]:
         """One batched, read-only qBittorrent info read for the fast cockpit refresh.
 
-        The cheap sibling of :meth:`poll_torrent`: ONE ``torrents_info`` call
+        The cheap sibling of `poll_torrent`: ONE `torrents_info` call
         covers every in-flight download (vs one call per torrent on the heavy
         cycle), and only sanitized telemetry comes back - no outcomes, no content
         paths - so the fast lane can never race the heavy poll's terminal
@@ -186,17 +186,17 @@ class ImportWaitManager:
         force: bool = False,
         at_deadline: bool = False,
     ) -> ImportProbe:
-        """Drive the strategy's ``import_completed``, swallowing any error.
+        """Drive the strategy's `import_completed`, swallowing any error.
 
         The import does live Sonarr HTTP work; a malformed response (a 200 with
-        a non-JSON body, a candidate missing ``path``, ...) must not abort the
-        run and skip the end-of-run ``cache_store.save`` in :meth:`_finalize_run`.
-        On any exception the record is left pending (returns a ``LEAVE`` probe) and
+        a non-JSON body, a candidate missing `path`, ...) must not abort the
+        run and skip the end-of-run `cache_store.save` in `_finalize_run`.
+        On any exception the record is left pending (returns a `LEAVE` probe) and
         the run continues; a real terminal failure is just retried next run / TTL'd.
 
-        ``force`` is threaded through so the engine can tell the strategy to stop
-        deferring to Sonarr on a clean ``importPending`` (the snapshot/reconcile
-        passes and the final in-bound monitor poll); ``at_deadline`` flags the final
+        `force` is threaded through so the engine can tell the strategy to stop
+        deferring to Sonarr on a clean `importPending` (the snapshot/reconcile
+        passes and the final in-bound monitor poll); `at_deadline` flags the final
         attempt so a still-missing file warns loudly rather than at debug.
         """
 
@@ -228,7 +228,7 @@ class ImportWaitManager:
     def _this_run_infohashes(self) -> set[str]:
         """Infohashes grabbed THIS run - excluded from the carried-over passes.
 
-        A this-run grab is reported as ``added``; the snapshot / reconcile / tally
+        A this-run grab is reported as `added`; the snapshot / reconcile / tally
         skip these so a record is never double-reported as queued/importing/imported.
         """
 
@@ -239,13 +239,13 @@ class ImportWaitManager:
         infohash: str,
         pending: PendingImport,
     ) -> PendingState:
-        """Poll one carried-over record once and fold it to a :class:`PendingState`.
+        """Poll one carried-over record once and fold it to a `PendingState`.
 
         Shared by the inline snapshot and the deferred reconcile: one non-blocking
-        :meth:`poll_torrent`; on COMPLETE drive one forced (CDH-off safe),
+        `poll_torrent`; on COMPLETE drive one forced (CDH-off safe),
         non-deadline import attempt (so a still-missing file never warns). The
         outcome + the probe's verified-files flag fold through
-        :func:`classify_pending` into one state, stashed per infohash for the
+        `classify_pending` into one state, stashed per infohash for the
         pre-summary tally; a terminal IMPORTED is dropped + counted, a MISSING is
         dropped. Returns the classified state.
         """
@@ -273,15 +273,15 @@ class ImportWaitManager:
     def snapshot_pending_for_series(self, series_id: int) -> None:
         """Reconcile + report this series' CARRIED-OVER pending records inline.
 
-        For each durable record for ``series_id`` that is NOT a this-run grab (its
-        infohash is absent from ``_ctx.pending_imports`` - those are already shown
-        as ``added``, so including them here would double-report), do one
-        non-blocking :meth:`poll_torrent`; on COMPLETE drive one forced (CDH-off
-        safe) import attempt with ``at_deadline=False`` (so a still-missing file
+        For each durable record for `series_id` that is NOT a this-run grab (its
+        infohash is absent from `_ctx.pending_imports` - those are already shown
+        as `added`, so including them here would double-report), do one
+        non-blocking `poll_torrent`; on COMPLETE drive one forced (CDH-off
+        safe) import attempt with `at_deadline=False` (so a still-missing file
         never warns). The poll's outcome + the probe's verified-files flag fold
-        through :func:`classify_pending` into one :class:`PendingState`, which is
-        rendered inline (``log_pending_snapshot``) and stashed per infohash for the
-        pre-summary tally. On IMPORTED the record is dropped and ``stats.imported``
+        through `classify_pending` into one `PendingState`, which is
+        rendered inline (`log_pending_snapshot`) and stashed per infohash for the
+        pre-summary tally. On IMPORTED the record is dropped and `stats.imported`
         bumped (the inline-reconciled case); other states are left pending and
         counted by the tally.
         """
@@ -292,7 +292,7 @@ class ImportWaitManager:
         run_grabs = self._this_run_infohashes()
         # Fresh per call and SQL-filtered to this series (so a record dropped earlier
         # this run is already absent) - replaces a full get_pending scan + Python
-        # series filter once per series. The ``record ->> 'series_id'`` match only
+        # series filter once per series. The `record ->> 'series_id'` match only
         # returns JSON objects, rehydrated here (the series-scoped raw boundary).
         for infohash, raw in self.cache_store.get_pending_for_series(self._ctx.arr, series_id).items():
             # Skip this-run grabs: they're already reported as `added`, so a
@@ -309,7 +309,7 @@ class ImportWaitManager:
         The deferred-mode pre-summary step (relocated from the old startup
         reconcile): one non-blocking poll per durable record whose infohash wasn't
         already touched by the per-series inline snapshot and isn't a this-run grab
-        (those stay ``added``). COMPLETE drives one forced, non-deadline import
+        (those stay `added`). COMPLETE drives one forced, non-deadline import
         attempt - the download finished a prior cycle, so a still-absent target
         means Sonarr won't import on its own (CDH off) and we step in. The ready
         ones are dropped + counted; the rest record their status for the tally.
@@ -330,12 +330,12 @@ class ImportWaitManager:
     def tally_carried_over_into_stats(self) -> None:
         """Bump queued/importing from each carried-over record's known status.
 
-        ``imported`` is bumped at the point a record is reconciled+dropped (in the
+        `imported` is bumped at the point a record is reconciled+dropped (in the
         snapshot / reconcile), so here we only fold the records still in the store
-        into ``queued`` / ``importing``: a record touched this run uses its known
-        :class:`PendingState`; an un-touched store record (e.g. another series, in
-        pure blocking where no reconcile ran) defaults to ``QUEUED`` without an
-        extra poll. This-run grabs are excluded throughout (they're ``added``), so
+        into `queued` / `importing`: a record touched this run uses its known
+        `PendingState`; an un-touched store record (e.g. another series, in
+        pure blocking where no reconcile ran) defaults to `QUEUED` without an
+        extra poll. This-run grabs are excluded throughout (they're `added`), so
         no record is ever double-counted.
         """
 
@@ -360,21 +360,21 @@ class ImportWaitManager:
 
         The blocking/hybrid end-of-run pass, run dead last (after the scoreboard is
         printed). The working set is every pending record - this run's grabs
-        (``_ctx.pending_imports``) AND carried-over store records, deduped by
+        (`_ctx.pending_imports`) AND carried-over store records, deduped by
         infohash - so a single-series run still finishes other-series carried-over
         downloads (the user's "monitor ALL" choice). Each cycle advances every
         active torrent once (so a fast torrent isn't stuck behind a slow one) into a
-        ``dict[infohash -> TorrentView]``, then pushes ONE :class:`WaitSnapshot` to
+        `dict[infohash -> TorrentView]`, then pushes ONE `WaitSnapshot` to
         the view (which emits a graduation per newly-terminal torrent; the
         renderers scroll it back).
-        ``imported`` is reported ONLY when the episode files are verified present
-        (``probe.files_present``), so an in-flight remote-mount copy reads
-        ``importing`` until it lands. Per-torrent timeouts: ``imports.wait_timeout``
-        for the download, ``imports.ready_timeout`` for the import (from the first
+        `imported` is reported ONLY when the episode files are verified present
+        (`probe.files_present`), so an in-flight remote-mount copy reads
+        `importing` until it lands. Per-torrent timeouts: `imports.wait_timeout`
+        for the download, `imports.ready_timeout` for the import (from the first
         COMPLETE). Ctrl-C pushes one final snapshot (so that cycle's terminals
-        still graduate) then breaks the loop (the ``finally`` restores the terminal
+        still graduate) then breaks the loop (the `finally` restores the terminal
         and the caller still saves the cache); the terminal outcomes are returned as a
-        :class:`WaitResult` for the run report + completion notification. The clock /
+        `WaitResult` for the run report + completion notification. The clock /
         sleep / view are injectable for tests.
         """
 
@@ -438,16 +438,16 @@ class ImportWaitManager:
     ) -> None:
         """Sleep one heavy-poll interval, refreshing the live rows between slices.
 
-        Splits the inter-poll ``nap`` into ``imports.progress_poll_interval`` slices;
+        Splits the inter-poll `nap` into `imports.progress_poll_interval` slices;
         between the heavy cycles it runs only the cheap fast-lane reads: the
         episode-file count behind each importing row's "files inserted" bar
         (promoting a row the instant its files all land) and ONE batched
         qBittorrent info read keeping the downloading rows' bar/speed/ETA live
         (telemetry only - never the throttled rescan, the queue, an import
-        command, or a phase transition). Falls back to one plain ``nap(poll_s)``
+        command, or a phase transition). Falls back to one plain `nap(poll_s)`
         when the fast poll is disabled (<= 0) or no faster than the heavy poll. A
-        ``KeyboardInterrupt`` during a slice propagates to the caller's break, as
-        a plain ``nap`` would.
+        `KeyboardInterrupt` during a slice propagates to the caller's break, as
+        a plain `nap` would.
         """
 
         poll_s = self._config.imports.poll_interval
@@ -472,7 +472,7 @@ class ImportWaitManager:
                 view.update(mp.snapshot())
 
     def _monitor_working_set(self) -> list[PendingImport]:
-        """Dedup ``_ctx.pending_imports`` + rehydrated store records by infohash.
+        """Dedup `_ctx.pending_imports` + rehydrated store records by infohash.
 
         This-run grabs first (so their richer in-memory record wins a collision),
         then every durable store record not already present - the union the monitor
@@ -496,9 +496,9 @@ class ImportWaitManager:
         """Drop durable pending records past their TTL (or with a bad stamp).
 
         Runs at the start of every non-off, non-preview run - including pure
-        ``blocking``, which never reconciles - so a never-completing torrent
+        `blocking`, which never reconciles - so a never-completing torrent
         can't pile up in the cache forever. A record past
-        ``imports.pending_max_age_days`` (or with an unparseable ``added_at``) is
+        `imports.pending_max_age_days` (or with an unparseable `added_at`) is
         dropped from the durable store.
         """
 
@@ -529,13 +529,13 @@ class ImportWaitManager:
         self._ctx.pending_imports = [p for p in self._ctx.pending_imports if p.infohash != infohash]
 
     def apply_post_import_category(self, infohash: str, label: str) -> None:
-        """Move a verified-imported torrent to ``imports.post_import_category``.
+        """Move a verified-imported torrent to `imports.post_import_category`.
 
         Called at the two confirmed-import sites (the reconcile passes and the
         monitor's IMPORTED terminal) - never for MISSING or a TTL drop. Creates
         the category on first use (qBittorrent 409s an unknown one). Best-effort:
         the import already succeeded, so a client error only warns - naming the
-        record by its ``label`` (display label), not the bare infohash.
+        record by its `label` (display label), not the bare infohash.
         """
 
         category = self._config.imports.post_import_category
@@ -554,14 +554,14 @@ class ImportWaitManager:
 class MonitorPass:
     """One blocking-monitor invocation's mutable state + per-cycle advance logic.
 
-    Built fresh at the top of :meth:`ImportWaitManager.run_monitor` from the
+    Built fresh at the top of `ImportWaitManager.run_monitor` from the
     manager, the working-set records, the clock, and the two per-torrent timeouts.
-    It owns the five accumulators the loop used to thread - ``views`` (the frame
-    the manager snapshots), ``results`` (terminal rows), ``active`` (still-running
-    infohashes), ``dl_start`` / ``import_start`` (per-phase clocks) - as fields,
-    so :meth:`advance` takes only the record and there is nothing to reset between
+    It owns the five accumulators the loop used to thread - `views` (the frame
+    the manager snapshots), `results` (terminal rows), `active` (still-running
+    infohashes), `dl_start` / `import_start` (per-phase clocks) - as fields,
+    so `advance` takes only the record and there is nothing to reset between
     runs (the object IS the per-invocation scope). It calls back to the manager's
-    ``poll_torrent`` / ``try_import_completed`` / ``drop_pending`` (those are
+    `poll_torrent` / `try_import_completed` / `drop_pending` (those are
     shared with the reconcile passes, so they stay on the manager).
     """
 
@@ -579,8 +579,8 @@ class MonitorPass:
         self.now = now
         self.dl_timeout = dl_timeout
         self.import_timeout = import_timeout
-        # Sampled once here (was ``start = clock()`` atop run_monitor); the download
-        # clock for every record starts now and ``elapsed`` measures from it.
+        # Sampled once here (was `start = clock()` atop run_monitor); the download
+        # clock for every record starts now and `elapsed` measures from it.
         self.start = now()
         self.dl_start: dict[str, float] = {r.infohash: self.start for r in records}
         self.import_start: dict[str, float] = {}
@@ -601,14 +601,14 @@ class MonitorPass:
         return self.now() - self.start
 
     def snapshot(self) -> WaitSnapshot:
-        """The current frame: every torrent's :class:`TorrentView`, plus elapsed."""
+        """The current frame: every torrent's `TorrentView`, plus elapsed."""
 
         return WaitSnapshot(tuple(self.views.values()), elapsed_s=self.elapsed())
 
     def _terminal(self, outcome: Outcome, record: PendingImport, *, files: int | None = None) -> None:
         """Record a terminal outcome: snapshot row + result + (maybe) drop + retire.
 
-        Drops the durable record when (and only when) ``outcome.dropped`` - True for
+        Drops the durable record when (and only when) `outcome.dropped` - True for
         exactly IMPORTED and MISSING, so the displayed word and the store mutation
         can't diverge; a SUCCESS-class outcome additionally gets the post-import
         category, keyed off the same pinned enum vocabulary. The terminal row
@@ -637,12 +637,12 @@ class MonitorPass:
     def advance(self, record: PendingImport) -> None:
         """Advance one torrent one monitor cycle (download or drive/verify import).
 
-        Writes this torrent's current :class:`TorrentView` into ``views`` (the frame
+        Writes this torrent's current `TorrentView` into `views` (the frame
         the caller snapshots) and, on a terminal outcome, retires it via
-        :meth:`_terminal`. ``import_start`` is stamped on the first COMPLETE.
-        ``imported`` is gated on verified episode files, so a freshly-issued import
-        command reads ``importing`` until the copy lands; the final in-bound attempt
-        (``at_deadline``) both forces and warns.
+        `_terminal`. `import_start` is stamped on the first COMPLETE.
+        `imported` is gated on verified episode files, so a freshly-issued import
+        command reads `importing` until the copy lands; the final in-bound attempt
+        (`at_deadline`) both forces and warns.
         """
 
         h = record.infohash

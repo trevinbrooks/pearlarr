@@ -42,7 +42,7 @@ def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
     """See if SeaDex releases have overlapping episodes
 
     Args:
-        seadex_dict (dict): Dictionary of SeaDex releases
+        seadex_dict: Dictionary of SeaDex releases
     """
 
     # Shares get_episode_keys with get_same_files_groups (planner) but
@@ -78,12 +78,12 @@ def radarr_movies_matching(
 
     Only a season-0 mapping can match (shows and movies are sometimes lumped
     together, so a movie rides along as a special). An unset mapping id never
-    matches - the ``is not None`` guards mean None == None is not a match.
+    matches - the `is not None` guards mean None == None is not a match.
     Order is preserved; a movie matching on both ids appears once.
 
     Args:
-        mapping (MappingEntry): Mapping between TVDB and AniList
-        movies (Sequence[RadarrItem]): The Radarr movie library to match against
+        mapping: Mapping between TVDB and AniList
+        movies: The Radarr movie library to match against
     """
 
     radarr_movies: list[RadarrItem] = []
@@ -105,10 +105,10 @@ def radarr_movies_matching(
 class SonarrSync(ArrSync[SonarrItem]):
     """Sonarr sync strategy: owns the Sonarr REST client + episode domain logic.
 
-    Implements the :class:`~.protocols.ArrSync` hooks the run machinery drives.
-    The composition root injects the shared :class:`~.run_services.RunDeps` (used
+    Implements the `ArrSync` hooks the run machinery drives.
+    The composition root injects the shared `RunDeps` (used
     to stand up the client and the episode domain logic) and the
-    :class:`~.run_services.RunServices` hub (held as ``self._services``);
+    `RunServices` hub (held as `self._services`);
     the per-id hooks call the shared pipeline through it.
     """
 
@@ -123,20 +123,20 @@ class SonarrSync(ArrSync[SonarrItem]):
         """Stand up the Sonarr client from the injected shared collaborators.
 
         Args:
-            deps (RunDeps): The shared collaborators; the config/mappings
+            deps: The shared collaborators; the config/mappings
                 this strategy reads directly are unpacked off it, and it's handed
                 to the Sonarr collaborators for the cache/AniList gateway/log
                 formatter they read.
-            services (RunServices): The services hub the per-id hooks call into.
-            sonarr_client (AbstractSonarrClient | None): A pre-built client to use
-                instead of constructing the real :class:`SonarrClient` (which
+            services: The services hub the per-id hooks call into.
+            sonarr_client: A pre-built client to use
+                instead of constructing the real `SonarrClient` (which
                 needs the connection keys). Defaults to None (build the real
                 one); tests inject a scripted fake through this typed seam, so
-                the real ``__init__`` + collaborator wiring runs without keys.
-            radarr_client (AbstractRadarrClient | None): Same seam for the
+                the real `__init__` + collaborator wiring runs without keys.
+            radarr_client: Same seam for the
                 movies-in-Radarr cross-check client, whose library is fetched
                 eagerly below (only consulted when
-                ``sonarr.ignore_movies_in_radarr`` is on). Defaults to None (build
+                `sonarr.ignore_movies_in_radarr` is on). Defaults to None (build
                 the real one when the feature is on and the Radarr keys are set).
         """
 
@@ -170,7 +170,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         # prefetch_episodes to it and reads its series_fp for the parse cache.
         self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
 
-        # Parse-cache collaborator: grab-time ``/parse`` of SeaDex filenames + the
+        # Parse-cache collaborator: grab-time `/parse` of SeaDex filenames + the
         # durable, freshness-checked parse cache (read-through the shared
         # cache_store, so its staged writes are visible to the seed builder's reads
         # later in the same run). The run's series fingerprint is threaded per call.
@@ -282,7 +282,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:
-        """Sonarr history since ``date`` (delegates to the client)."""
+        """Sonarr history since `date` (delegates to the client)."""
 
         return self.sonarr.history_since(date)
 
@@ -501,7 +501,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         """The Sonarr series id whose carried-over pending records this item owns.
 
         The engine's per-item snapshot hook keys off this; a Sonarr series owns
-        its pending records by ``series_id``, which is the Sonarr series id.
+        its pending records by `series_id`, which is the Sonarr series id.
         """
 
         return item.id
@@ -518,7 +518,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         """One reconcile/import poll for a completed download (delegated).
 
         The @abstractmethod hook stays here so the ABC instantiates; the reconcile
-        decision lives on :class:`~.sonarr_import.ImportReconciler`.
+        decision lives on `ImportReconciler`.
         """
 
         return self._reconciler.import_completed(

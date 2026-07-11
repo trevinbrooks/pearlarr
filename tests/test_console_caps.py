@@ -1,5 +1,5 @@
 # pyright: strict
-"""Tests for the shared caps cache (``console_caps.CapsCache``).
+"""Tests for the shared caps cache (`console_caps.CapsCache`).
 
 One CapsCache instance is shared by the console seat's regions (boot + wait),
 so a mid-boot resize can never flip one surface's slow-heads-up decision only:

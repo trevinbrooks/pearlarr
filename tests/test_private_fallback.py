@@ -2,7 +2,7 @@
 # pyright: reportPrivateUsage=false
 # The grab assertions seed the pipeline's private AniList gateway (_anilist);
 # strict re-flags that and the repo disables reportPrivateUsage for tests.
-"""End-to-end regressions for ``seadex.private_releases: fallback``.
+"""End-to-end regressions for `seadex.private_releases: fallback`.
 
 Drive the full build -> filter_downloads -> grab_and_cache path over one SeaDex
 entry, pinning the fallback contract: when a preferred release is private-only,
@@ -78,7 +78,7 @@ def _entry_private_pick_plus_public_alt() -> EntryRecord:
 
 
 def _fill_episodes(sd: SeadexDict, mapping: dict[str, list[EpisodeRecord]]) -> None:
-    """Mirror ``parse_episodes_from_seadex``: per-url episodes + the group union."""
+    """Mirror `parse_episodes_from_seadex`: per-url episodes + the group union."""
 
     for rg_item in sd.values():
         all_eps: list[EpisodeRecord] = []
@@ -102,7 +102,7 @@ def _record() -> Generator[RecordingHub]:
 
 
 def _warning_texts(recording: RecordingHub) -> list[str]:
-    """The recorded detail texts at WARNING+ (the old ``levelno >= WARNING`` filter)."""
+    """The recorded detail texts at WARNING+ (the old `levelno >= WARNING` filter)."""
 
     return [d.value.text for d in recording.of_type(EntryDetail) if d.severity >= Severity.WARNING]
 
@@ -1002,7 +1002,7 @@ class TestEqualUnionMixedGroups:
 
 
 class _CachedEntryReporter:
-    """Just enough reporter surface for ``cached_entry_skip``'s logging tail."""
+    """Just enough reporter surface for `cached_entry_skip`'s logging tail."""
 
     def log_cached_entry(
         self,

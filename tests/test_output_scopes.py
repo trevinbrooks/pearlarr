@@ -1,5 +1,5 @@
 # pyright: strict
-"""Tests for the scope handles (``output.scopes``).
+"""Tests for the scope handles (`output.scopes`).
 
 Pin the handle lifecycles (step timing/outcomes, entry header-at-open, wait
 open/close ordering), ScopeId stamping, and the runtime-total stale-handle

@@ -1,13 +1,13 @@
 """ID-mapping resolution: external sources -> AniList ids.
 
-``MappingResolver`` owns the three immutable mapping sources (the Kometa
+`MappingResolver` owns the three immutable mapping sources (the Kometa
 Anime-IDs JSON, the AniDB anime-list XML, and the anibridge graph). It
 downloads/refreshes each file, and - only when a file's *content* changes -
-parses and indexes it once into a dedicated SQLite store (``mappings.db``, via
-:class:`~pearlarr.modules.mapping_store.MappingStore`). Lookups are then served
-from SQL, so a process whose source files are unchanged never re-parses or holds
-the ~50MB of parsed structures resident. It resolves an Arr's external ids (TVDB /
-TMDB / IMDb) to the AniList ids they map to.
+parses and indexes it once into a dedicated SQLite store (`mappings.db`, via
+`MappingStore`). Lookups are then served from SQL, so a process whose source
+files are unchanged never re-parses or holds the ~50MB of parsed structures
+resident. It resolves an Arr's external ids (TVDB / TMDB / IMDb) to the AniList
+ids they map to.
 
 Visibility: the resolver logs each source's download / cache-hit / parse step and
 streams download progress, and the downloader uses a per-read socket timeout so a
@@ -46,24 +46,23 @@ from .paths import resolve_paths
 from .seadex_types import ProgressSink, TvdbMappings
 
 type AnimeIdsRecord = dict[str, Any]
-"""One Kometa Anime-IDs record (``{field: value}``).
+"""One Kometa Anime-IDs record (`{field: value}`).
 
 A loosely-shaped producer dict: a flat record carrying mixed-typed fields
-(``anilist_id``/``tvdb_id``/``tmdb_movie_id``/``imdb_id`` ints or strs,
-``tvdb_season``/``tvdb_epoffset`` ints). It is read at the raw->typed boundary
-(:func:`_entry_from_raw` / :func:`_anime_ids_rows`) and never modeled as a domain
-object, so it stays a loose ``dict[str, Any]`` like
-:data:`~pearlarr.modules.anibridge.AniBridgeEntry`.
+(`anilist_id`/`tvdb_id`/`tmdb_movie_id`/`imdb_id` ints or strs,
+`tvdb_season`/`tvdb_epoffset` ints). It is read at the raw->typed boundary
+(`_entry_from_raw` / `_anime_ids_rows`) and never modeled as a domain
+object, so it stays a loose `dict[str, Any]` like `AniBridgeEntry`.
 """
 
 type AnimeIdsMap = dict[str, AnimeIdsRecord]
-"""The parsed Kometa Anime-IDs JSON: ``{name -> record}`` (~16k entries)."""
+"""The parsed Kometa Anime-IDs JSON: `{name -> record}` (~16k entries)."""
 
 
 class MappingMode(Enum):
     """The two closed kinds of episode mapping a SeaDex mapping can carry.
 
-    A mapping either ships explicit AniBridge ``tvdb_mappings`` (season ->
+    A mapping either ships explicit AniBridge `tvdb_mappings` (season ->
     episode ranges) or it doesn't, in which case the Sonarr path falls back to
     Anime-ID season/offset logic. There is no third kind, so dispatch on this
     enum needs no defensive default arm.
@@ -76,12 +75,12 @@ class MappingMode(Enum):
 class MappingSource(Enum):
     """Which producer a resolved mapping came from (its provenance).
 
-    Distinct from :class:`MappingMode`: ``mode`` is the episode strategy (derived
-    from ``tvdb_mappings`` presence), ``source`` is the producer. They correlate
+    Distinct from `MappingMode`: `mode` is the episode strategy (derived
+    from `tvdb_mappings` presence), `source` is the producer. They correlate
     but are not the same: a *degraded* AniBridge entry (imdb/tmdb-resolved, so it
-    carries no tvdb season ranges) is ``mode ANIME_IDS`` yet ``source ANIBRIDGE`` -
+    carries no tvdb season ranges) is `mode ANIME_IDS` yet `source ANIBRIDGE` -
     the only signal that separates it from a legit Kometa whole-series entry
-    (also ``mode ANIME_IDS``, but ``source ANIME_IDS``).
+    (also `mode ANIME_IDS`, but `source ANIME_IDS`).
     """
 
     ANIBRIDGE = "anibridge"
@@ -93,11 +92,11 @@ class MappingEntry:
     """One resolved AniList mapping, as the sync strategies consume it.
 
     Built at the raw->typed boundary from the two producers: the AniBridge graph
-    attaches ``tvdb_mappings`` (season -> episode ranges) only on a TVDB lookup,
-    while the Kometa Anime-IDs records carry the flat ``tvdb_season`` /
-    ``tvdb_epoffset`` fields. Both normalize into one typed record with attribute
-    reads; the ``tvdb_mappings``-present-or-not distinction becomes the typed
-    :attr:`mode` discriminant.
+    attaches `tvdb_mappings` (season -> episode ranges) only on a TVDB lookup,
+    while the Kometa Anime-IDs records carry the flat `tvdb_season` /
+    `tvdb_epoffset` fields. Both normalize into one typed record with attribute
+    reads; the `tvdb_mappings`-present-or-not distinction becomes the typed
+    `mode` discriminant.
     """
 
     anilist_id: int
@@ -113,9 +112,9 @@ class MappingEntry:
     def mode(self) -> MappingMode:
         """Which episode-mapping mode this entry drives.
 
-        ANIBRIDGE iff ``tvdb_mappings`` was attached. Tested with ``is not
-        None`` (not truthiness) on purpose: an *empty* ``tvdb_mappings`` dict is
-        still ANIBRIDGE, exactly as the former ``"tvdb_mappings" in mapping``
+        ANIBRIDGE iff `tvdb_mappings` was attached. Tested with `is not
+        None` (not truthiness) on purpose: an *empty* `tvdb_mappings` dict is
+        still ANIBRIDGE, exactly as the former `"tvdb_mappings" in mapping`
         key-presence check was.
         """
 
@@ -125,17 +124,16 @@ class MappingEntry:
 
 
 def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> MappingEntry:
-    """Build a :class:`MappingEntry` from a producer's raw dict.
+    """Build a `MappingEntry` from a producer's raw dict.
 
-    The one place a loosely-typed producer dict (an AniBridge ``_consumer_entry``
-    dict) becomes a typed record. Defaults mirror the former ``.get(..., default)``
-    reads exactly, so an AniBridge entry (which carries no ``tvdb_season`` /
-    ``tvdb_epoffset``) lands on ``-1`` / ``0``.
+    The one place a loosely-typed producer dict (an AniBridge `_consumer_entry`
+    dict) becomes a typed record. Defaults mirror the former `.get(..., default)`
+    reads exactly, so an AniBridge entry (which carries no `tvdb_season` /
+    `tvdb_epoffset`) lands on `-1` / `0`.
 
     Args:
-        anilist_id (int): AniList id for this entry.
-        raw (AnimeIdsRecord | AniBridgeEntry): Producer dict; only the enumerated
-            keys are read.
+        anilist_id: AniList id for this entry.
+        raw: Producer dict; only the enumerated keys are read.
     """
 
     # Coalesce a present-but-null season/epoffset to the sentinel, matching
@@ -158,10 +156,10 @@ def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> Ma
 
 
 def _entry_from_anime_row(row: AnimeIdRow) -> MappingEntry:
-    """Build a :class:`MappingEntry` from a stored :class:`AnimeIdRow`.
+    """Build a `MappingEntry` from a stored `AnimeIdRow`.
 
-    The SQL twin of :func:`_entry_from_raw` for Kometa records: a row never
-    carries ``tvdb_mappings`` (only AniBridge does), so ``mode`` is ANIME_IDS.
+    The SQL twin of `_entry_from_raw` for Kometa records: a row never
+    carries `tvdb_mappings` (only AniBridge does), so `mode` is ANIME_IDS.
     """
 
     return MappingEntry(
@@ -179,11 +177,11 @@ def _entry_from_anime_row(row: AnimeIdRow) -> MappingEntry:
 def _is_degraded_anibridge(entry: MappingEntry) -> bool:
     """An AniBridge entry resolved via imdb/tmdb only - no usable tvdb mapping.
 
-    Such an entry carries ``source ANIBRIDGE`` but ``tvdb_mappings is None`` (so
-    ``mode ANIME_IDS`` with the default ``tvdb_season=-1``). In a TVDB/Sonarr
+    Such an entry carries `source ANIBRIDGE` but `tvdb_mappings is None` (so
+    `mode ANIME_IDS` with the default `tvdb_season=-1`). In a TVDB/Sonarr
     context that drives a wrong-episode grab and shadows a precise Kometa season,
-    so Kometa must override it there. A rich AniBridge entry (``tvdb_mappings`` set,
-    incl. an empty ``{}``) is NOT degraded.
+    so Kometa must override it there. A rich AniBridge entry (`tvdb_mappings` set,
+    incl. an empty `{}`) is NOT degraded.
     """
 
     return entry.source is MappingSource.ANIBRIDGE and entry.tvdb_mappings is None
@@ -250,18 +248,18 @@ def _parse_anime_mappings(path: str) -> AnimeIdsMap:
 def _anime_ids_rows(anime_mappings: AnimeIdsMap) -> list[AnimeIdRow]:
     """Flatten the Kometa map into anime_ids store rows (first-seen order).
 
-    Every record yields a row (a NULL ``anilist_id`` is kept, so the library-filter
+    Every record yields a row (a NULL `anilist_id` is kept, so the library-filter
     candidate sets match the former full-map scan; id->entry lookups filter those
     out, as the former reverse index did). Each field uses the same
-    ``.get(..., default)`` reads :func:`_entry_from_raw` used, so the SQL-served
+    `.get(..., default)` reads `_entry_from_raw` used, so the SQL-served
     entry is identical.
     """
 
     rows: list[AnimeIdRow] = []
     for record in anime_mappings.values():
-        # ``.get(key, default)`` only substitutes the default for an ABSENT key; a
-        # present-but-null JSON value (``"tvdb_season": null``) returns None, which
-        # the NOT NULL ``tvdb_season`` / ``tvdb_epoffset`` columns reject - and that
+        # `.get(key, default)` only substitutes the default for an ABSENT key; a
+        # present-but-null JSON value (`"tvdb_season": null`) returns None, which
+        # the NOT NULL `tvdb_season` / `tvdb_epoffset` columns reject - and that
         # IntegrityError aborts the whole populate (then the :memory: fail-open
         # re-parses the same data and re-raises, taking down the entire run).
         # Coalesce an explicit null to the same sentinel an absent key gets.
@@ -293,8 +291,8 @@ def _parse_anidb_mappings(path: str) -> ElementTree.Element:
 class _AnidbParse(NamedTuple):
     """The flattened AniDB parse plus the two skip tallies.
 
-    ``malformed`` counts ``<anime>`` elements dropped whole (missing/non-int
-    anidbid - 0 on healthy upstream data); ``unsupported`` counts ``<mapping>``
+    `malformed` counts `<anime>` elements dropped whole (missing/non-int
+    anidbid - 0 on healthy upstream data); `unsupported` counts `<mapping>`
     forms this parser deliberately doesn't consume (the offset form's empty text,
     multi-episode spans - present in the hundreds on a healthy file).
     """
@@ -306,16 +304,16 @@ class _AnidbParse(NamedTuple):
 
 
 def _anidb_rows(root: ElementTree.Element) -> _AnidbParse:
-    """Flatten the AniDB XML into ``anidb_mapping`` rows + the ambiguous-id set.
+    """Flatten the AniDB XML into `anidb_mapping` rows + the ambiguous-id set.
 
-    Reproduces the former ``anidb_anime_by_id`` + ``_parse_anidb_mapping_dict``
+    Reproduces the former `anidb_anime_by_id` + `_parse_anidb_mapping_dict`
     behavior exactly, but once at populate time:
 
-    * An anidb id appearing in more than one ``<anime>`` element is *ambiguous*
-      (the former ``len(...) > 1`` -> raise case); it is recorded and stored with
-      no mapping rows, and :meth:`MappingResolver.anidb_mapping_dict` raises on it.
-    * For an unambiguous id, each ``<mapping-list>/<mapping>`` with text is parsed
-      to ``{tvdb_ep: anidb_ep}`` keyed by ``tvdbseason``; a repeated season is
+    * An anidb id appearing in more than one `<anime>` element is *ambiguous*
+      (the former `len(...) > 1` -> raise case); it is recorded and stored with
+      no mapping rows, and `MappingResolver.anidb_mapping_dict` raises on it.
+    * For an unambiguous id, each `<mapping-list>/<mapping>` with text is parsed
+      to `{tvdb_ep: anidb_ep}` keyed by `tvdbseason`; a repeated season is
       last-wins, matching the former dict assignment. Malformed/unsupported
       mappings are skipped but tallied (the old code only crashed if such an anime
       was looked up; populating every anime must tolerate what it never reached).
@@ -370,7 +368,7 @@ def _anidb_rows(root: ElementTree.Element) -> _AnidbParse:
 class MappingSources:
     """The three mapping-source configs the resolver loads.
 
-    Each field is tri-state: ``False`` disables the source, ``None`` downloads
+    Each field is tri-state: `False` disables the source, `None` downloads
     it, and a pre-parsed value is used inline (tests / standalone use).
     """
 
@@ -383,8 +381,8 @@ class MappingResolver:
     """Resolve external Arr ids to AniList ids via three SQL-backed sources.
 
     Downloads-if-stale, then - only when a source's content digest changed -
-    parses and indexes it into ``mappings.db`` (owned here). Lookups are answered
-    from SQL. ``get_anilist_ids`` returns the AniList mappings plus the ids it
+    parses and indexes it into `mappings.db` (owned here). Lookups are answered
+    from SQL. `get_anilist_ids` returns the AniList mappings plus the ids it
     dropped because the user chose to ignore them, so the caller (not the
     resolver) owns the per-id logging.
     """
@@ -403,17 +401,17 @@ class MappingResolver:
         """Open the store and load (parse-if-changed) the mapping sources.
 
         Args:
-            cache_time (int): Days a downloaded source stays usable before it's
+            cache_time: Days a downloaded source stays usable before it's
                 re-fetched.
-            ignore_anilist_ids (set[int]): AniList ids to drop from every result.
-            sources (MappingSources): The three source configs, each tri-state
+            ignore_anilist_ids: AniList ids to drop from every result.
+            sources: The three source configs, each tri-state
                 (disabled / download / pre-parsed inline).
-            web (httpx.Client): The shared web client the source downloads ride.
-            mappings_db (str): Path to the SQLite mapping cache; defaults to an
+            web: The shared web client the source downloads ride.
+            mappings_db: Path to the SQLite mapping cache; defaults to an
                 in-memory db (tests / pre-parsed configs).
-            logger (logging.Logger | None): For download/parse visibility (DEBUG;
+            logger: For download/parse visibility (DEBUG;
                 the boot cockpit owns the INFO-level startup narrative).
-            progress (ProgressSink | None): The boot cockpit's step handle, fed
+            progress: The boot cockpit's step handle, fed
                 streaming download progress for the live bar. Defaults to None (no
                 cockpit: progress falls back to throttled DEBUG lines).
         """
@@ -478,8 +476,8 @@ class MappingResolver:
     def _build(self, sources: MappingSources) -> None:
         """Load each source into the store per its config (download / inline / off).
 
-        Safe to call twice (the fail-open retry does): each ``replace_*`` fully
-        replaces a source's rows, and the enabled flags / ``anibridge`` facade are
+        Safe to call twice (the fail-open retry does): each `replace_*` fully
+        replaces a source's rows, and the enabled flags / `anibridge` facade are
         simply re-set.
         """
 
@@ -516,14 +514,14 @@ class MappingResolver:
             self.anibridge = AniBridge.from_store(self._store)
 
     def _download_file(self, url: str, dest: str, *, label: str) -> None:
-        """Stream ``url`` to ``dest`` with a per-read timeout and throttled progress.
+        """Stream `url` to `dest` with a per-read timeout and throttled progress.
 
-        Writes to a ``.part`` temp and atomically renames on success, so a failed or
+        Writes to a `.part` temp and atomically renames on success, so a failed or
         stalled download never leaves a truncated source file for the next run to
         digest and trust. A per-read timeout bounds a stall (the read raises rather
         than blocking forever). Progress is reported about once per MB - to the boot
         cockpit's live bar when the resolver has a progress sink, else as a
-        throttled DEBUG line. Raises ``OSError`` on any failure (the callers'
+        throttled DEBUG line. Raises `OSError` on any failure (the callers'
         containment contract).
         """
 
@@ -574,7 +572,7 @@ class MappingResolver:
                 os.remove(tmp)
 
     def _maybe_download(self, file: str, url: str, label: str) -> None:
-        """Download ``file`` if missing, or refresh it once it's past cache_time."""
+        """Download `file` if missing, or refresh it once it's past cache_time."""
 
         # The data dir exists in the normal CLI flow (ensure_data_dir); create it
         # here too so the in-memory/standalone fallback never fails on a first write.
@@ -679,13 +677,13 @@ class MappingResolver:
     # -- library-filter id sets ---------------------------------------------
 
     def anime_id_set(self, column: AnimeIdColumn) -> AbstractSet[int | str]:
-        """DISTINCT external ids the Anime-IDs source carries for ``column``.
+        """DISTINCT external ids the Anime-IDs source carries for `column`.
 
         Backs the library-filter candidate sets (symmetric with AniBridge's
-        ``all_*`` sets), so ``collect_anime_items`` no longer scans the full map.
+        `all_*` sets), so `collect_anime_items` no longer scans the full map.
         Returns an empty set when the source is disabled. The covariant
-        ``AbstractSet`` return absorbs the store's per-column ``set[int]`` /
-        ``set[str]`` overloads.
+        `AbstractSet` return absorbs the store's per-column `set[int]` /
+        `set[str]` overloads.
         """
 
         if not self._anime_enabled:
@@ -694,23 +692,23 @@ class MappingResolver:
 
     @property
     def has_anidb(self) -> bool:
-        """True when the AniDB source is enabled (the former ``anidb_mappings is not None``)."""
+        """True when the AniDB source is enabled (the former `anidb_mappings is not None`)."""
 
         return self._anidb_enabled
 
     # -- anidb episode mapping ----------------------------------------------
 
     def anidb_mapping_dict(self, anidb_id: int, tvdb_season: int) -> dict[int, dict[int, int]]:
-        """Return ``{tvdb_season: {tvdb_ep: anidb_ep}}`` for an AniDB id + season.
+        """Return `{tvdb_season: {tvdb_ep: anidb_ep}}` for an AniDB id + season.
 
-        Replaces the former ``anidb_anime_by_id`` + ``_parse_anidb_mapping_dict``
-        pair: ``{}`` when the source is disabled, the id is unknown, or it has no
-        mapping for the season; raises the same ``ValueError`` when the id was
-        ambiguous (appeared in more than one ``<anime>`` element).
+        Replaces the former `anidb_anime_by_id` + `_parse_anidb_mapping_dict`
+        pair: `{}` when the source is disabled, the id is unknown, or it has no
+        mapping for the season; raises the same `ValueError` when the id was
+        ambiguous (appeared in more than one `<anime>` element).
 
         Args:
-            anidb_id (int): AniDB id to look up.
-            tvdb_season (int): The TVDB season AniList resolved to.
+            anidb_id: AniDB id to look up.
+            tvdb_season: The TVDB season AniList resolved to.
         """
 
         if not self._anidb_enabled:
@@ -733,7 +731,7 @@ class MappingResolver:
         """Resolve external ids to a sorted {AniList id -> mapping} dict.
 
         Args:
-            ids (ExternalIds): The external Arr ids to resolve (at least one).
+            ids: The external Arr ids to resolve (at least one).
 
         Returns:
             tuple: (anilist_mappings, ids_to_drop), where anilist_mappings is a
@@ -790,10 +788,10 @@ class MappingResolver:
         """Get mappings from the Anime ID mappings (served from SQL).
 
         Returns a fresh {AniList id -> mapping} dict for this source alone;
-        cross-source precedence is ``get_anilist_ids``' merge to apply.
+        cross-source precedence is `get_anilist_ids`' merge to apply.
 
         Args:
-            ids (ExternalIds): The external Arr ids to resolve (at least one).
+            ids: The external Arr ids to resolve (at least one).
         """
 
         anilist_mappings: dict[int, MappingEntry] = {}
@@ -827,10 +825,10 @@ class MappingResolver:
         """Get mappings from the AniBridge mappings (served from SQL).
 
         Returns a fresh {AniList id -> mapping} dict for this source alone;
-        cross-source precedence is ``get_anilist_ids``' merge to apply.
+        cross-source precedence is `get_anilist_ids`' merge to apply.
 
         Args:
-            ids (ExternalIds): The external Arr ids to resolve (at least one).
+            ids: The external Arr ids to resolve (at least one).
         """
 
         anilist_mappings: dict[int, MappingEntry] = {}

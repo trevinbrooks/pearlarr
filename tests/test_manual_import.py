@@ -2,14 +2,14 @@
 """Characterization tests for the pure manual-import helpers.
 
 Pins the deterministic decision helpers in
-:mod:`pearlarr.modules.manual_import` (the wait vocabulary, the normalizers,
-the :class:`PendingImport` JSON round-trip) and
-:mod:`pearlarr.modules.sonarr_import_plan` (the ``(season, episode) -> id``
+`manual_import` (the wait vocabulary, the normalizers,
+the `PendingImport` JSON round-trip) and
+`sonarr_import_plan` (the `(season, episode) -> id`
 map, the authoritative file->episode mapping and import planning (strict-honor
 + never-overwrite + never-skip), the queue classifier and episode-file status,
 the filename quality parse, and the layered quality/language selection). All
-pure, no network or disk; :class:`SonarrEpisode` is built directly via
-:meth:`SonarrEpisode.from_api`.
+pure, no network or disk; `SonarrEpisode` is built directly via
+`SonarrEpisode.from_api`.
 """
 
 import pytest
@@ -71,7 +71,7 @@ def _ep(
     file_id: int = 0,
     group: str | None = None,
 ) -> SonarrEpisode:
-    """A ``SonarrEpisode`` from the raw fields the helpers read."""
+    """A `SonarrEpisode` from the raw fields the helpers read."""
 
     raw: dict[str, object] = {"id": ep_id, "seasonNumber": season, "episodeNumber": episode}
     if file_id:
@@ -252,7 +252,7 @@ class TestPlanImportFiles:
     def test_already_imported_skips_only_when_no_target_needs_us(self) -> None:
         # When every target already holds a recommended file (none in needing),
         # Sonarr's rejection and our episode-file check agree -> the more specific
-        # ``already`` (never overwrite).
+        # `already` (never overwrite).
         amap = {"i.mkv": [12]}
         cands = {"i.mkv": _candidate("i.mkv", already=True)}
         decisions = plan_import_files(amap, cands, needing_import=set())
@@ -271,7 +271,7 @@ def _command(
     status: str = "started",
     files: list[dict[str, object]] | None = None,
 ) -> CommandResource:
-    """A ``CommandResource`` from the raw command fields the guard reads."""
+    """A `CommandResource` from the raw command fields the guard reads."""
 
     return CommandResource.from_api(
         {"name": name, "status": status, "body": {"files": files or []}},
@@ -650,7 +650,7 @@ class TestClassifyPending:
 
 class TestSanitizeTorrentTelemetry:
     """MUTATION PIN: the pure telemetry sanitizer's clamps, sentinel folds and the
-    numeric-string ``_as_float`` path (a cluster of ~10 surviving mutants)."""
+    numeric-string `_as_float` path (a cluster of ~10 surviving mutants)."""
 
     @pytest.mark.parametrize(
         ("progress", "dlspeed", "eta", "completed", "size", "expected"),

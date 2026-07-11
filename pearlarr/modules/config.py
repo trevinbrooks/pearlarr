@@ -1,15 +1,15 @@
 """Application configuration: typed, validated settings loaded from the YAML file.
 
-``AppConfig`` is a Pydantic model tree over the config file. Pydantic owns parsing,
+`AppConfig` is a Pydantic model tree over the config file. Pydantic owns parsing,
 defaults, coercion (including the present-but-blank-YAML-key footgun) and validation:
-an unknown/typo'd key or a bad value raises a clear ``ValidationError`` instead of
+an unknown/typo'd key or a bad value raises a clear `ValidationError` instead of
 being silently dropped or coalesced. The rest of the package reads
-``config.seadex.want_best`` rather than ``config.get("want_best", True)``.
+`config.seadex.want_best` rather than `config.get("want_best", True)`.
 
-Each settings group is its own submodel (``sonarr``/``radarr``/``qbittorrent``/
-``seadex``/``imports``/``notifications``/``advanced``/``mappings``). The connection
-``url``/``api_key`` for each arr are optional at parse time and enforced lazily at
-point-of-use via ``AppConfig.require_connection``, so a config filled in for only
+Each settings group is its own submodel (`sonarr`/`radarr`/`qbittorrent`/
+`seadex`/`imports`/`notifications`/`advanced`/`mappings`). The connection
+`url`/`api_key` for each arr are optional at parse time and enforced lazily at
+point-of-use via `AppConfig.require_connection`, so a config filled in for only
 one arr still validates and runs.
 """
 
@@ -35,7 +35,7 @@ from .manual_import import ImportWaitMode
 
 # Tracker name classification. The *_TRACKER_NAMES tuples keep SeaDex's exact casings
 # (the docs generator renders them into the sample and reference); the sets are
-# casefolded so membership tests match the casefolded ``seadex.trackers`` setting and
+# casefolded so membership tests match the casefolded `seadex.trackers` setting and
 # the casefolded tracker names from SeaDex.
 PUBLIC_TRACKER_NAMES: tuple[str, ...] = ("Nyaa", "AnimeTosho", "AniDex", "RuTracker")
 PRIVATE_TRACKER_NAMES: tuple[str, ...] = (
@@ -52,7 +52,7 @@ OTHER_TRACKER_NAMES: tuple[str, ...] = ("Other", "OtherPrivate")
 PUBLIC_TRACKERS = {tracker.casefold() for tracker in PUBLIC_TRACKER_NAMES}
 PRIVATE_TRACKERS = {tracker.casefold() for tracker in PRIVATE_TRACKER_NAMES}
 
-# Every name the seadex ``Tracker`` enum can emit (casefolded), so the cli can warn on
+# Every name the seadex `Tracker` enum can emit (casefolded), so the cli can warn on
 # configured trackers that match nothing. Literals keep this module's imports light;
 # a parity test pins them against the installed enum.
 KNOWN_TRACKERS = PUBLIC_TRACKERS | PRIVATE_TRACKERS | {tracker.casefold() for tracker in OTHER_TRACKER_NAMES}
@@ -63,7 +63,7 @@ CONFIG_TEMPLATE_FILE = "config_sample.yml"
 class Arr(StrEnum):
     """Which *arr the run targets.
 
-    A ``StrEnum`` so the value still equals its string (``Arr.SONARR == "sonarr"``),
+    A `StrEnum` so the value still equals its string (`Arr.SONARR == "sonarr"`),
     serializes as a bare JSON cache key, and selects the matching config group -
     while making the two valid arrs the only representable states.
     """
@@ -73,7 +73,7 @@ class Arr(StrEnum):
 
 
 class PrivateReleaseAction(StrEnum):
-    """The ``seadex.private_releases`` policy for private-tracker releases.
+    """The `seadex.private_releases` policy for private-tracker releases.
 
     Private releases are never grabbed: SeaDex carries no downloadable link or
     infohash for them, and no private-tracker auth is supported. The policy
@@ -94,7 +94,7 @@ def template_path() -> str:
 
 
 def write_starter_config(path: str) -> None:
-    """Copy the bundled template to ``path`` as a user-owned starter config.
+    """Copy the bundled template to `path` as a user-owned starter config.
 
     Drops the template's generated-file banner (the copy is the user's file to
     edit, not a generated artifact) and restricts the copy to owner-only.
@@ -108,9 +108,9 @@ def write_starter_config(path: str) -> None:
 
 
 def restrict_config_permissions(path: str) -> None:
-    """Best-effort ``chmod 0600``: the config carries plaintext API keys.
+    """Best-effort `chmod 0600`: the config carries plaintext API keys.
 
-    Both creation paths (the first-run template copy and ``config init``) call
+    Both creation paths (the first-run template copy and `config init`) call
     this so a fresh config never lands group/other-readable. Best-effort because
     a filesystem that doesn't support modes (or a race with a deleted file) must
     not turn the write into a crash.
@@ -138,15 +138,15 @@ def config_permissions_loose(path: str) -> bool:
 
 
 def secret_value(secret: SecretStr | None) -> str | None:
-    """Unwrap an optional ``SecretStr`` at a point of use."""
+    """Unwrap an optional `SecretStr` at a point of use."""
 
     return secret.get_secret_value() if secret is not None else None
 
 
 def strip_userinfo(value: str) -> str:
-    """Mask a ``user:pass@`` login embedded in a URL/host value.
+    """Mask a `user:pass@` login embedded in a URL/host value.
 
-    Every user-facing rendering of a configured URL (``config show``, arr
+    Every user-facing rendering of a configured URL (`config show`, arr
     connection errors) goes through this: the login is a credential, the
     host is what the user needs to see.
     """
@@ -164,13 +164,13 @@ def strip_userinfo(value: str) -> str:
 class _ConfigBase(BaseModel):
     """Shared base for every settings group: strict, immutable, blank-tolerant.
 
-    ``extra="forbid"`` turns a typo'd key into a ``ValidationError`` (the whole point
-    of validating); ``frozen=True`` matches the project's value-object convention and
+    `extra="forbid"` turns a typo'd key into a `ValidationError` (the whole point
+    of validating); `frozen=True` matches the project's value-object convention and
     makes sharing one loaded config across both arrs provably safe;
-    ``hide_input_in_errors=True`` keeps a rejected value (which could be a
+    `hide_input_in_errors=True` keeps a rejected value (which could be a
     credential pasted under the wrong key) out of the ValidationError text;
-    ``use_attribute_docstrings=True`` lifts each field's attribute docstring into
-    ``FieldInfo.description`` - the one authored home the docs generator renders.
+    `use_attribute_docstrings=True` lifts each field's attribute docstring into
+    `FieldInfo.description` - the one authored home the docs generator renders.
     """
 
     model_config = ConfigDict(
@@ -185,11 +185,11 @@ class _ConfigBase(BaseModel):
     def _drop_blank_none(cls, data: Any) -> Any:
         """Let blank YAML keys fall back to their declared default.
 
-        A present-but-blank YAML key (``foo:``) parses to ``None``; a plain field
-        default would not apply (the key is present) and ``None`` would be rejected
-        by an ``int``/``str`` field. Drop ``None`` *only for known fields* so the
+        A present-but-blank YAML key (`foo:`) parses to `None`; a plain field
+        default would not apply (the key is present) and `None` would be rejected
+        by an `int`/`str` field. Drop `None` *only for known fields* so the
         default applies. Unknown keys are kept regardless of blankness, so
-        ``extra="forbid"`` still flags both ``typo: value`` and a bare ``typo:``.
+        `extra="forbid"` still flags both `typo: value` and a bare `typo:`.
         """
 
         if not isinstance(data, dict):
@@ -200,13 +200,13 @@ class _ConfigBase(BaseModel):
 
 
 class ArrSettings(_ConfigBase):
-    """Connection + per-arr behavior, shared by the ``sonarr`` and ``radarr`` groups.
+    """Connection + per-arr behavior, shared by the `sonarr` and `radarr` groups.
 
-    ``api_key`` is a ``SecretStr`` so a dumped/logged model masks it;
-    ``AppConfig.require_connection`` (and the Sonarr->Radarr cross-check)
-    unwrap it at the client-construction boundary. ``verify_ssl: false`` is the
+    `api_key` is a `SecretStr` so a dumped/logged model masks it;
+    `AppConfig.require_connection` (and the Sonarr->Radarr cross-check)
+    unwrap it at the client-construction boundary. `verify_ssl: false` is the
     last-resort escape hatch for a self-signed arr whose CA can't be trusted via
-    the OS store / ``SSL_CERT_FILE``.
+    the OS store / `SSL_CERT_FILE`.
     """
 
     url: str | None = None
@@ -242,8 +242,8 @@ class ArrSettings(_ConfigBase):
 class SonarrSettings(ArrSettings):
     """Sonarr adds one cross-arr flag the Radarr group must not accept.
 
-    ``ignore_movies_in_radarr`` is read only on a Sonarr run; declaring it here (not
-    on the shared base) means ``extra="forbid"`` correctly rejects it under ``radarr``.
+    `ignore_movies_in_radarr` is read only on a Sonarr run; declaring it here (not
+    on the shared base) means `extra="forbid"` correctly rejects it under `radarr`.
     """
 
     ignore_movies_in_radarr: bool = False
@@ -251,10 +251,10 @@ class SonarrSettings(ArrSettings):
 
 
 class QbittorrentSettings(_ConfigBase):
-    """qBittorrent connection. The connection fields are modelled explicitly; ``options``
-    is a scoped escape hatch for the remaining ``qbittorrentapi.Client`` kwargs (e.g.
-    ``VERIFY_WEBUI_CERTIFICATE`` for a self-signed-HTTPS WebUI, ``REQUESTS_ARGS``) so the
-    explicit model doesn't drop connectivity the old free-form ``qbit_info`` splat allowed.
+    """qBittorrent connection. The connection fields are modelled explicitly; `options`
+    is a scoped escape hatch for the remaining `qbittorrentapi.Client` kwargs (e.g.
+    `VERIFY_WEBUI_CERTIFICATE` for a self-signed-HTTPS WebUI, `REQUESTS_ARGS`) so the
+    explicit model doesn't drop connectivity the old free-form `qbit_info` splat allowed.
     """
 
     host: str | None = None
@@ -282,7 +282,7 @@ class QbittorrentSettings(_ConfigBase):
     """
 
     def credentials(self) -> tuple[str, str, str] | None:
-        """The ``(host, username, password)`` triple, or ``None`` if any part is unset.
+        """The `(host, username, password)` triple, or `None` if any part is unset.
 
         All three are needed to add torrents; a missing one means run in preview mode
         (nothing is grabbed). The caller builds the client with explicit kwargs; the
@@ -338,13 +338,13 @@ class SeadexSettings(_ConfigBase):
     def _casefold_trackers(cls, value: Any) -> Any:
         """Casefold explicit trackers so membership tests match SeaDex's names.
 
-        An absent ``trackers`` key takes the ``PUBLIC | PRIVATE`` default_factory; an
+        An absent `trackers` key takes the `PUBLIC | PRIVATE` default_factory; an
         explicit empty list/string coalesces to that same default here (empty means "no
         restriction", never "match nothing" - which would silently grab nothing,
         mirroring the languages validator). A scalar string is one tracker, not iterated
-        character-by-character (``trackers: Nyaa`` -> ``{"nyaa"}``); a non-iterable scalar
-        raises ``ValueError`` so it surfaces as a clean ``ValidationError`` instead of a
-        raw ``TypeError`` that would escape the cli's error handler.
+        character-by-character (`trackers: Nyaa` -> `{"nyaa"}`); a non-iterable scalar
+        raises `ValueError` so it surfaces as a clean `ValidationError` instead of a
+        raw `TypeError` that would escape the cli's error handler.
         """
 
         if isinstance(value, (str, list, set, tuple)) and not value:
@@ -370,7 +370,7 @@ class ImportsSettings(_ConfigBase):
     """When, if ever, to wait for grabbed torrents to finish downloading and then drive Sonarr's import."""
 
     # ge=1: a zero timeout/poll cadence is a degenerate busy-loop, never a
-    # documented disable (that's ``wait_mode: off``).
+    # documented disable (that's `wait_mode: off`).
     wait_timeout: int = Field(default=3600, ge=1)
     """Seconds to wait per torrent for qBittorrent to finish downloading it."""
 
@@ -437,11 +437,11 @@ class ImportsSettings(_ConfigBase):
     @field_validator("wait_mode", mode="before")
     @classmethod
     def _yaml_bool_off(cls, value: Any) -> Any:
-        """Map YAML's unquoted ``off`` back to the OFF mode.
+        """Map YAML's unquoted `off` back to the OFF mode.
 
-        YAML 1.1 parses a bare ``off`` (the documented disabled value) as the boolean
-        ``False``, so without this ``wait_mode: off`` would fail enum validation and skip
-        the whole run. ``False`` reads as "disabled", so it maps to OFF; any other
+        YAML 1.1 parses a bare `off` (the documented disabled value) as the boolean
+        `False`, so without this `wait_mode: off` would fail enum validation and skip
+        the whole run. `False` reads as "disabled", so it maps to OFF; any other
         unrecognized value still raises cleanly.
         """
 
@@ -454,8 +454,8 @@ class ImportsSettings(_ConfigBase):
     def _languages_default_if_empty(cls, value: Any, info: ValidationInfo) -> Any:
         """Coalesce an explicit empty list to the language default.
 
-        Preserves the pre-Pydantic truthiness coalescing (``value if value else
-        default``): ``languages_dual: []`` in the config must not tag imported files with
+        Preserves the pre-Pydantic truthiness coalescing (`value if value else
+        default`): `languages_dual: []` in the config must not tag imported files with
         no language. A blank/absent key already takes the default_factory via the
         inherited blank-drop, so this only handles an explicitly-empty list.
         """
@@ -470,7 +470,7 @@ class ImportsSettings(_ConfigBase):
 class NotificationsSettings(_ConfigBase):
     """Discord + generic webhook + the walk-away ping when a wait pass completes.
 
-    Both webhook URLs are ``SecretStr``: the URL itself embeds the
+    Both webhook URLs are `SecretStr`: the URL itself embeds the
     credential (the Discord path IS the token), so a dumped/logged model masks
     them; the Notifier construction unwraps them.
     """
@@ -491,10 +491,10 @@ class NotificationsSettings(_ConfigBase):
     @model_validator(mode="before")
     @classmethod
     def _derive_wait_notify(cls, data: Any) -> Any:
-        """Default ``wait_notify`` on whenever any webhook is set; explicit value wins.
+        """Default `wait_notify` on whenever any webhook is set; explicit value wins.
 
         Order-independent w.r.t. the inherited blank-drop: it keys off
-        ``wait_notify`` being absent/None, true either way.
+        `wait_notify` being absent/None, true either way.
         """
 
         if not isinstance(data, dict):
@@ -516,9 +516,9 @@ class ScheduleSettings(_ConfigBase):
 
 
 type LogFormat = Literal["auto", "rich", "plain", "json"]
-"""The console output formats ``advanced.log_format`` accepts.
+"""The console output formats `advanced.log_format` accepts.
 
-``auto`` resolves once at logger setup: rich on a TTY stdout, plain otherwise.
+`auto` resolves once at logger setup: rich on a TTY stdout, plain otherwise.
 """
 
 
@@ -563,7 +563,7 @@ class AdvancedSettings(_ConfigBase):
     @field_validator("log_level", mode="before")
     @classmethod
     def _uppercase_log_level(cls, value: Any) -> Any:
-        """Uppercase a configured level so ``info`` and ``INFO`` both validate."""
+        """Uppercase a configured level so `info` and `INFO` both validate."""
 
         if isinstance(value, str):
             return value.upper()
@@ -572,7 +572,7 @@ class AdvancedSettings(_ConfigBase):
     @field_validator("log_format", mode="before")
     @classmethod
     def _lowercase_log_format(cls, value: Any) -> Any:
-        """Lowercase a configured format so ``JSON`` and ``json`` both validate."""
+        """Lowercase a configured format so `JSON` and `json` both validate."""
 
         if isinstance(value, str):
             return value.lower()
@@ -580,10 +580,10 @@ class AdvancedSettings(_ConfigBase):
 
 
 class MappingsSettings(_ConfigBase):
-    """ID/episode mapping sources: ``False`` disables, blank auto-downloads.
+    """ID/episode mapping sources: `False` disables, blank auto-downloads.
 
-    ``anime``/``anibridge`` also accept an inline mapping dict (a power-user path the
-    resolver supports). ``anidb``'s inline form is an XML element that can't come from
+    `anime`/`anibridge` also accept an inline mapping dict (a power-user path the
+    resolver supports). `anidb`'s inline form is an XML element that can't come from
     a YAML file, so only disable/auto-download are offered there.
     """
 
@@ -645,7 +645,7 @@ class AppConfig(_ConfigBase):
     mappings: MappingsSettings = Field(default_factory=MappingsSettings)
     """ID and episode mapping sources. `anibridge_mappings` is the primary; the others fill anything it misses."""
 
-    # Set once by ``load`` after construction (frozen models still allow private-attr
+    # Set once by `load` after construction (frozen models still allow private-attr
     # assignment); the file checksum is the cache descriptor, the path feeds error text.
     _path: str = PrivateAttr(default="")
     _checksum: str = PrivateAttr(default="")
@@ -654,13 +654,13 @@ class AppConfig(_ConfigBase):
     def load(cls, path: str) -> "AppConfig":
         """Locate, load and validate the config file.
 
-        Copies the bundled template to ``path`` and raises ``FileNotFoundError`` when
+        Copies the bundled template to `path` and raises `FileNotFoundError` when
         the file is missing (so a first run writes a starter config), then parses and
-        validates it. An invalid config raises ``pydantic.ValidationError`` (a
-        ``ValueError`` subclass) naming the offending keys.
+        validates it. An invalid config raises `pydantic.ValidationError` (a
+        `ValueError` subclass) naming the offending keys.
 
         Args:
-            path (str): Path to the config file.
+            path: Path to the config file.
         """
 
         if not os.path.exists(path):
@@ -691,7 +691,7 @@ class AppConfig(_ConfigBase):
         """Whether the arr's connection pair (url + api_key) is filled in.
 
         The CLI uses this to skip an unconfigured arr cleanly (a Sonarr-only
-        setup is normal) instead of tripping :meth:`require_connection`.
+        setup is normal) instead of tripping `require_connection`.
         """
 
         return not self.missing_arr_keys(arr)
@@ -709,7 +709,7 @@ class AppConfig(_ConfigBase):
         return tuple(f"{arr.value}.{field}" for field, value in pairs if not value)
 
     def require_connection(self, arr: Arr) -> tuple[str, str]:
-        """The arr's ``(url, api_key)``, or raise naming the missing key + file.
+        """The arr's `(url, api_key)`, or raise naming the missing key + file.
 
         Connection settings are optional at parse time so a config filled in for only
         one arr still validates; this enforces them lazily when that arr actually runs.

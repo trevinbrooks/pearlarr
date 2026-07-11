@@ -5,11 +5,11 @@
 
 Pins the behaviors the rest of the app relies on:
 
-* ``resolve_paths`` honors the precedence ``--data-dir`` arg > ``PEARLARR_DATA_DIR``
-  env > the OS-standard ``platformdirs`` default, and lays every file under one dir.
-* The global ``--data-dir`` flag folds into the env so each command (called directly in
-  tests, not via ``ctx.obj``) sees it, and the flag wins over a pre-set env.
-* Logs route to the resolved ``log_dir`` rather than the current working directory.
+* `resolve_paths` honors the precedence `--data-dir` arg > `PEARLARR_DATA_DIR`
+  env > the OS-standard `platformdirs` default, and lays every file under one dir.
+* The global `--data-dir` flag folds into the env so each command (called directly in
+  tests, not via `ctx.obj`) sees it, and the flag wins over a pre-set env.
+* Logs route to the resolved `log_dir` rather than the current working directory.
 """
 
 import io
@@ -93,7 +93,7 @@ class TestLogRouting:
 
     @staticmethod
     def _install(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-        """The production install against ``data_dir``; stdout swapped off the tty."""
+        """The production install against `data_dir`; stdout swapped off the tty."""
 
         monkeypatch.setattr(sys, "stdout", io.StringIO())
         _install_output_hub(resolve_paths(str(data_dir)))

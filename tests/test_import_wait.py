@@ -3,15 +3,15 @@
 # These access the wait manager's + engine's private members (mgr._reporter,
 # mgr._pending_records, mgr._ctx, engine._wait_manager, ...); strict re-flags that and
 # the repo disables reportPrivateUsage for tests.
-"""Unit tests for the completion wait/poll machinery (:class:`ImportWaitManager`).
+"""Unit tests for the completion wait/poll machinery (`ImportWaitManager`).
 
-These pin :meth:`ImportWaitManager.poll_torrent` (the single-shot state read)
-and :meth:`ImportWaitManager.run_monitor` (the poll loop) against a scripted
-``FakeQbit``. The clock and sleep are injected into the monitor loop so it never
-actually waits - real foreground ``sleep`` is blocked in this env, so the fakes
-are mandatory, not just a speed-up. The manager is built bare (``object.__new__``
-via ``make_bare_instance``) so no live qBittorrent login or disk I/O happens. The
-engine's ``_finalize_run`` orchestration (which drives the manager's passes) is
+These pin `ImportWaitManager.poll_torrent` (the single-shot state read)
+and `ImportWaitManager.run_monitor` (the poll loop) against a scripted
+`FakeQbit`. The clock and sleep are injected into the monitor loop so it never
+actually waits - real foreground `sleep` is blocked in this env, so the fakes
+are mandatory, not just a speed-up. The manager is built bare (`object.__new__`
+via `make_bare_instance`) so no live qBittorrent login or disk I/O happens. The
+engine's `_finalize_run` orchestration (which drives the manager's passes) is
 pinned via a real engine with an attached manager at the bottom of the file.
 
 Every collaborator the manager drives - the strategy's import hooks, the snapshot
@@ -69,7 +69,7 @@ from .fakes import CaptureHandler, FakeStrategy, install_recording_hub
 
 
 class FakeStateEnum:
-    """Mimics qBittorrent's ``state_enum`` (the ``is_*`` booleans the poll reads)."""
+    """Mimics qBittorrent's `state_enum` (the `is_*` booleans the poll reads)."""
 
     def __init__(self, *, is_complete: bool = False, is_errored: bool = False) -> None:
         self.is_complete = is_complete
@@ -77,13 +77,13 @@ class FakeStateEnum:
 
 
 class FakeTorrent:
-    """Mimics one qBittorrent torrent info row (the fields ``poll_torrent`` reads).
+    """Mimics one qBittorrent torrent info row (the fields `poll_torrent` reads).
 
-    The telemetry fields (``dlspeed`` / ``eta`` / ``completed`` / ``size``) default
-    to None so the common monitor tests don't have to set them; ``poll_torrent``
-    reads them via ``getattr`` and sanitizes None to None. ``hash`` is only read
-    by the batched ``poll_telemetry`` (which keys its result off it); a blank
-    hash is filled in from the script key when served from a ``FakeQbit``
+    The telemetry fields (`dlspeed` / `eta` / `completed` / `size`) default
+    to None so the common monitor tests don't have to set them; `poll_torrent`
+    reads them via `getattr` and sanitizes None to None. `hash` is only read
+    by the batched `poll_telemetry` (which keys its result off it); a blank
+    hash is filled in from the script key when served from a `FakeQbit`
     telemetry script, so only a deliberate-mismatch test needs to set it.
     """
 
@@ -117,17 +117,17 @@ type QbitStep = FakeTorrent | Exception
 class FakeQbit:
     """A scriptable qBittorrent client with per-hash, per-lane scripts.
 
-    ``torrents`` scripts the heavy per-hash poll: each infohash maps to its own
-    ordered lifecycle of readings, and every single-hash ``torrents_info`` call
+    `torrents` scripts the heavy per-hash poll: each infohash maps to its own
+    ordered lifecycle of readings, and every single-hash `torrents_info` call
     advances THAT hash's script by one (clamping at the last, so a steady state
-    repeats indefinitely). An unscripted hash reads as gone (``[]``); an
-    Exception step is raised to exercise the transient-error path. ``telemetry``
+    repeats indefinitely). An unscripted hash reads as gone (`[]`); an
+    Exception step is raised to exercise the transient-error path. `telemetry`
     separately scripts the fast batched poll the same way - a batch read never
     consumes a heavy script (and vice versa), so a test scripts torrent
     lifecycles declaratively without caring which lane polls first; hashes with
     no telemetry script simply don't appear in a batch. Hash matching is
-    case-insensitive on both lanes (real qBittorrent is). ``calls`` counts every
-    ``torrents_info`` call, either lane.
+    case-insensitive on both lanes (real qBittorrent is). `calls` counts every
+    `torrents_info` call, either lane.
     """
 
     def __init__(
@@ -151,7 +151,7 @@ class FakeQbit:
 
     @staticmethod
     def _next(steps: list[QbitStep], index: dict[str, int], key: str) -> FakeTorrent:
-        """Advance ``key``'s cursor through ``steps`` (clamped); raise Exception steps."""
+        """Advance `key`'s cursor through `steps` (clamped); raise Exception steps."""
 
         i = index.get(key, 0)
         index[key] = i + 1
@@ -191,7 +191,7 @@ class _InterruptOnHash(FakeQbit):
 
 
 def make_wait_manager(qbit: FakeQbit) -> ImportWaitManager:
-    """A bare ``ImportWaitManager`` wired only with the ``qbit`` the poll reads."""
+    """A bare `ImportWaitManager` wired only with the `qbit` the poll reads."""
 
     return make_bare_instance(ImportWaitManager, qbit=qbit)
 
@@ -351,7 +351,7 @@ _EXPIRED = "2000-01-01 00:00:00"
 
 @dataclass(frozen=True)
 class _ImportCall:
-    """One recorded ``import_completed`` call: its record/path + force/deadline flags."""
+    """One recorded `import_completed` call: its record/path + force/deadline flags."""
 
     pending: PendingImport
     content_path: str
@@ -360,15 +360,15 @@ class _ImportCall:
 
 
 class _RecordingStrategy(FakeStrategy):
-    """A :class:`FakeStrategy` that records + scripts the two import hooks the manager drives.
+    """A `FakeStrategy` that records + scripts the two import hooks the manager drives.
 
-    ``import_completed`` records each call's force/at_deadline flags (asserted on
-    ``import_calls``) and dispenses a scripted :class:`ImportProbe` - a single
-    ``completed`` repeated, a ``completed_sequence`` advanced per call (clamped to its
-    last), or a ``completed_error`` raised (the swallowed-import path).
-    ``import_progress`` likewise records (``progress_calls``) and dispenses an
-    :class:`ImportProgress`, defaulting to an indeterminate zero - the Tier-2
-    fast-poll no-op the heavy-poll tests rely on; ``progress_error`` is raised
+    `import_completed` records each call's force/at_deadline flags (asserted on
+    `import_calls`) and dispenses a scripted `ImportProbe` - a single
+    `completed` repeated, a `completed_sequence` advanced per call (clamped to its
+    last), or a `completed_error` raised (the swallowed-import path).
+    `import_progress` likewise records (`progress_calls`) and dispenses an
+    `ImportProgress`, defaulting to an indeterminate zero - the Tier-2
+    fast-poll no-op the heavy-poll tests rely on; `progress_error` is raised
     ONCE on the first call (the fast-lane containment path), then cleared.
     """
 
@@ -432,7 +432,7 @@ class _RecordingStrategy(FakeStrategy):
 
 @dataclass(frozen=True)
 class _SnapshotCall:
-    """One recorded ``log_pending_snapshot`` call's reported fields."""
+    """One recorded `log_pending_snapshot` call's reported fields."""
 
     state: PendingState
     title: str
@@ -441,7 +441,7 @@ class _SnapshotCall:
 
 
 class _RecordingReporter:
-    """Records ``log_pending_snapshot`` calls, so the inline-snapshot / no-double-report
+    """Records `log_pending_snapshot` calls, so the inline-snapshot / no-double-report
     contracts are asserted on recorded state."""
 
     def __init__(self) -> None:
@@ -465,15 +465,15 @@ def make_orchestration_manager(
     reporter: _RecordingReporter | None = None,
     **config_overrides: object,
 ) -> ImportWaitManager:
-    """A bare ``ImportWaitManager`` wired for the pending-import orchestration paths.
+    """A bare `ImportWaitManager` wired for the pending-import orchestration paths.
 
-    Seeds the durable per-arr store (via the manager's own ``cache_store``) and the
-    in-memory ``_ctx.pending_imports`` list so ``prune_expired_pending``,
-    ``snapshot_pending_for_series``, ``reconcile_remaining`` and ``run_monitor`` can
+    Seeds the durable per-arr store (via the manager's own `cache_store`) and the
+    in-memory `_ctx.pending_imports` list so `prune_expired_pending`,
+    `snapshot_pending_for_series`, `reconcile_remaining` and `run_monitor` can
     be driven without a live Sonarr/qBittorrent. The strategy is a recording
-    ``_RecordingStrategy`` (its import hooks scripted per test) and the reporter a
-    recording ``_RecordingReporter`` (a test that asserts on the snapshot reporter
-    passes in its own ``reporter`` to read it back).
+    `_RecordingStrategy` (its import hooks scripted per test) and the reporter a
+    recording `_RecordingReporter` (a test that asserts on the snapshot reporter
+    passes in its own `reporter` to read it back).
     """
 
     mgr = make_bare_instance(
@@ -543,7 +543,7 @@ class RecordingWaitView(WaitView):
     """Records every snapshot the manager pushes, for assertion.
 
     Replaces the old call-tuple FakeWaitView: the view is now a pure function of
-    the pushed :class:`WaitSnapshot`, so the tests assert on the recorded snapshot
+    the pushed `WaitSnapshot`, so the tests assert on the recorded snapshot
     state (each torrent's phase / outcome) rather than imperative method calls.
     """
 
@@ -565,7 +565,7 @@ class RecordingWaitView(WaitView):
         return next(t for t in self.snapshots[-1].torrents if t.key == key)
 
     def saw(self, key: str, phase: Phase) -> bool:
-        """Whether any recorded snapshot showed ``key`` in ``phase``."""
+        """Whether any recorded snapshot showed `key` in `phase`."""
 
         return any(t.key == key and t.phase is phase for snap in self.snapshots for t in snap.torrents)
 
@@ -1319,7 +1319,7 @@ def _monitor_pass(
     qbit: FakeQbit,
     record: PendingImport,
 ) -> MonitorPass:
-    """A fresh :class:`MonitorPass` over one record, wired to a scripted qBittorrent."""
+    """A fresh `MonitorPass` over one record, wired to a scripted qBittorrent."""
 
     mgr = make_orchestration_manager(qbit=qbit, strategy=_RecordingStrategy())
     clock = FakeClock(step=5)
@@ -1500,7 +1500,7 @@ class TestImportWaitModeProperty:
     """The services hub exposes the run's RESOLVED wait mode (cli > config).
 
     The Sonarr strategy's seed-building gate reads this instead of the raw config
-    so a CLI override that turns the feature on over an ``off`` config still
+    so a CLI override that turns the feature on over an `off` config still
     builds seeds (otherwise the whole pass silently no-ops).
     """
 
@@ -1513,11 +1513,11 @@ class TestImportWaitModeProperty:
 
 
 def _attach_wait_manager(engine: RunLoop) -> None:
-    """Attach an ``ImportWaitManager`` sharing the engine's run state.
+    """Attach an `ImportWaitManager` sharing the engine's run state.
 
     The wait/poll machinery lives on the manager now, so a finalize/snapshot test
-    on a bare engine must wire one bound to the SAME ``_ctx`` / ``cache_store`` /
-    client / strategy the engine holds - exactly as ``__init__`` + ``begin_run`` do.
+    on a bare engine must wire one bound to the SAME `_ctx` / `cache_store` /
+    client / strategy the engine holds - exactly as `__init__` + `begin_run` do.
     """
 
     engine._wait_manager = make_import_wait_manager(
@@ -1555,7 +1555,7 @@ class _FinalizeReporter:
 
 
 class _RecordingCacheStore(FakeCacheStore):
-    """A :class:`FakeCacheStore` whose ``save`` appends a ``"save"`` ordering marker."""
+    """A `FakeCacheStore` whose `save` appends a `"save"` ordering marker."""
 
     def __init__(self, calls: list[str]) -> None:
         super().__init__()
@@ -1571,8 +1571,8 @@ class _FinalizeWaitManager:
 
     Every pass appends its ordering marker; the real ones return early on the
     empty working set these tests build - recording nothing - so a recording
-    stand-in is what makes each step observable. ``raise_on`` scripts one pass to
-    fail, for the unwind pins (the raise escapes ``_finalize_run``, exactly as a
+    stand-in is what makes each step observable. `raise_on` scripts one pass to
+    fail, for the unwind pins (the raise escapes `_finalize_run`, exactly as a
     real failure would, and bootstrap's finally is what closes the run).
     """
 
@@ -1603,14 +1603,14 @@ def _finalize_engine(
     mode: ImportWaitMode,
     raise_on: str | None = None,
 ) -> RunLoop:
-    """A bare engine whose every run-tail step appends a marker to ``calls``.
+    """A bare engine whose every run-tail step appends a marker to `calls`.
 
     The reporter, cache store, and wait manager are typed recorders (a
-    ``_FinalizeReporter`` / ``_RecordingCacheStore`` / ``_FinalizeWaitManager``), so
-    ``_finalize_run``'s ordering is asserted on the recorded ``calls`` list without a
+    `_FinalizeReporter` / `_RecordingCacheStore` / `_FinalizeWaitManager`), so
+    `_finalize_run`'s ordering is asserted on the recorded `calls` list without a
     live Sonarr/qBittorrent. The finalize's preview fact comes off the services hub,
-    so a bare one shares the engine's ctx (and the ``qbit`` that decides preview).
-    ``raise_on`` names the wait-manager pass that should blow up.
+    so a bare one shares the engine's ctx (and the `qbit` that decides preview).
+    `raise_on` names the wait-manager pass that should blow up.
     """
 
     ctx = RunContext(arr=Arr.SONARR, import_wait_mode=mode)
@@ -1634,8 +1634,8 @@ def _finalize_engine(
 class TestFinalizeRunOrdering:
     """_finalize_run brackets the tail with its close boundaries, summary before monitor.
 
-    ``scan_finished`` leads on every path - so the reconcile/tally diagnostics that
-    follow place at run level, never inside the last entry - and ``run_finished``
+    `scan_finished` leads on every path - so the reconcile/tally diagnostics that
+    follow place at run level, never inside the last entry - and `run_finished`
     trails the save, so it is the leg's last event.
     """
 
@@ -1680,7 +1680,7 @@ class TestFinalizeRunOrdering:
 
 
 class TestFinalizeRunUnwind:
-    """A raise in the tail leaves ``run_finished`` to bootstrap's unwind emit.
+    """A raise in the tail leaves `run_finished` to bootstrap's unwind emit.
 
     The scan is already closed either way, so the leg-fatal error the composition
     root logs can never render inside a stale entry (Band D review finding #7). The
@@ -1757,9 +1757,9 @@ class TestDropPending:
 
 
 class CategoryQbit(FakeQbit):
-    """A :class:`FakeQbit` recording the category writes the post-import move makes.
+    """A `FakeQbit` recording the category writes the post-import move makes.
 
-    ``set_errors`` scripts per-call ``torrents_set_category`` failures (popped in
+    `set_errors` scripts per-call `torrents_set_category` failures (popped in
     order), so the create-on-409 retry and the best-effort warn path can be driven.
     """
 
@@ -1793,7 +1793,7 @@ class TestPostImportCategory:
     ) -> ImportWaitManager:
         """A manager whose one carried-over record reconciles straight to IMPORTED.
 
-        A ``None`` category routes through ``make_config`` to the blank-drop, so it
+        A `None` category routes through `make_config` to the blank-drop, so it
         exercises the same "left unset" default a real config file yields.
         """
 
@@ -1943,16 +1943,16 @@ def make_add_engine(
     dry_run: bool = False,
     **config_overrides: object,
 ) -> tuple[RunLoop, GrabPipeline]:
-    """A bare ``RunLoop`` + a ``GrabPipeline`` + an attached ``ImportWaitManager``.
+    """A bare `RunLoop` + a `GrabPipeline` + an attached `ImportWaitManager`.
 
-    The produce side lives on :class:`GrabPipeline` (held by the services hub in
-    production) and the consume side on :class:`ImportWaitManager`, so both are
-    wired to the SAME ``_ctx`` / ``cache_store`` / client the engine holds - an
+    The produce side lives on `GrabPipeline` (held by the services hub in
+    production) and the consume side on `ImportWaitManager`, so both are
+    wired to the SAME `_ctx` / `cache_store` / client the engine holds - an
     add through the returned pipeline registers into exactly the state the
-    manager's consume passes (``snapshot_pending_for_series`` /
-    ``_monitor_working_set``) read back. ``_active_strategy`` is the test's
-    recording ``_RecordingStrategy`` and ``_reporter`` a recording
-    ``_RecordingReporter`` so the snapshot can be driven afterwards and asserted
+    manager's consume passes (`snapshot_pending_for_series` /
+    `_monitor_working_set`) read back. `_active_strategy` is the test's
+    recording `_RecordingStrategy` and `_reporter` a recording
+    `_RecordingReporter` so the snapshot can be driven afterwards and asserted
     on recorded state.
     """
 

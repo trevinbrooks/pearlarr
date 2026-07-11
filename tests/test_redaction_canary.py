@@ -63,7 +63,7 @@ advanced:
 
 
 def _assert_clean(text: str) -> None:
-    """Fail naming the leaked field if any canary appears in ``text``."""
+    """Fail naming the leaked field if any canary appears in `text`."""
 
     for field, canary in CANARIES.items():
         assert canary not in text, f"{field} leaked into output"

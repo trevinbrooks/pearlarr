@@ -4,15 +4,15 @@
 # seam); the repo disables reportPrivateUsage for tests, strict re-flags it.
 """Guards the single end-of-run finalize site.
 
-When ``max_torrents_to_add`` is reached mid-run, ``_grab`` returns a pure bool
-(it no longer finalizes); ``run_sync`` breaks the per-item scan and runs the ONE
-post-loop ``_finalize_run`` site - the same site the normal end-of-run path
+When `max_torrents_to_add` is reached mid-run, `_grab` returns a pure bool
+(it no longer finalizes); `run_sync` breaks the per-item scan and runs the ONE
+post-loop `_finalize_run` site - the same site the normal end-of-run path
 reaches. These pin both halves of that hoist so a future change can't silently
 double-finalize or skip the blocking/import pass on the cap-reached break.
 
-The strategy is the shared typed :class:`FakeStrategy` (an ``ArrSync`` recording
-its ``process_al_id`` calls), the engine's collaborators are small typed fakes,
-and ``_finalize_run`` is replaced by a typed recorder - so the contracts are
+The strategy is the shared typed `FakeStrategy` (an `ArrSync` recording
+its `process_al_id` calls), the engine's collaborators are small typed fakes,
+and `_finalize_run` is replaced by a typed recorder - so the contracts are
 pinned by asserting recorded state.
 """
 
@@ -75,14 +75,14 @@ class _FakeReporter:
 
 
 class _FakeBound:
-    """A collaborator whose only run-loop hook is the ``begin_run`` ctx bind."""
+    """A collaborator whose only run-loop hook is the `begin_run` ctx bind."""
 
     def begin_run(self, ctx: RunContext, strategy: ImportCompleter | None = None) -> None:
         del ctx, strategy
 
 
 class _FinalizeRecorder:
-    """A typed stand-in for ``RunLoop._finalize_run`` that counts its calls."""
+    """A typed stand-in for `RunLoop._finalize_run` that counts its calls."""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -98,15 +98,15 @@ def _engine(
     config: AppConfig | None = None,
     seadex: _FakeGateway | None = None,
 ) -> RunLoop:
-    """A bare ``RunLoop`` wired with typed fakes for the run-loop collaborators.
+    """A bare `RunLoop` wired with typed fakes for the run-loop collaborators.
 
-    The strategy reaches ``run_sync`` typed (it's an ``ArrSync``); the rest are
-    injected as bare attributes (the methods only read them), and ``_finalize_run``
+    The strategy reaches `run_sync` typed (it's an `ArrSync`); the rest are
+    injected as bare attributes (the methods only read them), and `_finalize_run`
     is shadowed by the recorder so the single finalize site is observable. The
-    ``_services`` hub is a bare real ``RunServices`` (the loop reads its ``arr``,
-    ``begin_run``, ``mark_dirty`` and ``is_preview``) whose per-id collaborators are
-    ctx-bind fakes; the ``cache_store`` backs the activity scan's checkpoint.
-    ``config`` overrides the loop's config (the activity-scan toggle tests).
+    `_services` hub is a bare real `RunServices` (the loop reads its `arr`,
+    `begin_run`, `mark_dirty` and `is_preview`) whose per-id collaborators are
+    ctx-bind fakes; the `cache_store` backs the activity scan's checkpoint.
+    `config` overrides the loop's config (the activity-scan toggle tests).
     """
 
     config = config if config is not None else make_config()
@@ -186,7 +186,7 @@ class TestPerIdErrorContainment:
 
 
 class _ItemRaisingStrategy(FakeStrategy):
-    """A :class:`FakeStrategy` whose mapping lookup raises for one item id - the
+    """A `FakeStrategy` whose mapping lookup raises for one item id - the
     seam run_sync hits per item BEFORE the per-id loop (the OUTER containment arm)."""
 
     def __init__(
@@ -238,7 +238,7 @@ class TestPerItemErrorContainment:
 
 
 class _RaisingNotifier:
-    """A ``Notifier`` stand-in whose wait-summary push raises a non-HTTP error."""
+    """A `Notifier` stand-in whose wait-summary push raises a non-HTTP error."""
 
     def push_wait_summary(self, *, arr: Arr, result: WaitResult) -> bool:
         del arr, result
@@ -269,7 +269,7 @@ class TestSeaDexBootNote:
     """The SeaDex prefetch step's ledger note must be truthful on an outage.
 
     The boot flow emits events, so the graduated (label, detail, outcome) is
-    read off the recorded ``BootStepFinished`` stream (conftest's autouse
+    read off the recorded `BootStepFinished` stream (conftest's autouse
     teardown uninstalls the hub after every test).
     """
 

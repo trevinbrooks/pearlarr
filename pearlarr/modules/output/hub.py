@@ -1,26 +1,26 @@
 """OutputHub: enqueue under one RLock; a single drainer dispatches outside it.
 
-``emit`` appends to a bounded queue under the hub lock, and the first emitter
+`emit` appends to a bounded queue under the hub lock, and the first emitter
 becomes the combiner: it drains the queue and calls renderers with the lock
 RELEASED, re-checking for new entries before handing the baton back — so no
 event ever waits for a future emit. Dispatch is lock-free, so it can never form
 the hub-lock→console-lock (ABBA) inversion; the lifecycle calls that DO hold the
-hub lock across a renderer (``begin_cycle``/``close``/``_swap_console``, where
-``close`` reaches ``Live.stop``'s Console lock) stay deadlock-free by the
+hub lock across a renderer (`begin_cycle`/`close`/`_swap_console`, where
+`close` reaches `Live.stop`'s Console lock) stay deadlock-free by the
 separate lock-ordering guarantee, not by this drain. Deliberately not a consumer
 thread: this hub is the
 app's UI, and synchronous main-path dispatch keeps output ordered with program
 actions and crash-faithful; cross-thread events are rare stragglers the active
-drain picks up. Lifecycle calls (``begin_cycle``/``set_level``/``close``) park
-until no drain is in flight, so they never race a renderer's ``handle`` — and
+drain picks up. Lifecycle calls (`begin_cycle`/`set_level`/`close`) park
+until no drain is in flight, so they never race a renderer's `handle` — and
 they hold the drain baton for their body, so a re-entrant emit from inside a
-renderer's lifecycle call (a bridge-adopted ``logger.debug`` in a teardown path)
+renderer's lifecycle call (a bridge-adopted `logger.debug` in a teardown path)
 enqueues instead of draining against a half-mutated subscriber list.
 
 Renderers that raise strike out (3 per cycle, S9) and are skipped until
-``begin_cycle`` re-arms them — never a process-latching quarantine (the verified
+`begin_cycle` re-arms them — never a process-latching quarantine (the verified
 daemon hazard). Striking out also closes the renderer, so a quarantined seat
-releases its resources (a live spinner must stop repainting). ``emit`` itself never raises on a renderer bug, so presentation
+releases its resources (a live spinner must stop repainting). `emit` itself never raises on a renderer bug, so presentation
 can never abort a run or the cache save; KeyboardInterrupt/SystemExit still
 propagate (Ctrl-C must unwind). The hub reads the clock once per emit and hands
 every renderer the same instant, so cross-sink timestamps can never disagree.
@@ -53,9 +53,9 @@ QUEUE_CAP: Final = 10_000
 class Renderer(Protocol):
     """One output surface subscribed to the hub.
 
-    ``handle`` receives the hub-stamped emit instant (epoch seconds) so all
-    surfaces timestamp identically. It must be an exhaustive ``match`` over
-    :data:`~.events.Event` ending in ``assert_never``, so a new event type fails
+    `handle` receives the hub-stamped emit instant (epoch seconds) so all
+    surfaces timestamp identically. It must be an exhaustive `match` over
+    `events.Event` ending in `assert_never`, so a new event type fails
     type-checking in every surface instead of silently dropping on one. Trivial
     pass-through renderers (Null/Recording) are exempt by nature.
     """
@@ -181,9 +181,9 @@ class _Sub:
 class OutputHub:
     """The one dispatch point: every surface sees every event, in emit order.
 
-    ``renderers`` are the stable sinks (file/json/...) and never contain a
-    console; the console renderer lives in its own tracked seat (``console`` at
-    construction, thereafter swapped by ``begin_cycle`` via ``console_factory``).
+    `renderers` are the stable sinks (file/json/...) and never contain a
+    console; the console renderer lives in its own tracked seat (`console` at
+    construction, thereafter swapped by `begin_cycle` via `console_factory`).
     """
 
     def __init__(
@@ -317,7 +317,7 @@ class OutputHub:
 
         The baton is taken INSIDE the try (emit only checks-and-calls), so an
         interrupt can never strand it between assignment and the clearing
-        finally. ``took`` marks THIS frame's take: a loser of the take race —
+        finally. `took` marks THIS frame's take: a loser of the take race —
         including a nested same-thread call from a mid-dispatch lifecycle call
         (set_level/begin_cycle/close) — returns without touching the outer
         frame's baton or flushing re-entrantly.
@@ -344,7 +344,7 @@ class OutputHub:
     def _drain_loop(self) -> None:
         """The combiner loop: pop + snapshot under the lock, dispatch outside it.
 
-        The popped event rides ``_in_flight`` until the next locked section, so
+        The popped event rides `_in_flight` until the next locked section, so
         an interrupt mid-dispatch can't lose it — the unwind flush re-dispatches
         it (duplicates over loss, crash fidelity) — while the queue's occupancy
         (the overflow cap) never counts it twice. The terminal arm clears
@@ -370,7 +370,7 @@ class OutputHub:
 
     def _flush_on_unwind(self) -> None:
         """Re-dispatch the in-flight event, then flush the queued tail, while an
-        exception unwinds ``_drain`` (crash fidelity: the tail must be on
+        exception unwinds `_drain` (crash fidelity: the tail must be on
         screen/in the file when the process dies). The in-flight re-dispatch is
         best-effort per renderer — even a repeat interrupt there is contained,
         so one hostile arm can't cost the whole tail (the tail flush itself
@@ -477,7 +477,7 @@ class OutputHub:
         The file sinks close LAST, after the teardown chatter the other closes
         enqueued (a bridge-adopted Live.stop failure, a region's contained-
         teardown note) is handed to them — a close-path failure still leaves a
-        file trace. Emits after the file sinks close drop at the ``_closed``
+        file trace. Emits after the file sinks close drop at the `_closed`
         gate: with no file surface left they are unrecordable on every route.
         """
 

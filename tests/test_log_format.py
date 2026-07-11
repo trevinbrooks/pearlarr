@@ -1,19 +1,19 @@
 # pyright: strict
-"""Tests for ``setup_logger``'s post-flip handler graph (the log.py side).
+"""Tests for `setup_logger`'s post-flip handler graph (the log.py side).
 
 Pins the contract:
 
-* "rich" (and "auto" on a TTY) attaches exactly ONE :class:`RichConsoleHandler`;
+* "rich" (and "auto" on a TTY) attaches exactly ONE `RichConsoleHandler`;
   it is the only non-bridge handler — no FileHandler anywhere (the hub's
   FileLogSink owns the file), no logger filters (severity tallies live on the
-  hub's ``SeverityCounts``).
+  hub's `SeverityCounts`).
 * "plain"/"json" (and "auto" off a TTY) attach NO console handler at all:
   level-only configuration; the bridge is the only handler, so records still
-  reach the hub and ``logging.lastResort`` can never fire.
-* ``console_of`` -> None under plain/json, so the live cockpits never build -
+  reach the hub and `logging.lastResort` can never fire.
+* `console_of` -> None under plain/json, so the live cockpits never build -
   designed, not a bug (the hub seats LineRenderer/JsonRenderer instead).
-* ``apply_log_level`` re-points the rich console handler's threshold
-  (``console_level`` semantics) and forwards the raw level to the hub.
+* `apply_log_level` re-points the rich console handler's threshold
+  (`console_level` semantics) and forwards the raw level to the hub.
 * The badge seam (S5 pin 2): the rich handler badge-renders plain WARNING+
   records UNLESS the registered console owner answers True (the bridge adopts
   them; the hub's renderer places them) — no owner or a struck-out seat keeps
@@ -60,10 +60,10 @@ def build(app_logger: logging.Logger, monkeypatch: pytest.MonkeyPatch) -> "_Buil
 
 
 class _Builder:
-    """Build a ``setup_logger`` logger over a swapped-in stdout stream.
+    """Build a `setup_logger` logger over a swapped-in stdout stream.
 
-    Swapping ``sys.stdout`` (rather than relying on pytest capture) makes the
-    TTY probe deterministic: ``StringIO.isatty()`` is False even under ``-s``.
+    Swapping `sys.stdout` (rather than relying on pytest capture) makes the
+    TTY probe deterministic: `StringIO.isatty()` is False even under `-s`.
     """
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:

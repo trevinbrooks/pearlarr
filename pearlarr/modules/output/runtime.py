@@ -2,7 +2,7 @@
 
 Mirrors stdlib logging's process-global registry: cli installs the real hub once
 pre-loop; scope producers (the boot flow's mark, the wait narrator's factory) and
-``apply_log_level`` reach it via :func:`current_hub`. The default is a
+`apply_log_level` reach it via `current_hub`. The default is a
 renderer-less hub, so emissions before install (tests, library use) drop silently
 instead of raising.
 """
@@ -25,7 +25,7 @@ def emit_to_hub(event: Event) -> None:
     """Emit through the process hub, resolved at call time.
 
     THE late-resolver emit for every producer without a bound handle - the
-    reporter's ``emit`` seam, boot_flow's ledger/mark, the wait narrator's
+    reporter's `emit` seam, boot_flow's ledger/mark, the wait narrator's
     ScopeFactory - so the per-cycle hub swap is never captured at build time,
     and the seam has one home.
     """
@@ -36,9 +36,9 @@ def emit_to_hub(event: Event) -> None:
 def hub_note(message: str, *, severity: Severity = Severity.INFO, exc: BaseException | None = None) -> None:
     """A first-party one-liner through the process hub - THE raw-logging replacement.
 
-    Replaces direct ``logger.<level>`` calls at any severity (not just the old
-    logger.info one-liners); ``exc`` captures the traceback onto the Diagnostic
-    (the ``exc_info=True`` replacement).
+    Replaces direct `logger.<level>` calls at any severity (not just the old
+    logger.info one-liners); `exc` captures the traceback onto the Diagnostic
+    (the `exc_info=True` replacement).
     """
 
     trace = CapturedTrace.from_exception(exc) if exc is not None else None
@@ -46,13 +46,13 @@ def hub_note(message: str, *, severity: Severity = Severity.INFO, exc: BaseExcep
 
 
 def hub_warn(message: str, *, exc: BaseException | None = None) -> None:
-    """:func:`hub_note` at WARNING - the ``logger.warning`` replacement."""
+    """`hub_note` at WARNING - the `logger.warning` replacement."""
 
     hub_note(message, severity=Severity.WARNING, exc=exc)
 
 
 def hub_error(message: str, *, exc: BaseException | None = None) -> None:
-    """:func:`hub_note` at ERROR - the ``logger.error`` replacement."""
+    """`hub_note` at ERROR - the `logger.error` replacement."""
 
     hub_note(message, severity=Severity.ERROR, exc=exc)
 
@@ -64,9 +64,9 @@ def hub_counts() -> SeverityCounts:
 
 
 def install_hub(hub: OutputHub) -> None:
-    """Make ``hub`` the process hub, closing any previously installed one.
+    """Make `hub` the process hub, closing any previously installed one.
 
-    A repeat ``run single`` in one process must not leak the prior hub's open
+    A repeat `run single` in one process must not leak the prior hub's open
     FileLogSink (or double-rotate its cascade); the DEFAULT hub is never closed.
     """
 

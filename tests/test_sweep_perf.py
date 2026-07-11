@@ -113,7 +113,7 @@ class TestFetchWorkers:
 
 
 class _Series:
-    """A stand-in Sonarr series satisfying the ``SonarrItem`` protocol surface."""
+    """A stand-in Sonarr series satisfying the `SonarrItem` protocol surface."""
 
     id: int
     title: str
@@ -144,13 +144,13 @@ def _eps_for(series_id: int) -> list[SonarrEpisode]:
 
 
 def _ids(*al_ids: int) -> dict[int, MappingEntry]:
-    """A ``{al_id -> mapping}`` dict; only the keys are read by the prefetch gate."""
+    """A `{al_id -> mapping}` dict; only the keys are read by the prefetch gate."""
 
     return {aid: MappingEntry(anilist_id=aid) for aid in al_ids}
 
 
 class _Recorder:
-    """A ``ProgressSink`` that records every ``progress`` call."""
+    """A `ProgressSink` that records every `progress` call."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[float, str | None]] = []
@@ -162,10 +162,10 @@ class _Recorder:
 class _Sonarr:
     """A scripted Sonarr client for the prefetch warm.
 
-    By default ``episodes(sid)`` returns a distinguishable one-episode list per
-    series (``_eps_for``); ``return_none`` degrades every fetch to a transient
-    miss, and ``raise_on`` makes the listed ids raise (the worker-degradation
-    case). Records each ``(series_id, quiet)`` call so the dedup / not-fetched /
+    By default `episodes(sid)` returns a distinguishable one-episode list per
+    series (`_eps_for`); `return_none` degrades every fetch to a transient
+    miss, and `raise_on` makes the listed ids raise (the worker-degradation
+    case). Records each `(series_id, quiet)` call so the dedup / not-fetched /
     quiet assertions read recorded state.
     """
 
@@ -186,10 +186,10 @@ class _Sonarr:
 class _Services:
     """A stand-in for the run machinery the prefetch consults.
 
-    ``get_anilist_ids`` resolves a series' tvdb id to its ``{al_id -> mapping}``
-    dict (``identity`` returns ``{tvdb_id: mapping}`` for any series, mirroring the
-    always-mapped helper); ``al_id_needs_scan`` is the per-id needs-scan gate
-    (``needs_scan=None`` reports every id as scannable).
+    `get_anilist_ids` resolves a series' tvdb id to its `{al_id -> mapping}`
+    dict (`identity` returns `{tvdb_id: mapping}` for any series, mirroring the
+    always-mapped helper); `al_id_needs_scan` is the per-id needs-scan gate
+    (`needs_scan=None` reports every id as scannable).
     """
 
     def __init__(
@@ -298,7 +298,7 @@ class TestPrefetchEpisodes:
 
 
 def _entry(dt: datetime) -> EntryRecord:
-    """A real SeaDex entry stamped at ``dt`` (only ``updated_at`` is read)."""
+    """A real SeaDex entry stamped at `dt` (only `updated_at` is read)."""
 
     return make_entry_record(updated_at=dt)
 
@@ -315,10 +315,10 @@ class _Seadex:
 
 
 class TestAlIdNeedsScan:
-    """``RunServices.al_id_needs_scan``: the side-effect-free mirror of the per-id
-    loop's no-entry + ``cached_entry_skip`` gates, so ``prefetch_episodes`` warms
+    """`RunServices.al_id_needs_scan`: the side-effect-free mirror of the per-id
+    loop's no-entry + `cached_entry_skip` gates, so `prefetch_episodes` warms
     only the series the loop would actually process (the SeaDex-modification-times
-    fix). Pinned against the same cases as ``cached_entry_skip``."""
+    fix). Pinned against the same cases as `cached_entry_skip`."""
 
     @staticmethod
     def _run(*, entry: EntryRecord | None, cache: FakeCacheStore, **cfg: object) -> RunServices:
@@ -393,13 +393,13 @@ class TestAlIdNeedsScan:
 
 
 class TestPrefetchSkipsUnchanged:
-    """``prefetch_episodes`` warms only series with at least one scannable id, so a
+    """`prefetch_episodes` warms only series with at least one scannable id, so a
     series whose every SeaDex entry is unchanged (or absent) is no longer fetched -
     the regression this change fixes."""
 
     def _eps(self, *, needs_scan: set[int]) -> tuple[SonarrEpisodes, _Sonarr]:
         # Each series maps to a single al_id equal to its id, so a series is warmed
-        # iff that id is in ``needs_scan``.
+        # iff that id is in `needs_scan`.
         sonarr = _Sonarr()
         services = _Services(identity=True, needs_scan=needs_scan)
         eps = make_sonarr_episodes(
@@ -435,9 +435,9 @@ class TestPrefetchSkipsUnchanged:
 
 
 class _ParseSonarr:
-    """A scripted Sonarr ``/parse`` client recording each parsed filename.
+    """A scripted Sonarr `/parse` client recording each parsed filename.
 
-    ``parse_episodes_from_seadex`` only touches ``sonarr.parse``; this scripts the
+    `parse_episodes_from_seadex` only touches `sonarr.parse`; this scripts the
     one result and records the calls so the not-parsed assertions read recorded
     state.
     """

@@ -1,5 +1,5 @@
 # pyright: strict
-"""Behavioral tests for the SQLite-backed ``CacheStore``.
+"""Behavioral tests for the SQLite-backed `CacheStore`.
 
 Pins behavior, not internals: the per-entry records + torrent-hash child rows,
 the JSONB meta/parse caches, pending imports, the descriptor, and - critically -
@@ -24,26 +24,26 @@ from pearlarr.modules.sqlite_util import is_corruption
 
 from .builders import make_entry_record
 
-# Stand-in for a config-file checksum. ``CacheStore`` only stamps and compares the
+# Stand-in for a config-file checksum. `CacheStore` only stamps and compares the
 # value it is handed; it never computes one, so any string works here.
 CHECKSUM = "0123456789abcdef0123456789abcdef"
 
 
 def _entry_name(store: CacheStore, al_id: int, arr: Arr = Arr.SONARR) -> str | None:
-    """The entry's stored name via ``get_entry`` (None when the row is absent)."""
+    """The entry's stored name via `get_entry` (None when the row is absent)."""
 
     entry = store.get_entry(arr, al_id)
     return None if entry is None else entry.name
 
 
 def _raise_os_replace(*_args: object, **_kwargs: object) -> None:
-    """A drop-in for ``os.replace`` that fails the atomic promote rename."""
+    """A drop-in for `os.replace` that fails the atomic promote rename."""
 
     raise OSError("boom")
 
 
 def _raise_locked(*_args: object, **_kwargs: object) -> sqlite3.Connection:
-    """A drop-in for ``_connect`` that simulates a transient open-time lock."""
+    """A drop-in for `_connect` that simulates a transient open-time lock."""
 
     raise sqlite3.OperationalError("database is locked")
 
@@ -79,8 +79,8 @@ class TestSchemaAndDescriptor:
         assert rows.get("config_checksum") == CHECKSUM
 
 
-# The original (pre-versioning) shape of the per-entry tables: ``entries`` without
-# ``fallback_satisfied``, stamped ``user_version`` 0 by default. Pins the v0 -> v1
+# The original (pre-versioning) shape of the per-entry tables: `entries` without
+# `fallback_satisfied`, stamped `user_version` 0 by default. Pins the v0 -> v1
 # upgrade path (the shape a first-release cache.db still has on disk).
 _V0_SCHEMA = """
 CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT);
@@ -114,7 +114,7 @@ class TestSchemaVersionGate:
         assert _user_version(tmp_path / "cache.db") == SCHEMA_VERSION
 
     def test_v0_db_is_upgraded_in_place(self, tmp_path: Path) -> None:
-        # The scenario the gate exists for: a db from before ``fallback_satisfied``
+        # The scenario the gate exists for: a db from before `fallback_satisfied`
         # shipped must be ALTERed current instead of crashing get_entry every run.
         db = tmp_path / "cache.db"
         raw = sqlite3.connect(str(db))
@@ -482,7 +482,7 @@ class TestPromoteFailure:
         # (empty) cache.
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"name": "T"})
-        # Scope the patch to this save only: the later ``again.save`` must promote for real.
+        # Scope the patch to this save only: the later `again.save` must promote for real.
         with monkeypatch.context() as mp, contextlib.suppress(OSError):
             mp.setattr("pearlarr.modules.cache.os.replace", _raise_os_replace)
             store.save(preview=False)

@@ -1,10 +1,10 @@
-"""Sonarr ``/parse`` cache collaborator: SeaDex filenames -> season/episode.
+"""Sonarr `/parse` cache collaborator: SeaDex filenames -> season/episode.
 
-Extracted from :class:`~.seadex_sonarr.SonarrSync`. ``SonarrParseCache`` owns the
-grab-time ``/parse`` of a release's filenames plus the durable, freshness-checked
-parse cache (read-through ``cache_store``): cold-cache warm, per-file freshness,
+Extracted from `SonarrSync`. `SonarrParseCache` owns the grab-time
+`/parse` of a release's filenames plus the durable, freshness-checked
+parse cache (read-through `cache_store`): cold-cache warm, per-file freshness,
 negative-record self-heal, and TTL eviction. The series-id fingerprint that pins
-negative records is threaded in per call (``series_fp``) so this stays decoupled
+negative records is threaded in per call (`series_fp`) so this stays decoupled
 from the episode collaborator that computes it.
 """
 
@@ -66,7 +66,7 @@ NON_VIDEO_EXTENSIONS = {
     ".zip",
     ".7z",
     # Audio tracks + rip sidecars (OSTs, EAC logs/cuesheets) bundled in releases:
-    # never an episode. ``.mka`` is Matroska audio (the video ``.mkv`` is kept).
+    # never an episode. `.mka` is Matroska audio (the video `.mkv` is kept).
     ".flac",
     ".mka",
     ".wav",
@@ -111,7 +111,7 @@ def is_video_candidate(basename: str) -> bool:
 
 
 def video_file_entries(files: Sequence[str]) -> Iterator[tuple[int, str]]:
-    """Yield ``(index, basename)`` for each importable video file in ``files``.
+    """Yield `(index, basename)` for each importable video file in `files`.
 
     The one basename+skip iteration the warm pass, the parse loop, and the seed
     builder share; the index survives so an index-aligned size list stays usable.
@@ -127,11 +127,11 @@ class ParseWindow(NamedTuple):
     """The freshness window for one parse pass, computed once per call.
 
     Bundles the values the parse-cache freshness check and writes thread
-    together: ``now_str`` stamps new records, ``cutoff`` bounds a positive
-    record's TTL, ``neg_cutoff`` the short negative-record backstop, and
-    ``series_fp`` pins negative records to the current series-id set (so a
+    together: `now_str` stamps new records, `cutoff` bounds a positive
+    record's TTL, `neg_cutoff` the short negative-record backstop, and
+    `series_fp` pins negative records to the current series-id set (so a
     newly-added series self-heals). One window is built in
-    ``parse_episodes_from_seadex`` and passed down to the fresh-check / writer.
+    `parse_episodes_from_seadex` and passed down to the fresh-check / writer.
     """
 
     now_str: str
@@ -141,11 +141,11 @@ class ParseWindow(NamedTuple):
 
 
 class SonarrParseRecord(TypedDict):
-    """One persisted Sonarr ``/parse`` cache record, keyed by filename.
+    """One persisted Sonarr `/parse` cache record, keyed by filename.
 
-    ``fetched_at`` stamps the record for TTL eviction; ``episodes`` is the parsed
-    season/episode list (empty for a negative record). ``series_fp`` is
-    ``NotRequired`` because only a negative record carries it (pinning it to the
+    `fetched_at` stamps the record for TTL eviction; `episodes` is the parsed
+    season/episode list (empty for a negative record). `series_fp` is
+    `NotRequired` because only a negative record carries it (pinning it to the
     series-id set) - the freshness reader dispatches on exactly that presence.
     """
 
@@ -155,21 +155,21 @@ class SonarrParseRecord(TypedDict):
 
 
 class SonarrParseCache:
-    """Owns the grab-time ``/parse`` + the durable, freshness-checked parse cache.
+    """Owns the grab-time `/parse` + the durable, freshness-checked parse cache.
 
-    Constructed once per run in :class:`~.seadex_sonarr.SonarrSync` from the shared
-    :class:`~.run_services.RunDeps` and the strategy's Sonarr client. The cache is
-    read-through ``cache_store`` (the same leaf the seed builder reads), so staged
-    writes from ``parse_episodes_from_seadex`` are visible to a later same-run read.
+    Constructed once per run in `SonarrSync` from the shared `RunDeps` and the
+    strategy's Sonarr client. The cache is read-through `cache_store` (the same
+    leaf the seed builder reads), so staged writes from `parse_episodes_from_seadex`
+    are visible to a later same-run read.
     """
 
     def __init__(self, deps: RunDeps, sonarr: AbstractSonarrClient) -> None:
         """Bind the shared collaborators the parse cache reads.
 
         Args:
-            deps (RunDeps): The shared collaborators (config/cache/logger unpacked
+            deps: The shared collaborators (config/cache/logger unpacked
                 off it).
-            sonarr (AbstractSonarrClient): The strategy's Sonarr client (its ``/parse``).
+            sonarr: The strategy's Sonarr client (its `/parse`).
         """
 
         self.sonarr = sonarr
@@ -186,9 +186,9 @@ class SonarrParseCache:
         """True if a persisted parse record is still usable.
 
         Positive (has episodes): stable mapping, valid for the 30-day
-        ``window.cutoff``. Negative (empty): valid only while the series-id set is
-        unchanged (matching ``window.series_fp``) and within the short
-        ``window.neg_cutoff`` backstop, so a newly-added series self-heals. Legacy
+        `window.cutoff`. Negative (empty): valid only while the series-id set is
+        unchanged (matching `window.series_fp`) and within the short
+        `window.neg_cutoff` backstop, so a newly-added series self-heals. Legacy
         records (no fp) read stale.
         """
 
@@ -208,7 +208,7 @@ class SonarrParseCache:
     def _write_parse_record(self, filename: str, episodes: list[dict[str, int]], *, window: ParseWindow) -> None:
         """Upsert a Sonarr parse-cache record (one builder for both shapes).
 
-        A NEGATIVE record (empty ``episodes``) carries the series fingerprint so
+        A NEGATIVE record (empty `episodes`) carries the series fingerprint so
         it self-heals when the library changes; a POSITIVE one never does - the
         freshness reader dispatches on exactly that presence.
         """
@@ -223,12 +223,12 @@ class SonarrParseCache:
 
         Empty means skip: a fresh negative record, a transient parse failure
         (not cached, re-queried on demand), and a fresh parse that found
-        nothing all fold to ``[]``.
+        nothing all fold to `[]`.
         """
 
         record = self.cache_store.get_sonarr_parse(f)
         if record is not None and self._sonarr_parse_is_fresh(record, window=window):
-            # ``episodes`` is untyped JSON; pin the element type back on.
+            # `episodes` is untyped JSON; pin the element type back on.
             episodes: list[dict[str, int]] = record["episodes"]
             return episodes
         result = self.sonarr.parse(f)
@@ -250,11 +250,11 @@ class SonarrParseCache:
     ) -> None:
         """Concurrently parse the not-yet-cached files for one release.
 
-        Cold-cache pre-pass: collapses the per-file ``/parse`` latency the same
-        way ``prefetch_episodes`` does for episodes, deduping repeats across
+        Cold-cache pre-pass: collapses the per-file `/parse` latency the same
+        way `prefetch_episodes` does for episodes, deduping repeats across
         overlapping release groups. The mapping loop then reads from the warm
-        cache. Only ``sonarr.parse`` runs in the pool; cache reads/writes stay on
-        the main thread. No-op when sequential (``sleep_time > 0``) or warm.
+        cache. Only `sonarr.parse` runs in the pool; cache reads/writes stay on
+        the main thread. No-op when sequential (`sleep_time > 0`) or warm.
         """
 
         workers = fetch_workers(self._config)
@@ -312,8 +312,8 @@ class SonarrParseCache:
         soon as its series is added to Sonarr.
 
         Args:
-            seadex_dict (dict): Dictionary of seadex releases
-            series_fp (str): The run's series-id fingerprint, pinning negative
+            seadex_dict: Dictionary of seadex releases
+            series_fp: The run's series-id fingerprint, pinning negative
                 records (from the episode collaborator).
         """
 

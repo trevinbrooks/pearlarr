@@ -3,12 +3,12 @@
 # These are deliberately under-test private helpers; the repo already disables
 # reportPrivateUsage for all of tests/ (test code reads private members), but the
 # strict directive above re-enables it, so restore the repo's test policy here.
-"""Direct unit tests for the pure helpers and retry path in ``anilist_client``.
+"""Direct unit tests for the pure helpers and retry path in `anilist_client`.
 
 These are otherwise only exercised incidentally. The classification / parsing /
-extraction helpers take plain ``dict`` bodies, so they are tested with no mocks
-at all; ``AniListClient``'s retry loop is exercised through its public queries,
-faked at the ``httpx`` boundary with the ``respx`` library (no ``unittest.mock``).
+extraction helpers take plain `dict` bodies, so they are tested with no mocks
+at all; `AniListClient`'s retry loop is exercised through its public queries,
+faked at the `httpx` boundary with the `respx` library (no `unittest.mock`).
 """
 
 import re
@@ -37,7 +37,7 @@ from pearlarr.modules.seadex_types import AniListError, AniListMediaNode
 
 
 def _no_sleep(_seconds: float) -> None:
-    """Replace ``time.sleep`` so the retry backoffs don't actually wait."""
+    """Replace `time.sleep` so the retry backoffs don't actually wait."""
 
 
 def _client() -> AniListClient:
@@ -50,15 +50,15 @@ def _client() -> AniListClient:
 
 
 def test_errors_are_retryable_none_body() -> None:
-    """A ``None`` body carries no errors, so it is never retryable."""
+    """A `None` body carries no errors, so it is never retryable."""
 
     assert _errors_are_retryable(None) is False
 
 
 def test_errors_are_retryable_no_errors() -> None:
-    """An empty body, a missing ``errors`` key, and an empty list are all misses.
+    """An empty body, a missing `errors` key, and an empty list are all misses.
 
-    A legitimate "not found" is HTTP 200 with no ``errors`` array, so it must not
+    A legitimate "not found" is HTTP 200 with no `errors` array, so it must not
     be treated as a throttle.
     """
 
@@ -92,21 +92,21 @@ def test_errors_are_retryable_non_retryable_error() -> None:
 
 
 def test_parse_errors_none_and_missing_key() -> None:
-    """No body or no ``errors`` key yields an empty list (never raises)."""
+    """No body or no `errors` key yields an empty list (never raises)."""
 
     assert _parse_errors(None) == []
     assert _parse_errors({}) == []
 
 
 def test_parse_errors_non_list_errors() -> None:
-    """A non-list ``errors`` value (malformed body) yields an empty list."""
+    """A non-list `errors` value (malformed body) yields an empty list."""
 
     body: dict[str, object] = {"errors": "boom"}
     assert _parse_errors(body) == []
 
 
 def test_parse_errors_wellformed() -> None:
-    """A well-formed entry maps to a typed ``AniListError`` with its status and message."""
+    """A well-formed entry maps to a typed `AniListError` with its status and message."""
 
     body: dict[str, object] = {"errors": [{"message": "Too Many Requests", "status": 429}]}
     parsed = _parse_errors(body)
@@ -116,8 +116,8 @@ def test_parse_errors_wellformed() -> None:
 def test_parse_errors_skips_malformed_entries() -> None:
     """Non-object junk in the array is skipped; only the dict entries are parsed.
 
-    A dict without a ``message`` defaults to ``""``; a non-int ``status`` becomes
-    ``None`` (here the second dict carries only a status).
+    A dict without a `message` defaults to `""`; a non-int `status` becomes
+    `None` (here the second dict carries only a status).
     """
 
     body: dict[str, object] = {
@@ -141,14 +141,14 @@ def test_extract_present_path() -> None:
 
 
 def test_extract_missing_key_yields_empty() -> None:
-    """A key missing at the final hop yields ``{}`` rather than ``None``."""
+    """A key missing at the final hop yields `{}` rather than `None`."""
 
     body: dict[str, object] = {"data": {}}
     assert extract_path(body, "data", "Media") == {}
 
 
 def test_extract_null_intermediate_yields_empty() -> None:
-    """A null intermediate level (``{"data": null}``) is coerced to ``{}`` and walked safely."""
+    """A null intermediate level (`{"data": null}`) is coerced to `{}` and walked safely."""
 
     body: dict[str, object] = {"data": None}
     assert extract_path(body, "data", "Media") == {}
@@ -159,7 +159,7 @@ def test_extract_null_intermediate_yields_empty() -> None:
 
 
 def test_media_from_full_body() -> None:
-    """A complete body crosses into a fully-populated typed node, preferring ``large`` cover."""
+    """A complete body crosses into a fully-populated typed node, preferring `large` cover."""
 
     body: dict[str, object] = {
         "data": {
@@ -183,14 +183,14 @@ def test_media_from_full_body() -> None:
 
 
 def test_media_from_missing_fields_defaults() -> None:
-    """Absent nested ``title``/``coverImage`` and scalar fields default to ``None``."""
+    """Absent nested `title`/`coverImage` and scalar fields default to `None`."""
 
     body: dict[str, object] = {"data": {"Media": {"id": 7}}}
     assert media_from(body) == AniListMediaNode(id=7)
 
 
 def test_media_from_none_body_is_all_none() -> None:
-    """A ``None`` body (a miss) parses to an all-``None`` node, not a crash."""
+    """A `None` body (a miss) parses to an all-`None` node, not a crash."""
 
     assert media_from(None) == AniListMediaNode()
 
@@ -199,12 +199,12 @@ def test_media_from_none_body_is_all_none() -> None:
 
 
 def test_media_fields_fragment_covers_from_api_reads() -> None:
-    """Every field ``AniListMediaNode.from_api`` reads is selected by the fragment.
+    """Every field `AniListMediaNode.from_api` reads is selected by the fragment.
 
-    The read set below is derived from ``from_api``'s body: the top-level
-    ``id``/``title``/``coverImage``/``episodes``/``format`` keys plus the nested
-    ``title.english``/``title.romaji``/``coverImage.large`` selections. A field
-    dropped from ``_MEDIA_FIELDS`` would silently parse to ``None`` downstream,
+    The read set below is derived from `from_api`'s body: the top-level
+    `id`/`title`/`coverImage`/`episodes`/`format` keys plus the nested
+    `title.english`/`title.romaji`/`coverImage.large` selections. A field
+    dropped from `_MEDIA_FIELDS` would silently parse to `None` downstream,
     so the shared fragment (not any full query string) is what's pinned here.
     """
 
@@ -369,7 +369,7 @@ def test_give_up_warns_once_per_run_not_per_title(monkeypatch: pytest.MonkeyPatc
 
 @respx.mock
 def test_network_give_up_returns_empty_and_warns(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A hard network outage still degrades to ``{}`` - but now with one warning
+    """A hard network outage still degrades to `{}` - but now with one warning
     instead of total silence."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)

@@ -2,12 +2,12 @@
 # pyright: reportPrivateUsage=false
 # The tests assert on the strat's private collaborators (_parse / _reconciler),
 # which strict re-flags; the repo disables reportPrivateUsage for tests.
-"""Unit tests for ``ImportReconciler.build_pending_seeds`` (via the strat).
+"""Unit tests for `ImportReconciler.build_pending_seeds` (via the strat).
 
 The seed-construction heart of the wait/import feature: it turns the filtered
-SeaDex releases into the durable ``PendingImport`` records the import path later
+SeaDex releases into the durable `PendingImport` records the import path later
 reads, mapping each grabbed video file to authoritative Sonarr episode ids via the
-cached ``/parse`` results and the ``(season, episode) -> id`` index. Built bare
+cached `/parse` results and the `(season, episode) -> id` index. Built bare
 (no live Sonarr) with a seeded in-memory parse cache.
 """
 
@@ -18,8 +18,8 @@ from pearlarr.modules.seadex_types import SonarrEpisode
 from .builders import FakeCacheStore, make_config, make_sonarr_sync, rg_group, url_item
 from .fakes import FakeSonarrClient
 
-# One persisted ``/parse`` cache shape: ``filename -> {"episodes": [{season, episode}]}``.
-# The seed builder reads ``record["episodes"]`` straight off this (no freshness stamp),
+# One persisted `/parse` cache shape: `filename -> {"episodes": [{season, episode}]}`.
+# The seed builder reads `record["episodes"]` straight off this (no freshness stamp),
 # so the test records carry only that key.
 type ParseCache = dict[str, dict[str, list[dict[str, int]]]]
 
@@ -148,7 +148,7 @@ class TestBuildPendingSeeds:
 
 class TestParseWriteVisibleToSeeds:
     """The parse cache (writer) and the seed builder (reader) are now separate
-    objects; they must share one ``cache_store`` so a parse write earlier in the
+    objects; they must share one `cache_store` so a parse write earlier in the
     run is visible to the seed read - the staged-write invariant the split risks."""
 
     def test_parse_write_feeds_seed_build(self) -> None:

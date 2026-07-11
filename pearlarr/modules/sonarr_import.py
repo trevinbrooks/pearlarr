@@ -1,16 +1,16 @@
 """Import-time subsystem: decide a download's state, then build/POST the import.
 
-Extracted from :class:`~.seadex_sonarr.SonarrSync`. Two collaborators:
+Extracted from `SonarrSync`. Two collaborators:
 
-* ``ImportExecutor`` owns the mechanical "consume" side: throttled download
+* `ImportExecutor` owns the mechanical "consume" side: throttled download
   rescan, queue/command reads, and - the heart of it - turning OUR resolved
-  ``basename -> episode ids`` map (built by
-  :class:`~.sonarr_mapper.FileEpisodeMapper`) into a Sonarr ManualImport payload
+  `basename -> episode ids` map (built by
+  `FileEpisodeMapper`) into a Sonarr ManualImport payload
   and POSTing it, with per-run quality/language caches.
-* ``ImportReconciler`` owns the *decision*: one ``import_completed`` poll (what
+* `ImportReconciler` owns the *decision*: one `import_completed` poll (what
   state the download is in, when to step in vs. defer to Sonarr) and the
-  grab-time ``PendingImport`` seed build. It composes the episode collaborator +
-  the executor; the strategy's ``import_completed`` / ``process_al_id`` hooks are
+  grab-time `PendingImport` seed build. It composes the episode collaborator +
+  the executor; the strategy's `import_completed` / `process_al_id` hooks are
   thin delegators onto it.
 """
 
@@ -81,11 +81,11 @@ _COMMAND_TERMINAL_STATES = frozenset({"completed", "failed", "aborted", "cancell
 class ImportExecutor:
     """Builds/POSTs the manual-import payload + owns the per-run import caches.
 
-    Constructed once per run in :class:`~.seadex_sonarr.SonarrSync` from the shared
+    Constructed once per run in `SonarrSync` from the shared
     deps, the strategy's Sonarr client, and the strategy's
-    :class:`~.sonarr_mapper.FileEpisodeMapper`. ``import_completed`` decides the
+    `FileEpisodeMapper`. `import_completed` decides the
     download's state and, when it's time to step in, calls
-    :meth:`run_manual_import`; the executor also exposes the throttled rescan and
+    `run_manual_import`; the executor also exposes the throttled rescan and
     the queue/command reads that decision consults.
     """
 
@@ -93,11 +93,11 @@ class ImportExecutor:
         """Bind the Sonarr client, config/logger, and the file->episode mapper.
 
         Args:
-            deps (RunDeps): The shared collaborators; the config + logger are read
+            deps: The shared collaborators; the config + logger are read
                 off it.
-            sonarr (AbstractSonarrClient): The strategy's Sonarr client.
-            mapper (FileEpisodeMapper): The strategy's import-time mapper (its
-                ``candidate_files`` / ``assign`` build the authoritative map).
+            sonarr: The strategy's Sonarr client.
+            mapper: The strategy's import-time mapper (its
+                `candidate_files` / `assign` build the authoritative map).
         """
 
         self.sonarr = sonarr
@@ -143,7 +143,7 @@ class ImportExecutor:
 
         RefreshMonitoredDownloads is global and the blocking pass polls often (and
         may walk several torrents back-to-back), so it's re-issued at most once per
-        ``imports.poll_interval``. Waiting for the command to finish means the queue
+        `imports.poll_interval`. Waiting for the command to finish means the queue
         read that follows reflects the rescan; the poll bound means a stuck command
         can never block the run, and a failure to queue/confirm just leaves the
         next queue read slightly stale (a later poll corrects it).
@@ -168,16 +168,16 @@ class ImportExecutor:
             time.sleep(_REFRESH_COMMAND_POLL_S)
 
     def queue_states(self, infohash: str) -> list[str]:
-        """This download's queue-record states, for :func:`classify_queue`.
+        """This download's queue-record states, for `classify_queue`.
 
-        Matches records to the torrent by ``downloadId`` (case-insensitively;
+        Matches records to the torrent by `downloadId` (case-insensitively;
         Sonarr stores the infohash uppercased) and keeps each record's
-        ``trackedDownloadState`` - the one signal the verdict depends on. Records
+        `trackedDownloadState` - the one signal the verdict depends on. Records
         with no tracked state are dropped; an empty result means Sonarr isn't
         tracking the download.
 
         Args:
-            infohash (str): The torrent infohash (the download id).
+            infohash: The torrent infohash (the download id).
         """
 
         target = infohash.casefold()
@@ -193,8 +193,8 @@ class ImportExecutor:
     def list_commands(self) -> list[CommandResource]:
         """The current Sonarr command list, for the in-flight ManualImport guard.
 
-        A thin pass-through to :meth:`SonarrClient.list_commands` (mirrors
-        :meth:`queue_states`' delegation to ``self.sonarr``). Fetched fresh
+        A thin pass-through to `SonarrClient.list_commands` (mirrors
+        `queue_states`' delegation to `self.sonarr`). Fetched fresh
         every poll - never cached - since an in-flight command's status changes as
         Sonarr finishes the import.
         """
@@ -211,29 +211,29 @@ class ImportExecutor:
     ) -> ImportProbe:
         """Drive our authoritative series-pinned manual import for one download.
 
-        Scans ``content_path`` for candidates (pinned to ``pending.series_id``),
+        Scans `content_path` for candidates (pinned to `pending.series_id`),
         repairs our file->episode map from the actual on-disk files (re-parsing
-        whatever the seed didn't cover, mapped through OUR ``(season, episode) ->
-        id`` index - never Sonarr's candidate episode assignment), then imports
+        whatever the seed didn't cover, mapped through OUR `(season, episode) ->
+        id` index - never Sonarr's candidate episode assignment), then imports
         EXACTLY the files our map intends: each file's episodes that don't already
         hold a recommended release (so a recommended file is never overwritten) and
         no file outside our map (so an episode our mapping gave to another preferred
         torrent is never imported here). An intended file Sonarr can't see yet is
         retried, never silently skipped.
 
-        Returns an :class:`ImportProbe`. A manual-import command's copy is async, so
-        accepting the command is NOT ``files_present`` - the probe reads
-        ``RETRY`` + ``command_issued`` until a later poll verifies the episode files
-        actually landed. ``files_present`` is set only when every intended episode
+        Returns an `ImportProbe`. A manual-import command's copy is async, so
+        accepting the command is NOT `files_present` - the probe reads
+        `RETRY` + `command_issued` until a later poll verifies the episode files
+        actually landed. `files_present` is set only when every intended episode
         already holds a recommended file (nothing left to copy).
 
         Args:
-            pending (PendingImport): The durable record for the completed torrent.
-            content_path (str): The qBittorrent ``content_path`` to import from;
+            pending: The durable record for the completed torrent.
+            content_path: The qBittorrent `content_path` to import from;
                 also the label for this download's log lines.
-            snapshot (EpisodeSnapshot): The same-poll episode index + normalized
+            snapshot: The same-poll episode index + normalized
                 recommended-group guard set.
-            at_deadline (bool): The final attempt - a still-missing intended file
+            at_deadline: The final attempt - a still-missing intended file
                 is terminal, so warn loudly; otherwise it's an expected early-poll
                 gap and only logged at debug.
         """
@@ -377,7 +377,7 @@ class ImportExecutor:
         pending: PendingImport,
         content_path: str,
     ) -> ManualImportFile:
-        """Build one ManualImport file payload from a planned ``import`` decision.
+        """Build one ManualImport file payload from a planned `import` decision.
 
         The episode ids come straight from our authoritative map (never Sonarr's
         parse); the quality is decided per axis with precedence Sonarr's parse ->
@@ -385,9 +385,9 @@ class ImportExecutor:
         quality (never an omitted key), warning only when it resolves to Unknown.
         The language objects + quality definitions are read from this run's caches.
 
-        Only ``import`` decisions reach here, so ``decision.path`` is the on-disk
-        candidate path (always set); the ``or decision.basename`` keeps the
-        payload ``path`` a non-null ``str`` for the type.
+        Only `import` decisions reach here, so `decision.path` is the on-disk
+        candidate path (always set); the `or decision.basename` keeps the
+        payload `path` a non-null `str` for the type.
         """
 
         lang_objs = self._import_language_objects(pending)
@@ -445,11 +445,11 @@ class _SeedStatuses(NamedTuple):
 class ImportReconciler:
     """Decides a completed download's state and builds the grab-time seeds.
 
-    Constructed once per run in :class:`~.seadex_sonarr.SonarrSync` from the shared
-    deps, the episode collaborator, and the :class:`ImportExecutor`. The strategy's
-    ``import_completed`` / ``process_al_id`` hooks delegate here: ``import_completed``
+    Constructed once per run in `SonarrSync` from the shared
+    deps, the episode collaborator, and the `ImportExecutor`. The strategy's
+    `import_completed` / `process_al_id` hooks delegate here: `import_completed`
     drives one reconcile poll (deferring the payload mechanics to the executor), and
-    ``build_pending_seeds`` produces the authoritative ``PendingImport`` records the
+    `build_pending_seeds` produces the authoritative `PendingImport` records the
     engine persists at the add site.
     """
 
@@ -457,11 +457,11 @@ class ImportReconciler:
         """Bind the cache/logger off the deps + the composed collaborators.
 
         Args:
-            deps (RunDeps): The shared collaborators; the cache store + logger are
+            deps: The shared collaborators; the cache store + logger are
                 read off it.
-            episodes (SonarrEpisodes): The strategy's episode collaborator (its
-                ``episodes_for_series`` is the source of truth for "imported").
-            executor (ImportExecutor): The strategy's import executor (rescan,
+            episodes: The strategy's episode collaborator (its
+                `episodes_for_series` is the source of truth for "imported").
+            executor: The strategy's import executor (rescan,
                 queue/command reads, and the manual-import POST).
         """
 
@@ -480,27 +480,27 @@ class ImportReconciler:
         coverage: str | None = None,
         url: str | None = None,
     ) -> dict[str, PendingImport]:
-        """Build ``infohash -> PendingImport`` for every release marked to grab.
+        """Build `infohash -> PendingImport` for every release marked to grab.
 
         For each downloadable url with a hash, seed our authoritative
-        ``normalized basename -> episode ids`` map from the cached ``/parse``
-        results and the ``(season, episode) -> id`` index. The map is best-effort
+        `normalized basename -> episode ids` map from the cached `/parse`
+        results and the `(season, episode) -> id` index. The map is best-effort
         at grab time (the series may not be fully in Sonarr yet); it self-heals at
         import time, when the files are on disk and the series exists, so a record
         is seeded for every grabbed torrent that carries at least one video file -
         not only the ones already fully mapped.
 
         Args:
-            seadex_dict (SeadexDict): The filtered releases; ``url_item.download``
+            seadex_dict: The filtered releases; `url_item.download`
                 marks the ones the engine will add.
-            ep_list (list[SonarrEpisode]): The relevant Sonarr episodes (carry ids).
-            sonarr_series_id (int): The Sonarr series id the files belong to.
-            anilist_title (str): Display title for the record (logging only).
-            coverage (str | None): The entry's season/episode coverage, persisted
-                so a carried-over record can render its inline ``files`` line next
+            ep_list: The relevant Sonarr episodes (carry ids).
+            sonarr_series_id: The Sonarr series id the files belong to.
+            anilist_title: Display title for the record (logging only).
+            coverage: The entry's season/episode coverage, persisted
+                so a carried-over record can render its inline `files` line next
                 run without re-deriving it.
-            url (str | None): The SeaDex entry URL, persisted for the carried-over
-                record's inline ``link`` line.
+            url: The SeaDex entry URL, persisted for the carried-over
+                record's inline `link` line.
 
         Returns:
             dict[str, PendingImport]: Seeds keyed by infohash (empty when nothing
@@ -514,9 +514,9 @@ class ImportReconciler:
         # Sonarr's title parse.
         ordered_episode_ids = [ep.id for ep in ep_list if ep.id]
         # Per-file parse records are read straight from the cache facade
-        # (``get_sonarr_parse``): each is the persisted parse entry
-        # ``{"fetched_at": str, "episodes": [...]}`` written by
-        # ``parse_episodes_from_seadex`` in the same run (staged writes are visible
+        # (`get_sonarr_parse`): each is the persisted parse entry
+        # `{"fetched_at": str, "episodes": [...]}` written by
+        # `parse_episodes_from_seadex` in the same run (staged writes are visible
         # to reads on the same connection).
         added_at = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
 
@@ -580,21 +580,21 @@ class ImportReconciler:
         source of truth - never the cache:
 
           * every intended episode already holds the recommended release ->
-            ``IMPORTED`` + ``files_present`` (drop the record).
-          * Sonarr is genuinely importing right now -> ``RETRY`` (don't race it).
-          * a clean ``importPending`` -> ``RETRY`` until ``force`` (the engine
+            `IMPORTED` + `files_present` (drop the record).
+          * Sonarr is genuinely importing right now -> `RETRY` (don't race it).
+          * a clean `importPending` -> `RETRY` until `force` (the engine
             forces on the snapshot/reconcile passes and on the final in-bound
             monitor poll, so a download Sonarr will never import - e.g. Completed
-            Download Handling off, which parks it in ``importPending`` forever -
+            Download Handling off, which parks it in `importPending` forever -
             is still imported rather than waited on indefinitely).
-          * otherwise (``importBlocked`` / ``failed`` / not tracked / forced clean
+          * otherwise (`importBlocked` / `failed` / not tracked / forced clean
             pending) -> drive our authoritative series-pinned manual import.
 
         Args:
-            pending (PendingImport): The durable record for the completed torrent.
-            content_path (str): The qBittorrent ``content_path`` to import from.
-            force (bool): Stop deferring to Sonarr on a clean ``importPending``.
-            at_deadline (bool): The final attempt - a still-missing intended file
+            pending: The durable record for the completed torrent.
+            content_path: The qBittorrent `content_path` to import from.
+            force: Stop deferring to Sonarr on a clean `importPending`.
+            at_deadline: The final attempt - a still-missing intended file
                 is terminal, so warn loudly (off the deadline it's debug).
         """
 
@@ -644,9 +644,9 @@ class ImportReconciler:
         # A ManualImport we (or a prior run) already POSTed may still be running
         # server-side after Sonarr dropped the torrent from the regular queue - so
         # the queue reads "empty -> step in" and we'd stack a duplicate every poll.
-        # NOT gated on ``force``: the carried-over reconcile path always forces, and
+        # NOT gated on `force`: the carried-over reconcile path always forces, and
         # that is exactly the path that loops; an in-flight command must suppress a
-        # re-issue regardless (``force`` overrides Sonarr's clean-pending deferral,
+        # re-issue regardless (`force` overrides Sonarr's clean-pending deferral,
         # a different state). A false positive only waits (bounded by the deadline).
         if manual_import_in_flight(
             self._executor.list_commands(),
@@ -673,7 +673,7 @@ class ImportReconciler:
 
         Reads ONLY the fresh episode files - never the throttled refresh, the queue,
         or qBittorrent - and counts the seed targets that now hold the recommended
-        release. ``determinate`` is False (and the counts 0) unless the seed map is
+        release. `determinate` is False (and the counts 0) unless the seed map is
         whole, so a partial seed never shows a misleading bar or promotes early; that
         decision is left to the heavy poll's repaired done-check.
         """
@@ -685,10 +685,10 @@ class ImportReconciler:
         return ImportProgress(self._recommended_count(seed.statuses), len(seeded_targets), determinate=True)
 
     def _seed_statuses(self, pending: PendingImport, targets: list[int]) -> _SeedStatuses:
-        """Fetch the series' episodes FRESH and classify ``targets`` against them.
+        """Fetch the series' episodes FRESH and classify `targets` against them.
 
         Episode files are the source of truth for "already imported". Callers gate
-        the bar on seed completeness by passing ``[]`` (empty statuses); the episode
+        the bar on seed completeness by passing `[]` (empty statuses); the episode
         index + recommended groups are still fetched for the manual import.
         """
 
@@ -709,13 +709,13 @@ class ImportReconciler:
         """Raw durable pending records for one series (any release group).
 
         Each record is the genuinely-open cache JSON form of a
-        :class:`PendingImport` (``to_json``/``from_json``), so it is typed
-        ``dict[str, Any]``.
+        `PendingImport` (`to_json`/`from_json`), so it is typed
+        `dict[str, Any]`.
         """
 
-        # ``get_pending_for_series`` returns a fresh snapshot ``{infohash -> record}``
+        # `get_pending_for_series` returns a fresh snapshot `{infohash -> record}`
         # already filtered to this series in SQL (so a record dropped earlier this run
-        # is absent). The ``record ->> 'series_id'`` match only returns JSON objects,
+        # is absent). The `record ->> 'series_id'` match only returns JSON objects,
         # so every value is a typed record - no defensive isinstance/widen needed.
         return list(self.cache_store.get_pending_for_series(Arr.SONARR, series_id).values())
 

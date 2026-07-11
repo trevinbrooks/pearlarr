@@ -1,7 +1,7 @@
 """Discord notifier: build the typed embeds and post the notifications.
 
-``Notifier`` owns the Discord webhook - building the grab embed from a
-:class:`GrabNotice` and the wait-complete summary embed (plus a generic
+`Notifier` owns the Discord webhook - building the grab embed from a
+`GrabNotice` and the wait-complete summary embed (plus a generic
 outbound webhook POST of the wait report). It's gated on a configured url;
 with none, every push is a no-op.
 """
@@ -96,8 +96,8 @@ def _wait_color(result: WaitResult) -> int:
 class GrabNotice:
     """Everything one grab notification renders, resolved by the grab pipeline.
 
-    ``entry`` is the SeaDex entry whole (url / notes / comparisons / incomplete
-    flag). ``results`` are the torrent-client add outcomes, so the embed can
+    `entry` is the SeaDex entry whole (url / notes / comparisons / incomplete
+    flag). `results` are the torrent-client add outcomes, so the embed can
     label a group whose releases were already in the client accordingly rather
     than claiming a fresh grab.
     """
@@ -165,7 +165,7 @@ def _notes_block(notes: str) -> str:
 def _grab_notes(notice: GrabNotice) -> str:
     """The trailing notes stack: subtitle, entry notes, comparison links, caveats.
 
-    The Arr's own title appears as a muted ``-#`` subtext byline only when it
+    The Arr's own title appears as a muted `-#` subtext byline only when it
     differs from the AniList one; each piece is omitted when it has nothing to
     say.
     """
@@ -304,10 +304,10 @@ class Notifier:
         """Configure the notifier.
 
         Args:
-            discord_url (str | None): Discord webhook url, or None to disable.
-            webhook_url (str | None): A generic outbound webhook POSTed the
+            discord_url: Discord webhook url, or None to disable.
+            webhook_url: A generic outbound webhook POSTed the
                 wait-complete report JSON (ntfy/gotify/Home-Assistant), or None.
-            web (httpx.Client): The shared web client every POST rides.
+            web: The shared web client every POST rides.
         """
 
         self.discord_url = discord_url
@@ -331,7 +331,7 @@ class Notifier:
         AniList art frames it (cover thumbnail + wide banner).
 
         Args:
-            notice (GrabNotice): The grab's resolved notification payload.
+            notice: The grab's resolved notification payload.
         """
 
         return self._push(_grab_embed(notice))
@@ -340,12 +340,12 @@ class Notifier:
         """Post the wait-pass outcome to Discord and/or the generic webhook.
 
         A no-op (returns False) when nothing waited or no url is configured; the
-        caller already gates on ``wait_notify`` and swallows any error, so this
+        caller already gates on `wait_notify` and swallows any error, so this
         can never abort the end-of-run cache save.
 
         Args:
-            arr (Arr): Which Arr the wait pass ran for (for the title).
-            result (WaitResult): The terminal outcomes + elapsed time.
+            arr: Which Arr the wait pass ran for (for the title).
+            result: The terminal outcomes + elapsed time.
         """
 
         if result.waited == 0:

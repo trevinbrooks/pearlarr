@@ -4,11 +4,11 @@
 """Tests for the wait surface's pure line builders + throttle + reducers.
 
 The byte guarantees on the wait ledger live in the builders (consumed by the
-WaitRegion's durable prints) and the :mod:`~pearlarr.modules.output.textline`
+WaitRegion's durable prints) and the `output.textline`
 grammar; the region-side rendering is pinned in test_output_wait_region. Here:
-the :class:`PulseThrottle` unit contract, the builder edge cases (including the
+the `PulseThrottle` unit contract, the builder edge cases (including the
 P6 category-based graduation level), and the pure cockpit reducers
-(``live_model`` / ``sparkline`` / ``graduation_tail``), moved here from
+(`live_model` / `sparkline` / `graduation_tail`), moved here from
 test_wait_view at the PR5 Band C flip.
 """
 

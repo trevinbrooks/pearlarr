@@ -1,17 +1,17 @@
 # pyright: strict
-"""Tests for ``TorrentService`` (the qBittorrent add path) and the
-``APIConnectionError`` -> ``QbitConnectionError`` mapping.
+"""Tests for `TorrentService` (the qBittorrent add path) and the
+`APIConnectionError` -> `QbitConnectionError` mapping.
 
-``TorrentService.add`` always runs the tracker parser then ``_add_to_qbit``.
+`TorrentService.add` always runs the tracker parser then `_add_to_qbit`.
 These tests monkeypatch the tracker parsers (the HTML/feed scrapers, covered in
-``test_torrent_parsers``) so each test drives only the qbit side, against a typed
-recording fake qBittorrent client built inline here. ``qbittorrentapi.Client`` is
+`test_torrent_parsers`) so each test drives only the qbit side, against a typed
+recording fake qBittorrent client built inline here. `qbittorrentapi.Client` is
 a concrete SDK class with no Protocol seam, so the fake is cast to it at the one
 injection boundary (the sanctioned leaf-client hatch).
 
-The ``QbitConnectionError`` mapping itself lives in ``RunDeps.build`` (where the
-login happens), so that one path is exercised through ``build`` with the qbit
-``Client`` swapped for one whose ``auth_log_in`` raises.
+The `QbitConnectionError` mapping itself lives in `RunDeps.build` (where the
+login happens), so that one path is exercised through `build` with the qbit
+`Client` swapped for one whose `auth_log_in` raises.
 """
 
 import logging
@@ -48,7 +48,7 @@ _SOURCE_TITLE = "Scraped Source Title"
 
 @dataclass(frozen=True)
 class _TorrInfo:
-    """The ``torrents_info`` row the add path reads (``.hash`` / ``.name``)."""
+    """The `torrents_info` row the add path reads (`.hash` / `.name`)."""
 
     hash: str
     name: str
@@ -56,7 +56,7 @@ class _TorrInfo:
 
 @dataclass(frozen=True)
 class _AddCall:
-    """One recorded ``torrents_add`` invocation (the request shape)."""
+    """One recorded `torrents_add` invocation (the request shape)."""
 
     urls: str
     category: str | None
@@ -64,10 +64,10 @@ class _AddCall:
 
 
 class _FakeQbit:
-    """A typed recording stand-in for ``qbittorrentapi.Client``.
+    """A typed recording stand-in for `qbittorrentapi.Client`.
 
-    Models qBittorrent's dedup-by-hash: ``torrents_info`` reports whichever hashes
-    are ``present``; ``torrents_add`` records its call and (optionally) registers a
+    Models qBittorrent's dedup-by-hash: `torrents_info` reports whichever hashes
+    are `present`; `torrents_add` records its call and (optionally) registers a
     hash->name as now-present, so the post-add name read-back finds it.
     """
 
@@ -98,7 +98,7 @@ class _FakeQbit:
 
 
 def _service(qbit: _FakeQbit, *, category: str | None = "anime", tags: list[str] | None = None) -> TorrentService:
-    """A ``TorrentService`` over the fake qbit (cast at the leaf-client boundary)."""
+    """A `TorrentService` over the fake qbit (cast at the leaf-client boundary)."""
 
     return TorrentService(
         qbit=cast("qbittorrentapi.Client", qbit),
@@ -123,7 +123,7 @@ def _patch_nyaa_parser(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_add_new_torrent_with_hash_prefers_qbit_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A fresh add hands the parsed URL to ``torrents_add`` and reports the name
+    """A fresh add hands the parsed URL to `torrents_add` and reports the name
     qBittorrent reads back (which wins over the scraped source title).
     """
 
@@ -180,7 +180,7 @@ def test_add_hashless_falls_back_to_source_title(monkeypatch: pytest.MonkeyPatch
 
 
 def test_add_qbit_rejects_add_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A non-``"Ok."`` ``torrents_add`` result is a hard failure."""
+    """A non-`"Ok."` `torrents_add` result is a hard failure."""
 
     _patch_nyaa_parser(monkeypatch)
     qbit = _FakeQbit(add_result="Fails.")
@@ -216,7 +216,7 @@ def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _patch_all_parsers(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub all three tracker parsers to a fixed (url, title), so the parseable
-    branch of ``add`` reaches the qbit path without a real scrape."""
+    branch of `add` reaches the qbit path without a real scrape."""
 
     def _nyaa(url: str) -> tuple[str | None, str]:
         del url
@@ -237,7 +237,7 @@ def _patch_all_parsers(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize("tracker", list(Tracker))
 def test_add_raises_iff_tracker_unparseable(tracker: Tracker, monkeypatch: pytest.MonkeyPatch) -> None:
-    """``add`` parses exactly the ``PARSEABLE_TRACKERS`` and raises for every other
+    """`add` parses exactly the `PARSEABLE_TRACKERS` and raises for every other
     member. The constant derives from the parser table, so this pins the raise
     behavior rather than a lockstep between two hand-maintained collections."""
 
@@ -276,8 +276,8 @@ def test_grab_failures_covers_every_expected_boundary_error() -> None:
 
 
 def test_qbit_login_failure_maps_to_qbit_connection_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A qBittorrent ``APIConnectionError`` at login is remapped to the
-    user-facing ``QbitConnectionError`` by ``RunDeps.build``.
+    """A qBittorrent `APIConnectionError` at login is remapped to the
+    user-facing `QbitConnectionError` by `RunDeps.build`.
     """
 
     class _FailingClient:

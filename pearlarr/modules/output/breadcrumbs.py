@@ -2,12 +2,12 @@
 
 One implementation, instantiated per surface: the rich renderer's instance is the
 sole placement authority (PR2+); text-sink instances derive labels only — the
-``[path]`` breadcrumb for handle-carried ScopeIds and the advisory ``during=`` tail
+`[path]` breadcrumb for handle-carried ScopeIds and the advisory `during=` tail
 for diagnostics — never position, never layout.
 
 The fold is replay-deterministic: the same event stream always yields the same
-state. The fixed transition table (B6) IS :data:`KIND_DEPTH` plus the ``match`` in
-:meth:`BreadcrumbFold.apply` — boundary events close strictly-deeper nodes, never
+state. The fixed transition table (B6) IS `KIND_DEPTH` plus the `match` in
+`BreadcrumbFold.apply` — boundary events close strictly-deeper nodes, never
 heuristic inference. A close on an unknown/already-closed id is a no-op, so
 defensive closes (the B3 unwind teardown, the doubled run-close) are idempotent.
 """
@@ -75,7 +75,7 @@ PATH_SEP: Final = " › "
 
 @dataclass(frozen=True, slots=True)
 class OpenNode:
-    """One open frontier node; ``scope`` is None for boundary-opened RUN/ITEM nodes."""
+    """One open frontier node; `scope` is None for boundary-opened RUN/ITEM nodes."""
 
     kind: ScopeKind
     label: str
@@ -159,7 +159,7 @@ class BreadcrumbFold:
         return None
 
     def during(self) -> str | None:
-        """The top node's label — the advisory ``during=`` tail for diagnostics."""
+        """The top node's label — the advisory `during=` tail for diagnostics."""
 
         return self._stack[-1].label if self._stack else None
 

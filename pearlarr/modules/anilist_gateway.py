@@ -1,14 +1,14 @@
 """AniList client gateway: the in-memory meta cache, its TTL, and prefetch.
 
-``AniListGateway`` owns the per-run ``al_cache`` (AniList responses keyed by id)
-and the persisted ``anilist_meta`` block in the cache file: it seeds the cache
+`AniListGateway` owns the per-run `al_cache` (AniList responses keyed by id)
+and the persisted `anilist_meta` block in the cache file: it seeds the cache
 from disk, batch-fetches everything still missing, persists newly seen
 responses (respecting a TTL), and resolves titles / thumbnails.
 
-Extracted from ``RunLoop`` during the refactor; behavior-preserving. The
+Extracted from `RunLoop` during the refactor; behavior-preserving. The
 gateway is deliberately
-side-effect-free with respect to the orchestrator's run state - ``title`` no
-longer stamps ``current_title``; the caller does that.
+side-effect-free with respect to the orchestrator's run state - `title` no
+longer stamps `current_title`; the caller does that.
 """
 
 import logging
@@ -39,10 +39,10 @@ class AniListGateway:
         """Wire the gateway to the cache store, logger and wire client.
 
         Args:
-            cache_store (AbstractCacheStore): Owns the on-disk ``anilist_meta``
+            cache_store: Owns the on-disk `anilist_meta`
                 block and the preview-gated save.
-            logger (logging.Logger): For the prefetch / load progress lines.
-            client (AniListClient): The bound AniList wire client every lookup
+            logger: For the prefetch / load progress lines.
+            client: The bound AniList wire client every lookup
                 rides (it carries the shared web client and the per-run retry
                 narration).
         """
@@ -89,8 +89,8 @@ class AniListGateway:
         an aged-out id is refreshed instead of being re-fetched on every run.
 
         Args:
-            preview (bool): When True, keep the warmed entries in memory but
-                don't persist them (the gate lives in ``CacheStore.save``).
+            preview: When True, keep the warmed entries in memory but
+                don't persist them (the gate lives in `CacheStore.save`).
         """
 
         now = datetime.now()
@@ -136,9 +136,9 @@ class AniListGateway:
         rarely has to hit AniList one id at a time and trip its rate limit.
 
         Args:
-            al_ids (iterable[int]): Candidate AniList IDs for this run
-            preview (bool): Forwarded to the post-fetch save's preview gate.
-            progress (ProgressSink | None): Boot cockpit step fed per-batch
+            al_ids: Candidate AniList IDs for this run
+            preview: Forwarded to the post-fetch save's preview gate.
+            progress: Boot cockpit step fed per-batch
                 fraction + "done/total" detail; None outside the cockpit.
 
         Returns:
@@ -179,10 +179,10 @@ class AniListGateway:
         chance.
 
         Args:
-            al_id (int): AniList ID
+            al_id: AniList ID
 
         Returns:
-            AniListMediaNode: The parsed node; all-``None`` on a miss.
+            AniListMediaNode: The parsed node; all-`None` on a miss.
         """
 
         # Cache hit: parse the stored body's Media node.
@@ -204,10 +204,10 @@ class AniListGateway:
         """Resolve the AniList title for an id (cache or live query), or None.
 
         Prefers the English title, falling back to romaji. Side-effect-free: the
-        caller owns any fallback and the ``current_title`` attribution.
+        caller owns any fallback and the `current_title` attribution.
 
         Args:
-            al_id (int): AniList ID
+            al_id: AniList ID
         """
 
         media = self._media(al_id)
@@ -217,7 +217,7 @@ class AniListGateway:
         """Resolve the AniList cover thumbnail URL for an id, or None.
 
         Args:
-            al_id (int): AniList ID
+            al_id: AniList ID
         """
 
         return self._media(al_id).cover_image
@@ -226,7 +226,7 @@ class AniListGateway:
         """Resolve the AniList wide banner URL for an id, or None.
 
         Args:
-            al_id (int): AniList ID
+            al_id: AniList ID
         """
 
         return self._media(al_id).banner_image
@@ -235,7 +235,7 @@ class AniListGateway:
         """Resolve the AniList media format (TV / MOVIE / OVA / ...) for an id, or None.
 
         Args:
-            al_id (int): AniList ID
+            al_id: AniList ID
         """
 
         return self._media(al_id).format
@@ -244,7 +244,7 @@ class AniListGateway:
         """Resolve the AniList episode count for an id, or None.
 
         Args:
-            al_id (int): AniList ID
+            al_id: AniList ID
         """
 
         return self._media(al_id).episodes

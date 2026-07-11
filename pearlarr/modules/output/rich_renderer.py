@@ -2,17 +2,17 @@
 arm; grows into the full renderer).
 
 Diagnostics are position-free; this renderer is the single ambient placement
-authority: its :class:`~.breadcrumbs.BreadcrumbFold` instance decides where a
+authority: its `breadcrumbs.BreadcrumbFold` instance decides where a
 diagnostic lands: indented while a boot section, wait region, or entry block is
 open, column 0 otherwise (RUN/ITEM alone stays column-0 — the producers open
 entry scopes, so a note between entries sits at the run margin). The boot
-events (banner / steps / capstone) drive the :class:`~.boot_region.BootRegion`
-— the live spinner and the durable ledger lines moved there from ``boot_view``.
-The scan events render through the shared :mod:`.scan_lines` builders at
+events (banner / steps / capstone) drive the `boot_region.BootRegion`
+— the live spinner and the durable ledger lines moved there from `boot_view`.
+The scan events render through the shared `scan_lines` builders at
 LOGGER-parity gating, so the console shows exactly what the file logs.
 
 The renderer resolves the CURRENT shared Console at render time from the live
-:class:`~..log.RichConsoleHandler` (``setup_logger`` rebuilds handlers per
+`log.RichConsoleHandler` (`setup_logger` rebuilds handlers per
 cycle; the logger identity is stable, S3). Printing through that shared Console
 keeps Live reflow safe — the same mechanism as the cockpits' graduation lines.
 Under plain/json (no rich handler) it no-ops; this seat is never built there
@@ -84,7 +84,7 @@ def live_console() -> Console | None:
 def diagnostic_threshold(level: int, *, first_party: bool) -> int:
     """The console floor for a diagnostic (S4).
 
-    First-party keeps the ``console_level`` semantics (INFO floor except
+    First-party keeps the `console_level` semantics (INFO floor except
     DEBUG/CRITICAL); third-party floors at WARNING unless the configured level
     is DEBUG, so a chatty library can't flood the ledger.
     """
@@ -121,7 +121,7 @@ class RichRenderer:
         caps_cache: CapsCache | None = None,
         time_source: Callable[[], float] = time.monotonic,
     ) -> None:
-        # ``caps_cache`` is the process-shared instance in production (cli
+        # `caps_cache` is the process-shared instance in production (cli
         # wiring, stable across seat swaps); None builds a private cache.
         self._console_source = console_source
         self._crumbs = BreadcrumbFold()
@@ -241,7 +241,7 @@ class RichRenderer:
     def _scan(self, event: ScanEvent) -> None:
         """The scan console arm: the shared legacy lines over the shared Console.
 
-        Gating is LOGGER parity (``render_legacy_lines``): at a configured
+        Gating is LOGGER parity (`render_legacy_lines`): at a configured
         WARNING the INFO scan lines vanish from the console exactly as they
         vanish from the file — deliberately NOT the diagnostics' console floor.
         """
@@ -252,7 +252,7 @@ class RichRenderer:
         render_legacy_lines(console, scan_event_lines(event), self._level)
 
     def _frontier_has(self, *kinds: ScopeKind) -> bool:
-        """True when any open node (the whole stack, not just the top) is one of ``kinds``."""
+        """True when any open node (the whole stack, not just the top) is one of `kinds`."""
 
         wanted = frozenset(kinds)
         return any(node.kind in wanted for node in self._crumbs.nodes())

@@ -38,7 +38,7 @@ def get_nyaa_torrent(url: str) -> tuple[str, str]:
     """Get the Nyaa download link and release title from a Nyaa URL
 
     Args:
-        url (str): URL of the Nyaa release page
+        url: URL of the Nyaa release page
 
     Returns:
         tuple: (download_url, release_title) - the .torrent download link and
@@ -57,9 +57,9 @@ def get_animetosho_torrent(
     """Get the AnimeTosho download link and release title from a URL
 
     Args:
-        url (str): URL of the AnimeTosho release page
-        client (httpx.Client, optional): Client to reuse for the two
-            requests this makes to the same host. Defaults to a shared one.
+        url: URL of the AnimeTosho release page
+        client: Client to reuse for the two requests this makes to the
+            same host. Defaults to a shared one.
 
     Returns:
         tuple: (download_url, release_title) - the .torrent download link
@@ -122,17 +122,16 @@ def get_rutracker_torrent(
     """Get the RuTracker magnet link and torrent title from a URL
 
     Args:
-        url (str): URL of the RuTracker topic
-        infohash (str | None): Torrent info hash
-        client (httpx.Client, optional): Client to reuse for the page
-            fetch. Defaults to a shared one.
+        url: URL of the RuTracker topic
+        infohash: Torrent info hash
+        client: Client to reuse for the page fetch. Defaults to a shared one.
 
     Returns:
         tuple: (magnet_url, torrent_title) - the magnet link and the
             human-readable torrent title scraped from the page
 
     Raises:
-        TorrentParseError: If ``infohash`` is None (a magnet needs the hash) or
+        TorrentParseError: If `infohash` is None (a magnet needs the hash) or
             the page carries no title.
     """
 

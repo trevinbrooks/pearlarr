@@ -1,5 +1,5 @@
 # pyright: strict
-"""Tests for ``output.trace`` — the one exception carrier.
+"""Tests for `output.trace` — the one exception carrier.
 
 Pin the secrets contract (frame locals are NEVER captured: an api_key local must
 not appear anywhere in the value), the bounded rich frame count, and the full

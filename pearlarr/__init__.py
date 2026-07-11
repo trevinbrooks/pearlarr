@@ -1,6 +1,6 @@
 """Pearlarr: grab the best SeaDex-tagged anime releases for Sonarr and Radarr.
 
-The supported interfaces are the CLI (``pearlarr``), the config schema, and the
+The supported interfaces are the CLI (`pearlarr`), the config schema, and the
 notification payloads. Every Python import path - including the names
 re-exported here - is internal and may change without notice; pin your exact
 version if you script against it anyway.
@@ -10,12 +10,12 @@ from typing import TYPE_CHECKING
 
 from .modules import pearlarr_cli, setup_logger
 
-# ``__version__`` and the run-machinery re-exports are resolved LAZILY (PEP 562):
-# the ``pearlarr`` entry point imports this package only to reach
-# ``pearlarr_cli``, so it must not eagerly pay the ``importlib.metadata`` lookup
+# `__version__` and the run-machinery re-exports are resolved LAZILY (PEP 562):
+# the `pearlarr` entry point imports this package only to reach
+# `pearlarr_cli`, so it must not eagerly pay the `importlib.metadata` lookup
 # or pull the heavy run machinery (qBittorrent / the SeaDex+httpx chain).
-# ``from .. import __version__`` in cache.py and ``pearlarr.<Sync>`` for
-# programmatic use both still resolve through ``__getattr__``.
+# `from .. import __version__` in cache.py and `pearlarr.<Sync>` for
+# programmatic use both still resolve through `__getattr__`.
 _LAZY_EXPORTS = frozenset({"RadarrSync", "RunDeps", "RunLoop", "RunServices", "SonarrSync"})
 
 if TYPE_CHECKING:

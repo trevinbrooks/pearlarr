@@ -1,8 +1,8 @@
 """Sonarr episode-domain collaborator: series enumeration + episode resolution.
 
-Extracted from :class:`~.seadex_sonarr.SonarrSync` so the strategy keeps only the
-``ArrSync`` hooks. ``SonarrEpisodes`` owns the per-run episode cache (and the
-series-id fingerprint that pins negative ``/parse`` records) and the logic that
+Extracted from `SonarrSync` so the strategy keeps only the
+`ArrSync` hooks. `SonarrEpisodes` owns the per-run episode cache (and the
+series-id fingerprint that pins negative `/parse` records) and the logic that
 turns a (series, AniList id, mapping) into the relevant episode list: season /
 AniBridge filtering, AniDB remaps, offset slicing, the existing-file release dict,
 and the concurrent prefetch warm.
@@ -38,7 +38,7 @@ def fetch_workers(config: AppConfig) -> int:
     """Concurrency for the episode / parse network fan-out.
 
     Sequential (1) whenever a rate-limit throttle is requested
-    (``advanced.sleep_time > 0``), so the bounded pool never bypasses the user's
+    (`advanced.sleep_time > 0`), so the bounded pool never bypasses the user's
     intended throttle; otherwise the bounded pool size. Shared by the episode
     prefetch and the parse warm, so it lives at module scope, owned by neither.
     """
@@ -51,13 +51,13 @@ def fetch_workers(config: AppConfig) -> int:
 def sonarr_series_fingerprint(series_ids: Iterable[int]) -> str:
     """Stable fingerprint of the current Sonarr series-id set.
 
-    Invalidates negative ``/parse`` records: an empty parse almost always means
+    Invalidates negative `/parse` records: an empty parse almost always means
     the file's series isn't present, so a new series id flips the fingerprint and
-    re-parses the affected entries. ``hashlib`` (not ``hash()``) for stability
+    re-parses the affected entries. `hashlib` (not `hash()`) for stability
     across processes.
 
     Args:
-        series_ids (Iterable[int]): Current Sonarr series ids (sorted/de-duped).
+        series_ids: Current Sonarr series ids (sorted/de-duped).
     """
 
     joined = ",".join(str(i) for i in sorted(set(series_ids)))
@@ -71,8 +71,8 @@ def check_ep_by_anime_ids(
     """Check whether to include an episode by Anime ID style
 
     Args:
-        ep (SonarrEpisode): Episode info
-        tvdb_season (int): TVDB season number
+        ep: Episode info
+        tvdb_season: TVDB season number
     """
 
     if tvdb_season == -1:
@@ -87,8 +87,8 @@ def check_ep_by_anibridge(
     """Check whether a Sonarr episode is covered by an AniBridge mapping.
 
     Args:
-        ep (SonarrEpisode): Sonarr episode info (season_number, episode_number)
-        tvdb_mappings (TvdbMappings): season (int) -> list of inclusive (start,
+        ep: Sonarr episode info (season_number, episode_number)
+        tvdb_mappings: season (int) -> list of inclusive (start,
             end) TVDB episode ranges. An empty list matches the whole season; an
             end of None is open-ended.
     """
@@ -119,20 +119,20 @@ def check_ep_by_anibridge(
 class SonarrEpisodes:
     """Owns the per-run episode cache + the (series, al_id, mapping) -> episodes logic.
 
-    Constructed once per run in :class:`~.seadex_sonarr.SonarrSync` from the shared
-    :class:`~.run_services.RunDeps`, the strategy's Sonarr client, and the services
-    hub (held as ``self._services`` for the prefetch needs-scan gate).
+    Constructed once per run in `SonarrSync` from the shared
+    `RunDeps`, the strategy's Sonarr client, and the services
+    hub (held as `self._services` for the prefetch needs-scan gate).
     """
 
     def __init__(self, deps: RunDeps, sonarr: AbstractSonarrClient, services: RunServices) -> None:
         """Bind the shared collaborators the episode logic reads.
 
         Args:
-            deps (RunDeps): The shared collaborators (config/mappings/AniList
+            deps: The shared collaborators (config/mappings/AniList
                 gateway/reporter are unpacked off it).
-            sonarr (AbstractSonarrClient): The strategy's Sonarr client (built once,
+            sonarr: The strategy's Sonarr client (built once,
                 reused so a multi-season series fetches its episodes once).
-            services (RunServices): The services hub; ``prefetch`` calls into it to
+            services: The services hub; `prefetch` calls into it to
                 resolve AniList ids and the needs-scan gate.
         """
 
@@ -154,7 +154,7 @@ class SonarrEpisodes:
         self._ep_list_cache: dict[int, list[SonarrEpisode]] = {}
 
         # Fingerprint of the current Sonarr series-id set, recomputed each run in
-        # collect_series. Pins negative ``/parse`` cache records to the library
+        # collect_series. Pins negative `/parse` cache records to the library
         # state so they self-heal when a missing series is added.
         self._series_fp: str = ""
 
@@ -169,7 +169,7 @@ class SonarrEpisodes:
 
         Drops the per-run episode cache and re-fingerprints the series-id set so a
         fresh run always re-reads the current library. Called once per run from the
-        strategy's ``get_items`` hook.
+        strategy's `get_items` hook.
         """
 
         self._ep_list_cache = {}
@@ -198,26 +198,26 @@ class SonarrEpisodes:
     def prefetch(self, items: list[SonarrItem], *, progress: ProgressSink | None = None) -> int:
         """Warm the per-series episode lists CONCURRENTLY before the scan loop.
 
-        One sequential ``/api/v3/episode`` round-trip per processed series is the
+        One sequential `/api/v3/episode` round-trip per processed series is the
         dominant sweep cost (~30s here). Fetching them up front over a bounded
         thread pool collapses that to a few seconds while keeping every list
         FRESH - the grab/skip decision reads each episode's existing file, so the
         lists are deliberately not persisted across runs. Only the network fetch
-        runs in the pool; the in-memory ``_ep_list_cache`` is populated on the
+        runs in the pool; the in-memory `_ep_list_cache` is populated on the
         main thread (the cache and mappings are not thread-safe). A series whose
         fetch fails is left unwarmed and re-fetched (and logged) by
-        ``get_ep_list`` on the main thread during the loop.
+        `get_ep_list` on the main thread during the loop.
 
         Only series the per-id loop would actually process are warmed: a series
         whose every AniList id the loop short-circuits (no SeaDex entry, or cached
-        and unchanged - ``al_id_needs_scan``) is skipped, since ``get_ep_list``
+        and unchanged - `al_id_needs_scan`) is skipped, since `get_ep_list`
         would never run for it. This keeps a warm run from re-fetching the episode
         lists the loop's cached-entry skip already obviates.
 
         Args:
-            items (list[SonarrItem]): The run's series list (already narrowed for
+            items: The run's series list (already narrowed for
                 a single-series run).
-            progress (ProgressSink | None): Boot cockpit step fed per-series
+            progress: Boot cockpit step fed per-series
                 fraction + "done/total" detail as each fetch completes; None
                 outside the cockpit.
 
@@ -282,7 +282,7 @@ class SonarrEpisodes:
         "already imported", and that state changes as Sonarr (or our own manual
         import) places files. A per-run cache would go stale across the monitor's
         repeated polls and never observe the import landing - the record would time
-        out as "still importing" (or, in ``move`` mode where the file leaves the
+        out as "still importing" (or, in `move` mode where the file leaves the
         download folder, never be confirmed at all). So this fetches fresh every
         call and refreshes the per-run cache for any later reader; a transient
         fetch failure falls back to the last-known list (or empty) so a later poll
@@ -304,9 +304,9 @@ class SonarrEpisodes:
         """Get a list of relevant episodes for an AniList mapping
 
         Args:
-            sonarr_series_id (int): Series ID in Sonarr
-            al_id (int): Anilist ID
-            mapping (MappingEntry): Mapping between TVDB and AniList
+            sonarr_series_id: Series ID in Sonarr
+            al_id: Anilist ID
+            mapping: Mapping between TVDB and AniList
         """
 
         # If we have any season info, pull that out now
@@ -410,10 +410,10 @@ class SonarrEpisodes:
         """Slice an anime-id episode list down by its TVDB offset / AniList count.
 
         Args:
-            final_ep_list (list): Season-filtered episodes to slice.
-            al_id (int): AniList ID, used to resolve the expected episode count.
-            mapping (MappingEntry): SeaDex mapping (read for ``tvdb_epoffset``).
-            tvdb_season (int): TVDB season (-1 means single-season offset slice).
+            final_ep_list: Season-filtered episodes to slice.
+            al_id: AniList ID, used to resolve the expected episode count.
+            mapping: SeaDex mapping (read for `tvdb_epoffset`).
+            tvdb_season: TVDB season (-1 means single-season offset slice).
         """
 
         # Slice the list to get the correct episodes, so any potential offsets

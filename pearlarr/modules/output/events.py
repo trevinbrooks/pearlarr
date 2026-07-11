@@ -1,13 +1,13 @@
 """The closed output-event vocabulary: frozen facts only, no rich render types.
 
 Producers state WHAT happened; renderers own every look decision (glyphs, widths,
-indents, styles). Emphasis rides the semantic :class:`Accent`/:class:`Span`/
-:class:`StyledValue` value model — never a rich style string, never a pre-formatted
-display string. ``EntryState`` (log.py) and ``Outcome``/``OutcomeCategory``
+indents, styles). Emphasis rides the semantic `Accent`/`Span`/
+`StyledValue` value model — never a rich style string, never a pre-formatted
+display string. `EntryState` (log.py) and `Outcome`/`OutcomeCategory`
 (manual_import.py) are reused, not mirrored, so the vocabulary can't drift from the
-domain enums. ``Outcome`` deliberately stays in manual_import (settled at PR7):
+domain enums. `Outcome` deliberately stays in manual_import (settled at PR7):
 moving it INTO this module would cycle — manual_import -> output.events -> config
--> manual_import (config imports ``ImportWaitMode``) — and reuse already prevents
+-> manual_import (config imports `ImportWaitMode`) — and reuse already prevents
 the drift that relocation would have bought.
 """
 
@@ -113,7 +113,7 @@ class NextRunScheduled:
 
 @dataclass(frozen=True, slots=True)
 class ScopeOpened:
-    """A handle-backed scope opened; ``label`` is the only home of its display name."""
+    """A handle-backed scope opened; `label` is the only home of its display name."""
 
     scope: ScopeId
     label: str
@@ -195,7 +195,7 @@ class ItemStarted:
 class EntryHeader:
     """One entry block's head, carried whole (header-at-open commit rule, B5).
 
-    The focal/dim distinction is renderer policy keyed on ``state`` — no
+    The focal/dim distinction is renderer policy keyed on `state` — no
     emphasis flag here (Accent is the emphasis mechanism where one is needed).
     """
 
@@ -269,7 +269,7 @@ class GrabStatus(Enum):
 @dataclass(frozen=True, slots=True)
 class RecommendedGroup:
     """A recommended release group with its SeaDex tags, carried separately;
-    :attr:`display` is the one place they're joined for output."""
+    `display` is the one place they're joined for output."""
 
     name: str
     tags: tuple[str, ...] = ()
@@ -299,7 +299,7 @@ class ReleaseName:
 class GrabAction:
     """The whole per-title action block as one atomic fact.
 
-    A dry run IS ``GrabStatus.WOULD_ADD`` — no separate flag to drift from it.
+    A dry run IS `GrabStatus.WOULD_ADD` — no separate flag to drift from it.
     """
 
     status: GrabStatus
@@ -363,7 +363,7 @@ class NeedsActionFact:
 
 @dataclass(frozen=True, slots=True)
 class RunTally:
-    """RunStats frozen at summary time; :meth:`from_stats` is the single conversion
+    """RunStats frozen at summary time; `from_stats` is the single conversion
     site (S10: never two hand-maintained field lists; a fields-parity test pins it)."""
 
     checked: int
@@ -415,7 +415,7 @@ class RunTally:
 class RunSummary:
     """The whole end-of-run scoreboard as one value; the tally rides embedded whole.
 
-    ``dry_run_note`` is the dry-run marker AND its human note in one field
+    `dry_run_note` is the dry-run marker AND its human note in one field
     (None = a real run), so a noteless "DRY RUN" title is unrepresentable.
     """
 
@@ -453,9 +453,9 @@ def clamp01(value: float) -> float:
 class Phase(Enum):
     """The lifecycle phase of one torrent in the wait pass.
 
-    ``QUEUED`` -> still downloading (or not yet polled). ``DOWNLOADING`` ->
-    downloading with live telemetry. ``IMPORTING`` -> the download finished and an
-    import is in flight (indeterminate). ``TERMINAL`` -> a terminal ``Outcome``
+    `QUEUED` -> still downloading (or not yet polled). `DOWNLOADING` ->
+    downloading with live telemetry. `IMPORTING` -> the download finished and an
+    import is in flight (indeterminate). `TERMINAL` -> a terminal `Outcome`
     was reached; these GRADUATE to scrollback and leave the live region.
     """
 
@@ -476,9 +476,9 @@ class TorrentView:
     """One torrent's state for a single frame - the engine's per-poll snapshot row.
 
     Immutable so a snapshot is a value: the engine rebuilds the row each cycle
-    (``dataclasses.replace`` off the prior one) and the renderers draw it. Telemetry
-    fields are already sanitized (``manual_import.TorrentProbe``); ``outcome`` is
-    non-None iff ``phase`` is ``TERMINAL``.
+    (`dataclasses.replace` off the prior one) and the renderers draw it. Telemetry
+    fields are already sanitized (`manual_import.TorrentProbe`); `outcome` is
+    non-None iff `phase` is `TERMINAL`.
     """
 
     key: str
@@ -608,7 +608,7 @@ class RunFinished:
 class Diagnostic:
     """A position-free problem/notice: our one-liners (hub_note) + adopted stdlib records.
 
-    ``file_only`` routes hub-containment notes (and, later, bridge-adopted
+    `file_only` routes hub-containment notes (and, later, bridge-adopted
     third-party DEBUG/INFO) past the console surfaces to the file sink alone.
     """
 

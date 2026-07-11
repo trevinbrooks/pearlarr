@@ -1,11 +1,11 @@
 """The per-run dependency bundle and the per-AniList-id services hub.
 
-Split out of ``run_loop.py``: :class:`RunDeps` is the shared leaf-collaborator
-bundle the composition root builds once per arr run, and :class:`RunServices` is
-the services hub the Arr strategies hold as ``self._services`` and call the
+Split out of `run_loop.py`: `RunDeps` is the shared leaf-collaborator
+bundle the composition root builds once per arr run, and `RunServices` is
+the services hub the Arr strategies hold as `self._services` and call the
 shared per-id pipeline through. The run loop itself stays in
-:class:`~.run_loop.RunLoop`, which adopts the hub's placeholder context and
-pushes each run's fresh context down via :meth:`RunServices.begin_run` - so the
+`RunLoop`, which adopts the hub's placeholder context and
+pushes each run's fresh context down via `RunServices.begin_run` - so the
 strategies depend on this module only and never see the loop type.
 """
 
@@ -47,7 +47,7 @@ from .torrents import TorrentService
 class QbitConnectionError(Exception):
     """qBittorrent auth/connection failed - a user-facing config problem.
 
-    Raised from ``RunDeps.build`` so the cli reports it as a clean one-line message
+    Raised from `RunDeps.build` so the cli reports it as a clean one-line message
     (wrong host / credentials) instead of a stack trace under "unexpected error".
     """
 
@@ -56,15 +56,15 @@ class QbitConnectionError(Exception):
 class RunDeps:
     """The shared leaf collaborators for one Arr run, built once at the root.
 
-    A plain value object the composition root (``bootstrap.py``) builds via
-    :meth:`build` and injects into the :class:`RunServices` hub, the
-    :class:`~.run_loop.RunLoop` run loop, and the Arr-specific strategy.
+    A plain value object the composition root (`bootstrap.py`) builds via
+    `build` and injects into the `RunServices` hub, the
+    `RunLoop` run loop, and the Arr-specific strategy.
     Keeping construction here (where every collaborator type is already imported)
     and injection at the root means none of them constructs another's
-    dependencies - each receives the subset it needs. ``anime_mappings`` /
-    ``anidb_mappings`` / ``anibridge`` are read off ``mappings`` by consumers, not
-    stored separately. ``arr_config`` is the per-arr connection/behavior submodel
-    (``config.for_arr(arr)``); ``config`` is the shared root reused by both arrs.
+    dependencies - each receives the subset it needs. `anime_mappings` /
+    `anidb_mappings` / `anibridge` are read off `mappings` by consumers, not
+    stored separately. `arr_config` is the per-arr connection/behavior submodel
+    (`config.for_arr(arr)`); `config` is the shared root reused by both arrs.
     """
 
     config: AppConfig
@@ -97,24 +97,24 @@ class RunDeps:
         """Construct the shared collaborators in dependency order.
 
         Args:
-            arr (Arr): Which Arr is being run; selects the per-arr config submodel.
-            cache (str, optional): Path to the cache database. Defaults to "cache.db".
-            logger (logging.Logger): Logger to use (the CLI builds it before the
+            arr: Which Arr is being run; selects the per-arr config submodel.
+            cache: Path to the cache database. Defaults to "cache.db".
+            logger: Logger to use (the CLI builds it before the
                 config file can even be read, so config errors are loggable).
-            mappings (MappingResolver): The id-mapping resolver, built once by the
+            mappings: The id-mapping resolver, built once by the
                 CLI and shared across a scheduled Radarr->Sonarr cycle so the three
                 large mapping sources are downloaded, parsed and indexed once.
-            app_config (AppConfig): The loaded config, read and validated once by
+            app_config: The loaded config, read and validated once by
                 the CLI per run and shared across a scheduled Radarr->Sonarr cycle.
-            web (httpx.Client): The shared non-arr web client (tracker scrapes,
+            web: The shared non-arr web client (tracker scrapes,
                 AniList, webhooks), built once by the CLI per cycle and owned
-                there - ``close`` deliberately leaves it open.
-            boot (BootFlow): The startup cockpit's producer facade; the
+                there - `close` deliberately leaves it open.
+            boot: The startup cockpit's producer facade; the
                 qBittorrent login and cache open graduate into it as steps
                 (a no-op unless a hub renders).
         """
 
-        # ``arr_config`` is this arr's connection/behavior submodel, injected
+        # `arr_config` is this arr's connection/behavior submodel, injected
         # alongside the shared root.
         arr_config = app_config.for_arr(arr)
 
@@ -226,10 +226,10 @@ class RunDeps:
     def close(self) -> None:
         """Release run-scoped resources: the arr HTTP client and the cache db.
 
-        Called once per arr run from ``bootstrap.py``'s ``finally`` (each arr owns its
-        own ``CacheStore`` - no sharing - so this never double-closes). The cache
-        ``close`` rolls back anything not flushed by the end-of-run save point.
-        ``web`` is NOT closed here: the CLI owns it across the whole cycle.
+        Called once per arr run from `bootstrap.py`'s `finally` (each arr owns its
+        own `CacheStore` - no sharing - so this never double-closes). The cache
+        `close` rolls back anything not flushed by the end-of-run save point.
+        `web` is NOT closed here: the CLI owns it across the whole cycle.
         """
         self.http.close()
         self.cache_store.close()
@@ -240,22 +240,22 @@ class RunDeps:
 class RunServices:
     """The per-AniList-id services hub the strategies call.
 
-    Receives its shared collaborators as a :class:`RunDeps` bundle (built and
-    injected by the composition root in ``bootstrap.py``) and owns the shared per-id
-    pipeline the Arr strategies reach through ``self._services``: the release
+    Receives its shared collaborators as a `RunDeps` bundle (built and
+    injected by the composition root in `bootstrap.py`) and owns the shared per-id
+    pipeline the Arr strategies reach through `self._services`: the release
     filter, the grab tail, the cache checks, and the strategy-facing log
-    delegates. ``arr`` is THE authority for which Arr is being run (``ctx.arr``
-    is the per-run copy); the :class:`~.run_loop.RunLoop` run loop adopts
+    delegates. `arr` is THE authority for which Arr is being run (`ctx.arr`
+    is the per-run copy); the `RunLoop` run loop adopts
     the placeholder context minted here and pushes each run's fresh context
-    down via :meth:`begin_run`, so the strategies never see the loop type.
+    down via `begin_run`, so the strategies never see the loop type.
     """
 
     def __init__(self, deps: RunDeps, arr: Arr) -> None:
         """Receive the shared collaborators and set up the per-id pipeline.
 
         Args:
-            deps (RunDeps): The shared collaborators
-            arr (Arr): Which Arr is being run. The authority for the run's arr;
+            deps: The shared collaborators
+            arr: Which Arr is being run. The authority for the run's arr;
                 every fresh run context carries a per-run copy of it.
         """
 
@@ -282,7 +282,7 @@ class RunServices:
         # fresh at the start of each run by the loop's reset_run_stats. The single
         # placeholder is minted here - its dry_run=False + OFF wait mode keep every
         # preview / pending-import path a safe no-op - so the object is usable
-        # before run_sync; the run loop ADOPTS it (via :attr:`ctx`) at construction.
+        # before run_sync; the run loop ADOPTS it (via `ctx`) at construction.
         self._ctx = RunContext(arr=arr)
 
         # AniList ids whose arr-side files changed since the last pass (fed by the
@@ -298,7 +298,7 @@ class RunServices:
     def ctx(self) -> RunContext:
         """The current run context (the placeholder until a run begins).
 
-        Read by the :class:`~.run_loop.RunLoop` run loop at construction so
+        Read by the `RunLoop` run loop at construction so
         it adopts the same placeholder instead of minting a second one.
         """
 
@@ -307,9 +307,9 @@ class RunServices:
     def begin_run(self, ctx: RunContext) -> None:
         """Bind the fresh run context to the hub and its per-id collaborators.
 
-        Driven by the run loop's ``begin_run``: once with the placeholder at
+        Driven by the run loop's `begin_run`: once with the placeholder at
         construction (so pre-run paths are safe) and again right after
-        ``reset_run_stats`` mints the run's real ctx. The wait-manager rebind
+        `reset_run_stats` mints the run's real ctx. The wait-manager rebind
         stays on the loop side (the loop owns the manager).
         """
 
@@ -347,11 +347,11 @@ class RunServices:
     def _skippable_entry(self, al_id: int, sd_entry: EntryRecord) -> CachedEntry | None:
         """The cached row iff the per-id loop may skip this id; None re-processes.
 
-        The single decision BOTH cache gates share: ``al_id_needs_scan`` picks
-        what prefetch warms and ``cached_entry_skip`` what the loop skips, and
+        The single decision BOTH cache gates share: `al_id_needs_scan` picks
+        what prefetch warms and `cached_entry_skip` what the loop skips, and
         the two must agree or un-warmed ids hit AniList one at a time. Run-wide
         bypasses come first (no db read); then the SeaDex-timestamp compare
-        (mirrors ``check_al_id_in_cache``); then warn mode re-processes
+        (mirrors `check_al_id_in_cache`); then warn mode re-processes
         fallback-satisfied entries, so their private-only warning resurfaces
         after a switch back from fallback mode.
         """
@@ -368,8 +368,8 @@ class RunServices:
     def mark_dirty(self, al_ids: Iterable[int]) -> None:
         """Record AniList ids whose arr-side file state changed since the last pass.
 
-        Fed by the run loop's :class:`~.arr_activity.ArrActivityMonitor` scan;
-        ``al_id_needs_scan`` and ``cached_entry_skip`` bypass the cached-entry
+        Fed by the run loop's `ArrActivityMonitor` scan;
+        `al_id_needs_scan` and `cached_entry_skip` bypass the cached-entry
         short-circuit for exactly these ids.
         """
 
@@ -387,8 +387,8 @@ class RunServices:
         presentation concern doesn't leak into the resolver.
 
         Args:
-            ids (ExternalIds): The external Arr ids to resolve (at least one).
-            log_ignored (bool): Log a ledger row for each ignored AniList ID.
+            ids: The external Arr ids to resolve (at least one).
+            log_ignored: Log a ledger row for each ignored AniList ID.
                 Defaults to True; pass False from the prefetch pass so ignored
                 ids aren't logged twice (once there, once in the main loop)
         """
@@ -410,12 +410,12 @@ class RunServices:
         """Resolve and remember the AniList title for an ID (no logging)
 
         The gateway resolves the raw title (no side-effects); the empty-result
-        fallback and the transitional ``current_title`` attribution live here so
+        fallback and the transitional `current_title` attribution live here so
         later steps can attribute grabs to the active entry. The entry header is
         logged separately by log_al_title, once episodes are known.
 
         Args:
-            al_id (int): AniList ID
+            al_id: AniList ID
         """
 
         anilist_title = self._anilist.title(al_id)
@@ -464,10 +464,10 @@ class RunServices:
     def import_wait_mode(self) -> ImportWaitMode:
         """The wait mode resolved for the current run (cli > config > default).
 
-        Set at the top of ``run_sync``; the active strategy reads this (not the
-        raw ``config.imports.wait_mode``) so its seed-building gate agrees with the
+        Set at the top of `run_sync`; the active strategy reads this (not the
+        raw `config.imports.wait_mode`) so its seed-building gate agrees with the
         run loop's persist/reconcile/blocking gates - otherwise a CLI override that
-        turns the feature on over an ``off`` config would build no seeds and the
+        turns the feature on over an `off` config would build no seeds and the
         whole pass would silently no-op.
         """
 
@@ -478,14 +478,13 @@ class RunServices:
         al_id: int,
         cache_details: CacheRecord | None = None,
     ) -> None:
-        """Merge ``cache_details`` into an entry's cache record (in-memory only).
+        """Merge `cache_details` into an entry's cache record (in-memory only).
 
-        The run's save points flush it; see ``CacheStore.update_cache``.
+        The run's save points flush it; see `CacheStore.update_cache`.
 
         Args:
-            al_id (int): AniList ID
-            cache_details (CacheRecord): Details for the cache entry. Defaults
-                to None
+            al_id: AniList ID
+            cache_details: Details for the cache entry. Defaults to None
         """
 
         self.cache_store.update_cache(self._ctx.arr, al_id, cache_details)
@@ -503,11 +502,11 @@ class RunServices:
         share one definition instead of a byte-for-byte duplicated block.
 
         Args:
-            al_id (int): AniList ID.
-            cache_details (CacheRecord): Cache record assembled for this id.
+            al_id: AniList ID.
+            cache_details: Cache record assembled for this id.
 
         Returns:
-            bool: Always ``False`` (nothing was grabbed).
+            bool: Always `False` (nothing was grabbed).
         """
 
         self._log_no_seadex_releases()
@@ -520,13 +519,13 @@ class RunServices:
     def invalid_selection_skip(self) -> bool:
         """Shared tail for an interactive pick that left zero valid selections.
 
-        Unlike :meth:`no_releases_skip` this deliberately persists NOTHING: caching
+        Unlike `no_releases_skip` this deliberately persists NOTHING: caching
         the title as done would suppress it forever, when the user only fumbled the
         input - it must re-prompt on the next run. The picker already warned about
         the empty selection; this just throttles and reports "not grabbed".
 
         Returns:
-            bool: Always ``False`` (nothing was grabbed).
+            bool: Always `False` (nothing was grabbed).
         """
 
         time.sleep(self._config.advanced.sleep_time)
@@ -542,7 +541,7 @@ class RunServices:
         next id either way.
 
         Args:
-            al_id (int): AniList id being processed
+            al_id: AniList id being processed
         """
 
         # Reset the per-title skip flags (and the skipped group names) before we
@@ -577,16 +576,16 @@ class RunServices:
 
         When the id is already cached and we're honoring SeaDex update times,
         backfill the url + coverage on legacy records that predate those fields,
-        log the cached entry, and return True so the caller skips it. ``coverage``
+        log the cached entry, and return True so the caller skips it. `coverage`
         is a zero-arg callable so the (for Sonarr, episode-fetching) coverage
         lookup runs only on the one-time backfill, never on the common
         already-backfilled path.
 
         Args:
-            al_id (int): AniList id being processed
-            sd_entry (EntryRecord): Resolved SeaDex entry (its url is stored on
+            al_id: AniList id being processed
+            sd_entry: Resolved SeaDex entry (its url is stored on
                 the backfilled record)
-            coverage (Callable[[], str]): Lazily builds the coverage string for
+            coverage: Lazily builds the coverage string for
                 the backfill ("" for a movie, a season/episode range for a series)
         """
 
@@ -610,10 +609,9 @@ class RunServices:
     def grab_and_cache(self, req: GrabRequest) -> bool:
         """Shared per-id tail: add torrents, notify, cache the outcome (delegates).
 
-        Both strategies build a :class:`GrabRequest` and call this through their
-        services; the produce mechanics live on
-        :class:`~.grab_pipeline.GrabPipeline`. Returns True only when
-        max_torrents_to_add was reached (the caller stops the whole run).
+        Both strategies build a `GrabRequest` and call this through their
+        services; the produce mechanics live on `GrabPipeline`. Returns True
+        only when max_torrents_to_add was reached (the caller stops the whole run).
         """
 
         return self._grab_pipeline.grab_and_cache(req)

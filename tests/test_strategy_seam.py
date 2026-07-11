@@ -6,11 +6,11 @@
 """Seam tests for the composition split.
 
 These pin the contract between the run machinery and the Arr strategies: each
-``ArrSync`` hook reaches the shared pipeline only through the injected
-``RunServices`` the strategy holds as ``self._services`` - and since the hub
+`ArrSync` hook reaches the shared pipeline only through the injected
+`RunServices` the strategy holds as `self._services` - and since the hub
 split out of the old god class, that seam is literal: the scripted fake below
-is a real ``RunServices`` subclass. The strategies are built bare
-(``object.__new__``) so no live Sonarr/Radarr client is constructed.
+is a real `RunServices` subclass. The strategies are built bare
+(`object.__new__`) so no live Sonarr/Radarr client is constructed.
 """
 
 import logging
@@ -68,8 +68,8 @@ from .fakes import FakeSonarrClient, diagnostic_messages, install_recording_hub
 class _Item:
     """A stand-in Arr item exposing whatever id attributes a test sets.
 
-    Declares the full ``ArrItem`` surface so it structurally satisfies the
-    ``SonarrItem`` / ``RadarrItem`` protocols; each test sets only the attributes
+    Declares the full `ArrItem` surface so it structurally satisfies the
+    `SonarrItem` / `RadarrItem` protocols; each test sets only the attributes
     the hook under test actually reads.
     """
 
@@ -85,7 +85,7 @@ class _Item:
 
 
 class GetAniListIdsCall(NamedTuple):
-    """One recorded ``get_anilist_ids`` call (the args the strategy forwarded).
+    """One recorded `get_anilist_ids` call (the args the strategy forwarded).
 
     Defaults mirror the seam's own defaults, so a recorded call equals an expected
     one constructed with only the fields the strategy actually varied.
@@ -96,7 +96,7 @@ class GetAniListIdsCall(NamedTuple):
 
 
 class CheckAlIdInCacheCall(NamedTuple):
-    """One recorded ``check_al_id_in_cache`` call (its explicit cross-arr ``arr``)."""
+    """One recorded `check_al_id_in_cache` call (its explicit cross-arr `arr`)."""
 
     arr: Arr
     al_id: int
@@ -104,7 +104,7 @@ class CheckAlIdInCacheCall(NamedTuple):
 
 
 class LogCachedEntryCall(NamedTuple):
-    """One recorded ``log_cached_entry`` call (its explicit cross-arr ``arr``)."""
+    """One recorded `log_cached_entry` call (its explicit cross-arr `arr`)."""
 
     arr: Arr
     al_id: int
@@ -112,11 +112,11 @@ class LogCachedEntryCall(NamedTuple):
 
 
 class _FakeRunServices(RunServices):
-    """A scripted ``RunServices`` - the seam a strategy holds as ``self._services``.
+    """A scripted `RunServices` - the seam a strategy holds as `self._services`.
 
-    A REAL ``RunServices`` subclass (the seam name is literal now, so it also
-    satisfies the constructors' typed ``services`` parameter), with its own
-    ``__init__`` that never calls the heavy real one. Every member of the
+    A REAL `RunServices` subclass (the seam name is literal now, so it also
+    satisfies the constructors' typed `services` parameter), with its own
+    `__init__` that never calls the heavy real one. Every member of the
     strategy-facing surface is overridden: each scriptable result is a
     constructor arg, and the methods whose call a test asserts RECORD it - so
     the contract is pinned by recorded state.
@@ -274,8 +274,8 @@ class _FakeRunServices(RunServices):
 
 
 def test_fake_overrides_the_full_public_surface() -> None:
-    """``@override`` catches renames and signature drift but NOT additions: a new
-    public ``RunServices`` member would be silently inherited here (real body over
+    """`@override` catches renames and signature drift but NOT additions: a new
+    public `RunServices` member would be silently inherited here (real body over
     fake state) and only fail at test runtime. Reflection closes that gap - extend
     the fake when this fails.
     """
@@ -293,7 +293,7 @@ def test_fake_overrides_the_full_public_surface() -> None:
 
 
 class _FakeEpisodes:
-    """Minimal episode collaborator: scripts ``get_ep_list``'s resolved episode list."""
+    """Minimal episode collaborator: scripts `get_ep_list`'s resolved episode list."""
 
     series_fp = "fp"
 
@@ -547,7 +547,7 @@ class TestProcessAlIdThreadsServices:
 
 
 def _ep_with_file(ep_id: int, *, group: str | None) -> SonarrEpisode:
-    """A current Sonarr episode that already holds a file from ``group``."""
+    """A current Sonarr episode that already holds a file from `group`."""
 
     return SonarrEpisode.from_api(
         {"id": ep_id, "episodeFileId": ep_id * 10, "episodeFile": {"releaseGroup": group}},
@@ -565,16 +565,16 @@ def _make_sonarr_for_import(
     cmd_id: int | None = 42,
     config_overrides: dict[str, list[str] | str] | None = None,
 ) -> tuple[SonarrSync, FakeSonarrClient]:
-    """A bare ``SonarrSync`` plus its scripted ``self.sonarr`` :class:`FakeSonarrClient`.
+    """A bare `SonarrSync` plus its scripted `self.sonarr` `FakeSonarrClient`.
 
     The fake returns the given queue records, current episodes, manual-import
     candidates, quality definitions, languages and an execute command id -
-    everything ``import_completed`` reaches over the network - and records the two
-    import commands so a test asserts on recorded state. ``episodes`` defaults to
+    everything `import_completed` reaches over the network - and records the two
+    import commands so a test asserts on recorded state. `episodes` defaults to
     empty, so the target episodes have NO file yet (they need importing) and the
     done-check never short-circuits; pass episodes carrying a file to exercise the
-    "already imported" / never-overwrite paths. ``queue`` defaults to empty (Sonarr
-    isn't tracking the download, so the strategy steps in). ``commands`` defaults to
+    "already imported" / never-overwrite paths. `queue` defaults to empty (Sonarr
+    isn't tracking the download, so the strategy steps in). `commands` defaults to
     empty (no in-flight ManualImport, so the dedup guard never trips). The fake's
     refresh / command-status defaults resolve immediately so the rescan never waits.
     """
@@ -600,8 +600,8 @@ def _make_sonarr_for_import(
 def _queue_record(infohash: str, state: str, *, status: str = "ok") -> QueueRecord:
     """One Sonarr queue record matching a download by infohash + tracked state.
 
-    Built through ``QueueRecord.from_api`` from the raw API field names so the
-    record mirrors exactly what ``SonarrClient.queue`` parses at the boundary.
+    Built through `QueueRecord.from_api` from the raw API field names so the
+    record mirrors exactly what `SonarrClient.queue` parses at the boundary.
     """
 
     return QueueRecord.from_api(
@@ -784,7 +784,7 @@ class TestImportCompletedQueueState:
 
 
 def _inflight_manual_import(infohash: str, *, status: str = "started") -> CommandResource:
-    """A ManualImport command whose one file carries ``infohash`` as downloadId."""
+    """A ManualImport command whose one file carries `infohash` as downloadId."""
 
     return CommandResource.from_api(
         {
@@ -1296,9 +1296,9 @@ class TestManualImportWarningGating:
 
 
 class TestDefaultQualityWarning:
-    """An unmatched ``imports.default_quality`` warns once per run, at the consume seam.
+    """An unmatched `imports.default_quality` warns once per run, at the consume seam.
 
-    ``quality_axes_from_name`` stays pure (its silent-empty return is pinned
+    `quality_axes_from_name` stays pure (its silent-empty return is pinned
     elsewhere); the executor is where the configured name meets the run's real
     Sonarr definitions, and it runs once per FILE - hence the once-per-run guard.
     """
@@ -1393,7 +1393,7 @@ class _FakeRadarr:
 
 
 def _one_group_dict(srg: str) -> SeadexDict:
-    """A one-group ``SeadexDict`` keyed by ``srg``, carrying a single URL record."""
+    """A one-group `SeadexDict` keyed by `srg`, carrying a single URL record."""
 
     url = f"https://nyaa.si/{srg}"
     return {srg: rg_group({url: url_item(url=url)})}

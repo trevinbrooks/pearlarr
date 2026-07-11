@@ -15,12 +15,12 @@ from .seadex_types import AniListError, AniListMediaNode, validation_summary
 API_URL = "https://graphql.anilist.co"
 
 type AniListCache = dict[int, dict[str, dict[str, Any]]]
-"""In-memory AniList cache: id -> raw GraphQL body ``{"data": {"Media": {...}}}``.
+"""In-memory AniList cache: id -> raw GraphQL body `{"data": {"Media": {...}}}`.
 
-The cached value is the *whole* response body (what :meth:`AniListClient.query`
-/ :meth:`AniListClient.query_batch` return), so it round-trips verbatim through
-the persisted ``anilist_meta`` block. The gateway extracts and parses the
-``Media`` node out of it into an :class:`AniListMediaNode`.
+The cached value is the *whole* response body (what `AniListClient.query`
+/ `AniListClient.query_batch` return), so it round-trips verbatim through
+the persisted `anilist_meta` block. The gateway extracts and parses the
+`Media` node out of it into an `AniListMediaNode`.
 """
 
 # AniList rate-limits (HTTP 429) and occasionally returns a transient 5xx. Retry
@@ -32,7 +32,7 @@ MAX_RETRIES = 3
 MAX_BACKOFF = 60
 
 # AniList also soft-throttles by returning HTTP 200 with a GraphQL error payload
-# (``{"data": null, "errors": [{"message": "Too Many Requests", "status": 429}]}")
+# (`{"data": null, "errors": [{"message": "Too Many Requests", "status": 429}]}`)
 # instead of a 429 status. These substrings flag a throttle/rate-limit error so it
 # gets the same polite retry as a real 429 rather than being treated as real data.
 RETRYABLE_ERROR_SUBSTRINGS = ("too many requests", "rate limit", "throttle")
@@ -91,11 +91,11 @@ query ($ids: [Int]) {
 
 
 class AniListRetryLog:
-    """Voices ``_post_with_retry``'s waits and give-ups as hub Diagnostics.
+    """Voices `_post_with_retry`'s waits and give-ups as hub Diagnostics.
 
     Without it a rate-limit backoff sleeps up to 60s with zero output (the run
-    looks hung) and a final give-up returns ``{}`` silently. One instance per
-    :class:`AniListClient` - which is built once per arr run - so the give-up
+    looks hung) and a final give-up returns `{}` silently. One instance per
+    `AniListClient` - which is built once per arr run - so the give-up
     warning fires once per run rather than once per title.
     """
 
@@ -122,14 +122,14 @@ def _errors_are_retryable(body: dict[str, Any] | None) -> bool:
     """True if a GraphQL body carries a throttle/rate-limit or 5xx-style error
 
     AniList sometimes soft-throttles with HTTP 200 and a non-empty "errors"
-    array (``{"data": null, "errors": [{"message": "Too Many Requests",
-    "status": 429}]}``). That should be retried like a real 429. A legitimate
+    array (`{"data": null, "errors": [{"message": "Too Many Requests",
+    "status": 429}]}`). That should be retried like a real 429. A legitimate
     "not found" is HTTP 200 with "data" present, the entry "null" and *no*
     "errors" array, so a body without errors is never treated as retryable
     here - the caller's null-safe extraction handles it as an ordinary miss.
 
     Args:
-        body (dict[str, Any] | None): The parsed JSON response body
+        body: The parsed JSON response body
     """
 
     for err in _parse_errors(body):
@@ -145,14 +145,14 @@ def _errors_are_retryable(body: dict[str, Any] | None) -> bool:
 
 
 def _parse_errors(body: dict[str, Any] | None) -> list[AniListError]:
-    """Parse a GraphQL body's ``errors`` array into typed :class:`AniListError`.
+    """Parse a GraphQL body's `errors` array into typed `AniListError`.
 
-    The ``errors`` array is the dynamic GraphQL boundary; this maps each raw
+    The `errors` array is the dynamic GraphQL boundary; this maps each raw
     entry into the typed domain (skipping any non-object entry), so the caller
-    reads ``err.status`` / ``err.message`` rather than untyped ``dict`` keys.
+    reads `err.status` / `err.message` rather than untyped `dict` keys.
 
     Args:
-        body (dict[str, Any] | None): The parsed JSON response body
+        body: The parsed JSON response body
     """
 
     raw_errors = (body or {}).get("errors")
@@ -178,8 +178,8 @@ def extract_path(body: dict[str, Any] | None, *path: str) -> dict[str, Any]:
     "'NoneType' object has no attribute 'get'".
 
     Args:
-        body (dict[str, Any] | None): The parsed JSON response body
-        *path (str): The keys to walk, e.g. "data", "Media"
+        body: The parsed JSON response body
+        *path: The keys to walk, e.g. "data", "Media"
     """
 
     node: dict[str, Any] = body or {}
@@ -189,13 +189,13 @@ def extract_path(body: dict[str, Any] | None, *path: str) -> dict[str, Any]:
 
 
 def media_node_from(raw: dict[str, Any]) -> AniListMediaNode:
-    """Validate a raw ``Media`` dict into the typed node (single-object fail-open).
+    """Validate a raw `Media` dict into the typed node (single-object fail-open).
 
-    A miss (``{}``) validates to the all-``None`` node; a malformed node
-    degrades to the same all-``None`` miss with one scrubbed warning.
+    A miss (`{}`) validates to the all-`None` node; a malformed node
+    degrades to the same all-`None` miss with one scrubbed warning.
 
     Args:
-        raw (dict[str, Any]): The raw ``Media`` dict (``{}`` on a miss).
+        raw: The raw `Media` dict (`{}` on a miss).
     """
 
     try:
@@ -208,13 +208,13 @@ def media_node_from(raw: dict[str, Any]) -> AniListMediaNode:
 def media_from(body: dict[str, Any] | None) -> AniListMediaNode:
     """Parse the Media node from a single-id body into an AniListMediaNode
 
-    The raw ``{"data": {"Media": {...}}}`` body is the dynamic GraphQL boundary;
-    this is where it crosses into the typed domain. A miss (``data``/``Media``
-    null) yields an all-``None`` node; so does a malformed node (see
-    :func:`media_node_from`).
+    The raw `{"data": {"Media": {...}}}` body is the dynamic GraphQL boundary;
+    this is where it crosses into the typed domain. A miss (`data`/`Media`
+    null) yields an all-`None` node; so does a malformed node (see
+    `media_node_from`).
 
     Args:
-        body (dict[str, Any] | None): The parsed JSON response body
+        body: The parsed JSON response body
     """
 
     return media_node_from(extract_path(body, "data", "Media"))
@@ -223,9 +223,9 @@ def media_from(body: dict[str, Any] | None) -> AniListMediaNode:
 class AniListClient:
     """AniList GraphQL wire client: the POST + retry policy, bound once.
 
-    The AniList analog of :class:`~.arr_http.ArrHttp`: the shared web client
+    The AniList analog of `arr_http.ArrHttp`: the shared web client
     and the per-run retry narration are bound at construction, so callers ask
-    for bodies by id instead of threading ``(client, retry_log)`` through
+    for bodies by id instead of threading `(client, retry_log)` through
     every call. Construction is network-free. The gateway layers the run cache
     on top; this class is deliberately cache-blind.
     """
@@ -234,7 +234,7 @@ class AniListClient:
         """Bind the wire client to the shared web client.
 
         Args:
-            client (httpx.Client): The shared web client every POST rides (its
+            client: The shared web client every POST rides (its
                 defaults carry the identifying User-Agent and timeout bounds).
         """
 
@@ -245,7 +245,7 @@ class AniListClient:
         """Fetch one AniList Media by id (see _post_with_retry for the retry policy)
 
         Args:
-            al_id (int): Anilist ID
+            al_id: Anilist ID
         """
 
         return self._post_with_retry(QUERY, {"id": al_id})
@@ -258,7 +258,7 @@ class AniListClient:
         simply absent from the result.
 
         Args:
-            al_ids (list[int]): Up to ANILIST_BATCH_SIZE AniList IDs
+            al_ids: Up to ANILIST_BATCH_SIZE AniList IDs
         """
 
         j = self._post_with_retry(BATCH_QUERY, {"ids": list(al_ids)})
@@ -281,7 +281,7 @@ class AniListClient:
         On a rate-limit (HTTP 429) or a transient 5xx, AniList returns
         "{"data": null, ...}". It can also soft-throttle with HTTP 200 and a
         throttle/rate-limit error in the "errors" array (see
-        ``_errors_are_retryable``); both take the same backoff path. Returning a
+        `_errors_are_retryable`); both take the same backoff path. Returning a
         throttled response untried is what surfaced downstream as
         "'NoneType' object has no attribute 'get'" when a run made many requests
         in quick succession, so we wait (honoring Retry-After when present) and

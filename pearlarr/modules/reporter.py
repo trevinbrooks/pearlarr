@@ -50,7 +50,7 @@ from .torrents import AddOutcome, ReleaseOutcome
 class GrabRecord:
     """One grab, recorded for the end-of-run summary's "added" detail block.
 
-    Replaces the ``{"title", "coverage", "url", "name", "group"}`` item dict.
+    Replaces the `{"title", "coverage", "url", "name", "group"}` item dict.
     """
 
     title: str | None
@@ -63,7 +63,7 @@ class GrabRecord:
 class NeedsActionKind(Enum):
     """Why a title landed in the "needs action" block - the machine-readable gate.
 
-    The summary's guidance tips key off this, never off the display ``reason``
+    The summary's guidance tips key off this, never off the display `reason`
     text (which can be reworded freely). PRIVATE_ONLY is the warn-mode skip;
     PRIVATE_ONLY_NO_FALLBACK is fallback mode that couldn't (no public
     alternative covers the held files) or wouldn't (an interactive private
@@ -86,7 +86,7 @@ class NeedsActionKind(Enum):
 class NeedsActionRecord:
     """One skip needing the user, recorded for the summary's "needs action" block.
 
-    ``reason`` is the human display text; ``kind`` is the closed classification
+    `reason` is the human display text; `kind` is the closed classification
     the reporter's guidance gates on.
     """
 
@@ -102,7 +102,7 @@ class NeedsActionRecord:
 class RunStats:
     """The per-run tally rendered by the end-of-run summary.
 
-    Replaces the 10-key ``fresh_stats()`` dict: field names equal the old keys, so
+    Replaces the 10-key `fresh_stats()` dict: field names equal the old keys, so
     counter bumps and list appends produce identical tallies - but a typo now
     fails to compile instead of silently birthing a key.
     """
@@ -133,7 +133,7 @@ class RunStats:
 class RunContext:
     """Per-run state, created fresh at the top of each run.
 
-    Replaces the run-scoped mutable ``self.*`` fields of the old god class so the
+    Replaces the run-scoped mutable `self.*` fields of the old god class so the
     decision engine, the torrent service, and the reporter can read and return
     data instead of mutating shared orchestrator state.
     """
@@ -176,7 +176,7 @@ class RunContext:
     counts_mark: CountsMark = field(default_factory=lambda: SeverityCounts().bound_mark())
     # PendingImport records written THIS run (on a successful add), for the
     # end-of-run blocking pass; the durable copies live in cache_store under
-    # ``pending_imports``, so this is just the fast in-memory list to wait on.
+    # `pending_imports`, so this is just the fast in-memory list to wait on.
     pending_imports: list[PendingImport] = field(
         default_factory=list[PendingImport],
     )
@@ -195,7 +195,7 @@ def is_preview(ctx: RunContext, qbit: qbittorrentapi.Client | None) -> bool:
     configured (nothing can actually be grabbed).
 
     Module-level so every per-run collaborator computes preview identically from
-    the shared :class:`RunContext` + client, rather than each re-deriving it.
+    the shared `RunContext` + client, rather than each re-deriving it.
     """
 
     return ctx.dry_run or qbit is None
@@ -215,7 +215,7 @@ def _summary_tip(needs: tuple[NeedsActionFact, ...]) -> NeedsActionCause | None:
     """The cause whose guidance tip the summary shows, or None (renderer maps text).
 
     Derived from the MAPPED tally causes so the kind->cause mapping stays
-    single-sited in :meth:`RunTally.from_stats`.
+    single-sited in `RunTally.from_stats`.
     """
 
     for cause in _TIP_PRECEDENCE:
@@ -227,15 +227,15 @@ def _summary_tip(needs: tuple[NeedsActionFact, ...]) -> NeedsActionCause | None:
 class RunReporter:
     """Owns the producer surface: each method EMITS a typed output event.
 
-    Built once per arr instance with its stable collaborators (the ``emit`` seam,
-    the hub-counts source ``counts_mark`` binds into the run-start mark, the
+    Built once per arr instance with its stable collaborators (the `emit` seam,
+    the hub-counts source `counts_mark` binds into the run-start mark, the
     cache store, the AniList gateway). The methods hold every producer-side
     decision - stats bumps, ctx mutation, gates, title fallbacks - then state
-    WHAT happened as an event; the scan-line builders (``output.scan_lines``)
+    WHAT happened as an event; the scan-line builders (`output.scan_lines`)
     own the layout. An open entry block
-    rides ``self._entry``: a CHECKING header opens one and its details stream
+    rides `self._entry`: a CHECKING header opens one and its details stream
     through it (any boundary/sibling closes it, idempotently, first); a COMPLETE
-    block (cached / carried-over pending) opens and self-closes via ``_block``, so
+    block (cached / carried-over pending) opens and self-closes via `_block`, so
     a gap diagnostic keeps col 0 rather than indenting under the finished block.
     """
 
@@ -287,7 +287,7 @@ class RunReporter:
         """Post an entry fact on the open scope, else emit it scope-free.
 
         The scope-free arm is LOAD-BEARING, not defensive: the titled-row paths
-        (no-entry / outage) post their anilist/status details AFTER ``_ledger``
+        (no-entry / outage) post their anilist/status details AFTER `_ledger`
         closed the entry, so those details ride col-0 by design.
         """
 
@@ -300,8 +300,8 @@ class RunReporter:
         """The ONE entry-detail path: routes through the open scope, else scope-free.
 
         Making this the only way to emit a detail keeps a post-close detail (the
-        no-entry / outage paths, where ``_entry`` is already None) from being
-        written against a stale ``self._entry`` out of habit. Public: the per-id
+        no-entry / outage paths, where `_entry` is already None) from being
+        written against a stale `self._entry` out of habit. Public: the per-id
         collaborators (grab pipeline / release filter / episode mapper) post their
         mid-entry skipped/failed/missing lines through it too.
         """
@@ -363,7 +363,7 @@ class RunReporter:
         self._close_entry()
         self._emit(ItemStarted(arr=arr, index=n_item, total=n_items, title=item_title))
 
-    # The two close boundaries carry no ``log_`` prefix and return nothing: they
+    # The two close boundaries carry no `log_` prefix and return nothing: they
     # state a boundary rather than report one, and no renderer draws a line for
     # either (rich passes, the text sinks skip them).
 
@@ -380,7 +380,7 @@ class RunReporter:
     def run_finished(self, arr: Arr) -> None:
         """Close the run (the leg-close boundary); bootstrap emits it on unwind.
 
-        The entry close is defensive - ``scan_finished`` ran on every path here.
+        The entry close is defensive - `scan_finished` ran on every path here.
 
         Args:
             arr: Type of arr instance
@@ -395,8 +395,8 @@ class RunReporter:
         """Emit a one-line entry status as a self-contained (col-0) ledger row.
 
         Args:
-            state (EntryState): Which entry-level outcome this row reports
-            label (str): What the state applies to (usually a title)
+            state: Which entry-level outcome this row reports
+            label: What the state applies to (usually a title)
         """
 
         self._ledger(state, label)
@@ -405,8 +405,8 @@ class RunReporter:
         """Report skipping an unmonitored item (bumps the tally, emits its row).
 
         Args:
-            ctx (RunContext): The run's state (stats tally).
-            item_title (str): Item title
+            ctx: The run's state (stats tally).
+            item_title: Item title
         """
 
         ctx.stats.unmonitored += 1
@@ -416,7 +416,7 @@ class RunReporter:
         """Report a title with no AniList mappings (bumps the tally, emits its row).
 
         Args:
-            ctx (RunContext): The run's state (stats tally).
+            ctx: The run's state (stats tally).
             title: Title for the item
         """
 
@@ -427,7 +427,7 @@ class RunReporter:
         """Report an AniList ID skipped via the ignore list.
 
         Args:
-            al_id (int): AniList ID
+            al_id: AniList ID
         """
 
         self._ledger(EntryState.IGNORED, f"AniList #{al_id}")
@@ -436,8 +436,8 @@ class RunReporter:
         """Report an id with no SeaDex entry (bumps the tally, emits a titled row).
 
         Args:
-            ctx (RunContext): The run's state (stats tally).
-            al_id (int): Al ID
+            ctx: The run's state (stats tally).
+            al_id: Al ID
         """
 
         ctx.stats.no_seadex_entry += 1
@@ -451,8 +451,8 @@ class RunReporter:
         a detail line, and the tally lands in its own counter.
 
         Args:
-            ctx (RunContext): The run's state (stats tally).
-            al_id (int): Al ID
+            ctx: The run's state (stats tally).
+            al_id: Al ID
         """
 
         ctx.stats.seadex_unreachable += 1
@@ -467,7 +467,7 @@ class RunReporter:
     def _log_titled_entry(self, state: EntryState, al_id: int, *, name: str | None = None) -> None:
         """A ledger row for an id with no SeaDex entry block to show.
 
-        Renders the caller-supplied ``name`` when one is known (the outage path
+        Renders the caller-supplied `name` when one is known (the outage path
         reads it off the cache row); otherwise resolves a human title live via
         AniList - through the gateway, so its retry log narrates any backoff.
         Either way the id rides its own "anilist" detail line when a title showed.
@@ -497,10 +497,10 @@ class RunReporter:
         ride the opened scope.
 
         Args:
-            ctx (RunContext): The run's state (remembers the active title/url/coverage).
-            anilist_title (str): Title for the AniList entry
+            ctx: The run's state (remembers the active title/url/coverage).
+            anilist_title: Title for the AniList entry
             sd_entry: SeaDex entry
-            coverage (str, optional): One-line coverage (e.g. "S04 E01-E12").
+            coverage: One-line coverage (e.g. "S04 E01-E12").
                 Defaults to None / "" (e.g., a Radarr movie -> URL only)
         """
 
@@ -541,10 +541,10 @@ class RunReporter:
         with a name lookup only if the cache predates name storage.
 
         Args:
-            ctx (RunContext): The run's state (stats tally).
-            arr (Arr): Arr instance the entry is cached under
-            al_id (int): AniList ID
-            state (EntryState): Defaults to UNCHANGED (skipped because the SeaDex
+            ctx: The run's state (stats tally).
+            arr: Arr instance the entry is cached under
+            al_id: AniList ID
+            state: Defaults to UNCHANGED (skipped because the SeaDex
                 entry's update time matches the cache); pass IN_RADARR for entries
                 already handled by a Radarr sync
         """
@@ -589,13 +589,13 @@ class RunReporter:
         Emits the same titled header + coverage/link continuation as the other
         entry headers (so the carried-over record reads inside the series block and
         is self-attributed by its release title), for the three reportable states
-        (``queued`` / ``importing`` / ``imported``). MISSING / ERRORED render
+        (`queued` / `importing` / `imported`). MISSING / ERRORED render
         nothing (no ledger vocabulary; the engine logs them at debug). This bumps
         NO counter - the engine owns the drop/count bookkeeping.
 
         Args:
-            state (PendingState): The record's classified status this poll.
-            pending (PendingImport): The carried-over record; its display label,
+            state: The record's classified status this poll.
+            pending: The carried-over record; its display label,
                 coverage and SeaDex link attribute the row.
         """
 
@@ -622,7 +622,7 @@ class RunReporter:
         """Report no suitable SeaDex releases (a status detail on the open entry).
 
         Args:
-            ctx (RunContext): The run's state (stats tally).
+            ctx: The run's state (stats tally).
         """
 
         ctx.stats.no_releases += 1
@@ -647,12 +647,12 @@ class RunReporter:
         per-release outcome (added / downloading).
 
         Args:
-            seadex_dict (SeadexDict): SeaDex entries (used for the recommended groups)
-            results (list): add_torrent's per-release outcomes (a preview run
+            seadex_dict: SeaDex entries (used for the recommended groups)
+            results: add_torrent's per-release outcomes (a preview run
                 simulates its adds, so these are present on a dry run too)
-            dry_run (bool): No torrent client, so nothing was really grabbed, but
+            dry_run: No torrent client, so nothing was really grabbed, but
                 we'd have added everything. Defaults to False
-            monitor_active (bool): The run will wait on / import pending torrents
+            monitor_active: The run will wait on / import pending torrents
                 this session, so the "already downloading" line can promise the
                 import. Defaults to False
 
@@ -710,7 +710,7 @@ class RunReporter:
         """Report hitting the per-run torrent cap (advanced.max_torrents_to_add).
 
         Args:
-            cap (int): The configured cap that was reached.
+            cap: The configured cap that was reached.
         """
 
         # Close the entry first: the scan breaks here and _finalize_run's
@@ -722,9 +722,9 @@ class RunReporter:
     # --- summary boundary ----------------------------------------------------
 
     def counts_mark(self) -> CountsMark:
-        """The counts mark run start stamps; ``log_run_summary`` diffs against it.
+        """The counts mark run start stamps; `log_run_summary` diffs against it.
 
-        The mark carries the counter it was stamped on, so its ``since()`` diff
+        The mark carries the counter it was stamped on, so its `since()` diff
         can never read a different hub than the mark did.
         """
 
@@ -733,14 +733,14 @@ class RunReporter:
     def log_run_summary(self, ctx: RunContext, *, preview: bool, has_client: bool) -> None:
         """Emit the end-of-run scoreboard (the summary boundary; closes the entry).
 
-        The arr and the resolved wait mode are read off ``ctx``; the carried-over
-        ``queued`` / ``importing`` / ``imported`` rows render only when the mode is
-        not OFF (renderer policy off ``wait_mode_on``).
+        The arr and the resolved wait mode are read off `ctx`; the carried-over
+        `queued` / `importing` / `imported` rows render only when the mode is
+        not OFF (renderer policy off `wait_mode_on`).
 
         Args:
-            ctx (RunContext): The run's state (arr, wait mode, stats, totals, clock).
-            preview (bool): The run grabbed nothing (dry run or no client).
-            has_client (bool): A qBittorrent client is configured (distinguishes
+            ctx: The run's state (arr, wait mode, stats, totals, clock).
+            preview: The run grabbed nothing (dry run or no client).
+            has_client: A qBittorrent client is configured (distinguishes
                 the dry-run note wording).
         """
 

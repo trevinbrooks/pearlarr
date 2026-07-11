@@ -16,8 +16,8 @@ from .config import Arr, LogFormat
 class TitledRule:
     """A titled section header: a full-width rule, then the bold title line.
 
-    ``heavy=True`` draws a heavy rule ("━", run boundaries); otherwise a light
-    rule ("─", per-title headers). Both the rule and the title take ``style``.
+    `heavy=True` draws a heavy rule ("━", run boundaries); otherwise a light
+    rule ("─", per-title headers). Both the rule and the title take `style`.
     """
 
     title: str
@@ -36,10 +36,10 @@ class SectionRule:
 class KvLine:
     """An aligned "key : value" (or gutter "key value") detail line.
 
-    Locks the producer (the ``output.scan_lines`` builders) and consumer
-    (``render_kv``) to the same fields, so the two sides
-    can't silently drift. ``value`` is a plain string or a pre-styled ``Text``
-    (the only non-str path, from ``group_highlight``).
+    Locks the producer (the `output.scan_lines` builders) and consumer
+    (`render_kv`) to the same fields, so the two sides
+    can't silently drift. `value` is a plain string or a pre-styled `Text`
+    (the only non-str path, from `group_highlight`).
     """
 
     key: str
@@ -60,12 +60,12 @@ class StyledLine:
 
 
 type ConsoleRender = TitledRule | SectionRule | KvLine | StyledLine
-"""The typed console-look payload of a :class:`~.output.scan_lines.LegacyLine`.
+"""The typed console-look payload of a `output.scan_lines.LegacyLine`.
 
-The hub's line builders (``output.scan_lines`` / ``output.wait_lines``) pair each
-plain message with one of these; ``render_legacy_lines`` draws them through the
-shared payload renderers below (``render_kv`` / ``render_rule`` /
-``print_titled_rule``). Lives here beside those renderers.
+The hub's line builders (`output.scan_lines` / `output.wait_lines`) pair each
+plain message with one of these; `render_legacy_lines` draws them through the
+shared payload renderers below (`render_kv` / `render_rule` /
+`print_titled_rule`). Lives here beside those renderers.
 """
 
 # True while the output bridge is installed: the hub owns the plain WARNING+
@@ -78,14 +78,14 @@ _hub_owns_badges = False
 
 
 def mark_hub_console_owner() -> None:
-    """The output bridge is installed: the hub owns the badge class (``install_bridge``)."""
+    """The output bridge is installed: the hub owns the badge class (`install_bridge`)."""
 
     global _hub_owns_badges
     _hub_owns_badges = True
 
 
 def clear_console_owner() -> None:
-    """Release badge ownership (``uninstall_bridge``, tests)."""
+    """Release badge ownership (`uninstall_bridge`, tests)."""
 
     global _hub_owns_badges
     _hub_owns_badges = False
@@ -94,14 +94,14 @@ def clear_console_owner() -> None:
 class HubBridgeBase(logging.Handler):
     """Marker base for the output bridge (output/bridge.py).
 
-    A distinct base so ``setup_logger`` can preserve the bridge across its
+    A distinct base so `setup_logger` can preserve the bridge across its
     per-cycle handler rebuilds without importing the output package (which
     imports this module back).
     """
 
 
 def print_literal(console: Console, text: Text) -> None:
-    """Print ``text`` as literal content: no markup/highlight, whole-line soft wrap.
+    """Print `text` as literal content: no markup/highlight, whole-line soft wrap.
 
     THE one home of the literal-print rule - bracketed content ("[1/182]",
     "[MARKED INCOMPLETE]") stays text instead of re-styling as markup, and the
@@ -114,7 +114,7 @@ def print_literal(console: Console, text: Text) -> None:
 def print_titled_rule(console: Console, title: str, style: str, *, heavy: bool) -> None:
     """A titled section header: a full-width rule, then the bold title line.
 
-    Shared by ``render_legacy_lines``'s ``TitledRule`` arm and the boot banner,
+    Shared by `render_legacy_lines`'s `TitledRule` arm and the boot banner,
     so the two console looks can't drift.
     """
 
@@ -127,9 +127,9 @@ def render_kv(kv: KvLine) -> Text:
 
     The leading "<indent><key><sep>" segment comes from the shared _kv_prefix
     helper, so this matches kv_string (the legacy-line message) exactly. Labels
-    are a fixed dim grey50 so the value reads first. An optional ``tail`` (e.g.,
+    are a fixed dim grey50 so the value reads first. An optional `tail` (e.g.,
     a "(marked incomplete)" note) is appended console-side only. Consumed by
-    ``render_legacy_lines`` (output/scan_lines.py), the hub's console arm.
+    `render_legacy_lines` (output/scan_lines.py), the hub's console arm.
     """
 
     prefix = _kv_prefix(kv.indent, kv.key, kv.key_width, kv.sep)
@@ -168,13 +168,13 @@ class RichConsoleHandler(logging.Handler):
     and exc_info tracebacks. Routine INFO/DEBUG lines print with no level
     prefix, so the output reads as clean text. PLAIN records at WARNING+ (the
     badge class, including exc_info records) are NOT rendered here while a
-    bridge is installed (``_hub_owns_badges``): the logging bridge
+    bridge is installed (`_hub_owns_badges`): the logging bridge
     (output/bridge.py) adopts them and the hub places them - the armed console
     seat in-context (S5 pin 2), its stderr fallback otherwise - so rendering
     here too would double them. With no bridge, the legacy badge renders so a
     warning can never vanish.
 
-    Messages are rendered as literal text rather than ``rich`` markup, so
+    Messages are rendered as literal text rather than `rich` markup, so
     bracketed content such as "[1/1]" or "[MARKED INCOMPLETE]" is never
     mistaken for a style tag.
     """
@@ -250,7 +250,7 @@ class RichConsoleHandler(logging.Handler):
 
 
 def badge_line(levelno: int, message: str) -> Text:
-    """``message`` behind its level badge — the ONE home of the badge column grammar.
+    """`message` behind its level badge — the ONE home of the badge column grammar.
 
     Levels without a badge fall back to the ERROR one (only the exc_info arm,
     which always badges, can reach that).
@@ -275,7 +275,7 @@ _LOG_LEVELS = {
 
 
 class LogLevel(StrEnum):
-    """The accepted log levels, as a choices-enum for the CLI's ``--log-level``."""
+    """The accepted log levels, as a choices-enum for the CLI's `--log-level`."""
 
     DEBUG = "DEBUG"
     INFO = "INFO"
@@ -307,11 +307,11 @@ def console_level(level: int) -> int:
 
 
 def apply_log_level(logger: logging.Logger, log_level: str) -> None:
-    """Re-point an already-built logger at ``log_level``.
+    """Re-point an already-built logger at `log_level`.
 
     The CLI bootstraps its logger before the config file can be read (config
     errors must be loggable), then calls this once the config's
-    ``advanced.log_level`` is known. Unknown names fall back to INFO; the
+    `advanced.log_level` is known. Unknown names fall back to INFO; the
     config validates the level, so that arm only serves programmatic callers.
     """
 
@@ -345,16 +345,16 @@ def setup_logger(
 ) -> logging.Logger:
     """Configure the app logger: level, plus a rich console handler on a TTY.
 
-    The hub's sinks own the file/plain/json surfaces (``output.textline``); the
+    The hub's sinks own the file/plain/json surfaces (`output.textline`); the
     logging module is an INPUT channel (the bridge adopts records into events)
-    with one exception: under "rich"/"auto"-on-a-TTY a :class:`RichConsoleHandler`
+    with one exception: under "rich"/"auto"-on-a-TTY a `RichConsoleHandler`
     is attached as the shared-Console owner and the TTY surface for raw
     first-party records. Under plain/json NO console handler is attached -
     level-only configuration; the bridge is the only handler.
 
     Parameters:
-        log_level (str): The log level to use
-        console_format (LogFormat): "rich" attaches the styled console handler;
+        log_level: The log level to use
+        console_format: "rich" attaches the styled console handler;
             "plain"/"json" attach nothing (the hub's stdout seat renders).
             "auto" (default) resolves here for programmatic callers - cli always
             passes a resolved value: rich when stdout is a TTY, plain otherwise.
@@ -441,9 +441,9 @@ DETAIL_KEY_WIDTH = (len(INDENT) + ENTRY_LABEL_OFFSET) - (DETAIL_INDENT * len(IND
 class EntryState(StrEnum):
     """The outcome word shown in an entry-ledger row's state column.
 
-    A ``StrEnum`` so each member still equals its rendered string
-    (``EntryState.UNCHANGED == "unchanged"``) and flows through
-    ``entry_string``'s ``.ljust(STATE_WIDTH)`` byte-for-byte unchanged - while
+    A `StrEnum` so each member still equals its rendered string
+    (`EntryState.UNCHANGED == "unchanged"`) and flows through
+    `entry_string`'s `.ljust(STATE_WIDTH)` byte-for-byte unchanged - while
     making the documented set the only representable states, enforced and
     discoverable instead of free-form literals spelled two ways at the call
     sites. The widest value ("unmonitored") fixes STATE_WIDTH.
@@ -479,7 +479,7 @@ def _kv_prefix(indent: int, key: str, key_width: int, sep: str = " :") -> str:
     """Build the shared "<indent><key><sep>" leading segment for a kv line.
 
     Single source of truth so the console render (render_kv) and the plain
-    message (kv_string) never drift in prefix/padding/separator. ``sep`` is
+    message (kv_string) never drift in prefix/padding/separator. `sep` is
     " :" for summary "key : value" lines and "" for the gutter "label value"
     entry-detail lines (see DETAIL_KEY_WIDTH).
     """
@@ -553,16 +553,16 @@ def group_highlight(
     """Build a torrent-name value with its SeaDex release group called out.
 
     The release group is the thing worth spotting at a glance on a grab line, so
-    it gets the same accent the live log gives groups (``group_style``). When the
+    it gets the same accent the live log gives groups (`group_style`). When the
     group already leads the torrent name (bare, or in the usual "[Group]" wrapper,
     matched case-insensitively), that span is highlighted in place; otherwise the
     group is prepended in brackets so it always reads at the front - a match
-    buried mid-name doesn't count. Returns a styled rich ``Text`` for the console;
-    the file log sees its plain text via ``str()`` (so a prepended "[group] "
+    buried mid-name doesn't count. Returns a styled rich `Text` for the console;
+    the file log sees its plain text via `str()` (so a prepended "[group] "
     still shows, just without color).
 
     With no group (or no name), the plain name is returned unchanged, so the
-    caller's own ``value_style`` applies as before.
+    caller's own `value_style` applies as before.
 
     Args:
         name: The torrent name as reported by the client / scraped from source
@@ -659,7 +659,7 @@ def format_elapsed(seconds: float) -> str:
 
 
 def human_bytes(num: float) -> str:
-    """A compact human byte size, e.g. ``"3.2 MB"`` / ``"1.8 GB"``."""
+    """A compact human byte size, e.g. `"3.2 MB"` / `"1.8 GB"`."""
 
     val = num
     for unit in ("B", "KB", "MB", "GB"):

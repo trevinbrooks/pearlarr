@@ -2,17 +2,17 @@
 """Real-API-fixture tests for the resolved-mapping manual import.
 
 These pin the behavior the *old* code got wrong, using JSON captured verbatim
-from a live Sonarr (``tests/fixtures/sonarr/``). The headline failure that
+from a live Sonarr (`tests/fixtures/sonarr/`). The headline failure that
 motivated the rewrite: a specials/alias release Sonarr can't match to a series
-(``Yamada-kun and the Seven Witches`` vs ``... (2015)``) returns an empty
-series-*matched* ``episodes`` array, so the import silently mapped nothing. The
-fix reads the series-*agnostic* ``parsedEpisodeInfo`` and assigns it into OUR
+(`Yamada-kun and the Seven Witches` vs `... (2015)`) returns an empty
+series-*matched* `episodes` array, so the import silently mapped nothing. The
+fix reads the series-*agnostic* `parsedEpisodeInfo` and assigns it into OUR
 resolved episode set - so identity comes from the same mapping the add flow
 already trusts, never from Sonarr's title match.
 
-The pure :func:`assign_episode_ids` tests encode the three cases the user raised
+The pure `assign_episode_ids` tests encode the three cases the user raised
 (correctly-named specials, mis-numbered specials, multi-season "To Love-Ru"); the
-end-to-end test drives the real Yamada fixtures through ``import_completed``.
+end-to-end test drives the real Yamada fixtures through `import_completed`.
 """
 
 import json
@@ -61,9 +61,9 @@ _FIXTURES = Path(__file__).parent / "fixtures" / "sonarr"
 def load_fixture[T](name: str, _shape: type[T] | None = None) -> T:
     """Parse one captured Sonarr response, typed by the call site's annotation.
 
-    ``_shape`` is unused at runtime; it gives ``T`` a second occurrence so pyright
+    `_shape` is unused at runtime; it gives `T` a second occurrence so pyright
     does not flag the otherwise return-only TypeVar (reportInvalidTypeVarUse). The
-    raw JSON shape (``Any``) is narrowed by the consuming ``from_api`` decoders.
+    raw JSON shape (`Any`) is narrowed by the consuming `from_api` decoders.
     """
 
     data: T = json.loads((_FIXTURES / name).read_text())
@@ -98,10 +98,10 @@ def _pinfo(
 class TestQualityResolution:
     """The quality fix's load-bearing claims.
 
-    Quality is matched by the structured ``(source, resolution)`` pair. The
+    Quality is matched by the structured `(source, resolution)` pair. The
     candidate-read test runs on a verbatim live-Sonarr capture; the
-    qualitydefinition list is a hand-authored STAND-IN (``qualitydefinitions.json``)
-    mirroring real Sonarr - the live ``/api/v3/qualitydefinition`` capture is owed
+    qualitydefinition list is a hand-authored STAND-IN (`qualitydefinitions.json`)
+    mirroring real Sonarr - the live `/api/v3/qualitydefinition` capture is owed
     (the user's instance sits behind an auth proxy). Dropping a real capture in
     place of the stand-in re-runs these against reality unchanged.
     """
@@ -161,7 +161,7 @@ class TestQualityResolution:
 # --------------------------------------------------------------------------- #
 class TestParsedFileInfoFromRealBodies:
     """The fix's load-bearing claim: parsedEpisodeInfo is populated when the
-    series-matched ``episodes`` array is empty."""
+    series-matched `episodes` array is empty."""
 
     def test_yamada_special_has_season_episode_despite_no_series_match(self) -> None:
         body: dict[str, object] = load_fixture("parse_yamada_s00e01.json")
@@ -586,9 +586,9 @@ def _yamada_parse_side_effect(raw_base: str) -> ParsedFileInfo | None:
 def _yamada_strat(config: AppConfig | None = None) -> tuple[SonarrSync, FakeSonarrClient, list[str]]:
     """The real Yamada fixtures wired into a bare SonarrSync + its scripted fake.
 
-    Returns the strategy, its scripted ``FakeSonarrClient`` (replaying the captured
+    Returns the strategy, its scripted `FakeSonarrClient` (replaying the captured
     episode list / manual-import candidates / per-file parse), and the on-disk
-    basenames. ``config`` overrides the default (e.g. to flip ``imports.mode``).
+    basenames. `config` overrides the default (e.g. to flip `imports.mode`).
     """
 
     episodes_raw: list[dict[str, object]] = load_fixture("episodes_213_yamada.json")

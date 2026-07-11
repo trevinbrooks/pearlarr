@@ -1,15 +1,15 @@
 """Pearlarr's output architecture (PR6: the hub's sinks own every surface).
 
 An event-stream chassis: producers emit the closed union of frozen event
-dataclasses (:mod:`.events`) through typed scope handles (:mod:`.scopes`) into one
-synchronous :class:`~.hub.OutputHub`; surfaces subscribe as renderers. The shared
-:class:`~.breadcrumbs.BreadcrumbFold` folds scope boundaries into the open path
-(labels for the text sinks in :mod:`.textline`; the placement authority is the
-:class:`~.rich_renderer.RichRenderer`'s instance). The logging bridge
-(:mod:`.bridge`) adopts stdlib records into Diagnostic events; the RichRenderer
+dataclasses (`events`) through typed scope handles (`scopes`) into one
+synchronous `hub.OutputHub`; surfaces subscribe as renderers. The shared
+`breadcrumbs.BreadcrumbFold` folds scope boundaries into the open path
+(labels for the text sinks in `textline`; the placement authority is the
+`rich_renderer.RichRenderer`'s instance). The logging bridge
+(`bridge`) adopts stdlib records into Diagnostic events; the RichRenderer
 owns the rich console (boot/scan/wait cockpits + diagnostic placement); the
-:mod:`.textline` sinks own the structured log file (:class:`FileLogSink`), plain
-stdout (:class:`LineRenderer`) and json stdout (:class:`JsonRenderer`) — one
+`textline` sinks own the structured log file (`FileLogSink`), plain
+stdout (`LineRenderer`) and json stdout (`JsonRenderer`) — one
 grammar, plain == file by construction.
 """
 

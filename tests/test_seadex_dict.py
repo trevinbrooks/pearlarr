@@ -1,7 +1,7 @@
 # pyright: strict
-"""Characterization tests for ``SeadexReleaseFilter.build`` (entry -> release dict).
+"""Characterization tests for `SeadexReleaseFilter.build` (entry -> release dict).
 
-This is the SeaDexGateway logic (the engine reaches it via ``get_seadex_dict``):
+This is the SeaDexGateway logic (the engine reaches it via `get_seadex_dict`):
 tracker filtering, the want_best / prefer_dual_audio narrowing, the is_public
 computation, and the per-group private-url drop.
 """
@@ -42,11 +42,11 @@ def _torrent(
     is_dual_audio: bool = False,
     infohash: str | None = "hash",
 ) -> TorrentRecord:
-    """A real ``seadex.TorrentRecord`` carrying only the fields ``build`` reads.
+    """A real `seadex.TorrentRecord` carrying only the fields `build` reads.
 
-    The library type is a frozen ``msgspec.Struct`` (no ``make_torrent_record``
+    The library type is a frozen `msgspec.Struct` (no `make_torrent_record`
     builder exists), so this defaults the boilerplate fields and exposes the
-    handful ``build`` varies; ``files`` stays empty since no test exercises them.
+    handful `build` varies; `files` stays empty since no test exercises them.
     """
 
     stamp = datetime(2026, 1, 1)
@@ -69,7 +69,7 @@ def _torrent(
 
 
 def _entry(*torrents: TorrentRecord) -> EntryRecord:
-    """A real ``EntryRecord`` wrapping the given torrents (replaces the duck-typed fake)."""
+    """A real `EntryRecord` wrapping the given torrents (replaces the duck-typed fake)."""
 
     return make_entry_record(torrents=torrents)
 
@@ -156,7 +156,7 @@ class TestGetSeadexDict:
 
 
 class TestPrivateFallback:
-    """``private_releases: fallback`` - the public-alternative pool added by ``build``."""
+    """`private_releases: fallback` - the public-alternative pool added by `build`."""
 
     def test_private_only_preferred_adds_public_fallback(self) -> None:
         filt = make_release_filter(private_releases="fallback", want_best=True, prefer_dual_audio=False)

@@ -22,7 +22,7 @@ from .torrent import (
 
 
 class TorrentAddError(Exception):
-    """qBittorrent rejected the add (a non-``"Ok."`` ``torrents_add`` result)."""
+    """qBittorrent rejected the add (a non-`"Ok."` `torrents_add` result)."""
 
 
 # The expected external failures a grab can hit: the tracker scrape (all
@@ -58,7 +58,7 @@ def _parse_rutracker(url: str, infohash: str | None, client: httpx.Client) -> tu
 
 # One parser per supported tracker; PARSEABLE_TRACKERS derives from this table so
 # the two can't drift. The grab pipeline pre-filters on the frozenset, so an
-# unparseable tracker is skipped there rather than reaching ``add``'s raise.
+# unparseable tracker is skipped there rather than reaching `add`'s raise.
 _PARSERS: dict[Tracker, _Parser] = {
     Tracker.NYAA: _parse_nyaa,
     Tracker.ANIMETOSHO: _parse_animetosho,
@@ -70,9 +70,9 @@ PARSEABLE_TRACKERS: frozenset[Tracker] = frozenset(_PARSERS)
 class AddOutcome(Enum):
     """The result of handing a release to the torrent client.
 
-    Replaces the ``"torrent_added"`` / ``"torrent_already_added"`` status strings:
+    Replaces the `"torrent_added"` / `"torrent_already_added"` status strings:
     a closed two-member vocabulary, so the dispatch on it is exhaustive (no dead
-    ``else: raise`` fallthrough).
+    `else: raise` fallthrough).
     """
 
     ADDED = auto()  # was "torrent_added"
@@ -82,7 +82,7 @@ class AddOutcome(Enum):
 class AddResult(NamedTuple):
     """One add's result: the outcome plus the best display name available.
 
-    ``name`` is the qBittorrent-reported name, falling back to the release title
+    `name` is the qBittorrent-reported name, falling back to the release title
     scraped from the source page (None only when neither exists).
     """
 
@@ -94,8 +94,8 @@ class AddResult(NamedTuple):
 class ReleaseOutcome:
     """One release's add result, as the engine records it for the reporter.
 
-    Replaces the ``{"outcome", "name", "group"}`` dict the engine built and
-    :meth:`RunReporter.log_seadex_action` re-read.
+    Replaces the `{"outcome", "name", "group"}` dict the engine built and
+    `RunReporter.log_seadex_action` re-read.
     """
 
     outcome: AddOutcome
@@ -122,13 +122,12 @@ class TorrentService:
         """Wire the adapter to the client and the shared web HTTP client.
 
         Args:
-            qbit (qbittorrentapi.Client | None): The logged-in client, or None
+            qbit: The logged-in client, or None
                 when no client is configured (every add is then a preview).
-            web (httpx.Client): Shared keep-alive client for the tracker page
-                scrapes.
-            category (str | None): qBittorrent category for added torrents.
-            tags (list[str] | None): qBittorrent tags for added torrents.
-            logger (logging.Logger): For the "already in qBittorrent" debug line.
+            web: Shared keep-alive client for the tracker page scrapes.
+            category: qBittorrent category for added torrents.
+            tags: qBittorrent tags for added torrents.
+            logger: For the "already in qBittorrent" debug line.
         """
 
         self.qbit = qbit
@@ -146,12 +145,11 @@ class TorrentService:
         """Parse a release URL by tracker and add it to qBittorrent.
 
         Args:
-            item (SeadexUrlItem): The release to grab: its ``url`` is the SeaDex
-                release-page URL, ``tracker`` selects the parser, and
-                ``infohash`` dedups / reads the name back (None for a private
+            item: The release to grab: its `url` is the SeaDex
+                release-page URL, `tracker` selects the parser, and
+                `infohash` dedups / reads the name back (None for a private
                 torrent with no hash).
-            preview (bool): When True, simulate the add without touching the
-                client.
+            preview: When True, simulate the add without touching the client.
 
         Returns:
             AddResult: The outcome plus the best display name available.
@@ -185,12 +183,12 @@ class TorrentService:
         """Add a torrent to qBittorrent (dedup by hash, read the name back).
 
         Args:
-            item (SeadexUrlItem): The release being grabbed: its ``url`` labels
-                the debug/error lines, its ``infohash`` dedups (None for a
+            item: The release being grabbed: its `url` labels
+                the debug/error lines, its `infohash` dedups (None for a
                 hashless torrent).
-            torrent_url (str): The resolved/scraped torrent / magnet link to
-                hand the client (distinct from ``item.url``).
-            preview (bool): When True, report the add without touching the client.
+            torrent_url: The resolved/scraped torrent / magnet link to
+                hand the client (distinct from `item.url`).
+            preview: When True, report the add without touching the client.
 
         Returns:
             AddResult: The outcome plus the client-reported name (None when

@@ -1,12 +1,12 @@
 """Shared console-capability probing for the render seats (wait + boot).
 
-The output package's live regions (:mod:`.output.boot_region`,
-:mod:`.output.wait_region`) drive an optional sticky ``rich.Live`` region over
-the SAME ``Console`` the logger already owns, and both must degrade to a calm
+The output package's live regions (`boot_region`,
+`wait_region`) drive an optional sticky `rich.Live` region over
+the SAME `Console` the logger already owns, and both must degrade to a calm
 log digest on a non-TTY (Docker / a pipe / a dumb or too-narrow terminal); the
-wait narrator's ``wants_telemetry`` probe branches on the same signals. The probe lives here once: :func:`console_of` finds the logger's
-console and :func:`detect_capabilities` folds rich's derived signals into the
-small :class:`Capabilities` value the seats branch on.
+wait narrator's `wants_telemetry` probe branches on the same signals. The probe lives here once: `console_of` finds the logger's
+console and `detect_capabilities` folds rich's derived signals into the
+small `Capabilities` value the seats branch on.
 """
 
 import logging
@@ -33,9 +33,9 @@ LIVE_REFRESH_PER_SECOND = 12.5
 class Capabilities:
     """What the output stream can do, probed once - drives mode + glyph choices.
 
-    ``live`` -> may we drive a sticky live region (a real, non-dumb, wide-enough
-    TTY)? ``color`` -> may we emit ANSI color? ``unicode`` -> may we use ``✔``/box
-    glyphs, or must we fall back to ASCII? ``width``/``height`` -> the clamped
+    `live` -> may we drive a sticky live region (a real, non-dumb, wide-enough
+    TTY)? `color` -> may we emit ANSI color? `unicode` -> may we use `✔`/box
+    glyphs, or must we fall back to ASCII? `width`/`height` -> the clamped
     render size.
     """
 
@@ -58,9 +58,9 @@ def console_of(logger: logging.Logger) -> Console | None:
 def detect_capabilities(console: Console | None) -> Capabilities:
     """Fold rich's derived console signals into our render capabilities.
 
-    Reads rich's own folded flags (which already honor ``NO_COLOR`` / ``TERM`` /
+    Reads rich's own folded flags (which already honor `NO_COLOR` / `TERM` /
     isatty / legacy Windows) rather than re-parsing the environment; the only
-    things added on top are the ``MIN_LIVE_WIDTH`` floor and a glyph-encodability
+    things added on top are the `MIN_LIVE_WIDTH` floor and a glyph-encodability
     probe, which decide box-vs-lines and the glyph set.
     """
 
@@ -81,11 +81,11 @@ def detect_capabilities(console: Console | None) -> Capabilities:
 
 @final
 class CapsCache:
-    """An identity-keyed :func:`detect_capabilities` cache for the render seats.
+    """An identity-keyed `detect_capabilities` cache for the render seats.
 
     The console seat's regions (boot + wait) branch on the probe (the slow
     heads-up policy); they must share ONE instance per hub, or a mid-boot resize
-    across ``MIN_LIVE_WIDTH`` could flip one surface's decision only.
+    across `MIN_LIVE_WIDTH` could flip one surface's decision only.
     """
 
     __slots__ = ("_state",)
@@ -94,7 +94,7 @@ class CapsCache:
         self._state: tuple[Console, Capabilities] | None = None
 
     def for_console(self, console: Console | None) -> Capabilities:
-        """The cached probe for ``console``; a new identity re-probes and replaces."""
+        """The cached probe for `console`; a new identity re-probes and replaces."""
 
         if console is None:
             return detect_capabilities(None)
@@ -126,7 +126,7 @@ def spinner_name(caps: Capabilities) -> str:
 
 
 def make_live(console: Console) -> Live:
-    """The transient, auto-refreshing ``rich.Live`` both cockpits drive."""
+    """The transient, auto-refreshing `rich.Live` both cockpits drive."""
 
     return Live(
         console=console,

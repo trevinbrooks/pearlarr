@@ -1,5 +1,5 @@
 # pyright: strict
-"""Characterization tests for the Pydantic ``AppConfig`` model tree.
+"""Characterization tests for the Pydantic `AppConfig` model tree.
 
 Pins the validated-settings behavior: per-group defaults, blank-YAML coalescing,
 strict validation (extra-forbid + strict enum), the lazy point-of-use connection
@@ -479,7 +479,7 @@ class TestConnection:
 
 
 class TestSecrets:
-    """The credential fields are ``SecretStr``: masked everywhere but their point of use."""
+    """The credential fields are `SecretStr`: masked everywhere but their point of use."""
 
     _RAW = {
         "sonarr": {"url": "http://s", "api_key": "sonarr-key"},

@@ -1,13 +1,13 @@
 # pyright: strict
-"""Tests for the boot flow's producer facade (``boot_flow``).
+"""Tests for the boot flow's producer facade (`boot_flow`).
 
-``BootFlow`` is render-free: it opens/closes the boot-section scope mark, runs
-each IO step as a :class:`~pearlarr.modules.output.StepScope`, and emits the
+`BootFlow` is render-free: it opens/closes the boot-section scope mark, runs
+each IO step as a `StepScope`, and emits the
 capstone when the section earned one. These pin the emitted event stream
 (RecordingHub), the capstone gate (empty/failed sections and ERROR+ recorded on
 the hub since the first step suppress it; a DEFERRED warn does not), the
 section reset across arrs, the one-shot slow heads-up, the close() safety net,
-and the production qBittorrent-unconfigured wiring through ``RunDeps.build``.
+and the production qBittorrent-unconfigured wiring through `RunDeps.build`.
 """
 
 import logging

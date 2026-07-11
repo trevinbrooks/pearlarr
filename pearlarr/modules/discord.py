@@ -1,6 +1,6 @@
 """Discord webhook boundary: the typed embed and the POST that ships it.
 
-:class:`DiscordEmbed` carries a notification as typed data; ``to_payload`` is
+`DiscordEmbed` carries a notification as typed data; `to_payload` is
 the single JSON-shaped boundary, where Discord's documented hard limits are
 enforced so an oversized notification degrades to a truncated embed instead of
 a 400 from the webhook.
@@ -41,7 +41,7 @@ _MAX_TOTAL_LEN = 6000
 class EmbedField(NamedTuple):
     """One Discord embed field (name/value), typed until the payload boundary.
 
-    ``inline`` fields render side by side (up to three per row); the grab
+    `inline` fields render side by side (up to three per row); the grab
     embed pairs its short metadata fields, everything else stays full-width.
     """
 
@@ -58,10 +58,10 @@ def _clamp(text: str, limit: int) -> str:
 
 @dataclass(frozen=True, slots=True)
 class DiscordEmbed:
-    """One webhook embed, held as typed data until :meth:`to_payload`.
+    """One webhook embed, held as typed data until `to_payload`.
 
-    ``url`` makes the title a link (the SeaDex entry page for a grab),
-    ``thumb_url`` is the AniList cover and ``image_url`` the wide AniList
+    `url` makes the title a link (the SeaDex entry page for a grab),
+    `thumb_url` is the AniList cover and `image_url` the wide AniList
     banner; each is omitted from the payload when unset rather than sent as a
     null.
     """
@@ -77,7 +77,7 @@ class DiscordEmbed:
     author_icon_url: str | None = None
 
     def to_payload(self) -> dict[str, Json]:
-        """The ``embeds[0]`` object Discord expects, clamped to its hard limits."""
+        """The `embeds[0]` object Discord expects, clamped to its hard limits."""
 
         author = _clamp(self.author_name, _MAX_NAME_LEN)
         title = _clamp(self.title, _MAX_NAME_LEN)
@@ -124,7 +124,7 @@ def discord_push(url: str, embed: DiscordEmbed, *, client: httpx.Client) -> None
 
     The payload overrides the webhook's display identity (Pearlarr name +
     SeaDex avatar) so posts look the same on any webhook. Raises
-    ``httpx.HTTPError`` (incl. HTTP error statuses) so the caller's containment
+    `httpx.HTTPError` (incl. HTTP error statuses) so the caller's containment
     decides; a webhook failure must never abort a grab. The hung-webhook bound
     is the shared web client's default timeout.
     """

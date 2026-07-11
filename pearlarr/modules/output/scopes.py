@@ -2,10 +2,10 @@
 
 The handle set is exactly Step / Entry / Wait (S2: no SummaryScope — the
 summary is one atomic event; Run/Item boundaries are plain events with no
-handle ceremony; position-free one-liners are the ``hub_note`` family in
-``runtime``, settled at PR7). Handles are
+handle ceremony; position-free one-liners are the `hub_note` family in
+`runtime`, settled at PR7). Handles are
 runtime-total: emitting on a closed handle demotes to an attributed
-:class:`~.events.Diagnostic` (``placed_by=HANDLE``) instead of raising or
+`events.Diagnostic` (`placed_by=HANDLE`) instead of raising or
 corrupting layout; tests pin that no production path ever demotes.
 """
 
@@ -54,7 +54,7 @@ type Emit = Callable[[Event], None]
 """The one producer-side seam: the hub satisfies it; tests pass a recorder."""
 
 type CountsSource = Callable[[], SeverityCounts]
-"""Emit's counts twin: ``hub_counts`` satisfies it; tests bind their own counter."""
+"""Emit's counts twin: `hub_counts` satisfies it; tests bind their own counter."""
 
 type EntryFact = EntryDetail | LedgerRow | ReleaseSkipped | GrabFailed | GrabAction
 """The entry-block facts an EntryScope can post (stamped with its ScopeId)."""
@@ -82,7 +82,7 @@ PROCESS_SCOPE_IDS: Final = ScopeIds()
 class ScopeMark:
     """The boot flow's ambient-scope mark ceremony: idempotent open/close.
 
-    Mints from :data:`PROCESS_SCOPE_IDS` and emits through :func:`~.runtime.emit_to_hub`
+    Mints from `PROCESS_SCOPE_IDS` and emits through `runtime.emit_to_hub`
     at call time (the hub may be installed after the flow is built). Only the mark
     pair — no handle semantics, no demotion.
     """
@@ -125,7 +125,7 @@ def _describe_fact(fact: EntryFact) -> str:
 class _ScopeBase:
     """Shared handle spine: emitter, label, open flag, and late-demotion.
 
-    ``_late`` binds the emitter/kind word/label once, so call sites state only
+    `_late` binds the emitter/kind word/label once, so call sites state only
     WHAT was attempted and at which severity — runtime-total.
     """
 
@@ -313,8 +313,8 @@ class WaitScope(_ScopeBase):
 class ScopeFactory:
     """Bind-once producer bundle: one emitter, one id minter, one clock.
 
-    Defaults to :data:`PROCESS_SCOPE_IDS` so two factories can never mint
-    colliding serials; tests inject a fresh :class:`ScopeIds` for determinism.
+    Defaults to `PROCESS_SCOPE_IDS` so two factories can never mint
+    colliding serials; tests inject a fresh `ScopeIds` for determinism.
     """
 
     def __init__(

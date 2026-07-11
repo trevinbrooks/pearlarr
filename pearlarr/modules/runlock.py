@@ -1,13 +1,13 @@
 """Single-instance run lock: guard against two runs sharing one data directory.
 
-A run reads and writes ``cache.db`` (and the WAL) in its data directory; two runs
+A run reads and writes `cache.db` (and the WAL) in its data directory; two runs
 pointed at the *same* directory would duplicate work and could race on imports.
 SQLite's own locking keeps the file from corrupting, but it won't stop the wasted,
 overlapping work - so we take a coarse advisory lock on the data dir and skip a run
 that finds another already active there.
 
-Scope is deliberately one host / one local filesystem, via :mod:`filelock`
-(``fcntl.flock`` on POSIX, ``msvcrt`` on Windows - a real lock everywhere, not the
+Scope is deliberately one host / one local filesystem, via `filelock`
+(`fcntl.flock` on POSIX, `msvcrt` on Windows - a real lock everywhere, not the
 former no-op Windows fallback). Running multiple instances *intentionally* means
 giving each its own data directory (its own lock file), which is allowed. There is
 no cross-host story here by design - that would need a real network lock, which
@@ -32,18 +32,18 @@ def single_instance_lock(
     *,
     logger: logging.Logger | None = None,
 ) -> Generator[bool]:
-    """Hold an advisory lock on ``data_dir`` for the duration of the ``with`` block.
+    """Hold an advisory lock on `data_dir` for the duration of the `with` block.
 
-    Yields ``True`` if this process acquired the lock (no other run is active in
-    that directory), or ``False`` if another run already holds it - the caller
-    should skip and retry next cycle. Degrades to a best-effort ``True`` (no real
-    lock) when the lock file can't be created (missing/unwritable ``data_dir``)
+    Yields `True` if this process acquired the lock (no other run is active in
+    that directory), or `False` if another run already holds it - the caller
+    should skip and retry next cycle. Degrades to a best-effort `True` (no real
+    lock) when the lock file can't be created (missing/unwritable `data_dir`)
     or the filesystem can't honor the lock (e.g. ENOLCK on some NFS/FUSE mounts) -
     so a guard failure never crashes or silently skips the run.
 
     Args:
-        data_dir (str): The run's data directory (where ``cache.db`` lives).
-        logger (logging.Logger | None): For a debug note on the lock path.
+        data_dir: The run's data directory (where `cache.db` lives).
+        logger: For a debug note on the lock path.
     """
 
     lock_path = os.path.join(data_dir, LOCK_FILENAME)

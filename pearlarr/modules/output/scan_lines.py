@@ -1,17 +1,17 @@
 """The scan surface's rich-console line grammar, event-driven (PR4 Band C).
 
-Every scan line is a :class:`LegacyLine`: a level, a plain message, and a typed
-``ConsoleRender`` payload (how the rich console draws it). The pure builders
+Every scan line is a `LegacyLine`: a level, a plain message, and a typed
+`ConsoleRender` payload (how the rich console draws it). The pure builders
 here map each scan event to the exact lines the pre-hub reporter rendered —
-pinned by the goldens in ``tests/test_scan_parity.py``, captured against the
+pinned by the goldens in `tests/test_scan_parity.py`, captured against the
 live reporter FIRST.
 
-Two consumers: the :class:`~.rich_renderer.RichRenderer`'s scan arm renders the
-payloads via :func:`render_legacy_lines` (through the shared payload renderers
-``render_kv`` / ``render_rule`` / ``print_titled_rule``), and the WaitRegion's
+Two consumers: the `rich_renderer.RichRenderer`'s scan arm renders the
+payloads via `render_legacy_lines` (through the shared payload renderers
+`render_kv` / `render_rule` / `print_titled_rule`), and the WaitRegion's
 durable prints ride the same route. The file/plain/json surfaces take the same
-events through the :mod:`.textline` grammar instead. Renderer-side module:
-importing rich is fine here, unlike ``events.py``.
+events through the `textline` grammar instead. Renderer-side module:
+importing rich is fine here, unlike `events.py`.
 """
 
 from __future__ import annotations
@@ -101,7 +101,7 @@ _CAP_MESSAGE: Final = "Reached the maximum number of torrents for this run (adva
 
 # The summary guidance tips by cause; causes without a tip render no line. The
 # PRIVATE_ONLY > NO_FALLBACK > STALE precedence is settled by whoever populates
-# ``RunSummary.tip`` (the producer), never re-derived here.
+# `RunSummary.tip` (the producer), never re-derived here.
 _TIP_TEXTS: Final[dict[NeedsActionCause, str]] = {
     NeedsActionCause.PRIVATE_ONLY: (
         "Tip: manually grab private releases or set private_releases: fallback to "
@@ -119,7 +119,7 @@ _TIP_TEXTS: Final[dict[NeedsActionCause, str]] = {
 
 
 def accent_style(accent: Accent) -> str:
-    """The rich style an :class:`Accent` renders as on the scan surface."""
+    """The rich style an `Accent` renders as on the scan surface."""
 
     match accent:
         case Accent.PLAIN:
@@ -146,7 +146,7 @@ def _info(message: str, payload: ConsoleRender) -> LegacyLine:
 
 
 def _kv_line(payload: KvLine, *, level: int = logging.INFO) -> LegacyLine:
-    """One kv line: the KvLine payload plus the exact ``kv_string`` message it renders."""
+    """One kv line: the KvLine payload plus the exact `kv_string` message it renders."""
 
     message = kv_string(payload.key, payload.value, key_width=payload.key_width, indent=payload.indent, sep=payload.sep)
     return LegacyLine(level, message, payload)
@@ -240,7 +240,7 @@ def entry_detail_lines(event: EntryDetail) -> tuple[LegacyLine, ...]:
 
 
 def _skip_text(event: ReleaseSkipped) -> str:
-    """The skip line's text by reason (``or event.group`` is the None-url fallback)."""
+    """The skip line's text by reason (`or event.group` is the None-url fallback)."""
 
     match event.reason:
         case SkipReason.PRIVATE_ONLY:
@@ -266,7 +266,7 @@ def release_skipped_lines(event: ReleaseSkipped) -> tuple[LegacyLine, ...]:
 
 
 def grab_failed_lines(event: GrabFailed) -> tuple[LegacyLine, ...]:
-    """A contained grab failure's "failed" row, at ``severity_of``'s level."""
+    """A contained grab failure's "failed" row, at `severity_of`'s level."""
 
     return (
         _detail_kv(
@@ -461,7 +461,7 @@ def scan_event_lines(event: ScanEvent) -> tuple[LegacyLine, ...]:
 def render_legacy_lines(console: Console, lines: Iterable[LegacyLine], level: int) -> None:
     """Render legacy lines on the shared console through the legacy payload
     renderers — LOGGER-parity gated: a line prints iff its level clears
-    ``level``, so a configured WARNING hides INFO scan lines from the console
+    `level`, so a configured WARNING hides INFO scan lines from the console
     exactly as it hides them from the file (NOT the diagnostics' console floor).
     """
 

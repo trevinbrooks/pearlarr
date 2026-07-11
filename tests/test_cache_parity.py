@@ -1,7 +1,7 @@
 # pyright: strict
-"""Parity guard: ``tests/builders.FakeCacheStore`` must observably match ``CacheStore``.
+"""Parity guard: `tests/builders.FakeCacheStore` must observably match `CacheStore`.
 
-~50 tests trust ``FakeCacheStore`` as a drop-in for the SQLite ``CacheStore``, yet
+~50 tests trust `FakeCacheStore` as a drop-in for the SQLite `CacheStore`, yet
 nothing checks the two agree. A semantic drift - TTL eviction, the
 entries/torrent_hashes split + ordering, the JSONB round-trip, the pending
 series filter - would silently invalidate every test that leans on the fake. This
@@ -111,9 +111,9 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
 class _JsonbBlock:
     """One whole-dict JSONB block's put/get/iter surface, for the isolation check.
 
-    ``get`` returns the single record under this block's fixed key (or None);
-    ``iter_records`` returns every record reachable through the block's collection
-    reads (for ``pending`` that is both ``get_pending`` and ``get_pending_for_series``).
+    `get` returns the single record under this block's fixed key (or None);
+    `iter_records` returns every record reachable through the block's collection
+    reads (for `pending` that is both `get_pending` and `get_pending_for_series`).
     """
 
     name: str
@@ -172,7 +172,7 @@ def _scribble(rec: dict[str, Any], marker: str) -> None:
 
 
 def _assert_pristine(rec: dict[str, Any] | None, block: str) -> dict[str, Any]:
-    """The record is present and none of :func:`_scribble`'s mutations reached it."""
+    """The record is present and none of `_scribble`'s mutations reached it."""
 
     assert rec is not None, block
     assert rec["title"] == "orig", block
@@ -184,7 +184,7 @@ def _assert_pristine(rec: dict[str, Any] | None, block: str) -> dict[str, Any]:
 def _assert_block_snapshot_isolated(store: AbstractCacheStore, block: _JsonbBlock) -> None:
     """A JSONB record is caller-mutation-isolated on BOTH ends, like the real store's
     json.dumps (put) / json.loads (get, iter) round-trip: mutating the dict handed to
-    ``put`` afterwards, or any dict returned by ``get`` / ``iter``, must not reach the
+    `put` afterwards, or any dict returned by `get` / `iter`, must not reach the
     store."""
 
     record: dict[str, Any] = {"series_id": _ISO_SID, "title": "orig", "nested": {"k": "v"}}

@@ -2,7 +2,7 @@
 
 The anibridge dataset (https://github.com/anibridge/anibridge-mappings) is a
 *directional* graph: a JSON object whose keys and values are descriptors of the
-form "provider: id[:scope]" (e.g. "anilist:269", ``tvdb_show:74796: s2``).
+form "provider: id[:scope]" (e.g. "anilist:269", `tvdb_show:74796: s2`).
 Every value is a map "{target_descriptor: {source_range: target_range}}".
 
 Every AniList id present in the dataset also appears as its own source key, so
@@ -12,7 +12,7 @@ of the linear scans the old per-id mapping format required.
 
 Episode ranges are kept in TVDB/TMDB numbering: for "anilist:269" ->
 "tvdb_show:74796:s2" with value "{"21-41": "1-21"}" the *target* side
-(``1-21") is the season-2 TVDB episode range, which is exactly what episode
+(`1-21`) is the season-2 TVDB episode range, which is exactly what episode
 filtering in Sonarr needs.
 """
 
@@ -35,12 +35,12 @@ type AniBridgeGraph = dict[str, dict[str, dict[str, str]]]
 """Raw anibridge-mappings JSON: descriptor -> {target_descriptor -> {src: tgt}}."""
 
 type AniBridgeEntry = dict[str, Any]
-"""One consumer-facing mapping entry (mixed-typed; ``mappings`` reads it via
-``_entry_from_raw``). Stays a loose ``dict`` - it is the raw->typed boundary,
+"""One consumer-facing mapping entry (mixed-typed; `mappings` reads it via
+`_entry_from_raw`). Stays a loose `dict` - it is the raw->typed boundary,
 not the typed domain."""
 
 type AniBridgeLookup = dict[int, AniBridgeEntry]
-"""A ``lookup_by_*`` result: AniList id -> its consumer entry."""
+"""A `lookup_by_*` result: AniList id -> its consumer entry."""
 
 
 @dataclass
@@ -48,13 +48,13 @@ class AniBridgeRecord:
     """The per-AniList record built incrementally while parsing the graph.
 
     One record accumulates every external id and season->episode-range map an
-    ``anilist:*`` entry points to. It is *mutable and built up* by
-    :meth:`AniBridge._add_target` (appending to the list/dict fields as targets
+    `anilist:*` entry points to. It is *mutable and built up* by
+    `AniBridge._add_target` (appending to the list/dict fields as targets
     are folded in), so the collection fields default-construct empty rather than
-    being passed at once; ``_consumer_entry`` then reads attributes off it.
+    being passed at once; `_consumer_entry` then reads attributes off it.
 
-    ``tvdb_shows`` is keyed by external id and holds a :data:`TvdbMappings`
-    (season -> inclusive ``(start, end)`` ranges) per id.
+    `tvdb_shows` is keyed by external id and holds a `TvdbMappings`
+    (season -> inclusive `(start, end)` ranges) per id.
     """
 
     anidb_id: int | None = None
@@ -67,7 +67,7 @@ def _parse_descriptor(descriptor: str) -> tuple[str, str | None, str | None]:
     """Split a "provider:id[:scope]" descriptor into its parts.
 
     Args:
-        descriptor (str): e.g. "tvdb_show:74796:s2" or "anilist:269"
+        descriptor: e.g. "tvdb_show:74796:s2" or "anilist:269"
 
     Returns:
         tuple[str, str | None, str | None]: (provider, id, scope)
@@ -84,7 +84,7 @@ def _parse_season(scope: str | None) -> int | None:
     """Parse a show scope like "s2" into an integer season number.
 
     Args:
-        scope (str | None): Scope portion of a descriptor
+        scope: Scope portion of a descriptor
 
     Returns:
         int | None: Season number, or None if the scope isn't "s<digits>"
@@ -106,7 +106,7 @@ def _parse_ranges(target: str) -> list[tuple[int, int | None]]:
     episodes are covered).
 
     Args:
-        target (str): e.g. "1-21", "1-6,8-13", "14-|2", "1"
+        target: e.g. "1-21", "1-6,8-13", "14-|2", "1"
 
     Returns:
         list[tuple[int, int | None]]: (start, end); the end is None for open-ended
@@ -147,7 +147,7 @@ def _first[T](values: list[T]) -> T | None:
     """Return the first value of a sequence, or None when empty.
 
     Args:
-        values (list): Collected ids for a provider
+        values: Collected ids for a provider
     """
 
     return values[0] if values else None
@@ -156,25 +156,25 @@ def _first[T](values: list[T]) -> T | None:
 class AniBridge:
     """Indexed view over an anibridge-mappings graph (in-memory or SQL-backed).
 
-    Two interchangeable backings behind one interface (``lookup_by_*`` / the
-    ``all_*`` id sets / ``__len__`` / ``__bool__``):
+    Two interchangeable backings behind one interface (`lookup_by_*` / the
+    `all_*` id sets / `__len__` / `__bool__`):
 
-    * **Graph-backed** (``AniBridge(graph)``): parses the graph once into per-AniList
-      records + reverse indexes. This is the parser/populator (its :meth:`to_rows`
+    * **Graph-backed** (`AniBridge(graph)`): parses the graph once into per-AniList
+      records + reverse indexes. This is the parser/populator (its `to_rows`
       feeds the SQL store) and the test oracle.
-    * **SQL-backed** (:meth:`from_store`): answers the same lookups from
-      ``mappings.db`` without holding the parsed graph in memory - the runtime path.
+    * **SQL-backed** (`from_store`): answers the same lookups from
+      `mappings.db` without holding the parsed graph in memory - the runtime path.
 
     Args:
-        graph (AniBridgeGraph): Raw anibridge mappings JSON (descriptor -> targets)
-        logger (logging.Logger | None): Optional logger for skipped descriptors
+        graph: Raw anibridge mappings JSON (descriptor -> targets)
+        logger: Optional logger for skipped descriptors
     """
 
     def __init__(self, graph: AniBridgeGraph, logger: logging.Logger | None = None) -> None:
 
         self.logger = logger
 
-        # SQL backing, set only by ``from_store``; None means graph-backed (below).
+        # SQL backing, set only by `from_store`; None means graph-backed (below).
         self._store: MappingStore | None = None
 
         # AniList id (int) -> the record of the ids/episode-maps it points to
@@ -198,14 +198,14 @@ class AniBridge:
 
     @classmethod
     def from_store(cls, store: MappingStore) -> "AniBridge":
-        """Build a SQL-backed view that answers lookups from ``mappings.db``.
+        """Build a SQL-backed view that answers lookups from `mappings.db`.
 
-        Holds only the store handle plus the (small) ``all_*`` id sets loaded once;
+        Holds only the store handle plus the (small) `all_*` id sets loaded once;
         the per-AniList records and reverse indexes live in SQL, so the ~25MB parsed
-        graph is never resident. ``lookup_by_*`` query the store on demand.
+        graph is never resident. `lookup_by_*` query the store on demand.
 
         Args:
-            store (MappingStore): Store whose anibridge tables are already populated.
+            store: Store whose anibridge tables are already populated.
         """
 
         self = cls.__new__(cls)
@@ -230,11 +230,11 @@ class AniBridge:
     def to_rows(self) -> AniBridgeRows:
         """Flatten this (graph-backed) view into store row tuples.
 
-        Persists the *computed* consumer-entry picks (``_first``) so the SQL
-        backing reproduces :meth:`_consumer_entry` with zero re-derivation.
+        Persists the *computed* consumer-entry picks (`_first`) so the SQL
+        backing reproduces `_consumer_entry` with zero re-derivation.
 
         Returns:
-            AniBridgeRows: The row lists for :meth:`MappingStore.replace_anibridge`.
+            AniBridgeRows: The row lists for `MappingStore.replace_anibridge`.
         """
 
         entries: list[AniBridgeEntryRow] = []
@@ -252,7 +252,7 @@ class AniBridge:
                 for season, range_list in seasons.items():
                     if not range_list:
                         # Present-but-empty season: a NULL-start marker so it
-                        # round-trips as ``{season: []}`` ("whole season covered")
+                        # round-trips as `{season: []}` ("whole season covered")
                         # rather than collapsing to a missing season.
                         ranges.append(AniBridgeRangeRow(anilist_id, tvdb_id, season, None, None))
                         continue
@@ -278,13 +278,13 @@ class AniBridge:
         return self._len
 
     def id_set(self, mapping_key: AnimeIdColumn) -> set[int] | set[str]:
-        """The precomputed candidate id set for a Kometa ``mapping_key`` axis.
+        """The precomputed candidate id set for a Kometa `mapping_key` axis.
 
-        Mirrors :meth:`MappingResolver.anime_id_set` so ``collect_anime_items`` can
+        Mirrors `MappingResolver.anime_id_set` so `collect_anime_items` can
         build BOTH sources' candidate-set tuples from one comprehension over the same
-        ``fields`` - instead of a hand-ordered literal that can silently drift out of
-        positional alignment with ``fields`` (the ``zip(strict=True)`` only checks
-        length, not correspondence). The keys are exactly the ``mapping_key``s the
+        `fields` - instead of a hand-ordered literal that can silently drift out of
+        positional alignment with `fields` (the `zip(strict=True)` only checks
+        length, not correspondence). The keys are exactly the `mapping_key`s the
         library filter passes (tvdb / tmdb-movie / imdb axes).
         """
 
@@ -298,7 +298,7 @@ class AniBridge:
         """Build per-AniList records and reverse indexes from the graph.
 
         Args:
-            graph (AniBridgeGraph): Raw anibridge mappings JSON
+            graph: Raw anibridge mappings JSON
         """
 
         for key, targets in graph.items():
@@ -330,10 +330,10 @@ class AniBridge:
         """Fold a single target descriptor into an AniList record.
 
         Args:
-            record (AniBridgeRecord): The AniList record being built
-            anilist_id (int): AniList id owning this record
-            target (str): Target descriptor (e.g. "tvdb_show:74796:s2")
-            ep_map (dict): {source_range: target_range} for this target
+            record: The AniList record being built
+            anilist_id: AniList id owning this record
+            target: Target descriptor (e.g. "tvdb_show:74796:s2")
+            ep_map: {source_range: target_range} for this target
         """
 
         provider, pid, scope = _parse_descriptor(target)
@@ -387,8 +387,8 @@ class AniBridge:
         "this is an anibridge series" marker used by "get_ep_list".
 
         Args:
-            anilist_id (int): AniList id
-            tvdb_id (int | None): tvdb id this entry is scoped to, if any
+            anilist_id: AniList id
+            tvdb_id: tvdb id this entry is scoped to, if any
 
         Returns:
             dict: Consumer-facing mapping entry
@@ -410,12 +410,12 @@ class AniBridge:
 
     @staticmethod
     def _ranges_to_mappings(rows: list[tuple[int, int | None, int | None]]) -> TvdbMappings:
-        """Rebuild a season -> ``[(start, end)]`` map from ordered range rows.
+        """Rebuild a season -> `[(start, end)]` map from ordered range rows.
 
-        ``rows`` arrive in populate (insertion) order, so each season's range list
+        `rows` arrive in populate (insertion) order, so each season's range list
         is rebuilt in the same order the in-memory view appended them. A NULL-start
         marker row creates the season key with an empty list (present-but-empty
-        season), exactly mirroring the in-memory ``{season: []}``. Season key order
+        season), exactly mirroring the in-memory `{season: []}`. Season key order
         is irrelevant to dict equality.
         """
 
@@ -433,16 +433,16 @@ class AniBridge:
         *,
         tvdb_id: int | None = None,
     ) -> AniBridgeLookup:
-        """Batched SQL twin of the graph ``lookup_by_*`` (on a stored view).
+        """Batched SQL twin of the graph `lookup_by_*` (on a stored view).
 
-        One xref->entry JOIN fetches every entry mapped to ``ext_id`` on ``axis``;
+        One xref->entry JOIN fetches every entry mapped to `ext_id` on `axis`;
         for a tvdb-scoped lookup a second xref->range JOIN fetches all their range
         rows at once (grouped here by AniList id), so resolving k ids costs 2 queries
-        rather than the former 1 + 2k point queries. Reproduces :meth:`_consumer_entry`
-        exactly: ``tvdb_mappings`` is attached whenever ``tvdb_id`` is supplied - the
-        only such caller (:meth:`lookup_by_tvdb`) iterates the tvdb xref, so every
+        rather than the former 1 + 2k point queries. Reproduces `_consumer_entry`
+        exactly: `tvdb_mappings` is attached whenever `tvdb_id` is supplied - the
+        only such caller (`lookup_by_tvdb`) iterates the tvdb xref, so every
         resolved id is guaranteed to carry that tvdb (matching the in-memory
-        ``tvdb_id in record.tvdb_shows`` guard).
+        `tvdb_id in record.tvdb_shows` guard).
         """
 
         store = self._store
@@ -470,7 +470,7 @@ class AniBridge:
         """Return "{anilist_id: entry}" for AniList ids mapped to a tvdb id.
 
         Args:
-            tvdb_id (int): TVDB series id
+            tvdb_id: TVDB series id
         """
 
         if self._store is not None:
@@ -485,7 +485,7 @@ class AniBridge:
         """Return "{anilist_id: entry}" for AniList ids mapped to a TMDB movie id.
 
         Args:
-            tmdb_id (int): TMDB movie id
+            tmdb_id: TMDB movie id
         """
 
         if self._store is not None:
@@ -497,7 +497,7 @@ class AniBridge:
         """Return "{anilist_id: entry}" for AniList ids mapped to an IMDb id.
 
         Args:
-            imdb_id (str): IMDb id (e.g. "tt0094625")
+            imdb_id: IMDb id (e.g. "tt0094625")
         """
 
         if self._store is not None:

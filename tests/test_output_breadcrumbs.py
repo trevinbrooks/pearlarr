@@ -1,5 +1,5 @@
 # pyright: strict
-"""Tests for the shared breadcrumb fold (``output.breadcrumbs``).
+"""Tests for the shared breadcrumb fold (`output.breadcrumbs`).
 
 Pin the fixed transition table (B6): explicit opens/closes, the boundary events'
 deterministic close-deeper behavior, unwind close-all, idempotent defensive
@@ -255,7 +255,7 @@ def test_reset_clears_all_open_nodes() -> None:
 
 def test_kind_depth_covers_every_scope_kind_with_no_stray_keys() -> None:
     """KIND_DEPTH and ScopeKind are hand-maintained twins the fold keys on (_push /
-    _close_at do ``KIND_DEPTH[kind]``): a new kind missing a depth would KeyError,
+    _close_at do `KIND_DEPTH[kind]`): a new kind missing a depth would KeyError,
     and a stray key would rot unnoticed."""
 
     assert set(KIND_DEPTH) == set(ScopeKind)

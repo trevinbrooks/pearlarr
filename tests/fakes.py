@@ -2,13 +2,13 @@
 """Shared, strict-typed test doubles.
 
 The home for fakes used across more than one test module, written to type-check
-at strict (no ``MagicMock``, no ``Any``). The guiding pattern: where a collaborator
-is injected behind a typed seam (``ArrSync``, ``AbstractCacheStore``), a small
+at strict (no `MagicMock`, no `Any`). The guiding pattern: where a collaborator
+is injected behind a typed seam (`ArrSync`, `AbstractCacheStore`), a small
 concrete fake implements it and records what a test needs to assert - so contracts
 are pinned by recorded state.
 
 Collaborators that the run machinery only reads as bare attributes (absorbed as
-``Any`` by ``make_bare_instance``) don't need a shared fake; keep those local to
+`Any` by `make_bare_instance`) don't need a shared fake; keep those local to
 the test that drives them.
 """
 
@@ -66,7 +66,7 @@ def strip_ansi(text: str) -> str:
     return _ANSI.sub("", text)
 
 
-# ``ScanEvent`` is a ``type`` alias (TypeAliasType) - ``isinstance`` raises on it -
+# `ScanEvent` is a `type` alias (TypeAliasType) - `isinstance` raises on it -
 # so re-derivation filters the raw stream with this explicit class tuple. Left
 # unannotated so the inferred heterogeneous tuple narrows to exactly ScanEvent.
 SCAN_EVENT_TYPES = (
@@ -87,7 +87,7 @@ def scan_lines_from_events(events: Iterable[Event]) -> list[LegacyLine]:
     """Re-derive the legacy scan lines a recorded event stream produces.
 
     The reporter EMITS events; both output seats render them through
-    ``scan_event_lines``. Tests that assert reporter output record the events and
+    `scan_event_lines`. Tests that assert reporter output record the events and
     replay them here (scope-boundary / diagnostic events carry no lines and drop),
     so the assertions ride the SAME builders production uses.
     """
@@ -100,7 +100,7 @@ def scan_lines_from_events(events: Iterable[Event]) -> list[LegacyLine]:
 
 
 def install_recording_hub() -> RecordingHub:
-    """Construct + install a fresh :class:`RecordingHub` as the process hub.
+    """Construct + install a fresh `RecordingHub` as the process hub.
 
     The conftest autouse teardown restores the renderer-less default after every
     test, so callers never uninstall.
@@ -112,7 +112,7 @@ def install_recording_hub() -> RecordingHub:
 
 
 def diagnostic_messages(recording: RecordingHub, severity: Severity | None = None) -> list[str]:
-    """The recorded ``Diagnostic`` messages, optionally filtered to one exact severity."""
+    """The recorded `Diagnostic` messages, optionally filtered to one exact severity."""
 
     return [d.message for d in recording.of_type(Diagnostic) if severity is None or d.severity is severity]
 
@@ -139,11 +139,11 @@ class FakeClock:
 
 
 class FakeArrItem:
-    """A minimal item satisfying the ``ArrItem`` protocol surface.
+    """A minimal item satisfying the `ArrItem` protocol surface.
 
-    Sets the four attributes the run loop reads (``id`` / ``title`` / ``imdbId`` /
-    ``monitored``); a single class stands in for both a Sonarr series and a Radarr
-    movie since the shared loop only touches ``ArrItem``.
+    Sets the four attributes the run loop reads (`id` / `title` / `imdbId` /
+    `monitored`); a single class stands in for both a Sonarr series and a Radarr
+    movie since the shared loop only touches `ArrItem`.
     """
 
     def __init__(self, *, item_id: int = 1, title: str = "Show", monitored: bool = True) -> None:
@@ -154,10 +154,10 @@ class FakeArrItem:
 
 
 class FakeStrategy(ArrSync[FakeArrItem]):
-    """A typed, recording ``ArrSync`` for engine-orchestration tests.
+    """A typed, recording `ArrSync` for engine-orchestration tests.
 
-    Records each ``process_al_id`` call (the al_id) and lets a test script the
-    items, the resolved AniList ids, and whether ``process_al_id`` returns the
+    Records each `process_al_id` call (the al_id) and lets a test script the
+    items, the resolved AniList ids, and whether `process_al_id` returns the
     cap-reached sentinel or raises. The import hooks raise unless a test that
     drives them overrides this fake.
     """
@@ -234,15 +234,15 @@ class FakeStrategy(ArrSync[FakeArrItem]):
 
 
 class FakeSonarrClient(AbstractSonarrClient):
-    """A typed, scriptable stand-in for the :class:`AbstractSonarrClient` surface.
+    """A typed, scriptable stand-in for the `AbstractSonarrClient` surface.
 
     Each read returns a per-instance field a test presets or reassigns mid-test
-    (e.g. ``fake.episodes_return = [...]``); the two import commands RECORD their
-    typed call args, so a test asserts on recorded state (``execute_calls`` /
-    ``candidate_calls``). Subclasses the ``AbstractSonarrClient`` ABC, so it's
+    (e.g. `fake.episodes_return = [...]`); the two import commands RECORD their
+    typed call args, so a test asserts on recorded state (`execute_calls` /
+    `candidate_calls`). Subclasses the `AbstractSonarrClient` ABC, so it's
     nominally checked against the real client's full method surface - a
-    missing method is a static ``reportAbstractUsage`` error and an
-    un-instantiable ``TypeError``, not a silently-absorbed ``Any``.
+    missing method is a static `reportAbstractUsage` error and an
+    un-instantiable `TypeError`, not a silently-absorbed `Any`.
     """
 
     def __init__(
@@ -360,12 +360,12 @@ class FakeSonarrClient(AbstractSonarrClient):
 
 
 class FakeRadarrClient(AbstractRadarrClient):
-    """A typed, scriptable stand-in for the :class:`AbstractRadarrClient` surface.
+    """A typed, scriptable stand-in for the `AbstractRadarrClient` surface.
 
-    Mirrors :class:`FakeSonarrClient`: reads return per-instance fields a test
-    presets, and ``movie_files`` RECORDS the ids it was asked for. Subclasses the
-    ABC, so a missing method is a static ``reportAbstractUsage`` error and an
-    un-instantiable ``TypeError``.
+    Mirrors `FakeSonarrClient`: reads return per-instance fields a test
+    presets, and `movie_files` RECORDS the ids it was asked for. Subclasses the
+    ABC, so a missing method is a static `reportAbstractUsage` error and an
+    un-instantiable `TypeError`.
     """
 
     def __init__(
@@ -399,8 +399,8 @@ class FakeRadarrClient(AbstractRadarrClient):
 class CaptureHandler(logging.Handler):
     """A logging handler that collects records, so a logged line/level can be asserted.
 
-    Attach to a test's logger, run the code, then assert over ``records`` (e.g. a
-    contained per-id failure logged at ``ERROR``) - the no-throw, structured way to
+    Attach to a test's logger, run the code, then assert over `records` (e.g. a
+    contained per-id failure logged at `ERROR`) - the no-throw, structured way to
     pin logging behavior without coupling to exact message strings.
     """
 

@@ -59,15 +59,15 @@ if TYPE_CHECKING:
 # The heavy clients (qBittorrent / the SeaDex+httpx chain via cache) are
 # imported lazily inside the functions that use them, NOT at module load, so the
 # CLI starts and prints its title without paying ~150ms+ for libraries a `--help`
-# or a config/cache subcommand never touches. ``ImportWaitMode`` stays eager: it
+# or a config/cache subcommand never touches. `ImportWaitMode` stays eager: it
 # rides a typer command signature, which typer resolves at invocation.
 
 
 def _exit_on_failure(result: object, **_: object) -> None:
-    """Turn a command's ``False`` return into exit code 1.
+    """Turn a command's `False` return into exit code 1.
 
     typer/click ignore return values, so without this every failed command exits
-    0 and scripts can't detect the failure. Commands keep returning ``bool`` for
+    0 and scripts can't detect the failure. Commands keep returning `bool` for
     programmatic callers (tests call them directly, bypassing this callback).
     The ROOT app's registration is the load-bearing one (a sub-command's False
     propagates up through callback-less groups); the sub-app registrations are
@@ -117,11 +117,11 @@ def _remove_db_sidecars(db_path: str) -> None:
 
 
 def _echo_missing(path: str, *, what: str, hint: str) -> bool:
-    """True (after echoing why, to stderr) when ``path`` doesn't exist.
+    """True (after echoing why, to stderr) when `path` doesn't exist.
 
     The cache/config commands report a missing file as one line - naming the
-    missing ``what`` plus a ``hint`` on how to get one - and a failure exit,
-    not a ``FileNotFoundError`` traceback.
+    missing `what` plus a `hint` on how to get one - and a failure exit,
+    not a `FileNotFoundError` traceback.
     """
 
     if os.path.exists(path):
@@ -131,7 +131,7 @@ def _echo_missing(path: str, *, what: str, hint: str) -> bool:
 
 
 def _echo_missing_cache(path: str) -> bool:
-    """``_echo_missing`` for cache.db, with the shared first-run hint."""
+    """`_echo_missing` for cache.db, with the shared first-run hint."""
 
     return _echo_missing(path, what="cache database", hint="it is created by the first run")
 
@@ -159,8 +159,8 @@ def _open_cache_readonly(cache_path: str) -> Generator[CacheStore]:
 
     Read-only (no descriptor re-stamp, no WAL switch, no fail-open quarantine) so
     the diagnostic reflects the file as-is; a corrupt/not-a-database file raises
-    ``sqlite3.DatabaseError`` from the first read, for the command to report.
-    The caller checks the file exists first (``_echo_missing``).
+    `sqlite3.DatabaseError` from the first read, for the command to report.
+    The caller checks the file exists first (`_echo_missing`).
     """
 
     from .cache import CacheStore
@@ -175,9 +175,9 @@ def _open_cache_readonly(cache_path: str) -> Generator[CacheStore]:
 def _trust_os_certificates() -> None:
     """Verify TLS against the OS trust store instead of the bundled certifi CAs.
 
-    ``inject_into_ssl`` swaps :class:`ssl.SSLContext` for truststore's here at
+    `inject_into_ssl` swaps `ssl.SSLContext` for truststore's here at
     the root callback - before any HTTP client builds a context - so a CA
-    installed on the host (or handed to a bare container via ``SSL_CERT_FILE``)
+    installed on the host (or handed to a bare container via `SSL_CERT_FILE`)
     is honored by every stack in the process (httpx, requests, urllib).
     """
 
@@ -187,7 +187,7 @@ def _trust_os_certificates() -> None:
 
 
 def _print_version(value: bool) -> None:
-    """Eager ``--version`` callback: print ``pearlarr <version>`` and exit."""
+    """Eager `--version` callback: print `pearlarr <version>` and exit."""
 
     if not value:
         return
@@ -231,10 +231,10 @@ def main(
     \f
     Args:
         data_dir: Override the data directory holding config, caches and logs
-            (typer exposes this as ``--data-dir``). Defaults to None, which uses
-            ``PEARLARR_DATA_DIR`` or the OS-standard per-user data location.
-        version: Handled entirely by the eager ``_print_version`` callback
-            (typer exposes this as ``--version``/``-V``). Defaults to False.
+            (typer exposes this as `--data-dir`). Defaults to None, which uses
+            `PEARLARR_DATA_DIR` or the OS-standard per-user data location.
+        version: Handled entirely by the eager `_print_version` callback
+            (typer exposes this as `--version`/`-V`). Defaults to False.
     """
 
     _trust_os_certificates()
@@ -269,7 +269,7 @@ _DEFAULT_SCHEDULE_HOURS = 6.0
 def _peek_config(config_path: str) -> AppConfig | None:
     """Silently read + validate the config for a pre-logger peek, or None.
 
-    Never writes the starter template and never logs: ``bootstrap.load_shared_config``
+    Never writes the starter template and never logs: `bootstrap.load_shared_config`
     owns the first-run copy and the user-facing config errors. Only the load's
     real failure set (unreadable file, bad YAML, failed validation) is
     suppressed; anything else is a programming bug and must surface.
@@ -282,11 +282,11 @@ def _peek_config(config_path: str) -> AppConfig | None:
 
 
 def _console_format(config_path: str) -> LogFormat:
-    """The configured ``advanced.log_format`` peek, still possibly "auto".
+    """The configured `advanced.log_format` peek, still possibly "auto".
 
     Folds to "auto" when the config is missing or unreadable - the real load
-    owns reporting those. ``_resolved_format`` folds "auto" to a concrete
-    format via ``resolve_console_format`` (the one fold home).
+    owns reporting those. `_resolved_format` folds "auto" to a concrete
+    format via `resolve_console_format` (the one fold home).
     """
 
     peeked = _peek_config(config_path)
@@ -294,10 +294,10 @@ def _console_format(config_path: str) -> LogFormat:
 
 
 def _resolved_format(config_path: str) -> LogFormat:
-    """The cycle's console format, "auto" folded once (``resolve_console_format``).
+    """The cycle's console format, "auto" folded once (`resolve_console_format`).
 
     Both run commands call this once per cycle and feed the SAME resolved value
-    to ``setup_logger`` AND ``hub.begin_cycle``, so the handler graph and the
+    to `setup_logger` AND `hub.begin_cycle`, so the handler graph and the
     hub's console seat can never disagree within a cycle.
     """
 
@@ -307,8 +307,8 @@ def _resolved_format(config_path: str) -> LogFormat:
 def _data_dir_unwritable(data_dir: str, e: OSError) -> NoReturn:
     """Report an unwritable data directory as one actionable stderr line, exit 1.
 
-    These failures strike before any output surface exists (``ensure_data_dir``
-    and ``_install_output_hub``'s log-dir makedirs run first), so the report
+    These failures strike before any output surface exists (`ensure_data_dir`
+    and `_install_output_hub`'s log-dir makedirs run first), so the report
     goes straight to stderr - never a traceback.
     """
 
@@ -321,7 +321,7 @@ def _data_dir_unwritable(data_dir: str, e: OSError) -> NoReturn:
 
 
 def _prepare_data_dir(paths: AppPaths) -> None:
-    """``ensure_data_dir``, degrading an unwritable location to a clean exit 1."""
+    """`ensure_data_dir`, degrading an unwritable location to a clean exit 1."""
 
     try:
         ensure_data_dir(paths)
@@ -349,12 +349,12 @@ def _console_seat(console_format: LogFormat, caps_cache: CapsCache) -> Renderer:
 def _install_output_hub(paths: AppPaths) -> OutputHub:
     """Build + install the per-process OutputHub; its sinks own file/plain/json.
 
-    The FileLogSink is deliberately the first stable sink (``_subs[0]``):
+    The FileLogSink is deliberately the first stable sink (`_subs[0]`):
     file-before-console dispatch, so a blocked tty can never starve the file.
-    Installed BEFORE ``setup_logger`` — required, so a record fired from inside
+    Installed BEFORE `setup_logger` — required, so a record fired from inside
     it (the invalid-level complaint) reaches the hub instead of
-    ``logging.lastResort``. ``install_hub`` closes any previously installed hub
-    (a repeat ``run single`` in-process must not leak an open FileLogSink).
+    `logging.lastResort`. `install_hub` closes any previously installed hub
+    (a repeat `run single` in-process must not leak an open FileLogSink).
     The probe is the pre-run writability check: it must reach the log FILE
     itself (a root-owned Pearlarr.log fails open, not makedirs), so an
     unwritable file aborts here like pre-flip instead of striking the sink.
@@ -384,7 +384,7 @@ def _schedule_hours(config_path: str) -> float:
     warning); an invalid one is reported with the value actually used instead.
     Both notices go through the hub so they reach the log file and render
     styled among the run's other lines. Config read failures - including a
-    still-missing file - degrade to the default quietly (``_peek_config``).
+    still-missing file - degrade to the default quietly (`_peek_config`).
     """
 
     raw = os.getenv("SCHEDULE_TIME")
@@ -408,7 +408,7 @@ def _handle_sigterm(signum: int, frame: FrameType | None) -> NoReturn:
     """Scheduled mode's SIGTERM handler: announce, then exit 0 (a clean stop).
 
     Docker stop / systemd deliver SIGTERM; the raise interrupts even the
-    inter-cycle ``time.sleep``, so shutdown is prompt at any point in the loop.
+    inter-cycle `time.sleep`, so shutdown is prompt at any point in the loop.
     """
 
     hub_note("Received SIGTERM; exiting.")
@@ -524,8 +524,8 @@ def run_single(
             the cache, or sending notifications. Defaults to False
         import_wait_mode: Override the configured wait-for-completion + Sonarr
             manual-import mode (off/deferred/blocking/hybrid) for this run. When
-            unset the config's ``imports.wait_mode`` wins (cli > config > default).
-        log_level: Override the configured ``advanced.log_level`` for this run
+            unset the config's `imports.wait_mode` wins (cli > config > default).
+        log_level: Override the configured `advanced.log_level` for this run
             (cli > config > INFO). Defaults to None (config wins).
     """
 
@@ -608,7 +608,7 @@ def config_init(
 def _load_config_reporting(path: str) -> AppConfig | None:
     """Load + validate the config for an inspection command, echoing why on failure.
 
-    Unlike the run path (where ``AppConfig.load`` copies the starter template on
+    Unlike the run path (where `AppConfig.load` copies the starter template on
     a missing file), inspecting must not create files, so existence is checked
     first. Every failure mode is a clean echo to stderr, never a traceback.
     """
@@ -663,7 +663,7 @@ def config_validate() -> bool:
 
 
 # Values under these keys hold credentials (the webhook URLs embed tokens), so
-# ``config show`` masks them; matched case-insensitively as substrings of the
+# `config show` masks them; matched case-insensitively as substrings of the
 # dumped key names.
 _SECRET_KEY_MARKERS = ("api_key", "password", "webhook", "discord", "username")
 
@@ -677,10 +677,10 @@ _MASK_ALL_SUBTREES = ("options",)
 def _redact_secrets(node: object, *, mask_values: bool = False) -> object:
     """A deep copy of a dumped config with every set secret value masked.
 
-    Only non-None values are masked, so an unset secret still reads as ``null``
+    Only non-None values are masked, so an unset secret still reads as `null`
     (the "is it even set?" question is usually why the dump is being shared).
-    URL/host values keep their host but mask any embedded ``user:pass@`` login;
-    ``mask_values`` (set inside a ``_MASK_ALL_SUBTREES`` subtree) masks every
+    URL/host values keep their host but mask any embedded `user:pass@` login;
+    `mask_values` (set inside a `_MASK_ALL_SUBTREES` subtree) masks every
     value regardless of key name.
     """
 
@@ -706,8 +706,8 @@ def config_show() -> bool:
 
     Safe to paste into a bug report: values under secret-named keys (api keys,
     passwords, usernames, webhook URLs) are masked, every value in the
-    free-form ``qbittorrent.options`` block is masked, a ``user:pass@`` login
-    embedded in a URL/host is masked, and unset secrets still show as ``null``.
+    free-form `qbittorrent.options` block is masked, a `user:pass@` login
+    embedded in a URL/host is masked, and unset secrets still show as `null`.
     """
 
     paths = resolve_paths()

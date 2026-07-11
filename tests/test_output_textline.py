@@ -1,9 +1,9 @@
 # pyright: strict, reportPrivateUsage=false
 # reportPrivateUsage is off for the skip-set pins alone: _TEXT_SKIP/_JSON_SKIP are
 # deliberately private tables, imported to pin their exact membership.
-"""Tests for the shared text grammar + text sinks (``output.textline``).
+"""Tests for the shared text grammar + text sinks (`output.textline`).
 
-Golden-pin the ``ts LEVEL [path] message k=v`` grammar (the PR6 file contract),
+Golden-pin the `ts LEVEL [path] message k=v` grammar (the PR6 file contract),
 the quoting/escape rules, breadcrumb labels + the advisory during=/placed=frontier
 tail, line/file byte-parity (with the file_only carve-out), per-line admission,
 the throttled "still waiting" pulse, the rotation cascade + append-after-close,
@@ -89,11 +89,11 @@ _WAIT = ScopeId(ScopeKind.WAIT_REGION, 3)
 def _format(event: Event, *events_before: Event) -> str | None:
     """The REAL plain sink's rendering of one event (None = wrote nothing).
 
-    Goldens pin the shipping ``LineRenderer`` path — not a parallel formatter —
-    so an assembly change in ``_GrammarSink._render`` moves these bytes. Context
+    Goldens pin the shipping `LineRenderer` path — not a parallel formatter —
+    so an assembly change in `_GrammarSink._render` moves these bytes. Context
     events render+fold first (their output is discarded via the stream mark);
     the DEBUG threshold admits every line, matching the old unthresholded
-    ``format_line``. The trailing newline is the sink's write framing, not part
+    `format_line`. The trailing newline is the sink's write framing, not part
     of the line."""
 
     stream = io.StringIO()

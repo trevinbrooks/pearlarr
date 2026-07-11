@@ -1,14 +1,14 @@
 """The grab "produce" side: add torrents, register pending records, write cache.
 
-Extracted from the old ``RunLoop`` god class. ``GrabPipeline`` owns the per-id
+Extracted from the old `RunLoop` god class. `GrabPipeline` owns the per-id
 grab tail both strategies funnel into - add the recommended release(s) to
-qBittorrent, persist the durable :class:`PendingImport` records the end-of-run
+qBittorrent, persist the durable `PendingImport` records the end-of-run
 monitor waits on, notify, and write the cache outcome. It returns a pure bool
 (cap-reached) and never calls back into the run loop;
-:class:`~.run_services.RunServices` keeps a thin ``grab_and_cache`` delegator so
+`RunServices` keeps a thin `grab_and_cache` delegator so
 the strategy<->services contract is unchanged.
 
-Binds the run :class:`RunContext` via :meth:`begin_run` (the same object the
+Binds the run `RunContext` via `begin_run` (the same object the
 run loop holds), so the grab bookkeeping the run summary reads stays in sync.
 """
 
@@ -43,9 +43,9 @@ if TYPE_CHECKING:
 class GrabRequest:
     """The resolved per-id payload for the shared grab tail.
 
-    ``cache_details`` is the run's mutable :class:`CacheRecord` accumulator: the
-    frozen field pins the reference, not the dict's contents (``grab_and_cache``
-    still writes ``torrent_hashes`` into it before saving).
+    `cache_details` is the run's mutable `CacheRecord` accumulator: the
+    frozen field pins the reference, not the dict's contents (`grab_and_cache`
+    still writes `torrent_hashes` into it before saving).
     """
 
     al_id: int
@@ -66,10 +66,10 @@ class GrabRequest:
 class GrabPipeline:
     """Adds the recommended release(s), registers pending records, writes the cache.
 
-    Constructed once per run in :class:`~.run_services.RunServices` from the
+    Constructed once per run in `RunServices` from the
     deps hub + the placeholder ctx (unpacked to private attrs here);
-    :meth:`begin_run` rebinds the ctx each run. The hub's ``grab_and_cache``
-    delegates here; ``_grab`` returns a pure bool (cap-reached) so the run loop
+    `begin_run` rebinds the ctx each run. The hub's `grab_and_cache`
+    delegates here; `_grab` returns a pure bool (cap-reached) so the run loop
     owns the single finalize site.
     """
 
@@ -121,14 +121,14 @@ class GrabPipeline:
         independent of that status.
 
         Args:
-            torrent_dict (dict): Dictionary of torrent info
-            pending_seeds (dict[str, PendingImport] | None): The Sonarr strategy's
-                ``infohash -> PendingImport`` seeds, finalized into a durable
+            torrent_dict: Dictionary of torrent info
+            pending_seeds: The Sonarr strategy's
+                `infohash -> PendingImport` seeds, finalized into a durable
                 record on a successful add. Radarr passes None.
 
         Returns:
             tuple: (n_torrents_added, results), where results is a list of
-                ``ReleaseOutcome``, one per release acted on, in order
+                `ReleaseOutcome`, one per release acted on, in order
         """
 
         n_torrents_added = 0
@@ -163,16 +163,16 @@ class GrabPipeline:
         url_item: SeadexUrlItem,
         pending_seeds: dict[str, PendingImport] | None = None,
     ) -> ReleaseOutcome | None:
-        """Resolve a single SeaDex url to an add outcome (or ``None`` to skip).
+        """Resolve a single SeaDex url to an add outcome (or `None` to skip).
 
-        Returns ``None`` for a release that's filtered out (not flagged for
+        Returns `None` for a release that's filtered out (not flagged for
         download, private-only, or an unselected tracker)
-        and for a service ``add`` that neither added nor was already present. On
-        an ``AddOutcome.ADDED`` the run-summary grab record is appended here; the
-        caller owns the torrents_added/cap bookkeeping. On EITHER ``ADDED`` or
-        ``ALREADY_ADDED`` (an already-present torrent is a prior-run grab still
-        downloading / not yet imported) the durable :class:`PendingImport` record
-        is persisted via :meth:`_register_pending_import` so the end-of-run monitor
+        and for a service `add` that neither added nor was already present. On
+        an `AddOutcome.ADDED` the run-summary grab record is appended here; the
+        caller owns the torrents_added/cap bookkeeping. On EITHER `ADDED` or
+        `ALREADY_ADDED` (an already-present torrent is a prior-run grab still
+        downloading / not yet imported) the durable `PendingImport` record
+        is persisted via `_register_pending_import` so the end-of-run monitor
         waits on it - when the feature is on, off-preview, and we hold its seed.
         """
 
@@ -261,7 +261,7 @@ class GrabPipeline:
         url_item: SeadexUrlItem,
         pending_seeds: dict[str, PendingImport] | None,
     ) -> None:
-        """Finalize the durable :class:`PendingImport` for a grabbed/present release.
+        """Finalize the durable `PendingImport` for a grabbed/present release.
 
         Only on a real (non-preview) add of a release we hold a seed for, keyed by
         infohash so a re-add overwrites and a verified import deletes. The in-memory
@@ -270,10 +270,10 @@ class GrabPipeline:
         reconcile / tally).
 
         Args:
-            url_item (SeadexUrlItem): The release just handed to the client; its
-                ``infohash`` keys the seed and the durable store.
-            pending_seeds (dict[str, PendingImport] | None): The Sonarr strategy's
-                ``infohash -> PendingImport`` seeds for this id (None for Radarr).
+            url_item: The release just handed to the client; its
+                `infohash` keys the seed and the durable store.
+            pending_seeds: The Sonarr strategy's
+                `infohash -> PendingImport` seeds for this id (None for Radarr).
         """
 
         if (
@@ -335,8 +335,8 @@ class GrabPipeline:
     def grab_and_cache(self, req: GrabRequest) -> bool:
         """Shared per-id tail: add torrents, notify, then cache the outcome
 
-        Identical across both Arrs once the (Arr-specific) ``seadex_dict`` and
-        release-group info have been resolved (bundled into ``req``). Returns True
+        Identical across both Arrs once the (Arr-specific) `seadex_dict` and
+        release-group info have been resolved (bundled into `req`). Returns True
         only when max_torrents_to_add has been reached (after the needs-action
         tail has recorded this title's summary row; the engine's single finalize
         site does the save + summary), so the caller stops the whole run;

@@ -1,9 +1,9 @@
 """The composition root: wire a run from config to run loop.
 
-``run_arrs`` reads + validates the config once, builds the id-mapping resolver
+`run_arrs` reads + validates the config once, builds the id-mapping resolver
 once (both arrs share them), then wires each requested arr its own
 RunDeps -> RunServices -> RunLoop stack and drives it inside an independent
-try block, so one arr crashing doesn't ruin the other. ``cli.py`` (the
+try block, so one arr crashing doesn't ruin the other. `cli.py` (the
 presentation layer) calls in; this module never imports it back.
 
 Boot weight: every runtime import below was already an eager import of the CLI
@@ -39,15 +39,15 @@ if TYPE_CHECKING:
 
 
 def format_validation_errors(e: ValidationError) -> str:
-    """The bad keys of a config ValidationError, one indented ``path: message`` line each."""
+    """The bad keys of a config ValidationError, one indented `path: message` line each."""
 
     return "\n".join(f"  - {'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in e.errors())
 
 
 def format_yaml_error(e: yaml.YAMLError) -> str:
-    """Describe a YAML parse error from its parts, never via ``str(e)``.
+    """Describe a YAML parse error from its parts, never via `str(e)`.
 
-    ``str(e)`` renders a snippet of the offending source line - which IS the
+    `str(e)` renders a snippet of the offending source line - which IS the
     secret when the syntax error sits on a credential line - so only the
     problem/context text and the line/column position are reported.
     """
@@ -74,9 +74,9 @@ def load_shared_config(
     (the bad keys are listed without a traceback) or unreadable, so the caller
     skips this run and retries next cycle instead of crashing (the user may be
     mid-edit). A MISSING file instead writes the starter template (inside
-    ``AppConfig.load``) and exits 1: no retry can succeed until the user fills
+    `AppConfig.load`) and exits 1: no retry can succeed until the user fills
     it in, so a scheduled/container run must stop and say so rather than sleep
-    on it. ``retry`` is the pre-formatted scheduled-mode note (empty for a
+    on it. `retry` is the pre-formatted scheduled-mode note (empty for a
     single run) stating when the loop retries.
     """
 
@@ -145,8 +145,8 @@ def build_resolver(
     """Build the id-mapping resolver both arrs share (settings are arr-independent).
 
     The resolver downloads-if-stale and (only when a source's content changed)
-    parses+indexes the three large mapping sources into ``mappings.db``, then
-    serves both arrs from SQL; it is injected (by ``run_arrs``) into both, so
+    parses+indexes the three large mapping sources into `mappings.db`, then
+    serves both arrs from SQL; it is injected (by `run_arrs`) into both, so
     that work happens a single time per run and is skipped entirely when the
     sources are unchanged. Returns None - after logging - when a source can't be
     fetched, so the caller skips this run and retries next cycle.
@@ -197,12 +197,12 @@ def configured_arrs(
     """Drop unconfigured arrs, or refuse when one was explicitly requested.
 
     A Sonarr-only (or Radarr-only) config is a normal setup: an implicit
-    selection (scheduled mode, a flagless ``run single``) skips the unconfigured
+    selection (scheduled mode, a flagless `run single`) skips the unconfigured
     arr with a dim note placed in the boot ledger it lands in, instead
-    of tripping ``require_connection`` into an "unexpected error" traceback.
+    of tripping `require_connection` into an "unexpected error" traceback.
     A half-configured arr (url without api_key, or vice versa) is almost
     certainly a mistake, so its skip is a WARNING naming the missing key. An
-    explicit ``--radarr``/``--movie-id`` against an unconfigured radarr is a
+    explicit `--radarr`/`--movie-id` against an unconfigured radarr is a
     config mistake: report it and run nothing. Returns the runnable pairs, or
     None - after logging why - when nothing can run.
     """
@@ -234,7 +234,7 @@ def configured_arrs(
 def implicated_arrs(arr: Arr, app_config: AppConfig) -> list[Arr]:
     """The arrs a run leg connects to, for attributing a connection/auth failure.
 
-    A Sonarr leg also builds a Radarr client when ``ignore_movies_in_radarr``
+    A Sonarr leg also builds a Radarr client when `ignore_movies_in_radarr`
     is on (the specials cross-check), so a connection/auth failure there can
     belong to either instance - the error handlers name every candidate key
     instead of pinning a Radarr outage on Sonarr.
@@ -259,9 +259,9 @@ def run_arrs(
 ) -> bool:
     """Build the shared config + mappings once, then run each requested arr.
 
-    ``arrs`` is a list of ``(arr_name, item_id)`` pairs; unconfigured arrs are
-    dropped (or, when ``explicit_selection`` says the user asked for them by
-    flag, refused) via ``configured_arrs``, and each survivor is run in its own
+    `arrs` is a list of `(arr_name, item_id)` pairs; unconfigured arrs are
+    dropped (or, when `explicit_selection` says the user asked for them by
+    flag, refused) via `configured_arrs`, and each survivor is run in its own
     try block (which logs and closes independently, so one crashing doesn't ruin
     the other). The shared config read and mapping download/parse happen a single
     time, in that order with the selection check in between, so a run with
@@ -270,14 +270,14 @@ def run_arrs(
     the cause is logged - when the shared deps couldn't be built, nothing
     runnable was selected, or an arr run failed (unreachable/unauthorized arr,
     qBittorrent connection failure, or an unexpected error), so a scripted
-    ``run single`` exits non-zero on any failed leg. A MISSING config doesn't
-    return at all: ``load_shared_config`` writes the starter template and
-    raises ``typer.Exit(1)`` (see its docstring). An empty ``arrs`` is a
+    `run single` exits non-zero on any failed leg. A MISSING config doesn't
+    return at all: `load_shared_config` writes the starter template and
+    raises `typer.Exit(1)` (see its docstring). An empty `arrs` is a
     defensive no-op returning True (both callers guard against it).
-    ``import_wait_mode`` is the resolved CLI override threaded into each arr
-    (None in scheduled mode); ``log_level`` is the CLI log-level override,
+    `import_wait_mode` is the resolved CLI override threaded into each arr
+    (None in scheduled mode); `log_level` is the CLI log-level override,
     applied as soon as the config is readable (cli > config > INFO);
-    ``retry_note`` is the scheduled-mode retry message (None otherwise).
+    `retry_note` is the scheduled-mode retry message (None otherwise).
     """
 
     if not arrs:

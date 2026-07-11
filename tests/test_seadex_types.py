@@ -1,11 +1,11 @@
 # pyright: strict
-"""Direct tests for the ``seadex_types`` pydantic boundary machinery.
+"""Direct tests for the `seadex_types` pydantic boundary machinery.
 
-Pins the contracts the client boundaries build on: ``validate_each``'s
+Pins the contracts the client boundaries build on: `validate_each`'s
 skip-with-scrubbed-warning posture (warnings NEVER embed payload values), the
-all-None empty-dict validation of :class:`AniListMediaNode` (the miss-node
+all-None empty-dict validation of `AniListMediaNode` (the miss-node
 contract the AniList gateway depends on), and the frozen-model violation shape
-(pydantic ``ValidationError``, not ``FrozenInstanceError``).
+(pydantic `ValidationError`, not `FrozenInstanceError`).
 """
 
 import pytest
@@ -86,7 +86,7 @@ def test_validate_each_strict_accepts_empty_and_partial_payloads() -> None:
 
 
 def test_anilist_media_node_empty_dict_is_the_all_none_miss_node() -> None:
-    """``{}`` (the reduced ``Media: null`` miss) validates to the all-None node."""
+    """`{}` (the reduced `Media: null` miss) validates to the all-None node."""
 
     assert AniListMediaNode.model_validate({}) == AniListMediaNode()
 
@@ -106,7 +106,7 @@ def test_frozen_model_mutation_raises_validation_error() -> None:
 
 
 def test_command_resource_junk_file_entry_skips_without_dropping_the_command() -> None:
-    """A junk ``body.files[]`` entry is skipped while the command survives - a
+    """A junk `body.files[]` entry is skipped while the command survives - a
     dropped command would blind the in-flight ManualImport guard.
     """
 
@@ -137,7 +137,7 @@ def test_parsed_file_info_null_number_arrays_fold_to_empty() -> None:
 
 def test_history_record_field_name_construction_matches_alias_parse() -> None:
     """Field-name kwargs (the tests/fakes idiom) build the same record the
-    aliased wire parse does - the ``validate_by_name`` contract.
+    aliased wire parse does - the `validate_by_name` contract.
     """
 
     by_name = HistoryRecord(id=2, date="d", item_id=5, event_type="grabbed", download_id="A")

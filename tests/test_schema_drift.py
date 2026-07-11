@@ -1,15 +1,15 @@
 # pyright: strict
 """Drift net: our boundary models vs the vendored Sonarr/Radarr OpenAPI captures.
 
-Every :mod:`~pearlarr.modules.seadex_types` model that mirrors an arr resource
-is pinned to its component in ``schemas/sonarr.schema`` / ``schemas/radarr.schema``:
-each declared field's wire name must exist in the component's ``properties``, and
-the :class:`QualitySource` vocabulary must match the schema enum. A regen of the
-captures (see ``schemas/README.md``) that renames or drops a consumed property
+Every `seadex_types` model that mirrors an arr resource
+is pinned to its component in `schemas/sonarr.schema` / `schemas/radarr.schema`:
+each declared field's wire name must exist in the component's `properties`, and
+the `QualitySource` vocabulary must match the schema enum. A regen of the
+captures (see `schemas/README.md`) that renames or drops a consumed property
 fails here, naming the model.field and component.
 
-Scope: declared fields only. The ``_WireModel`` write bodies get the same check;
-their ``extra="allow"`` passthrough of undeclared keys is out of scope by design
+Scope: declared fields only. The `_WireModel` write bodies get the same check;
+their `extra="allow"` passthrough of undeclared keys is out of scope by design
 (passthrough carries whatever the wire had, so there is nothing to drift).
 """
 
@@ -50,7 +50,7 @@ _SCHEMA_DIR: Final = Path(__file__).resolve().parent.parent / "schemas"
 
 @dataclass(frozen=True)
 class _Schema:
-    """One vendored OpenAPI capture, reduced to its ``components.schemas`` map."""
+    """One vendored OpenAPI capture, reduced to its `components.schemas` map."""
 
     name: str
     components: dict[str, Json]
@@ -66,7 +66,7 @@ class _Schema:
         return props
 
     def _deref(self, node: Json) -> dict[str, Json]:
-        """Resolve one ``$ref`` hop; a plain object node passes through."""
+        """Resolve one `$ref` hop; a plain object node passes through."""
 
         assert is_json_obj(node), f"{self.name}: expected an object node, got {type(node).__name__}"
         ref = node.get("$ref")
@@ -75,7 +75,7 @@ class _Schema:
         return node
 
     def _alias_path_problem(self, component: str, path: AliasPath) -> str | None:
-        """Walk an ``AliasPath`` through the component; the failing step, or None."""
+        """Walk an `AliasPath` through the component; the failing step, or None."""
 
         node = self.component(component)
         for step in path.path:
@@ -151,13 +151,13 @@ ROSTER: Final = (
     Spec(ManualImportFile, "ManualImportReprocessResource", _SONARR),
     Spec(QualityDefinition, "QualityDefinitionResource", _SONARR),
     Spec(QueueRecord, "QueueResource", _SONARR),
-    # ``files`` reads AliasPath(body -> files): a runtime echo of the polymorphic
+    # `files` reads AliasPath(body -> files): a runtime echo of the polymorphic
     # command body, which the generic Command component doesn't model.
     Spec(CommandResource, "CommandResource", _SONARR, exempt=frozenset({"files"})),
     Spec(RadarrMovie, "MovieResource", _RADARR),
     Spec(MovieFile, "MovieFileResource", _RADARR),
-    # ``reason`` is synthesized by a before-validator from the ``data`` map
-    # (no such property exists); test_history_data_backs_the_reason_lift pins ``data``.
+    # `reason` is synthesized by a before-validator from the `data` map
+    # (no such property exists); test_history_data_backs_the_reason_lift pins `data`.
     Spec(HistoryRecord, "HistoryResource", _BOTH, exempt=frozenset({"reason"})),
     Spec(Quality, "Quality", _BOTH),
     Spec(Revision, "Revision", _BOTH),
@@ -185,7 +185,7 @@ def test_declared_fields_exist_in_schema(spec: Spec) -> None:
 
 
 def test_history_data_backs_the_reason_lift() -> None:
-    """The ``data`` map feeding HistoryRecord's synthesized ``reason`` stays in both schemas."""
+    """The `data` map feeding HistoryRecord's synthesized `reason` stays in both schemas."""
 
     for schema in _SCHEMAS.values():
         assert "data" in schema.properties("HistoryResource"), f"{schema.name}:HistoryResource lost 'data'"

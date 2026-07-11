@@ -1,19 +1,19 @@
 """The shared traditional text grammar + the text-surface renderers.
 
-One grammar — ``ts LEVEL [path] message k=v`` — feeds both :class:`LineRenderer`
-(plain stdout) and :class:`FileLogSink` (the log file), byte-identical by
-construction (the sole carve-out: ``file_only`` diagnostics reach the file alone;
-the rule lives once, on the shared chassis). ``[path]`` is a label-only breadcrumb
-from a per-sink :class:`BreadcrumbFold` (S1: never position, never layout);
+One grammar — `ts LEVEL [path] message k=v` — feeds both `LineRenderer`
+(plain stdout) and `FileLogSink` (the log file), byte-identical by
+construction (the sole carve-out: `file_only` diagnostics reach the file alone;
+the rule lives once, on the shared chassis). `[path]` is a label-only breadcrumb
+from a per-sink `BreadcrumbFold` (S1: never position, never layout);
 diagnostics instead carry their origin in the bracket plus an advisory
-``during="..." placed=frontier`` tail. Values quote iff they contain whitespace,
-``"`` or ``=``; newlines are escaped in messages and quoted values — a rendered
-traceback is the sole multi-line form. :class:`JsonRenderer` rides the same
+`during="..." placed=frontier` tail. Values quote iff they contain whitespace,
+`"` or `=`; newlines are escaped in messages and quoted values — a rendered
+traceback is the sole multi-line form. `JsonRenderer` rides the same
 chassis and writes one JSON object per event (stable key order, local time with
 its UTC offset).
 
 Every event's facts — (name, severity, message, fields) — are stated exactly once
-(:func:`_fact_of`); the text and json surfaces only decorate. Sinks render each
+(`_fact_of`); the text and json surfaces only decorate. Sinks render each
 event BEFORE folding it (so a closing event still renders with the path it is
 closing), and the fold advances even when rendering raises. Admission is
 line-granular on the text surfaces: a WARNING summary row reaches a WARNING-level
@@ -83,7 +83,7 @@ type FieldValue = str | int | float | bool
 
 
 class Field(NamedTuple):
-    """One ``key=value`` fact on a rendered line / json object."""
+    """One `key=value` fact on a rendered line / json object."""
 
     key: str
     value: FieldValue
@@ -509,8 +509,8 @@ class _PerSecondMemo:
 class _TextLineSink:
     """The shared sink chassis: admission, fold ordering, per-second timestamps.
 
-    Subclasses provide only the render step; ``handle`` folds the event AFTER
-    rendering — in a ``finally``, so a render/write bug can never desync the path.
+    Subclasses provide only the render step; `handle` folds the event AFTER
+    rendering — in a `finally`, so a render/write bug can never desync the path.
     """
 
     # The single file_only routing rule: console-ish surfaces skip, the file keeps.

@@ -1,10 +1,10 @@
 # pyright: strict
-"""Contract tests for ``AniListGateway``: the TTL gates, eviction, prefetch, and
+"""Contract tests for `AniListGateway`: the TTL gates, eviction, prefetch, and
 the per-id get-or-fetch resolvers.
 
-The gateway is driven over the in-memory :class:`FakeCacheStore`; the HTTP/retry
-layer is already pinned in ``test_anilist_client``, so the wire is faked with a
-checked scripted :class:`AniListClient` subclass injected at construction.
+The gateway is driven over the in-memory `FakeCacheStore`; the HTTP/retry
+layer is already pinned in `test_anilist_client`, so the wire is faked with a
+checked scripted `AniListClient` subclass injected at construction.
 """
 
 import logging
@@ -22,13 +22,13 @@ from .fakes import CaptureHandler
 
 
 def _stamp(*, days_ago: int) -> str:
-    """A ``fetched_at`` stamp ``days_ago`` days in the past (store string format)."""
+    """A `fetched_at` stamp `days_ago` days in the past (store string format)."""
 
     return (datetime.now() - timedelta(days=days_ago)).strftime(UPDATED_AT_STR_FORMAT)
 
 
 def _media(al_id: int) -> dict[str, dict[str, object]]:
-    """A cached AniList body payload (the record's ``data`` value) for ``al_id``."""
+    """A cached AniList body payload (the record's `data` value) for `al_id`."""
 
     return {"Media": {"id": al_id}}
 
@@ -49,11 +49,11 @@ def _full_media(al_id: int) -> dict[str, dict[str, object]]:
 
 
 class _ScriptedClient(AniListClient):
-    """Checked scripted ``AniListClient``: canned bodies, calls recorded, no HTTP.
+    """Checked scripted `AniListClient`: canned bodies, calls recorded, no HTTP.
 
-    Ids listed in ``absent`` are unknown to AniList: omitted from batch results
+    Ids listed in `absent` are unknown to AniList: omitted from batch results
     and answered with a Media-less single-id body (a miss, never an error).
-    ``full`` scripts fully-populated Media bodies instead of id-only ones.
+    `full` scripts fully-populated Media bodies instead of id-only ones.
     """
 
     def __init__(self, absent: frozenset[int] = frozenset(), *, full: bool = False) -> None:

@@ -4,12 +4,12 @@
 # public ssl-context accessor); the repo already disables the rule for tests.
 """Direct tests for the shared non-arr web client and its GET retry helper.
 
-``make_web_client`` is the second process-wide client (tracker pages, AniList,
+`make_web_client` is the second process-wide client (tracker pages, AniList,
 webhooks, mapping downloads): these pin its transport policy - redirects
 followed (no credential header rides it), verification always on, the
-``pearlarr/<version>`` User-Agent default, and the (5, 30) timeout split -
-mirroring ``test_make_httpx_client_pins_the_transport_policy`` for the arr
-client. ``get_with_retries`` replaces the urllib3 ``Retry`` adapter the old
+`pearlarr/<version>` User-Agent default, and the (5, 30) timeout split -
+mirroring `test_make_httpx_client_pins_the_transport_policy` for the arr
+client. `get_with_retries` replaces the urllib3 `Retry` adapter the old
 requests session mounted, so its matrix is pinned too: transient statuses and
 transport errors retry with backoff, a terminal status returns immediately,
 retry exhaustion returns the response (never raises on status) but propagates

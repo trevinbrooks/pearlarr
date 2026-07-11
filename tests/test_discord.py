@@ -1,9 +1,9 @@
 # pyright: strict
 """Tests for the Discord embed boundary.
 
-``DiscordEmbed.to_payload`` is the single JSON-shaped seam - these pin the
-omitted-when-unset optional keys, the field ``inline`` flag, and the clamping
-to Discord's hard limits - and ``discord_push`` is the pure POST that ships it
+`DiscordEmbed.to_payload` is the single JSON-shaped seam - these pin the
+omitted-when-unset optional keys, the field `inline` flag, and the clamping
+to Discord's hard limits - and `discord_push` is the pure POST that ships it
 (wire shape, errors propagate: containment lives in the Notifier).
 """
 
@@ -24,7 +24,7 @@ from pearlarr.modules.seadex_types import Json
 
 
 def _str_at(payload: dict[str, Json], key: str) -> str:
-    """The payload's string value at ``key``, narrowed for the length asserts."""
+    """The payload's string value at `key`, narrowed for the length asserts."""
 
     value = payload[key]
     assert isinstance(value, str)
@@ -32,7 +32,7 @@ def _str_at(payload: dict[str, Json], key: str) -> str:
 
 
 def _obj_at(payload: dict[str, Json], key: str) -> dict[str, str]:
-    """The payload's one-level string object at ``key`` (author/footer/thumbnail)."""
+    """The payload's one-level string object at `key` (author/footer/thumbnail)."""
 
     value = payload[key]
     assert isinstance(value, dict)

@@ -1,6 +1,6 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-"""Tests for the OutputHub (``output.hub``).
+"""Tests for the OutputHub (`output.hub`).
 
 Pin the dispatch contract (every surface, emit order), per-event containment
 with N strikes + per-cycle re-arm (never process-latching), the once= dedup

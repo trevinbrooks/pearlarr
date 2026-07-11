@@ -1,10 +1,10 @@
 """Registry of every environment variable Pearlarr or its Docker entrypoint reads.
 
 The one authored home for the inventory: the docs generator renders it into the
-configuration reference, a parity test greps the tree against it, and ``paths``
-reads the data-dir variable name from it. New variables use the ``PEARLARR_``
-prefix with ``__`` as the nesting delimiter, so names stay unambiguous under a
-future pydantic-settings split (``PEARLARR_SONARR__URL`` -> ``sonarr.url``).
+configuration reference, a parity test greps the tree against it, and `paths`
+reads the data-dir variable name from it. New variables use the `PEARLARR_`
+prefix with `__` as the nesting delimiter, so names stay unambiguous under a
+future pydantic-settings split (`PEARLARR_SONARR__URL` -> `sonarr.url`).
 """
 
 from dataclasses import dataclass

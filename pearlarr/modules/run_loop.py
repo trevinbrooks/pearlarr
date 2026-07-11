@@ -23,13 +23,13 @@ from .wait_view import (
 class RunLoop:
     """The Arr-agnostic run loop driving an injected strategy.
 
-    Receives its shared collaborators as a :class:`RunDeps` bundle plus the
-    :class:`RunServices` hub (both built and injected by the composition root
-    in ``bootstrap.py``) and owns the run loop, the per-run :class:`RunContext`
+    Receives its shared collaborators as a `RunDeps` bundle plus the
+    `RunServices` hub (both built and injected by the composition root
+    in `bootstrap.py`) and owns the run loop, the per-run `RunContext`
     lifecycle, and the wait-pass machinery. It drives an injected
-    :class:`~.protocols.ArrSync` strategy (passed to :meth:`run_sync`) for the
-    Arr-specific pieces; the strategy holds the :class:`RunServices` hub as its
-    ``services`` and calls the shared per-id pipeline through it, so it never
+    `ArrSync` strategy (passed to `run_sync`) for the
+    Arr-specific pieces; the strategy holds the `RunServices` hub as its
+    `services` and calls the shared per-id pipeline through it, so it never
     sees this loop type. The loop never holds the strategy and never constructs
     its own dependencies.
     """
@@ -38,8 +38,8 @@ class RunLoop:
         """Receive the shared collaborators + services hub and set up per-run state.
 
         Args:
-            deps (RunDeps): The shared collaborators
-            services (RunServices): The per-id services hub (also injected into
+            deps: The shared collaborators
+            services: The per-id services hub (also injected into
                 the strategy); the loop adopts its placeholder context and
                 pushes each run's fresh context back into it.
         """
@@ -84,8 +84,8 @@ class RunLoop:
         """Bind the fresh run context to every per-run collaborator.
 
         Two-phase bind: called once with the adopted placeholder ctx in
-        ``__init__`` (so pre-run paths are safe) and again from ``run_sync``
-        right after ``reset_run_stats`` swaps in the run's real ctx, so every
+        `__init__` (so pre-run paths are safe) and again from `run_sync`
+        right after `reset_run_stats` swaps in the run's real ctx, so every
         collaborator - the services hub (and through it the filter + grab
         pipeline) and the loop's wait manager - rebinds to the fresh ctx.
         """
@@ -101,16 +101,16 @@ class RunLoop:
         """Start a fresh run context and the run clock, and rebind collaborators
 
         Replaces the run-scoped state wholesale with a new RunContext - this is
-        the ONLY fresh-mint site; its ``arr`` is read off the services hub (the
+        the ONLY fresh-mint site; its `arr` is read off the services hub (the
         authority) - and stamps the hub-counts mark (warning/error counts are
         diffed against it when the summary is logged). The
-        ``begin_run`` rebind is folded in here so the ctx swap and the
+        `begin_run` rebind is folded in here so the ctx swap and the
         collaborator rebind can never drift apart - a missed rebind would
         silently route a collaborator's writes to the orphaned prior context.
 
         Args:
-            dry_run (bool): Whether this run simulates without grabbing/writing.
-            import_wait_mode (ImportWaitMode): The run's resolved wait mode
+            dry_run: Whether this run simulates without grabbing/writing.
+            import_wait_mode: The run's resolved wait mode
                 (cli > config > default), stamped onto the fresh context.
         """
 
@@ -145,26 +145,26 @@ class RunLoop:
     ) -> None:
         """Shared run scaffolding for both Arr syncers
 
-        Generic in ``ItemT`` (the strategy's item protocol), so the body sees a
-        precise ``list[ItemT]`` / ``item: ItemT`` - the same concrete type the
-        strategy's hooks consume and produce - rather than the loose ``Any`` the
-        run machinery used to carry. ``ArrSync`` is invariant in its item type, so
+        Generic in `ItemT` (the strategy's item protocol), so the body sees a
+        precise `list[ItemT]` / `item: ItemT` - the same concrete type the
+        strategy's hooks consume and produce - rather than the loose `Any` the
+        run machinery used to carry. `ArrSync` is invariant in its item type, so
         a concrete (non-union) strategy must reach this call: the composition root
-        (``bootstrap.py``) branches per Arr so each call binds one ``ItemT`` cleanly.
+        (`bootstrap.py`) branches per Arr so each call binds one `ItemT` cleanly.
 
         Args:
-            strategy (ArrSync[ItemT]): The Arr-specific strategy to drive (injected
+            strategy: The Arr-specific strategy to drive (injected
                 by the composition root, which picks Sonarr/Radarr at runtime). It
-                already holds the shared :class:`RunServices` hub as its services,
+                already holds the shared `RunServices` hub as its services,
                 so its hooks are called without passing anything back.
-            item_id (int | None): If set, only run for the single item with this
+            item_id: If set, only run for the single item with this
                 id (TMDB for Radarr, TVDB for Sonarr)
-            dry_run (bool): Simulate the run without grabbing torrents, writing
+            dry_run: Simulate the run without grabbing torrents, writing
                 the cache, or sending notifications
-            import_wait_mode (ImportWaitMode | None): The CLI ``--import-wait-mode``
+            import_wait_mode: The CLI `--import-wait-mode`
                 override, resolved cli > config > default. None falls back to the
-                configured ``imports.wait_mode``.
-            boot (BootFlow): The startup cockpit's producer facade; the
+                configured `imports.wait_mode`.
+            boot: The startup cockpit's producer facade; the
                 library fetch and the metadata prefetch graduate into it as steps,
                 and its section is capped right before the per-item scan begins
                 (a no-op unless a hub renders).
@@ -362,9 +362,9 @@ class RunLoop:
 
     # --- Wait-for-completion orchestration ----------------------------------
     #
-    # The completion wait/poll machinery lives on ``self._wait_manager``
-    # (:class:`~.import_wait.ImportWaitManager`); the loop keeps the run tail
-    # (``_finalize_run``) that drives its passes in order plus the walk-away
+    # The completion wait/poll machinery lives on `self._wait_manager`
+    # (`ImportWaitManager`); the loop keeps the run tail
+    # (`_finalize_run`) that drives its passes in order plus the walk-away
     # completion notification. Every path is a no-op under preview (no client).
 
     def _finalize_run(self) -> None:
@@ -377,8 +377,8 @@ class RunLoop:
           1. deferred-mode pre-summary reconcile of any carried-over records not
              already snapshotted inline (non-blocking; feeds the counters);
           2. fold every still-pending carried-over record into the
-             ``queued``/``importing``/``imported`` counters (this-run grabs stay
-             ``added``);
+             `queued`/`importing`/`imported` counters (this-run grabs stay
+             `added`);
           3. print the scoreboard - so the summary reflects the pre-monitor state
              and never reports completion for this-run grabs;
           4. ONLY for blocking/hybrid, run the interleaved monitor + live region
@@ -432,7 +432,7 @@ class RunLoop:
         self._reporter.run_finished(self._ctx.arr)
 
     def _notify_wait_complete(self, result: WaitResult) -> None:
-        """Push the completion notification, gated on ``wait_notify``; swallow errors."""
+        """Push the completion notification, gated on `wait_notify`; swallow errors."""
 
         if not self._config.notifications.wait_notify:
             return

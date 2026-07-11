@@ -16,10 +16,10 @@ from .seadex_types import ArrReleaseDict, HistoryRecord, ProgressSink, RadarrIte
 class RadarrSync(ArrSync[RadarrItem]):
     """Radarr sync strategy: owns the Radarr REST client + movie domain logic.
 
-    Implements the :class:`~.protocols.ArrSync` hooks the run machinery drives.
-    The composition root injects the shared :class:`~.run_services.RunDeps` (used
-    to stand up the client) and the :class:`~.run_services.RunServices` hub
-    (held as ``self._services``); the per-id hooks call the shared pipeline
+    Implements the `ArrSync` hooks the run machinery drives.
+    The composition root injects the shared `RunDeps` (used
+    to stand up the client) and the `RunServices` hub
+    (held as `self._services`); the per-id hooks call the shared pipeline
     through it.
     """
 
@@ -32,21 +32,20 @@ class RadarrSync(ArrSync[RadarrItem]):
         """Stand up the Radarr client from the injected shared collaborators.
 
         Args:
-            deps (RunDeps): The shared collaborators; the config/mappings
+            deps: The shared collaborators; the config/mappings
                 this strategy needs are read off it.
-            services (RunServices): The services hub the per-id hooks call into.
-            radarr_client (AbstractRadarrClient | None, optional): Injectable
-                replacement for the real :class:`~.radarr_client.RadarrClient`,
+            services: The services hub the per-id hooks call into.
+            radarr_client: Injectable replacement for the real `RadarrClient`,
                 which needs the connection keys. Defaults to None (build the
                 real one); tests inject a scripted fake through this typed seam,
-                so the real ``__init__`` runs without keys.
+                so the real `__init__` runs without keys.
         """
 
         self._services = services
         self._config = deps.config
         self.logger = deps.logger
         # The resolver supplies the Anime-IDs candidate id-sets (from SQL) that
-        # ``collect_anime_movies`` filters with; the AniBridge view supplies its own.
+        # `collect_anime_movies` filters with; the AniBridge view supplies its own.
         self._mappings = deps.mappings
         self.anibridge = deps.mappings.anibridge
 
@@ -110,7 +109,7 @@ class RadarrSync(ArrSync[RadarrItem]):
 
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:
-        """Radarr history since ``date`` (delegates to the client)."""
+        """Radarr history since `date` (delegates to the client)."""
 
         return self.radarr.history_since(date)
 
@@ -125,7 +124,7 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         A movie is a single file, so the middle is simply: resolve the Radarr
         release group, pull the SeaDex releases, filter them, then hand off to
-        the shared grab/cache tail. ``mapping`` is unused (movies need no episode
+        the shared grab/cache tail. `mapping` is unused (movies need no episode
         mapping) but is accepted to match the shared hook signature.
         """
 
@@ -216,7 +215,7 @@ class RadarrSync(ArrSync[RadarrItem]):
     def pending_import_series_id(self, item: RadarrItem) -> int | None:
         """No-op: Radarr movies record no pending imports (out of scope).
 
-        Returns ``None`` so the engine's per-item snapshot hook short-circuits for
+        Returns `None` so the engine's per-item snapshot hook short-circuits for
         every Radarr movie - there are no carried-over import records to report.
         """
 
@@ -234,10 +233,10 @@ class RadarrSync(ArrSync[RadarrItem]):
     ) -> ImportProbe:
         """No-op: the series-pinned manual import is Sonarr-only (out of scope).
 
-        Radarr never records a pending import (``grab_and_cache`` passes no
-        ``pending_seeds``), so this is never reached in practice; it returns a
-        ``LEAVE`` probe (the safest terminal value - never drops a record, no files
-        verified) to satisfy the :class:`~.protocols.ArrSync` contract.
+        Radarr never records a pending import (`grab_and_cache` passes no
+        `pending_seeds`), so this is never reached in practice; it returns a
+        `LEAVE` probe (the safest terminal value - never drops a record, no files
+        verified) to satisfy the `ArrSync` contract.
         """
 
         del pending, content_path, force, at_deadline
@@ -248,7 +247,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         """No-op: Radarr records no pending imports, so this is never reached.
 
         Returns an indeterminate zero (the safest value - shows no bar, promotes
-        nothing) to satisfy the :class:`~.protocols.ArrSync` contract.
+        nothing) to satisfy the `ArrSync` contract.
         """
 
         del pending
@@ -272,7 +271,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         """Get a dictionary of useful info for a Radarr movie
 
         Args:
-            radarr_movie_id (int): ID for movie in Radarr
+            radarr_movie_id: ID for movie in Radarr
         """
 
         # Accumulate sizes per release group (a movie can carry several files - an

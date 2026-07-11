@@ -1,14 +1,14 @@
 # pyright: strict
 """Characterization tests for the download-decision engine.
 
-This is the core domain logic extracted into ``DownloadPlanner`` in Phase 4:
-``get_any_to_download``, ``reduce_overlapping_downloads``,
-``filter_by_torrent_hash`` and ``filter_by_release_group``. The tests assert on
-the resulting per-url ``download`` flags, the returned hash list, and the
-private-only skip outcome surfaced on the :class:`PlanResult` /
-:class:`PrivateOnlySkips` (rather than mutated run state, as before Phase 4).
+This is the core domain logic extracted into `DownloadPlanner` in Phase 4:
+`get_any_to_download`, `reduce_overlapping_downloads`,
+`filter_by_torrent_hash` and `filter_by_release_group`. The tests assert on
+the resulting per-url `download` flags, the returned hash list, and the
+private-only skip outcome surfaced on the `PlanResult` /
+`PrivateOnlySkips` (rather than mutated run state, as before Phase 4).
 
-The ``reduce_overlapping_downloads`` branch matrix these tests pin::
+The `reduce_overlapping_downloads` branch matrix these tests pin:
 
     interactive ............................ early return, nothing touched
     per same-files set (no flagged: skip set), public_flagged == 0:

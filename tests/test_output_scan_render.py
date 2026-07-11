@@ -1,9 +1,9 @@
 # pyright: strict
 """Tests for the scan-surface rendering layer (PR4 Band C).
 
-Two halves over ONE golden spine (the data in ``test_scan_parity``, captured
-from the live reporter): the pure ``scan_lines`` builders reproduce the exact
-``(level, message, payload)`` tuples per event, and the RichRenderer's scan arm
+Two halves over ONE golden spine (the data in `test_scan_parity`, captured
+from the live reporter): the pure `scan_lines` builders reproduce the exact
+`(level, message, payload)` tuples per event, and the RichRenderer's scan arm
 renders the same lines through the shared payload renderers on the shared
 Console at LOGGER-parity gating. Plus the generalized ENTRY-indent placement
 rule for diagnostics.

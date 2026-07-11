@@ -37,10 +37,10 @@ class AppPaths:
 def resolve_paths(data_dir: str | None = None) -> AppPaths:
     """Resolve every path under the data directory.
 
-    Precedence: explicit ``data_dir`` arg > ``PEARLARR_DATA_DIR`` env >
-    ``platformdirs.user_data_dir`` (``~/Library/Application Support/pearlarr`` on
-    macOS, ``~/.local/share/pearlarr`` on Linux, ``%LOCALAPPDATA%\\pearlarr`` on
-    Windows). ``appauthor=False`` drops the Windows author subfolder.
+    Precedence: explicit `data_dir` arg > `PEARLARR_DATA_DIR` env >
+    `platformdirs.user_data_dir` (`~/Library/Application Support/pearlarr` on
+    macOS, `~/.local/share/pearlarr` on Linux, `%LOCALAPPDATA%\\pearlarr` on
+    Windows). `appauthor=False` drops the Windows author subfolder.
     """
 
     base = data_dir or os.getenv(DATA_DIR_ENV) or user_data_dir(APP_NAME, appauthor=False)

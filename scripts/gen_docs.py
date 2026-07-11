@@ -1,15 +1,15 @@
 """Generate the documentation artifacts whose source of truth is code.
 
 One authored home per fact: config facts live as attribute docstrings on the
-pydantic models in ``pearlarr/modules/config.py`` (plus enum member docstrings
+pydantic models in `pearlarr/modules/config.py` (plus enum member docstrings
 and the env-var registry), and this script renders every other surface from
 them:
 
-- ``pearlarr/modules/config_sample.yml`` - the starter config template
-- ``schemas/config.schema.json`` - JSON Schema for editor validation
-- ``docs/configuration.md`` - the generated islands between ``gen:`` markers
+- `pearlarr/modules/config_sample.yml` - the starter config template
+- `schemas/config.schema.json` - JSON Schema for editor validation
+- `docs/configuration.md` - the generated islands between `gen:` markers
 
-Write mode (default) rewrites the artifacts in place; ``--check`` exits
+Write mode (default) rewrites the artifacts in place; `--check` exits
 non-zero when any artifact is not byte-identical to what would be generated
 (the doc test suite and pre-commit run this). Missing field or enum-member
 docstrings are a hard error in both modes.
@@ -144,7 +144,7 @@ def enum_member_docs(enum_cls: type[Enum]) -> dict[str, str]:
 
 
 def _unwrap_annotation(annotation: object) -> object:
-    """Resolve PEP 695 aliases and strip ``| None`` when one real arm remains."""
+    """Resolve PEP 695 aliases and strip `| None` when one real arm remains."""
 
     ann = getattr(annotation, "__value__", annotation)
     if get_origin(ann) is UnionType:
@@ -157,7 +157,7 @@ def _unwrap_annotation(annotation: object) -> object:
 def field_values(annotation: object) -> tuple[tuple[str, str], ...]:
     """The enumerable values of a field, paired with member docs where they exist.
 
-    Enums contribute their member docstrings; a pure string ``Literal``
+    Enums contribute their member docstrings; a pure string `Literal`
     contributes bare values. Anything else (unions of shapes, free-form types)
     enumerates nothing.
     """
@@ -187,7 +187,7 @@ def yaml_scalar(value: object) -> str:
 
 
 def yaml_flow(value: list[str]) -> str:
-    """Render a list default in flow style (``[Japanese, English]``)."""
+    """Render a list default in flow style (`[Japanese, English]`)."""
 
     return yaml.safe_dump(value, default_flow_style=True).strip()
 
@@ -244,7 +244,7 @@ def build_leaf(group_key: str, key: str, field: FieldInfo) -> LeafDoc:
 
 
 def build_groups() -> tuple[GroupDoc, ...]:
-    """Walk ``AppConfig`` into renderable group docs, failing on any gap."""
+    """Walk `AppConfig` into renderable group docs, failing on any gap."""
 
     groups: list[GroupDoc] = []
     for group_key, group_field in AppConfig.model_fields.items():
@@ -266,7 +266,7 @@ def build_groups() -> tuple[GroupDoc, ...]:
 
 
 def comment_lines(text: str, indent: str) -> list[str]:
-    """Wrap plain text into ``# `` comment lines within the sample width."""
+    """Wrap plain text into `# ` comment lines within the sample width."""
 
     width = SAMPLE_WIDTH - len(indent) - 2
     return [f"{indent}# {line}" for line in textwrap.wrap(text, width=width, break_on_hyphens=False)]
@@ -320,7 +320,7 @@ def render_sample(groups: tuple[GroupDoc, ...]) -> str:
 
 
 def _normalize_descriptions(node: object) -> None:
-    """Flatten and de-reST every ``description`` in a JSON-schema tree, in place."""
+    """Flatten and de-reST every `description` in a JSON-schema tree, in place."""
 
     if isinstance(node, dict):
         typed = cast("dict[str, object]", node)
@@ -335,7 +335,7 @@ def _normalize_descriptions(node: object) -> None:
 
 
 def render_schema(groups: tuple[GroupDoc, ...]) -> str:
-    """The JSON Schema for ``config.yml``, published at a tag-stable path."""
+    """The JSON Schema for `config.yml`, published at a tag-stable path."""
 
     generated = AppConfig.model_json_schema()
     defs = cast("dict[str, dict[str, Any]]", generated.get("$defs", {}))
@@ -430,9 +430,9 @@ def render_contributing() -> str:
 
 
 def collect_invariants() -> tuple[tuple[str, str], ...]:
-    """Every ``# Invariant:`` comment block in the package, as (module, text) pairs.
+    """Every `# Invariant:` comment block in the package, as (module, text) pairs.
 
-    A block runs from its ``# Invariant:`` line through the directly following
+    A block runs from its `# Invariant:` line through the directly following
     comment lines; blocks appear in path order, then file order.
     """
 
@@ -490,7 +490,7 @@ def artifacts() -> dict[Path, str]:
 
 
 def main() -> int:
-    """Entry point: write the artifacts, or verify them with ``--check``."""
+    """Entry point: write the artifacts, or verify them with `--check`."""
 
     parser = argparse.ArgumentParser(description="Generate documentation artifacts from code.")
     parser.add_argument("--check", action="store_true", help="verify artifacts are current; exit 1 on drift")

@@ -1,8 +1,8 @@
 # pyright: strict
 """Tests for the Notifier pushes: the grab embed and the wait-complete summary.
 
-``Notifier.push_wait_summary`` posts the wait-pass outcome (colored by its
-worst outcome class) to Discord and/or a generic webhook; ``push_grab`` posts
+`Notifier.push_wait_summary` posts the wait-pass outcome (colored by its
+worst outcome class) to Discord and/or a generic webhook; `push_grab` posts
 the per-title grab embed. Both are best-effort, so these pin the happy paths,
 the no-url no-op, and the containment invariant: a notification failure warns
 and returns False, it must never abort a grab or the end-of-run cache save.
@@ -41,7 +41,7 @@ from .fakes import diagnostic_messages, install_recording_hub
 
 @pytest.fixture
 def pushes(monkeypatch: pytest.MonkeyPatch) -> list[DiscordEmbed]:
-    """Route ``notify.discord_push`` into a recording list (no network)."""
+    """Route `notify.discord_push` into a recording list (no network)."""
 
     recorded: list[DiscordEmbed] = []
 
@@ -54,11 +54,11 @@ def pushes(monkeypatch: pytest.MonkeyPatch) -> list[DiscordEmbed]:
 
 
 def _http_error(status: int, *, retry_after: str | None = None) -> httpx.HTTPStatusError:
-    """An ``HTTPStatusError`` carrying a response, as ``raise_for_status`` raises it.
+    """An `HTTPStatusError` carrying a response, as `raise_for_status` raises it.
 
     The url (in the message and on the request, as httpx builds both) stands in
     for the webhook credential: the containment tests assert it never reaches a
-    warning message. ``retry_after`` sets the Retry-After header the 429
+    warning message. `retry_after` sets the Retry-After header the 429
     handling parses.
     """
 
@@ -70,7 +70,7 @@ def _http_error(status: int, *, retry_after: str | None = None) -> httpx.HTTPSta
 
 
 class _SequencedPush:
-    """``discord_push`` stand-in: raises the queued errors in order, then succeeds."""
+    """`discord_push` stand-in: raises the queued errors in order, then succeeds."""
 
     def __init__(self, *errors: httpx.HTTPStatusError) -> None:
         self.errors = list(errors)
@@ -84,7 +84,7 @@ class _SequencedPush:
 
 
 def _record_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
-    """Route ``time.sleep`` (pacing + the 429 Retry-After) into a recording list."""
+    """Route `time.sleep` (pacing + the 429 Retry-After) into a recording list."""
 
     sleeps: list[float] = []
     monkeypatch.setattr(time, "sleep", sleeps.append)

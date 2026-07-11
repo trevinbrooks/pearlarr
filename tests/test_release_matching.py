@@ -1,7 +1,7 @@
 # pyright: strict
 """Characterization tests for the pure release-matching helpers.
 
-These functions move to ``planner.py`` in Phase 1; pinning them here proves the
+These functions move to `planner.py` in Phase 1; pinning them here proves the
 relocation is behavior-preserving.
 """
 

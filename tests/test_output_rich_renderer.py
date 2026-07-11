@@ -1,15 +1,15 @@
 # pyright: strict
-"""Tests for the rich console surface's diagnostic path (``output.rich_renderer``).
+"""Tests for the rich console surface's diagnostic path (`output.rich_renderer`).
 
 Pin ambient placement against the cockpit scopes (boot-ledger indent while the
 boot section is open, wait indent while the wait region is open, column 0
 otherwise - including under bare RUN/ITEM nodes), the unwind close that empties
 the frontier for a leg-fatal error, the S4 floors (third-party WARNING floor
-unless DEBUG; first-party INFO renders dim), the ``file_only`` and
+unless DEBUG; first-party INFO renders dim), the `file_only` and
 no-rich-console no-ops, trace rendering without locals, markup literalness,
 the begin_cycle fold reset, and the durable loop lines (NextRunScheduled; the
 ReleaseSkipped/GrabFailed scan routing). The ENTRY-indent arm is pinned in
-``test_output_scan_render``.
+`test_output_scan_render`.
 """
 
 import io
@@ -120,8 +120,8 @@ class TestPlacement:
 class TestUnwindPlacement:
     """The other half of bootstrap's unwind emit: RunFinished clears the frontier.
 
-    ``bootstrap`` emits RunFinished from an inner finally, before its except arms
-    log the leg-fatal error (``test_unwind_teardown`` pins that ordering). These
+    `bootstrap` emits RunFinished from an inner finally, before its except arms
+    log the leg-fatal error (`test_unwind_teardown` pins that ordering). These
     pin what the ordering BUYS - the error lands at column 0, whatever frame the
     leg died in - and the regression it closes.
     """

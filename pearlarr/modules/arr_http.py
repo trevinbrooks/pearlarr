@@ -1,6 +1,6 @@
 """Shared raw-endpoint HTTP for the arr clients.
 
-:class:`ArrHttp` is the httpx-native transport every raw arr endpoint rides:
+`ArrHttp` is the httpx-native transport every raw arr endpoint rides:
 one bound helper per client holding the request/retry/parse/fail-open
 boilerplate that used to be copied per endpoint (plus the strict, fail-closed
 library fetch and its typed errors, and the shared history read both arr
@@ -20,7 +20,7 @@ from .output import hub_warn
 from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord, Json, validate_each
 
 # Transient statuses worth another try on an idempotent GET - shared with the
-# web client's ``get_with_retries`` so the two stacks retry the same set.
+# web client's `get_with_retries` so the two stacks retry the same set.
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 GET_RETRIES = 3
 BACKOFF_BASE_S = 0.5
@@ -29,7 +29,7 @@ BACKOFF_BASE_S = 0.5
 class ArrConnectionError(Exception):
     """An arr's load-bearing library fetch could not produce a result.
 
-    Raised (instead of failing open) by :meth:`ArrHttp.get_json_list_strict`:
+    Raised (instead of failing open) by `ArrHttp.get_json_list_strict`:
     the library list is a run's ground truth, so an unreachable arr / non-200 /
     non-JSON body / wrong payload shape aborts the leg with this clean,
     user-facing message (the CLI containment arm renders it without a
@@ -40,22 +40,22 @@ class ArrConnectionError(Exception):
 class ArrAuthError(Exception):
     """An arr rejected the API key (401/403) on the load-bearing library fetch.
 
-    Split from :class:`ArrConnectionError` so the CLI containment arm can point
-    the user at ``<arr>.api_key`` specifically instead of the url.
+    Split from `ArrConnectionError` so the CLI containment arm can point
+    the user at `<arr>.api_key` specifically instead of the url.
     """
 
 
 def make_httpx_client(*, verify: bool = True) -> httpx.Client:
     """The pinned httpx client the arr transports share (one per run).
 
-    - ``follow_redirects=False`` (httpx's default, pinned here on purpose): the
-      ``X-Api-Key`` header must never ride a cross-host redirect, so a 3xx from
+    - `follow_redirects=False` (httpx's default, pinned here on purpose): the
+      `X-Api-Key` header must never ride a cross-host redirect, so a 3xx from
       an arr (a reverse-proxy login bounce) surfaces as a non-200 miss instead
       of silently replaying credentials elsewhere.
-    - Client-level timeout mirroring ``ARR_REQUEST_TIMEOUT_S``, so no call site
+    - Client-level timeout mirroring `ARR_REQUEST_TIMEOUT_S`, so no call site
       can forget one.
     - Pool sized to the episode sweep's fetch concurrency
-      (``SONARR_FETCH_WORKERS``), so parallel GETs don't queue.
+      (`SONARR_FETCH_WORKERS`), so parallel GETs don't queue.
     """
 
     connect_s, read_s = ARR_REQUEST_TIMEOUT_S
@@ -74,11 +74,11 @@ class ArrHttp:
     Owns the boilerplate every raw endpoint used to copy: the auth header rides
     each request (the client is shared across arrs, so never on the client),
     transient GET failures retry with jittered backoff (a POST is not
-    idempotent, so :meth:`post_json` never retries), EVERY body is parsed
+    idempotent, so `post_json` never retries), EVERY body is parsed
     behind a JSON guard (a 200 HTML proxy page reads as a miss, never an
-    abort), and each failure warns once through the caller's ``warn`` template
+    abort), and each failure warns once through the caller's `warn` template
     with the failure detail filled in. The one fail-CLOSED read is
-    :meth:`get_json_list_strict`, which raises typed errors for the
+    `get_json_list_strict`, which raises typed errors for the
     load-bearing library fetch.
     """
 
@@ -92,7 +92,7 @@ class ArrHttp:
     def display_url(self) -> str:
         """The base URL as messages may show it: any embedded login masked.
 
-        Requests ride ``base_url`` verbatim (a ``user:pass@`` login there is
+        Requests ride `base_url` verbatim (a `user:pass@` login there is
         real basic auth, e.g. an arr behind a protected reverse proxy); every
         error/warning string uses this instead - the login is a credential
         under the redaction guarantee.
@@ -112,7 +112,7 @@ class ArrHttp:
     ) -> "ArrHttp":
         """Bind the shared client to one arr's url + key.
 
-        The key becomes the ``X-Api-Key`` header (never a query param, so it
+        The key becomes the `X-Api-Key` header (never a query param, so it
         can't leak through URLs in logs/exceptions).
         """
 
@@ -134,12 +134,12 @@ class ArrHttp:
         """The retrying GET core the fail-open and strict paths share.
 
         Retries transient failures (connect/read errors, 429/5xx) up to
-        ``GET_RETRIES`` times with jittered exponential backoff - GETs only, so
-        this stays safe for idempotent reads. ``timeout`` overrides the
+        `GET_RETRIES` times with jittered exponential backoff - GETs only, so
+        this stays safe for idempotent reads. `timeout` overrides the
         client-level timeout per request (the 120s manual-import scans);
         None rides the client default. Returns the final response (a 200, or
         the terminal / retry-exhausted non-200) paired with a detail naming
-        the failure, or ``(None, detail)`` when no request completed.
+        the failure, or `(None, detail)` when no request completed.
         """
 
         request_timeout = httpx.USE_CLIENT_DEFAULT if timeout is None else httpx.Timeout(timeout)
@@ -177,19 +177,19 @@ class ArrHttp:
         warn: str | None,
         timeout: float | None = None,
     ) -> object | None:
-        """GET ``path`` and parse the JSON body; fail open to None with one warning.
+        """GET `path` and parse the JSON body; fail open to None with one warning.
 
-        Rides :meth:`_get_with_retries` (transient failures retry with jittered
+        Rides `_get_with_retries` (transient failures retry with jittered
         backoff). Any terminal failure (request error, non-200, non-JSON body)
-        warns via ``warn`` - a template whose ``{detail}`` names the cause - and
-        returns None; ``warn=None`` keeps a deliberate quiet path silent.
+        warns via `warn` - a template whose `{detail}` names the cause - and
+        returns None; `warn=None` keeps a deliberate quiet path silent.
 
         Args:
-            path (str): Endpoint path (e.g. ``"/api/v3/queue"``).
-            params (Mapping[str, str] | None): Query params. Defaults to None.
-            warn (str | None): Warning template with a ``{detail}`` placeholder,
+            path: Endpoint path (e.g. `"/api/v3/queue"`).
+            params: Query params. Defaults to None.
+            warn: Warning template with a `{detail}` placeholder,
                 or None to fail open silently.
-            timeout (float | None): Per-request timeout override (seconds).
+            timeout: Per-request timeout override (seconds).
                 Defaults to None (the client-level timeout).
         """
 
@@ -209,7 +209,7 @@ class ArrHttp:
         warn: str | None,
         timeout: float | None = None,
     ) -> list[object] | None:
-        """:meth:`get_json` narrowed to a JSON array (fails open on any other shape)."""
+        """`get_json` narrowed to a JSON array (fails open on any other shape)."""
 
         payload = self.get_json(path, params=params, warn=warn, timeout=timeout)
         if payload is None:
@@ -226,7 +226,7 @@ class ArrHttp:
         warn: str | None,
         timeout: float | None = None,
     ) -> dict[str, object] | None:
-        """:meth:`get_json` narrowed to a JSON object (fails open on any other shape)."""
+        """`get_json` narrowed to a JSON object (fails open on any other shape)."""
 
         payload = self.get_json(path, params=params, warn=warn, timeout=timeout)
         if payload is None:
@@ -242,17 +242,17 @@ class ArrHttp:
         json: Json,
         warn: str | None,
     ) -> object | None:
-        """POST ``json`` to ``path`` and parse the body; fail open to None with one warning.
+        """POST `json` to `path` and parse the body; fail open to None with one warning.
 
         ONE attempt, never retried: a POST is not idempotent, so a retry could
         double-queue a command. Both 200 and 201 read as success; any failure
-        (request error, other status, non-JSON body) warns via ``warn`` - the
-        same ``{detail}`` template as :meth:`get_json` - and returns None.
+        (request error, other status, non-JSON body) warns via `warn` - the
+        same `{detail}` template as `get_json` - and returns None.
 
         Args:
-            path (str): Endpoint path (e.g. ``"/api/v3/command"``).
-            json (Json): The JSON request body.
-            warn (str | None): Warning template with a ``{detail}`` placeholder,
+            path: Endpoint path (e.g. `"/api/v3/command"`).
+            json: The JSON request body.
+            warn: Warning template with a `{detail}` placeholder,
                 or None to fail open silently.
         """
 
@@ -273,20 +273,20 @@ class ArrHttp:
         *,
         params: Mapping[str, str] | None = None,
     ) -> list[object]:
-        """GET ``path`` and parse the JSON array body; RAISE instead of failing open.
+        """GET `path` and parse the JSON array body; RAISE instead of failing open.
 
-        The strict counterpart of :meth:`get_json_list`, for the load-bearing
+        The strict counterpart of `get_json_list`, for the load-bearing
         library fetch where a failure must abort the leg rather than read as an
         empty library. Shares the retry core (transient statuses still retry
         first), then turns any terminal failure into a typed error: a 401/403
-        raises :class:`ArrAuthError`; a transport error, any other non-200, a
+        raises `ArrAuthError`; a transport error, any other non-200, a
         non-JSON body or a non-array payload raises
-        :class:`ArrConnectionError` - both with a clean message naming this
+        `ArrConnectionError` - both with a clean message naming this
         arr's base url and the failure detail.
 
         Args:
-            path (str): Endpoint path (e.g. ``"/api/v3/series"``).
-            params (Mapping[str, str] | None): Query params. Defaults to None.
+            path: Endpoint path (e.g. `"/api/v3/series"`).
+            params: Query params. Defaults to None.
         """
 
         response, detail = self._get_with_retries(path, params)
@@ -308,18 +308,18 @@ class ArrHttp:
         *,
         include_flags: Mapping[str, str],
     ) -> list[HistoryRecord] | None:
-        """History records since ``date`` (``/api/v3/history/since``, ascending), or None.
+        """History records since `date` (`/api/v3/history/since`, ascending), or None.
 
-        One unfiltered call (``eventType`` is single-valued server-side; the
+        One unfiltered call (`eventType` is single-valued server-side; the
         activity scan filters client-side), shared by both arr clients - the
-        record's ``seriesId``/``movieId`` fold into one ``item_id`` at the
-        model. Fails open to None through :meth:`get_json_list`'s matrix with a
+        record's `seriesId`/`movieId` fold into one `item_id` at the
+        model. Fails open to None through `get_json_list`'s matrix with a
         warning that states the consequence too: this read only feeds activity
-        detection, and the caller (``ArrActivityMonitor.scan``) doesn't re-warn.
+        detection, and the caller (`ArrActivityMonitor.scan`) doesn't re-warn.
 
         Args:
-            date (str): ISO8601 lower bound (arr-clock, inclusive).
-            include_flags (Mapping[str, str]): The arr's include-* query params.
+            date: ISO8601 lower bound (arr-clock, inclusive).
+            include_flags: The arr's include-* query params.
         """
 
         raw = self.get_json_list(

@@ -1,7 +1,6 @@
 """Shared SQLite primitives for the project's on-disk stores.
 
-Both :mod:`pearlarr.modules.cache` (``cache.db``) and
-:mod:`pearlarr.modules.mapping_store` (``mappings.db``) need the same low-level
+Both `cache` (`cache.db`) and `mapping_store` (`mappings.db`) need the same low-level
 behavior: a connection pinned to *explicit* legacy/deferred transaction control,
 a busy timeout, a corruption predicate that distinguishes a genuinely torn file
 from a transient lock, and a fail-open quarantine of an unreadable file. Those
@@ -34,29 +33,29 @@ def connect(path: str, *, ensure_wal: bool = True, foreign_keys: bool = False) -
     """Open a connection with the project's fixed pragmas + transaction control.
 
     The single place these connections are created, so every caller shares
-    identical settings instead of re-typing the pragma trio. ``busy_timeout`` is
+    identical settings instead of re-typing the pragma trio. `busy_timeout` is
     applied FIRST so the WAL-mode switch and the schema statements that follow
     already honor it (rather than racing with a zero timeout).
 
     Transaction control is pinned *explicitly* to legacy/deferred rather than
-    leaning on the sqlite3 defaults: legacy mode means an implicit ``BEGIN``
-    precedes the first DML and nothing commits until the owner calls ``commit`` -
+    leaning on the sqlite3 defaults: legacy mode means an implicit `BEGIN`
+    precedes the first DML and nothing commits until the owner calls `commit` -
     exactly what the cache's staged-write preview gate and the mapping store's
     atomic per-source replace both rely on - so a future Python flipping a default
     can't silently turn staged writes into immediate commits and break either. Do
-    NOT set ``isolation_level=None`` / real autocommit. (Both attributes are set
+    NOT set `isolation_level=None` / real autocommit. (Both attributes are set
     post-connect, before any transaction is open, so this is pure configuration.)
 
     A non-db / corrupt file raises on the WAL switch; the handle is closed so it
     doesn't leak before the caller decides whether to quarantine.
 
     Args:
-        path (str): Database path, or ``":memory:"``.
-        ensure_wal (bool): Apply the WAL-mode pragma (the writable run path).
+        path: Database path, or `":memory:"`.
+        ensure_wal: Apply the WAL-mode pragma (the writable run path).
             Read-only diagnostics pass False so they neither mutate the db's
             journal mode nor need the file to be a valid db just to open. Defaults
             to True.
-        foreign_keys (bool): Apply ``PRAGMA foreign_keys=ON`` (only the cache has FK
+        foreign_keys: Apply `PRAGMA foreign_keys=ON` (only the cache has FK
             constraints - the mapping store has none). Defaults to False.
     """
 
@@ -83,26 +82,26 @@ def open_or_quarantine(
     what: str,
     recovery: str,
 ) -> tuple[sqlite3.Connection, bool]:
-    """Open ``path`` and ensure its schema, quarantining a corrupt file.
+    """Open `path` and ensure its schema, quarantining a corrupt file.
 
     The shared recovery policy for both stores. A transient/operational
-    ``DatabaseError`` (locked, disk I/O) is NOT corruption: fail closed and
+    `DatabaseError` (locked, disk I/O) is NOT corruption: fail closed and
     re-raise rather than destructively quarantining a healthy db on a fluke. A
-    real not-a-database / torn file is moved aside via :func:`quarantine_corrupt`
-    and a fresh ``:memory:`` db is returned instead, so a corrupt store fails
+    real not-a-database / torn file is moved aside via `quarantine_corrupt`
+    and a fresh `:memory:` db is returned instead, so a corrupt store fails
     open rather than crash-looping every run.
 
     Args:
-        path (str): Database path to open (or ``":memory:"``).
-        connect_fn (Callable): The store's own connection factory (keeps its
+        path: Database path to open (or `":memory:"`).
+        connect_fn: The store's own connection factory (keeps its
             pragma choices and the tests' patch point).
-        ensure (Callable): Ensures the schema on a fresh connection.
-        what (str): Human noun for the quarantine log line.
-        recovery (str): Trailing recovery clause for the quarantine log line.
+        ensure: Ensures the schema on a fresh connection.
+        what: Human noun for the quarantine log line.
+        recovery: Trailing recovery clause for the quarantine log line.
 
     Returns:
-        tuple: ``(conn, fell_back)`` - ``fell_back`` is True when the file was
-        quarantined and ``conn`` is the in-memory fallback.
+        tuple: `(conn, fell_back)` - `fell_back` is True when the file was
+        quarantined and `conn` is the in-memory fallback.
     """
 
     conn: sqlite3.Connection | None = None
@@ -135,10 +134,10 @@ def open_or_quarantine(
 
 
 def rollback_and_close(conn: sqlite3.Connection) -> None:
-    """Roll back anything uncommitted and close ``conn``, swallowing sqlite errors.
+    """Roll back anything uncommitted and close `conn`, swallowing sqlite errors.
 
-    The shared ``close()`` tail for both stores, so their error behavior on a
-    torn-down connection can't diverge. Idempotent enough for a ``finally`` block.
+    The shared `close()` tail for both stores, so their error behavior on a
+    torn-down connection can't diverge. Idempotent enough for a `finally` block.
     """
 
     with contextlib.suppress(sqlite3.Error):
@@ -151,8 +150,8 @@ def is_corruption(exc: sqlite3.DatabaseError) -> bool:
     """True if a DatabaseError signals an actually corrupt / not-a-database file.
 
     The quarantine path destroys (renames) the db, so it must fire ONLY on real
-    corruption - never on a transient ``OperationalError`` (``SQLITE_BUSY`` /
-    ``database is locked``, a disk I/O error), which would otherwise wipe a healthy
+    corruption - never on a transient `OperationalError` (`SQLITE_BUSY` /
+    `database is locked`, a disk I/O error), which would otherwise wipe a healthy
     file on a fluke. Keys on the SQLite extended/primary result code, with a message
     fallback for builds that don't surface one.
     """
@@ -179,14 +178,14 @@ def quarantine_corrupt(
     """Move an unreadable db (and its WAL/SHM sidecars) aside so a run can recover.
 
     Fail-open: rather than crash-loop on a corrupt/torn file, rename it to
-    ``<path>.corrupt-<timestamp>`` (kept for inspection) and let the caller start
+    `<path>.corrupt-<timestamp>` (kept for inspection) and let the caller start
     fresh. A fresh db only costs one re-derive pass - the safe direction.
 
     Args:
-        path (str): Path to the unreadable database.
-        what (str): Human noun for the log line (e.g. ``"Cache database"``).
-        recovery (str): Trailing clause describing the recovery (e.g.
-            ``"started a fresh cache (...)."``, ending with the period).
+        path: Path to the unreadable database.
+        what: Human noun for the log line (e.g. `"Cache database"`).
+        recovery: Trailing clause describing the recovery (e.g.
+            `"started a fresh cache (...)."`, ending with the period).
     """
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")

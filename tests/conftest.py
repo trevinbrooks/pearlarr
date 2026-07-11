@@ -3,7 +3,7 @@
 
 Kept deliberately small: fixtures land here as the migration consumes them, so
 they're shaped by real use rather than guessed up front. The first is the
-isolated logger that replaces the single process-global ``builders.make_logger``.
+isolated logger that replaces the single process-global `builders.make_logger`.
 """
 
 import logging
@@ -24,27 +24,27 @@ from .builders import make_logger
 def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Close the sqlite stores + file log handlers a test leaves open.
 
-    Two GC-timed ``ResourceWarning`` sources that ``filterwarnings=["error"]``
+    Two GC-timed `ResourceWarning` sources that `filterwarnings=["error"]`
     would otherwise turn into failures at a nondeterministic later moment (whoever
     is running when the GC finalizes the object):
 
-    * ``MappingStore``: ``make_run_deps`` / ``make_sonarr_sync`` build a real
-      ``MappingResolver`` whose ``:memory:`` store the tests can't close in the
-      builder (they query ``deps.mappings`` after construction). Wrapping the
-      ``open`` factory registers every store regardless of construction path;
-      ``close()`` is idempotent, so stores that already close themselves are fine.
-    * The file handler ``setup_logger`` attaches to the ``"Pearlarr"``
+    * `MappingStore`: `make_run_deps` / `make_sonarr_sync` build a real
+      `MappingResolver` whose `:memory:` store the tests can't close in the
+      builder (they query `deps.mappings` after construction). Wrapping the
+      `open` factory registers every store regardless of construction path;
+      `close()` is idempotent, so stores that already close themselves are fine.
+    * The file handler `setup_logger` attaches to the `"Pearlarr"`
       logger (only the e2e smoke drives the real logging path); left open, its
       file handle leaks.
 
-    The process-global ``"Pearlarr"`` logger is also fully reset (all handlers
-    removed, level back to NOTSET): a test that ran ``setup_logger`` /
-    ``apply_log_level`` would otherwise leak a console handler bound to its own
+    The process-global `"Pearlarr"` logger is also fully reset (all handlers
+    removed, level back to NOTSET): a test that ran `setup_logger` /
+    `apply_log_level` would otherwise leak a console handler bound to its own
     captured stdout and a raised level into whichever test runs next under
     randomized ordering. The output seam gets the same treatment: a test that
     installed the hub/bridge (the cli run commands do) would otherwise leave the
     bridge on the ROOT logger, echoing every later test's third-party warnings.
-    ``setup_logger``/``apply_log_level`` also open the ROOT logger's level (the
+    `setup_logger`/`apply_log_level` also open the ROOT logger's level (the
     bridge's gate); it is restored to the stdlib WARNING default here.
     """
 
@@ -76,18 +76,18 @@ def isolate_data_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Point ``PEARLARR_DATA_DIR`` at a per-test tmp dir for every test.
+    """Point `PEARLARR_DATA_DIR` at a per-test tmp dir for every test.
 
-    A backstop: ``resolve_paths()`` is read at runtime across ``cli.py`` and
-    ``mappings.py``, and ``test_cli`` does destructive cache ops keyed off it - one
-    forgotten ``setenv`` would touch the developer's real data dir. Tests that set
-    the env themselves still override this default; ``@pytest.mark.real_data_dir``
-    opts fully out (``test_paths`` and the ``@realdata`` parity suite, which need
+    A backstop: `resolve_paths()` is read at runtime across `cli.py` and
+    `mappings.py`, and `test_cli` does destructive cache ops keyed off it - one
+    forgotten `setenv` would touch the developer's real data dir. Tests that set
+    the env themselves still override this default; `@pytest.mark.real_data_dir`
+    opts fully out (`test_paths` and the `@realdata` parity suite, which need
     the real dir / manage the env directly).
     """
 
-    # ``request.keywords`` aggregates the item's markers (incl. class/module
-    # pytestmark); ``FixtureRequest.node`` is untyped, so read markers off it.
+    # `request.keywords` aggregates the item's markers (incl. class/module
+    # pytestmark); `FixtureRequest.node` is untyped, so read markers off it.
     if "real_data_dir" in request.keywords:
         return
     monkeypatch.setenv(DATA_DIR_ENV, str(tmp_path / "pearlarr_data"))
@@ -125,7 +125,7 @@ def logger() -> Iterator[logging.Logger]:
     """An isolated quiet logger (NullHandler, no propagation, WARNING).
 
     Config (logger name, no-propagation, level) comes from the single shared
-    ``builders.make_logger`` factory, so the fixture and the construction-time
+    `builders.make_logger` factory, so the fixture and the construction-time
     builders that also call it can't drift. On top of that the fixture brackets a
     handler reset on BOTH setup and teardown, so a level bump or an attached
     handler in one test can't leak into the next under randomized ordering (tests

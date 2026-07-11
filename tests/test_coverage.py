@@ -1,7 +1,7 @@
 # pyright: strict
 """Characterization tests for the episode-coverage formatting helpers.
 
-These helpers live in ``coverage.py``.
+These helpers live in `coverage.py`.
 """
 
 from pearlarr.modules.coverage import (

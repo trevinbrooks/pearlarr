@@ -3,16 +3,16 @@
 Startup does real work before any series is scanned — read+validate config,
 download/parse the id-mapping sources, open the cache, log into qBittorrent,
 fetch the library, prefetch AniList + SeaDex metadata. The composition root
-(``bootstrap.py``) drives that work through :class:`BootFlow`: the banner facts
-ride a :class:`~.output.RunStarted` event, each IO step runs inside a
-:class:`~.output.StepScope` (timed + graduated by the renderers), and the
+(`bootstrap.py`) drives that work through `BootFlow`: the banner facts
+ride a `RunStarted` event, each IO step runs inside a
+`StepScope` (timed + graduated by the renderers), and the
 section mark keeps diagnostics fired BETWEEN steps placed at the boot-ledger
 indent. Rendering lives entirely on the hub's surfaces (the RichRenderer's boot
 region, the file/plain/json text sinks) — this module emits facts only.
 
 A run scans each configured arr in turn; each scan's per-item logging must start
-with no live region above it, so :meth:`end_section` caps a section (emitting
-the ``ready in Xs`` capstone when it earned one) and the next :meth:`step`
+with no live region above it, so `end_section` caps a section (emitting
+the `ready in Xs` capstone when it earned one) and the next `step`
 reopens a fresh one. Every method is total: emission rides the hub (which contains
 renderer bugs), so presentation can never abort the startup work it wraps.
 """
@@ -42,7 +42,7 @@ from .output import (
 @dataclass(frozen=True, slots=True)
 class _CapstoneWindow:
     """The capstone gate's window: opened at a section's first step, closed by
-    ``end_section`` (parity with the old view — the banner→step gap holds only
+    `end_section` (parity with the old view — the banner→step gap holds only
     import work)."""
 
     started_at: float
@@ -53,9 +53,9 @@ class _CapstoneWindow:
 class BootFlow:
     """The small facade the composition root drives while starting a run.
 
-    The root emits the :meth:`banner`, runs each IO step inside :meth:`step`,
-    calls :meth:`end_section` right before a per-arr scan starts logging (so the
-    renderers tear their live region down first), and :meth:`close` once at the
+    The root emits the `banner`, runs each IO step inside `step`,
+    calls `end_section` right before a per-arr scan starts logging (so the
+    renderers tear their live region down first), and `close` once at the
     end — the safety net when a section was left open.
     """
 
@@ -70,7 +70,7 @@ class BootFlow:
     def banner(self) -> None:
         """State the banner facts (version, data dir), then open the boot section.
 
-        Order matters: ``RunStarted`` is the run boundary (the fold closes any
+        Order matters: `RunStarted` is the run boundary (the fold closes any
         stale nodes on it), so the section mark opens after it.
         """
 
@@ -100,7 +100,7 @@ class BootFlow:
     def end_section(self) -> None:
         """Cap the section: emit the capstone (when earned), close the scope mark.
 
-        Calling this inside an open :meth:`step` body is unsupported.
+        Calling this inside an open `step` body is unsupported.
         """
 
         self._emit_capstone()
@@ -129,7 +129,7 @@ class BootFlow:
 
 
 def _app_version() -> str:
-    """The installed package version as ``"vX.Y.Z"`` (empty if undeterminable)."""
+    """The installed package version as `"vX.Y.Z"` (empty if undeterminable)."""
 
     try:
         return f"v{version('pearlarr')}"

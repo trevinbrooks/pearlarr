@@ -1,11 +1,11 @@
 # pyright: strict
-"""Characterization tests for the ``MappingEntry`` resolution boundary.
+"""Characterization tests for the `MappingEntry` resolution boundary.
 
 These pin the two producer paths (Kometa Anime-IDs and AniBridge) end-to-end
-through ``MappingResolver.get_anilist_ids``, plus the ``.mode`` discriminant and
+through `MappingResolver.get_anilist_ids`, plus the `.mode` discriminant and
 the field defaults. The boundary had no coverage before the TypedDict ->
 dataclass deepening, so these guard the behavior the dataclass must preserve:
-which mode an entry drives, and the exact ``.get(..., default)`` values the
+which mode an entry drives, and the exact `.get(..., default)` values the
 former dict reads produced.
 """
 
@@ -114,7 +114,7 @@ class TestAniBridgePath:
 
 
 class TestModeDiscriminant:
-    """``mode`` keys off presence, not truthiness (the empty-dict trap)."""
+    """`mode` keys off presence, not truthiness (the empty-dict trap)."""
 
     def test_empty_tvdb_mappings_is_still_anibridge(self) -> None:
         # The former "tvdb_mappings" in mapping was True even for an empty dict.

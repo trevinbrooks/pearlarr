@@ -1,13 +1,13 @@
 """The wait-pass producer: engine snapshots in, hub events out (PR5).
 
-The engine drives a :class:`WaitView` while it waits on each grabbed torrent to
-download and then import, pushing one immutable :class:`WaitSnapshot` per poll
-cycle. Nothing renders here: :class:`HubWaitView` - the narrator - turns each
-push into hub events (``WaitStarted`` on the first snapshot via a
-:class:`~.output.scopes.WaitScope`, one ``TorrentGraduated`` per newly-terminal
-torrent, ``WaitProgress`` per poll, the ``WaitFinished`` tally on close), and
+The engine drives a `WaitView` while it waits on each grabbed torrent to
+download and then import, pushing one immutable `WaitSnapshot` per poll
+cycle. Nothing renders here: `HubWaitView` - the narrator - turns each
+push into hub events (`WaitStarted` on the first snapshot via a
+`WaitScope`, one `TorrentGraduated` per newly-terminal
+torrent, `WaitProgress` per poll, the `WaitFinished` tally on close), and
 the renderers own every look decision: the RichRenderer's
-:class:`~.output.wait_region.WaitRegion` draws the live cockpit / non-TTY
+`WaitRegion` draws the live cockpit / non-TTY
 digest, and the hub's text sinks write the structured file/plain/json lines.
 Every method is total: a presentation bug degrades to a no-op, never aborting
 the wait loop or the end-of-run cache save.
@@ -47,8 +47,8 @@ class WaitOutcomeRow:
 class WaitResult:
     """The outcome of a whole wait pass - the completion notification's payload.
 
-    Returned by :meth:`ImportWaitManager.run_monitor` so the run loop can push
-    the Discord/webhook completion notification (``Notifier.push_wait_summary``)
+    Returned by `ImportWaitManager.run_monitor` so the run loop can push
+    the Discord/webhook completion notification (`Notifier.push_wait_summary`)
     without re-deriving state.
     """
 
@@ -100,7 +100,7 @@ def graduations(seen: AbstractSet[str], snapshot: WaitSnapshot) -> list[TorrentV
 class WaitView(ABC):
     """The small interface the engine drives while waiting on downloads/imports.
 
-    The engine pushes a full :class:`WaitSnapshot` each poll cycle. Both methods
+    The engine pushes a full `WaitSnapshot` each poll cycle. Both methods
     MUST be total (never raise) so a presentation bug can't abort the wait loop
     or the end-of-run cache save.
     """
@@ -207,11 +207,11 @@ def make_wait_view(logger: logging.Logger, *, poll_s: int, digest_interval: int 
     """The production narrator, probed off the logger's console.
 
     Args:
-        logger (logging.Logger): The app logger; its rich console handler is
-            probed so ``wants_telemetry`` matches what the console will draw
+        logger: The app logger; its rich console handler is
+            probed so `wants_telemetry` matches what the console will draw
             (per-row telemetry exists only on the live-TTY cockpit).
-        poll_s (int): The poll cadence - the floor for the non-TTY digest interval.
-        digest_interval (int): Target seconds between non-TTY aggregate pulses.
+        poll_s: The poll cadence - the floor for the non-TTY digest interval.
+        digest_interval: Target seconds between non-TTY aggregate pulses.
     """
 
     console = console_of(logger)

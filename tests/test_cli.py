@@ -1,41 +1,41 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# ``_schedule_hours`` is a deliberately under-test private helper; the repo already
+# `_schedule_hours` is a deliberately under-test private helper; the repo already
 # disables reportPrivateUsage for all of tests/, but the strict directive above
 # re-enables it, so restore the repo's test policy here.
 """Tests for the Pearlarr CLI commands.
 
 Pins the behaviors the commands must guarantee:
 
-* A corrupt / not-a-database ``cache.db`` is *reported*, never crashed on - the
-  ``stats`` and ``check`` diagnostics (and ``backup``) return a clean False instead
-  of letting a ``sqlite3`` traceback escape (finding #4). ``check`` exists to report
+* A corrupt / not-a-database `cache.db` is *reported*, never crashed on - the
+  `stats` and `check` diagnostics (and `backup`) return a clean False instead
+  of letting a `sqlite3` traceback escape (finding #4). `check` exists to report
   bad integrity, so it must survive the very corruption it diagnoses.
-* The destructive commands (``restore`` / ``remove``) take the single-instance run
+* The destructive commands (`restore` / `remove`) take the single-instance run
   lock first and refuse while a run is active, so they never unlink or replace the
   live db out from under it (finding #5).
 * Failure paths report cleanly (missing files echo one hint line, not a traceback),
   failure text goes to stderr (so `pearlarr config show > cfg.yml` stays clean)
   while success output stays on stdout, and a False return maps to exit code 1
   through the Typer apps' result callback.
-* ``config init`` never overwrites a filled-in config.yml without ``--force``.
-* ``run single`` with no selection flag runs every *configured* arr (scheduled-mode
+* `config init` never overwrites a filled-in config.yml without `--force`.
+* `run single` with no selection flag runs every *configured* arr (scheduled-mode
   symmetry); an explicit flag for an unconfigured arr refuses cleanly, an implicit
   selection skips it with a dim ledger note - except a half-configured arr (url
-  without api_key), whose skip warns by name (``configured_arrs``).
-* The inspection commands (``config validate`` / ``config show``) never write the
-  starter template, and ``show`` masks secret-named values (plus the free-form
-  ``qbittorrent.options`` block and URL-embedded logins) while keeping unset
-  ones ``null``.
-* ``advanced.log_level`` is applied to CLI runs as soon as the config is read,
-  and ``--log-level`` overrides it (cli > config).
+  without api_key), whose skip warns by name (`configured_arrs`).
+* The inspection commands (`config validate` / `config show`) never write the
+  starter template, and `show` masks secret-named values (plus the free-form
+  `qbittorrent.options` block and URL-embedded logins) while keeping unset
+  ones `null`.
+* `advanced.log_level` is applied to CLI runs as soon as the config is read,
+  and `--log-level` overrides it (cli > config).
 * A missing config exits 1 with the starter template written (no silent
   skip-and-retry); an invalid config keeps the skip+retry contract in scheduled
   mode; SIGTERM stops the scheduled loop with exit code 0.
 
-Each test points ``resolve_paths()`` at its own ``tmp_path`` via ``PEARLARR_DATA_DIR``
-and calls the command functions directly (they return ``bool``); the exit-code
-tests go through ``CliRunner`` since the callback only runs inside typer.
+Each test points `resolve_paths()` at its own `tmp_path` via `PEARLARR_DATA_DIR`
+and calls the command functions directly (they return `bool`); the exit-code
+tests go through `CliRunner` since the callback only runs inside typer.
 """
 
 import io
@@ -119,11 +119,11 @@ def _starter_text() -> str:
 
 
 def _build_cache(tmp_path: Path) -> None:
-    """Write a real on-disk ``cache.db`` under ``tmp_path`` holding one entry.
+    """Write a real on-disk `cache.db` under `tmp_path` holding one entry.
 
-    Uses the normal load -> stage -> ``save(preview=False)`` path, which promotes
+    Uses the normal load -> stage -> `save(preview=False)` path, which promotes
     the in-memory db to the file, so the fixture matches a cache a real run leaves
-    behind (entry ``(SONARR, 7)`` with ``name="X"``).
+    behind (entry `(SONARR, 7)` with `name="X"`).
     """
 
     store = CacheStore.load(str(tmp_path / "cache.db"), config_checksum="x")
@@ -413,7 +413,7 @@ class TestConfigInit:
 
 
 class _RunArrsRecorder:
-    """A stand-in for ``bootstrap.run_arrs`` that records how ``run_single`` calls it."""
+    """A stand-in for `bootstrap.run_arrs` that records how `run_single` calls it."""
 
     def __init__(self) -> None:
         self.arrs: list[tuple[Arr, int | None]] | None = None
@@ -441,10 +441,10 @@ class _RunArrsRecorder:
 class TestRunSingleSelection:
     """No selection flag = every arr, implicitly; any flag/id narrows explicitly.
 
-    ``run_arrs`` is faked out, so these pin only the selection wiring: which
-    ``(arr, item_id)`` pairs are requested and whether the request counts as
+    `run_arrs` is faked out, so these pin only the selection wiring: which
+    `(arr, item_id)` pairs are requested and whether the request counts as
     explicit (an explicit request for an unconfigured arr must refuse rather
-    than skip - that arm is pinned on ``configured_arrs`` below).
+    than skip - that arm is pinned on `configured_arrs` below).
     """
 
     @pytest.fixture
@@ -782,7 +782,7 @@ class TestSelectionSettlesBeforeMappingFetch:
 
 
 class TestConfigInspection:
-    """``config validate`` / ``config show``: report cleanly, never write files."""
+    """`config validate` / `config show`: report cleanly, never write files."""
 
     def test_validate_missing_file_points_at_init_and_writes_nothing(
         self,
@@ -931,9 +931,9 @@ class TestApplyLogLevel:
 
 
 class TestLogLevelWiring:
-    """The headline fix: ``advanced.log_level`` reaches CLI runs, ``--log-level`` wins.
+    """The headline fix: `advanced.log_level` reaches CLI runs, `--log-level` wins.
 
-    ``apply_log_level`` itself is pinned above; these pin that ``run_arrs``
+    `apply_log_level` itself is pinned above; these pin that `run_arrs`
     actually calls it once the config is readable, with cli > config precedence
     (the original bug: the config level was dead on every CLI run).
     """
@@ -978,7 +978,7 @@ class TestLogLevelWiring:
 
 
 class _SetupLoggerRecorder:
-    """A stand-in for ``cli.setup_logger`` recording each call's context.
+    """A stand-in for `cli.setup_logger` recording each call's context.
 
     Captures the console_format it got and whether the output bridge was
     already installed on the app logger AT CALL TIME (the install-order pin:
@@ -998,22 +998,22 @@ class _SetupLoggerRecorder:
 
 
 class _StopScheduledLoop(Exception):
-    """Breaks ``run_scheduled``'s infinite loop from a faked ``run_arrs``."""
+    """Breaks `run_scheduled`'s infinite loop from a faked `run_arrs`."""
 
 
 def _stop_loop(*args: object, **kwargs: object) -> NoReturn:
-    """A ``run_arrs`` stand-in that breaks ``run_scheduled``'s loop."""
+    """A `run_arrs` stand-in that breaks `run_scheduled`'s loop."""
 
     raise _StopScheduledLoop
 
 
 def _swallow_signal(signum: int, handler: object) -> None:
-    """A no-op ``signal.signal``: a test must never re-point the pytest process's
+    """A no-op `signal.signal`: a test must never re-point the pytest process's
     real SIGTERM disposition (the registration itself is pinned separately)."""
 
 
 class _CycleStampingRenderer:
-    """Records each hub event with how many ``begin_cycle`` calls preceded it,
+    """Records each hub event with how many `begin_cycle` calls preceded it,
     so post-begin ordering (CycleStarted lands in the fresh cycle) is assertable."""
 
     writes_file_only: ClassVar[bool] = False
@@ -1036,7 +1036,7 @@ class _CycleStampingRenderer:
 
 
 def _install_cycle_recorder(monkeypatch: pytest.MonkeyPatch) -> _CycleStampingRenderer:
-    """Swap ``cli._install_output_hub`` for a hub over one recording renderer."""
+    """Swap `cli._install_output_hub` for a hub over one recording renderer."""
 
     renderer = _CycleStampingRenderer()
 
@@ -1051,10 +1051,10 @@ def _install_cycle_recorder(monkeypatch: pytest.MonkeyPatch) -> _CycleStampingRe
 
 
 class TestLogFormatWiring:
-    """``advanced.log_format`` reaches ``setup_logger`` on both run commands.
+    """`advanced.log_format` reaches `setup_logger` on both run commands.
 
     The renderers themselves are pinned in test_log_format.py; these pin that
-    the run commands resolve the config format and thread ``console_format``
+    the run commands resolve the config format and thread `console_format`
     through (scheduled mode re-resolves each cycle, before the logger is
     rebuilt), AND that the hub + bridge are installed BEFORE setup_logger runs
     (advisor #17: an invalid-level complaint fired inside it must reach the
@@ -1100,7 +1100,7 @@ class TestLogFormatWiring:
 
 
 class TestConsoleFormat:
-    """``_console_format``: a silent pre-logger peek folding every failure to "auto"."""
+    """`_console_format`: a silent pre-logger peek folding every failure to "auto"."""
 
     def test_missing_config_folds_to_auto_and_writes_nothing(self, tmp_path: Path) -> None:
         missing = tmp_path / "config.yml"
@@ -1126,8 +1126,8 @@ class TestConsoleFormat:
 
 
 class TestResolvedFormat:
-    """``_resolved_format``: the ONE "auto" fold — the same resolved value feeds
-    ``setup_logger`` and ``hub.begin_cycle``, so the two can never disagree."""
+    """`_resolved_format`: the ONE "auto" fold — the same resolved value feeds
+    `setup_logger` and `hub.begin_cycle`, so the two can never disagree."""
 
     def test_auto_folds_to_plain_off_a_tty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sys, "stdout", io.StringIO())
@@ -1217,8 +1217,8 @@ class TestHubSeats:
 class TestMissingConfigExitsNonzero:
     """A virgin data dir: exit 1 with the starter template written, never a silent retry.
 
-    Driven end-to-end through CliRunner: the ``typer.Exit`` raised inside
-    ``load_shared_config``'s FileNotFoundError arm must escape ``run_arrs``'
+    Driven end-to-end through CliRunner: the `typer.Exit` raised inside
+    `load_shared_config`'s FileNotFoundError arm must escape `run_arrs`'
     finallys (boot view, web client, run lock all release) and reach typer as
     exit code 1 - pinning the whole propagation path, not just the helper.
     """
@@ -1235,7 +1235,7 @@ class TestMissingConfigExitsNonzero:
 
 
 class TestUnknownTrackerWarning:
-    """Unknown ``seadex.trackers`` values warn at load - they silently match nothing.
+    """Unknown `seadex.trackers` values warn at load - they silently match nothing.
 
     Warn-not-reject: strict key validation already rejects unknown KEYS; an unknown
     VALUE is a typo that would quietly filter out every release from that tracker.
@@ -1273,7 +1273,7 @@ class TestUnknownTrackerWarning:
 
 
 class TestUnexpectedConfigErrorSkips:
-    """``load_shared_config``'s last-resort arm: ERROR with traceback, then skip."""
+    """`load_shared_config`'s last-resort arm: ERROR with traceback, then skip."""
 
     def test_unexpected_load_error_reports_and_skips(
         self,
@@ -1307,8 +1307,8 @@ _needs_posix_permissions = pytest.mark.skipif(
 class TestUnwritableDataDir:
     """An unwritable data directory: one actionable stderr line + exit 1, no traceback.
 
-    ``ensure_data_dir``/``setup_logger`` run before any logger exists, so the
-    report must go straight to stderr; ``config init``'s template copy gets the
+    `ensure_data_dir`/`setup_logger` run before any logger exists, so the
+    report must go straight to stderr; `config init`'s template copy gets the
     same treatment. An unreadable CONFIG in a healthy dir instead keeps the
     skip+retry contract - exiting would kill the scheduled daemon.
     """
@@ -1622,7 +1622,7 @@ class TestScheduleHours:
 
 
 def test_trust_os_certificates_swaps_in_the_os_trust_store() -> None:
-    """The root callback's TLS hook swaps ``ssl.SSLContext`` for truststore's
+    """The root callback's TLS hook swaps `ssl.SSLContext` for truststore's
     OS-store-backed one, before any HTTP client builds a context.
     """
 

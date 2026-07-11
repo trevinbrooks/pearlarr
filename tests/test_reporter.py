@@ -3,15 +3,15 @@
 
 The run loop and the end-of-run summary had no coverage before this phase, so
 these pin the run-state contracts the orchestrator depends on: the stats-tally
-counters each ``log_*`` method bumps, the active-title attribution set by
-``log_al_title``, and that the summary renders without error on both the real
-and dry-run paths. Presentation is captured as EMITTED events (via the ``emit``
+counters each `log_*` method bumps, the active-title attribution set by
+`log_al_title`, and that the summary renders without error on both the real
+and dry-run paths. Presentation is captured as EMITTED events (via the `emit`
 seam) and, where a test pins output, re-derived to lines through the shipped
-builders; most tests just assert on the :class:`RunContext` mutations.
+builders; most tests just assert on the `RunContext` mutations.
 
 The collaborators are real, not mocks: the reporter is built with the shared
-in-memory :class:`FakeCacheStore` (typed by ``AbstractCacheStore``) and a real
-:class:`AniListGateway` whose own cache store is faked - the "construct the
+in-memory `FakeCacheStore` (typed by `AbstractCacheStore`) and a real
+`AniListGateway` whose own cache store is faked - the "construct the
 composite, fake its leaves" seam - so the whole file type-checks at strict.
 """
 
@@ -61,7 +61,7 @@ def _record(
 
     The reporter EMITS events through the recorder; tests that pin output re-derive
     lines from the events. A real gateway with a faked cache store: the reporter
-    only reads/updates its ``al_cache`` dict, so the real wiring runs without a
+    only reads/updates its `al_cache` dict, so the real wiring runs without a
     network.
     """
 
@@ -190,7 +190,7 @@ class TestStatsCounters:
 
 
 class _ScriptedTitleClient(AniListClient):
-    """Checked scripted ``AniListClient``: a fixed resolvable title, queries recorded.
+    """Checked scripted `AniListClient`: a fixed resolvable title, queries recorded.
 
     Injected into the gateway under the reporter, so a title lookup exercises
     the REAL gateway get-or-fetch (cache warm + store) over a canned wire body.
@@ -217,7 +217,7 @@ class TestActiveTitle:
 
 
 class TestEntryHeaderAlId:
-    """G1: ``al_id`` on the emitted EntryHeader is producer-unverified - garbage
+    """G1: `al_id` on the emitted EntryHeader is producer-unverified - garbage
     in either header-opening path passed the whole suite - so pin it on both."""
 
     def _header(self, events: list[Event]) -> EntryHeader:
@@ -238,7 +238,7 @@ class TestEntryHeaderAlId:
 
 
 class TestCloseBoundaries:
-    """``scan_finished`` / ``run_finished`` close the open entry, then state the boundary.
+    """`scan_finished` / `run_finished` close the open entry, then state the boundary.
 
     Closing entry-first is what keeps a later diagnostic (a reconcile warning, a
     leg-fatal error) from rendering inside the entry the scan happened to end on.
@@ -521,7 +521,7 @@ class TestSummarySeadexDownRow:
 
 class TestPrivateOnlyTip:
     """The private-only guidance tip gates on the record's KIND, never on the
-    display ``reason`` text (rewording the string must not kill the tip)."""
+    display `reason` text (rewording the string must not kill the tip)."""
 
     def _needs_ctx(self, kind: NeedsActionKind) -> RunContext:
         ctx = RunContext(arr=Arr.SONARR)
@@ -574,7 +574,7 @@ def _action_messages(
 ) -> tuple[bool, list[str]]:
     """The status + per-release rows log_seadex_action re-derives to.
 
-    Passes an empty ``seadex_dict`` so the recommended-group rows are skipped and
+    Passes an empty `seadex_dict` so the recommended-group rows are skipped and
     the assertions key only on the status line and the per-release outcome rows.
     """
 

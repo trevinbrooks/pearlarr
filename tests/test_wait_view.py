@@ -1,13 +1,13 @@
 # pyright: strict
-"""Tests for the wait-pass narrator (``wait_view``).
+"""Tests for the wait-pass narrator (`wait_view`).
 
-The engine pushes one immutable :class:`WaitSnapshot` per poll cycle; the view
-side is a single narrator (:class:`HubWaitView`) that turns those pushes into
+The engine pushes one immutable `WaitSnapshot` per poll cycle; the view
+side is a single narrator (`HubWaitView`) that turns those pushes into
 hub events - rendering lives behind the hub (WaitRegion for the console, the
 textline sinks for file/plain/json; pinned in test_output_wait_region /
 test_output_textline). These pin the narrator's event grammar (lazy open,
-graduation dedup + exact field mapping, the close tally), the ``make_wait_view``
-probe (wants_telemetry + the pulse interval), the pure ``graduations`` helper,
+graduation dedup + exact field mapping, the close tally), the `make_wait_view`
+probe (wants_telemetry + the pulse interval), the pure `graduations` helper,
 the WaitResult counting, and the no-throw contract.
 """
 
@@ -292,7 +292,7 @@ class TestHubWaitViewNarration:
 
 
 class _FlakyEmit:
-    """An emit stand-in that starts raising after ``allow`` successful events."""
+    """An emit stand-in that starts raising after `allow` successful events."""
 
     def __init__(self, allow: int) -> None:
         self.calls = 0
