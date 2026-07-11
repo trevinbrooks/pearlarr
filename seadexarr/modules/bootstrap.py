@@ -22,8 +22,8 @@ from pydantic import ValidationError
 
 from .boot_flow import BootFlow
 from .config import KNOWN_TRACKERS, AppConfig, Arr, config_permissions_loose
-from .log import LOG_NAME, apply_log_level
-from .output import Diagnostic, RunFinished, Severity, emit_to_hub
+from .log import apply_log_level
+from .output import RunFinished, emit_to_hub, hub_note
 from .runlock import single_instance_lock
 
 if TYPE_CHECKING:
@@ -229,13 +229,7 @@ def configured_arrs(
         else:
             # Flat message: the rich console indents it via placement (the open
             # boot section); the file/plain surfaces take a structured line.
-            emit_to_hub(
-                Diagnostic(
-                    severity=Severity.INFO,
-                    message=f"{arr.capitalize()} not configured - skipped",
-                    origin=LOG_NAME,
-                ),
-            )
+            hub_note(f"{arr.capitalize()} not configured - skipped")
 
     kept = [(arr, item_id) for arr, item_id in arrs if arr not in missing]
     if not kept:

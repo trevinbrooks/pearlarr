@@ -469,8 +469,9 @@ The general user should leave all three blank (auto-download):
 - `advanced.log_format` — console output format. `auto` (the default) renders the rich styled
   console on a terminal and structured log lines (timestamp, level, context, message) when
   piped or under Docker; `rich`, `plain` and `json` force a renderer. `plain` output matches
-  the log file byte for byte; `json` emits one JSON object per event. `plain` and `json` also
-  disable the live progress views (expected). The log file always uses the structured format
+  the log file line for line, except for forensic file-only diagnostics that only the file
+  keeps; `json` emits one JSON object per event. `plain` and `json` also disable the live
+  progress views (expected). The log file always uses the structured format
 
 ## Scripting
 

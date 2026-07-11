@@ -1450,11 +1450,12 @@ class TestScheduledLifecycle:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         renderer = _install_cycle_recorder(monkeypatch)
 
-        before = datetime.now()
+        before = datetime.now().astimezone()
         with pytest.raises(_StopScheduledLoop):
             run_scheduled()
 
         (scheduled,) = [e for e, _ in renderer.events if isinstance(e, NextRunScheduled)]
+        assert scheduled.at.tzinfo is not None  # aware: the serialized form carries its offset
         assert abs((scheduled.at - (before + timedelta(hours=6))).total_seconds()) < 60
 
     def test_run_scheduled_registers_the_sigterm_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:

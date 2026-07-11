@@ -355,9 +355,10 @@ def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact 
         case CycleStarted(number=number):
             return _Fact("cycle_started", severity, "cycle started", (Field("number", number),), None, "run")
         case NextRunScheduled(at=at):
-            return _Fact(
-                "next_run_scheduled", severity, "next run scheduled", (Field("at", at.isoformat()),), None, "run"
-            )
+            # Seconds precision keeps the offset and drops microseconds; the
+            # json surface shares this Field, matching its "time" key's shape.
+            fields = (Field("at", at.isoformat(timespec="seconds")),)
+            return _Fact("next_run_scheduled", severity, "next run scheduled", fields, None, "run")
         case ScopeOpened(scope=scope, label=label):
             fields = (*_scope_fields(scope), Field("label", label))
             return _Fact("scope_opened", severity, "scope opened", fields, None, "scope")

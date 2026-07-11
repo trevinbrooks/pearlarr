@@ -68,7 +68,7 @@ from .events import (
     WaitStarted,
 )
 from .live_region import LiveRegion
-from .scan_lines import ScanEvent, render_legacy_lines, scan_event_lines
+from .scan_lines import LegacyLine, ScanEvent, render_legacy_lines, scan_event_lines
 from .trace import CapturedTrace
 from .wait_region import WaitRegion
 from ..console_caps import CapsCache, console_of
@@ -227,18 +227,17 @@ class RichRenderer:
             )
 
     def _next_run(self, at: datetime) -> None:
-        """The scheduled-mode footer, plain and level-gated like a raw INFO record.
+        """The scheduled-mode footer, through the shared durable-line route.
 
         Weekday included: interval_hours can exceed 24, so a bare HH:MM would be
         ambiguous about which day it means.
         """
 
-        if self._level > logging.INFO:
-            return
         console = self._console_source()
         if console is None:
             return
-        console.print(Text(f"Next scheduled run at {at:%a %H:%M}"), highlight=False, soft_wrap=True)
+        line = LegacyLine(logging.INFO, f"Next scheduled run at {at:%a %H:%M}", None)
+        render_legacy_lines(console, (line,), self._level)
 
     def _scan(self, event: ScanEvent) -> None:
         """The scan console arm: the shared legacy lines over the shared Console.

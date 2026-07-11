@@ -271,6 +271,14 @@ class LogLevel(StrEnum):
     CRITICAL = "CRITICAL"
 
 
+def resolve_console_format(console_format: LogFormat) -> LogFormat:
+    """Fold "auto" to the tty-detected concrete format — the ONE fold home."""
+
+    if console_format == "auto":
+        return "rich" if sys.stdout.isatty() else "plain"
+    return console_format
+
+
 def console_level(level: int) -> int:
     """The RICH-console threshold for a logger level (the handlers here and the
     RichRenderer's diagnostic floor); the text surfaces use the raw level (S4).
@@ -369,8 +377,7 @@ def setup_logger(
     logging.getLogger().setLevel(level)
 
     # Defensive fold for programmatic callers; cli resolves before calling.
-    if console_format == "auto":
-        console_format = "rich" if sys.stdout.isatty() else "plain"
+    console_format = resolve_console_format(console_format)
 
     if console_format == "rich":
         # Console logging through rich: routine lines print with no level

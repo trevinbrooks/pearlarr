@@ -51,8 +51,7 @@ from typing import Any, NamedTuple, TypedDict, cast, override
 from seadex import EntryRecord
 
 from .config import Arr
-from .log import LOG_NAME
-from .output import Diagnostic, Severity, emit_to_hub
+from .output import hub_note
 from .sqlite_util import connect as _sqlite_connect
 from .sqlite_util import open_or_quarantine, rollback_and_close
 from .. import __version__
@@ -203,13 +202,7 @@ def _ensure_schema(conn: sqlite3.Connection, path: str) -> None:
         except BaseException:
             conn.rollback()
             raise
-        emit_to_hub(
-            Diagnostic(
-                severity=Severity.INFO,
-                message=f"Upgraded cache database schema v{step} -> v{step + 1}",
-                origin=LOG_NAME,
-            ),
-        )
+        hub_note(f"Upgraded cache database schema v{step} -> v{step + 1}")
 
 
 def record_is_fresh(

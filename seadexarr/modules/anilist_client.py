@@ -11,8 +11,7 @@ import httpx
 from pydantic import ValidationError
 
 from .json_narrow import is_json_list, is_json_obj
-from .log import LOG_NAME
-from .output import Diagnostic, Severity, emit_to_hub
+from .output import Severity, hub_note
 from .seadex_types import AniListError, AniListMediaNode, validation_summary
 
 API_URL = "https://graphql.anilist.co"
@@ -109,13 +108,7 @@ class AniListRetryLog:
     def waiting(self, reason: str, wait: float, retry: int, *, severity: Severity = Severity.INFO) -> None:
         """One backoff notice, so a long Retry-After wait doesn't look like a hang."""
 
-        emit_to_hub(
-            Diagnostic(
-                severity=severity,
-                message=f"AniList {reason}; waiting {wait:.0f}s (retry {retry}/{MAX_RETRIES})",
-                origin=LOG_NAME,
-            ),
-        )
+        hub_note(f"AniList {reason}; waiting {wait:.0f}s (retry {retry}/{MAX_RETRIES})", severity=severity)
 
     def gave_up(self) -> None:
         """Warn ONCE per run that AniList lookups are degraded, then stay quiet."""

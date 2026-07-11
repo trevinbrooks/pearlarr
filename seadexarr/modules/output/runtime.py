@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from typing import Final
 
-from .events import Event
+from .events import Diagnostic, Event, Severity
 from .hub import OutputHub, SeverityCounts
+from ..log import LOG_NAME
 
 _DEFAULT_HUB: Final = OutputHub([])
 
@@ -29,6 +30,12 @@ def emit_to_hub(event: Event) -> None:
     """
 
     current_hub().emit(event)
+
+
+def hub_note(message: str, *, severity: Severity = Severity.INFO) -> None:
+    """A first-party one-liner note through the process hub (the logger.info replacements)."""
+
+    current_hub().emit(Diagnostic(severity=severity, message=message, origin=LOG_NAME))
 
 
 def hub_counts() -> SeverityCounts:

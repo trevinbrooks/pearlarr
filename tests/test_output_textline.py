@@ -14,7 +14,7 @@ offset-bearing time).
 import io
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import get_args, override
 
@@ -116,6 +116,14 @@ def test_run_started_line() -> None:
 def test_run_started_omits_an_empty_version() -> None:
     line = _format(RunStarted(version="", data_dir="/data"))
     assert line == f"{_TS} INFO [run] SeaDexArr started data_dir=/data"
+
+
+def test_next_run_scheduled_at_keeps_the_offset_and_drops_microseconds() -> None:
+    # The producer emits an AWARE datetime; the serialized field must carry the
+    # UTC offset (the json "time" key's shape) and truncate to seconds.
+    at = datetime(2026, 1, 2, 3, 4, 5, 678901, tzinfo=timezone(timedelta(hours=-5)))
+    line = _format(NextRunScheduled(at=at))
+    assert line == f"{_TS} INFO [run] next run scheduled at=2026-01-02T03:04:05-05:00"
 
 
 def test_boot_step_finished_line_keeps_the_step_path() -> None:
@@ -827,7 +835,7 @@ def _exemplars() -> list[Event]:
     return [
         RunStarted(version="v1.0.0", data_dir="/d"),
         CycleStarted(number=1),
-        NextRunScheduled(at=_WHEN),
+        NextRunScheduled(at=_WHEN.astimezone()),
         ScopeOpened(scope=_ENTRY, label="T"),
         ScopeClosed(scope=_ENTRY),
         BootStepStarted(scope=_STEP, label="Reading config"),

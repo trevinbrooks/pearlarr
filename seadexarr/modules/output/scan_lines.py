@@ -41,6 +41,7 @@ from .events import (
     RunSummaryReady,
     ScanStarted,
     SkipReason,
+    severity_of,
 )
 from ..log import (
     DETAIL_INDENT,
@@ -265,14 +266,14 @@ def release_skipped_lines(event: ReleaseSkipped) -> tuple[LegacyLine, ...]:
 
 
 def grab_failed_lines(event: GrabFailed) -> tuple[LegacyLine, ...]:
-    """A contained grab failure's "failed" row; WARNING mirrors ``severity_of``."""
+    """A contained grab failure's "failed" row, at ``severity_of``'s level."""
 
     return (
         _detail_kv(
             "failed",
             f"could not grab {event.url}: {event.error}; will retry next run",
             value_style=accent_style(Accent.CAUTION),
-            level=logging.WARNING,
+            level=int(severity_of(event)),
         ),
     )
 

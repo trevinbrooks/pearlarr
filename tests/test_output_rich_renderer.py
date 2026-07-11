@@ -14,7 +14,7 @@ ReleaseSkipped/GrabFailed scan routing). The ENTRY-indent arm is pinned in
 
 import io
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from rich.console import Console
 
@@ -255,7 +255,8 @@ class TestNoOps:
 class TestDurableLoopLines:
     """PR6 Band D: the scheduled-loop footer arm + the flipped release facts."""
 
-    _AT = datetime(2026, 1, 1, 23, 5)  # a Thursday
+    # A Thursday; aware (the producer's contract) — the footer shows wall time.
+    _AT = datetime(2026, 1, 1, 23, 5, tzinfo=timezone(timedelta(hours=-5)))
 
     def test_next_run_scheduled_prints_the_plain_footer(self) -> None:
         renderer, stream = _renderer()

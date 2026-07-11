@@ -28,19 +28,18 @@ from .config import (
 )
 from .console_caps import CapsCache
 from .json_narrow import is_json_list, is_json_obj
-from .log import LOG_NAME, LogLevel, setup_logger
+from .log import LogLevel, resolve_console_format, setup_logger
 from .manual_import import ImportWaitMode
 from .output import (
     CycleStarted,
-    Diagnostic,
     FileLogSink,
     JsonRenderer,
     LineRenderer,
     NextRunScheduled,
     OutputHub,
     Renderer,
-    Severity,
     emit_to_hub,
+    hub_note,
     install_hub,
 )
 from .output.bridge import install_bridge
@@ -285,8 +284,8 @@ def _console_format(config_path: str) -> LogFormat:
     """The configured ``advanced.log_format`` peek, still possibly "auto".
 
     Folds to "auto" when the config is missing or unreadable - the real load
-    owns reporting those. ``_resolved_format`` (the one resolution home) folds
-    "auto" to a concrete format.
+    owns reporting those. ``_resolved_format`` folds "auto" to a concrete
+    format via ``resolve_console_format`` (the one fold home).
     """
 
     peeked = _peek_config(config_path)
@@ -294,17 +293,14 @@ def _console_format(config_path: str) -> LogFormat:
 
 
 def _resolved_format(config_path: str) -> LogFormat:
-    """The cycle's console format, with "auto" folded HERE, once.
+    """The cycle's console format, "auto" folded once (``resolve_console_format``).
 
     Both run commands call this once per cycle and feed the SAME resolved value
     to ``setup_logger`` AND ``hub.begin_cycle``, so the handler graph and the
     hub's console seat can never disagree within a cycle.
     """
 
-    configured = _console_format(config_path)
-    if configured == "auto":
-        return "rich" if sys.stdout.isatty() else "plain"
-    return configured
+    return resolve_console_format(_console_format(config_path))
 
 
 def _data_dir_unwritable(data_dir: str, e: OSError) -> NoReturn:
@@ -339,10 +335,9 @@ def _console_seat(console_format: LogFormat, caps_cache: CapsCache) -> Renderer:
     Console); plain and json get the matching stdout text seat.
     """
 
-    if console_format == "auto":
-        # Unreachable from production (cli resolves pre-begin_cycle); folded
-        # defensively for programmatic callers.
-        console_format = "rich" if sys.stdout.isatty() else "plain"
+    # "auto" is unreachable from production (cli resolves pre-begin_cycle);
+    # folded defensively for programmatic callers.
+    console_format = resolve_console_format(console_format)
     if console_format == "rich":
         return RichRenderer(caps_cache=caps_cache)
     if console_format == "json":
@@ -415,7 +410,7 @@ def _handle_sigterm(signum: int, frame: FrameType | None) -> NoReturn:
     inter-cycle ``time.sleep``, so shutdown is prompt at any point in the loop.
     """
 
-    emit_to_hub(Diagnostic(severity=Severity.INFO, message="Received SIGTERM; exiting.", origin=LOG_NAME))
+    hub_note("Received SIGTERM; exiting.")
     raise SystemExit(0)
 
 
@@ -475,7 +470,9 @@ def run_scheduled(
             retry_note=f"will retry in {schedule_time:g}h (Ctrl-C to stop)",
         )
 
-        emit_to_hub(NextRunScheduled(at=datetime.now() + timedelta(hours=schedule_time)))
+        # Aware (fixed local offset), so the serialized timestamp carries its
+        # UTC offset and matches the sleep-seconds semantics across DST edges.
+        emit_to_hub(NextRunScheduled(at=datetime.now().astimezone() + timedelta(hours=schedule_time)))
 
         time.sleep(schedule_time * 3600)
 
