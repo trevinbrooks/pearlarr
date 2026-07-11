@@ -75,9 +75,11 @@ class _InterruptingRenderer(_FailingRenderer):
 
 
 class _FailOnMarkerRenderer(_FailingRenderer):
-    """Raises on the marker event (RunStarted) only; renders leg-boundary events
-    (RunFinished) cleanly, so a leg close between failures neither strikes nor
-    resets the strike count."""
+    """Raises on the marker event (RunStarted) only.
+
+    Renders leg-boundary events (RunFinished) cleanly, so a leg close between
+    failures neither strikes nor resets the strike count.
+    """
 
     @override
     def handle(self, event: Event, when: float) -> None:
@@ -129,8 +131,7 @@ class _DoubleEmittingRenderer(_EmittingRenderer):
 
 
 class _LockProbeRenderer:
-    """handle() probes the hub lock from a HELPER thread (the same thread would
-    trivially re-acquire an RLock it owns)."""
+    """`handle()` probes the hub lock from a HELPER thread (the same thread would re-acquire an RLock it owns)."""
 
     writes_file_only: ClassVar[bool] = False
 
@@ -166,8 +167,11 @@ class _LockProbeRenderer:
 
 
 class _GatedRenderer:
-    """Blocks inside handle (on the first event only) until released; records each
-    handled event with its handling thread plus lifecycle calls, in one order log."""
+    """Blocks inside `handle` (on the first event only) until released.
+
+    Records each handled event with its handling thread plus lifecycle calls,
+    in one order log.
+    """
 
     writes_file_only: ClassVar[bool] = False
 
@@ -221,8 +225,11 @@ class _InterruptOnceRenderer:
 
 
 class _ReArmableGate:
-    """Blocks inside handle once per armed episode until released; arm() re-arms it
-    for the next episode — the overflow-note-per-episode reset probe."""
+    """Blocks inside `handle` once per armed episode until released.
+
+    `arm()` re-arms it for the next episode — the overflow-note-per-episode
+    reset probe.
+    """
 
     writes_file_only: ClassVar[bool] = False
 
@@ -327,10 +334,12 @@ class _LifecycleEmitter:
 
 
 class _EmitThenInterrupt:
-    """Emits a follow-up once, then raises KeyboardInterrupt from EVERY handle of
-    the trigger event — the signal-mid-dispatch shape (the marker is a SIGTERM
-    handler's exit line; the repeat raise models a hostile arm on the flush's
-    best-effort re-dispatch)."""
+    """Emits a follow-up once, then raises KeyboardInterrupt from EVERY handle of the trigger event.
+
+    This is the signal-mid-dispatch shape (the marker is a SIGTERM handler's
+    exit line; the repeat raise models a hostile arm on the flush's
+    best-effort re-dispatch).
+    """
 
     writes_file_only: ClassVar[bool] = False
 
@@ -375,8 +384,11 @@ def test_a_raising_renderer_never_breaks_the_survivors() -> None:
 
 
 def test_losing_the_file_sink_escalates_the_note_to_a_counted_visible_error() -> None:
-    """A run must never silently lose its whole log file: when the casualty IS
-    the file surface, the containment note goes visible at ERROR and counts."""
+    """A run must never silently lose its whole log file.
+
+    When the casualty IS the file surface, the containment note goes visible
+    at ERROR and counts.
+    """
 
     flaky, survivor = _FailingFileish(), RecordingRenderer()
     hub = OutputHub([flaky, survivor])
@@ -406,9 +418,12 @@ def test_three_strikes_quarantine_until_begin_cycle_rearms() -> None:
 
 
 def test_strikes_carry_across_a_run_leg_boundary_and_only_begin_cycle_rearms() -> None:
-    """A leg close (RunFinished) is not a cycle turnover. Strikes are a per-cycle
-    budget: they accumulate across the RunFinished leg boundary, so the Nth
-    strike quarantines regardless of the boundary, and only begin_cycle re-arms."""
+    """A leg close (RunFinished) is not a cycle turnover.
+
+    Strikes are a per-cycle budget: they accumulate across the RunFinished leg
+    boundary, so the Nth strike quarantines regardless of the boundary, and
+    only `begin_cycle` re-arms.
+    """
 
     flaky, survivor = _FailOnMarkerRenderer(), RecordingRenderer()
     hub = OutputHub([flaky, survivor])
@@ -443,8 +458,10 @@ def test_strikes_carry_across_a_run_leg_boundary_and_only_begin_cycle_rearms() -
 
 
 def test_quarantine_closes_the_seat_exactly_once_at_the_crossing() -> None:
-    """The live-leak pin: striking out closes the renderer (a struck boot Live
-    must stop repainting), and only the crossing fires it — never skipped events."""
+    """This test pins the live-leak fix: striking out closes the renderer (a struck boot Live must stop repainting).
+
+    Only the crossing fires it — never skipped events.
+    """
 
     flaky, survivor = _FailingRenderer(), RecordingRenderer()
     hub = OutputHub([flaky, survivor])
@@ -534,9 +551,11 @@ def test_reentrant_emits_drain_fifo_before_the_outer_emit_returns() -> None:
 
 
 def test_a_lifecycle_reentrant_emit_enqueues_and_drains_after_the_turnover() -> None:
-    """An emit from inside a renderer's lifecycle call (a bridge-adopted teardown
-    debug) must never start a nested drain against a half-mutated subscriber
-    list; the lifecycle body holds the baton and drains the stragglers after."""
+    """An emit from inside a renderer's lifecycle call (a bridge-adopted teardown debug) must not start a nested drain.
+
+    Starting one against a half-mutated subscriber list is unsafe; the
+    lifecycle body holds the baton and drains the stragglers after.
+    """
 
     emitter = _LifecycleEmitter()
     hub = OutputHub([emitter])
@@ -706,8 +725,11 @@ def test_overflow_sheds_newest_with_one_note_per_episode() -> None:
 
 
 def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch) -> None:
-    """D1: at the cap only diagnostics shed — a fold input (RunFinished) is appended
-    even past the cap, so the breadcrumb frontier can never be corrupted."""
+    """D1: at the cap, only diagnostics shed.
+
+    A fold input (RunFinished) is appended even past the cap, so the
+    breadcrumb frontier can never be corrupted.
+    """
 
     cap = 3
     monkeypatch.setattr("pearlarr.modules.output.hub.QUEUE_CAP", cap)
@@ -736,8 +758,10 @@ def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch
 def test_overflow_sheds_diagnostics_and_re_arms_the_note_per_episode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """D1 kept behavior: diagnostics past the cap shed (still counted at enqueue) with
-    one note per episode; the note re-arms once a drain empties the queue."""
+    """D1 kept behavior: diagnostics past the cap shed (still counted at enqueue) with one note per episode.
+
+    The note re-arms once a drain empties the queue.
+    """
 
     cap = 3
     monkeypatch.setattr("pearlarr.modules.output.hub.QUEUE_CAP", cap)
@@ -932,8 +956,10 @@ def test_the_hub_stamps_one_instant_per_emit_for_every_renderer() -> None:
 
 
 def test_visible_warnings_reach_stderr_while_no_console_seat_is_armed(capsys: pytest.CaptureFixture[str]) -> None:
-    """The install→begin_cycle window (and a quarantined seat): a visible
-    WARNING+ diagnostic must still reach a human, via stderr."""
+    """This covers the install→`begin_cycle` window and a quarantined seat.
+
+    A visible WARNING+ diagnostic must still reach a human, via stderr.
+    """
 
     hub = OutputHub([_FileishRecorder()], console_factory=lambda console_format: NullRenderer())
 
@@ -1117,9 +1143,11 @@ def test_hub_note_with_exc_captures_the_trace() -> None:
 
 
 def test_a_once_key_shed_by_overflow_is_shed_whole_and_lands_on_re_emit() -> None:
-    """A once-keyed diagnostic arriving during an overflow episode must not
-    consume its dedup key (or its count): shed WHOLE, so the post-drain re-emit
-    is the one rendered and the one tallied."""
+    """A once-keyed diagnostic arriving during an overflow episode must not consume its dedup key (or its count).
+
+    It sheds WHOLE, so the post-drain re-emit is the one rendered and the one
+    tallied.
+    """
 
     gated, observer = _GatedRenderer(), RecordingRenderer()
     hub = OutputHub([gated, observer])
@@ -1147,9 +1175,10 @@ def test_a_once_key_shed_by_overflow_is_shed_whole_and_lands_on_re_emit() -> Non
 
 
 def test_a_mid_dispatch_lifecycle_call_keeps_the_baton_and_the_emit_order() -> None:
-    """set_level from inside a renderer's handle (the documented mid-drain
-    lifecycle escape) must not flush re-entrantly or release the OUTER drain's
-    baton: the re-entrant event still dispatches AFTER the in-flight one."""
+    """`set_level` from inside a renderer's handle (the documented mid-drain lifecycle escape) must not flush re-entrantly or release the OUTER drain's baton.
+
+    The re-entrant event still dispatches AFTER the in-flight one.
+    """
 
     recorder = RecordingRenderer()
 
@@ -1189,8 +1218,11 @@ def test_a_mid_dispatch_lifecycle_call_keeps_the_baton_and_the_emit_order() -> N
 
 
 def test_a_broken_stderr_never_raises_through_emit() -> None:
-    """The stderr fallback is contained like every renderer write: a broken pipe
-    on stderr must not abort the run (the emit-never-raises contract)."""
+    """The stderr fallback is contained like every renderer write.
+
+    A broken pipe on stderr must not abort the run (the emit-never-raises
+    contract).
+    """
 
     class _BrokenStderr:
         def write(self, text: str) -> int:
@@ -1214,8 +1246,11 @@ def test_a_broken_stderr_never_raises_through_emit() -> None:
 
 
 def test_close_hands_teardown_chatter_to_the_file_sink_before_closing_it() -> None:
-    """close() closes the file sinks LAST: a diagnostic emitted from another
-    renderer's close path (a contained teardown failure) still reaches the file."""
+    """`close()` closes the file sinks LAST.
+
+    A diagnostic emitted from another renderer's close path (a contained
+    teardown failure) still reaches the file.
+    """
 
     class _FileRecorder:
         writes_file_only: ClassVar[bool] = True
@@ -1271,8 +1306,10 @@ def test_close_hands_teardown_chatter_to_the_file_sink_before_closing_it() -> No
 
 
 def test_begin_cycle_applies_the_level_to_a_fresh_console_exactly_once() -> None:
-    """The swap-time set_level died (begin_cycle's tail applies the cycle level
-    to every sub): one bug must cost the fresh console ONE strike, not two."""
+    """The swap-time `set_level` died (`begin_cycle`'s tail applies the cycle level to every sub).
+
+    One bug must cost the fresh console ONE strike, not two.
+    """
 
     class _LevelRecorder:
         writes_file_only: ClassVar[bool] = False

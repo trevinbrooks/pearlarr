@@ -1,3 +1,5 @@
+"""The run reporter: per-run context and stats, and the typed emission path the run logs through."""
+
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto

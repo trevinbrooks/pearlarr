@@ -1,6 +1,5 @@
 # pyright: strict
-"""Tests for `TorrentService` (the qBittorrent add path) and the
-`APIConnectionError` -> `QbitConnectionError` mapping.
+"""Tests for `TorrentService` (the qBittorrent add path) and the `APIConnectionError` -> `QbitConnectionError` mapping.
 
 `TorrentService.add` always runs the tracker parser then `_add_to_qbit`.
 These tests monkeypatch the tracker parsers (the HTML/feed scrapers, covered in
@@ -123,9 +122,7 @@ def _patch_nyaa_parser(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_add_new_torrent_with_hash_prefers_qbit_name(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A fresh add hands the parsed URL to `torrents_add` and reports the name
-    qBittorrent reads back (which wins over the scraped source title).
-    """
+    """A fresh add hands the parsed URL to `torrents_add` and reports the name qBittorrent reads back (which wins over the scraped source title)."""
 
     _patch_nyaa_parser(monkeypatch)
     qbit = _FakeQbit(register_on_add=(_HASH, "Qbit Reported Name"))
@@ -143,9 +140,7 @@ def test_add_new_torrent_with_hash_prefers_qbit_name(monkeypatch: pytest.MonkeyP
 
 
 def test_add_already_present_dedups_by_hash(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When the hash is already in qBittorrent, the add is skipped and reported as
-    ALREADY_ADDED with the existing name.
-    """
+    """When the hash is already in qBittorrent, the add is skipped and reported as ALREADY_ADDED with the existing name."""
 
     _patch_nyaa_parser(monkeypatch)
     qbit = _FakeQbit(present={_HASH: "Existing Name"})
@@ -161,9 +156,7 @@ def test_add_already_present_dedups_by_hash(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_add_hashless_falls_back_to_source_title(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A hashless torrent skips the dedup/name lookup, so the reported name falls
-    back to the scraped source title.
-    """
+    """A hashless torrent skips the dedup/name lookup, so the reported name falls back to the scraped source title."""
 
     _patch_nyaa_parser(monkeypatch)
     qbit = _FakeQbit()
@@ -215,8 +208,7 @@ def test_add_unparseable_url_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _patch_all_parsers(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stub all three tracker parsers to a fixed (url, title), so the parseable
-    branch of `add` reaches the qbit path without a real scrape."""
+    """Stub all three tracker parsers to a fixed (url, title), so the parseable branch of `add` reaches the qbit path without a real scrape."""
 
     def _nyaa(url: str) -> tuple[str | None, str]:
         del url
@@ -237,9 +229,11 @@ def _patch_all_parsers(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize("tracker", list(Tracker))
 def test_add_raises_iff_tracker_unparseable(tracker: Tracker, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`add` parses exactly the `PARSEABLE_TRACKERS` and raises for every other
-    member. The constant derives from the parser table, so this pins the raise
-    behavior rather than a lockstep between two hand-maintained collections."""
+    """`add` parses exactly the `PARSEABLE_TRACKERS` and raises for every other member.
+
+    The constant derives from the parser table, so this pins the raise
+    behavior rather than a lockstep between two hand-maintained collections.
+    """
 
     _patch_all_parsers(monkeypatch)
     service = _service(_FakeQbit())
@@ -255,9 +249,12 @@ def test_add_raises_iff_tracker_unparseable(tracker: Tracker, monkeypatch: pytes
 
 
 def test_grab_failures_covers_every_expected_boundary_error() -> None:
-    """Drift guard: the containment tuple catches each boundary's failure mode -
-    the parse/add raises, an httpx blip (the tracker scrapes and pynyaa / seadex
-    transport all ride httpx), a pynyaa error, and any qbittorrentapi error."""
+    """Drift guard: the containment tuple catches each boundary's failure mode.
+
+    The modes are the parse/add raises, an httpx blip (the tracker scrapes and
+    pynyaa / seadex transport all ride httpx), a pynyaa error, and any
+    qbittorrentapi error.
+    """
 
     expected = (
         TorrentParseError("x"),
@@ -276,9 +273,7 @@ def test_grab_failures_covers_every_expected_boundary_error() -> None:
 
 
 def test_qbit_login_failure_maps_to_qbit_connection_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A qBittorrent `APIConnectionError` at login is remapped to the
-    user-facing `QbitConnectionError` by `RunDeps.build`.
-    """
+    """A qBittorrent `APIConnectionError` at login is remapped to the user-facing `QbitConnectionError` by `RunDeps.build`."""
 
     class _FailingClient:
         def __init__(self, **kwargs: object) -> None:

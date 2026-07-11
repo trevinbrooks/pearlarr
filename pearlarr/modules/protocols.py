@@ -1,3 +1,5 @@
+"""The engine-facing strategy contracts: the hooks a per-arr strategy implements."""
+
 from abc import ABC, abstractmethod
 from typing import Protocol
 

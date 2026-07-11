@@ -79,6 +79,11 @@ def _non_bridge_handlers(logger: logging.Logger) -> list[logging.Handler]:
 
 
 class TestHandlerGraph:
+    """`setup_logger`'s handler graph: rich attaches exactly one `RichConsoleHandler`, plain/json attach none.
+
+    Neither format ever touches the filesystem or installs a `FileHandler`/filter.
+    """
+
     def test_plain_attaches_no_handler_at_all(self, build: _Builder) -> None:
         # Level-only configuration: the hub's LineRenderer owns plain stdout and
         # the FileLogSink owns the file; the bridge is the only record path.
@@ -114,6 +119,8 @@ class TestHandlerGraph:
 
 
 class TestFormatSelection:
+    """`console_format="auto"` picks rich only on a real TTY; an explicit "rich" forces it regardless."""
+
     def test_auto_on_a_non_tty_attaches_nothing(self, build: _Builder) -> None:
         logger = build("auto")
         assert _non_bridge_handlers(logger) == []
@@ -128,6 +135,11 @@ class TestFormatSelection:
 
 
 class TestApplyLogLevel:
+    """`apply_log_level` re-points the rich console handler's threshold (never below INFO).
+
+    Under plain, it changes only the logger level.
+    """
+
     def test_repoints_the_rich_console_threshold_but_not_below_info(self, build: _Builder) -> None:
         logger = build("rich")
         console = next(h for h in logger.handlers if isinstance(h, RichConsoleHandler))
@@ -164,13 +176,17 @@ def _rich_setup(name: str) -> tuple[logging.Logger, io.StringIO]:
 
 
 class TestRichHandlerSeam:
-    """The badge seam: while a bridge is installed the hub owns the badge class
-    outright (armed seat in-context, stderr fallback otherwise), so the handler
-    stands down; with no bridge the legacy badge renders (standalone fallback)."""
+    """The badge seam: while a bridge is installed, the hub owns the badge class outright.
+
+    An armed seat renders in-context, else the stderr fallback fires - either way the handler stands down; with
+    no bridge installed the legacy badge renders instead (the standalone fallback).
+    """
 
     def test_plain_warning_and_error_records_skip_the_handler_when_the_hub_owns_the_console(self) -> None:
-        """Plain WARNING+ (incl. exc_info) never render here while a bridge is
-        installed - the hub places the badge (double render otherwise)."""
+        """Plain WARNING+ (incl. exc_info) never render here while a bridge is installed.
+
+        The hub places the badge instead - rendering here too would double it.
+        """
 
         logger, stream = _rich_setup("pearlarr-test-rich-seam-badge")
         mark_hub_console_owner()  # conftest's uninstall_bridge clears it
@@ -193,9 +209,11 @@ class TestRichHandlerSeam:
         assert "WARNING  watch out" in strip_ansi(stream.getvalue())
 
     def test_plain_warning_skips_the_handler_even_with_the_hub_seat_inactive(self) -> None:
-        """Ownership is registration, not seat state: pre-begin_cycle or after a
-        strike-out the hub's STDERR fallback is the single net - the handler
-        rendering here too printed the same warning twice (once per net)."""
+        """Ownership is registration, not seat state.
+
+        Pre-`begin_cycle` or after a strike-out, the hub's STDERR fallback is the single net - the handler
+        rendering here too printed the same warning twice (once per net).
+        """
 
         logger, stream = _rich_setup("pearlarr-test-rich-seam-struck-out")
         mark_hub_console_owner()
@@ -212,8 +230,10 @@ class TestRichHandlerSeam:
         assert stream.getvalue() == "checking Frieren\n"
 
     def test_debug_exc_info_renders_the_traceback_but_never_frame_locals(self) -> None:
-        """The handler-side secrets pin: exc_info tracebacks render with
-        show_locals=False, so a frame local's VALUE (an api key) can never leak."""
+        """The handler-side secrets pin: exc_info tracebacks render with show_locals=False.
+
+        A frame local's VALUE (an api key) can never leak.
+        """
 
         logger, stream = _rich_setup("pearlarr-test-rich-secrets")
         sentinel = "hun" + "ter2"  # runtime-assembled: never a contiguous string here
@@ -232,8 +252,10 @@ class TestRichHandlerSeam:
 
 
 class TestInvalidLevelComplaint:
-    """setup_logger's invalid-level critical fires AFTER handler attach, so it
-    always has a route: the rich console (badge fallback) or the bridge."""
+    """`setup_logger`'s invalid-level critical fires after handler attach.
+
+    It always has a route: the rich console (badge fallback) or the bridge.
+    """
 
     def test_complaint_renders_on_the_rich_console_without_an_owner(
         self, app_logger: logging.Logger, monkeypatch: pytest.MonkeyPatch
@@ -251,9 +273,11 @@ class TestInvalidLevelComplaint:
     def test_complaint_reaches_the_hub_under_plain_and_never_last_resort(
         self, app_logger: logging.Logger, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Advisor #17's early-record path: with hub+bridge installed FIRST (the
-        cli order) and no console handler, the CRITICAL complaint arrives as a
-        visible hub Diagnostic and logging.lastResort never fires."""
+        """Advisor #17's early-record path.
+
+        With hub+bridge installed first (the cli order) and no console handler, the CRITICAL complaint arrives
+        as a visible hub Diagnostic and `logging.lastResort` never fires.
+        """
 
         del app_logger
         monkeypatch.setattr(sys, "stdout", io.StringIO())

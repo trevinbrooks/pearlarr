@@ -97,9 +97,10 @@ _SERIES_BODY: dict[str, object] = {
 
 @respx.mock
 def test_all_series_parses_into_sonarr_item_shape() -> None:
-    """`all_series` parses each raw record into a `SonarrSeries` satisfying
-    the `SonarrItem` protocol (checked from `object`: the runtime
-    counterpart of the client's typed claim), with correctly-typed id fields.
+    """`all_series` parses each raw record into a `SonarrSeries` satisfying the `SonarrItem` protocol.
+
+    The check runs against `object` (the runtime counterpart of the client's
+    typed claim), with correctly-typed id fields.
     """
 
     route = respx.get(f"{_BASE}/series").respond(json=[_SERIES_BODY])
@@ -131,8 +132,9 @@ def test_all_series_skips_non_dict_elements() -> None:
 
 @respx.mock
 def test_all_series_all_invalid_payload_raises_contract_error() -> None:
-    """A non-empty series payload validating to NOTHING raises the typed
-    contract error (fail-closed) instead of reading as an empty library.
+    """A non-empty series payload validating to NOTHING raises the typed contract error (fail-closed).
+
+    It never reads as an empty library.
     """
 
     respx.get(f"{_BASE}/series").respond(json=["junk", 42])
@@ -145,9 +147,7 @@ def test_all_series_all_invalid_payload_raises_contract_error() -> None:
 
 @respx.mock
 def test_queue_decodes_records_and_builds_request() -> None:
-    """`queue()` pulls the whole queue in one paged request and narrows each
-    record to a `QueueRecord` view.
-    """
+    """`queue()` pulls the whole queue in one paged request and narrows each record to a `QueueRecord` view."""
 
     route = respx.get(f"{_BASE}/queue").respond(json=sonarr_fixture("queue.json"))
     client = _make_client()
@@ -181,8 +181,9 @@ def _queue_page(total: int, hashes: list[str]) -> dict[str, object]:
 
 @respx.mock
 def test_queue_paginates_until_total_records_covered() -> None:
-    """A queue larger than one page is fetched page by page until totalRecords
-    is covered, never silently truncated at the first page.
+    """A queue larger than one page is fetched page by page until totalRecords is covered.
+
+    It is never silently truncated at the first page.
     """
 
     pages = [
@@ -207,8 +208,10 @@ def test_queue_paginates_until_total_records_covered() -> None:
 
 @respx.mock
 def test_queue_later_page_failure_keeps_fetched_records() -> None:
-    """A failed LATER page returns what was already fetched (partial beats empty
-    for the caller's "not tracked -> fall back to own scan" logic).
+    """A failed LATER page returns what was already fetched.
+
+    Partial beats empty for the caller's "not tracked -> fall back to own
+    scan" logic.
     """
 
     route = respx.get(f"{_BASE}/queue")
@@ -230,8 +233,9 @@ def test_queue_non_200_returns_empty() -> None:
 
 @respx.mock
 def test_queue_request_error_returns_empty() -> None:
-    """A transient request error (a timeout raises an httpx error) also falls
-    back to [] instead of unwinding the poll loop.
+    """A transient request error (a timeout raises an httpx error) also falls back to [].
+
+    It never unwinds the poll loop.
     """
 
     respx.get(f"{_BASE}/queue").mock(side_effect=httpx.ConnectError("boom"))
@@ -243,8 +247,9 @@ def test_queue_request_error_returns_empty() -> None:
 
 @respx.mock
 def test_episodes_decodes_sorted_and_builds_request() -> None:
-    """`episodes()` pulls one series' episodes season/episode-sorted, narrowing
-    each to a `SonarrEpisode`; the request pins seriesId + the include flags.
+    """`episodes()` pulls one series' episodes season/episode-sorted, narrowing each to a `SonarrEpisode`.
+
+    The request pins seriesId + the include flags.
     """
 
     route = respx.get(f"{_BASE}/episode").respond(json=sonarr_fixture("episodes_228_bahamut.json"))
@@ -267,8 +272,9 @@ def test_episodes_decodes_sorted_and_builds_request() -> None:
 
 @respx.mock
 def test_episodes_missing_numbers_sort_first_without_crashing() -> None:
-    """A record missing seasonNumber/episodeNumber sorts first (as -1) instead
-    of raising a `None < int` TypeError and killing the whole fetch.
+    """A record missing seasonNumber/episodeNumber sorts first (as -1).
+
+    This avoids raising a `None < int` TypeError and killing the whole fetch.
     """
 
     body = [
@@ -311,8 +317,10 @@ def test_episodes_non_200_returns_none_and_warns() -> None:
 
 @respx.mock
 def test_episodes_quiet_suppresses_unreachable_warning() -> None:
-    """`quiet=True` still returns None on a non-200 but emits NO warning - the
-    concurrent prefetch path, retried/logged on the main thread instead.
+    """`quiet=True` still returns None on a non-200 but emits NO warning.
+
+    This is the concurrent prefetch path, retried/logged on the main thread
+    instead.
     """
 
     respx.get(f"{_BASE}/episode").respond(status_code=500)
@@ -336,8 +344,9 @@ def test_episodes_request_error_returns_none() -> None:
 
 @respx.mock
 def test_parse_skips_entries_missing_season_or_episode() -> None:
-    """`parse()` drops any parsed entry missing a season OR episode number,
-    keeping only the fully-resolved `{season, episode}` mappings.
+    """`parse()` drops any parsed entry missing a season OR episode number.
+
+    It keeps only the fully-resolved `{season, episode}` mappings.
     """
 
     body: dict[str, object] = {
@@ -353,9 +362,11 @@ def test_parse_skips_entries_missing_season_or_episode() -> None:
 
 @respx.mock
 def test_parse_clean_no_match_returns_empty_list() -> None:
-    """A clean 200 where Sonarr matched no episode returns `[]` (a *confirmed*
-    no-match the caller may negative-cache) - distinct from a failure's None.
-    A missing `episodes` key is the same clean no-match.
+    """A clean 200 where Sonarr matched no episode returns `[]`.
+
+    This is a *confirmed* no-match the caller may negative-cache, distinct
+    from a failure's None; a missing `episodes` key is the same clean
+    no-match.
     """
 
     respx.get(f"{_BASE}/parse").mock(
@@ -370,8 +381,9 @@ def test_parse_clean_no_match_returns_empty_list() -> None:
 
 @respx.mock
 def test_parse_wrong_shape_episodes_returns_none() -> None:
-    """A 200 whose `episodes` is present but not a list (a mangled response)
-    returns the uncacheable None, NOT the negative-cacheable `[]`.
+    """A 200 whose `episodes` is present but not a list (a mangled response) returns the uncacheable None.
+
+    This is NOT the negative-cacheable `[]`.
     """
 
     respx.get(f"{_BASE}/parse").mock(
@@ -405,8 +417,10 @@ def test_parse_request_error_returns_none() -> None:
 
 @respx.mock
 def test_parse_episode_info_decodes_season_episode() -> None:
-    """An `SxxExx` release decodes to its season + episode numbers; the request
-    carries the title in the URL and the api key in the X-Api-Key header.
+    """An `SxxExx` release decodes to its season + episode numbers.
+
+    The request carries the title in the URL and the api key in the
+    X-Api-Key header.
     """
 
     route = respx.get(f"{_BASE}/parse").respond(json=sonarr_fixture("parse_bahamut_s01e01.json"))
@@ -430,8 +444,9 @@ def test_parse_episode_info_decodes_season_episode() -> None:
 
 @respx.mock
 def test_parse_episode_info_decodes_absolute() -> None:
-    """An absolute-numbered release decodes to its absolute numbers (season 0, no
-    SxxExx episode numbers) - the case Sonarr's series-matched parse misses.
+    """An absolute-numbered release decodes to its absolute numbers (season 0, no SxxExx episode numbers).
+
+    This is the case Sonarr's series-matched parse misses.
     """
 
     respx.get(f"{_BASE}/parse").respond(json=sonarr_fixture("parse_toloveru_abs14.json"))
@@ -466,8 +481,9 @@ def test_parse_episode_info_request_error_returns_none() -> None:
 
 @respx.mock
 def test_manual_import_candidates_decodes_and_uppercases_downloadid() -> None:
-    """The scan keys on the UPPERCASED infohash (no `seriesId`) and narrows
-    each candidate to its `path` / `quality` / `rejections`.
+    """The scan keys on the UPPERCASED infohash (no `seriesId`).
+
+    It narrows each candidate to its `path` / `quality` / `rejections`.
     """
 
     pending = _make_pending(
@@ -517,8 +533,9 @@ def test_manual_import_candidates_request_error_returns_none() -> None:
 
 @respx.mock
 def test_manual_import_execute_posts_body_and_returns_id() -> None:
-    """The `ManualImport` command POSTs `{name, importMode, files}` and returns
-    the queued command id; `import_mode` threads straight into the body.
+    """The `ManualImport` command POSTs `{name, importMode, files}` and returns the queued command id.
+
+    `import_mode` threads straight into the body.
     """
 
     file = ManualImportFile(
@@ -574,8 +591,9 @@ def test_manual_import_execute_non_2xx_returns_none() -> None:
 
 @respx.mock
 def test_post_command_request_error_returns_none() -> None:
-    """A transient error on the command POST (never retried - not idempotent)
-    returns None rather than raising through the import path.
+    """A transient error on the command POST (never retried - not idempotent) returns None.
+
+    It never raises through the import path.
     """
 
     route = respx.post(f"{_BASE}/command").mock(side_effect=httpx.ConnectError("boom"))
@@ -585,8 +603,9 @@ def test_post_command_request_error_returns_none() -> None:
 
 @respx.mock
 def test_post_command_2xx_non_object_warns_and_returns_none() -> None:
-    """A 2xx command POST whose body isn't a JSON object warns before returning
-    None - Sonarr may still have queued the command, so leave a breadcrumb.
+    """A 2xx command POST whose body isn't a JSON object warns before returning None.
+
+    Sonarr may still have queued the command, so leave a breadcrumb.
     """
 
     recording = install_recording_hub()
@@ -633,8 +652,9 @@ def test_command_status_non_200_returns_default() -> None:
 
 @respx.mock
 def test_command_status_request_error_returns_default() -> None:
-    """A transient request error also yields the default `CommandResource` (the
-    caller treats the import as unverified and leaves it pending).
+    """A transient request error also yields the default `CommandResource`.
+
+    The caller treats the import as unverified and leaves it pending.
     """
 
     respx.get(f"{_BASE}/command/9").mock(side_effect=httpx.ConnectError("boom"))
@@ -643,8 +663,10 @@ def test_command_status_request_error_returns_default() -> None:
 
 @respx.mock
 def test_list_commands_decodes_with_nested_files() -> None:
-    """The command LIST narrows each command, including the nested `body.files`
-    each in-flight ManualImport carries (the guard's match signal).
+    """The command LIST narrows each command.
+
+    This includes the nested `body.files` each in-flight ManualImport carries
+    (the guard's match signal).
     """
 
     respx.get(f"{_BASE}/command").respond(json=sonarr_fixture("command_list.json"))
@@ -673,9 +695,10 @@ def test_list_commands_non_200_returns_empty() -> None:
 
 @respx.mock
 def test_history_since_decodes_records_and_builds_request() -> None:
-    """`history_since()` narrows each record to a `HistoryRecord` (incl. the
-    case-insensitive `data` reason key and a null `downloadId`); the request
-    pins the date + the include flags off.
+    """`history_since()` narrows each record to a `HistoryRecord`.
+
+    This includes the case-insensitive `data` reason key and a null
+    `downloadId`; the request pins the date + the include flags off.
     """
 
     body: list[object] = [
@@ -790,8 +813,9 @@ def test_history_since_skips_non_dict_elements() -> None:
 
 @respx.mock
 def test_trailing_slash_url_is_normalized() -> None:
-    """A trailing-slash base url must not become a `//api` join - live Sonarr
-    302s that to the login page, breaking every raw endpoint.
+    """A trailing-slash base url must not become a `//api` join.
+
+    Live Sonarr 302s that to the login page, breaking every raw endpoint.
     """
 
     client = SonarrClient(
@@ -807,8 +831,10 @@ def test_trailing_slash_url_is_normalized() -> None:
 
 @respx.mock
 def test_quality_definitions_decodes_nested_quality_verbatim() -> None:
-    """Each definition's nested `quality` validates verbatim (the resolver
-    re-emits it into the outgoing payload, unknown keys included).
+    """Each definition's nested `quality` validates verbatim.
+
+    The resolver re-emits it into the outgoing payload, unknown keys
+    included.
     """
 
     route = respx.get(f"{_BASE}/qualitydefinition").respond(json=sonarr_fixture("qualitydefinitions.json"))

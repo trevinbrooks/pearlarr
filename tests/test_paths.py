@@ -33,6 +33,8 @@ runner = CliRunner()
 
 
 class TestResolvePaths:
+    """`resolve_paths` lays every path under one data dir, honoring `--data-dir` arg > `PEARLARR_DATA_DIR` env > the platformdirs default, and absolutizes relative input."""
+
     def test_every_member_lives_under_the_data_dir(self, tmp_path: Path) -> None:
         paths = resolve_paths(str(tmp_path))
         base = str(tmp_path)
@@ -65,6 +67,8 @@ class TestResolvePaths:
 
 
 class TestEnsureDataDir:
+    """`ensure_data_dir` creates the resolved data directory when it doesn't already exist."""
+
     def test_creates_the_missing_directory(self, tmp_path: Path) -> None:
         paths = resolve_paths(str(tmp_path / "nested" / "dir"))
         assert not os.path.exists(paths.data_dir)
@@ -73,6 +77,8 @@ class TestEnsureDataDir:
 
 
 class TestPathsCommand:
+    """The `paths` CLI command prints the resolved data dir, and `--data-dir` overrides a pre-set env."""
+
     def test_prints_the_resolved_data_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
         result = runner.invoke(pearlarr_cli, ["paths"])

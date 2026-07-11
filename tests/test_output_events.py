@@ -65,8 +65,10 @@ def test_styled_value_defaults_to_plain() -> None:
 
 
 def test_dry_run_derives_from_the_note() -> None:
-    """One field carries the dry-run marker AND its note: a noteless "DRY RUN"
-    title (the literal-None render bug class) is unrepresentable."""
+    """One field carries both the dry-run marker and its note.
+
+    A noteless "DRY RUN" title (the literal-None render bug class) is unrepresentable.
+    """
 
     real = RunSummary(
         arr=Arr.SONARR,
@@ -111,8 +113,11 @@ def test_grab_failed_is_a_warning() -> None:
 
 
 def test_boot_step_finished_tallies_info_regardless_of_outcome() -> None:
-    """The outcome drives glyphs/styles only: a failed/deferred step's caller logs
-    the problem itself, so an outcome-based tally would double-count it."""
+    """The outcome drives glyphs/styles only.
+
+    A failed/deferred step's caller logs the problem itself, so an outcome-based
+    tally would double-count it.
+    """
 
     scope = ScopeId(ScopeKind.BOOT_STEP, 1)
 

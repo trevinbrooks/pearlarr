@@ -102,8 +102,9 @@ def test_radarr_sync_init_builds_without_network_via_client_seam() -> None:
 
 
 def test_rundeps_build_pins_verify_ssl_to_the_arrs_knob(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """`RunDeps.build` constructs the run's httpx client with THIS arr's
-    `verify_ssl` (the per-arr escape hatch for a self-signed HTTPS arr).
+    """`RunDeps.build` constructs the run's httpx client with THIS arr's `verify_ssl`.
+
+    It's the per-arr escape hatch for a self-signed HTTPS arr.
     """
 
     seen: list[bool] = []

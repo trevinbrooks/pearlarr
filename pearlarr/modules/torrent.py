@@ -1,3 +1,5 @@
+"""Per-tracker parsers: turn a tracker page/feed URL into a download link and release title."""
+
 from urllib.parse import urlencode, urljoin
 
 import httpx
@@ -35,7 +37,7 @@ _NYAA_SESSION = pynyaa.Nyaa(
 
 
 def get_nyaa_torrent(url: str) -> tuple[str, str]:
-    """Get the Nyaa download link and release title from a Nyaa URL
+    """Get the Nyaa download link and release title from a Nyaa URL.
 
     Args:
         url: URL of the Nyaa release page
@@ -53,7 +55,7 @@ def get_animetosho_torrent(
     url: str,
     client: httpx.Client | None = None,
 ) -> tuple[str | None, str]:
-    """Get the AnimeTosho download link and release title from a URL
+    """Get the AnimeTosho download link and release title from a URL.
 
     Args:
         url: URL of the AnimeTosho release page
@@ -117,7 +119,7 @@ def get_rutracker_torrent(
     infohash: str | None,
     client: httpx.Client | None = None,
 ) -> tuple[str, str]:
-    """Get the RuTracker magnet link and torrent title from a URL
+    """Get the RuTracker magnet link and torrent title from a URL.
 
     Args:
         url: URL of the RuTracker topic

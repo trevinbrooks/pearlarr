@@ -96,8 +96,9 @@ def test_movie_files_non_json_body_returns_empty_and_warns() -> None:
 
 @respx.mock
 def test_history_since_decodes_records_and_builds_request() -> None:
-    """`history_since()` keys the item id on `movieId` and the request pins
-    `includeMovie=false`; a record with no `data` map parses to a None reason.
+    """`history_since()` keys the item id on `movieId` and the request pins `includeMovie=false`.
+
+    A record with no `data` map parses to a `None` reason.
     """
 
     body: list[object] = [
@@ -203,9 +204,10 @@ _MOVIE_BODY: dict[str, object] = {
 
 @respx.mock
 def test_all_movies_parses_into_radarr_item_shape() -> None:
-    """`all_movies` parses each raw record into a `RadarrMovie` satisfying
-    the `RadarrItem` protocol (checked from `object`: the runtime
-    counterpart of the client's typed claim), with correctly-typed id fields.
+    """`all_movies` parses each raw record into a `RadarrMovie` satisfying the `RadarrItem` protocol.
+
+    This is checked from `object` (the runtime counterpart of the client's
+    typed claim), with correctly-typed id fields.
     """
 
     route = respx.get(f"{_BASE}/movie").respond(json=[_MOVIE_BODY])
@@ -248,8 +250,10 @@ class _RecordingIdSets:
 
 
 def test_collect_anime_movies_wires_id_spaces() -> None:
-    """The candidate sets are pulled for (tmdb_movie_id, imdb_id), in that order,
-    an imdb-only match is kept, and `anibridge=None` degrades to empty sets."""
+    """The candidate sets are pulled for (tmdb_movie_id, imdb_id), in that order.
+
+    An imdb-only match is kept, and `anibridge=None` degrades to empty sets.
+    """
 
     movies: list[RadarrItem] = [
         RadarrMovie(id=1, title="Imdb Only", tmdbId=111, imdbId="tt1"),

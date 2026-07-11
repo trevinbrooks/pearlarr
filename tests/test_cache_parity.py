@@ -163,8 +163,10 @@ _JSONB_BLOCKS: tuple[_JsonbBlock, ...] = (
 
 
 def _scribble(rec: dict[str, Any], marker: str) -> None:
-    """Mutate a record in place - top-level, nested, and a fresh key - so any leak
-    into the store (a shallow copy OR a shared reference) surfaces on the next read."""
+    """Mutate a record in place: top-level, nested, and a fresh key.
+
+    Any leak into the store (a shallow copy OR a shared reference) surfaces on the next read.
+    """
 
     rec["title"] = marker
     rec["nested"]["k"] = marker
@@ -182,10 +184,10 @@ def _assert_pristine(rec: dict[str, Any] | None, block: str) -> dict[str, Any]:
 
 
 def _assert_block_snapshot_isolated(store: AbstractCacheStore, block: _JsonbBlock) -> None:
-    """A JSONB record is caller-mutation-isolated on BOTH ends, like the real store's
-    json.dumps (put) / json.loads (get, iter) round-trip: mutating the dict handed to
-    `put` afterwards, or any dict returned by `get` / `iter`, must not reach the
-    store."""
+    """A JSONB record is caller-mutation-isolated on both ends, like the real store's json round-trip.
+
+    Mutating the dict handed to `put` afterwards, or any dict returned by `get` / `iter`, must not reach the store.
+    """
 
     record: dict[str, Any] = {"series_id": _ISO_SID, "title": "orig", "nested": {"k": "v"}}
     block.put(store, record)
@@ -206,9 +208,11 @@ def _assert_block_snapshot_isolated(store: AbstractCacheStore, block: _JsonbBloc
 
 
 def test_jsonb_record_snapshot_mutation_does_not_leak(tmp_path: Path) -> None:
-    """Every JSONB block isolates caller mutation on both ends. The real store (the
-    json round-trip) is driven through the same assertion, so it proves the contract
-    rather than an invented one - and pins the fake to it."""
+    """Every JSONB block isolates caller mutation on both ends.
+
+    The real store (the json round-trip) is driven through the same assertion, so it
+    proves the contract rather than an invented one - and pins the fake to it.
+    """
 
     with _both_stores(tmp_path) as (fake, real):
         for block in _JSONB_BLOCKS:

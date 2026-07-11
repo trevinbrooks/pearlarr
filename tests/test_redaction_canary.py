@@ -84,6 +84,8 @@ def _data_dir_text() -> str:
 
 
 class TestCliSurfaces:
+    """`config show`, `config validate`, and a failed run's console + file log all redact every canary secret."""
+
     def test_config_show_is_canary_free(self) -> None:
         _write_canary_config()
         result = CliRunner().invoke(pearlarr_cli, ["config", "show"])
@@ -125,6 +127,8 @@ class TestCliSurfaces:
 
 
 class TestArrClientMessages:
+    """An arr connection error masks a url-embedded login while still naming the host."""
+
     def test_connection_error_masks_a_url_login_but_names_the_host(self) -> None:
         # A user:pass@ login in the arr URL is real basic auth (a protected
         # reverse proxy); the could-not-reach error keeps the host, never the login.
@@ -140,6 +144,8 @@ class TestArrClientMessages:
 
 
 class TestNotifierFailureWarnings:
+    """A Discord/webhook push failure warns by naming the config key, never the url (with its embedded token)."""
+
     @staticmethod
     def _result() -> WaitResult:
         return WaitResult(rows=(WaitOutcomeRow(label="Frieren S01", outcome=Outcome.IMPORTED),), elapsed_s=12.5)

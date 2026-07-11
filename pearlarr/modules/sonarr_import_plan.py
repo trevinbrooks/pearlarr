@@ -129,7 +129,7 @@ _COMMAND_IN_FLIGHT_STATES = frozenset({"queued", "started"})
 
 
 def _norm_path(path: str) -> str:
-    """Normalize a path for a pure (no-disk) prefix compare: `\\` -> `/`, folded."""
+    r"""Normalize a path for a pure (no-disk) prefix compare: `\` -> `/`, folded."""
 
     return path.replace("\\", "/").casefold()
 

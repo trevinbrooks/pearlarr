@@ -378,7 +378,7 @@ class RunServices:
         ids: ExternalIds,
         log_ignored: bool = True,
     ) -> dict[int, MappingEntry]:
-        """Resolve external Arr ids to a {AniList id -> mapping} dict
+        """Resolve external Arr ids to a {AniList id -> mapping} dict.
 
         The resolver does the mapping computation and reports which ids it
         dropped (the user's ignore list); the logging stays here so the
@@ -405,7 +405,7 @@ class RunServices:
         self,
         al_id: int,
     ) -> str:
-        """Resolve and remember the AniList title for an ID (no logging)
+        """Resolve and remember the AniList title for an ID (no logging).
 
         The gateway resolves the raw title (no side-effects); the empty-result
         fallback and the transitional `current_title` attribution live here so
@@ -518,7 +518,7 @@ class RunServices:
         return False
 
     def al_id_prologue(self, al_id: int) -> EntryRecord | None:
-        """Shared per-AniList-id head: reset skip flags, tally, fetch SeaDex entry
+        """Shared per-AniList-id head: reset skip flags, tally, fetch SeaDex entry.
 
         Returns the SeaDex entry to process, or None when there's nothing to do -
         either the id has no SeaDex entry, or the lookup was skipped because
@@ -555,7 +555,7 @@ class RunServices:
         sd_entry: EntryRecord,
         coverage: Callable[[], str],
     ) -> bool:
-        """Shared cached-entry short-circuit for both Arr runners
+        """Shared cached-entry short-circuit for both Arr runners.
 
         When the id is already cached and we're honoring SeaDex update times,
         backfill the url + coverage on legacy records that predate those fields,

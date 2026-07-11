@@ -604,11 +604,10 @@ def make_run_deps(
     seadex: SeaDexSource | None = None,
     logger: logging.Logger | None = None,
 ) -> RunDeps:
-    """A real `RunDeps` (typed fakes) to drive the REAL `RunServices` /
-    `RunLoop` / `SonarrSync` `__init__` + `begin_run` rebind - the
-    construction seam `make_bare_instance` bypasses.
+    """A real `RunDeps` (typed fakes) that drives the real `RunServices`/`RunLoop`/`SonarrSync` construction seam.
 
-    Every field is passed to `RunDeps` by explicit keyword (no `**dict[str, Any]`
+    Unlike `make_bare_instance`, this drives the actual `__init__` + `begin_run`
+    rebind. Every field is passed to `RunDeps` by explicit keyword (no `**dict[str, Any]`
     launder), so each is type-checked against the dataclass field at this seam - a
     wrong-typed fake (`cache_store=object()`, a non-`SeaDexSource` seadex) is a
     pyright error here, not a silent `Any`. The config carries a Sonarr
@@ -703,6 +702,8 @@ class FakeTorrents:
         item: SeadexUrlItem,
         preview: bool,
     ) -> AddResult:
+        """Return the scripted `AddResult` for the url item's infohash (or raise its scripted error)."""
+
         del preview
         infohash = item.infohash
         self.calls.append(infohash)

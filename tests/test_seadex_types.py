@@ -29,8 +29,9 @@ from pearlarr.modules.seadex_types import (
 
 
 def test_validate_each_skips_bad_records_and_scrubs_the_warning() -> None:
-    """A junk record is skipped with ONE warning naming the model, index and
-    failing field - never the payload value itself (it may carry titles/paths).
+    """A junk record is skipped with ONE warning naming the model, index, and failing field.
+
+    It never includes the payload value itself (it may carry titles/paths).
     """
 
     recording = RecordingHub()
@@ -60,8 +61,9 @@ def test_validate_each_empty_list_is_empty() -> None:
 
 
 def test_validate_each_strict_raises_when_nothing_validates() -> None:
-    """strict=True: a non-empty payload with ZERO valid records raises
-    BoundaryContractError - an all-invalid library must never read as empty.
+    """strict=True: a non-empty payload with ZERO valid records raises `BoundaryContractError`.
+
+    An all-invalid library must never read as empty.
     """
 
     with pytest.raises(BoundaryContractError):
@@ -69,8 +71,9 @@ def test_validate_each_strict_raises_when_nothing_validates() -> None:
 
 
 def test_validate_each_strict_accepts_empty_and_partial_payloads() -> None:
-    """strict=True still reads an EMPTY payload as [] (a legitimate empty
-    library) and keeps the valid records of a partially-junk one.
+    """strict=True still reads an EMPTY payload as [] (a legitimate empty library).
+
+    It keeps the valid records of a partially-junk payload too.
     """
 
     assert validate_each(SonarrSeries, [], strict=True) == []
@@ -106,8 +109,9 @@ def test_frozen_model_mutation_raises_validation_error() -> None:
 
 
 def test_command_resource_junk_file_entry_skips_without_dropping_the_command() -> None:
-    """A junk `body.files[]` entry is skipped while the command survives - a
-    dropped command would blind the in-flight ManualImport guard.
+    """A junk `body.files[]` entry is skipped while the command survives.
+
+    A dropped command would blind the in-flight ManualImport guard.
     """
 
     command = CommandResource.model_validate(
@@ -136,8 +140,9 @@ def test_parsed_file_info_null_number_arrays_fold_to_empty() -> None:
 
 
 def test_history_record_field_name_construction_matches_alias_parse() -> None:
-    """Field-name kwargs (the tests/fakes idiom) build the same record the
-    aliased wire parse does - the `validate_by_name` contract.
+    """Field-name kwargs (the tests/fakes idiom) build the same record the aliased wire parse does.
+
+    This is the `validate_by_name` contract.
     """
 
     by_name = HistoryRecord(id=2, date="d", item_id=5, event_type="grabbed", download_id="A")

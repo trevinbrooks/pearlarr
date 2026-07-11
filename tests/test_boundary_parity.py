@@ -124,9 +124,10 @@ _UNKNOWN_QUALITY: dict[str, object] = {
 
 @respx.mock
 def test_golden_body_matched_definition_reemits_definition_quality() -> None:
-    """A resolved (source, resolution) re-emits the matched definition's nested
-    quality VERBATIM (unknown keys included) plus the default revision; a
-    language definition with no id resolves to an explicit `"id": null`.
+    """A resolved (source, resolution) re-emits the matched definition's nested quality VERBATIM.
+
+    Unknown keys are included, plus the default revision. A language
+    definition with no id resolves to an explicit `"id": null`.
     """
 
     definition_quality: dict[str, object] = {
@@ -157,9 +158,10 @@ def test_golden_body_matched_definition_reemits_definition_quality() -> None:
 
 @respx.mock
 def test_golden_body_no_match_reemits_candidate_verbatim_with_unknown_keys() -> None:
-    """With no matching definition, Sonarr's own candidate model is re-emitted
-    verbatim - unknown keys survive at BOTH nesting levels (inside `quality`
-    and inside `quality.quality`).
+    """With no matching definition, Sonarr's own candidate model is re-emitted verbatim.
+
+    Unknown keys survive at BOTH nesting levels (inside `quality` and inside
+    `quality.quality`).
     """
 
     candidate_quality: dict[str, object] = {
@@ -187,8 +189,9 @@ def test_golden_body_no_match_reemits_candidate_verbatim_with_unknown_keys() -> 
 
 @respx.mock
 def test_golden_body_quality_absent_synthesizes_unknown() -> None:
-    """A candidate carrying NO quality at all falls back to the explicit
-    synthesized Unknown (never an omitted quality key).
+    """A candidate carrying NO quality at all falls back to the explicit synthesized Unknown.
+
+    The quality key is never omitted from the request body.
     """
 
     body = _drive_manual_import(
@@ -202,9 +205,9 @@ def test_golden_body_quality_absent_synthesizes_unknown() -> None:
 
 @respx.mock
 def test_golden_body_empty_quality_object_synthesizes_unknown() -> None:
-    """`"quality": {}` on the candidate is falsy TODAY and must keep
-    synthesizing Unknown after the port (the dict-falsy -> model-truthy trap at
-    the candidate level).
+    """`"quality": {}` on the candidate is falsy TODAY and must keep synthesizing Unknown after the port.
+
+    This is the dict-falsy -> model-truthy trap at the candidate level.
     """
 
     body = _drive_manual_import(
@@ -218,9 +221,10 @@ def test_golden_body_empty_quality_object_synthesizes_unknown() -> None:
 
 @respx.mock
 def test_golden_body_empty_inner_quality_synthesizes_unknown() -> None:
-    """`"quality": {"quality": {}}` - present model, empty INNER quality - is
-    falsy today in `resolve_quality`'s fallback tail and must keep
-    synthesizing Unknown after the port (the same trap one level down).
+    """`"quality": {"quality": {}}` (empty INNER quality) is falsy in `resolve_quality`'s fallback tail today.
+
+    It must keep synthesizing Unknown after the port (the same trap one
+    level down).
     """
 
     body = _drive_manual_import(
@@ -237,8 +241,9 @@ def test_golden_body_empty_inner_quality_synthesizes_unknown() -> None:
 
 @respx.mock
 def test_queue_record_folds_junk_per_field_without_dropping_the_record() -> None:
-    """Junk in individual queue-record fields folds that FIELD to None; the
-    record itself (and its healthy siblings) always survives.
+    """Junk in individual queue-record fields folds that FIELD to None.
+
+    The record itself (and its healthy siblings) always survives.
     """
 
     respx.get(f"{_BASE}/queue").respond(
@@ -268,9 +273,9 @@ def test_queue_record_folds_junk_per_field_without_dropping_the_record() -> None
 
 @respx.mock
 def test_import_pending_always_classifies_pending_clean() -> None:
-    """Live invariant: EVERY `importPending` record - even with a warning
-    status - classifies as PENDING_CLEAN (wait), never STEP_IN (stepping in
-    double-imports).
+    """Live invariant: EVERY `importPending` record classifies as PENDING_CLEAN (wait), never STEP_IN.
+
+    This holds even with a warning status - stepping in would double-import.
     """
 
     respx.get(f"{_BASE}/queue").respond(
@@ -297,8 +302,9 @@ def test_import_pending_always_classifies_pending_clean() -> None:
 
 @respx.mock
 def test_history_junk_item_id_folds_to_zero_and_the_record_is_kept() -> None:
-    """A junk `seriesId` folds to 0 without dropping the record - a dropped
-    record would be a missed dirty-mark and a lagging checkpoint.
+    """A junk `seriesId` folds to 0 without dropping the record.
+
+    A dropped record would be a missed dirty-mark and a lagging checkpoint.
     """
 
     respx.get(f"{_BASE}/history/since").respond(
@@ -326,8 +332,9 @@ def test_history_junk_item_id_folds_to_zero_and_the_record_is_kept() -> None:
 
 @respx.mock
 def test_history_reason_key_resolves_case_insensitively() -> None:
-    """The `data` reason key is found regardless of case (nets a naive
-    fixed-alias port - an alias cannot do case-insensitivity).
+    """The `data` reason key is found regardless of case.
+
+    This nets a naive fixed-alias port - an alias cannot do case-insensitivity.
     """
 
     respx.get(f"{_BASE}/history/since").respond(
@@ -344,8 +351,9 @@ def test_history_reason_key_resolves_case_insensitively() -> None:
 
 @respx.mock
 def test_history_missing_item_id_defaults_to_zero() -> None:
-    """A record with neither `seriesId` nor `movieId` keeps item_id 0 (the
-    downstream `item_id <= 0` drop applies later, never at the parse).
+    """A record with neither `seriesId` nor `movieId` keeps item_id 0.
+
+    The downstream `item_id <= 0` drop applies later, never at the parse.
     """
 
     respx.get(f"{_BASE}/history/since").respond(
@@ -359,8 +367,10 @@ def test_history_missing_item_id_defaults_to_zero() -> None:
 
 @respx.mock
 def test_radarr_history_item_id_reads_movie_id_and_junk_folds() -> None:
-    """Radarr's item id comes from `movieId`; a null one folds to 0 with the
-    record kept (same per-field posture as Sonarr's).
+    """Radarr's item id comes from `movieId`.
+
+    A null one folds to 0 with the record kept (same per-field posture as
+    Sonarr's).
     """
 
     respx.get("http://radarr.test/api/v3/history/since").respond(
@@ -381,9 +391,11 @@ def test_radarr_history_item_id_reads_movie_id_and_junk_folds() -> None:
 
 @respx.mock
 def test_rejections_fold_strings_and_dicts_and_skip_other_shapes() -> None:
-    """One rejections list mixing a bare string (older Sonarr), a proper
-    `{reason}` object, a reason-less object, and non-str/non-dict junk: the
-    first three fold to `ImportRejection`s, the junk entries are skipped.
+    """One rejections list mixes several item shapes; the well-formed ones fold, the rest are skipped.
+
+    The shapes are a bare string (older Sonarr), a proper `{reason}` object,
+    a reason-less object, and non-str/non-dict junk. The first three fold to
+    `ImportRejection`s; the junk entries are skipped.
     """
 
     respx.get(f"{_BASE}/manualimport").respond(
@@ -416,9 +428,10 @@ def test_rejections_fold_strings_and_dicts_and_skip_other_shapes() -> None:
 
 @respx.mock
 def test_junk_path_drops_the_candidate_but_keeps_siblings() -> None:
-    """A candidate whose `path` is a type lie (non-str) fails validation and
-    is dropped whole (skip + warn); well-formed siblings survive. The old dict
-    walk passed the lie through and crashed later at `os.path.basename`.
+    """A candidate whose `path` is a type lie (non-str) fails validation and is dropped whole (skip + warn).
+
+    Well-formed siblings survive. The old dict walk passed the lie through
+    and crashed later at `os.path.basename`.
     """
 
     respx.get(f"{_BASE}/manualimport").respond(

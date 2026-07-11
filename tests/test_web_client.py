@@ -41,9 +41,11 @@ def _pool_ssl_context(client: httpx.Client) -> ssl.SSLContext:
 
 
 def test_make_web_client_pins_the_transport_policy() -> None:
-    """The factory pins redirects-followed (no credential rides this client),
-    always-on verification, the identifiable UA default, and the (5, 30)
-    (connect, read) timeout split every external call used to pass per-request.
+    """The factory pins the web client's transport policy: redirects, verification, UA, and timeouts.
+
+    It follows redirects (no credential rides this client), always verifies, defaults
+    to an identifiable UA, and fixes the (5, 30) (connect, read) timeout split every
+    external call used to pass per-request.
     """
 
     client = make_web_client()

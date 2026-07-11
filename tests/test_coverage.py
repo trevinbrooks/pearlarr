@@ -15,6 +15,8 @@ from .builders import sonarr_ep
 
 
 class TestFormatEpisodeCoverage:
+    """`format_episode_coverage` returns `None` for no episodes, else per-season `(label, range)` pairs sorted by season."""
+
     def test_none_when_empty(self) -> None:
         assert format_episode_coverage([]) is None
 
@@ -34,6 +36,8 @@ class TestFormatEpisodeCoverage:
 
 
 class TestCoverageString:
+    """`coverage_string` renders episodes as a joined season/episode-range string, blank when empty."""
+
     def test_empty_is_blank(self) -> None:
         assert coverage_string([]) == ""
 
@@ -47,6 +51,8 @@ class TestCoverageString:
 
 
 class TestEpisodesFromEpList:
+    """`episodes_from_ep_list` maps Sonarr episode dicts to `EpisodeRecord`s; `missing_only` filters to episodes without a file."""
+
     def test_none_returns_empty(self) -> None:
         assert episodes_from_ep_list(None) == []
 

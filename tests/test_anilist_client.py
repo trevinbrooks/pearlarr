@@ -214,9 +214,7 @@ def test_media_fields_fragment_covers_from_api_reads() -> None:
 
 
 def test_retryable_constants() -> None:
-    """The retry vocabulary matches the helpers' assumptions: 429 is retryable and
-    every throttle substring is lower-case (the message is lower-cased before matching).
-    """
+    """The retry vocabulary matches the helpers' assumptions: 429 is retryable and every throttle substring is lower-case (the message is lower-cased before matching)."""
 
     assert 429 in RETRYABLE_STATUS
     assert 200 not in RETRYABLE_STATUS
@@ -283,9 +281,7 @@ def test_query_retries_on_throttle_error_body(monkeypatch: pytest.MonkeyPatch) -
 
 @respx.mock
 def test_query_batch_reshapes_page_media_by_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A Page body is re-keyed to {id: single-id-shaped body}, so the results can
-    seed the run cache directly; junk, id-less and non-int-id entries in the media
-    array are skipped (an id unknown to AniList is simply absent, never an error)."""
+    """A Page body is re-keyed to {id: single-id-shaped body}, so the results can seed the run cache directly; junk, id-less and non-int-id entries in the media array are skipped (an id unknown to AniList is simply absent, never an error)."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     page: dict[str, object] = {
@@ -301,8 +297,7 @@ def test_query_batch_reshapes_page_media_by_id(monkeypatch: pytest.MonkeyPatch) 
 
 @respx.mock
 def test_query_json_array_body_is_no_data(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 200 whose body is a JSON *array* falls to the {} no-data arm instead of
-    being laundered as a dict (which used to crash the callers' .get walks)."""
+    """A 200 whose body is a JSON *array* falls to the {} no-data arm instead of being laundered as a dict (which used to crash the callers' .get walks)."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     route = respx.post(API_URL).respond(json=[1, 2, 3])
@@ -324,9 +319,7 @@ def _warnings(recording: RecordingHub) -> list[Diagnostic]:
 
 @respx.mock
 def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 429 backoff emits the (Retry-After) wait as an INFO hub Diagnostic - the
-    run no longer looks hung - and a successful retry never fires the give-up
-    warning."""
+    """A 429 backoff emits the (Retry-After) wait as an INFO hub Diagnostic - the run no longer looks hung - and a successful retry never fires the give-up warning."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     recording = RecordingHub()
@@ -349,8 +342,7 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @respx.mock
 def test_give_up_warns_once_per_run_not_per_title(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Exhausting the retries warns ONCE; a second exhausted request (another
-    title, same run) stays quiet - the flag is per client, i.e. per run."""
+    """Exhausting the retries warns ONCE; a second exhausted request (another title, same run) stays quiet - the flag is per client, i.e. per run."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     recording = RecordingHub()
@@ -369,8 +361,7 @@ def test_give_up_warns_once_per_run_not_per_title(monkeypatch: pytest.MonkeyPatc
 
 @respx.mock
 def test_network_give_up_returns_empty_and_warns(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A hard network outage still degrades to `{}` - but now with one warning
-    instead of total silence."""
+    """A hard network outage still degrades to `{}` - but now with one warning instead of total silence."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     recording = RecordingHub()

@@ -133,6 +133,11 @@ def _build_cache(tmp_path: Path) -> None:
 
 
 class TestCacheRoundTrip:
+    """`cache_backup`/`cache_restore`/`cache_remove` round-trip and clean up the cache db.
+
+    Backup-then-restore preserves data and clears a stale WAL/SHM sidecar; remove deletes the db and its sidecars.
+    """
+
     def test_backup_then_restore_preserves_data(
         self,
         tmp_path: Path,
@@ -191,6 +196,8 @@ class TestCacheRoundTrip:
 
 
 class TestHealthyDiagnostics:
+    """`cache_stats` and `cache_check` both succeed on a healthy db and report its integrity as ok."""
+
     def test_stats_and_check_report_a_healthy_db(
         self,
         tmp_path: Path,
@@ -762,6 +769,8 @@ class TestRunFailuresAreCleanAndNonzero:
 
 
 class TestSelectionSettlesBeforeMappingFetch:
+    """A run with nothing configured fails fast on the selection check, before any mapping source is fetched."""
+
     def test_nothing_configured_fails_before_the_mapping_fetch(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -892,6 +901,11 @@ class TestConfigInspection:
 
 
 class TestVersionAndHelp:
+    """`--version`, `-h`, and a bare subcommand group all succeed instead of erroring.
+
+    The flag prints the package version, `-h` aliases `--help`, and the bare group falls back to its help text.
+    """
+
     def test_version_flag_prints_the_package_version(self) -> None:
         result = CliRunner().invoke(pearlarr_cli, ["--version"])
         assert result.exit_code == 0
@@ -910,6 +924,8 @@ class TestVersionAndHelp:
 
 
 class TestApplyLogLevel:
+    """`apply_log_level` re-points the logger and its rich console threshold, including CRITICAL and DEBUG."""
+
     def test_repoints_logger_and_console_thresholds(self) -> None:
         # Forced rich: "auto" resolves to plain under pytest's non-TTY stdout
         # (the plain twin of this pin lives in test_log_format.py).
@@ -1008,13 +1024,17 @@ def _stop_loop(*args: object, **kwargs: object) -> NoReturn:
 
 
 def _swallow_signal(signum: int, handler: object) -> None:
-    """A no-op `signal.signal`: a test must never re-point the pytest process's
-    real SIGTERM disposition (the registration itself is pinned separately)."""
+    """A no-op `signal.signal`: a test must never re-point the pytest process's real SIGTERM disposition.
+
+    The registration itself is pinned separately.
+    """
 
 
 class _CycleStampingRenderer:
-    """Records each hub event with how many `begin_cycle` calls preceded it,
-    so post-begin ordering (CycleStarted lands in the fresh cycle) is assertable."""
+    """Records each hub event alongside how many `begin_cycle` calls preceded it.
+
+    Makes post-begin ordering assertable (CycleStarted lands in the fresh cycle).
+    """
 
     writes_file_only: ClassVar[bool] = False
 
@@ -1126,8 +1146,10 @@ class TestConsoleFormat:
 
 
 class TestResolvedFormat:
-    """`_resolved_format`: the ONE "auto" fold — the same resolved value feeds
-    `setup_logger` and `hub.begin_cycle`, so the two can never disagree."""
+    """`_resolved_format` is the one "auto" fold.
+
+    The same resolved value feeds `setup_logger` and `hub.begin_cycle`, so the two can never disagree.
+    """
 
     def test_auto_folds_to_plain_off_a_tty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sys, "stdout", io.StringIO())
@@ -1159,7 +1181,8 @@ class TestHubSeats:
     """The REAL cli seat factory, pinned end-to-end.
 
     Plain stdout is the file's bytes minus exactly the file_only lines; json is
-    event-per-line."""
+    event-per-line.
+    """
 
     @staticmethod
     def _seated(
@@ -1624,8 +1647,9 @@ class TestScheduleHours:
 
 
 def test_trust_os_certificates_swaps_in_the_os_trust_store() -> None:
-    """The root callback's TLS hook swaps `ssl.SSLContext` for truststore's
-    OS-store-backed one, before any HTTP client builds a context.
+    """The root callback's TLS hook swaps `ssl.SSLContext` for truststore's OS-backed one.
+
+    It runs before any HTTP client builds a context.
     """
 
     try:

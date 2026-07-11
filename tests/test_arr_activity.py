@@ -74,6 +74,8 @@ def _monitor(cache: FakeCacheStore | None = None) -> tuple[ArrActivityMonitor, F
 
 
 class TestDateHelpers:
+    """`parse_history_date`/`format_history_date` round-trip; naive stamps assume UTC, offsets convert, garbage parses to `None`."""
+
     def test_round_trip(self) -> None:
         assert parse_history_date(format_history_date(_NOW)) == _NOW
 
@@ -88,6 +90,8 @@ class TestDateHelpers:
 
 
 class TestScan:
+    """`ArrActivityMonitor.scan` windows/dedups history queries off the stored checkpoint, clamping bad or future dates to a full rescan, and filters touched ids by event type."""
+
     def test_bootstrap_queries_lookback_window_and_stores_max_id_checkpoint(self) -> None:
         monitor, cache = _monitor()
         fetch = _Fetch([_rec(5, item_id=3), _rec(7, item_id=4, date="2026-07-06T11:00:00Z")])

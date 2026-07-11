@@ -1,3 +1,5 @@
+"""The Sonarr strategy: series/episode coverage and per-AniList-id processing over the services hub."""
+
 import time
 from collections.abc import Sequence
 from typing import override
@@ -39,7 +41,7 @@ from .sonarr_parse import SonarrParseCache
 
 
 def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
-    """See if SeaDex releases have overlapping episodes"""
+    """See if SeaDex releases have overlapping episodes."""
 
     # Shares get_episode_keys with get_same_files_groups (planner) but
     # deliberately differs on unparsed releases: here an unparsed release is
@@ -285,7 +287,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         al_id: int,
         mapping: MappingEntry,
     ) -> bool:
-        """Process one AniList id for a Sonarr series
+        """Process one AniList id for a Sonarr series.
 
         The middle is the episode-aware part: resolve the relevant episode list,
         its coverage and release groups, parse the SeaDex file lists into

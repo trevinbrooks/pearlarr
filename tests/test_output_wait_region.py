@@ -86,6 +86,8 @@ def _progress(*torrents: TorrentView, elapsed: float) -> WaitProgress:
 
 
 class TestWaitCockpitLifecycle:
+    """The wait cockpit's Live opens on the first WaitProgress and stops before the closing tally prints."""
+
     def test_live_starts_on_first_progress_not_on_started(self) -> None:
         renderer, _stream = _live_renderer()
 
@@ -155,6 +157,8 @@ class TestWaitCockpitLifecycle:
 
 
 class TestNonLiveDigest:
+    """On a non-live console the cockpit degrades to a start line plus throttled pulses, still honoring level gating."""
+
     def test_prints_start_and_throttled_pulses_without_a_live(self) -> None:
         renderer, stream = _live_renderer(width=20)  # width < MIN_LIVE_WIDTH -> not live
 
@@ -204,6 +208,8 @@ class TestNonLiveDigest:
 
 
 class TestFrontierTeardown:
+    """The wait Live slot tears down whenever the wait region leaves the fold's frontier, always starting fresh."""
+
     def test_scope_closed_tears_down_the_wait_live(self) -> None:
         renderer, _stream = _live_renderer()
 
@@ -295,6 +301,8 @@ class TestFrontierTeardown:
 
 
 class TestWaitRegionDirect:
+    """WaitRegion driven directly: section_left tears down idempotently, frames roll the clock, rows adapt to width."""
+
     @staticmethod
     def _region() -> WaitRegion:
         console = Console(file=io.StringIO(), force_terminal=True, legacy_windows=False, width=100)

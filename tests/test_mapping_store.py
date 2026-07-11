@@ -1,6 +1,5 @@
 # pyright: strict
-"""Unit tests for `MappingStore`: the freshness gate, atomic populate, schema
-rebuild on version change, corruption fail-open, and cross-open durability.
+"""Unit tests for `MappingStore`: freshness gate, atomic populate, schema rebuild, corruption fail-open, durability.
 
 These pin the guarantees the parse-once-per-download cache relies on - in
 particular that a torn populate can never leave a digest marked fresh against
@@ -29,6 +28,11 @@ ROW2 = AnimeIdRow(101, 201, -1, 0, None, None, None)
 
 
 class TestFreshnessGate:
+    """`is_fresh` reads fresh only for a matching per-source digest.
+
+    `replace_*` swaps both the digest and the rows atomically.
+    """
+
     def test_is_fresh_only_for_matching_digest(self) -> None:
         store = MappingStore.open(":memory:")
         assert not store.is_fresh(SOURCE_ANIME_IDS, "d1")
@@ -57,8 +61,10 @@ class TestFreshnessGate:
 
 
 class TestAtomicReplace:
-    """A populate that errors mid-write must roll back to the prior state, never
-    leaving the digest fresh against empty/partial tables."""
+    """A populate that errors mid-write rolls back to the prior state.
+
+    It never leaves the digest fresh against empty/partial tables.
+    """
 
     def test_failed_populate_keeps_prior_state(self) -> None:
         store = MappingStore.open(":memory:")
@@ -79,6 +85,8 @@ class TestAtomicReplace:
 
 
 class TestSchemaVersion:
+    """A schema version mismatch on open rebuilds the tables from scratch, dropping prior data."""
+
     def test_version_mismatch_rebuilds_tables(self, tmp_path: Path) -> None:
         path = str(tmp_path / "mappings.db")
         store = MappingStore.open(path)
@@ -99,6 +107,8 @@ class TestSchemaVersion:
 
 
 class TestCorruptionFailOpen:
+    """A corrupt db file is quarantined (moved aside), and the store fails open onto a working in-memory db."""
+
     def test_garbage_file_is_quarantined_and_store_still_works(self, tmp_path: Path) -> None:
         path = tmp_path / "mappings.db"
         path.write_bytes(b"this is definitely not a sqlite database" * 16)
@@ -114,9 +124,11 @@ class TestCorruptionFailOpen:
 
 
 class TestDistinctTyping:
-    """The per-column/per-axis overloads' runtime halves: anime_ids values come
-    from third-party JSON un-coerced (junk is skipped), while anibridge ext ids
-    were coerced on write (a mismatch is corruption and raises)."""
+    """The per-column/per-axis distinct overloads' runtime halves.
+
+    `anime_ids` values come from third-party JSON un-coerced (junk is skipped), while anibridge ext ids were
+    coerced on write (a mismatch is corruption and raises).
+    """
 
     def test_anime_ids_distinct_skips_junk_typed_values(self, tmp_path: Path) -> None:
         path = str(tmp_path / "mappings.db")
@@ -157,6 +169,8 @@ class TestDistinctTyping:
 
 
 class TestDurability:
+    """A missing db file is created on first open, and its digest/rows persist across a fresh open (new process)."""
+
     def test_missing_file_created_and_persists_across_opens(self, tmp_path: Path) -> None:
         path = str(tmp_path / "mappings.db")
 

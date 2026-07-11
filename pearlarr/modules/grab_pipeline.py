@@ -108,7 +108,7 @@ class GrabPipeline:
         torrent_dict: SeadexDict,
         pending_seeds: dict[str, PendingImport] | None = None,
     ) -> tuple[int, list[ReleaseOutcome]]:
-        """Add torrent(s) to qBittorrent
+        """Add torrent(s) to qBittorrent.
 
         The per-release outcome lines (added / already-downloading) are NOT
         logged here; this returns them so the caller (log_seadex_action) can emit
@@ -331,7 +331,7 @@ class GrabPipeline:
         )
 
     def grab_and_cache(self, req: GrabRequest) -> bool:
-        """Shared per-id tail: add torrents, notify, then cache the outcome
+        """Shared per-id tail: add torrents, notify, then cache the outcome.
 
         Identical across both Arrs once the (Arr-specific) `seadex_dict` and
         release-group info have been resolved (bundled into `req`). Returns True

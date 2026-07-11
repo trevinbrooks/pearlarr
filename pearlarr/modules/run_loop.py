@@ -1,3 +1,5 @@
+"""The per-arr run loop: the `run_sync` scaffolding shared by both Arr strategies."""
+
 import time
 from typing import final
 
@@ -96,7 +98,7 @@ class RunLoop:
         dry_run: bool,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
     ) -> None:
-        """Start a fresh run context and the run clock, and rebind collaborators
+        """Start a fresh run context and the run clock, and rebind collaborators.
 
         Replaces the run-scoped state wholesale with a new RunContext - this is
         the ONLY fresh-mint site; its `arr` is read off the services hub (the
@@ -141,7 +143,7 @@ class RunLoop:
         import_wait_mode: ImportWaitMode | None = None,
         boot: BootFlow,
     ) -> None:
-        """Shared run scaffolding for both Arr syncers
+        """Shared run scaffolding for both Arr syncers.
 
         Generic in `ItemT` (the strategy's item protocol), so the body sees a
         precise `list[ItemT]` / `item: ItemT` - the same concrete type the

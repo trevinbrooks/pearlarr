@@ -40,6 +40,8 @@ from .builders import make_planner, rg_group, sonarr_ep, url_item
 
 
 class TestGetAnyToDownload:
+    """`get_any_to_download` reports whether any url in the group dict has its `download` flag set."""
+
     def test_false_when_none_flagged(self) -> None:
         seadex = {"A": rg_group({"u": url_item(download=False)})}
         assert DownloadPlanner.get_any_to_download(seadex) is False
@@ -50,6 +52,8 @@ class TestGetAnyToDownload:
 
 
 class TestReduceOverlappingDownloads:
+    """`reduce_overlapping_downloads` picks one keeper per same-files set per the module's branch matrix, accumulating skip state across sets."""
+
     def test_interactive_is_noop(self) -> None:
         planner = make_planner(interactive=True)
         seadex = {
@@ -503,8 +507,10 @@ class TestReduceOverlappingDownloads:
 
 
 class TestSameGroupDuplicateDedup:
-    """Within one group, flagged urls with identical non-empty filesets dedup to
-    the first; unknown filesets never dedup (can't prove identity)."""
+    """Within one group, flagged urls with identical non-empty filesets dedup to the first.
+
+    Unknown filesets never dedup (can't prove identity).
+    """
 
     def test_identical_filesets_keep_first(self) -> None:
         planner = make_planner()
@@ -588,6 +594,8 @@ class TestSameGroupDuplicateDedup:
 
 
 class TestFilterByTorrentHash:
+    """`filter_by_torrent_hash` flags urls whose infohash isn't already cached, and always lists every url's hash."""
+
     def test_flags_uncached_hashes(self) -> None:
         planner = make_planner()
         seadex = {"A": rg_group({"u1": url_item(infohash="h1", download=False)})}
@@ -607,6 +615,8 @@ class TestFilterByTorrentHash:
 
 
 class TestFilterByReleaseGroup:
+    """`filter_by_release_group` skips a release whose group and size(s) already match what the arr holds (case-insensitively), downloading otherwise."""
+
     def test_new_group_no_episodes_downloads(self) -> None:
         planner = make_planner()
         seadex = {"NewRG": rg_group({"u1": url_item(episodes=[], infohash="h1")})}

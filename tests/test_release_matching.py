@@ -22,6 +22,8 @@ from .builders import sonarr_ep
 
 
 class TestNormalizeRg:
+    """`normalize_rg` casefolds and strips whitespace/leading-trailing dashes; blank or `None` in yields `None`."""
+
     def test_none_and_blank_return_none(self) -> None:
         assert normalize_rg(None) is None
         assert normalize_rg("") is None
@@ -35,6 +37,8 @@ class TestNormalizeRg:
 
 
 class TestFormatEpisodeRanges:
+    """`format_episode_ranges` renders sorted, deduped episode numbers as comma-joined contiguous `E`-ranges."""
+
     def test_empty(self) -> None:
         assert format_episode_ranges([]) == ""
 
@@ -52,6 +56,8 @@ class TestFormatEpisodeRanges:
 
 
 class TestGetEpisodeKeys:
+    """`get_episode_keys` builds a `(season, episode)` set from episode records, missing fields becoming `(None, None)`."""
+
     def test_builds_season_episode_pairs(self) -> None:
         eps = [EpisodeRecord(season=1, episode=1), EpisodeRecord(season=1, episode=2)]
         assert get_episode_keys(eps) == {(1, 1), (1, 2)}
@@ -61,6 +67,13 @@ class TestGetEpisodeKeys:
 
 
 class TestGetSameFilesGroups:
+    """`get_same_files_groups` groups release names by identical episode coverage.
+
+    Unset (`None`) coverage collapses every group into one; an empty list keeps
+    each group apart (coverage unverifiable); matching/differing coverage sets
+    group or separate accordingly.
+    """
+
     def test_no_episode_parsing_groups_together(self) -> None:
         # No all_episodes (None) -> no-parsing branch -> all collapse to one group
         seadex = {"A": SeadexReleaseGroupItem(), "B": SeadexReleaseGroupItem()}
@@ -90,6 +103,12 @@ class TestGetSameFilesGroups:
 
 
 class TestGetAllSeadexRgsPerEpisode:
+    """`get_all_seadex_rgs_per_episode` maps each Sonarr-known episode to its casefolded release-group names.
+
+    A dict of one group short-circuits to just the empty `all` bucket; a group
+    with no matched episodes falls into `all` instead of a per-episode key.
+    """
+
     def test_single_group_short_circuits(self) -> None:
         # len(seadex_dict) <= 1 returns just the empty "all" bucket
         seadex = {

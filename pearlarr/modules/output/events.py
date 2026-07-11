@@ -105,6 +105,8 @@ class CycleStarted:
 
 @dataclass(frozen=True, slots=True)
 class NextRunScheduled:
+    """The scheduled loop's footer fact: when the next cycle fires."""
+
     at: datetime
 
 
@@ -121,6 +123,8 @@ class ScopeOpened:
 
 @dataclass(frozen=True, slots=True)
 class ScopeClosed:
+    """A handle-backed scope closed; the fold also closes anything nested deeper."""
+
     scope: ScopeId
 
 
@@ -230,6 +234,8 @@ class LedgerRow:
 
 
 class SkipReason(Enum):
+    """Why a release was skipped at add time; `severity` picks the line's level."""
+
     PRIVATE_ONLY = auto()
     UNSUPPORTED_TRACKER = auto()
     TRACKER_NOT_SELECTED = auto()
@@ -243,6 +249,8 @@ class SkipReason(Enum):
 
 @dataclass(frozen=True, slots=True)
 class ReleaseSkipped:
+    """One release skipped at add time, with the group/tracker facts the line renders."""
+
     group: str
     tracker: str
     reason: SkipReason
@@ -261,6 +269,8 @@ class GrabFailed:
 
 
 class GrabStatus(Enum):
+    """The grab action's disposition: a real add, a preview would-add, or already downloading."""
+
     ADDING = auto()
     WOULD_ADD = auto()
     ALREADY_DOWNLOADING = auto()
@@ -314,6 +324,8 @@ class GrabAction:
 
 @dataclass(frozen=True, slots=True)
 class CapReached:
+    """The `max_torrents` cap was reached; the run adds nothing further."""
+
     cap: int
 
 
@@ -567,6 +579,8 @@ class WaitSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class WaitStarted:
+    """The wait pass opened: how many torrents it watches, and the pulse cadence."""
+
     total: int
     # The renderer's pulse throttle interval (max(poll_s, digest_interval)); the
     # producer computes it. No default: the producer must supply it.
@@ -600,6 +614,8 @@ class TorrentGraduated:
 
 @dataclass(frozen=True, slots=True)
 class WaitFinished:
+    """The wait pass closed, with its imported/deferred/failed tally."""
+
     imported: int
     deferred: int
     failed: int

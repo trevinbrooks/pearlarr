@@ -37,6 +37,12 @@ def _ep(ep_id: int, season: int, episode: int) -> SonarrEpisode:
 
 
 class TestBuildPendingSeeds:
+    """`build_pending_seeds` seeds a `PendingImport` per download+hash video url.
+
+    Filenames map to episode ids via the parse cache (falling back flat when
+    unparsed); releases with no video files are skipped.
+    """
+
     def test_seeds_only_download_with_hash(self) -> None:
         ep_list = [_ep(101, 1, 1)]
         parse_cache = {"Show - 01.mkv": {"episodes": [{"season": 1, "episode": 1}]}}
@@ -147,9 +153,11 @@ class TestBuildPendingSeeds:
 
 
 class TestParseWriteVisibleToSeeds:
-    """The parse cache (writer) and the seed builder (reader) are now separate
-    objects; they must share one `cache_store` so a parse write earlier in the
-    run is visible to the seed read - the staged-write invariant the split risks."""
+    """The parse cache (writer) and the seed builder (reader) are now separate objects.
+
+    They must share one `cache_store` so a parse write earlier in the run is
+    visible to the seed read - the staged-write invariant the split risks.
+    """
 
     def test_parse_write_feeds_seed_build(self) -> None:
         sonarr = FakeSonarrClient(parse=[{"season": 1, "episode": 1}])

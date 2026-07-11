@@ -53,6 +53,8 @@ def _open(tmp_path: Path) -> CacheStore:
 
 
 class TestSchemaAndDescriptor:
+    """A missing db opens in-memory and reads empty; a saved db persists the version/checksum descriptor."""
+
     def test_missing_file_opens_in_memory(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         # Nothing on disk yet, and reads work against the empty in-memory schema.
@@ -104,6 +106,8 @@ def _user_version(db: Path) -> int:
 
 
 class TestSchemaVersionGate:
+    """The schema-version gate: older dbs migrate step-by-step, newer dbs are refused."""
+
     def test_fresh_db_is_stamped_through_promote(self, tmp_path: Path) -> None:
         # The :memory: stand-in is stamped on create; the backup-API promote must
         # carry that stamp into the file it writes, or every fresh install would
@@ -171,6 +175,8 @@ class TestSchemaVersionGate:
 
 
 class TestEntries:
+    """Per-entry columns merge partially on update, format/match timestamps, and stay isolated per arr."""
+
     def test_update_cache_is_a_partial_merge(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"name": "Title", "url": "u"})
@@ -237,6 +243,8 @@ class TestEntries:
 
 
 class TestFallbackSatisfied:
+    """`fallback_satisfied` defaults false, round-trips as a real bool, and survives partial updates that omit it."""
+
     def test_defaults_false_and_roundtrips_as_bool(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         # A row written without the key reads back False (NOT NULL DEFAULT 0)...
@@ -280,6 +288,11 @@ class TestFallbackSatisfied:
 
 
 class TestTorrentHashes:
+    """Torrent hashes preserve the None (hashless) marker and dedup it.
+
+    Rewriting the set replaces it wholesale, and the shape stays compatible with a pre-existing NOT NULL schema.
+    """
+
     def test_roundtrip_preserves_none_marker(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["aaa", "bbb", None]})
@@ -331,6 +344,8 @@ class TestTorrentHashes:
 
 
 class TestPreviewGate:
+    """The staged-write preview gate: a preview save never persists, only a real save does."""
+
     def test_preview_save_on_missing_file_writes_nothing(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.update_cache(Arr.SONARR, 7, {"name": "Title"})
@@ -370,6 +385,8 @@ class TestPreviewGate:
 
 
 class TestAnilistMeta:
+    """AniList metadata records round-trip by id, are iterable, and a later `put` overwrites the prior record."""
+
     def test_roundtrip_get_and_iter(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         rec = {"fetched_at": "2026-06-20 12:00:00", "data": {"Media": {"id": 1}}}
@@ -390,6 +407,8 @@ class TestAnilistMeta:
 
 
 class TestSonarrParse:
+    """Parsed Sonarr episode records round-trip keyed by filename, and a missing filename reads back None."""
+
     def test_roundtrip_get(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         rec = {"fetched_at": "2026-06-20 12:00:00", "episodes": [{"season": 1, "episode": 2}]}
@@ -400,6 +419,8 @@ class TestSonarrParse:
 
 
 class TestPendingImports:
+    """Pending imports are tracked per arr+infohash, droppable, and filterable by series id in SQL."""
+
     def test_roundtrip_drop_and_arr_isolation(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         rec = {"infohash": "h1", "series_id": 5, "episode_ids": [1, 2]}
@@ -435,6 +456,11 @@ class TestPendingImports:
 
 
 class TestHistoryCheckpoints:
+    """History checkpoints upsert per arr and respect the preview gate.
+
+    `own_download_ids` unions casefolded hashes across cached torrents and pending imports.
+    """
+
     def test_roundtrip_upsert_and_arr_isolation(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         assert store.get_history_checkpoint(Arr.SONARR) is None
@@ -476,6 +502,8 @@ class TestHistoryCheckpoints:
 
 
 class TestPromoteFailure:
+    """A failed atomic promote leaves no partial `cache.db` behind, and a later save still promotes for real."""
+
     def test_failed_promote_leaves_no_partial_db(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # If the promote rename fails (disk full / killed mid-copy), it must leave NO
         # partial cache.db - else the next run mistakes the torn file for a real
@@ -504,9 +532,11 @@ class TestPromoteFailure:
 
 
 class TestRunLifecycle:
-    """Replays the order the run loop drives a real CacheStore through (the run-loop
-    tests mock cache_store, so this is the only check that the real load -> writes ->
-    save(commit) -> close(rollback) -> reopen sequence behaves)."""
+    """Replays the order the run loop drives a real `CacheStore` through.
+
+    The run-loop tests mock `cache_store`, so this is the only check that the real
+    load -> writes -> save(commit) -> close(rollback) -> reopen sequence behaves.
+    """
 
     def test_run_call_order_persists_and_reloads(self, tmp_path: Path) -> None:
         db = str(tmp_path / "cache.db")
@@ -545,6 +575,8 @@ class TestRunLifecycle:
 
 
 class TestMaintenance:
+    """Eviction drops only stale or stampless records and keeps fresh ones; stats/integrity report accurate counts."""
+
     def test_evict_anilist_meta_drops_only_stale(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
         store.put_anilist_meta(1, {"fetched_at": "2020-01-01 00:00:00", "data": {"x": 1}})
@@ -596,6 +628,8 @@ class TestMaintenance:
 
 
 class TestCorruptStore:
+    """Corruption detection fires only on real corruption, and only genuinely corrupt dbs get quarantined."""
+
     def test_is_corruption_distinguishes_corrupt_from_transient(self) -> None:
         # Quarantine wipes the db, so it must fire ONLY on real corruption - never on
         # a transient lock/IO error (which would destroy a healthy cache on a fluke).

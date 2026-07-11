@@ -75,6 +75,11 @@ def _entry(*torrents: TorrentRecord) -> EntryRecord:
 
 
 class TestGetSeadexDict:
+    """`make_release_filter`'s `build` narrows candidates by tracker, tags, want_best, and dual-audio.
+
+    A private url is dropped only when a public copy of the same group survives.
+    """
+
     def test_filters_out_unselected_trackers(self) -> None:
         filt = make_release_filter(trackers={"nyaa"}, want_best=False, prefer_dual_audio=False)
         entry = _entry(
@@ -445,6 +450,11 @@ class TestPrivateFallback:
 
 
 class TestInteractivePick:
+    """The interactive numbered-pick prompt supports comma-separated multi-select and tolerates bad input.
+
+    All-invalid input skips the title without caching a result.
+    """
+
     def test_comma_separated_multi_pick_keeps_each_selection(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:

@@ -119,7 +119,7 @@ class AniListRetryLog:
 
 
 def _errors_are_retryable(body: dict[str, Any] | None) -> bool:
-    """True if a GraphQL body carries a throttle/rate-limit or 5xx-style error
+    """True if a GraphQL body carries a throttle/rate-limit or 5xx-style error.
 
     AniList sometimes soft-throttles with HTTP 200 and a non-empty "errors"
     array (`{"data": null, "errors": [{"message": "Too Many Requests",
@@ -164,7 +164,7 @@ def _parse_errors(body: dict[str, Any] | None) -> list[AniListError]:
 
 
 def extract_path(body: dict[str, Any] | None, *path: str) -> dict[str, Any]:
-    """Walk a null-safe key path through a GraphQL body, yielding {} on any miss
+    """Walk a null-safe key path through a GraphQL body, yielding {} on any miss.
 
     AniList returns {"data": null} or {"data": {"Media": null}} for an unknown
     id or a rate-limit, so each hop is guarded with "or {}" and a missing or
@@ -194,7 +194,7 @@ def media_node_from(raw: dict[str, Any]) -> AniListMediaNode:
 
 
 def media_from(body: dict[str, Any] | None) -> AniListMediaNode:
-    """Parse the Media node from a single-id body into an AniListMediaNode
+    """Parse the Media node from a single-id body into an AniListMediaNode.
 
     The raw `{"data": {"Media": {...}}}` body is the dynamic GraphQL boundary;
     this is where it crosses into the typed domain. A miss (`data`/`Media`
@@ -227,12 +227,12 @@ class AniListClient:
         self._retry_log = AniListRetryLog()
 
     def query(self, al_id: int) -> dict[str, Any]:
-        """Fetch one AniList Media by id (see _post_with_retry for the retry policy)"""
+        """Fetch one AniList Media by id (see _post_with_retry for the retry policy)."""
 
         return self._post_with_retry(QUERY, {"id": al_id})
 
     def query_batch(self, al_ids: list[int]) -> AniListCache:
-        """Fetch up to ANILIST_BATCH_SIZE AniList Media in a single request via id_in
+        """Fetch up to ANILIST_BATCH_SIZE AniList Media in a single request via id_in.
 
         Returns "{id: {"data": {"Media": {...}}}}" mirroring the single-id shape,
         so the results can seed the same cache directly. Ids unknown to AniList are
@@ -254,7 +254,7 @@ class AniListClient:
         return out
 
     def _post_with_retry(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
-        """POST a GraphQL query to AniList, retrying politely on rate-limits / 5xx
+        """POST a GraphQL query to AniList, retrying politely on rate-limits / 5xx.
 
         On a rate-limit (HTTP 429) or a transient 5xx, AniList returns
         "{"data": null, ...}". It can also soft-throttle with HTTP 200 and a

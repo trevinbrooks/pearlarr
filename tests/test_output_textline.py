@@ -94,7 +94,8 @@ def _format(event: Event, *events_before: Event) -> str | None:
     events render+fold first (their output is discarded via the stream mark);
     the DEBUG threshold admits every line, matching the old unthresholded
     `format_line`. The trailing newline is the sink's write framing, not part
-    of the line."""
+    of the line.
+    """
 
     stream = io.StringIO()
     sink = LineRenderer(stream)
@@ -878,9 +879,11 @@ def _exemplars() -> list[Event]:
 
 
 def test_a_newline_in_a_breadcrumb_label_cannot_break_the_line_grammar() -> None:
-    """Bracket labels carry external titles (Arr/AniList): a smuggled newline is
-    escaped exactly like the message, so the one-line grammar holds (a rendered
-    traceback stays the sole multi-line form)."""
+    """Bracket labels carry external titles (Arr/AniList).
+
+    A smuggled newline is escaped exactly like the message, so the one-line
+    grammar holds (a rendered traceback stays the sole multi-line form).
+    """
 
     context = (
         ScanStarted(arr=Arr.SONARR, total=1),
@@ -900,10 +903,12 @@ _JSON_ENVELOPE_KEYS = frozenset(
 
 
 def test_no_fact_field_key_can_collide_with_the_json_envelope() -> None:
-    """JsonRenderer writes fact fields into the envelope dict: a Field keyed
-    like an envelope member would silently clobber it in every json line. Every
-    Field key in textline.py is a string literal, so this AST canary pins the
-    disjointness for current AND future field vocabulary."""
+    """A `Field` key that collides with an envelope member would silently clobber it in every JSON line.
+
+    `JsonRenderer` writes fact fields straight into the envelope dict, and every
+    `Field` key in `textline.py` is a string literal, so this AST canary pins the
+    disjointness for current and future field vocabulary.
+    """
 
     import ast
     import inspect
@@ -959,10 +964,13 @@ def test_every_event_type_has_a_decided_form_on_both_surfaces() -> None:
 
 
 def test_skip_sets_are_event_members_pinned_to_their_current_membership() -> None:
-    """The source skip sets are hand-maintained subsets of the Event union: (a) a
-    renamed/removed event breaks the subset check loudly (import still succeeds, but
-    get_args no longer holds it); (b) the exact membership is pinned, so adding or
-    dropping a skip is a conscious, reviewed change — not a silent behavior shift."""
+    """The source skip sets are hand-maintained subsets of the Event union.
+
+    (a) A renamed/removed event breaks the subset check loudly (import still
+    succeeds, but get_args no longer holds it); (b) the exact membership is
+    pinned, so adding or dropping a skip is a conscious, reviewed change — not
+    a silent behavior shift.
+    """
 
     union_members: set[object] = set(get_args(Event.__value__))
     assert _TEXT_SKIP <= union_members

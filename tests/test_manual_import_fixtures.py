@@ -160,8 +160,7 @@ class TestQualityResolution:
 # ParsedFileInfo.from_parse_resource - the series-agnostic field, on real bodies
 # --------------------------------------------------------------------------- #
 class TestParsedFileInfoFromRealBodies:
-    """The fix's load-bearing claim: parsedEpisodeInfo is populated when the
-    series-matched `episodes` array is empty."""
+    """The load-bearing claim: `parsedEpisodeInfo` populates even when `episodes` (series-matched) is empty."""
 
     def test_yamada_special_has_season_episode_despite_no_series_match(self) -> None:
         body: dict[str, object] = load_fixture("parse_yamada_s00e01.json")
@@ -188,6 +187,8 @@ class TestParsedFileInfoFromRealBodies:
 # parse_se_from_filename - the offline SxxExx fallback
 # --------------------------------------------------------------------------- #
 class TestParseSeFromFilename:
+    """`parse_se_from_filename` extracts an offline SxxExx pattern, never guessing a bare absolute number."""
+
     def test_sxxexx_extracted(self) -> None:
         info = parse_se_from_filename("Show.Name.S00E05.480p.mkv")
         assert info is not None
@@ -470,6 +471,8 @@ class TestClassifyRealQueue:
 # PendingImport round-trip carries the new resolved set (with back-compat)
 # --------------------------------------------------------------------------- #
 class TestPendingImportOrderedIds:
+    """`ordered_episode_ids` round-trips through JSON; a legacy record missing the key rehydrates to an empty list."""
+
     def test_round_trip_preserves_ordered_episode_ids(self) -> None:
         rec = pending_import(ordered_episode_ids=[8030, 8031, 8032])
         from pearlarr.modules.manual_import import PendingImport

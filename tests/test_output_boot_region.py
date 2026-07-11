@@ -137,6 +137,8 @@ def test_format_step_secs_bands() -> None:
 
 
 class TestBootRegion:
+    """Boot region: steps graduate to durable lines; the Live slot tears down at every scope/run/cycle boundary."""
+
     def test_banner_renders_title_blank_and_data_dir(self) -> None:
         renderer, stream = _renderer()
 
@@ -400,6 +402,8 @@ def _frame(label: str, caps: Capabilities, fraction: float | None, detail: str |
 
 
 class TestFrameText:
+    """The pure spinner-frame builder draws a unicode percent bar, degrading to ASCII without unicode support."""
+
     def test_unicode_frame_draws_a_bar_with_percent_and_detail(self) -> None:
         text = _frame("Refreshing mappings", _UNICODE_CAPS, 0.5, "anime_ids.json")
         assert "50%" in text

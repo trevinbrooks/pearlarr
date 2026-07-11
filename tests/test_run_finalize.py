@@ -186,8 +186,11 @@ class TestPerIdErrorContainment:
 
 
 class _ItemRaisingStrategy(FakeStrategy):
-    """A `FakeStrategy` whose mapping lookup raises for one item id - the
-    seam run_sync hits per item BEFORE the per-id loop (the OUTER containment arm)."""
+    """A `FakeStrategy` whose mapping lookup raises for one item id.
+
+    This is the seam `run_sync` hits per item BEFORE the per-id loop (the
+    OUTER containment arm).
+    """
 
     def __init__(
         self,

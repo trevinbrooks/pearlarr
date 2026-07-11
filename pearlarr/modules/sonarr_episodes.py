@@ -175,7 +175,7 @@ class SonarrEpisodes:
         return series
 
     def get_all_sonarr_series(self) -> list[SonarrItem]:
-        """Get all series in Sonarr with AniList mapping info"""
+        """Get all series in Sonarr with AniList mapping info."""
 
         fields = (IdField("tvdb_id", "tvdbId"), IdField("imdb_id", "imdbId"))
         return collect_anime_items(

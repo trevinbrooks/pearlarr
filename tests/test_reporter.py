@@ -110,6 +110,12 @@ def test_run_stats_shape() -> None:
 
 
 class TestStatsCounters:
+    """Each `RunReporter` `log_*` method increments its matching `RunStats` counter.
+
+    Cached/outage-skip paths resolve a title via the AniList gateway only when
+    no name is already stored.
+    """
+
     def test_unmonitored(self) -> None:
         ctx = RunContext(arr=Arr.SONARR)
         _make_reporter().log_arr_item_unmonitored(ctx, "Title")
@@ -207,6 +213,8 @@ class _ScriptedTitleClient(AniListClient):
 
 
 class TestActiveTitle:
+    """`log_al_title` sets the context's current title, url, and coverage for the open entry."""
+
     def test_log_al_title_sets_current(self) -> None:
         ctx = RunContext(arr=Arr.SONARR)
         entry = make_entry_record(url="https://releases.moe/9")
@@ -217,8 +225,10 @@ class TestActiveTitle:
 
 
 class TestEntryHeaderAlId:
-    """G1: `al_id` on the emitted EntryHeader is producer-unverified - garbage
-    in either header-opening path passed the whole suite - so pin it on both."""
+    """G1: `al_id` on the emitted `EntryHeader` is producer-unverified.
+
+    Garbage in either header-opening path passed the whole suite, so pin it on both.
+    """
 
     def _header(self, events: list[Event]) -> EntryHeader:
         return next(e for e in events if isinstance(e, EntryHeader))
@@ -272,11 +282,12 @@ class TestCloseBoundaries:
 
 
 class TestCompleteBlocksSelfClose:
-    """D6: a cached / carried-over-pending block is COMPLETE on return (nothing
-    follows it - the header carries the whole row), so it self-closes. A gap
-    diagnostic (e.g. a retry WARNING while resolving the next title) then rides
-    col 0 rather than indenting under the finished block. Contrast a CHECKING
-    entry, which legitimately accrues followers and stays open until a boundary.
+    """D6: a cached / carried-over-pending block is COMPLETE on return, so it self-closes.
+
+    Nothing follows it - the header carries the whole row. A gap diagnostic
+    (e.g. a retry WARNING while resolving the next title) then rides col 0
+    rather than indenting under the finished block. Contrast a CHECKING entry,
+    which legitimately accrues followers and stays open until a boundary.
     """
 
     def test_cached_entry_emits_scope_closed_before_returning(self) -> None:
@@ -294,6 +305,11 @@ class TestCompleteBlocksSelfClose:
 
 
 class TestRunSummary:
+    """`log_run_summary` emits a `RunSummaryReady` scoreboard from the run's stats.
+
+    The dry-run note wording tracks whether a qBittorrent client is configured.
+    """
+
     def _ctx_with_data(self) -> RunContext:
         ctx = RunContext(arr=Arr.SONARR)
         ctx.stats.checked = 3
@@ -343,8 +359,10 @@ class TestRunSummary:
         assert self._summary_of(events).summary.dry_run_note == "nothing grabbed"
 
     def test_counts_mark_stays_bound_to_the_counter_it_was_stamped_on(self) -> None:
-        """A counter swapped in between mark and summary (a re-installed hub) can't
-        feed the diff: the mark carries the ORIGINAL counter."""
+        """A counter swapped in between mark and summary (a re-installed hub) can't feed the diff.
+
+        The mark carries the ORIGINAL counter.
+        """
 
         anilist = AniListGateway(
             cache_store=FakeCacheStore(),
@@ -501,8 +519,10 @@ class TestSummaryNoReleaseRow:
 
 
 class TestSummarySeadexDownRow:
-    """Outage skips get their own gated "seadex down" row - never the alarming
-    (and untrue) "no entry" count."""
+    """Outage skips get their own gated "seadex down" row.
+
+    It's never the alarming (and untrue) "no entry" count.
+    """
 
     def test_zero_count_renders_no_row(self) -> None:
         messages = _summary_messages(RunContext(arr=Arr.SONARR))
@@ -520,8 +540,10 @@ class TestSummarySeadexDownRow:
 
 
 class TestPrivateOnlyTip:
-    """The private-only guidance tip gates on the record's KIND, never on the
-    display `reason` text (rewording the string must not kill the tip)."""
+    """The private-only guidance tip gates on the record's KIND, never on the display `reason` text.
+
+    Rewording the string must not kill the tip.
+    """
 
     def _needs_ctx(self, kind: NeedsActionKind) -> RunContext:
         ctx = RunContext(arr=Arr.SONARR)

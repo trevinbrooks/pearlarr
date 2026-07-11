@@ -274,10 +274,11 @@ class _FakeRunServices(RunServices):
 
 
 def test_fake_overrides_the_full_public_surface() -> None:
-    """`@override` catches renames and signature drift but NOT additions: a new
-    public `RunServices` member would be silently inherited here (real body over
-    fake state) and only fail at test runtime. Reflection closes that gap - extend
-    the fake when this fails.
+    """`@override` catches renames and signature drift but NOT additions.
+
+    A new public `RunServices` member would be silently inherited here (real
+    body over fake state) and only fail at test runtime. Reflection closes
+    that gap - extend the fake when this fails.
     """
 
     # Loop-driven members (the runner calls these, strategies never do), so the

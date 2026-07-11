@@ -68,6 +68,8 @@ def _warning(message: str, origin: str = LOG_NAME) -> Diagnostic:
 
 
 class TestPlacement:
+    """Ambient indent tracks the open scope: boot-ledger and wait indents, column 0 otherwise, reset on `begin_cycle`."""
+
     def test_open_boot_section_indents_to_the_ledger(self) -> None:
         renderer, stream = _renderer()
 
@@ -90,9 +92,10 @@ class TestPlacement:
         assert _lines(stream) == [f"{INDENT}WARNING  webhook flaked"]
 
     def test_mid_scan_stays_at_column_zero_under_run_and_item_alone(self) -> None:
-        """RUN/ITEM are structural, not indented contexts: between entries (the
-        item's own rows), a diagnostic keeps column 0. An open entry scope indents
-        it - see test_output_scan_render."""
+        """RUN/ITEM are structural, not indented contexts: between entries (the item's own rows), a diagnostic keeps column 0.
+
+        An open entry scope indents it - see `test_output_scan_render`.
+        """
 
         renderer, stream = _renderer()
 
@@ -186,6 +189,8 @@ class TestUnwindPlacement:
 
 
 class TestFloors:
+    """Severity floors: third-party diagnostics floor at WARNING unless DEBUG; first-party honors the configured level."""
+
     def test_third_party_info_is_floored_at_the_default_level(self) -> None:
         renderer, stream = _renderer()
 
@@ -221,8 +226,7 @@ class TestFloors:
         assert str(text.style) == "grey50"
 
     def test_threshold_table(self) -> None:
-        """S4: first-party keeps console_level semantics; third-party floors at
-        WARNING unless the configured level is DEBUG."""
+        """S4: first-party keeps console_level semantics; third-party floors at WARNING unless the configured level is DEBUG."""
 
         assert diagnostic_threshold(logging.INFO, first_party=True) == logging.INFO
         assert diagnostic_threshold(logging.ERROR, first_party=True) == logging.INFO
@@ -234,6 +238,8 @@ class TestFloors:
 
 
 class TestNoOps:
+    """No-op paths: a `file_only` diagnostic and a missing rich console both suppress rendering without raising."""
+
     def test_file_only_diagnostics_never_render(self) -> None:
         renderer, stream = _renderer()
 
@@ -292,9 +298,10 @@ class TestDurableLoopLines:
 
 
 class TestRendering:
+    """Rendering pins: capped tracebacks never leak locals, messages render literally, and badge wording matches legacy."""
+
     def test_trace_renders_a_capped_traceback_but_never_locals(self) -> None:
-        """The secrets pin, renderer-side: CapturedTrace was extracted with
-        show_locals=False, so a frame local's VALUE can never render."""
+        """The secrets pin, renderer-side: CapturedTrace was extracted with show_locals=False, so a frame local's VALUE can never render."""
 
         renderer, stream = _renderer()
         sentinel = "hunter2-" + "sentinel"  # never a contiguous string in this file

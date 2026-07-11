@@ -841,6 +841,8 @@ def _seeded_store() -> FakeCacheStore:
 
 
 class TestBannerParity:
+    """`log_arr_start` / `log_arr_item_start` reproduce the pinned banner/item-start golden lines per arr."""
+
     def test_arr_start(self) -> None:
         harness = _Harness()
         harness.reporter.log_arr_start(Arr.SONARR, 3)
@@ -861,6 +863,8 @@ class TestBannerParity:
 
 
 class TestLedgerRowParity:
+    """The self-contained ledger rows (unmonitored, no-mapping, ignored) reproduce their pinned golden lines."""
+
     def test_unmonitored(self) -> None:
         harness = _Harness()
         harness.reporter.log_arr_item_unmonitored(RunContext(arr=Arr.SONARR), "Unmonitored Show")
@@ -878,6 +882,11 @@ class TestLedgerRowParity:
 
 
 class TestEntryHeaderParity:
+    """`log_al_title` / `log_cached_entry` / `log_pending_snapshot` reproduce the pinned entry-header golden lines.
+
+    Covers the checking, cached, and pending states.
+    """
+
     def test_checking_with_coverage_url_and_incomplete(self) -> None:
         harness = _Harness()
         entry = make_entry_record(url="https://releases.moe/111852", is_incomplete=True)
@@ -919,6 +928,11 @@ class TestEntryHeaderParity:
 
 
 class TestTitledEntryParity:
+    """`log_no_sd_entry` / `log_seadex_outage_skip` reproduce the pinned golden lines.
+
+    A title is resolved via the AniList gateway, or falls back when the gateway or cache has none.
+    """
+
     def test_no_entry_with_resolved_title(self) -> None:
         harness = _Harness(title="Resolved Title")
         harness.reporter.log_no_sd_entry(RunContext(arr=Arr.SONARR), 42)
@@ -936,6 +950,8 @@ class TestTitledEntryParity:
 
 
 class TestDetailParity:
+    """`log_no_seadex_releases` reproduces the pinned no-suitable-releases golden line."""
+
     def test_no_suitable_releases(self) -> None:
         harness = _Harness()
         harness.reporter.log_no_seadex_releases(RunContext(arr=Arr.SONARR))
@@ -967,14 +983,12 @@ class _FactSite:
 
 
 class TestExternalDetailParity:
-    """The external producer sites (grab pipeline / release filter / episode
-    mapper). Each golden was captured by RUNNING the pre-migration
-    `LogFormatter.detail` with the site's literal args at fc58aef; the reporter
-    must reproduce every line byte-identically through the shipped `scan_lines`
-    builders (the grammar every rendering surface consumes). The four
-    grab-pipeline sites emit typed `reporter.post` facts - the golden
-    `Line` tuples stay verbatim; the planner notice / missing / status sites
-    stay `reporter.detail`-driven.
+    """The external producer sites: grab pipeline, release filter, episode mapper.
+
+    Each golden was captured by running the pre-migration `LogFormatter.detail` with the site's literal args at
+    fc58aef; the reporter must reproduce every line byte-identically through the shipped `scan_lines` builders (the
+    grammar every rendering surface consumes). The four grab-pipeline sites emit typed `reporter.post` facts - the
+    golden `Line` tuples stay verbatim; the planner notice / missing / status sites stay `reporter.detail`-driven.
     """
 
     FACT_SITES: tuple[_FactSite, ...] = (
@@ -1104,6 +1118,11 @@ class TestExternalDetailParity:
 
 
 class TestActionBlockParity:
+    """`log_seadex_action` / `log_max_torrents_added` reproduce the pinned action-block golden lines.
+
+    Covers fresh, dry-run, already-downloading, and mixed-outcome renders.
+    """
+
     _SEADEX_DICT = {
         "GroupA": rg_group({"https://nyaa.si/view/1": url_item(download=True)}, tags=frozenset({_HDR_TAG})),
         "GroupB": rg_group({"https://nyaa.si/view/2": url_item(download=True)}),
@@ -1180,6 +1199,11 @@ def _summary_lines(
 
 
 class TestRunSummaryParity:
+    """`log_run_summary` reproduces the pinned summary golden lines across rich/dry/minimal/wait-off states.
+
+    Includes the issues row's style ladder (plain, yellow, bold-red).
+    """
+
     def test_rich_summary(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # A frozen clock pins the elapsed row (started at 38s, "now" 100s -> 1m 02s).
         monkeypatch.setattr(time, "monotonic", lambda: 100.0)
@@ -1216,8 +1240,10 @@ class TestRunSummaryParity:
 
 
 class TestTorrentValuePins:
-    """The summary "torrent" Text values, pinned by content (plain + spans + base
-    style) so the golden equality above can't hide a group_highlight regression."""
+    """The summary's "torrent" Text values, pinned by content: plain text, spans, and base style.
+
+    Golden equality above can't hide a `group_highlight` regression on its own.
+    """
 
     def test_leading_group_is_highlighted_in_place(self) -> None:
         value = _torrent_text("[GroupA] Frieren S01 1080p.mkv", "GroupA", dry=False)
@@ -1338,16 +1364,19 @@ class TestScopeLifecycle:
 
 
 def test_scan_event_types_match_the_alias() -> None:
-    """The fakes filter tuple can't rot behind the ScanEvent union: a new scan
-    event missing from it would silently vanish from every re-derived golden."""
+    """The fakes filter tuple can't rot behind the `ScanEvent` union.
+
+    A new scan event missing from it would silently vanish from every re-derived golden.
+    """
 
     members: set[object] = set(get_args(ScanEvent.__value__))
     assert set(SCAN_EVENT_TYPES) == members
 
 
 def test_tip_precedence_covers_exactly_the_tip_texts() -> None:
-    """Producer precedence (_TIP_PRECEDENCE) and builder texts (_TIP_TEXTS) are
-    hand-maintained twins; an entry in one without the other silently drops the
-    tip line (unranked cause -> tip=None; unmapped cause -> no text)."""
+    """Producer precedence (`_TIP_PRECEDENCE`) and builder texts (`_TIP_TEXTS`) are hand-maintained twins.
+
+    An entry in one without the other silently drops the tip line (unranked -> tip=None; unmapped -> no text).
+    """
 
     assert set(_TIP_PRECEDENCE) == set(_TIP_TEXTS)

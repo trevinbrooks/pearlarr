@@ -299,7 +299,7 @@ class SonarrParseCache:
         *,
         series_fp: str,
     ) -> SeadexDict:
-        """For files in a SeaDex release, parse this through Sonarr to get season/episode numbers
+        """For files in a SeaDex release, parse this through Sonarr to get season/episode numbers.
 
         This gets an overall episode list per-release group, and also episode lists per-torrent,
         if there are multiple

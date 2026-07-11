@@ -1,3 +1,5 @@
+"""Logging setup and the console surfaces: the rich handler, plain/json formats, and the level plumbing."""
+
 import logging
 import sys
 from dataclasses import dataclass
@@ -614,7 +616,7 @@ def arr_item_noun(arr: Arr, n: int) -> str:
 
 
 def format_elapsed(seconds: float) -> str:
-    """Format an elapsed number of seconds as e.g. "8s", "14m 03s" or "1h 02m 03s" """
+    """Format an elapsed number of seconds as e.g. "8s", "14m 03s", or "1h 02m 03s"."""
 
     total = int(seconds)
     hours, rem = divmod(total, 3600)

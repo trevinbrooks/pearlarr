@@ -1,3 +1,5 @@
+"""The SeaDex release filter: builds the per-entry `seadex_dict` and applies the selection rules."""
+
 import copy
 import sys
 from typing import TYPE_CHECKING, NamedTuple

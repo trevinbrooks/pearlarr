@@ -81,6 +81,11 @@ def _ep(
 
 
 class TestBuildEpisodeIdMap:
+    """`build_episode_id_map` maps `(season, episode)` to the first episode id.
+
+    Missing season/episode fold to a sentinel key (no collision with real pairs), and id 0 is skipped.
+    """
+
     def test_normal_seasoned_episodes(self) -> None:
         eps = [
             _ep(ep_id=11, season=1, episode=1),
@@ -108,6 +113,11 @@ class TestBuildEpisodeIdMap:
 
 
 class TestNormalize:
+    """`normalize_basename`/`normalize_group` casefold and strip for stable comparison.
+
+    Interior dashes in a group name are never stripped, only wrapping ones.
+    """
+
     def test_nfc_nfd_match(self) -> None:
         # Same text, NFC (composed) vs NFD (decomposed) "é"; both fold equal.
         nfc = "Café - 01.mkv"
@@ -137,6 +147,8 @@ class TestNormalize:
 
 
 class TestEpisodeIdsForParsed:
+    """`episode_ids_for_parsed` maps parsed `(season, episode)` pairs to ids via the index, dropping unknowns."""
+
     def test_maps_via_index(self) -> None:
         idx = {(1, 1): 11, (1, 2): 12}
         parsed = [{"season": 1, "episode": 1}, {"season": 1, "episode": 2}]
@@ -153,6 +165,12 @@ class TestEpisodeIdsForParsed:
 
 
 class TestEpisodeFileStatuses:
+    """`episode_file_statuses` classifies each episode's file, and the two summary helpers derive from that.
+
+    `all_targets_done` is true only when every status is recommended; `targets_needing_import` excludes only
+    the recommended ones.
+    """
+
     def test_absent_recommended_other_unknown(self) -> None:
         episodes = {
             1: _ep(ep_id=1, file_id=0),
@@ -207,6 +225,11 @@ def _candidate(basename: str, *, sample: bool = False, already: bool = False) ->
 
 
 class TestPlanImportFiles:
+    """`plan_import_files` decides each candidate's action from the file->episode map and the needing-import set.
+
+    Actions: import, skip_done, missing, sample, already.
+    """
+
     def test_imports_only_needing_episodes(self) -> None:
         amap = {"a.mkv": [11], "b.mkv": [12]}
         cands = {"a.mkv": _candidate("a.mkv"), "b.mkv": _candidate("b.mkv")}
@@ -344,6 +367,8 @@ def _resolved_name(model: QualityModel) -> str | None:
 
 
 class TestParseQualityFromFilename:
+    """`parse_quality_from_filename` extracts the `(source, resolution)` pair, including the blurayRaw remux case."""
+
     def test_2160p_webdl(self) -> None:
         assert parse_quality_from_filename(
             "Show.S01E01.2160p.WEB-DL.x265.mkv",
@@ -375,6 +400,11 @@ class TestParseQualityFromFilename:
 
 
 class TestQualityAxesFromModel:
+    """`quality_axes_from_model` reads the `(source, resolution)` pair off a `QualityModel`.
+
+    An unknown source or zero resolution is treated as undetermined, as is a None model.
+    """
+
     def test_reads_structured_source_and_resolution(self) -> None:
         model = QualityModel.model_validate(
             {"quality": {"name": "Bluray-1080p", "source": "bluray", "resolution": 1080}},
@@ -395,6 +425,8 @@ class TestQualityAxesFromModel:
 
 
 class TestQualityAxesFromName:
+    """`quality_axes_from_name` resolves a display name to its `(source, resolution)` pair via the definitions."""
+
     def test_resolves_default_name_to_axes(self) -> None:
         assert quality_axes_from_name("Bluray-2160p", _DEFS) == ParsedQuality(
             source=QualitySource.BLURAY,
@@ -407,6 +439,12 @@ class TestQualityAxesFromName:
 
 
 class TestResolveQuality:
+    """`resolve_quality` picks the winning value per axis - Sonarr's own parse, then ours, then the default.
+
+    It resolves the pair to a definition, falling back to the candidate verbatim or an explicit Unknown
+    when nothing resolves.
+    """
+
     def test_sonarr_wins_over_ours_and_default(self) -> None:
         # Sonarr parsed (web, 1080); our filename parse and the default disagree.
         sonarr = ParsedQuality(source=QualitySource.WEB, resolution=1080)
@@ -501,6 +539,8 @@ class TestResolveQuality:
 
 
 class TestDeriveLanguages:
+    """`derive_languages` returns both audio languages for a dual-audio release, or just the primary otherwise."""
+
     def test_dual_audio_returns_dual(self) -> None:
         assert derive_languages(True, ["Japanese", "English"], ["Japanese"]) == [
             "Japanese",
@@ -512,6 +552,8 @@ class TestDeriveLanguages:
 
 
 class TestResolveWaitMode:
+    """`resolve_wait_mode` prefers the CLI override over the config value, defaulting to OFF when neither is set."""
+
     def test_cli_wins_over_config(self) -> None:
         assert resolve_wait_mode(ImportWaitMode.OFF, ImportWaitMode.HYBRID) is ImportWaitMode.OFF
 
@@ -523,6 +565,11 @@ class TestResolveWaitMode:
 
 
 class TestPendingImportRoundTrip:
+    """`PendingImport`'s JSON round-trip tolerates missing/unknown keys and defaults coverage/url to None.
+
+    `display_label` falls back title -> infohash when the title/group is absent.
+    """
+
     def test_to_json_from_json_round_trip(self) -> None:
         pending = PendingImport(
             infohash="abc123",
@@ -649,8 +696,10 @@ class TestClassifyPending:
 
 
 class TestSanitizeTorrentTelemetry:
-    """MUTATION PIN: the pure telemetry sanitizer's clamps, sentinel folds and the
-    numeric-string `_as_float` path (a cluster of ~10 surviving mutants)."""
+    """MUTATION PIN: pins the pure telemetry sanitizer's clamps and sentinel folds.
+
+    Covers the numeric-string `_as_float` path too - a cluster of ~10 surviving mutants.
+    """
 
     @pytest.mark.parametrize(
         ("progress", "dlspeed", "eta", "completed", "size", "expected"),

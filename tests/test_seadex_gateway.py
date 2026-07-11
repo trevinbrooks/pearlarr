@@ -78,6 +78,12 @@ def _gateway(fake: FakeSeaDex) -> SeaDexGateway:
 
 
 class TestSeaDexPrefetch:
+    """`prefetch` batches entries so `entry` serves cache hits and known-absent misses without a fallback.
+
+    Only unprefetched ids fall back to `from_id`, and a single failed batch
+    chunk retries silently before an outage is declared.
+    """
+
     def test_prefetch_serves_from_cache_without_from_id(self) -> None:
         fake = FakeSeaDex({1: _rec(1), 2: _rec(2), 3: _rec(3)})
         gateway = _gateway(fake)

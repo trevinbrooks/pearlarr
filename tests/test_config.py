@@ -34,6 +34,11 @@ from pearlarr.modules.manual_import import ImportWaitMode
 
 
 class TestFileLifecycle:
+    """A missing config copies the starter template (0600, banner-stripped) and raises.
+
+    An existing one loads normally, preserving user values, with a byte-exact checksum.
+    """
+
     def test_missing_config_copies_template_and_raises(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "config.yml"
         # The message reflects that the copy already happened and says what to
@@ -113,6 +118,11 @@ class TestFileLifecycle:
 
 
 class TestDefaults:
+    """Every group defaults sensibly when absent, and numeric knobs enforce their documented bounds.
+
+    An explicit nested value always overrides the default.
+    """
+
     def test_group_defaults_when_absent(self) -> None:
         cfg = AppConfig()
         assert cfg.seadex.private_releases is PrivateReleaseAction.WARN
@@ -230,6 +240,8 @@ class TestDefaults:
 
 
 class TestBlankCoalescing:
+    """A present-but-blank YAML value (None, or an explicit empty list/group) coalesces to its default."""
+
     def test_blank_scalar_knobs_fall_back_to_defaults(self) -> None:
         # A present-but-blank YAML value parses to None; without coalescing it would
         # flow into time.sleep(None) / be rejected by the int field.
@@ -269,6 +281,11 @@ class TestBlankCoalescing:
 
 
 class TestStrictValidation:
+    """`extra="forbid"` and strict enums reject unknown/wrong-group keys and bad or invalid enum values.
+
+    Only the documented strings coerce; a removed key stays rejected too.
+    """
+
     def test_unknown_key_with_value_is_rejected(self) -> None:
         with pytest.raises(ValidationError):
             SeadexSettings.model_validate({"public_onlyy": True})
@@ -346,6 +363,8 @@ class TestStrictValidation:
 
 
 class TestNormalization:
+    """Field normalizers coerce/casefold tags, ids, trackers; log_level/log_format case-fold and reject typos."""
+
     def test_ignore_tags_none_becomes_empty_list(self) -> None:
         assert SeadexSettings().ignore_tags == []
         assert SeadexSettings.model_validate({"ignore_tags": None}).ignore_tags == []
@@ -411,6 +430,11 @@ class TestNormalization:
 
 
 class TestQbittorrent:
+    """`credentials()` returns a triple only when host/username/password are all set.
+
+    `options` passes extra qbittorrent-api kwargs through untouched.
+    """
+
     def test_credentials_require_all_three(self) -> None:
         info = {"host": "h", "username": "u", "password": "p"}
         assert QbittorrentSettings.model_validate(info).credentials() == ("h", "u", "p")
@@ -430,6 +454,8 @@ class TestQbittorrent:
 
 
 class TestNotifications:
+    """`wait_notify` defaults on the moment any webhook URL is set, unless the field is set explicitly."""
+
     def test_wait_notify_defaults_off_without_webhooks(self) -> None:
         assert NotificationsSettings().wait_notify is False
 
@@ -442,6 +468,8 @@ class TestNotifications:
 
 
 class TestConnection:
+    """`for_arr`/`require_connection` select the per-arr submodel and enforce a fully configured connection."""
+
     def test_for_arr_selects_submodel(self) -> None:
         cfg = AppConfig.model_validate(
             {

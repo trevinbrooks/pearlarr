@@ -51,6 +51,8 @@ def _grad(label: str, outcome: Outcome, *, files: int | None = None, waited: flo
 
 
 class TestPulseThrottle:
+    """PulseThrottle's contract: skip-first firing, elapsed-anchored cadence, and re-arm restarts skip-first."""
+
     def test_disarmed_never_fires(self) -> None:
         throttle = PulseThrottle()
         assert throttle.fire(0.0) is False
@@ -110,6 +112,8 @@ class TestPulseThrottle:
 
 
 class TestWaitBuilders:
+    """Builder edge cases the goldens miss: zero tallies, pluralized start lines, graduation style/level by outcome."""
+
     def test_zero_graduation_tally_is_empty(self) -> None:
         assert wait_tally_lines(WaitFinished(imported=0, deferred=0, failed=0, elapsed_s=42.0)) == []
 

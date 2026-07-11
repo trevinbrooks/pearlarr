@@ -3,8 +3,11 @@
 # These read the episode collaborator's private per-run state (eps._ep_list_cache /
 # eps._config) and call the private SonarrParseCache._sonarr_parse_is_fresh; strict
 # re-flags that and the repo disables reportPrivateUsage for tests.
-"""Tests for the Sonarr sweep speedups: negative parse-cache, the series-id
-fingerprint, the worker gating, and the concurrent fresh episode prefetch."""
+"""Tests for the Sonarr sweep speedups.
+
+Covers the negative parse-cache, series-id fingerprint, worker gating, and
+concurrent fresh episode prefetch.
+"""
 
 from __future__ import annotations
 
@@ -66,6 +69,8 @@ def _fresh(record: dict[str, object], *, series_fp: str = "fp") -> bool:
 
 
 class TestSeriesFingerprint:
+    """`sonarr_series_fingerprint` is order- and duplicate-independent, differs across different id sets, and is stable for the empty set."""
+
     def test_order_and_duplicate_independent(self) -> None:
         assert sonarr_series_fingerprint([3, 1, 2]) == sonarr_series_fingerprint([2, 2, 1, 3])
 
@@ -77,6 +82,12 @@ class TestSeriesFingerprint:
 
 
 class TestSonarrParseIsFresh:
+    """`SonarrParseCache._sonarr_parse_is_fresh` treats positive parses as fresh within the TTL.
+
+    Negative (empty) parses are fresh within the backstop only on a matching
+    series fingerprint; legacy fp-less empties are stale.
+    """
+
     def test_positive_within_ttl_is_fresh(self) -> None:
         assert _fresh({"fetched_at": _stamp(5), "episodes": [{"season": 1, "episode": 1}]})
 
@@ -105,6 +116,8 @@ class TestSonarrParseIsFresh:
 
 
 class TestFetchWorkers:
+    """`fetch_workers` returns the concurrent worker count when unthrottled, else 1 when sleep-throttled."""
+
     def test_concurrent_when_no_sleep(self) -> None:
         assert fetch_workers(make_config(sleep_time=0)) == SONARR_FETCH_WORKERS
 
@@ -221,6 +234,13 @@ class _Services:
 
 
 class TestPrefetchEpisodes:
+    """`SonarrEpisodes.prefetch` warms only mapped, monitored, scannable series, deduped by id.
+
+    It tolerates a raising or `None`-returning worker (that series stays
+    unwarmed, the rest still warm) and reports the attempted (not cached)
+    count via progress.
+    """
+
     def _eps(self, *, mapped: set[int], sleep_time: int = 0) -> tuple[SonarrEpisodes, _Sonarr]:
         sonarr = _Sonarr()
         # Only "mapped" series resolve to a non-empty AniList mapping; needs_scan
@@ -315,10 +335,12 @@ class _Seadex:
 
 
 class TestAlIdNeedsScan:
-    """`RunServices.al_id_needs_scan`: the side-effect-free mirror of the per-id
-    loop's no-entry + `cached_entry_skip` gates, so `prefetch_episodes` warms
-    only the series the loop would actually process (the SeaDex-modification-times
-    fix). Pinned against the same cases as `cached_entry_skip`."""
+    """`RunServices.al_id_needs_scan` mirrors the per-id loop's no-entry + `cached_entry_skip` gates, side-effect-free.
+
+    So `prefetch_episodes` warms only the series the loop would actually
+    process (the SeaDex-modification-times fix). Pinned against the same
+    cases as `cached_entry_skip`.
+    """
 
     @staticmethod
     def _run(*, entry: EntryRecord | None, cache: FakeCacheStore, **cfg: object) -> RunServices:
@@ -393,9 +415,11 @@ class TestAlIdNeedsScan:
 
 
 class TestPrefetchSkipsUnchanged:
-    """`prefetch_episodes` warms only series with at least one scannable id, so a
-    series whose every SeaDex entry is unchanged (or absent) is no longer fetched -
-    the regression this change fixes."""
+    """`prefetch_episodes` warms only series with at least one scannable id.
+
+    A series whose every SeaDex entry is unchanged (or absent) is no longer
+    fetched - the regression this change fixes.
+    """
 
     def _eps(self, *, needs_scan: set[int]) -> tuple[SonarrEpisodes, _Sonarr]:
         # Each series maps to a single al_id equal to its id, so a series is warmed
@@ -452,6 +476,12 @@ class _ParseSonarr:
 
 
 class TestParseEpisodesNegativeCache:
+    """`parse_episodes_from_seadex` negative-caches a genuine empty parse with the series fingerprint.
+
+    It skips a fresh negative hit's network call, never caches a transient
+    `None`, and never parses audio files.
+    """
+
     def _parse(
         self,
         *,

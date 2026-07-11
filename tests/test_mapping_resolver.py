@@ -93,6 +93,8 @@ def _ab_pair(graph: AniBridgeGraph) -> tuple[AniBridge, AniBridge, MappingStore]
 
 
 class TestAniBridgeParity:
+    """The SQL-backed `AniBridge` view reproduces the graph-backed oracle's lookups, sets, and season ranges."""
+
     def test_lookups_and_sets_match_graph(self) -> None:
         graph_ab, sql_ab, store = _ab_pair(GRAPH)
         try:
@@ -211,8 +213,10 @@ _ALLOW_FIXTURES = settings(suppress_health_check=[HealthCheck.function_scoped_fi
 
 
 class TestAniBridgeParityProperty:
-    """graph<->SQL parity over generated graphs - the CI-enforced twin of
-    TestRealDataParity (which only runs when the gitignored real files exist)."""
+    """graph<->SQL parity over generated graphs.
+
+    The CI-enforced twin of `TestRealDataParity`, which only runs when the gitignored real files exist.
+    """
 
     @_ALLOW_FIXTURES
     @given(graph=_anibridge_graph())
@@ -320,6 +324,11 @@ def _anime_oracle(amap: AnimeIdsMap, ids: ExternalIds) -> dict[int, MappingEntry
 
 
 class TestAnimeIdsParity:
+    """The SQL `anime_ids` lookups reproduce the former reverse-index merge oracle.
+
+    Covers null-season coalescing and anilist-less candidate sets.
+    """
+
     @pytest.mark.parametrize(
         "ids",
         [
@@ -392,6 +401,8 @@ class TestAnimeIdsParity:
 
 
 class TestGetAnilistIdsMerge:
+    """`get_anilist_ids` merges AniBridge (winning) with anime-ids fallback, drops ignored ids, and sorts by id."""
+
     def test_anibridge_wins_then_anime_fills_then_drop_and_sort(self) -> None:
         # 269 resolves in both sources for tvdb 74796; AniBridge must win (it is
         # queried first). 270 is AniBridge-only. Ignored ids are dropped; result
@@ -419,10 +430,11 @@ class TestGetAnilistIdsMerge:
 
 
 class TestVu1DegradedAniBridge:
-    """VU1: an AniBridge id reachable via imdb but not tvdb is 'degraded' (no tvdb
-    season ranges). In the Sonarr/tvdb context it must defer to Kometa (which has
-    the precise season) and, with no Kometa fallback, skip rather than grab the
-    wrong episodes - while Radarr's AniBridge-primary precedence stays untouched.
+    """VU1: an AniBridge id reachable via imdb but not tvdb is 'degraded' (no tvdb season ranges).
+
+    In the Sonarr/tvdb context it must defer to Kometa (which has the precise season) and, with no Kometa
+    fallback, skip rather than grab the wrong episodes - while Radarr's AniBridge-primary precedence stays
+    untouched.
     """
 
     def test_sonarr_context_kometa_overrides_degraded(self) -> None:
@@ -557,6 +569,12 @@ def _anidb_resolver() -> MappingResolver:
 
 
 class TestAnidbMappingDict:
+    """`anidb_mapping_dict` resolves season-scoped id->episode maps.
+
+    Missing season/id reads as empty, a repeated season keeps the last one, an ambiguous id raises, and a
+    disabled anidb source is always empty.
+    """
+
     def test_season_scoped_mapping(self) -> None:
         resolver = _anidb_resolver()
         try:
@@ -702,6 +720,8 @@ class TestAnidbSkipTallies:
 
 
 class TestDigestGate:
+    """The digest gate skips re-parsing an unchanged source file and re-parses only when its content changes."""
+
     def test_unchanged_file_is_not_reparsed_changed_file_is(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -752,6 +772,8 @@ class TestDigestGate:
 
 
 class TestConstructionFailureClosesStore:
+    """A non-`DatabaseError` raised during `_build` still closes the store before it propagates."""
+
     def test_store_closed_when_build_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # A non-DatabaseError from _build must still close the store (the resolver
         # is never returned, so no one else can). Spy on close().
@@ -908,6 +930,8 @@ def _anidb_oracle(root: ElementTree.Element, anidb_id: int, tvdb_season: int) ->
 @pytest.mark.realdata
 @pytest.mark.real_data_dir
 class TestRealDataParity:
+    """SQL backings for anibridge, anime_ids, and anidb match their in-memory oracles over the real source files."""
+
     def test_anibridge_sql_matches_graph_over_all_ids(self, real_sources: _RealSources) -> None:
         with open(real_sources.anibridge, encoding="utf-8") as f:
             graph: AniBridgeGraph = json.load(f)

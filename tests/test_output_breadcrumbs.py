@@ -254,16 +254,20 @@ def test_reset_clears_all_open_nodes() -> None:
 
 
 def test_kind_depth_covers_every_scope_kind_with_no_stray_keys() -> None:
-    """KIND_DEPTH and ScopeKind are hand-maintained twins the fold keys on (_push /
-    _close_at do `KIND_DEPTH[kind]`): a new kind missing a depth would KeyError,
-    and a stray key would rot unnoticed."""
+    """`KIND_DEPTH` and `ScopeKind` are hand-maintained twins the fold keys on.
+
+    `_push`/`_close_at` do `KIND_DEPTH[kind]`: a new kind missing a depth would
+    KeyError, and a stray key would rot unnoticed.
+    """
 
     assert set(KIND_DEPTH) == set(ScopeKind)
 
 
 def test_wait_region_depth_deliberately_equals_item_depth() -> None:
-    """The P5 pin: production wait is run-level (post-summary, after the item/entry
-    nodes closed), so a wait pass is mutually exclusive with an item and shares its
-    depth. Revisit only if a per-item wait ever appears."""
+    """The P5 pin: production wait is run-level, running post-summary once item/entry nodes have closed.
+
+    It is mutually exclusive with an item and shares its depth; revisit only if a
+    per-item wait ever appears.
+    """
 
     assert KIND_DEPTH[ScopeKind.WAIT_REGION] == KIND_DEPTH[ScopeKind.ITEM]

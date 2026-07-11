@@ -1,3 +1,5 @@
+"""The Radarr strategy: movie matching and per-AniList-id processing over the services hub."""
+
 from typing import override
 
 from .cache import CacheRecord
@@ -120,7 +122,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         al_id: int,
         mapping: MappingEntry,
     ) -> bool:
-        """Process one AniList id for a Radarr movie
+        """Process one AniList id for a Radarr movie.
 
         A movie is a single file, so the middle is simply: resolve the Radarr
         release group, pull the SeaDex releases, filter them, then hand off to
@@ -256,7 +258,7 @@ class RadarrSync(ArrSync[RadarrItem]):
     # --- Radarr domain logic ------------------------------------------------
 
     def get_all_radarr_movies(self) -> list[RadarrItem]:
-        """Get all movies in Radarr that have an associated AniList ID"""
+        """Get all movies in Radarr that have an associated AniList ID."""
 
         return collect_anime_movies(
             self.radarr,
@@ -268,7 +270,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         self,
         radarr_movie_id: int,
     ) -> ArrReleaseDict:
-        """Get a dictionary of useful info for a Radarr movie"""
+        """Get a dictionary of useful info for a Radarr movie."""
 
         # Accumulate sizes per release group (a movie can carry several files - an
         # upgrade or a multi-edition); the user has all of them, so the planner dedups

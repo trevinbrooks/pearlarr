@@ -92,7 +92,7 @@ class PlanResult:
 
 
 def normalize_rg(name: str | None) -> str | None:
-    """Normalize a release group name for comparison
+    """Normalize a release group name for comparison.
 
     Delegates to `normalize_group` (strip whitespace and
     wrapping dashes, casefold) so the grab-time filter and the import-time
@@ -114,7 +114,7 @@ def _render_groups(groups: Iterable[str | None]) -> str:
 def get_episode_keys(
     all_episodes: Iterable[EpisodeRecord],
 ) -> set[tuple[int | None, int | None]]:
-    """Build the set of (season, episode) keys an episode list covers
+    """Build the set of (season, episode) keys an episode list covers.
 
     Reduces a release's parsed episode list to the set of (season, episode)
     pairs it contains, so different SeaDex release groups can be compared by
@@ -125,7 +125,7 @@ def get_episode_keys(
 
 
 def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
-    """Group SeaDex release groups that cover exactly the same files
+    """Group SeaDex release groups that cover exactly the same files.
 
     Release groups are grouped by their parsed episode coverage: two groups are
     only treated as covering the same files when their parsed episode lists are
@@ -202,7 +202,7 @@ def get_all_seadex_rgs_per_episode(
     seadex_dict: SeadexDict,
     sonarr_by_key: dict[tuple[int, int], SonarrEpisode],
 ) -> dict[str, set[str | None]]:
-    """Get a list of all SeaDex releases per-episode
+    """Get a list of all SeaDex releases per-episode.
 
     `sonarr_by_key` indexes Sonarr episodes by (season, episode): a parsed
     SeaDex (season, episode) is recorded only when Sonarr has it, which the
@@ -329,7 +329,7 @@ class DownloadPlanner:
         seadex_dict: SeadexDict,
         cached_hashes: list[str | None],
     ) -> PlanResult:
-        """Select downloads if the torrent hash is not already in the cache
+        """Select downloads if the torrent hash is not already in the cache.
 
         Multiple "best" releases are all grabbed, except where several cover
         the same files (see reduce_overlapping_downloads), in which case only
@@ -398,7 +398,7 @@ class DownloadPlanner:
         arr_release_dict: ArrReleaseDict,
         ep_list: list[SonarrEpisode] | None = None,
     ) -> PlanResult:
-        """Filter torrents by release group
+        """Filter torrents by release group.
 
         This is either an episode-by-episode for the Sonarr
         case where we can parse episodes, or a more blunt
@@ -694,7 +694,7 @@ class DownloadPlanner:
         self,
         seadex_dict: SeadexDict,
     ) -> PrivateOnlySkips:
-        """Reduce overlapping flagged downloads down to a single release group
+        """Reduce overlapping flagged downloads down to a single release group.
 
         Where multiple preferred release groups cover the same files and the
         Arr doesn't already have any of them, we only want to grab one. We
@@ -989,6 +989,6 @@ class DownloadPlanner:
 
     @staticmethod
     def get_any_to_download(seadex_dict: SeadexDict) -> bool:
-        """Check if any torrents are marked as to download"""
+        """Check if any torrents are marked as to download."""
 
         return any(url_item.download for rg_item in seadex_dict.values() for url_item in rg_item.urls.values())

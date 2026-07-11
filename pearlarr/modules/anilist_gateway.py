@@ -53,7 +53,7 @@ class AniListGateway:
         self.al_cache: AniListCache = {}
 
     def load_cache(self) -> None:
-        """Seed the in-memory AniList cache from the persisted store
+        """Seed the in-memory AniList cache from the persisted store.
 
         AniList metadata (title / format / episodes / cover) is effectively
         static, so reusing what we fetched on previous runs is what keeps a run
@@ -81,7 +81,7 @@ class AniListGateway:
             )
 
     def save_cache(self, *, preview: bool) -> None:
-        """Persist any newly seen AniList responses back to the on-disk cache
+        """Persist any newly seen AniList responses back to the on-disk cache.
 
         An entry that's already stored and still fresh keeps its original
         fetched_at (so the TTL actually expires it rather than resetting every
@@ -127,7 +127,7 @@ class AniListGateway:
         preview: bool,
         progress: ProgressSink | None = None,
     ) -> int:
-        """Warm the AniList cache for a set of ids in batched requests
+        """Warm the AniList cache for a set of ids in batched requests.
 
         Fetches everything still missing from the cache in ANILIST_BATCH_SIZE-id
         "id_in" pages (one request per page) instead of one request per id on

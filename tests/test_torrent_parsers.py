@@ -105,9 +105,7 @@ def test_get_nyaa_torrent_returns_download_and_title(monkeypatch: pytest.MonkeyP
 
 @respx.mock
 def test_get_animetosho_torrent_success() -> None:
-    """The scraped page title plus the feed entry whose `link` matches the URL
-    yield `(torrent_url, title)`.
-    """
+    """The scraped page title plus the feed entry whose `link` matches the URL yield `(torrent_url, title)`."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
     feed_torrent = "https://animetosho.org/storage/torrent/abc/cool-anime-01.torrent"
@@ -126,9 +124,7 @@ def test_get_animetosho_torrent_success() -> None:
 
 @respx.mock
 def test_get_animetosho_torrent_no_feed_match_returns_none_url() -> None:
-    """When no feed entry's `link` matches the page URL, the download URL is
-    `None` but the scraped title is still returned.
-    """
+    """When no feed entry's `link` matches the page URL, the download URL is `None` but the scraped title is still returned."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
 
@@ -144,9 +140,7 @@ def test_get_animetosho_torrent_no_feed_match_returns_none_url() -> None:
 
 @respx.mock
 def test_get_animetosho_torrent_non_str_url_folds_to_none() -> None:
-    """A matching feed entry with a junk (non-str) `torrent_url` yields `None`
-    instead of leaking the junk value downstream as a fake download URL.
-    """
+    """A matching feed entry with a junk (non-str) `torrent_url` yields `None` instead of leaking the junk value downstream as a fake download URL."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
 
@@ -182,9 +176,7 @@ def test_get_animetosho_torrent_two_titles_raises() -> None:
 
 @respx.mock
 def test_get_animetosho_torrent_http_500_raises_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 5xx page (still 5xx once the transient retries run out) raises
-    `HTTPStatusError` (a contained grab failure) instead of scraping the
-    error body into a misleading "no title" parse error."""
+    """A 5xx page (still 5xx once the transient retries run out) raises `HTTPStatusError` (a contained grab failure) instead of scraping the error body into a misleading "no title" parse error."""
 
     _stub_retry_sleep(monkeypatch)
     page_url = "https://animetosho.org/view/down.1"
@@ -196,8 +188,7 @@ def test_get_animetosho_torrent_http_500_raises_http_error(monkeypatch: pytest.M
 
 @respx.mock
 def test_get_animetosho_torrent_non_json_feed_is_a_parse_error() -> None:
-    """An HTML error body from the feed (HTTP 200 but not JSON) surfaces as a
-    `TorrentParseError` naming the feed URL, not a raw `JSONDecodeError`."""
+    """An HTML error body from the feed (HTTP 200 but not JSON) surfaces as a `TorrentParseError` naming the feed URL, not a raw `JSONDecodeError`."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
 
@@ -209,8 +200,7 @@ def test_get_animetosho_torrent_non_json_feed_is_a_parse_error() -> None:
 
 @respx.mock
 def test_get_animetosho_torrent_non_list_json_is_a_parse_error() -> None:
-    """A JSON error OBJECT from the feed (rate limit / API error) surfaces as a
-    `TorrentParseError`, not an AttributeError from iterating its keys."""
+    """A JSON error OBJECT from the feed (rate limit / API error) surfaces as a `TorrentParseError`, not an AttributeError from iterating its keys."""
 
     page_url = "https://animetosho.org/view/cool-anime-01.123456"
 
@@ -225,9 +215,7 @@ def test_get_animetosho_torrent_non_list_json_is_a_parse_error() -> None:
 
 @respx.mock
 def test_get_rutracker_torrent_builds_magnet() -> None:
-    """The RuTracker parser scrapes the maintitle and builds the magnet from the
-    hash, the fixed announce, and the title as `dn`.
-    """
+    """The RuTracker parser scrapes the maintitle and builds the magnet from the hash, the fixed announce, and the title as `dn`."""
 
     url = "https://rutracker.org/forum/viewtopic.php?t=1234567"
     infohash = "abcdef0123456789abcdef0123456789abcdef01"
@@ -266,8 +254,7 @@ def test_get_rutracker_torrent_http_500_raises_http_error(monkeypatch: pytest.Mo
 
 @respx.mock
 def test_get_rutracker_torrent_no_infohash_raises() -> None:
-    """A None infohash can't make a magnet ("urn:btih:None"): raise the parse
-    error before any fetch (the routeless mock proves nothing was requested)."""
+    """A None infohash can't make a magnet ("urn:btih:None"): raise the parse error before any fetch (the routeless mock proves nothing was requested)."""
 
     with pytest.raises(TorrentParseError, match="no infohash"):
         get_rutracker_torrent(

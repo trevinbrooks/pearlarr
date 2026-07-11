@@ -132,6 +132,8 @@ def _as_lines(lines: tuple[LegacyLine, ...]) -> tuple[Line, ...]:
 
 
 class TestBuilders:
+    """The pure line builders match their golden Line tuples for every scan, entry, action, and summary event."""
+
     def test_scan_started(self) -> None:
         assert _as_lines(scan_started_lines(SCAN_STARTED_SONARR)) == SCAN_STARTED_SONARR_LINES
         assert _as_lines(scan_started_lines(SCAN_STARTED_RADARR)) == SCAN_STARTED_RADARR_LINES
@@ -271,9 +273,11 @@ def _plain_lines(stream: io.StringIO) -> list[str]:
 
 
 def _expected_console(*line_groups: tuple[Line, ...], width: int = _WIDTH) -> list[str]:
-    """The console text the golden lines should render as (derived independently
-    of the renderer: rules span the width, kv tails append, titles are the
-    payload's — possibly console-only-annotated — title)."""
+    """The console text the golden lines should render as, derived independently of the renderer.
+
+    Rules span the width, kv tails append, and titles use the payload's
+    (possibly console-only-annotated) title.
+    """
 
     out: list[str] = []
     for lines in line_groups:
@@ -292,6 +296,8 @@ def _expected_console(*line_groups: tuple[Line, ...], width: int = _WIDTH) -> li
 
 
 class TestRichRendererScanArm:
+    """The RichRenderer scan arm matches the golden lines, honors level gating, and no-ops without a console."""
+
     def test_renders_a_scan_sequence_in_order(self) -> None:
         renderer, stream = _renderer()
         for event in (SCAN_STARTED_SONARR, ITEM_STARTED_SONARR, CHECKING_FULL, ACTION_FRESH, CAP_REACHED):
@@ -342,8 +348,10 @@ class TestRichRendererScanArm:
 
 
 class TestEntryIndentedDiagnostics:
-    """The generalized placement rule: a diagnostic indents while an ENTRY scope
-    is open (like boot/wait); under RUN/ITEM alone it stays column-0."""
+    """The generalized placement rule: a diagnostic indents while an ENTRY scope is open (like boot/wait).
+
+    Under RUN/ITEM alone it stays column-0.
+    """
 
     _ENTRY = ScopeId(ScopeKind.ENTRY, 1)
 

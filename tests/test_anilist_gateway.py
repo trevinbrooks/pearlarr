@@ -1,6 +1,5 @@
 # pyright: strict
-"""Contract tests for `AniListGateway`: the TTL gates, eviction, prefetch, and
-the per-id get-or-fetch resolvers.
+"""Contract tests for `AniListGateway`: the TTL gates, eviction, prefetch, and the per-id get-or-fetch resolvers.
 
 The gateway is driven over the in-memory `FakeCacheStore`; the HTTP/retry
 layer is already pinned in `test_anilist_client`, so the wire is faked with a

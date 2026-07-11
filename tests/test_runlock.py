@@ -7,6 +7,8 @@ from pearlarr.modules.runlock import single_instance_lock
 
 
 class TestSingleInstanceLock:
+    """`single_instance_lock` blocks a second acquire in the same data dir, lets unrelated dirs run in parallel, and degrades to a no-op when the dir doesn't exist."""
+
     def test_second_acquire_in_same_dir_is_blocked(self, tmp_path: Path) -> None:
         with single_instance_lock(str(tmp_path)) as first:
             assert first is True

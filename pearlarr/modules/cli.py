@@ -1,3 +1,5 @@
+"""The typer command surface: subcommands, process wiring, and exit codes; `bootstrap.py` owns composition."""
+
 from __future__ import annotations
 
 import contextlib
@@ -227,14 +229,6 @@ def main(
 
     Without a subcommand, runs in scheduled mode (every configured arr, every
     few hours).
-
-    \f
-    Args:
-        data_dir: Override the data directory holding config, caches and logs
-            (typer exposes this as `--data-dir`); unset, `PEARLARR_DATA_DIR`
-            or the OS-standard per-user data location applies.
-        version: Handled entirely by the eager `_print_version` callback
-            (typer exposes this as `--version`/`-V`).
     """
 
     _trust_os_certificates()

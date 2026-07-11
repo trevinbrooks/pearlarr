@@ -22,8 +22,7 @@ from .builders import FakeCacheStore, FakeSeaDexSource, make_entry_record, make_
 
 
 class _RecordingReporter:
-    """Records `log_cached_entry` calls, so the cross-arr param is asserted on
-    recorded state."""
+    """Records `log_cached_entry` calls, so the cross-arr param can be asserted on recorded state."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[RunContext, Arr, int, EntryState]] = []
@@ -40,6 +39,11 @@ class _RecordingReporter:
 
 
 class TestCachedEntrySkip:
+    """`cached_entry_skip` skips only a fresh cached entry, backfilling url/coverage once.
+
+    It is bypassed by `ignore_seadex_update_times` or a dirty id, and the dirty set clears each run.
+    """
+
     @staticmethod
     def _run(cache: FakeCacheStore) -> RunServices:
         # cached_entry_skip touches only cache_store + _config (real, default
@@ -168,8 +172,7 @@ class _CtxBind:
 
 
 class TestCrossArrLookupHonorsParam:
-    """`check_al_id_in_cache` / `log_cached_entry` read the `arr` PARAMETER,
-    never `self._ctx.arr`.
+    """`check_al_id_in_cache` / `log_cached_entry` read the `arr` parameter, never `self._ctx.arr`.
 
     The run-arr consolidation drops `arr` from methods that only ever act on the
     run's own arr, but these two stay parameterised because the Sonarr run's
@@ -222,6 +225,8 @@ class _TailReporter:
 
 
 class TestNoReleasesSkip:
+    """`no_releases_skip` runs the real four-step tail: log, cache write, throttle, then report not-grabbed."""
+
     def test_logs_persists_and_reports_not_grabbed(self) -> None:
         # The real four-step tail (log + cache write + throttle + False). Its body
         # previously had fake-only coverage: the seam tests script it, nothing
@@ -239,6 +244,8 @@ class TestNoReleasesSkip:
 
 
 class TestAlIdPrologue:
+    """`al_id_prologue` reports a missing entry vs an outage distinctly, and resets skip flags/tallies on a hit."""
+
     def test_no_seadex_entry_reports_and_returns_none(self) -> None:
         reporter = _TailReporter()
         run = make_services(_seadex=FakeSeaDexSource(), _reporter=reporter)

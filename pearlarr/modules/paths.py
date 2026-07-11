@@ -1,3 +1,5 @@
+"""The data-directory resolver: config, cache, and logs live under one platformdirs root."""
+
 from __future__ import annotations
 
 import os
@@ -35,11 +37,11 @@ class AppPaths:
 
 
 def resolve_paths(data_dir: str | None = None) -> AppPaths:
-    """Resolve every path under the data directory.
+    r"""Resolve every path under the data directory.
 
     Precedence: explicit `data_dir` arg > `PEARLARR_DATA_DIR` env >
     `platformdirs.user_data_dir` (`~/Library/Application Support/pearlarr` on
-    macOS, `~/.local/share/pearlarr` on Linux, `%LOCALAPPDATA%\\pearlarr` on
+    macOS, `~/.local/share/pearlarr` on Linux, `%LOCALAPPDATA%\pearlarr` on
     Windows). `appauthor=False` drops the Windows author subfolder.
     """
 

@@ -167,8 +167,9 @@ def test_warn_none_fails_open_silently() -> None:
 
 @respx.mock
 def test_get_timeout_override_rides_the_request() -> None:
-    """`timeout=` overrides the client-level timeout for that request only
-    (the 120s manual-import scans); the default rides the client's timeout.
+    """`timeout=` overrides the client-level timeout for that request only.
+
+    Used for the 120s manual-import scans; the default rides the client's timeout.
     """
 
     seen: list[dict[str, float | None]] = []
@@ -305,8 +306,9 @@ def test_strict_get_retryable_status_retries_then_succeeds() -> None:
 
 
 def test_make_httpx_client_pins_the_transport_policy() -> None:
-    """The factory pins no-redirects (the key must never ride one) and the
-    (connect, read) timeout split every arr call used to pass per-request.
+    """The factory pins no-redirects: the key must never ride one.
+
+    It also fixes the (connect, read) timeout split every arr call used to pass per-request.
     """
 
     client = make_httpx_client()

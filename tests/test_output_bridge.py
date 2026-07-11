@@ -71,6 +71,8 @@ def _third_party(name: str, level: int = logging.DEBUG) -> logging.Logger:
 
 
 class TestAdoption:
+    """Pins the bridge's adoption table: visible vs `file_only`, by origin, level config, and dispatch reentrancy."""
+
     def test_first_party_plain_warning_is_adopted(self, bridged: tuple[RecordingRenderer, logging.Logger]) -> None:
         recorder, logger = bridged
 
@@ -82,8 +84,10 @@ class TestAdoption:
     def test_first_party_sub_warning_adopts_file_only_at_info_config(
         self, bridged: tuple[RecordingRenderer, logging.Logger]
     ) -> None:
-        """P3: at INFO+ config (the bridged hub's default) DEBUG chatter +
-        unmigrated INFO stragglers stay in the FILE; stdout omits them."""
+        """P3: at INFO+ config (the bridged hub's default), DEBUG and unmigrated INFO stragglers stay in the FILE.
+
+        stdout omits them.
+        """
 
         recorder, logger = bridged
 
@@ -96,8 +100,10 @@ class TestAdoption:
         ]
 
     def test_first_party_sub_warning_visible_at_debug_config_on_a_plain_seat(self, app_logger: logging.Logger) -> None:
-        """At DEBUG config with a plain/json seat the bridge is a first-party
-        record's ONLY console route, so DEBUG/INFO adopt visible."""
+        """At DEBUG config with a plain/json seat, the bridge is a first-party record's ONLY console route.
+
+        So DEBUG/INFO adopt visible.
+        """
 
         recorder = RecordingRenderer()
         hub = OutputHub([recorder], console_factory=lambda console_format: NullRenderer())
@@ -119,8 +125,10 @@ class TestAdoption:
     def test_first_party_sub_warning_stays_file_only_at_debug_config_under_rich(
         self, app_logger: logging.Logger
     ) -> None:
-        """Under a rich seat RichConsoleHandler already prints the raw record;
-        visible adoption would double it, so file_only stands even at DEBUG."""
+        """Under a rich seat, `RichConsoleHandler` already prints the raw record.
+
+        Visible adoption would double it, so `file_only` stands even at DEBUG.
+        """
 
         recorder = RecordingRenderer()
         hub = OutputHub([recorder], console_factory=lambda console_format: NullRenderer())
@@ -137,8 +145,10 @@ class TestAdoption:
         assert diagnostic.file_only
 
     def test_third_party_adopts_all_levels_visible_at_configured_debug(self, app_logger: logging.Logger) -> None:
-        """At a configured DEBUG the early-out never fires and nothing is demoted
-        to file_only: the hub is a library record's only console route."""
+        """At a configured DEBUG, the early-out never fires and nothing is demoted to `file_only`.
+
+        The hub is a library record's only console route.
+        """
 
         del app_logger
         recorder = RecordingRenderer()
@@ -171,10 +181,13 @@ class TestAdoption:
     def test_sub_threshold_third_party_records_are_never_constructed(
         self, bridged: tuple[RecordingRenderer, logging.Logger]
     ) -> None:
-        """The early-out: below WARNING and below the hub's level (INFO here), a
-        third-party record is dropped before adoption - not constructed, not
-        counted. INFO itself adopts file_only (the file keeps the forensics;
-        stdout loses library chatter at INFO+)."""
+        """The early-out drops sub-threshold third-party records before construction.
+
+        Below WARNING and below the hub's level (INFO here), a third-party
+        record is dropped before adoption - not constructed, not counted.
+        INFO itself adopts file_only (the file keeps the forensics; stdout
+        loses library chatter at INFO+).
+        """
 
         recorder, _logger = bridged
         library = _third_party("bridge-test-quiet")
@@ -209,8 +222,11 @@ class TestAdoption:
         assert "ValueError: boom" in diagnostic.trace.plain
 
     def test_adoption_never_mutates_the_record(self) -> None:
-        """caplog safety: the bridge constructs a new event and hands back the
-        record byte-identical - no attribute added, consumed or flattened."""
+        """Adoption keeps the `caplog` record byte-identical to the original.
+
+        The bridge constructs a new event and hands back the record
+        unmodified - no attribute added, consumed or flattened.
+        """
 
         recorder = RecordingRenderer()
         install_hub(OutputHub([recorder]))
@@ -238,8 +254,10 @@ class TestAdoption:
         assert "dusty corner" in diagnostic.message
 
     def test_reentrant_records_downgrade_to_file_only(self, app_logger: logging.Logger) -> None:
-        """A record fired from inside hub dispatch (renderer/SIGTERM logging) is
-        adopted file-only: no frontier placement mid-fold."""
+        """A record fired from inside hub dispatch (renderer/SIGTERM logging) is adopted file-only.
+
+        No frontier placement happens mid-fold.
+        """
 
         recorder = RecordingRenderer()
         install_hub(OutputHub([recorder, _MidDispatchLogger("bridge-test-reentrant")]))
@@ -256,10 +274,13 @@ class TestAdoption:
         assert inner.file_only
 
     def test_reentrant_records_downgrade_on_a_producer_entered_drain(self, app_logger: logging.Logger) -> None:
-        """N2 holds for EVERY drain: a renderer logging while a DIRECT producer
-        emit (reporter/hub_note — the majority path) drives dispatch is adopted
-        file-only too. The hub's own baton read decides, not bridge-private
-        state that only its own emits used to set."""
+        """N2 holds for EVERY drain.
+
+        A renderer logging while a DIRECT producer emit (reporter/`hub_note`
+        — the majority path) drives dispatch is adopted file-only too. The
+        hub's own baton read decides, not bridge-private state that only its
+        own emits used to set.
+        """
 
         del app_logger
         recorder = RecordingRenderer()
@@ -277,9 +298,11 @@ class TestAdoption:
         assert inner.file_only
 
     def test_a_hub_swap_repoints_the_bridge_without_a_reinstall(self, app_logger: logging.Logger) -> None:
-        """The bridge resolves the hub through the registry per record: an
-        install_hub swap must never orphan it onto the closed old hub (silent
-        loss of every third-party WARNING/ERROR)."""
+        """The bridge resolves the hub through the registry per record.
+
+        An `install_hub` swap must never orphan it onto the closed old hub
+        (silent loss of every third-party WARNING/ERROR).
+        """
 
         del app_logger
         first, second = RecordingRenderer(), RecordingRenderer()
@@ -325,8 +348,11 @@ class _MidDispatchLogger:
 
 
 class TestRootGate:
-    """A self-silent (NOTSET) library logger defers to the ROOT level; stdlib's
-    WARNING default would drop its sub-WARNING records before the bridge runs."""
+    """A self-silent (NOTSET) library logger defers to the ROOT level.
+
+    stdlib's WARNING default would drop its sub-WARNING records before the
+    bridge runs.
+    """
 
     def test_third_party_info_reaches_the_bridge_at_info_config(self, app_logger: logging.Logger) -> None:
         del app_logger
@@ -371,6 +397,8 @@ class TestRootGate:
 
 
 class TestInstall:
+    """Pins the bridge's install lifecycle: idempotent re-install, `setup_logger` rebuild survival, clean uninstall."""
+
     def test_install_is_idempotent(self, app_logger: logging.Logger) -> None:
         first = install_bridge()
         second = install_bridge()
@@ -384,8 +412,11 @@ class TestInstall:
             uninstall_bridge()
 
     def test_setup_logger_rebuilds_preserve_the_bridge(self, app_logger: logging.Logger) -> None:
-        """Scheduled mode re-runs setup_logger per cycle; the bridge must survive
-        the handler teardown with its identity intact (installed once, S3)."""
+        """Scheduled mode re-runs `setup_logger` per cycle.
+
+        The bridge must survive the handler teardown with its identity
+        intact (installed once, S3).
+        """
 
         del app_logger
         bridge = install_bridge()
@@ -410,6 +441,8 @@ class TestInstall:
 
 
 class TestOriginHelpers:
+    """Pins the origin helpers: first-party detection by logger name and third-party message attribution."""
+
     def test_first_party_is_the_app_logger_and_its_children(self) -> None:
         assert is_first_party(LOG_NAME)
         assert is_first_party(f"{LOG_NAME}.child")
@@ -441,8 +474,11 @@ def full_stack(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Generator[tuple[logging.Logger, TtyStringIO, Path]]:
-    """The real production wiring under rich: hub (FileLogSink first) + bridge
-    installed BEFORE setup_logger builds the rich console over a fake TTY."""
+    """This fixture wires the real production stack under `rich`.
+
+    The hub (`FileLogSink` first) and bridge install BEFORE `setup_logger`
+    builds the rich console over a fake TTY.
+    """
 
     del app_logger  # isolation + teardown ordering only
     stream = TtyStringIO()
@@ -457,6 +493,8 @@ def full_stack(
 
 
 class TestFullStackSeams:
+    """Pins the full-stack seams over the real sinks: one console render and one file line per record."""
+
     def test_first_party_warning_renders_once_on_console_once_in_file(
         self, full_stack: tuple[logging.Logger, TtyStringIO, Path]
     ) -> None:
@@ -474,8 +512,11 @@ class TestFullStackSeams:
     def test_first_party_info_reaches_the_file_and_the_raw_tty_once_each(
         self, full_stack: tuple[logging.Logger, TtyStringIO, Path]
     ) -> None:
-        """P3: an unmigrated INFO one-liner adopts file_only — the FileLogSink
-        keeps it while the rich TTY shows the RAW record (no double render)."""
+        """P3: an unmigrated INFO one-liner adopts file_only.
+
+        The `FileLogSink` keeps it while the rich TTY shows the RAW record
+        (no double render).
+        """
 
         logger, stream, log_file = full_stack
 
@@ -514,8 +555,10 @@ class TestFullStackSeams:
     def test_warning_between_boot_steps_renders_at_the_ledger_indent(
         self, full_stack: tuple[logging.Logger, TtyStringIO, Path]
     ) -> None:
-        """THE motivating scenario: the chmod-style warning fired after a boot
-        step closes lands under the boot ledger, not at column 0."""
+        """THE motivating scenario: a chmod-style warning fires after a boot step closes.
+
+        It lands under the boot ledger, not at column 0.
+        """
 
         logger, stream, _log_file = full_stack
         boot = BootFlow()
@@ -538,8 +581,11 @@ class TestFullStackSeams:
         app_logger: logging.Logger,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Two setup_logger + begin_cycle rounds (scheduled mode): the bridge stays
-        singly-installed and the renderer resolves the CURRENT cycle's console."""
+        """Two `setup_logger` + `begin_cycle` rounds simulate scheduled mode.
+
+        The bridge stays singly-installed and the renderer resolves the
+        CURRENT cycle's console.
+        """
 
         del app_logger
         stream_one = TtyStringIO()

@@ -176,8 +176,10 @@ class FakeQbit:
 
 
 class _InterruptOnHash(FakeQbit):
-    """Raises KeyboardInterrupt when the heavy poll reaches the given hash —
-    a Ctrl-C landing mid-advance-loop, after earlier records already advanced."""
+    """Raises KeyboardInterrupt when the heavy poll reaches the given hash.
+
+    Models a Ctrl-C landing mid-advance-loop, after earlier records already advanced.
+    """
 
     def __init__(self, torrents: dict[str, list[QbitStep]], *, interrupt_on: str) -> None:
         super().__init__(torrents)
@@ -441,8 +443,7 @@ class _SnapshotCall:
 
 
 class _RecordingReporter:
-    """Records `log_pending_snapshot` calls, so the inline-snapshot / no-double-report
-    contracts are asserted on recorded state."""
+    """Records `log_pending_snapshot` calls so the inline-snapshot/no-double-report contracts are checkable."""
 
     def __init__(self) -> None:
         self.snapshot_calls: list[_SnapshotCall] = []

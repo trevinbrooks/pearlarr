@@ -117,8 +117,10 @@ class TestGrabReturnsPureBool:
 
 
 class TestGrabPushesNotice:
-    """_grab builds the GrabNotice from the request + add outcomes and pushes it
-    - but never on a preview run, and never when nothing was actually added."""
+    """`_grab` builds a `GrabNotice` from the request and add outcomes, then pushes it.
+
+    It never pushes on a preview run, and never when nothing was actually added.
+    """
 
     def _grab(
         self,
@@ -195,8 +197,10 @@ class TestGrabPushesNotice:
 
 
 class TestAddOneUrlRegistersPending:
-    """_add_one_url registers a PendingImport for a fresh AND an already-present
-    torrent, but records a grab / counts toward the cap only for a fresh add."""
+    """`_add_one_url` registers a `PendingImport` for both a fresh and an already-present torrent.
+
+    It records a grab and counts toward the cap only for a fresh add.
+    """
 
     def test_already_added_registers_pending_import(self) -> None:
         # The recommended release is already in qBittorrent (a prior run grabbed
@@ -413,8 +417,10 @@ class TestUpToDateTally:
 
 
 def _anidex_release(*, url: str, infohash: str) -> SeadexUrlItem:
-    """A download-flagged release on AniDex - public (clears the private-only gate) and in the
-    default tracker set, but with no parser, so it hits `_add_one_url`'s new skip."""
+    """A download-flagged release on AniDex: public (clears the private-only gate), in the default tracker set.
+
+    It has no parser, so it hits `_add_one_url`'s new skip.
+    """
 
     item = url_item(url=url, infohash=infohash, download=True)
     item.tracker = Tracker.ANIDEX
@@ -422,8 +428,10 @@ def _anidex_release(*, url: str, infohash: str) -> SeadexUrlItem:
 
 
 class TestUnsupportedTrackerSkip:
-    """An unparseable tracker is skipped (not raised), so the id's other releases
-    still grab, and a title with nothing grabbable is left uncached + flagged."""
+    """An unparseable tracker is skipped (not raised), so the id's other releases still grab.
+
+    A title with nothing grabbable is left uncached and flagged.
+    """
 
     def test_skipped_but_loop_continues(self) -> None:
         # AniDex first, Nyaa second, under one group. The old raise unwound the whole
@@ -753,10 +761,12 @@ class TestUnsupportedTrackerSkip:
 
 
 class TestGrabFailureContainment:
-    """An expected external failure (tracker or qBittorrent down/erroring) is
-    contained at the add: ONE clean warning (no traceback), the url loop moves
-    on, the title stays uncached (retried next run), and the summary carries a
-    GRAB_FAILED needs-action row instead of the title silently vanishing."""
+    """An expected external failure (tracker or qBittorrent down/erroring) is contained at the add.
+
+    ONE clean warning (no traceback), the url loop moves on, the title stays
+    uncached (retried next run), and the summary carries a GRAB_FAILED
+    needs-action row instead of the title silently vanishing.
+    """
 
     def _request(self, al_id: int, seadex_dict: SeadexDict, hashes: list[str | None]) -> GrabRequest:
         return GrabRequest(
@@ -906,8 +916,10 @@ class TestGrabFailureContainment:
 
 
 class TestFallbackHoldNeverCaches:
-    """fallback + non-interactive + a private hold: the title never caches - even
-    on a partial grab - and the no-fallback row resurfaces in every run's summary."""
+    """Fallback + non-interactive + a private hold: the title never caches, even on a partial grab.
+
+    The no-fallback row resurfaces in every run's summary.
+    """
 
     def _mixed_seadex_dict(self) -> SeadexDict:
         """A refused private group next to a grabbable public group."""

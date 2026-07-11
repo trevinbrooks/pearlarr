@@ -135,6 +135,8 @@ class FakeClock:
         return self.now
 
     def tick(self, seconds: float) -> None:
+        """Advance the fake time by `seconds`."""
+
         self.now += seconds
 
 
