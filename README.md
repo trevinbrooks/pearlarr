@@ -17,7 +17,7 @@ On a schedule, Pearlarr maps your library to SeaDex's entries, picks the best re
 Each run walks your library title by title:
 
 1. **Map** - Sonarr series and Radarr movies are resolved to AniList IDs, the key SeaDex indexes by, through three public ID-mapping sources.
-2. **Check** - the title's SeaDex entry is fetched, unless the cache shows nothing relevant changed since the last pass.
+2. **Check** - the title's SeaDex entry is fetched, unless the cache shows nothing relevant changed since the last run.
 3. **Select** - the entry's torrents are cut down to the preferred release: your tag and tracker filters, SeaDex's "best" marks, your audio preference.
 4. **Compare** - the picks are matched against what the arr already has (release groups, episodes, file sizes), so only missing or outdated releases go further.
 5. **Grab** - the release is added to qBittorrent with your category and tags, a Discord notification goes out, and the result is cached.
@@ -26,6 +26,8 @@ Each run walks your library title by title:
 Runs are incremental and safe to repeat: results live in a SQLite cache and are re-evaluated only when SeaDex or your arr changed something, and an interrupted run never corrupts state.
 
 ## Install
+
+> Coming from upstream SeaDexArr? The config format and data locations changed - see [migrating from upstream](docs/deployment.md#migrating-from-upstream-seadexarr) first.
 
 ### Docker Compose (recommended)
 
@@ -44,7 +46,8 @@ $ docker compose restart pearlarr
 $ docker compose logs -f pearlarr
 ```
 
-The container schedules its own runs - every six hours by default, tunable with `PEARLARR_CRON` - and one-off commands run through the same service:
+The container schedules its own runs - every six hours by default, tunable with `PEARLARR_CRON`.
+One-off commands run through the same service:
 
 ```console
 $ docker compose run --rm pearlarr run single --sonarr
@@ -78,7 +81,7 @@ $ pearlarr run single
 
 Without qBittorrent credentials, every run is a **preview**: Pearlarr evaluates your whole library and reports everything it *would* grab, but grabs nothing and records nothing.
 That is the recommended way to check a new setup - read the preview's summary, adjust the config, repeat.
-When the preview picks what you'd pick, add `qbittorrent.host`, `username` and `password` and the same command grabs for real.
+When the preview picks what you'd pick, add `qbittorrent.host`, `username` and `password`, and the same command grabs for real.
 (`run single --dry-run` simulates a run with no side effects even after credentials are set.)
 
 Bare `pearlarr` runs the scheduled loop, one cycle every `schedule.interval_hours`; under Docker the container's cron owns the cadence instead.
@@ -90,13 +93,14 @@ Bare `pearlarr` runs the scheduled loop, one cycle every `schedule.interval_hour
 - `sonarr` / `radarr` - connection details and per-arr behavior (unmonitored handling, torrent category).
 - `qbittorrent` - WebUI credentials (blank = preview mode), tags, extra client options.
 - `seadex` - how a release is chosen: tracker and tag filters, best/dual-audio preference, the private-release policy.
-- `imports` - the wait-for-download and Sonarr manual-import pass.
+- `imports` - the wait-for-completion and Sonarr manual-import pass.
 - `notifications` - the Discord webhook and a generic JSON webhook.
 - `schedule` - the bare-metal loop's cadence.
 - `mappings` - override or disable the ID-mapping sources.
 - `advanced` - request pacing, cache lifetime, arr-activity detection, log level and format.
 
-Every key, with its default, allowed values and description, is in [docs/configuration.md](docs/configuration.md) - generated from the source, so it is always current; the starter config carries the same documentation as comments, and a `$schema` line gives editors completion and validation.
+Every key, with its default, allowed values and description, is in [docs/configuration.md](docs/configuration.md) - generated from the source, so it is always current.
+The starter config carries the same documentation as comments, and a `$schema` line gives editors completion and validation.
 The config is validated on load: an unknown or misspelled key fails with an error naming it rather than being silently ignored.
 
 `pearlarr config validate` checks the file and reports what a run would use; `pearlarr config show` prints the effective configuration with secrets redacted - safe to paste into a bug report.
@@ -106,7 +110,7 @@ The config is validated on load: an unknown or misspelled key fails with an erro
 - **Downloads come from public trackers only**, currently Nyaa, AnimeTosho and RuTracker.
   A winning release on another public tracker is skipped with a warning and re-considered once support lands.
 - **Private releases are never grabbed** - SeaDex carries no download link for them, and no private-tracker auth is supported.
-  `seadex.private_releases` chooses what happens when a title's best release is private-only: warn every run, or fall back to the best public alternative.
+  `seadex.private_releases` decides what happens when a title's preferred release is private-only: warn every run, or fall back to the best public alternative.
 - **qBittorrent is the only download client**; Usenet is out of scope.
   More clients and trackers are on the roadmap.
 - **The supported interfaces** are the CLI, the config schema, and the notification payloads.
@@ -124,8 +128,6 @@ The config is validated on load: an unknown or misspelled key fails with an erro
 | Python | 3.13+ (the Docker image ships its own 3.14) |
 | OS | Linux, macOS, Windows (CI covers Linux and Windows); Docker images for amd64 and arm64 |
 
-Coming from upstream SeaDexArr? The config format and data locations changed - see [migrating from upstream](docs/deployment.md#migrating-from-upstream-seadexarr).
-
 ## Documentation
 
 - [docs/configuration.md](docs/configuration.md) - every setting: defaults, allowed values, semantics.
@@ -137,7 +139,7 @@ Coming from upstream SeaDexArr? The config format and data locations changed - s
 
 ## Acknowledgements
 
-Pearlarr is a fork of [seadexarr](https://github.com/bbtufty/seadexarr), originally created by [bbtufty](https://github.com/bbtufty).
+Pearlarr is a fork of [SeaDexArr](https://github.com/bbtufty/seadexarr), originally created by [bbtufty](https://github.com/bbtufty).
 Release data comes from the [SeaDex](https://releases.moe) project, which Pearlarr is not affiliated with; ID mappings come from [AniBridge Mappings](https://github.com/anibridge/anibridge-mappings), [Kometa Anime-IDs](https://github.com/Kometa-Team/Anime-IDs) and [Anime-Lists](https://github.com/Anime-Lists/anime-lists).
 
 Pearlarr is licensed under the [GPL-3.0-or-later](LICENSE).

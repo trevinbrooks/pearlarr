@@ -383,7 +383,7 @@ class ImportsSettings(_ConfigBase):
     # The fast lane between heavy polls: re-reads /api/v3/episode + one batched
     # qBittorrent info read - NEVER the heavy RefreshMonitoredDownloads/queue.
     progress_poll_interval: int = Field(default=5, ge=0)
-    """Seconds between cheap wait-screen refreshes (progress bars, speed, ETA) between polls.
+    """Seconds between lightweight wait-screen refreshes (progress bars, speed, ETA) within each poll interval.
 
     `0` disables the extra refreshes; rows then advance once per
     `poll_interval` while spinners and timers still animate. A value at or
@@ -404,7 +404,7 @@ class ImportsSettings(_ConfigBase):
     post_import_category: str | None = None
     """qBittorrent category applied to a torrent once its import is verified complete.
 
-    Useful to hand finished torrents to different seeding rules. Blank keeps
+    Useful to give finished torrents different seeding rules. Blank keeps
     the add-time category. Only applies when `wait_mode` is not `off`.
     """
 
@@ -468,7 +468,7 @@ class ImportsSettings(_ConfigBase):
 
 
 class NotificationsSettings(_ConfigBase):
-    """Discord + generic webhook + the walk-away wait-complete ping.
+    """Discord + generic webhook + the walk-away ping when a wait pass completes.
 
     Both webhook URLs are ``SecretStr``: the URL itself embeds the
     credential (the Discord path IS the token), so a dumped/logged model masks
@@ -479,7 +479,7 @@ class NotificationsSettings(_ConfigBase):
     """Discord webhook URL grab notifications are posted to. Blank disables them."""
 
     wait_webhook_url: SecretStr | None = None
-    """Webhook URL (ntfy, gotify, Home Assistant, ...) receiving the wait-complete summary. Blank disables it."""
+    """Webhook URL (ntfy, gotify, Home Assistant, ...) receiving the wait-pass summary. Blank disables it."""
 
     wait_notify: bool = False
     """Send a notification when a wait pass completes.
@@ -542,7 +542,7 @@ class AdvancedSettings(_ConfigBase):
     """Cap on torrents added per run. Blank means unlimited."""
 
     detect_arr_activity: bool = True
-    """Re-check entries whose files Sonarr or Radarr changed since the last pass.
+    """Re-check titles whose files Sonarr or Radarr changed since the last run.
 
     Polls each arr's history at run start. Turn off if a release you replaced
     arr-side keeps being re-grabbed.

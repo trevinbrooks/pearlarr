@@ -23,19 +23,20 @@ Coming from upstream 0.9.x:
 - **The cache is not carried over**: the SQLite `cache.db` replaces `cache.json`, and the old file is not read.
   The first run re-evaluates the library from scratch - cheap in the default matching mode, which checks what the arrs already have on disk; see [docs/deployment.md](docs/deployment.md#migrating-from-upstream-seadexarr) before enabling hash matching.
 - **Python 3.13 or newer is required** (3.12 support dropped); the Docker image runs 3.14.
-- `SCHEDULE_TIME` is deprecated in favor of `schedule.interval_hours` (on bare metal a still-set `SCHEDULE_TIME` wins, with a deprecation warning; the Docker image never reads it - set `PEARLARR_CRON`).
+- **`SCHEDULE_TIME` is deprecated** in favor of `schedule.interval_hours` (on bare metal a still-set `SCHEDULE_TIME` wins, with a deprecation warning; the Docker image never reads it - set `PEARLARR_CRON`).
 
 ### Added
 
-- Wait-for-completion and Sonarr manual import (`imports.wait_mode`: `off`/`deferred`/`blocking`/`hybrid`): wait for qBittorrent to finish grabbed torrents, let Sonarr import them, and step in with a series-pinned manual import when Sonarr can't.
+- Wait-for-completion and Sonarr manual import (`imports.wait_mode`: `off`/`deferred`/`blocking`/`hybrid`): Pearlarr waits for qBittorrent to finish grabbed torrents, lets Sonarr import them, and steps in with a series-pinned manual import when Sonarr can't.
   Downloads that outlast a run are carried as pending imports and picked up by a later run.
 - `notifications.wait_webhook_url`: a generic outbound webhook (ntfy, gotify, Home Assistant, ...) for the wait-pass summary, alongside the Discord webhook, with `notifications.wait_notify` controlling the push.
-- `imports.post_import_category`: move a torrent to a different qBittorrent category (created if missing) once its import is verified complete, e.g. to hand finished torrents different seeding rules.
-- Arr-side activity detection (`advanced.detect_arr_activity`, on by default): each pass polls the arr's history and re-checks entries whose files were imported or deleted arr-side since the last pass, so a quality upgrade or manual grab is re-evaluated without waiting for SeaDex to update.
+- `imports.post_import_category`: move a torrent to a different qBittorrent category (created if missing) once its import is verified complete, e.g. to give finished torrents different seeding rules.
+- Arr-side activity detection (`advanced.detect_arr_activity`, on by default): each run polls the arr's history and re-checks titles whose files were imported or deleted arr-side since the last run, so a quality upgrade or manual grab is re-evaluated without waiting for SeaDex to update.
   The first scan covers the last 30 days; a coverage gap re-checks everything once.
 - AniBridge mappings as the primary ID/episode mapping source, mopping up titles the other sources miss.
 - `seadex.ignore_anilist_ids` (skip specific AniList IDs), `seadex.ignore_tags` (filter releases by SeaDex tag), and `qbittorrent.tags` (tag every added torrent).
-- Discord notifications are rich embeds with colors, links and a version footer; the console shows a live cockpit during startup and the import-wait pass (spinners, ticking timers, files-imported progress).
+- Discord notifications are rich embeds with colors, links and a version footer.
+- The console shows a live cockpit during startup and the import-wait pass (spinners, ticking timers, files-imported progress).
 - New CLI surface: `run single --dry-run` (simulate without grabbing, caching, or notifying), `--movie-id`/`--series-id` (single-title runs by TMDB/TVDB ID), `--import-wait-mode` and `--log-level` per-run overrides; `config validate` and `config show` (effective config with secrets redacted, safe to paste into a bug report); `cache stats` and `cache check`; `pearlarr --version`, `-h` everywhere, group commands print their help.
 - The scheduled-run cadence is a config field, `schedule.interval_hours` (default 6), re-read each cycle so an edit takes effect without a restart.
 
@@ -65,7 +66,7 @@ Coming from upstream 0.9.x:
 ### Fixed
 
 - `advanced.log_level` is honored everywhere: `ERROR` is a real level (the logger previously treated it as `INFO`), and CLI runs no longer force `INFO` regardless of config.
-- In `fallback` mode, a public substitute never replaces a copy of the preferred private release you already own: a stale-sized private copy warns and holds (the summary names both ways out) instead of being overwritten by the fallback.
+- In `fallback` mode, a public substitute never replaces a copy of the preferred private release you already own: when your private copy is stale-sized, Pearlarr warns and holds the title (the summary names both ways out) instead of overwriting it with the fallback.
 
 ## Inherited from upstream
 

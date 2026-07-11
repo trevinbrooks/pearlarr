@@ -178,7 +178,7 @@ private context — no session or chat references.
 | --- | --- | --- |
 | `PEARLARR_DATA_DIR` | application | Override the data directory; the global `--data-dir` flag wins over it. |
 | `PEARLARR_CRON` | Docker entrypoint | Cron schedule for the container's recurring runs. |
-| `PEARLARR_RUN_ON_START` | Docker entrypoint | Whether the container runs a catch-up pass at start, before the cron cadence takes over. |
+| `PEARLARR_RUN_ON_START` | Docker entrypoint | Whether the container starts with a catch-up run, before the cron cadence takes over. |
 <!-- /gen:env-vars -->
 
 Names use the `PEARLARR_` prefix with `__` as the nesting delimiter (a future

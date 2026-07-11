@@ -34,6 +34,6 @@ ENV_VARS: tuple[EnvVar, ...] = (
     EnvVar(
         "PEARLARR_RUN_ON_START",
         "docker",
-        "Whether the container runs a catch-up pass at start, before the cron cadence takes over.",
+        "Whether the container starts with a catch-up run, before the cron cadence takes over.",
     ),
 )

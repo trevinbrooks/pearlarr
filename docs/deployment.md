@@ -30,7 +30,7 @@ Started bare (the normal service), it walks four steps:
    A bind-mount directory auto-created by Docker is root-owned, which is why the quick start says to `mkdir -p ./config` yourself.
 2. **First boot** - if `/config/config.yml` does not exist, `pearlarr config init` writes the starter template and the container exits so you can fill it in.
    With `restart: unless-stopped` Docker restarts it; the file now exists, so the container stays up (each run fails with a one-line error until the file is filled in).
-3. **Catch-up run** - with `PEARLARR_RUN_ON_START=true` (the default) one `pearlarr run single` pass runs at container start.
+3. **Catch-up run** - with `PEARLARR_RUN_ON_START=true` (the default), one `pearlarr run single` runs at container start.
    Its failure does not stop the container; the exit code is logged and the schedule proceeds.
 4. **Schedule** - [supercronic](https://github.com/aptible/supercronic) becomes PID 1 and runs `pearlarr run single` on the `PEARLARR_CRON` schedule.
 
@@ -48,7 +48,7 @@ PUID and PGID are compose *interpolation* variables - set them in an `.env` file
 They are **not** `environment:` keys; an `environment:` entry is silently ignored for this.
 Match them to the owner of the `./config` host directory so the container can write its config, caches and logs there.
 
-The starter config is written mode `600`, which lines up when your host editor runs as the same uid the container uses.
+The starter config is written with mode `600`, which works when your host editor runs as the same uid as the container.
 If you loosen it (say `chmod 644`), Pearlarr warns on every run that the file - which holds API keys - is readable by other users.
 
 ### Custom certificate authorities
@@ -67,12 +67,13 @@ environment:
 ### Stopping, and `stop_grace_period`
 
 `docker stop` sends SIGTERM to supercronic, which stops scheduling and waits for an in-flight run to finish; Docker escalates to SIGKILL after `stop_grace_period`, default ten seconds.
-See [Interruption semantics](#interruption-semantics) for what a killed run leaves behind.
-That is fine for the default configuration, but a blocking `imports.wait_mode` can legitimately hold a run for up to `imports.wait_timeout` (default one hour) - raise the grace period so a routine `docker stop` does not SIGKILL a mid-import run:
+Ten seconds is fine for the default configuration, but a blocking `imports.wait_mode` can legitimately hold a run for up to `imports.wait_timeout` (default one hour) - raise the grace period so a routine `docker stop` does not SIGKILL a mid-import run:
 
 ```yaml
 stop_grace_period: 1h
 ```
+
+See [Interruption semantics](#interruption-semantics) for what a killed run leaves behind.
 
 ### Healthcheck
 
@@ -88,7 +89,7 @@ Two options:
 - **Your own scheduler** - cron or a systemd timer invoking `pearlarr run single`.
   Failed runs exit non-zero, so cron mail and `OnFailure=` hooks work as expected.
 
-If two invocations pointed at the same data directory ever overlap, the second warns `Another Pearlarr run is active in <data_dir>; skipping this run.` and exits non-zero (in scheduled mode, the loop retries next cycle).
+If two invocations pointing at the same data directory ever overlap, the second warns `Another Pearlarr run is active in <data_dir>; skipping this run.` and exits non-zero (in scheduled mode, the loop retries next cycle).
 Running multiple instances *intentionally* is fine - give each its own data directory (`--data-dir` or `PEARLARR_DATA_DIR`), which also gives each its own lock.
 
 ## The data directory
@@ -116,9 +117,9 @@ What is in it, and what deleting each piece costs:
 ## Backup and restore
 
 Two files matter: `config.yml` and `cache.db`.
-The mapping cache and logs are regenerable and disposable, respectively.
+The mapping cache is regenerable; the logs are disposable.
 
-- `pearlarr cache backup` snapshots `cache.db` to `cache.backup.db` using SQLite's online-backup API, so the copy is consistent even if taken mid-write, and writes through a temp file, so a failed backup can never destroy the previous good one.
+- `pearlarr cache backup` snapshots `cache.db` to `cache.backup.db` using SQLite's online-backup API, so the copy is consistent even if taken mid-write; it writes through a temp file, so a failed backup can never destroy the previous good one.
 - `pearlarr cache restore` replaces `cache.db` with a copy of the backup; the backup is kept, so a restore is repeatable.
 - Both refuse to touch the cache while a run is active in the same data directory: `Another Pearlarr run is active in <data_dir>; refusing to modify the cache.`
 
@@ -142,7 +143,7 @@ Pearlarr is safe to interrupt - Ctrl-C, `docker stop`, a crash, a power cut:
 - **Decisions commit once per arr, at the end of its run.**
   A kill mid-run rolls the staged writes back, so nothing is half-recorded; the next run re-evaluates that arr from the last completed state.
 - **Torrents already handed to qBittorrent stay there.**
-  The next pass recognizes them by hash ("already in qBittorrent") and does not add duplicates.
+  The next run recognizes them by hash ("already in qBittorrent") and does not add duplicates.
 - **`cache.db` cannot be half-written.**
   SQLite journaling covers normal operation, and the very first write of a fresh cache builds the database in memory and promotes it to disk with an atomic rename.
 - **The run lock cannot wedge.**

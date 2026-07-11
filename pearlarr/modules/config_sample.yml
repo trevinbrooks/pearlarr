@@ -115,8 +115,8 @@ imports:
   #   deferred - Never block: record grabs and import the already-finished ones on a later run.
   #   blocking - Block at the end of the run (and on an early break) until downloads finish, then
   #              import.
-  #   hybrid   - Recommended: reconcile deferred imports at run start plus a blocking pass at the
-  #              end.
+  #   hybrid   - Reconcile deferred imports at run start, then a blocking pass at the end
+  #              (recommended).
   wait_mode: 'off'
 
   # Seconds to wait per torrent for qBittorrent to finish downloading it.
@@ -128,9 +128,9 @@ imports:
   # Seconds between polls of qBittorrent and the Sonarr queue while waiting.
   poll_interval: 30
 
-  # Seconds between cheap wait-screen refreshes (progress bars, speed, ETA) between polls. 0
-  # disables the extra refreshes; rows then advance once per poll_interval while spinners and timers
-  # still animate. A value at or above poll_interval behaves as disabled.
+  # Seconds between lightweight wait-screen refreshes (progress bars, speed, ETA) within each poll
+  # interval. 0 disables the extra refreshes; rows then advance once per poll_interval while
+  # spinners and timers still animate. A value at or above poll_interval behaves as disabled.
   progress_poll_interval: 5
 
   # How the import takes finished files into the library. auto lets Sonarr choose between moving and
@@ -139,9 +139,9 @@ imports:
   # Values: auto / move / copy
   mode: auto
 
-  # qBittorrent category applied to a torrent once its import is verified complete. Useful to hand
-  # finished torrents to different seeding rules. Blank keeps the add-time category. Only applies
-  # when wait_mode is not off.
+  # qBittorrent category applied to a torrent once its import is verified complete. Useful to give
+  # finished torrents different seeding rules. Blank keeps the add-time category. Only applies when
+  # wait_mode is not off.
   post_import_category:
 
   # Sonarr quality name, e.g. Bluray-2160p, filling the gaps when a file's quality cannot be
@@ -171,8 +171,8 @@ notifications:
   # Discord webhook URL grab notifications are posted to. Blank disables them.
   discord_url:
 
-  # Webhook URL (ntfy, gotify, Home Assistant, ...) receiving the wait-complete summary. Blank
-  # disables it.
+  # Webhook URL (ntfy, gotify, Home Assistant, ...) receiving the wait-pass summary. Blank disables
+  # it.
   wait_webhook_url:
 
   # Send a notification when a wait pass completes. Absent, it turns on automatically whenever any
@@ -198,7 +198,7 @@ advanced:
   # Cap on torrents added per run. Blank means unlimited.
   max_torrents_to_add:
 
-  # Re-check entries whose files Sonarr or Radarr changed since the last pass. Polls each arr's
+  # Re-check titles whose files Sonarr or Radarr changed since the last run. Polls each arr's
   # history at run start. Turn off if a release you replaced arr-side keeps being re-grabbed.
   detect_arr_activity: true
 

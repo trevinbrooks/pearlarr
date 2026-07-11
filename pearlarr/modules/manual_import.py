@@ -76,7 +76,7 @@ class ImportWaitMode(StrEnum):
     """Block at the end of the run (and on an early break) until downloads finish, then import."""
 
     HYBRID = "hybrid"
-    """Recommended: reconcile deferred imports at run start plus a blocking pass at the end."""
+    """Reconcile deferred imports at run start, then a blocking pass at the end (recommended)."""
 
 
 class WaitOutcome(Enum):
