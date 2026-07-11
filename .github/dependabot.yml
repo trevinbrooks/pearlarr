@@ -11,10 +11,9 @@ updates:
     schedule:
       interval: "weekly"
 
-  # Maintain dependencies for pip
-  - package-ecosystem: "pip"
+  # The uv ecosystem (not pip) so bump PRs update uv.lock alongside pyproject.
+  - package-ecosystem: "uv"
     directory: "/"
     target-branch: "main"
     schedule:
       interval: "weekly"
-      
