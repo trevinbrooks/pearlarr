@@ -3,7 +3,8 @@ name: Build
 on:
   push:
     branches:
-      - '*'
+      # '**' matches slash-named branches (feature/foo); a bare '*' does not.
+      - '**'
   pull_request:
     branches:
       - main
