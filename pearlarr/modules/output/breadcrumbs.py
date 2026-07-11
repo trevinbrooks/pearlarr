@@ -1,15 +1,15 @@
-"""The shared pure fold of scope/boundary events into the open-node path (S1/B6).
+"""The shared pure fold of scope/boundary events into the open-node path.
 
 One implementation, instantiated per surface: the rich renderer's instance is the
-sole placement authority (PR2+); text-sink instances derive labels only — the
+sole placement authority; text-sink instances derive labels only — the
 `[path]` breadcrumb for handle-carried ScopeIds and the advisory `during=` tail
 for diagnostics — never position, never layout.
 
 The fold is replay-deterministic: the same event stream always yields the same
-state. The fixed transition table (B6) IS `KIND_DEPTH` plus the `match` in
+state. The fixed transition table IS `KIND_DEPTH` plus the `match` in
 `BreadcrumbFold.apply` — boundary events close strictly-deeper nodes, never
 heuristic inference. A close on an unknown/already-closed id is a no-op, so
-defensive closes (the B3 unwind teardown, the doubled run-close) are idempotent.
+defensive closes (the unwind teardown, the doubled run-close) are idempotent.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ KIND_DEPTH: Final[Mapping[ScopeKind, int]] = {
     ScopeKind.RUN: 1,
     ScopeKind.BOOT_STEP: 2,
     ScopeKind.ITEM: 2,
-    # Same depth as ITEM is deliberate (P5): a wait pass is mutually exclusive
+    # Same depth as ITEM is deliberate: a wait pass is mutually exclusive
     # with an item; revisit only if a per-item wait ever appears.
     ScopeKind.WAIT_REGION: 2,
     ScopeKind.ENTRY: 3,
@@ -138,7 +138,7 @@ class BreadcrumbFold:
             case _:
                 assert_never(event)
 
-    # -- read APIs (the only surface; S1: labels/during only, never placement) -----
+    # -- read APIs (the only surface: labels/during only, never placement) ---------
 
     def nodes(self) -> tuple[OpenNode, ...]:
         """The open nodes, root to top."""

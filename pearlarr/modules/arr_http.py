@@ -183,14 +183,8 @@ class ArrHttp:
         backoff). Any terminal failure (request error, non-200, non-JSON body)
         warns via `warn` - a template whose `{detail}` names the cause - and
         returns None; `warn=None` keeps a deliberate quiet path silent.
-
-        Args:
-            path: Endpoint path (e.g. `"/api/v3/queue"`).
-            params: Query params. Defaults to None.
-            warn: Warning template with a `{detail}` placeholder,
-                or None to fail open silently.
-            timeout: Per-request timeout override (seconds).
-                Defaults to None (the client-level timeout).
+        `timeout` overrides the client-level timeout per request (seconds);
+        None rides the client default.
         """
 
         response, detail = self._get_with_retries(path, params, timeout=timeout)
@@ -247,13 +241,8 @@ class ArrHttp:
         ONE attempt, never retried: a POST is not idempotent, so a retry could
         double-queue a command. Both 200 and 201 read as success; any failure
         (request error, other status, non-JSON body) warns via `warn` - the
-        same `{detail}` template as `get_json` - and returns None.
-
-        Args:
-            path: Endpoint path (e.g. `"/api/v3/command"`).
-            json: The JSON request body.
-            warn: Warning template with a `{detail}` placeholder,
-                or None to fail open silently.
+        same `{detail}` template as `get_json`, None for a deliberate quiet
+        path - and returns None.
         """
 
         try:
@@ -283,10 +272,6 @@ class ArrHttp:
         non-JSON body or a non-array payload raises
         `ArrConnectionError` - both with a clean message naming this
         arr's base url and the failure detail.
-
-        Args:
-            path: Endpoint path (e.g. `"/api/v3/series"`).
-            params: Query params. Defaults to None.
         """
 
         response, detail = self._get_with_retries(path, params)

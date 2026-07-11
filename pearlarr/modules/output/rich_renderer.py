@@ -1,5 +1,4 @@
-"""The rich console surface (PR3: diagnostics + the boot cockpit; PR4: the scan
-arm; grows into the full renderer).
+"""The rich console surface: diagnostics + the boot, scan, and wait cockpit arms.
 
 Diagnostics are position-free; this renderer is the single ambient placement
 authority: its `breadcrumbs.BreadcrumbFold` instance decides where a
@@ -7,13 +6,13 @@ diagnostic lands: indented while a boot section, wait region, or entry block is
 open, column 0 otherwise (RUN/ITEM alone stays column-0 — the producers open
 entry scopes, so a note between entries sits at the run margin). The boot
 events (banner / steps / capstone) drive the `boot_region.BootRegion`
-— the live spinner and the durable ledger lines moved there from `boot_view`.
+(the live spinner and the durable ledger lines).
 The scan events render through the shared `scan_lines` builders at
 LOGGER-parity gating, so the console shows exactly what the file logs.
 
 The renderer resolves the CURRENT shared Console at render time from the live
 `log.RichConsoleHandler` (`setup_logger` rebuilds handlers per
-cycle; the logger identity is stable, S3). Printing through that shared Console
+cycle; the logger identity is stable). Printing through that shared Console
 keeps Live reflow safe — the same mechanism as the cockpits' graduation lines.
 Under plain/json (no rich handler) it no-ops; this seat is never built there
 (cli seats LineRenderer/JsonRenderer instead), and the FileLogSink always
@@ -82,7 +81,7 @@ def live_console() -> Console | None:
 
 
 def diagnostic_threshold(level: int, *, first_party: bool) -> int:
-    """The console floor for a diagnostic (S4).
+    """The console floor for a diagnostic.
 
     First-party keeps the `console_level` semantics (INFO floor except
     DEBUG/CRITICAL); third-party floors at WARNING unless the configured level
@@ -99,7 +98,7 @@ def diagnostic_text(event: Diagnostic, *, indented: bool) -> Text:
     """The rendered console line for a diagnostic — pure, golden-testable.
 
     WARNING+ get the legacy badge word/styles (one look, no drift); INFO/DEBUG
-    render dim, in-context (S4 — the unconfigured-arr note's eventual look).
+    render dim, in-context (the unconfigured-arr note's eventual look).
     """
 
     indent = INDENT if indented else ""
@@ -258,7 +257,10 @@ class RichRenderer:
         return any(node.kind in wanted for node in self._crumbs.nodes())
 
     def _cockpit_open(self) -> bool:
-        """True while a boot section, wait region, or entry block is open — the
-        indented contexts a diagnostic folds into (RUN/ITEM alone stays column-0)."""
+        """True while a boot section, wait region, or entry block is open.
+
+        These are the indented contexts a diagnostic folds into (RUN/ITEM alone
+        stays column-0).
+        """
 
         return self._frontier_has(ScopeKind.BOOT_SECTION, ScopeKind.WAIT_REGION, ScopeKind.ENTRY)

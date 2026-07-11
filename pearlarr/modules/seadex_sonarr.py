@@ -39,11 +39,7 @@ from .sonarr_parse import SonarrParseCache
 
 
 def get_overlapping_results(seadex_dict: SeadexDict) -> bool:
-    """See if SeaDex releases have overlapping episodes
-
-    Args:
-        seadex_dict: Dictionary of SeaDex releases
-    """
+    """See if SeaDex releases have overlapping episodes"""
 
     # Shares get_episode_keys with get_same_files_groups (planner) but
     # deliberately differs on unparsed releases: here an unparsed release is
@@ -80,10 +76,6 @@ def radarr_movies_matching(
     together, so a movie rides along as a special). An unset mapping id never
     matches - the `is not None` guards mean None == None is not a match.
     Order is preserved; a movie matching on both ids appears once.
-
-    Args:
-        mapping: Mapping between TVDB and AniList
-        movies: The Radarr movie library to match against
     """
 
     radarr_movies: list[RadarrItem] = []
@@ -130,14 +122,14 @@ class SonarrSync(ArrSync[SonarrItem]):
             services: The services hub the per-id hooks call into.
             sonarr_client: A pre-built client to use
                 instead of constructing the real `SonarrClient` (which
-                needs the connection keys). Defaults to None (build the real
-                one); tests inject a scripted fake through this typed seam, so
-                the real `__init__` + collaborator wiring runs without keys.
+                needs the connection keys); None builds the real one. Tests
+                inject a scripted fake through this typed seam, so the real
+                `__init__` + collaborator wiring runs without keys.
             radarr_client: Same seam for the
                 movies-in-Radarr cross-check client, whose library is fetched
                 eagerly below (only consulted when
-                `sonarr.ignore_movies_in_radarr` is on). Defaults to None (build
-                the real one when the feature is on and the Radarr keys are set).
+                `sonarr.ignore_movies_in_radarr` is on); None builds the real
+                one when the feature is on and the Radarr keys are set.
         """
 
         self._services = services

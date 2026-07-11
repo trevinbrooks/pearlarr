@@ -95,12 +95,11 @@ class ArrActivityMonitor:
         Fetch failure (None) fails open: mark nothing dirty, leave the
         checkpoint untouched (a coverage gap is then re-detected next pass); the
         fetch helper owns the user-facing warning, so only a debug line lands
-        here. An
-        empty window stashes no checkpoint either (the bootstrap retries next
-        pass). Own grabs - records whose `downloadId` matches a remembered or
-        pending infohash - are suppressed. Broken coverage (checkpoint beyond
-        the lookback, or an unreadable stored date) returns `rescan_all`
-        instead of a touched set.
+        here. An empty window stashes no checkpoint either (the bootstrap
+        retries next pass). Own grabs - records whose `downloadId` matches a
+        remembered or pending infohash - are suppressed. Broken coverage
+        (checkpoint beyond the lookback, or an unreadable stored date) returns
+        `rescan_all` instead of a touched set.
 
         Args:
             fetch: The strategy's `history_since` (takes the ISO8601 query date).

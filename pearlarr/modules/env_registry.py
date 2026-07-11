@@ -19,7 +19,6 @@ class EnvVar:
     """One environment variable and where it is honored."""
 
     name: str
-    """The variable name."""
 
     scope: Literal["app", "docker"]
     """`app` is read by the application itself; `docker` only by the container entrypoint."""

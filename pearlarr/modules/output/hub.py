@@ -17,7 +17,7 @@ they hold the drain baton for their body, so a re-entrant emit from inside a
 renderer's lifecycle call (a bridge-adopted `logger.debug` in a teardown path)
 enqueues instead of draining against a half-mutated subscriber list.
 
-Renderers that raise strike out (3 per cycle, S9) and are skipped until
+Renderers that raise strike out (3 per cycle) and are skipped until
 `begin_cycle` re-arms them — never a process-latching quarantine (the verified
 daemon hazard). Striking out also closes the renderer, so a quarantined seat
 releases its resources (a live spinner must stop repainting). `emit` itself never raises on a renderer bug, so presentation
@@ -133,7 +133,7 @@ class CountsMark:
 class SeverityCounts:
     """Monotonic per-process tallies; runs take a mark() and read counts_since().
 
-    N13 — never "reset per cycle", always deltas via marks.
+    Never "reset per cycle", always deltas via marks.
     """
 
     def __init__(self) -> None:
@@ -229,9 +229,10 @@ class OutputHub:
 
     @property
     def console_format(self) -> LogFormat | None:
-        """The seated console format (None before any begin_cycle) — a lock-free
-        read for the bridge; a one-record stale read at a begin_cycle boundary is
-        acceptable."""
+        """The seated console format (None before any begin_cycle) — a lock-free read for the bridge.
+
+        A one-record stale read at a begin_cycle boundary is acceptable.
+        """
 
         return self._console_format
 
@@ -250,7 +251,7 @@ class OutputHub:
         """True while THIS thread is inside hub dispatch (drain or a lifecycle body).
 
         Deliberately lock-free: the bridge consults it under handler locks for
-        the N2 file-only downgrade. The identity read is exact for the calling
+        the file-only downgrade. The identity read is exact for the calling
         thread — only the thread itself can have set the baton to itself.
         """
 
@@ -369,14 +370,16 @@ class OutputHub:
             self._dispatch(event, when, armed)
 
     def _flush_on_unwind(self) -> None:
-        """Re-dispatch the in-flight event, then flush the queued tail, while an
-        exception unwinds `_drain` (crash fidelity: the tail must be on
-        screen/in the file when the process dies). The in-flight re-dispatch is
-        best-effort per renderer — even a repeat interrupt there is contained,
-        so one hostile arm can't cost the whole tail (the tail flush itself
-        stays interruptible: a second Ctrl-C still kills it). The finally
-        releases the baton no matter what — a wedged baton would silence the
-        hub for the process's remaining lifetime (the PR5 D-1 hazard)."""
+        """Re-dispatch the in-flight event, then flush the queued tail, while an exception unwinds `_drain`.
+
+        Crash fidelity: the tail must be on screen/in the file when the process
+        dies. The in-flight re-dispatch is best-effort per renderer — even a
+        repeat interrupt there is contained, so one hostile arm can't cost the
+        whole tail (the tail flush itself stays interruptible: a second Ctrl-C
+        still kills it). The finally releases the baton no matter what — a
+        wedged baton would silence the hub for the process's remaining
+        lifetime.
+        """
 
         try:
             with self._lock:
@@ -399,8 +402,11 @@ class OutputHub:
                     self._idle.notify_all()
 
     def _await_no_drainer(self) -> None:
-        """Park (lock held) until no OTHER thread holds the drain baton — the
-        current-thread escape prevents self-deadlock on a mid-drain lifecycle call."""
+        """Park (lock held) until no OTHER thread holds the drain baton.
+
+        The current-thread escape prevents self-deadlock on a mid-drain
+        lifecycle call.
+        """
 
         while self._drainer is not None and self._drainer is not threading.current_thread():
             self._idle.wait()
@@ -433,8 +439,10 @@ class OutputHub:
                 self._idle.notify_all()
 
     def begin_cycle(self, *, console_format: LogFormat, level: int) -> None:
-        """Per-cycle turnover: re-arm strikes, clear once-keys, swap the console
-        renderer when the re-peeked format changed, rotate/reset sinks."""
+        """Per-cycle turnover: re-arm strikes, clear once-keys, reseat the console, rotate/reset sinks.
+
+        The console renderer is swapped only when the re-peeked format changed.
+        """
 
         with self._lock:
             self._await_no_drainer()
@@ -455,7 +463,7 @@ class OutputHub:
         self._drain()
 
     def set_level(self, level: int) -> None:
-        """Forward the configured level; each surface applies its own floor semantics (S4)."""
+        """Forward the configured level; each surface applies its own floor semantics."""
 
         with self._lock:
             self._await_no_drainer()
@@ -472,7 +480,7 @@ class OutputHub:
                 self._strike(sub)
 
     def close(self) -> None:
-        """Idempotent teardown of every surface (file close, Live stop in PR2+).
+        """Idempotent teardown of every surface (file close, Live stop).
 
         The file sinks close LAST, after the teardown chatter the other closes
         enqueued (a bridge-adopted Live.stop failure, a region's contained-
@@ -506,9 +514,11 @@ class OutputHub:
                         sub.renderer.close()
 
     def _strike(self, sub: _Sub) -> None:
-        """One strike (under a brief lock re-acquire); crossing the limit also closes
-        the renderer — a quarantined seat must release its resources (a struck boot
-        Live keeps repainting otherwise)."""
+        """One strike (under a brief lock re-acquire); crossing the limit also closes the renderer.
+
+        A quarantined seat must release its resources (a struck boot Live keeps
+        repainting otherwise).
+        """
 
         with self._lock:
             sub.strikes += 1
@@ -579,7 +589,7 @@ class OutputHub:
             file_only=file_only,
         )
         if not file_only:
-            # P5: counts = what a visible surface could show; this one is visible.
+            # Counts = what a visible surface could show; this one is visible.
             self._counts.record(note.severity)
         for sub in armed:
             try:
@@ -590,10 +600,12 @@ class OutputHub:
         self._stderr_fallback(note)
 
     def _stderr_fallback(self, event: Event) -> None:
-        """No armed console seat (pre-begin_cycle, or quarantined): visible
-        WARNING+ diagnostics still reach a human via stderr. Factory-less hubs
+        """With no armed console seat, visible WARNING+ diagnostics still reach a human via stderr.
+
+        No armed seat means pre-begin_cycle or quarantined. Factory-less hubs
         (the renderer-less default, recording hubs) keep dropping silently —
-        library and test use must stay quiet."""
+        library and test use must stay quiet.
+        """
 
         if self._console_factory is None or self.console_render_active():
             return

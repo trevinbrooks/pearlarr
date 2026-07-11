@@ -53,10 +53,9 @@ def connect(path: str, *, ensure_wal: bool = True, foreign_keys: bool = False) -
         path: Database path, or `":memory:"`.
         ensure_wal: Apply the WAL-mode pragma (the writable run path).
             Read-only diagnostics pass False so they neither mutate the db's
-            journal mode nor need the file to be a valid db just to open. Defaults
-            to True.
+            journal mode nor need the file to be a valid db just to open.
         foreign_keys: Apply `PRAGMA foreign_keys=ON` (only the cache has FK
-            constraints - the mapping store has none). Defaults to False.
+            constraints - the mapping store has none).
     """
 
     conn = sqlite3.connect(path)
@@ -100,8 +99,8 @@ def open_or_quarantine(
         recovery: Trailing recovery clause for the quarantine log line.
 
     Returns:
-        tuple: `(conn, fell_back)` - `fell_back` is True when the file was
-        quarantined and `conn` is the in-memory fallback.
+        The open connection plus a fell-back flag - True when the file was
+        quarantined and the connection is the in-memory fallback.
     """
 
     conn: sqlite3.Connection | None = None
@@ -181,11 +180,9 @@ def quarantine_corrupt(
     `<path>.corrupt-<timestamp>` (kept for inspection) and let the caller start
     fresh. A fresh db only costs one re-derive pass - the safe direction.
 
-    Args:
-        path: Path to the unreadable database.
-        what: Human noun for the log line (e.g. `"Cache database"`).
-        recovery: Trailing clause describing the recovery (e.g.
-            `"started a fresh cache (...)."`, ending with the period).
+    The warn line is built from `what` (a human noun, e.g. `"Cache database"`)
+    and `recovery` (its trailing clause, e.g. `"started a fresh cache (...)."`,
+    ending with the period).
     """
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")

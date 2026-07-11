@@ -68,11 +68,9 @@ def check_ep_by_anime_ids(
     ep: SonarrEpisode,
     tvdb_season: int,
 ) -> bool:
-    """Check whether to include an episode by Anime ID style
+    """Check whether to include an episode by Anime ID style.
 
-    Args:
-        ep: Episode info
-        tvdb_season: TVDB season number
+    A `tvdb_season` of -1 matches every season except specials (season 0).
     """
 
     if tvdb_season == -1:
@@ -86,11 +84,8 @@ def check_ep_by_anibridge(
 ) -> bool:
     """Check whether a Sonarr episode is covered by an AniBridge mapping.
 
-    Args:
-        ep: Sonarr episode info (season_number, episode_number)
-        tvdb_mappings: season (int) -> list of inclusive (start,
-            end) TVDB episode ranges. An empty list matches the whole season; an
-            end of None is open-ended.
+    `tvdb_mappings` maps a season to its inclusive `(start, end)` TVDB episode
+    ranges: an empty list matches the whole season; an end of None is open-ended.
     """
 
     ep_season = ep.season_number if ep.season_number is not None else -1
@@ -222,7 +217,7 @@ class SonarrEpisodes:
                 outside the cockpit.
 
         Returns:
-            int: How many series were warmed (attempted) - the needs-scan subset,
+            How many series were warmed (attempted) - the needs-scan subset,
             for the caller's ledger detail. A series whose fetch returned None
             still counts.
         """
@@ -301,13 +296,7 @@ class SonarrEpisodes:
         al_id: int,
         mapping: MappingEntry,
     ) -> list[SonarrEpisode] | None:
-        """Get a list of relevant episodes for an AniList mapping
-
-        Args:
-            sonarr_series_id: Series ID in Sonarr
-            al_id: Anilist ID
-            mapping: Mapping between TVDB and AniList
-        """
+        """Get a list of relevant episodes for an AniList mapping."""
 
         # If we have any season info, pull that out now
         tvdb_season = mapping.tvdb_season
@@ -435,11 +424,7 @@ class SonarrEpisodes:
         self,
         ep_list: list[SonarrEpisode],
     ) -> ArrReleaseDict:
-        """Get a dictionary of useful info for a series in Sonarr
-
-        Args:
-            ep_list: List of Sonarr episodes
-        """
+        """Fold the episodes' existing files into an `ArrReleaseDict`, reporting missing episodes."""
 
         # Look through, get release groups from the existing Sonarr files
         # and note any potential missing files

@@ -89,7 +89,7 @@ class ArrSync[ItemT: ArrItem](ABC):
                 fraction + "done/total" detail; None outside the cockpit.
 
         Returns:
-            int: How many items were warmed (attempted), for the caller's ledger
+            How many items were warmed (attempted), for the caller's ledger
             detail. `RadarrSync` returns 0.
         """
 
@@ -159,7 +159,7 @@ class ArrSync[ItemT: ArrItem](ABC):
                 snapshot/reconcile force without being at a deadline (no warning).
 
         Returns:
-            ImportProbe: the readiness (drop / retry / leave) plus whether the
+            The `ImportProbe` readiness (drop / retry / leave) plus whether the
             intended episode files are verified present (`files_present`) and
             whether an import command was just accepted (`command_issued`).
         """

@@ -3,7 +3,7 @@
 # deliberately private tables, imported to pin their exact membership.
 """Tests for the shared text grammar + text sinks (`output.textline`).
 
-Golden-pin the `ts LEVEL [path] message k=v` grammar (the PR6 file contract),
+Golden-pin the `ts LEVEL [path] message k=v` grammar (the file-log contract),
 the quoting/escape rules, breadcrumb labels + the advisory during=/placed=frontier
 tail, line/file byte-parity (with the file_only carve-out), per-line admission,
 the throttled "still waiting" pulse, the rotation cascade + append-after-close,

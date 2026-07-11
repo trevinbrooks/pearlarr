@@ -59,7 +59,7 @@ class AniListGateway:
         static, so reusing what we fetched on previous runs is what keeps a run
         from re-querying AniList for ids it has already seen - the main cause of
         the rate-limit stalls. Entries older than ANILIST_CACHE_TTL_DAYS are
-         skipped, so the data can't get arbitrarily stale (see prefetch /
+        skipped, so the data can't get arbitrarily stale (see prefetch /
         save_cache for the writing side).
         """
 
@@ -142,7 +142,7 @@ class AniListGateway:
                 fraction + "done/total" detail; None outside the cockpit.
 
         Returns:
-            int: How many ids needed fetching (0 = fully cache-warm), for the
+            How many ids needed fetching (0 = fully cache-warm), for the
             caller's ledger detail.
         """
 
@@ -178,11 +178,8 @@ class AniListGateway:
         network) isn't cached as a permanent miss - the next call gets a fresh
         chance.
 
-        Args:
-            al_id: AniList ID
-
         Returns:
-            AniListMediaNode: The parsed node; all-`None` on a miss.
+            The parsed `AniListMediaNode`; all-`None` on a miss.
         """
 
         # Cache hit: parse the stored body's Media node.
@@ -205,46 +202,27 @@ class AniListGateway:
 
         Prefers the English title, falling back to romaji. Side-effect-free: the
         caller owns any fallback and the `current_title` attribution.
-
-        Args:
-            al_id: AniList ID
         """
 
         media = self._media(al_id)
         return media.title_english or media.title_romaji
 
     def thumb(self, al_id: int) -> str | None:
-        """Resolve the AniList cover thumbnail URL for an id, or None.
-
-        Args:
-            al_id: AniList ID
-        """
+        """Resolve the AniList cover thumbnail URL for an id, or None."""
 
         return self._media(al_id).cover_image
 
     def banner(self, al_id: int) -> str | None:
-        """Resolve the AniList wide banner URL for an id, or None.
-
-        Args:
-            al_id: AniList ID
-        """
+        """Resolve the AniList wide banner URL for an id, or None."""
 
         return self._media(al_id).banner_image
 
     def media_format(self, al_id: int) -> str | None:
-        """Resolve the AniList media format (TV / MOVIE / OVA / ...) for an id, or None.
-
-        Args:
-            al_id: AniList ID
-        """
+        """Resolve the AniList media format (TV / MOVIE / OVA / ...) for an id, or None."""
 
         return self._media(al_id).format
 
     def n_eps(self, al_id: int) -> int | None:
-        """Resolve the AniList episode count for an id, or None.
-
-        Args:
-            al_id: AniList ID
-        """
+        """Resolve the AniList episode count for an id, or None."""
 
         return self._media(al_id).episodes

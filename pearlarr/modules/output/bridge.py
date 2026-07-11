@@ -1,11 +1,11 @@
-"""The logging bridge: stdlib LogRecords adopted into Diagnostic events (S5).
+"""The logging bridge: stdlib LogRecords adopted into Diagnostic events.
 
 One `HubBridgeHandler` per process, attached to the root logger AND to the
 app logger (its `propagate` stays False, so the app path needs its own seat).
 Adoption rules:
 
-* App-logger records: WARNING+ adopt visible (the badge class) — post-PR7 a
-  defensive arm, since first-party WARNING+ emits hub Diagnostics directly
+* App-logger records: WARNING+ adopt visible (the badge class) — a defensive
+  arm, since first-party WARNING+ emits hub Diagnostics directly
   (tests/test_logging_ban.py enforces it; log.py's invalid-level critical is
   the one sanctioned raw site). Sub-WARNING (DEBUG chatter, which stays raw
   forever) adopts `file_only` at INFO+ config and under a rich seat
@@ -22,7 +22,7 @@ Adoption rules:
 The bridge CONSTRUCTS new events and never mutates the LogRecord (caplog
 safety). A record fired from inside hub dispatch on the same thread (a renderer
 or signal handler logging mid-dispatch, whichever producer entered the drain)
-downgrades to file-only adoption (S5 pin 4 / N2) — the hub's own
+downgrades to file-only adoption — the hub's own
 `dispatch_active` baton read decides, so the rule holds for every drain, not
 just bridge-entered ones. The hub is resolved through the process registry at
 every record (like every other producer), so an `install_hub` swap can never
@@ -98,7 +98,7 @@ class HubBridgeHandler(HubBridgeBase):
                 return
             if hub.dispatch_active():
                 # Fired mid-dispatch on this thread (a renderer or lifecycle body
-                # logging): file-only adoption (N2).
+                # logging): file-only adoption.
                 hub.emit(replace(diagnostic, file_only=True))
                 return
             hub.emit(diagnostic)

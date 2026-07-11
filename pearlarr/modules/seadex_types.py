@@ -579,7 +579,7 @@ class QualitySource(StrEnum):
             value: A raw `QualitySource` string from Sonarr JSON.
 
         Returns:
-            QualitySource | None: The matched source, or None when undetermined.
+            The matched source, or None when undetermined.
         """
 
         if not value:

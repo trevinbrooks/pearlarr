@@ -70,7 +70,7 @@ def _parse_descriptor(descriptor: str) -> tuple[str, str | None, str | None]:
         descriptor: e.g. "tvdb_show:74796:s2" or "anilist:269"
 
     Returns:
-        tuple[str, str | None, str | None]: (provider, id, scope)
+        The `(provider, id, scope)` parts; the id and scope are None when absent.
     """
 
     parts = descriptor.split(":")
@@ -83,11 +83,8 @@ def _parse_descriptor(descriptor: str) -> tuple[str, str | None, str | None]:
 def _parse_season(scope: str | None) -> int | None:
     """Parse a show scope like "s2" into an integer season number.
 
-    Args:
-        scope: Scope portion of a descriptor
-
     Returns:
-        int | None: Season number, or None if the scope isn't "s<digits>"
+        The season number, or None if the scope isn't "s<digits>"
     """
 
     if not scope or not scope.startswith("s"):
@@ -109,7 +106,7 @@ def _parse_ranges(target: str) -> list[tuple[int, int | None]]:
         target: e.g. "1-21", "1-6,8-13", "14-|2", "1"
 
     Returns:
-        list[tuple[int, int | None]]: (start, end); the end is None for open-ended
+        The `(start, end)` pairs; the end is None for an open-ended range
     """
 
     ranges: list[tuple[int, int | None]] = []
@@ -144,11 +141,7 @@ def _parse_ranges(target: str) -> list[tuple[int, int | None]]:
 
 
 def _first[T](values: list[T]) -> T | None:
-    """Return the first value of a sequence, or None when empty.
-
-    Args:
-        values: Collected ids for a provider
-    """
+    """Return the first value of a sequence, or None when empty."""
 
     return values[0] if values else None
 
@@ -234,7 +227,7 @@ class AniBridge:
         backing reproduces `_consumer_entry` with zero re-derivation.
 
         Returns:
-            AniBridgeRows: The row lists for `MappingStore.replace_anibridge`.
+            The `AniBridgeRows` row lists for `MappingStore.replace_anibridge`.
         """
 
         entries: list[AniBridgeEntryRow] = []
@@ -295,11 +288,7 @@ class AniBridge:
         }[mapping_key]
 
     def _parse(self, graph: AniBridgeGraph) -> None:
-        """Build per-AniList records and reverse indexes from the graph.
-
-        Args:
-            graph: Raw anibridge mappings JSON
-        """
+        """Build per-AniList records and reverse indexes from the graph."""
 
         for key, targets in graph.items():
             provider, pid, _ = _parse_descriptor(key)
@@ -385,13 +374,6 @@ class AniBridge:
         "tvdb_mappings" (season -> ranges) is only attached when the lookup is
         scoped to a tvdb id that has season data, so it doubles as the
         "this is an anibridge series" marker used by "get_ep_list".
-
-        Args:
-            anilist_id: AniList id
-            tvdb_id: tvdb id this entry is scoped to, if any
-
-        Returns:
-            dict: Consumer-facing mapping entry
         """
 
         record = self.by_anilist[anilist_id]
@@ -467,11 +449,7 @@ class AniBridge:
         return result
 
     def lookup_by_tvdb(self, tvdb_id: int) -> AniBridgeLookup:
-        """Return "{anilist_id: entry}" for AniList ids mapped to a tvdb id.
-
-        Args:
-            tvdb_id: TVDB series id
-        """
+        """Return "{anilist_id: entry}" for AniList ids mapped to a TVDB series id."""
 
         if self._store is not None:
             return self._sql_lookup("tvdb", tvdb_id, tvdb_id=tvdb_id)
@@ -482,11 +460,7 @@ class AniBridge:
         }
 
     def lookup_by_tmdb(self, tmdb_id: int) -> AniBridgeLookup:
-        """Return "{anilist_id: entry}" for AniList ids mapped to a TMDB movie id.
-
-        Args:
-            tmdb_id: TMDB movie id
-        """
+        """Return "{anilist_id: entry}" for AniList ids mapped to a TMDB movie id."""
 
         if self._store is not None:
             return self._sql_lookup("tmdb_movie", tmdb_id)
@@ -494,11 +468,7 @@ class AniBridge:
         return {anilist_id: self._consumer_entry(anilist_id) for anilist_id in self.tmdb_movie_index.get(tmdb_id, ())}
 
     def lookup_by_imdb(self, imdb_id: str) -> AniBridgeLookup:
-        """Return "{anilist_id: entry}" for AniList ids mapped to an IMDb id.
-
-        Args:
-            imdb_id: IMDb id (e.g. "tt0094625")
-        """
+        """Return "{anilist_id: entry}" for AniList ids mapped to an IMDb id (e.g. "tt0094625")."""
 
         if self._store is not None:
             return self._sql_lookup("imdb", imdb_id)

@@ -1,4 +1,4 @@
-"""The scan surface's rich-console line grammar, event-driven (PR4 Band C).
+"""The scan surface's rich-console line grammar, event-driven.
 
 Every scan line is a `LegacyLine`: a level, a plain message, and a typed
 `ConsoleRender` payload (how the rich console draws it). The pure builders
@@ -459,10 +459,12 @@ def scan_event_lines(event: ScanEvent) -> tuple[LegacyLine, ...]:
 
 
 def render_legacy_lines(console: Console, lines: Iterable[LegacyLine], level: int) -> None:
-    """Render legacy lines on the shared console through the legacy payload
-    renderers — LOGGER-parity gated: a line prints iff its level clears
+    """Render legacy lines on the shared console, LOGGER-parity gated.
+
+    A line prints through the legacy payload renderers iff its level clears
     `level`, so a configured WARNING hides INFO scan lines from the console
-    exactly as it hides them from the file (NOT the diagnostics' console floor).
+    exactly as it hides them from the file (NOT the diagnostics' console
+    floor).
     """
 
     for line in lines:

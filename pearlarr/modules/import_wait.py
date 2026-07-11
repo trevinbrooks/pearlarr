@@ -124,9 +124,6 @@ class ImportWaitManager:
         ONE place that reads qBittorrent AND the one place that sanitizes its junk
         telemetry (via `sanitize_torrent_telemetry`), so nothing downstream
         ever sees a sentinel ETA / idle-speed / over-count.
-
-        Args:
-            infohash: The qBittorrent tracking key to poll.
         """
 
         if self.qbit is None:

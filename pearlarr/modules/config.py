@@ -251,8 +251,10 @@ class SonarrSettings(ArrSettings):
 
 
 class QbittorrentSettings(_ConfigBase):
-    """qBittorrent connection. The connection fields are modelled explicitly; `options`
-    is a scoped escape hatch for the remaining `qbittorrentapi.Client` kwargs (e.g.
+    """qBittorrent connection.
+
+    The connection fields are modelled explicitly; `options` is a scoped escape
+    hatch for the remaining `qbittorrentapi.Client` kwargs (e.g.
     `VERIFY_WEBUI_CERTIFICATE` for a self-signed-HTTPS WebUI, `REQUESTS_ARGS`) so the
     explicit model doesn't drop connectivity the old free-form `qbit_info` splat allowed.
     """
@@ -658,9 +660,6 @@ class AppConfig(_ConfigBase):
         the file is missing (so a first run writes a starter config), then parses and
         validates it. An invalid config raises `pydantic.ValidationError` (a
         `ValueError` subclass) naming the offending keys.
-
-        Args:
-            path: Path to the config file.
         """
 
         if not os.path.exists(path):

@@ -127,13 +127,10 @@ def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> Ma
     """Build a `MappingEntry` from a producer's raw dict.
 
     The one place a loosely-typed producer dict (an AniBridge `_consumer_entry`
-    dict) becomes a typed record. Defaults mirror the former `.get(..., default)`
-    reads exactly, so an AniBridge entry (which carries no `tvdb_season` /
-    `tvdb_epoffset`) lands on `-1` / `0`.
-
-    Args:
-        anilist_id: AniList id for this entry.
-        raw: Producer dict; only the enumerated keys are read.
+    dict) becomes a typed record. Only the enumerated keys of `raw` are read;
+    defaults mirror the former `.get(..., default)` reads exactly, so an
+    AniBridge entry (which carries no `tvdb_season` / `tvdb_epoffset`) lands
+    on `-1` / `0`.
     """
 
     # Coalesce a present-but-null season/epoffset to the sentinel, matching
@@ -407,13 +404,13 @@ class MappingResolver:
             sources: The three source configs, each tri-state
                 (disabled / download / pre-parsed inline).
             web: The shared web client the source downloads ride.
-            mappings_db: Path to the SQLite mapping cache; defaults to an
-                in-memory db (tests / pre-parsed configs).
+            mappings_db: Path to the SQLite mapping cache; the in-memory
+                default is for tests / pre-parsed configs.
             logger: For download/parse visibility (DEBUG;
                 the boot cockpit owns the INFO-level startup narrative).
             progress: The boot cockpit's step handle, fed
-                streaming download progress for the live bar. Defaults to None (no
-                cockpit: progress falls back to throttled DEBUG lines).
+                streaming download progress for the live bar; with no cockpit,
+                progress falls back to throttled DEBUG lines.
         """
 
         self.cache_time = cache_time
@@ -704,11 +701,8 @@ class MappingResolver:
         Replaces the former `anidb_anime_by_id` + `_parse_anidb_mapping_dict`
         pair: `{}` when the source is disabled, the id is unknown, or it has no
         mapping for the season; raises the same `ValueError` when the id was
-        ambiguous (appeared in more than one `<anime>` element).
-
-        Args:
-            anidb_id: AniDB id to look up.
-            tvdb_season: The TVDB season AniList resolved to.
+        ambiguous (appeared in more than one `<anime>` element). `tvdb_season`
+        is the season AniList resolved to.
         """
 
         if not self._anidb_enabled:
@@ -734,10 +728,9 @@ class MappingResolver:
             ids: The external Arr ids to resolve (at least one).
 
         Returns:
-            tuple: (anilist_mappings, ids_to_drop), where anilist_mappings is a
-                fresh copy of the resolved mappings (so a caller mutating it
-                can't corrupt the memo) and ids_to_drop is the list of ignored
-                AniList ids removed from the result, for the caller to log.
+            A fresh copy of the resolved mappings (so a caller mutating it
+            can't corrupt the memo), plus the ignored AniList ids removed
+            from the result, for the caller to log.
         """
 
         ids.require_any()

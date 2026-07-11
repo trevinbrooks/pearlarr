@@ -172,7 +172,7 @@ class TestHubWaitViewNarration:
         ]
 
     def test_first_snapshot_terminals_graduate_after_the_start(self) -> None:
-        # The documented Band C divergence, pinned deliberately: the old views
+        # A documented divergence, pinned deliberately: the old views
         # logged a first-snapshot graduation BEFORE their start line; the
         # narrator opens (ScopeOpened + WaitStarted) first.
         recording = RecordingHub()

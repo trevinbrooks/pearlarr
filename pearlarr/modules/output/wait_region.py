@@ -1,15 +1,13 @@
-"""The rich console's wait cockpit region, event-driven (PR5).
+"""The rich console's wait cockpit region, event-driven.
 
-The machinery that was `wait_view.LiveWaitView` now lives behind the hub:
 `WaitRegion` is driven by `rich_renderer.RichRenderer`'s
 exhaustive match and owns the single self-animating `rich.Live` cockpit
 (`_FrameAnchor`/`_LiveFrame`/`_TableLayout` + the
 anchor-advance timer trick), the graduation of finished torrents to durable
 scrollback lines, and the closing tally. On a live-capable console
-`WaitProgress` feeds the cockpit; a non-live console degrades the way
-`LogWaitView` did - a start line + throttled aggregate pulses, no Live. Under
-plain/json there is no rich console and every event no-ops (the hub's text
-sinks carry those surfaces).
+`WaitProgress` feeds the cockpit; a non-live console degrades - a start line +
+throttled aggregate pulses, no Live. Under plain/json there is no rich console
+and every event no-ops (the hub's text sinks carry those surfaces).
 
 The durable lines here come from the shared `wait_lines` builders and
 render through `scan_lines.render_legacy_lines`, LOGGER-parity gated
@@ -132,11 +130,11 @@ class _LiveFrame:
 
 @final
 class WaitRegion(LiveRegion):
-    """One live slot + durable prints over the shared Console (PR5).
+    """One live slot + durable prints over the shared Console.
 
     Durable lines (start, pulses, graduations, tally) print the moment their
     event arrives - they reflow ABOVE the transient cockpit via the shared
-    Console lock, exactly like the PR2 diagnostics. The Live is torn down by
+    Console lock, exactly like the diagnostic lines. The Live is torn down by
     `section_left` when the renderer's fold evicts the wait-region node
     (whatever event evicted it), by a new pass's `WaitStarted` reset - the
     load-bearing route when back-to-back passes replace the frontier node in
@@ -178,7 +176,7 @@ class WaitRegion(LiveRegion):
         caps = self._caps_cache.for_console(console)
         match event:
             case WaitStarted():
-                # Do NOT start the Live here (the old view started it on the first
+                # Do NOT start the Live here (it starts on the first live
                 # snapshot); just arm the digest cadence and print the start line.
                 self._reset_frame()
                 self._throttle.arm(event.pulse_s)

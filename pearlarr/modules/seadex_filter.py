@@ -80,11 +80,7 @@ class SeadexReleaseFilter:
         self._ctx = ctx
 
     def build(self, sd_entry: EntryRecord) -> SeadexDict:
-        """Parse and filter a SeaDex entry into the run's release dict.
-
-        Args:
-            sd_entry: SeaDex API query
-        """
+        """Parse and filter a SeaDex entry into the run's release dict."""
 
         # The torrent records are only read here (a fresh dict is built per
         # release group below), so iterate them directly rather than deep-copying
@@ -120,9 +116,10 @@ class SeadexReleaseFilter:
             public_file_names = {f.name for t in candidates if _is_public_torrent(t) for f in t.files}
 
             def needs_fallback(t: TorrentRecord) -> bool:
-                """A private candidate needs a public alternative unless the public
-                candidates cover its files (an unknown fileset on either side
-                degrades to the per-group gate)."""
+                """A private candidate needs a public alternative unless the public candidates cover its files.
+
+                An unknown fileset on either side degrades to the per-group gate.
+                """
 
                 if _is_public_torrent(t):
                     return False
@@ -198,12 +195,7 @@ class SeadexReleaseFilter:
         seadex_dict: SeadexDict,
         sd_entry: EntryRecord,
     ) -> SeadexDict:
-        """If multiple matches are found, let the user filter them interactively.
-
-        Args:
-            seadex_dict: Dictionary of SeaDex releases
-            sd_entry: SeaDex entry
-        """
+        """If multiple matches are found, let the user filter them interactively."""
 
         # The prompt rows are interactive UI for the input() below, not log
         # events: they render straight to the terminal so they stay visible at
@@ -276,12 +268,6 @@ class SeadexReleaseFilter:
         entry's cached hashes, then apply the plan's private-only skip outcome back
         onto the run context the grab/cache tail still reads (the SkipNotice log
         lines, the private_only_skipped flag, and the skipped group names).
-
-        Args:
-            al_id: AniList ID
-            seadex_dict: Dictionary of SeaDex releases
-            arr_release_dict: Dictionary of arr release properties
-            ep_list: List of episodes. Defaults to None
         """
 
         result = self._planner.plan(

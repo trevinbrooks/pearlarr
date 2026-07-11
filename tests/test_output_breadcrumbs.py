@@ -1,7 +1,7 @@
 # pyright: strict
 """Tests for the shared breadcrumb fold (`output.breadcrumbs`).
 
-Pin the fixed transition table (B6): explicit opens/closes, the boundary events'
+Pin the fixed transition table: explicit opens/closes, the boundary events'
 deterministic close-deeper behavior, unwind close-all, idempotent defensive
 closes, and the label-only read APIs (path text, path_for, during).
 """
@@ -184,7 +184,7 @@ def test_run_finished_closes_everything_and_is_idempotent() -> None:
     )
     assert fold.nodes() == ()
 
-    # The defensive teardown close (B3) re-emits it; a no-op on an empty stack.
+    # The defensive teardown close re-emits it; a no-op on an empty stack.
     fold.apply(RunFinished(arr=Arr.SONARR))
     assert fold.nodes() == ()
 

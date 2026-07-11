@@ -1,13 +1,12 @@
-"""The rich console's boot cockpit region, event-driven (PR3).
+"""The rich console's boot cockpit region, event-driven.
 
-The machinery that was `boot_view.LiveBootView`/`LogBootView` now lives
-behind the hub: `BootRegion` is driven by `rich_renderer.RichRenderer`'s
-exhaustive match and owns the banner, the single live spinner + download bar,
-the graduation of finished steps to durable scrollback lines, and the capstone.
-On a live-capable console the spinner shows liveness (`BootStepSlow` is
-ignored); a non-live rich console degrades the way `LogBootView` did — no
-Live, a one-time heads-up line per slow step. Under plain/json there is no rich
-console and every event no-ops (the hub's text sinks carry those surfaces).
+`BootRegion` is driven by `rich_renderer.RichRenderer`'s exhaustive match and
+owns the banner, the single live spinner + download bar, the graduation of
+finished steps to durable scrollback lines, and the capstone. On a
+live-capable console the spinner shows liveness (`BootStepSlow` is ignored); a
+non-live rich console degrades — no Live, a one-time heads-up line per slow
+step. Under plain/json there is no rich console and every event no-ops (the
+hub's text sinks carry those surfaces).
 """
 
 from __future__ import annotations
@@ -97,11 +96,11 @@ def ready_line(elapsed_s: float) -> str:
 
 @final
 class BootRegion(LiveRegion):
-    """One live slot + durable prints over the shared Console (PR3).
+    """One live slot + durable prints over the shared Console.
 
     Durable lines (banner, graduations, heads-up, capstone) print the moment
     their event arrives — they reflow ABOVE the transient spinner via the shared
-    Console lock, exactly like the PR2 diagnostics. The spinner is torn down by
+    Console lock, exactly like the diagnostic lines. The spinner is torn down by
     `section_left` when the renderer's fold evicts the boot-section node
     (whatever event evicted it — and defensively by `begin_cycle`/`close`),
     so scan output never lands under a stale live region.
@@ -133,7 +132,7 @@ class BootRegion(LiveRegion):
                     self._spinner.update(text=self._frame_text(caps, fraction, detail))
             case BootStepSlow(label=label):
                 # Live consoles show liveness via the spinner; the heads-up is
-                # the non-live rich console's LogBootView-style degradation.
+                # the non-live rich console's degraded liveness signal.
                 if not caps.live and self._admits_durable():
                     self._print(console, Text(slow_line(label, caps)))
             case BootStepFinished():
@@ -164,7 +163,7 @@ class BootRegion(LiveRegion):
         return self._level_source() <= logging.INFO
 
     def _banner(self, console: Console, event: RunStarted) -> None:
-        # Parity: the same console look the pre-PR3 TitledRule/StyledLine payloads produced.
+        # Parity: the same look the TitledRule/StyledLine payload route renders.
         if not self._admits_durable():
             return
         print_titled_rule(console, banner_title(event.version), "bold cyan", heavy=True)

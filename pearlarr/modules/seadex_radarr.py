@@ -36,9 +36,9 @@ class RadarrSync(ArrSync[RadarrItem]):
                 this strategy needs are read off it.
             services: The services hub the per-id hooks call into.
             radarr_client: Injectable replacement for the real `RadarrClient`,
-                which needs the connection keys. Defaults to None (build the
-                real one); tests inject a scripted fake through this typed seam,
-                so the real `__init__` runs without keys.
+                which needs the connection keys; None builds the real one.
+                Tests inject a scripted fake through this typed seam, so the
+                real `__init__` runs without keys.
         """
 
         self._services = services
@@ -268,11 +268,7 @@ class RadarrSync(ArrSync[RadarrItem]):
         self,
         radarr_movie_id: int,
     ) -> ArrReleaseDict:
-        """Get a dictionary of useful info for a Radarr movie
-
-        Args:
-            radarr_movie_id: ID for movie in Radarr
-        """
+        """Get a dictionary of useful info for a Radarr movie"""
 
         # Accumulate sizes per release group (a movie can carry several files - an
         # upgrade or a multi-edition); the user has all of them, so the planner dedups

@@ -1156,8 +1156,10 @@ def _drive_representative(hub: OutputHub) -> None:
 
 
 class TestHubSeats:
-    """Band C's own pins: the REAL cli seat factory end-to-end — plain stdout is
-    the file's bytes minus exactly the file_only lines; json is event-per-line."""
+    """The REAL cli seat factory, pinned end-to-end.
+
+    Plain stdout is the file's bytes minus exactly the file_only lines; json is
+    event-per-line."""
 
     @staticmethod
     def _seated(

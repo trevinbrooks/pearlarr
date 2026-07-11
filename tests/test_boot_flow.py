@@ -136,7 +136,7 @@ def test_step_failure_graduates_failed_and_reraises() -> None:
 
 def test_slow_heads_up_is_emitted_once_per_step() -> None:
     # A slow step reports many progress ticks; the digest surfaces collapse them
-    # to a single heads-up, so the one-shot lives producer-side (S6).
+    # to a single heads-up, so the one-shot lives producer-side.
     flow, recording, clock = _flow()
 
     with flow.step("Refreshing mappings") as step:

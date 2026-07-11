@@ -42,8 +42,11 @@ class RecordingRenderer:
 
 @final
 class RecordingHub:
-    """A real OutputHub over one RecordingRenderer, so handles mint real ScopeIds
-    and dedup/containment behave exactly as in production."""
+    """A real OutputHub over one RecordingRenderer.
+
+    Handles mint real ScopeIds and dedup/containment behave exactly as in
+    production.
+    """
 
     def __init__(self) -> None:
         self.renderer = RecordingRenderer()

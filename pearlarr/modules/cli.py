@@ -231,10 +231,10 @@ def main(
     \f
     Args:
         data_dir: Override the data directory holding config, caches and logs
-            (typer exposes this as `--data-dir`). Defaults to None, which uses
-            `PEARLARR_DATA_DIR` or the OS-standard per-user data location.
+            (typer exposes this as `--data-dir`); unset, `PEARLARR_DATA_DIR`
+            or the OS-standard per-user data location applies.
         version: Handled entirely by the eager `_print_version` callback
-            (typer exposes this as `--version`/`-V`). Defaults to False.
+            (typer exposes this as `--version`/`-V`).
     """
 
     _trust_os_certificates()
@@ -330,7 +330,7 @@ def _prepare_data_dir(paths: AppPaths) -> None:
 
 
 def _console_seat(console_format: LogFormat, caps_cache: CapsCache) -> Renderer:
-    """The hub's console seat for a cycle's RESOLVED format (S3).
+    """The hub's console seat for a cycle's RESOLVED format.
 
     rich gets the cockpit renderer (boot/scan/wait regions over the shared
     Console); plain and json get the matching stdout text seat.
@@ -437,7 +437,7 @@ def run_scheduled(
     # die mid-sleep with SIGTERM's default nonzero status.
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
-    # The hub is per-process (S3): installed once, BEFORE the loop — required,
+    # The hub is per-process: installed once, BEFORE the loop — required,
     # so a record fired from inside setup_logger reaches the hub, never lastResort.
     hub = _install_output_hub(paths)
 
@@ -514,19 +514,19 @@ def run_single(
     the flags narrow the run to one arr or one title.
 
     Args:
-        radarr: Only run the Radarr module. Defaults to False
-        sonarr: Only run the Sonarr module. Defaults to False
+        radarr: Only run the Radarr module.
+        sonarr: Only run the Sonarr module.
         movie_id: If set, only run Radarr for the movie with this TMDB ID.
-            Implies a Radarr run. Defaults to None
+            Implies a Radarr run.
         series_id: If set, only run Sonarr for the series with this TVDB ID.
-            Implies a Sonarr run. Defaults to None
+            Implies a Sonarr run.
         dry_run: If set, simulate the run without grabbing torrents, writing
-            the cache, or sending notifications. Defaults to False
+            the cache, or sending notifications.
         import_wait_mode: Override the configured wait-for-completion + Sonarr
             manual-import mode (off/deferred/blocking/hybrid) for this run. When
             unset the config's `imports.wait_mode` wins (cli > config > default).
         log_level: Override the configured `advanced.log_level` for this run
-            (cli > config > INFO). Defaults to None (config wins).
+            (cli > config > INFO).
     """
 
     # Passing a flag or a movie/series ID narrows the run to that arr; with no

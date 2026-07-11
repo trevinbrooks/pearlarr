@@ -1,5 +1,5 @@
 # pyright: strict
-"""Tests for the scan-surface rendering layer (PR4 Band C).
+"""Tests for the scan-surface rendering layer.
 
 Two halves over ONE golden spine (the data in `test_scan_parity`, captured
 from the live reporter): the pure `scan_lines` builders reproduce the exact

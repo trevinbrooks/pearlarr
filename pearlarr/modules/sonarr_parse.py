@@ -312,7 +312,8 @@ class SonarrParseCache:
         soon as its series is added to Sonarr.
 
         Args:
-            seadex_dict: Dictionary of seadex releases
+            seadex_dict: The releases to parse; episode lists are attached to
+                its items in place, and it is returned.
             series_fp: The run's series-id fingerprint, pinning negative
                 records (from the episode collaborator).
         """

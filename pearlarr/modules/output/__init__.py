@@ -1,4 +1,4 @@
-"""Pearlarr's output architecture (PR6: the hub's sinks own every surface).
+"""Pearlarr's output architecture: the hub's sinks own every surface.
 
 An event-stream chassis: producers emit the closed union of frozen event
 dataclasses (`events`) through typed scope handles (`scopes`) into one

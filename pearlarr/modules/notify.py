@@ -329,9 +329,6 @@ class Notifier:
         arr's own logo; a single-group grab carries its pick in the
         description, a multi-group grab stacks one field per group; the
         AniList art frames it (cover thumbnail + wide banner).
-
-        Args:
-            notice: The grab's resolved notification payload.
         """
 
         return self._push(_grab_embed(notice))
@@ -341,11 +338,8 @@ class Notifier:
 
         A no-op (returns False) when nothing waited or no url is configured; the
         caller already gates on `wait_notify` and swallows any error, so this
-        can never abort the end-of-run cache save.
-
-        Args:
-            arr: Which Arr the wait pass ran for (for the title).
-            result: The terminal outcomes + elapsed time.
+        can never abort the end-of-run cache save. `arr` names the wait pass in
+        the title.
         """
 
         if result.waited == 0:

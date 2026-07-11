@@ -100,8 +100,7 @@ class GrabPipeline:
         self._ctx = ctx
 
     def _is_preview(self) -> bool:
-        """A run is a no-op preview when an explicit dry run was requested OR
-        qBittorrent is not configured (nothing can actually be grabbed)."""
+        """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""
         return is_preview(self._ctx, self.qbit)
 
     def add_torrent(
@@ -118,17 +117,13 @@ class GrabPipeline:
         was grabbed, "already downloading" if every recommended release was
         already in the client from a prior run. The "skipped" warnings
         (private-only, unselected tracker) are still logged inline, as they're
-        independent of that status.
-
-        Args:
-            torrent_dict: Dictionary of torrent info
-            pending_seeds: The Sonarr strategy's
-                `infohash -> PendingImport` seeds, finalized into a durable
-                record on a successful add. Radarr passes None.
+        independent of that status. `pending_seeds` are the Sonarr strategy's
+        `infohash -> PendingImport` seeds, finalized into a durable record on a
+        successful add; Radarr passes None.
 
         Returns:
-            tuple: (n_torrents_added, results), where results is a list of
-                `ReleaseOutcome`, one per release acted on, in order
+            The `(n_torrents_added, results)` pair, where `results` holds one
+                `ReleaseOutcome` per release acted on, in order
         """
 
         n_torrents_added = 0
@@ -292,9 +287,12 @@ class GrabPipeline:
             self._ctx.pending_imports.append(pending)
 
     def _needs_action(self, groups: list[str], reason: str, kind: NeedsActionKind) -> NeedsActionRecord:
-        """A needs-action record for the current title: title/coverage/url come from
-        the per-title context, the caller supplies the skipped groups, the display
-        reason, and the machine-readable kind the summary's guidance gates on."""
+        """A needs-action record for the current title.
+
+        Title/coverage/url come from the per-title context; the caller supplies
+        the skipped groups, the display reason, and the machine-readable kind
+        the summary's guidance gates on.
+        """
 
         return NeedsActionRecord(
             title=self._ctx.current_title,

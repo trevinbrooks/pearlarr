@@ -303,6 +303,6 @@ def test_late_wait_emissions_demote() -> None:
     assert "imported T" in late[1].message
 
 
-# (The Diagnostics handle died at the p4 re-review: hub_note/hub_warn/hub_error
-# — settled at PR7 — are the position-free one-liner surface; the hub's once_key
-# dedup mechanism is pinned in test_output_hub.)
+# (There is no Diagnostics handle: hub_note/hub_warn/hub_error are the
+# position-free one-liner surface; the hub's once_key dedup mechanism is
+# pinned in test_output_hub.)

@@ -14,7 +14,7 @@ Pins the contract:
   designed, not a bug (the hub seats LineRenderer/JsonRenderer instead).
 * `apply_log_level` re-points the rich console handler's threshold
   (`console_level` semantics) and forwards the raw level to the hub.
-* The badge seam (S5 pin 2): the rich handler badge-renders plain WARNING+
+* The badge seam: the rich handler badge-renders plain WARNING+
   records UNLESS the registered console owner answers True (the bridge adopts
   them; the hub's renderer places them) — no owner or a struck-out seat keeps
   the legacy badge, so warnings can never vanish.

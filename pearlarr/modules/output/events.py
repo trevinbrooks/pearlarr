@@ -5,8 +5,8 @@ indents, styles). Emphasis rides the semantic `Accent`/`Span`/
 `StyledValue` value model — never a rich style string, never a pre-formatted
 display string. `EntryState` (log.py) and `Outcome`/`OutcomeCategory`
 (manual_import.py) are reused, not mirrored, so the vocabulary can't drift from the
-domain enums. `Outcome` deliberately stays in manual_import (settled at PR7):
-moving it INTO this module would cycle — manual_import -> output.events -> config
+domain enums. `Outcome` deliberately stays in manual_import: moving it INTO
+this module would cycle — manual_import -> output.events -> config
 -> manual_import (config imports `ImportWaitMode`) — and reuse already prevents
 the drift that relocation would have bought.
 """
@@ -146,7 +146,7 @@ class BootStepProgressed:
 
 @dataclass(frozen=True, slots=True)
 class BootStepSlow:
-    """One-time heads-up on a step's first progress report (S6); text sinks map it 1:1."""
+    """One-time heads-up on a step's first progress report; text sinks map it 1:1."""
 
     scope: ScopeId
     label: str
@@ -175,7 +175,7 @@ class BootReady:
 
 @dataclass(frozen=True, slots=True)
 class ScanStarted:
-    """Opens the per-arr run node (B6 boundary; no handle ceremony)."""
+    """Opens the per-arr run node (a boundary event; no handle ceremony)."""
 
     arr: Arr
     total: int
@@ -183,7 +183,7 @@ class ScanStarted:
 
 @dataclass(frozen=True, slots=True)
 class ItemStarted:
-    """Opens an item node, deterministically closing the previous item/entry (B6)."""
+    """Opens an item node, deterministically closing the previous item/entry."""
 
     arr: Arr
     index: int
@@ -193,7 +193,7 @@ class ItemStarted:
 
 @dataclass(frozen=True, slots=True)
 class EntryHeader:
-    """One entry block's head, carried whole (header-at-open commit rule, B5).
+    """One entry block's head, carried whole (the header-at-open commit rule).
 
     The focal/dim distinction is renderer policy keyed on `state` — no
     emphasis flag here (Accent is the emphasis mechanism where one is needed).
@@ -268,8 +268,10 @@ class GrabStatus(Enum):
 
 @dataclass(frozen=True, slots=True)
 class RecommendedGroup:
-    """A recommended release group with its SeaDex tags, carried separately;
-    `display` is the one place they're joined for output."""
+    """A recommended release group with its SeaDex tags, carried separately.
+
+    `display` is the one place they're joined for output.
+    """
 
     name: str
     tags: tuple[str, ...] = ()
@@ -317,8 +319,11 @@ class CapReached:
 
 @dataclass(frozen=True, slots=True)
 class ScanFinished:
-    """The scan-close boundary (B4.2): emitted atop _finalize_run, before the
-    reconcile, so reconcile diagnostics render at run level."""
+    """The scan-close boundary.
+
+    Emitted atop `_finalize_run`, before the reconcile, so reconcile
+    diagnostics render at run level.
+    """
 
     arr: Arr
 
@@ -328,8 +333,10 @@ class ScanFinished:
 
 @dataclass(frozen=True, slots=True)
 class GrabFact:
-    """One grab for the summary's "added" block (owned twin of reporter.GrabRecord;
-    PR4 maps records into facts at the reporter chokepoint)."""
+    """One grab for the summary's "added" block — the owned twin of `reporter.GrabRecord`.
+
+    Records map into facts at the reporter chokepoint.
+    """
 
     title: str | None
     coverage: str | None
@@ -339,8 +346,10 @@ class GrabFact:
 
 
 class NeedsActionCause(Enum):
-    """Why a title needs the user (owned twin of reporter.NeedsActionKind; member
-    names are test-pinned equal so the PR4 name-based mapping can't drift)."""
+    """Why a title needs the user — the owned twin of `reporter.NeedsActionKind`.
+
+    Member names are test-pinned equal so the name-based mapping can't drift.
+    """
 
     PRIVATE_ONLY = auto()
     PRIVATE_ONLY_NO_FALLBACK = auto()
@@ -363,8 +372,11 @@ class NeedsActionFact:
 
 @dataclass(frozen=True, slots=True)
 class RunTally:
-    """RunStats frozen at summary time; `from_stats` is the single conversion
-    site (S10: never two hand-maintained field lists; a fields-parity test pins it)."""
+    """`RunStats` frozen at summary time.
+
+    `from_stats` is the single conversion site (never two hand-maintained
+    field lists; a fields-parity test pins it).
+    """
 
     checked: int
     added: tuple[GrabFact, ...]
@@ -436,7 +448,7 @@ class RunSummary:
 
 @dataclass(frozen=True, slots=True)
 class RunSummaryReady:
-    """Atomic (S2: no SummaryScope); also a B6 boundary closing item/entry nodes."""
+    """Atomic (no SummaryScope); also a boundary closing item/entry nodes."""
 
     summary: RunSummary
 
@@ -557,16 +569,19 @@ class WaitSnapshot:
 class WaitStarted:
     total: int
     # The renderer's pulse throttle interval (max(poll_s, digest_interval)); the
-    # producer computes it (Band C). No default: the producer must supply it.
+    # producer computes it. No default: the producer must supply it.
     pulse_s: float
     scope: ScopeId | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class WaitProgress:
-    """The engine's pure per-poll snapshot: json drops it; the text sinks render
-    only a throttled "still waiting" pulse from it (mode-independent, like every
-    text line — the file is the same whether stdout was a TTY or a pipe)."""
+    """The engine's pure per-poll snapshot.
+
+    The json surface drops it; the text sinks render only a throttled "still
+    waiting" pulse from it (mode-independent, like every text line — the file
+    is the same whether stdout was a TTY or a pipe).
+    """
 
     snapshot: WaitSnapshot
     scope: ScopeId | None = None
@@ -594,9 +609,12 @@ class WaitFinished:
 
 @dataclass(frozen=True, slots=True)
 class RunFinished:
-    """The run-close boundary (B4.3): emitted at the end of _finalize_run, and by
-    the unwind teardown (B3) only when the leg dies before that tail close; the fold
-    treats it idempotently (defense in depth)."""
+    """The run-close boundary.
+
+    Emitted at the end of `_finalize_run`, and by the unwind teardown only
+    when the leg dies before that tail close; the fold treats it idempotently
+    (defense in depth).
+    """
 
     arr: Arr
 
@@ -679,7 +697,7 @@ def severity_of(event: Event) -> Severity:
             # problem itself, so an outcome-based tally would double-count it.
             return Severity.INFO
         case TorrentGraduated(outcome=outcome):
-            # Category-based; wait_graduation_line carries the same level (P6).
+            # Category-based; wait_graduation_line carries the same level.
             return _category_severity(outcome.category)
         case (
             RunStarted()

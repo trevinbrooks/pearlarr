@@ -152,8 +152,10 @@ def render_kv(kv: KvLine) -> Text:
 
 
 def render_rule(char: str) -> Rule:
-    """A full-width separator: heavy ("━") for section ("=") breaks, light ("─")
-    for sub ("-") breaks, so the two stay distinguishable without color."""
+    """A full-width separator: heavy ("━") for section ("=") breaks, light ("─") for sub ("-") breaks.
+
+    The two weights keep the break levels distinguishable without color.
+    """
 
     if "=" in char:
         return Rule(style="cyan", characters="━")
@@ -293,9 +295,9 @@ def resolve_console_format(console_format: LogFormat) -> LogFormat:
 
 
 def console_level(level: int) -> int:
-    """The RICH-console threshold for a logger level (the handlers here and the
-    RichRenderer's diagnostic floor); the text surfaces use the raw level (S4).
+    """The RICH-console threshold for a logger level; the text surfaces use the raw level.
 
+    Applied by the handlers here and as the RichRenderer's diagnostic floor.
     The console always shows INFO+ so routine progress stays visible even when
     the file logger is raised - except DEBUG, which lowers the threshold, and
     CRITICAL, which raises it to match the file logger.
@@ -352,15 +354,13 @@ def setup_logger(
     first-party records. Under plain/json NO console handler is attached -
     level-only configuration; the bridge is the only handler.
 
-    Parameters:
-        log_level: The log level to use
+    Args:
+        log_level: Level name, case-insensitive; an unknown name falls back
+            to INFO with a logged complaint.
         console_format: "rich" attaches the styled console handler;
             "plain"/"json" attach nothing (the hub's stdout seat renders).
-            "auto" (default) resolves here for programmatic callers - cli always
+            "auto" resolves here for programmatic callers - cli always
             passes a resolved value: rich when stdout is a TTY, plain otherwise.
-
-    Returns:
-        A logger object for logging messages.
     """
 
     logger = logging.getLogger(LOG_NAME)
@@ -491,12 +491,7 @@ def rule_string(
     rule_char: str = "-",
     total_length: int = 80,
 ) -> str:
-    """Draw a full-width separator rule for the (flat-style) logger
-
-    Args:
-        rule_char: Character to repeat across the rule. Defaults to "-"
-        total_length: Width of the rule. Defaults to 80
-    """
+    """Draw a full-width separator rule for the (flat-style) logger."""
 
     return rule_char * total_length
 
@@ -505,12 +500,7 @@ def indent_string(
     text: str,
     level: int = 1,
 ) -> str:
-    """Format an indented detail line for the (flat-style) logger
-
-    Args:
-        text: String to format
-        level: Number of indent levels (each INDENT wide). Defaults to 1
-    """
+    """Indent a detail line for the (flat-style) logger by `level` levels, each `INDENT` wide."""
 
     return f"{INDENT * level}{text}"
 
@@ -522,15 +512,11 @@ def kv_string(
     indent: int = 1,
     sep: str = " :",
 ) -> str:
-    """Format an aligned "key : value" detail line for flat-style output
+    """Format an aligned "key : value" detail line for flat-style output.
 
-    Args:
-        key: Left-hand label
-        value: Right-hand value
-        key_width: Column width the key is padded to, so the colons line up
-        indent: Number of indent levels to prefix. Defaults to 1
-        sep: Separator after the padded key. Defaults to " :"; pass "" for the
-            colon-less gutter "label value" entry-detail format
+    `key` is padded to `key_width` so the separators line up down a block;
+    `indent` counts indent levels. Pass `sep=""` for the colon-less gutter
+    "label value" entry-detail format.
     """
 
     # Built from the shared _kv_prefix helper, so the plain message matches the
@@ -566,10 +552,9 @@ def group_highlight(
 
     Args:
         name: The torrent name as reported by the client / scraped from source
-        group: The recommended SeaDex release group, or None
-        group_style: Rich style for the group span/prefix. Defaults to "cyan"
-            (the live log's group color)
-        base_style: Rich style for the rest of the name. Defaults to "" (none)
+        group: The recommended SeaDex release group
+        group_style: Rich style for the group span/prefix
+        base_style: Rich style for the rest of the name
     """
 
     name = name or ""
@@ -607,13 +592,7 @@ def group_highlight(
 
 
 def pluralize(n: int, singular: str, plural: str | None = None) -> str:
-    """Pick the singular or plural form of a word based on a count
-
-    Args:
-        n: The count
-        singular: The singular form, used when n == 1
-        plural: The plural form. Defaults to None, i.e., singular + "s"
-    """
+    """Pick the singular or plural form of a word based on a count; `plural` unset means `singular` + "s"."""
 
     if n == 1:
         return singular
@@ -621,24 +600,13 @@ def pluralize(n: int, singular: str, plural: str | None = None) -> str:
 
 
 def count_noun(n: int, singular: str, plural: str | None = None) -> str:
-    """Format a count with its correctly pluralized noun, e.g. "3 movies"
-
-    Args:
-        n: The count
-        singular: The singular noun
-        plural: The plural noun. Defaults to None, i.e., singular + "s"
-    """
+    """Format a count with its correctly pluralized noun, e.g. "3 movies"; `plural` unset means `singular` + "s"."""
 
     return f"{n} {pluralize(n, singular, plural)}"
 
 
 def arr_item_noun(arr: Arr, n: int) -> str:
-    """Format a count with the arr's library noun: "3 movies" / "3 series"
-
-    Args:
-        arr: Which arr the items belong to (picks movie vs series)
-        n: The count
-    """
+    """Format a count with the arr's library noun: "3 movies" / "3 series"."""
 
     if arr is Arr.RADARR:
         return count_noun(n, "movie")

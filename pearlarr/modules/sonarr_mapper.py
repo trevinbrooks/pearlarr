@@ -28,15 +28,10 @@ _SAMPLE_TOKENS = ("sample",)
 def _rejection_matches(candidate: ManualImportCandidate, tokens: tuple[str, ...]) -> bool:
     """True if any of a candidate's rejections contains one of `tokens`.
 
-    Best-effort and case-insensitive. Each rejection is an
-    `ImportRejection` view whose `reason` carries the
+    Best-effort and case-insensitive (`tokens` must be lowercase). Each
+    rejection is an `ImportRejection` view whose `reason` carries the
     human text (a bare-string rejection from an older Sonarr is folded into the
     same `reason` field at the client boundary).
-
-    Args:
-        candidate: The parsed candidate (reads
-            `rejections`).
-        tokens: Lowercase substrings to look for.
     """
 
     for rejection in candidate.rejections:
@@ -58,11 +53,7 @@ class FileEpisodeMapper:
     """
 
     def __init__(self, sonarr: AbstractSonarrClient) -> None:
-        """Bind the Sonarr client the on-disk parse reads.
-
-        Args:
-            sonarr: The strategy's Sonarr client (its `/parse`).
-        """
+        """Bind the strategy's Sonarr client, whose `/parse` the on-disk parse reads."""
 
         self.sonarr = sonarr
 

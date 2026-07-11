@@ -152,7 +152,7 @@ def test_diagnostic_defaults_are_ambient_and_shared() -> None:
     assert not diag.file_only
 
 
-# --- RunTally: the single conversion site (S10) ------------------------------------
+# --- RunTally: the single conversion site ------------------------------------------
 
 
 def test_run_tally_freezes_run_stats_whole() -> None:
@@ -208,7 +208,7 @@ def test_run_tally_freezes_run_stats_whole() -> None:
     assert tally.added == (grab_fact,)
 
 
-# Fields allowed to differ between RunStats and RunTally - deliberately empty (S10).
+# Fields allowed to differ between RunStats and RunTally - deliberately empty.
 _PARITY_ALLOWLIST: Final[frozenset[str]] = frozenset()
 
 

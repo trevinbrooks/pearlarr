@@ -1,4 +1,4 @@
-"""The process-global hub registry (S3).
+"""The process-global hub registry.
 
 Mirrors stdlib logging's process-global registry: cli installs the real hub once
 pre-loop; scope producers (the boot flow's mark, the wait narrator's factory) and

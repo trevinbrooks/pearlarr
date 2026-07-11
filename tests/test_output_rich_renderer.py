@@ -103,7 +103,7 @@ class TestPlacement:
             _warning("mid-scan"),
         )
 
-        # The scan arm renders the banner/header lines (PR4); the diagnostic
+        # The scan arm renders the banner/header lines; the diagnostic
         # itself lands un-indented at column 0.
         assert _lines(stream)[-1] == "WARNING  mid-scan"
 
@@ -253,7 +253,7 @@ class TestNoOps:
 
 
 class TestDurableLoopLines:
-    """PR6 Band D: the scheduled-loop footer arm + the flipped release facts."""
+    """The scheduled-loop footer arm + the typed release-fact lines."""
 
     # A Thursday; aware (the producer's contract) — the footer shows wall time.
     _AT = datetime(2026, 1, 1, 23, 5, tzinfo=timezone(timedelta(hours=-5)))

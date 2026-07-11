@@ -37,11 +37,9 @@ class RunLoop:
     def __init__(self, deps: RunDeps, services: RunServices) -> None:
         """Receive the shared collaborators + services hub and set up per-run state.
 
-        Args:
-            deps: The shared collaborators
-            services: The per-id services hub (also injected into
-                the strategy); the loop adopts its placeholder context and
-                pushes each run's fresh context back into it.
+        The loop adopts the services hub's placeholder context and pushes each
+        run's fresh context back into it; the hub is also injected into the
+        strategy.
         """
 
         # Unpack the injected collaborators into the attribute names the run loop

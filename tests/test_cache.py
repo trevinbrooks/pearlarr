@@ -134,7 +134,7 @@ class TestSchemaVersionGate:
         # The upgrade committed at load time - durable even though the run's own
         # staged writes were rolled back by close().
         assert _user_version(db) == SCHEMA_VERSION
-        # Each step announces itself as an INFO hub Diagnostic (PR6 Band D flip).
+        # Each step announces itself as an INFO hub Diagnostic.
         (upgraded,) = recording.of_type(Diagnostic)
         assert upgraded.severity is Severity.INFO
         assert upgraded.message == "Upgraded cache database schema v0 -> v1"

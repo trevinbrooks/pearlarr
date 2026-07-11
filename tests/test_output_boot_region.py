@@ -236,7 +236,7 @@ class TestBootRegion:
         assert f"  ✔ Two{SEP}0.61s" in out
 
     def test_scan_started_tears_down_the_live_slot(self) -> None:
-        # The PR4 trap: ScanStarted evicts the boot section in the fold WITHOUT
+        # The trap: ScanStarted evicts the boot section in the fold WITHOUT
         # any ScopeClosed; the spinner must not survive over the scan output.
         renderer, _stream = _renderer()
 
@@ -325,7 +325,7 @@ class TestBootRegion:
 
     def test_raised_level_silences_the_durable_boot_lines(self) -> None:
         # Parity with the logger-driven ledger: at level WARNING the INFO boot
-        # lines never rendered pre-PR3 (the logger gate), so the region mirrors it.
+        # lines never rendered under the old logger gate, so the region mirrors it.
         renderer, stream = _renderer()
         renderer.set_level(logging.WARNING)
 

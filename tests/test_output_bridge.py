@@ -138,7 +138,7 @@ class TestAdoption:
 
     def test_third_party_adopts_all_levels_visible_at_configured_debug(self, app_logger: logging.Logger) -> None:
         """At a configured DEBUG the early-out never fires and nothing is demoted
-        to file_only: the hub is a library record's only console route (S4)."""
+        to file_only: the hub is a library record's only console route."""
 
         del app_logger
         recorder = RecordingRenderer()
@@ -239,7 +239,7 @@ class TestAdoption:
 
     def test_reentrant_records_downgrade_to_file_only(self, app_logger: logging.Logger) -> None:
         """A record fired from inside hub dispatch (renderer/SIGTERM logging) is
-        adopted file-only: no frontier placement mid-fold (S5 pin 4 / N2)."""
+        adopted file-only: no frontier placement mid-fold."""
 
         recorder = RecordingRenderer()
         install_hub(OutputHub([recorder, _MidDispatchLogger("bridge-test-reentrant")]))

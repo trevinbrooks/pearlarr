@@ -93,8 +93,8 @@ def classify_queue(states: list[str]) -> QueueVerdict:
             (matched + reduced by the caller; case preserved, folded here).
 
     Returns:
-        QueueVerdict: The action this poll, BEFORE the episode-file "already
-        imported" check the caller layers on top.
+        The action this poll, BEFORE the episode-file "already imported" check
+        the caller layers on top.
     """
 
     in_motion = False
@@ -173,7 +173,7 @@ def manual_import_in_flight(
         target_ep_ids: Our intended episode ids, for the same fallback.
 
     Returns:
-        bool: True when a still-running ManualImport already covers this download.
+        True when a still-running ManualImport already covers this download.
     """
 
     target_hash = infohash.casefold()
@@ -212,8 +212,7 @@ def build_episode_id_map(ep_list: list[SonarrEpisode]) -> dict[tuple[int, int], 
         ep_list: Episodes parsed from `/api/v3/episode`.
 
     Returns:
-        dict[tuple[int, int], int]: `(season, episode) -> ep.id` for every
-        episode carrying a real id.
+        `(season, episode) -> ep.id` for every episode carrying a real id.
     """
 
     by_key: dict[tuple[int, int], int] = {}
@@ -247,9 +246,12 @@ class EpisodeFileStatus(Enum):
 
 
 class EpisodeSnapshot(NamedTuple):
-    """One poll's coherent view of a series: the fresh episode index plus the
-    normalized recommended-group (overwrite-guard) set - fetched together, so
-    consumers never mix state from two different polls."""
+    """One poll's coherent view of a series: the fresh episode index plus the recommended-group set.
+
+    The groups arrive normalized (the overwrite-guard set) and are fetched
+    together with the index, so consumers never mix state from two different
+    polls.
+    """
 
     episodes_by_id: dict[int, SonarrEpisode]
     recommended_groups: set[str]
@@ -272,7 +274,7 @@ def episode_file_statuses(
             groups (via `normalize_group`).
 
     Returns:
-        dict[int, EpisodeFileStatus]: One status per de-duplicated target id.
+        One status per de-duplicated target id.
     """
 
     statuses: dict[int, EpisodeFileStatus] = {}
@@ -458,7 +460,7 @@ def assign_episode_ids(
             fully-seeded record isn't mistaken for "no scope to enforce".
 
     Returns:
-        EpisodeAssignment: the placed files and the skipped ones.
+        The placed files and the skipped ones.
     """
 
     resolved = [i for i in ordered_episode_ids if i]
@@ -621,7 +623,7 @@ def plan_import_files(
             `targets_needing_import`).
 
     Returns:
-        list[ImportDecision]: one decision per map entry, in map order.
+        One decision per map entry, in map order.
     """
 
     decisions: list[ImportDecision] = []
@@ -704,7 +706,7 @@ def parse_quality_from_filename(filename: str) -> ParsedQuality:
         filename: The SeaDex filename (or full path; only the text matched).
 
     Returns:
-        ParsedQuality: The parsed axes; either may be `None`.
+        The parsed axes; either may be `None`.
     """
 
     res_match = _RESOLUTION_PATTERN.search(filename)
@@ -732,7 +734,7 @@ def quality_axes_from_model(model: QualityModel | None) -> ParsedQuality:
         model: A candidate's in-context quality model.
 
     Returns:
-        ParsedQuality: The structured axes Sonarr determined, each possibly None.
+        The structured axes Sonarr determined, each possibly None.
     """
 
     if model is None:
@@ -763,7 +765,7 @@ def quality_axes_from_name(
         quality_defs: The `/api/v3/qualitydefinition` list.
 
     Returns:
-        ParsedQuality: The default's axes, or empty when unset/unmatched.
+        The default's axes, or empty when unset/unmatched.
     """
 
     if not name:
@@ -853,7 +855,7 @@ def resolve_quality(
             last-resort verbatim fallback.
 
     Returns:
-        QualityModel: The quality to POST; never omitted.
+        The quality to POST; never omitted.
     """
 
     # Invariant: the import payload always carries a quality key - omitting it

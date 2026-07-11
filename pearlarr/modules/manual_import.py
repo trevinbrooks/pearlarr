@@ -38,7 +38,7 @@ def normalize_basename(name: str) -> str:
         name: A filename (basename or full path; only the text is folded).
 
     Returns:
-        str: The NFC-normalized, stripped, case-folded leaf.
+        The NFC-normalized, stripped, case-folded leaf.
     """
 
     return unicodedata.normalize("NFC", name).strip().casefold()
@@ -153,9 +153,9 @@ def classify_pending(
             present in Sonarr (the only signal that promotes to `IMPORTED`).
 
     Returns:
-        PendingState: `MISSING` / `ERRORED` for those terminal outcomes;
-        `None` (still downloading) -> `QUEUED`; COMPLETE with files present ->
-        `IMPORTED`; COMPLETE without files present -> `IMPORTING`.
+        `MISSING` / `ERRORED` for those terminal outcomes; `None` (still
+        downloading) -> `QUEUED`; COMPLETE with files present -> `IMPORTED`;
+        COMPLETE without files present -> `IMPORTING`.
     """
 
     if wait_outcome is WaitOutcome.MISSING:
@@ -525,8 +525,7 @@ def resolve_wait_mode(
         config_mode: The configured `imports.wait_mode`.
 
     Returns:
-        ImportWaitMode: `cli_mode` if set, else `config_mode` if set, else
-        `ImportWaitMode.OFF`.
+        `cli_mode` if set, else `config_mode` if set, else `ImportWaitMode.OFF`.
     """
 
     if cli_mode is not None:

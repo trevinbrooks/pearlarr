@@ -41,9 +41,11 @@ from .output import (
 
 @dataclass(frozen=True, slots=True)
 class _CapstoneWindow:
-    """The capstone gate's window: opened at a section's first step, closed by
-    `end_section` (parity with the old view — the banner→step gap holds only
-    import work)."""
+    """The capstone gate's window: opened at a section's first step, closed by `end_section`.
+
+    Opening at the first step keeps the banner→step gap — which holds only
+    import work — out of the capstone's timing.
+    """
 
     started_at: float
     counts_mark: CountsMark

@@ -175,9 +175,6 @@ class ImportExecutor:
         `trackedDownloadState` - the one signal the verdict depends on. Records
         with no tracked state are dropped; an empty result means Sonarr isn't
         tracking the download.
-
-        Args:
-            infohash: The torrent infohash (the download id).
         """
 
         target = infohash.casefold()
@@ -503,8 +500,8 @@ class ImportReconciler:
                 record's inline `link` line.
 
         Returns:
-            dict[str, PendingImport]: Seeds keyed by infohash (empty when nothing
-            downloadable carries a video file).
+            Seeds keyed by infohash (empty when nothing downloadable carries a
+            video file).
         """
 
         ep_id_map = build_episode_id_map(ep_list)

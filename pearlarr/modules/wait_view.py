@@ -1,4 +1,4 @@
-"""The wait-pass producer: engine snapshots in, hub events out (PR5).
+"""The wait-pass producer: engine snapshots in, hub events out.
 
 The engine drives a `WaitView` while it waits on each grabbed torrent to
 download and then import, pushing one immutable `WaitSnapshot` per poll
@@ -121,7 +121,7 @@ class WaitView(ABC):
 
 @final
 class HubWaitView(WaitView):
-    """The wait-pass narrator: turns engine snapshots into hub events (P1).
+    """The wait-pass narrator: turns engine snapshots into hub events.
 
     Holds producer state only (seen keys, the outcome tally, the last elapsed
     clock); the renderers decide every look. The wait scope opens lazily on the

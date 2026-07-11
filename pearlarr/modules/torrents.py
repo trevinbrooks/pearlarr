@@ -152,7 +152,7 @@ class TorrentService:
             preview: When True, simulate the add without touching the client.
 
         Returns:
-            AddResult: The outcome plus the best display name available.
+            The outcome plus the best display name available.
         """
 
         parser = _PARSERS.get(item.tracker)
@@ -191,8 +191,8 @@ class TorrentService:
             preview: When True, report the add without touching the client.
 
         Returns:
-            AddResult: The outcome plus the client-reported name (None when
-                there's no hash to look it up by).
+            The outcome plus the client-reported name (None when there's no
+            hash to look it up by).
         """
 
         infohash = item.infohash

@@ -1,11 +1,10 @@
 """Typed capability scope handles: position rides the handle, never the call site.
 
-The handle set is exactly Step / Entry / Wait (S2: no SummaryScope — the
+The handle set is exactly Step / Entry / Wait (no SummaryScope — the
 summary is one atomic event; Run/Item boundaries are plain events with no
 handle ceremony; position-free one-liners are the `hub_note` family in
-`runtime`, settled at PR7). Handles are
-runtime-total: emitting on a closed handle demotes to an attributed
-`events.Diagnostic` (`placed_by=HANDLE`) instead of raising or
+`runtime`). Handles are runtime-total: emitting on a closed handle demotes to
+an attributed `events.Diagnostic` (`placed_by=HANDLE`) instead of raising or
 corrupting layout; tests pin that no production path ever demotes.
 """
 
@@ -62,8 +61,11 @@ type EntryFact = EntryDetail | LedgerRow | ReleaseSkipped | GrabFailed | GrabAct
 
 @final
 class ScopeIds:
-    """Thread-safe ScopeId minter (serials are monotonic per minter; factories
-    default to the process-wide minter so serials never collide across factories)."""
+    """Thread-safe ScopeId minter; serials are monotonic per minter.
+
+    Factories default to the process-wide minter so serials never collide
+    across factories.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -234,7 +236,7 @@ class StepScope(_ScopeBase):
 
 @final
 class EntryScope(_ScopeBase):
-    """One entry block: opened WITH its header (header-at-open, B5); details stream."""
+    """One entry block: opened WITH its header (header-at-open); details stream."""
 
     _KIND_WORD: ClassVar[str] = "entry"
 

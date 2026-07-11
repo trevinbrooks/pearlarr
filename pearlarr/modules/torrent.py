@@ -41,8 +41,7 @@ def get_nyaa_torrent(url: str) -> tuple[str, str]:
         url: URL of the Nyaa release page
 
     Returns:
-        tuple: (download_url, release_title) - the .torrent download link and
-            the human-readable release title
+        The .torrent download link and the human-readable release title.
     """
 
     release = _NYAA_SESSION.get(url)
@@ -62,9 +61,8 @@ def get_animetosho_torrent(
             same host. Defaults to a shared one.
 
     Returns:
-        tuple: (download_url, release_title) - the .torrent download link
-            (None if no matching link is found in the feed) and the
-            human-readable release title scraped from the page
+        The .torrent download link (None if no matching link is found in the
+        feed) and the human-readable release title scraped from the page.
     """
 
     client = client or _DEFAULT_CLIENT
@@ -123,12 +121,12 @@ def get_rutracker_torrent(
 
     Args:
         url: URL of the RuTracker topic
-        infohash: Torrent info hash
+        infohash: The hash the magnet's `urn:btih` payload is built from.
         client: Client to reuse for the page fetch. Defaults to a shared one.
 
     Returns:
-        tuple: (magnet_url, torrent_title) - the magnet link and the
-            human-readable torrent title scraped from the page
+        The magnet link and the human-readable torrent title scraped from
+        the page.
 
     Raises:
         TorrentParseError: If `infohash` is None (a magnet needs the hash) or

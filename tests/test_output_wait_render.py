@@ -7,9 +7,8 @@ The byte guarantees on the wait ledger live in the builders (consumed by the
 WaitRegion's durable prints) and the `output.textline`
 grammar; the region-side rendering is pinned in test_output_wait_region. Here:
 the `PulseThrottle` unit contract, the builder edge cases (including the
-P6 category-based graduation level), and the pure cockpit reducers
-(`live_model` / `sparkline` / `graduation_tail`), moved here from
-test_wait_view at the PR5 Band C flip.
+category-based graduation level), and the pure cockpit reducers
+(`live_model` / `sparkline` / `graduation_tail`).
 """
 
 import logging
@@ -134,7 +133,7 @@ class TestWaitBuilders:
         assert wait_graduation_line(_grad("C", Outcome.DOWNLOAD_ERRORED), caps).level == logging.ERROR
 
 
-# --- the pure cockpit reducers (moved from test_wait_view at the Band C flip) -----------
+# --- the pure cockpit reducers ----------------------------------------------------------
 
 _WIDE = Capabilities(live=True, color=True, unicode=True, width=100, height=40)
 

@@ -510,8 +510,8 @@ class TestPruneExpiredPending:
         mgr.prune_expired_pending()
 
         assert set(mgr._pending_records()) == {"fresh"}
-        # Only the aged drop is announced (an INFO hub Diagnostic since PR6
-        # Band D); the unparseable-stamp drop stays DEBUG chatter on the logger.
+        # Only the aged drop is announced (an INFO hub Diagnostic); the
+        # unparseable-stamp drop stays DEBUG chatter on the logger.
         (aged,) = recording.of_type(Diagnostic)
         assert aged.severity is Severity.INFO
         assert aged.origin == LOG_NAME
@@ -1214,7 +1214,7 @@ class TestRunMonitor:
         assert set(mgr._pending_records()) == {"h"}  # left pending for next run
         assert view.saw("h", Phase.DOWNLOADING)
         assert view.closed is False  # injected views are the caller's to close (own_view seam)
-        # The break is announced as an INFO hub Diagnostic (PR6 Band D flip).
+        # The break is announced as an INFO hub Diagnostic.
         (note,) = recording.of_type(Diagnostic)
         assert note.severity is Severity.INFO
         assert note.message == "Wait interrupted; 1 left pending"

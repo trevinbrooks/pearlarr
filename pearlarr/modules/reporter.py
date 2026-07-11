@@ -191,11 +191,11 @@ class RunContext:
 
 
 def is_preview(ctx: RunContext, qbit: qbittorrentapi.Client | None) -> bool:
-    """A run is a no-op preview when a dry run was requested OR qBittorrent is not
-    configured (nothing can actually be grabbed).
+    """A run is a no-op preview when a dry run was requested OR qBittorrent is not configured.
 
-    Module-level so every per-run collaborator computes preview identically from
-    the shared `RunContext` + client, rather than each re-deriving it.
+    Either way nothing can actually be grabbed. Module-level so every per-run
+    collaborator computes preview identically from the shared `RunContext` +
+    client, rather than each re-deriving it.
     """
 
     return ctx.dry_run or qbit is None
@@ -309,8 +309,7 @@ class RunReporter:
         self._post(EntryDetail(label=label, value=value, severity=severity))
 
     def post(self, fact: ReleaseSkipped | GrabFailed) -> None:
-        """The ONE path for the typed release-level facts: routes through the open
-        entry scope, else scope-free.
+        """The ONE path for the typed release-level facts: via the open entry scope, else scope-free.
 
         The narrowed public type keeps EntryDetail / LedgerRow / GrabAction on
         their dedicated paths; the grab pipeline posts its per-release
@@ -334,12 +333,7 @@ class RunReporter:
     # --- run / item boundaries -----------------------------------------------
 
     def log_arr_start(self, arr: Arr, n_items: int) -> None:
-        """Announce the start of the run (the per-arr scan-open boundary).
-
-        Args:
-            arr: Type of arr instance
-            n_items: Total number of shows/movies
-        """
+        """Announce the start of the run (the per-arr scan-open boundary)."""
 
         self._close_entry()
         self._emit(ScanStarted(arr=arr, total=n_items))
@@ -351,14 +345,7 @@ class RunReporter:
         n_item: int,
         n_items: int,
     ) -> None:
-        """Announce the start of one Arr item (closes the previous item/entry).
-
-        Args:
-            arr: Type of arr instance
-            item_title: Title for the item
-            n_item: Number for the show/movie
-            n_items: Total number of shows/movies
-        """
+        """Announce the start of one Arr item (closes the previous item/entry)."""
 
         self._close_entry()
         self._emit(ItemStarted(arr=arr, index=n_item, total=n_items, title=item_title))
@@ -368,11 +355,7 @@ class RunReporter:
     # either (rich passes, the text sinks skip them).
 
     def scan_finished(self, arr: Arr) -> None:
-        """Close the scan and its open entry (the per-arr scan-close boundary).
-
-        Args:
-            arr: Type of arr instance
-        """
+        """Close the scan and its open entry (the per-arr scan-close boundary)."""
 
         self._close_entry()
         self._emit(ScanFinished(arr=arr))
@@ -381,9 +364,6 @@ class RunReporter:
         """Close the run (the leg-close boundary); bootstrap emits it on unwind.
 
         The entry close is defensive - `scan_finished` ran on every path here.
-
-        Args:
-            arr: Type of arr instance
         """
 
         self._close_entry()
@@ -394,51 +374,30 @@ class RunReporter:
     def log_entry_status(self, state: EntryState, label: str) -> None:
         """Emit a one-line entry status as a self-contained (col-0) ledger row.
 
-        Args:
-            state: Which entry-level outcome this row reports
-            label: What the state applies to (usually a title)
+        The `label` is what the state applies to (usually a title).
         """
 
         self._ledger(state, label)
 
     def log_arr_item_unmonitored(self, ctx: RunContext, item_title: str) -> None:
-        """Report skipping an unmonitored item (bumps the tally, emits its row).
-
-        Args:
-            ctx: The run's state (stats tally).
-            item_title: Item title
-        """
+        """Report skipping an unmonitored item (bumps the tally, emits its row)."""
 
         ctx.stats.unmonitored += 1
         self._ledger(EntryState.UNMONITORED, item_title)
 
     def log_no_anilist_mappings(self, ctx: RunContext, title: str) -> None:
-        """Report a title with no AniList mappings (bumps the tally, emits its row).
-
-        Args:
-            ctx: The run's state (stats tally).
-            title: Title for the item
-        """
+        """Report a title with no AniList mappings (bumps the tally, emits its row)."""
 
         ctx.stats.no_mappings += 1
         self._ledger(EntryState.NO_MAPPING, title)
 
     def log_ignored_anilist_id(self, al_id: int) -> None:
-        """Report an AniList ID skipped via the ignore list.
-
-        Args:
-            al_id: AniList ID
-        """
+        """Report an AniList ID skipped via the ignore list."""
 
         self._ledger(EntryState.IGNORED, f"AniList #{al_id}")
 
     def log_no_sd_entry(self, ctx: RunContext, al_id: int) -> None:
-        """Report an id with no SeaDex entry (bumps the tally, emits a titled row).
-
-        Args:
-            ctx: The run's state (stats tally).
-            al_id: Al ID
-        """
+        """Report an id with no SeaDex entry (bumps the tally, emits a titled row)."""
 
         ctx.stats.no_seadex_entry += 1
         self._log_titled_entry(EntryState.NO_ENTRY, al_id)
@@ -449,10 +408,6 @@ class RunReporter:
         The outage skip is NOT a missing entry - the gateway warned once when
         SeaDex went unreachable - so the ledger says "skipped" with the reason on
         a detail line, and the tally lands in its own counter.
-
-        Args:
-            ctx: The run's state (stats tally).
-            al_id: Al ID
         """
 
         ctx.stats.seadex_unreachable += 1
@@ -494,14 +449,9 @@ class RunReporter:
 
         The entry being evaluated is the focal header of the title block, keyed on
         state CHECKING; its coverage/URL continuation and any details that follow
-        ride the opened scope.
-
-        Args:
-            ctx: The run's state (remembers the active title/url/coverage).
-            anilist_title: Title for the AniList entry
-            sd_entry: SeaDex entry
-            coverage: One-line coverage (e.g. "S04 E01-E12").
-                Defaults to None / "" (e.g., a Radarr movie -> URL only)
+        ride the opened scope. The active title/url/coverage are remembered on
+        `ctx`. `coverage` is a one-line range (e.g. "S04 E01-E12"); None / ""
+        renders URL only (e.g. a Radarr movie).
         """
 
         # Remember title, URL, and coverage so add_torrent / the summary can
@@ -538,15 +488,10 @@ class RunReporter:
         a dim header (state and title) and continuation lines carrying the stored
         season/episode coverage and, on its own line, the SeaDex URL. Everything is
         read from the cache record (written when the entry was first processed),
-        with a name lookup only if the cache predates name storage.
-
-        Args:
-            ctx: The run's state (stats tally).
-            arr: Arr instance the entry is cached under
-            al_id: AniList ID
-            state: Defaults to UNCHANGED (skipped because the SeaDex
-                entry's update time matches the cache); pass IN_RADARR for entries
-                already handled by a Radarr sync
+        with a name lookup only if the cache predates name storage. The record is
+        read under the explicit `arr` the entry is cached under (which may not be
+        the running arr). UNCHANGED means the SeaDex entry's update time matches
+        the cache; pass IN_RADARR for entries already handled by a Radarr sync.
         """
 
         ctx.stats.cached += 1
@@ -588,15 +533,11 @@ class RunReporter:
 
         Emits the same titled header + coverage/link continuation as the other
         entry headers (so the carried-over record reads inside the series block and
-        is self-attributed by its release title), for the three reportable states
+        is self-attributed by its release title, coverage and SeaDex link), for the
+        three reportable states
         (`queued` / `importing` / `imported`). MISSING / ERRORED render
         nothing (no ledger vocabulary; the engine logs them at debug). This bumps
         NO counter - the engine owns the drop/count bookkeeping.
-
-        Args:
-            state: The record's classified status this poll.
-            pending: The carried-over record; its display label,
-                coverage and SeaDex link attribute the row.
         """
 
         entry_state = self._PENDING_ENTRY_STATES.get(state)
@@ -619,11 +560,7 @@ class RunReporter:
     # --- entry-block details -------------------------------------------------
 
     def log_no_seadex_releases(self, ctx: RunContext) -> None:
-        """Report no suitable SeaDex releases (a status detail on the open entry).
-
-        Args:
-            ctx: The run's state (stats tally).
-        """
+        """Report no suitable SeaDex releases (a status detail on the open entry)."""
 
         ctx.stats.no_releases += 1
         self.detail("status", StyledValue("no suitable releases on SeaDex", Accent.DIM))
@@ -651,13 +588,13 @@ class RunReporter:
             results: add_torrent's per-release outcomes (a preview run
                 simulates its adds, so these are present on a dry run too)
             dry_run: No torrent client, so nothing was really grabbed, but
-                we'd have added everything. Defaults to False
+                we'd have added everything.
             monitor_active: The run will wait on / import pending torrents
                 this session, so the "already downloading" line can promise the
-                import. Defaults to False
+                import.
 
         Returns:
-            bool: True if a status block was posted; False if there was nothing to
+            True if a status block was posted; False if there was nothing to
                 report (e.g., every release was skipped - the skip warning already
                 explains that, so a status would only mislead)
         """
@@ -707,11 +644,7 @@ class RunReporter:
         return True
 
     def log_max_torrents_added(self, cap: int) -> None:
-        """Report hitting the per-run torrent cap (advanced.max_torrents_to_add).
-
-        Args:
-            cap: The configured cap that was reached.
-        """
+        """Report hitting the per-run torrent cap (advanced.max_torrents_to_add)."""
 
         # Close the entry first: the scan breaks here and _finalize_run's
         # reconcile runs before the summary, so a still-open ENTRY frontier would

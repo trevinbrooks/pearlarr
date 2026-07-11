@@ -127,9 +127,6 @@ def _errors_are_retryable(body: dict[str, Any] | None) -> bool:
     "not found" is HTTP 200 with "data" present, the entry "null" and *no*
     "errors" array, so a body without errors is never treated as retryable
     here - the caller's null-safe extraction handles it as an ordinary miss.
-
-    Args:
-        body: The parsed JSON response body
     """
 
     for err in _parse_errors(body):
@@ -150,9 +147,6 @@ def _parse_errors(body: dict[str, Any] | None) -> list[AniListError]:
     The `errors` array is the dynamic GraphQL boundary; this maps each raw
     entry into the typed domain (skipping any non-object entry), so the caller
     reads `err.status` / `err.message` rather than untyped `dict` keys.
-
-    Args:
-        body: The parsed JSON response body
     """
 
     raw_errors = (body or {}).get("errors")
@@ -175,11 +169,8 @@ def extract_path(body: dict[str, Any] | None, *path: str) -> dict[str, Any]:
     AniList returns {"data": null} or {"data": {"Media": null}} for an unknown
     id or a rate-limit, so each hop is guarded with "or {}" and a missing or
     null level yields an empty dict rather than raising
-    "'NoneType' object has no attribute 'get'".
-
-    Args:
-        body: The parsed JSON response body
-        *path: The keys to walk, e.g. "data", "Media"
+    "'NoneType' object has no attribute 'get'". The `path` keys are walked in
+    order, e.g. "data", "Media".
     """
 
     node: dict[str, Any] = body or {}
@@ -193,9 +184,6 @@ def media_node_from(raw: dict[str, Any]) -> AniListMediaNode:
 
     A miss (`{}`) validates to the all-`None` node; a malformed node
     degrades to the same all-`None` miss with one scrubbed warning.
-
-    Args:
-        raw: The raw `Media` dict (`{}` on a miss).
     """
 
     try:
@@ -212,9 +200,6 @@ def media_from(body: dict[str, Any] | None) -> AniListMediaNode:
     this is where it crosses into the typed domain. A miss (`data`/`Media`
     null) yields an all-`None` node; so does a malformed node (see
     `media_node_from`).
-
-    Args:
-        body: The parsed JSON response body
     """
 
     return media_node_from(extract_path(body, "data", "Media"))
@@ -242,11 +227,7 @@ class AniListClient:
         self._retry_log = AniListRetryLog()
 
     def query(self, al_id: int) -> dict[str, Any]:
-        """Fetch one AniList Media by id (see _post_with_retry for the retry policy)
-
-        Args:
-            al_id: Anilist ID
-        """
+        """Fetch one AniList Media by id (see _post_with_retry for the retry policy)"""
 
         return self._post_with_retry(QUERY, {"id": al_id})
 
@@ -256,9 +237,6 @@ class AniListClient:
         Returns "{id: {"data": {"Media": {...}}}}" mirroring the single-id shape,
         so the results can seed the same cache directly. Ids unknown to AniList are
         simply absent from the result.
-
-        Args:
-            al_ids: Up to ANILIST_BATCH_SIZE AniList IDs
         """
 
         j = self._post_with_retry(BATCH_QUERY, {"ids": list(al_ids)})

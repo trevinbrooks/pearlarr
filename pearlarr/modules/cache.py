@@ -350,7 +350,6 @@ def _connect(path: str, *, ensure_wal: bool = True) -> sqlite3.Connection:
     Args:
         path: Database path (or `":memory:"`).
         ensure_wal: Apply the WAL (and, with it, foreign-keys) pragmas.
-            Defaults to True.
     """
 
     return _sqlite_connect(path, ensure_wal=ensure_wal, foreign_keys=ensure_wal)
@@ -433,16 +432,13 @@ class CacheStore(AbstractCacheStore):
     ) -> "CacheStore":
         """Open the cache db (or an in-memory stand-in) and reconcile the descriptor.
 
-        An existing file is opened in place; a missing file opens `:memory:` so a
-        preview run that never reaches a real save leaves no file behind. Either
-        way the schema is ensured and the version/checksum descriptor is staged
-        (committed at the first non-preview save).
-
-        Args:
-            path: Path to the cache database file.
-            config_checksum: Current config-file checksum, stamped into the
-                descriptor so a changed config is recorded (informational; not used
-                to invalidate records - entries are freshness-keyed already).
+        An existing file at `path` is opened in place; a missing one opens
+        `:memory:` so a preview run that never reaches a real save leaves no file
+        behind. Either way the schema is ensured and the version/checksum
+        descriptor is staged (committed at the first non-preview save).
+        `config_checksum` is stamped into the descriptor so a changed config is
+        recorded (informational; not used to invalidate records - entries are
+        freshness-keyed already).
         """
 
         exists = os.path.exists(path)
@@ -570,13 +566,7 @@ class CacheStore(AbstractCacheStore):
         al_id: int,
         seadex_entry: EntryRecord,
     ) -> bool:
-        """True if the cached entry's timestamp matches the SeaDex entry's.
-
-        Args:
-            arr: Arr instance.
-            al_id: AniList ID.
-            seadex_entry: SeaDex entry whose `updated_at` is compared.
-        """
+        """True if the cached entry's timestamp matches the SeaDex entry's `updated_at`."""
 
         sd_time_str = seadex_entry.updated_at.strftime(UPDATED_AT_STR_FORMAT)
         row = self._conn.execute(
@@ -608,10 +598,6 @@ class CacheStore(AbstractCacheStore):
         Used by the download planner to skip releases already grabbed. A remembered
         `None` marker (a hashless release) is preserved and round-trips, matching
         the planner's `cached_hashes: list[str | None]` membership check.
-
-        Args:
-            arr: Arr instance the entry is cached under.
-            al_id: AniList ID.
         """
 
         rows = self._conn.execute(
@@ -633,13 +619,8 @@ class CacheStore(AbstractCacheStore):
         Mirrors the old dict `.update`: only the supplied scalar fields are
         written (absent ones are left untouched), and a supplied `torrent_hashes`
         replaces the entry's whole hash set. `updated_at` given as a `datetime`
-        is strftime'd in place.
-
-        Args:
-            arr: Arr instance.
-            al_id: AniList ID.
-            cache_details: Fields to merge. Defaults to None (just
-                ensures the entry row exists).
+        is strftime'd in place. With no `cache_details`, the entry row is just
+        ensured to exist.
         """
 
         details: dict[str, Any] = dict(cache_details or {})

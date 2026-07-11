@@ -471,13 +471,13 @@ class MappingStore:
         ext_id: object,
         tvdb_id: int,
     ) -> list[AniBridgeRangeHit]:
-        """`AniBridgeRangeHit` rows for an (axis, ext_id) set, scoped to
-        `tvdb_id`, in `(anilist_id, populate)` order.
+        """The `tvdb_id`-scoped `AniBridgeRangeHit` rows for an (axis, ext_id) lookup.
 
-        The batched twin of the former per-id range lookup: one xref->range JOIN
-        fetches the ranges for every AniList id a tvdb lookup resolves, so the caller
-        groups them by `anilist_id` and rebuilds each season's list in insertion
-        order (`ORDER BY x.anilist_id, r.rowid` -> parity with the in-memory build).
+        Ordered by `(anilist_id, populate)`. The batched twin of the former
+        per-id range lookup: one xref->range JOIN fetches the ranges for every
+        AniList id a tvdb lookup resolves, so the caller groups them by
+        `anilist_id` and rebuilds each season's list in insertion order
+        (`ORDER BY x.anilist_id, r.rowid` -> parity with the in-memory build).
         A NULL `start_ep` row is the present-but-empty-season marker.
         """
 

@@ -98,7 +98,7 @@ class RunDeps:
 
         Args:
             arr: Which Arr is being run; selects the per-arr config submodel.
-            cache: Path to the cache database. Defaults to "cache.db".
+            cache: Path to the cache database.
             logger: Logger to use (the CLI builds it before the
                 config file can even be read, so config errors are loggable).
             mappings: The id-mapping resolver, built once by the
@@ -253,10 +253,8 @@ class RunServices:
     def __init__(self, deps: RunDeps, arr: Arr) -> None:
         """Receive the shared collaborators and set up the per-id pipeline.
 
-        Args:
-            deps: The shared collaborators
-            arr: Which Arr is being run. The authority for the run's arr;
-                every fresh run context carries a per-run copy of it.
+        `arr` is the authority for the run's arr; every fresh run context
+        carries a per-run copy of it.
         """
 
         # Unpack the injected collaborators into the attribute names the per-id
@@ -330,10 +328,10 @@ class RunServices:
         return self.cache_store.check_al_id_in_cache(arr, al_id, seadex_entry)
 
     def al_id_needs_scan(self, al_id: int) -> bool:
-        """Side-effect-free mirror of process_al_id's no-entry + cached_entry_skip
-        gates: True iff the per-id loop would actually process this id.
+        """Side-effect-free mirror of process_al_id's no-entry + cached_entry_skip gates.
 
-        Lets prefetch_episodes warm only the series the loop won't short-circuit
+        True iff the per-id loop would actually process this id. Lets
+        prefetch_episodes warm only the series the loop won't short-circuit
         (no SeaDex entry, or cached and unchanged), instead of every mapped
         series. No logging / stats / backfill - purely a predicate over the
         warmed SeaDex cache and the entry cache.
@@ -389,8 +387,8 @@ class RunServices:
         Args:
             ids: The external Arr ids to resolve (at least one).
             log_ignored: Log a ledger row for each ignored AniList ID.
-                Defaults to True; pass False from the prefetch pass so ignored
-                ids aren't logged twice (once there, once in the main loop)
+                Pass False from the prefetch pass so ignored ids aren't logged
+                twice (once there, once in the main loop)
         """
 
         anilist_mappings, ids_to_drop = self._mappings.get_anilist_ids(ids)
@@ -413,9 +411,6 @@ class RunServices:
         fallback and the transitional `current_title` attribution live here so
         later steps can attribute grabs to the active entry. The entry header is
         logged separately by log_al_title, once episodes are known.
-
-        Args:
-            al_id: AniList ID
         """
 
         anilist_title = self._anilist.title(al_id)
@@ -456,8 +451,7 @@ class RunServices:
         return self._filter.filter_downloads(al_id, seadex_dict, arr_release_dict, ep_list)
 
     def is_preview(self) -> bool:
-        """A run is a no-op preview when an explicit dry run was requested OR
-        qBittorrent is not configured (nothing can actually be grabbed)."""
+        """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""
         return is_preview(self._ctx, self.qbit)
 
     @property
@@ -481,10 +475,6 @@ class RunServices:
         """Merge `cache_details` into an entry's cache record (in-memory only).
 
         The run's save points flush it; see `CacheStore.update_cache`.
-
-        Args:
-            al_id: AniList ID
-            cache_details: Details for the cache entry. Defaults to None
         """
 
         self.cache_store.update_cache(self._ctx.arr, al_id, cache_details)
@@ -501,12 +491,8 @@ class RunServices:
         throttle, and report "not grabbed". Hoisted here so the two strategies
         share one definition instead of a byte-for-byte duplicated block.
 
-        Args:
-            al_id: AniList ID.
-            cache_details: Cache record assembled for this id.
-
         Returns:
-            bool: Always `False` (nothing was grabbed).
+            Always `False` (nothing was grabbed).
         """
 
         self._log_no_seadex_releases()
@@ -525,7 +511,7 @@ class RunServices:
         the empty selection; this just throttles and reports "not grabbed".
 
         Returns:
-            bool: Always `False` (nothing was grabbed).
+            Always `False` (nothing was grabbed).
         """
 
         time.sleep(self._config.advanced.sleep_time)
@@ -539,9 +525,6 @@ class RunServices:
         SeaDex is unreachable this run. The two misses are reported distinctly
         (an outage skip must never read as "no entry"); the caller moves to the
         next id either way.
-
-        Args:
-            al_id: AniList id being processed
         """
 
         # Reset the per-title skip flags (and the skipped group names) before we
@@ -579,14 +562,8 @@ class RunServices:
         log the cached entry, and return True so the caller skips it. `coverage`
         is a zero-arg callable so the (for Sonarr, episode-fetching) coverage
         lookup runs only on the one-time backfill, never on the common
-        already-backfilled path.
-
-        Args:
-            al_id: AniList id being processed
-            sd_entry: Resolved SeaDex entry (its url is stored on
-                the backfilled record)
-            coverage: Lazily builds the coverage string for
-                the backfill ("" for a movie, a season/episode range for a series)
+        already-backfilled path; it builds "" for a movie, a season/episode
+        range for a series.
         """
 
         # The shared skip decision; its one row read also serves the url-backfill

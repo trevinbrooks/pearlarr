@@ -406,8 +406,8 @@ def test_three_strikes_quarantine_until_begin_cycle_rearms() -> None:
 
 
 def test_strikes_carry_across_a_run_leg_boundary_and_only_begin_cycle_rearms() -> None:
-    """G3: a leg close (RunFinished) is not a cycle turnover. Strikes are a per-cycle
-    budget (S9): they accumulate across the RunFinished leg boundary, so the Nth
+    """A leg close (RunFinished) is not a cycle turnover. Strikes are a per-cycle
+    budget: they accumulate across the RunFinished leg boundary, so the Nth
     strike quarantines regardless of the boundary, and only begin_cycle re-arms."""
 
     flaky, survivor = _FailOnMarkerRenderer(), RecordingRenderer()
@@ -984,7 +984,7 @@ def test_console_render_active_is_false_once_the_seat_strikes_out() -> None:
     assert hub.console_render_active() is False
 
 
-# --- console renderer swap (S3) ------------------------------------------------------
+# --- console renderer swap -----------------------------------------------------------
 
 
 def test_begin_cycle_swaps_the_console_renderer_only_on_format_change() -> None:

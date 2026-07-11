@@ -1,4 +1,4 @@
-"""Pure builders + reducers for the wait pass's rendering (PR5).
+"""Pure builders + reducers for the wait pass's rendering.
 
 Two families, no styled look decided here. The bounded live-frame model
 (`live_model` and its row/aggregate helpers) and the graduation ledger's
@@ -85,19 +85,19 @@ def graduation_tail(outcome: Outcome, files: int | None, waited_s: float) -> str
 
 # --- the durable ledger-line builders (the rich console's scrollback) ----------------
 #
-# Transliterated from wait_view's LogWaitView/_DurableWaitView. Start/pulse/tally
-# lines carry INFO; a graduation carries severity_of's category-based level (P6),
-# so a FAILED graduation renders at ERROR and survives a raised level.
+# Start/pulse/tally lines carry INFO; a graduation carries severity_of's
+# category-based level, so a FAILED graduation renders at ERROR and survives
+# a raised level.
 
 
 def wait_start_line(event: WaitStarted) -> LegacyLine:
-    """The non-TTY digest's opening line (LogWaitView's first render)."""
+    """The non-TTY digest's opening line."""
 
     return LegacyLine(logging.INFO, f"Waiting on {count_noun(event.total, 'download')} to complete and import...")
 
 
 def wait_pulse_line(snapshot: WaitSnapshot) -> LegacyLine:
-    """One throttled "still waiting" aggregate pulse (LogWaitView's later renders)."""
+    """One throttled "still waiting" aggregate pulse."""
 
     counts = snapshot.counts()
     message = indent_string(
@@ -150,9 +150,8 @@ class PulseThrottle:
 
     One copy per seat: the rich non-live digest and each textline grammar sink
     (the file is mode-independent, so its pulses render on live-TTY runs too).
-    Parity with LogWaitView's throttle: `arm` (on WaitStarted) sets the
-    interval; the FIRST `fire` returns False unconditionally (the old
-    view's first render printed the start line and returned, so the start
+    `arm` (on WaitStarted) sets the interval; the FIRST `fire` returns False
+    unconditionally (the start line already announces the pass, so the start
     snapshot never pulses), then a pulse is due once elapsed reaches the
     elapsed-anchored next mark. State advances regardless of log level.
     """

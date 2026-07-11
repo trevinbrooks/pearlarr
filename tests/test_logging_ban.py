@@ -1,5 +1,5 @@
 # pyright: strict
-"""The raw-logging ban (PR7): first-party WARNING+ goes through `hub_note`.
+"""The raw-logging ban: first-party WARNING+ goes through `hub_note`.
 
 Ruff's LOG015 bans the module-level `logging.*` convenience calls, but no
 lint rule can see a method call on an instance attribute — this canary is the

@@ -4,7 +4,7 @@ One grammar — `ts LEVEL [path] message k=v` — feeds both `LineRenderer`
 (plain stdout) and `FileLogSink` (the log file), byte-identical by
 construction (the sole carve-out: `file_only` diagnostics reach the file alone;
 the rule lives once, on the shared chassis). `[path]` is a label-only breadcrumb
-from a per-sink `BreadcrumbFold` (S1: never position, never layout);
+from a per-sink `BreadcrumbFold` (never position, never layout);
 diagnostics instead carry their origin in the bracket plus an advisory
 `during="..." placed=frontier` tail. Values quote iff they contain whitespace,
 `"` or `=`; newlines are escaped in messages and quoted values — a rendered
@@ -534,7 +534,7 @@ class _TextLineSink:
         self._turn_over()
 
     def set_level(self, level: int) -> None:
-        # Text surfaces share the file's S4 semantics: the raw configured level.
+        # Text surfaces share the file's semantics: the raw configured level.
         # The INFO floor is rich-console-only (log.py's console_level).
         self._threshold = level
 
@@ -552,7 +552,7 @@ class _TextLineSink:
 
 
 class _GrammarSink(_TextLineSink):
-    """Chassis + the text grammar with line-granular admission (#7).
+    """Chassis + the text grammar with line-granular admission.
 
     Owns the per-sink wait-pulse throttle. Cadence is a pure function of event
     content (WaitStarted.pulse_s, snapshot.elapsed_s — never wall clock), so the
@@ -721,7 +721,7 @@ class JsonRenderer(_TextLineSink):
 
     @staticmethod
     def _effective(event: Event, severity: Severity) -> Severity:
-        # A summary carrying user-actionable / error content admits at WARNING (#7).
+        # A summary carrying user-actionable / error content admits at WARNING.
         if isinstance(event, RunSummaryReady):
             summary = event.summary
             if summary.tally.needs_action or summary.errors:

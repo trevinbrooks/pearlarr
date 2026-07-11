@@ -25,12 +25,8 @@ def make_radarr_client(
     Hoisted so the two Arr strategies share one construction site (and the one
     `label="Radarr"` bind). The url/key lookup policy stays with each caller
     (Radarr requires them, Sonarr reads them optionally for its cross-check), so
-    they're passed in already resolved rather than re-derived here.
-
-    Args:
-        url: Radarr base URL.
-        api_key: Radarr API key.
-        http: The run's shared client for the raw endpoints.
+    they're passed in already resolved rather than re-derived here. `http` is
+    the run's shared client for the raw endpoints.
     """
 
     return RadarrClient(
@@ -105,9 +101,6 @@ class RadarrClient(AbstractRadarrClient):
         Returns an empty list (with a warning) on a non-200 or a transient request
         error, so the caller treats "couldn't read the files" as "no existing
         files" instead of unwinding the run.
-
-        Args:
-            movie_id: ID for the movie in Radarr.
         """
 
         raw = self._http.get_json_list(

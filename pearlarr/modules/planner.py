@@ -98,9 +98,6 @@ def normalize_rg(name: str | None) -> str | None:
     wrapping dashes, casefold) so the grab-time filter and the import-time
     never-overwrite check share ONE normalization; this wrapper only adds the
     None-tolerance. Returns None for a missing/blank name.
-
-    Args:
-        name: Release group name
     """
 
     if not name:
@@ -122,9 +119,6 @@ def get_episode_keys(
     Reduces a release's parsed episode list to the set of (season, episode)
     pairs it contains, so different SeaDex release groups can be compared by
     what files they cover.
-
-    Args:
-        all_episodes: Parsed episode dicts with "season"/"episode"
     """
 
     return {(ep.season, ep.episode) for ep in all_episodes}
@@ -145,9 +139,6 @@ def get_same_files_groups(seadex_dict: SeadexDict) -> list[list[str]]:
     parsed (Sonarr parse failure, empty episode list) are each kept on their
     own: we can't prove what they cover, so we'd rather grab a duplicate than
     silently drop content. Returns a list of lists of release group names.
-
-    Args:
-        seadex_dict: Dictionary of SeaDex releases
     """
 
     # The grouping key is one of three shapes: a shared "all cover one movie"
@@ -213,12 +204,10 @@ def get_all_seadex_rgs_per_episode(
 ) -> dict[str, set[str | None]]:
     """Get a list of all SeaDex releases per-episode
 
-    Args:
-        seadex_dict: Dictionary of SeaDex releases
-        sonarr_by_key: Sonarr episodes indexed by (season, episode). A parsed
-            SeaDex (season, episode) is recorded only when Sonarr has it, which
-            this makes an O(1) key lookup. Built once by the caller and shared
-            with the per-episode match loop in filter_by_release_group.
+    `sonarr_by_key` indexes Sonarr episodes by (season, episode): a parsed
+    SeaDex (season, episode) is recorded only when Sonarr has it, which the
+    index makes an O(1) key lookup. Built once by the caller and shared with
+    the per-episode match loop in filter_by_release_group.
     """
 
     all_seadex_rgs_per_episode: dict[str, set[str | None]] = {"all": set()}
@@ -311,12 +300,8 @@ class DownloadPlanner:
         Selects the hash-based or release-group-based strategy from the config
         flag, then unions in the cached hashes (release-group path only — the
         hash path already lists every url's hash) and de-duplicates.
-
-        Args:
-            seadex_dict: Dictionary of SeaDex releases (annotated in place)
-            arr_release_dict: Dictionary of arr release properties
-            cached_hashes: Torrent hashes already remembered for this entry
-            ep_list: List of episodes. Defaults to None
+        `seadex_dict` is annotated in place; `cached_hashes` are the torrent
+        hashes already remembered for this entry.
         """
 
         if self.use_torrent_hash_to_filter:
@@ -349,10 +334,6 @@ class DownloadPlanner:
         Multiple "best" releases are all grabbed, except where several cover
         the same files (see reduce_overlapping_downloads), in which case only
         one is kept
-
-        Args:
-            seadex_dict: Dictionary of SeaDex releases
-            cached_hashes: Torrent hashes already remembered for this entry
         """
 
         torrent_hashes: list[str | None] = []
@@ -423,11 +404,6 @@ class DownloadPlanner:
         case where we can parse episodes, or a more blunt
         hammer just checking against anything for Radarr
         and weirdly named TV
-
-        Args:
-            seadex_dict: Dictionary of SeaDex releases
-            arr_release_dict: Dictionary of arr release properties
-            ep_list: List of episodes. Defaults to None
         """
 
         # The release-group names, used both for display (insertion order
@@ -744,9 +720,6 @@ class DownloadPlanner:
         private-only skip outcome (skipped flag, group names, notices to log).
         Skipped entirely in interactive mode, where the user has already
         hand-picked what to grab.
-
-        Args:
-            seadex_dict: Dictionary of SeaDex releases
         """
 
         skips = PrivateOnlySkips()
@@ -956,8 +929,9 @@ class DownloadPlanner:
         promoted: str,
         skips: PrivateOnlySkips,
     ) -> None:
-        """The INFO notice for flagged groups a promoted group now stands in for
-        (the caller unflags them). Promotion never picks a fallback group, so the
+        """The INFO notice for flagged groups a promoted group now stands in for.
+
+        The caller unflags them. Promotion never picks a fallback group, so the
         verb is always "grabbing public alternative"; the keeper flow owns
         "falling back to".
         """
@@ -1015,10 +989,6 @@ class DownloadPlanner:
 
     @staticmethod
     def get_any_to_download(seadex_dict: SeadexDict) -> bool:
-        """Check if any torrents are marked as to download
-
-        Args:
-            seadex_dict: Dictionary of SeaDex releases
-        """
+        """Check if any torrents are marked as to download"""
 
         return any(url_item.download for rg_item in seadex_dict.values() for url_item in rg_item.urls.values())

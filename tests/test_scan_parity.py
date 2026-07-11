@@ -1,7 +1,7 @@
 # pyright: strict, reportPrivateUsage=false
 # reportPrivateUsage is off for the dual-list parity pins alone: the producer's
 # _TIP_PRECEDENCE and the builder's _TIP_TEXTS are deliberately private twins.
-"""Golden harness for the scan surface (PR4 Band C): the grammar contract.
+"""Golden harness for the scan surface: the grammar contract.
 
 Every constant below was captured by RUNNING the current `RunReporter` (not
 hand-derived): each scenario pins the exact `(level, message, payload)` records
@@ -971,10 +971,10 @@ class TestExternalDetailParity:
     mapper). Each golden was captured by RUNNING the pre-migration
     `LogFormatter.detail` with the site's literal args at fc58aef; the reporter
     must reproduce every line byte-identically through the shipped `scan_lines`
-    builders (the grammar every rendering surface consumes). PR6 Band D flipped
-    the four grab-pipeline sites to typed `reporter.post` facts - the golden
+    builders (the grammar every rendering surface consumes). The four
+    grab-pipeline sites emit typed `reporter.post` facts - the golden
     `Line` tuples stay verbatim; the planner notice / missing / status sites
-    stay `reporter.detail`-driven (D3).
+    stay `reporter.detail`-driven.
     """
 
     FACT_SITES: tuple[_FactSite, ...] = (

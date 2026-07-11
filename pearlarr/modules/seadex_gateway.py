@@ -83,11 +83,7 @@ class SeaDexGateway(SeaDexSource):
     """Thin wrapper over the SeaDex client: bulk prefetch + by-id lookups."""
 
     def __init__(self, *, client: SeaDexEntryApi) -> None:
-        """Wire the gateway to the SeaDex client it decorates.
-
-        Args:
-            client: The SeaDex API client every lookup rides.
-        """
+        """Wire the gateway to the SeaDex client it decorates."""
 
         self._client = client
         # Per-run bulk-fetch cache: entries keyed by AniList id, plus the set of ids
@@ -133,7 +129,7 @@ class SeaDexGateway(SeaDexSource):
                 fraction + "done/total" detail; None outside the cockpit.
 
         Returns:
-            int: How many ids needed fetching (0 = nothing to do), for the
+            How many ids needed fetching (0 = nothing to do), for the
             caller's ledger detail.
         """
 
@@ -189,9 +185,6 @@ class SeaDexGateway(SeaDexSource):
         is NO_ENTRY without a call; an id that wasn't prefetched (e.g. a single-id
         run) falls back to a single `from_id` - unless the outage flag is set, in
         which case it degrades straight to OUTAGE without another network attempt.
-
-        Args:
-            al_id: AniList ID.
         """
 
         cached = self._entry_cache.get(al_id)

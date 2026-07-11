@@ -6,13 +6,10 @@ from .seadex_types import EpisodeRecord, SonarrEpisode
 
 
 def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
-    """Condense a set of episode numbers into a readable range string
+    """Condense one season's episode numbers into a readable range string.
 
     Contiguous runs are collapsed (e.g. [1, 2, 3] -> "E01-E03"), lone episodes
     are kept as-is (e.g. [5] -> "E05"), and gaps split into multiple comma-separated ranges (e.g. [1, 2, 3, 7, 8] -> "E01-E03, E07-E08").
-
-    Args:
-        episode_numbers: Episode numbers within a single season
     """
 
     episodes = sorted(set(episode_numbers))
@@ -46,8 +43,7 @@ def format_episode_coverage(episodes: list[EpisodeRecord]) -> list[tuple[str, st
     or a Sonarr parse failure).
 
     Args:
-        episodes: List of `EpisodeRecord`s, as parsed onto each
-            torrent's url_item
+        episodes: The coverage records parsed onto each torrent's url_item
     """
 
     if not episodes:
@@ -71,12 +67,10 @@ def format_episode_coverage(episodes: list[EpisodeRecord]) -> list[tuple[str, st
 
 
 def coverage_string(episodes: list[EpisodeRecord]) -> str:
-    """One-line season/episode coverage, e.g. "S04 E01-E12" or
-    "S00 E10, S02 E01-E12". Returns "" when there's no parsed episode info
-    (e.g., a Radarr movie), so callers can treat it as "URL only".
+    """One-line season/episode coverage, e.g. "S04 E01-E12" or "S00 E10, S02 E01-E12".
 
-    Args:
-        episodes: List of `EpisodeRecord`s
+    Returns "" when there's no parsed episode info (e.g., a Radarr movie), so
+    callers can treat it as "URL only".
     """
 
     coverage = format_episode_coverage(episodes)
@@ -89,15 +83,11 @@ def episodes_from_ep_list(
     ep_list: list[SonarrEpisode] | None,
     missing_only: bool = False,
 ) -> list[EpisodeRecord]:
-    """Convert a Sonarr ep_list into `EpisodeRecord` coverage records
+    """Convert a Sonarr ep_list into `EpisodeRecord` coverage records.
 
     Sonarr episodes carry "seasonNumber"/"episodeNumber"; the coverage helpers
-    read `EpisodeRecord.season`/`.episode`. Optionally, keep only missing
-    episodes (no file on disk) to summarize what is still needed.
-
-    Args:
-        ep_list: Sonarr episode dicts
-        missing_only: Keep only episodes with no file. Defaults to False
+    read `EpisodeRecord.season`/`.episode`. `missing_only` keeps only missing
+    episodes (no file on disk), to summarize what is still needed.
     """
 
     episodes: list[EpisodeRecord] = []

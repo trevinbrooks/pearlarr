@@ -159,14 +159,11 @@ class SonarrClient(AbstractSonarrClient):
 
         Returns None (with a warning) if Sonarr is unreachable, so the caller can
         skip the id gracefully. Stateless over the shared httpx client, so the
-        concurrent prefetch can call it from worker threads.
-
-        Args:
-            series_id: Series ID in Sonarr.
-            quiet: Suppress the unreachable-warning. The concurrent
-                episode prefetch passes this so a transient miss isn't logged
-                from a worker thread - it is retried, and logged if it still
-                fails, on the main thread when `get_ep_list` re-fetches.
+        concurrent prefetch can call it from worker threads. `quiet` suppresses
+        the unreachable-warning: the concurrent episode prefetch passes it so a
+        transient miss isn't logged from a worker thread - it is retried, and
+        logged if it still fails, on the main thread when `get_ep_list`
+        re-fetches.
         """
 
         warn = f"Could not fetch episodes for series {series_id} from Sonarr ({{detail}}); skipping"
@@ -208,9 +205,8 @@ class SonarrClient(AbstractSonarrClient):
             filename: Filename to parse (basename, not full path).
 
         Returns:
-            list[dict[str, int]] | None: {"season", "episode"} dicts on a clean
-                200 (empty when Sonarr genuinely matched nothing), or None when
-                the request failed.
+            {"season", "episode"} dicts on a clean 200 (empty when Sonarr
+            genuinely matched nothing), or None when the request failed.
         """
 
         payload = self._http.get_json_dict(
@@ -318,12 +314,8 @@ class SonarrClient(AbstractSonarrClient):
         `rejections`) at this client boundary, so the decision path never
         touches the raw DTO.
 
-        Args:
-            pending: The pending import record to scan for
-
         Returns:
-            list[ManualImportCandidate] | None: The parsed candidates; `None` on
-                a transient failure.
+            The parsed candidates; `None` on a transient failure.
         """
 
         raw = self._http.get_json_list(
@@ -358,19 +350,13 @@ class SonarrClient(AbstractSonarrClient):
         Each entry in `files` carries the authoritative mapping we computed
         (`seriesId`, `episodeIds`, `releaseGroup`, `quality` ...), so
         Sonarr imports without re-deriving anything from the release title.
-
-        Returns the command `id` (for optional completion verification) or
-        None (with a warning) on failure, so the caller can leave the import
-        pending and retry later.
-
-        Args:
-            files: ManualImport file payloads to import.
-            import_mode: Sonarr `importMode`: `auto` (default; respects
-                the copy/hardlink setting and preserves seeding), `move` or
-                `copy`.
+        `import_mode` is Sonarr's `importMode`: `auto` (the default; respects
+        the copy/hardlink setting and preserves seeding), `move` or `copy`.
 
         Returns:
-            int | None: The queued command's id, or None on failure.
+            The queued command's id (for optional completion verification), or
+            None (with a warning) on failure, so the caller can leave the
+            import pending and retry later.
         """
 
         return self._post_command(CommandBody(name="ManualImport", importMode=import_mode, files=files))
@@ -450,7 +436,7 @@ class SonarrClient(AbstractSonarrClient):
         "couldn't read the queue" as "not tracked" and falls back to its own scan.
 
         Returns:
-            list[QueueRecord]: The parsed queue records; empty on failure.
+            The parsed queue records; empty on failure.
         """
         records: list[QueueRecord] = []
         page = 1
@@ -492,9 +478,8 @@ class SonarrClient(AbstractSonarrClient):
         fall back to other quality sources.
 
         Returns:
-            list[QualityDefinition]: Raw QualityDefinitionResource dicts (each
-                wraps a nested `quality` object the resolver re-emits verbatim);
-                empty on failure.
+            The parsed `QualityDefinitionResource` records (each wraps a nested
+            `quality` object the resolver re-emits verbatim); empty on failure.
         """
 
         raw = self._http.get_json_list(
@@ -519,8 +504,8 @@ class SonarrClient(AbstractSonarrClient):
         fall back to the candidate's languages.
 
         Returns:
-            list[Language]: Raw LanguageResource dicts (the `{id, name}` the
-                resolver matches by name and re-emits verbatim); empty on failure.
+            The parsed `LanguageResource` records (the `{id, name}` the
+            resolver matches by name and re-emits verbatim); empty on failure.
         """
 
         raw = self._http.get_json_list(
@@ -545,12 +530,9 @@ class SonarrClient(AbstractSonarrClient):
         on a non-200, so the caller can treat the import as unverified and leave it
         pending.
 
-        Args:
-            command_id: Command ID returned by `manual_import_execute`.
-
         Returns:
-            CommandResource: The command's parsed state (`status` / `result`);
-                a default (`status` None) on failure.
+            The command's parsed state (`status` / `result`); a default
+            (`status` None) on failure.
         """
 
         payload = self._http.get_json_dict(
@@ -586,7 +568,7 @@ class SonarrClient(AbstractSonarrClient):
         next poll).
 
         Returns:
-            list[CommandResource]: The parsed commands; empty on failure.
+            The parsed commands; empty on failure.
         """
 
         raw = self._http.get_json_list(

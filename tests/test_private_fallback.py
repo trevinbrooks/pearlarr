@@ -114,7 +114,7 @@ def _info_texts(recording: RecordingHub) -> list[str]:
 
 
 def _private_skips(recording: RecordingHub) -> list[ReleaseSkipped]:
-    """The add-time private-only skips (grab_pipeline's typed facts since PR6 Band D)."""
+    """The add-time private-only skips (grab_pipeline's typed `ReleaseSkipped` facts)."""
 
     return [s for s in recording.of_type(ReleaseSkipped) if s.reason is SkipReason.PRIVATE_ONLY]
 
