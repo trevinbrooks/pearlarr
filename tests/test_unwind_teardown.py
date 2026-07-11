@@ -112,9 +112,9 @@ def _run_failing_leg(
 ) -> tuple[bool, RecordingHub]:
     """Drive one Sonarr leg whose ``RunDeps.build`` raises ``exc``; record the stream.
 
-    The real hub AND the real logging bridge are installed, so the composition root's
-    ``logger.error`` is adopted into the same event stream as the unwind's
-    ``RunFinished`` - which is the only way their relative order is observable.
+    The real hub AND the real logging bridge are installed (production parity), so
+    the composition root's ``hub_note`` ERROR lands in the same event stream as the
+    unwind's ``RunFinished`` - which is the only way their relative order is observable.
     """
 
     _write_config()
@@ -155,8 +155,9 @@ class TestUnwindEmitsRunFinished:
         assert recording.of_type(RunFinished) == [RunFinished(arr=Arr.SONARR)]
         error_at, error = _leg_fatal_error(recording)
         assert recording.events.index(RunFinished(arr=Arr.SONARR)) < error_at
-        # The adopted record is the one the clean (no-traceback) arm logged.
+        # The clean (no-traceback) arm's Diagnostic: the message, nothing captured.
         assert error.message == _SCHEMA_ERROR
+        assert error.trace is None
 
     def test_traceback_arm_closes_the_run_before_logging(
         self,
@@ -173,6 +174,7 @@ class TestUnwindEmitsRunFinished:
         error_at, error = _leg_fatal_error(recording)
         assert recording.events.index(RunFinished(arr=Arr.SONARR)) < error_at
         assert "Unexpected error during Sonarr run" in error.message
+        assert error.trace is not None  # the exc_info arm carries its traceback
 
 
 class _StubDeps:

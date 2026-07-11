@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import itertools
-import logging
 import math
 import os
 import shutil
@@ -38,6 +37,7 @@ from .output import (
     NextRunScheduled,
     OutputHub,
     Renderer,
+    Severity,
     emit_to_hub,
     hub_note,
     install_hub,
@@ -376,12 +376,12 @@ def _install_output_hub(paths: AppPaths) -> OutputHub:
     return hub
 
 
-def _schedule_hours(config_path: str, logger: logging.Logger) -> float:
+def _schedule_hours(config_path: str) -> float:
     """Hours between scheduled cycles: SCHEDULE_TIME env (deprecated) > config > 6.
 
     A valid positive finite SCHEDULE_TIME still wins (with a deprecation
     warning); an invalid one is reported with the value actually used instead.
-    Both notices go through the logger so they reach the log file and render
+    Both notices go through the hub so they reach the log file and render
     styled among the run's other lines. Config read failures - including a
     still-missing file - degrade to the default quietly (``_peek_config``).
     """
@@ -393,13 +393,16 @@ def _schedule_hours(config_path: str, logger: logging.Logger) -> float:
         except ValueError:
             hours = math.nan
         if math.isfinite(hours) and hours > 0:
-            logger.warning("SCHEDULE_TIME is deprecated; set schedule.interval_hours in the config instead.")
+            hub_note(
+                "SCHEDULE_TIME is deprecated; set schedule.interval_hours in the config instead.",
+                severity=Severity.WARNING,
+            )
             return hours
 
     peeked = _peek_config(config_path)
     fallback = peeked.schedule.interval_hours if peeked is not None else _DEFAULT_SCHEDULE_HOURS
     if raw is not None:
-        logger.warning(f"Invalid SCHEDULE_TIME {raw!r}; using {fallback:g} hours.")
+        hub_note(f"Invalid SCHEDULE_TIME {raw!r}; using {fallback:g} hours.", severity=Severity.WARNING)
     return fallback
 
 
@@ -452,7 +455,7 @@ def run_scheduled(
 
         # Re-read the cadence each cycle so a config edit takes effect without a
         # restart.
-        schedule_time = _schedule_hours(paths.config, logger)
+        schedule_time = _schedule_hours(paths.config)
 
         # Build the shared config + id-mapping resolver once and run every
         # configured arr (one config read + one download/parse per cycle, reused

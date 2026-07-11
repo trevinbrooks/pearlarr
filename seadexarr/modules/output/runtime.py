@@ -13,6 +13,7 @@ from typing import Final
 
 from .events import Diagnostic, Event, Severity
 from .hub import OutputHub, SeverityCounts
+from .trace import CapturedTrace
 from ..log import LOG_NAME
 
 _DEFAULT_HUB: Final = OutputHub([])
@@ -32,10 +33,16 @@ def emit_to_hub(event: Event) -> None:
     current_hub().emit(event)
 
 
-def hub_note(message: str, *, severity: Severity = Severity.INFO) -> None:
-    """A first-party one-liner note through the process hub (the logger.info replacements)."""
+def hub_note(message: str, *, severity: Severity = Severity.INFO, exc: BaseException | None = None) -> None:
+    """A first-party one-liner through the process hub - THE raw-logging replacement.
 
-    current_hub().emit(Diagnostic(severity=severity, message=message, origin=LOG_NAME))
+    Replaces direct ``logger.<level>`` calls at any severity (not just the old
+    logger.info one-liners); ``exc`` captures the traceback onto the Diagnostic
+    (the ``exc_info=True`` replacement).
+    """
+
+    trace = CapturedTrace.from_exception(exc) if exc is not None else None
+    current_hub().emit(Diagnostic(severity=severity, message=message, origin=LOG_NAME, trace=trace))
 
 
 def hub_counts() -> SeverityCounts:

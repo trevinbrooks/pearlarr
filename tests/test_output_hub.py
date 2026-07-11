@@ -18,6 +18,7 @@ import pytest
 
 from seadexarr.modules.cli import _install_output_hub
 from seadexarr.modules.config import Arr, LogFormat
+from seadexarr.modules.log import LOG_NAME
 from seadexarr.modules.output import (
     STRIKE_LIMIT,
     Diagnostic,
@@ -32,6 +33,7 @@ from seadexarr.modules.output import (
     SeverityCounts,
     SeverityTally,
     emit_to_hub,
+    hub_note,
     install_hub,
     uninstall_bridge,
     uninstall_hub,
@@ -1082,3 +1084,32 @@ def test_uninstall_hub_closes_the_outgoing_hub_but_never_the_default() -> None:
     emit_to_hub(_EVENT)
     hub.emit(_EVENT)  # drop-after-close is silent
     assert sink.events == []
+
+
+# --- hub_note (the raw first-party logging replacement) -------------------------------
+
+
+def test_hub_note_with_exc_captures_the_trace() -> None:
+    recording = RecordingHub()
+    install_hub(recording.hub)  # conftest teardown restores the default
+    try:
+        raise ValueError("boom")
+    except ValueError as e:
+        hub_note("it broke", severity=Severity.ERROR, exc=e)
+
+    (note,) = recording.of_type(Diagnostic)
+    assert note.severity is Severity.ERROR
+    assert note.message == "it broke"
+    assert note.origin == LOG_NAME
+    assert note.trace is not None
+    assert "ValueError: boom" in note.trace.plain_text()
+
+
+def test_hub_note_without_exc_keeps_the_trace_none() -> None:
+    recording = RecordingHub()
+    install_hub(recording.hub)  # conftest teardown restores the default
+    hub_note("plain note")
+
+    (note,) = recording.of_type(Diagnostic)
+    assert note.severity is Severity.INFO
+    assert note.trace is None

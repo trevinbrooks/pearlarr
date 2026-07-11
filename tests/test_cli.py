@@ -107,7 +107,7 @@ from seadexarr.modules.paths import AppPaths, resolve_paths
 from seadexarr.modules.runlock import single_instance_lock
 
 from .builders import make_logger
-from .fakes import CaptureHandler, TtyStringIO
+from .fakes import TtyStringIO
 from .test_scan_parity import SUMMARY_MINIMAL
 
 
@@ -465,25 +465,17 @@ class TestConfiguredArrs:
     """Unconfigured arrs: implicit selections skip them, explicit ones refuse."""
 
     @pytest.fixture
-    def capture(self, logger: logging.Logger) -> CaptureHandler:
-        handler = CaptureHandler()
-        logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
-        return handler
-
-    def test_implicit_selection_skips_the_unconfigured_arr(
-        self,
-        logger: logging.Logger,
-        capture: CaptureHandler,
-    ) -> None:
+    def recording(self) -> RecordingHub:
         recording = RecordingHub()
         install_hub(recording.hub)  # conftest teardown restores the default
+        return recording
+
+    def test_implicit_selection_skips_the_unconfigured_arr(self, recording: RecordingHub) -> None:
         kept = configured_arrs(
             [(Arr.RADARR, None), (Arr.SONARR, None)],
             _config_with(sonarr=True),
             explicit=False,
             config_path="config.yml",
-            logger=logger,
         )
         assert kept == [(Arr.SONARR, None)]
         # The note is a first-party INFO Diagnostic on the hub: a Sonarr-only
@@ -495,13 +487,8 @@ class TestConfiguredArrs:
         assert skip.message == "Radarr not configured - skipped"
         assert skip.origin == LOG_NAME
         assert not skip.file_only
-        assert capture.records == []  # nothing rides the logger anymore
 
-    def test_a_half_configured_arr_warns_by_name(
-        self,
-        logger: logging.Logger,
-        capture: CaptureHandler,
-    ) -> None:
+    def test_a_half_configured_arr_warns_by_name(self, recording: RecordingHub) -> None:
         config = AppConfig.model_validate(
             {"sonarr": {"url": "http://sonarr:8989", "api_key": "k"}, "radarr": {"url": "http://radarr:7878"}},
         )
@@ -510,72 +497,59 @@ class TestConfiguredArrs:
             config,
             explicit=False,
             config_path="config.yml",
-            logger=logger,
         )
         assert kept == [(Arr.SONARR, None)]
         # url XOR api_key is almost certainly an accident: the skip must be loud
         # and name the missing half, not read like an intentional single-arr setup.
         # Dotted keys stay lowercase; the prose subject is capitalized.
-        warning = next(r for r in capture.records if r.levelno == logging.WARNING)
-        assert warning.getMessage() == "radarr.url is set but radarr.api_key is not - skipping Radarr"
+        (warning,) = recording.of_type(Diagnostic)
+        assert warning.severity is Severity.WARNING
+        assert warning.message == "radarr.url is set but radarr.api_key is not - skipping Radarr"
 
     def test_explicit_selection_of_a_half_configured_arr_names_only_the_missing_key(
         self,
-        logger: logging.Logger,
-        capture: CaptureHandler,
+        recording: RecordingHub,
     ) -> None:
         config = AppConfig.model_validate({"radarr": {"url": "http://radarr:7878"}})
-        kept = configured_arrs([(Arr.RADARR, None)], config, explicit=True, config_path="config.yml", logger=logger)
+        kept = configured_arrs([(Arr.RADARR, None)], config, explicit=True, config_path="config.yml")
         assert kept is None
-        error = next(r for r in capture.records if r.levelno == logging.ERROR)
-        assert "set radarr.api_key in config.yml" in error.getMessage()
+        (error,) = recording.of_type(Diagnostic)
+        assert error.severity is Severity.ERROR
+        assert "set radarr.api_key in config.yml" in error.message
 
-    def test_explicit_selection_of_an_unconfigured_arr_refuses(
-        self,
-        logger: logging.Logger,
-        capture: CaptureHandler,
-    ) -> None:
+    def test_explicit_selection_of_an_unconfigured_arr_refuses(self, recording: RecordingHub) -> None:
         kept = configured_arrs(
             [(Arr.RADARR, 42)],
             _config_with(sonarr=True),
             explicit=True,
             config_path="config.yml",
-            logger=logger,
         )
         assert kept is None
-        error = next(r for r in capture.records if r.levelno == logging.ERROR)
-        assert "radarr.url" in error.getMessage()
+        (error,) = recording.of_type(Diagnostic)
+        assert error.severity is Severity.ERROR
+        assert "radarr.url" in error.message
         # Prose subject capitalized; the dotted keys above stay lowercase.
-        assert error.getMessage().startswith("Radarr was selected but is not configured")
+        assert error.message.startswith("Radarr was selected but is not configured")
 
-    def test_nothing_configured_reports_and_refuses(
-        self,
-        logger: logging.Logger,
-        capture: CaptureHandler,
-    ) -> None:
+    def test_nothing_configured_reports_and_refuses(self, recording: RecordingHub) -> None:
         kept = configured_arrs(
             [(Arr.RADARR, None), (Arr.SONARR, None)],
             _config_with(),
             explicit=False,
             config_path="config.yml",
-            logger=logger,
         )
         assert kept is None
-        assert any(r.levelno == logging.ERROR for r in capture.records)
-
-    def test_fully_configured_passes_through_unchanged(
-        self,
-        logger: logging.Logger,
-        capture: CaptureHandler,
-    ) -> None:
-        arrs: list[tuple[Arr, int | None]] = [(Arr.RADARR, None), (Arr.SONARR, 7)]
-        assert (
-            configured_arrs(
-                arrs, _config_with(sonarr=True, radarr=True), explicit=True, config_path="config.yml", logger=logger
-            )
-            == arrs
+        # Both per-arr skip notes precede the refusal; the ERROR is the verdict.
+        (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
+        assert error.message == (
+            "Neither sonarr nor radarr is configured - set url and api_key for at least one in config.yml"
         )
-        assert capture.records == []
+
+    def test_fully_configured_passes_through_unchanged(self, recording: RecordingHub) -> None:
+        arrs: list[tuple[Arr, int | None]] = [(Arr.RADARR, None), (Arr.SONARR, 7)]
+        kept = configured_arrs(arrs, _config_with(sonarr=True, radarr=True), explicit=True, config_path="config.yml")
+        assert kept == arrs
+        assert recording.of_type(Diagnostic) == []
 
 
 # Mapping stanza shared by the runnable-config helpers: disabled sources keep
@@ -1245,42 +1219,37 @@ class TestUnknownTrackerWarning:
     """
 
     @staticmethod
-    def _load(tmp_path: Path, logger: logging.Logger, body: str) -> AppConfig | None:
+    def _load(tmp_path: Path, body: str) -> AppConfig | None:
         config = tmp_path / "config.yml"
         config.write_text(body, encoding="utf-8")
-        config.chmod(0o600)  # keep the loose-permissions warning out of the capture
-        return load_shared_config(str(config), logger, BootFlow(), "")
+        config.chmod(0o600)  # keep the loose-permissions warning out of the recorded stream
+        return load_shared_config(str(config), BootFlow(), "")
 
-    def test_unknown_value_warns_naming_it_and_the_vocabulary(
-        self,
-        tmp_path: Path,
-        logger: logging.Logger,
-    ) -> None:
-        capture = CaptureHandler()
-        logger.addHandler(capture)
-        assert self._load(tmp_path, logger, "seadex:\n  trackers: [Nyaaa, Nyaa]\n") is not None
+    def test_unknown_value_warns_naming_it_and_the_vocabulary(self, tmp_path: Path) -> None:
+        recording = RecordingHub()
+        install_hub(recording.hub)  # conftest teardown restores the default
+        assert self._load(tmp_path, "seadex:\n  trackers: [Nyaaa, Nyaa]\n") is not None
 
-        warning = next(r for r in capture.records if r.levelno == logging.WARNING)
-        message = warning.getMessage()
-        assert "nyaaa" in message  # the offender (casefolded, as matching sees it)
-        assert "case-insensitive" in message
-        assert "animetosho" in message  # the known vocabulary is enumerated
-        assert "otherprivate" in message  # including the seadex-only catch-alls
+        warning = next(d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING)
+        assert "nyaaa" in warning.message  # the offender (casefolded, as matching sees it)
+        assert "case-insensitive" in warning.message
+        assert "animetosho" in warning.message  # the known vocabulary is enumerated
+        assert "otherprivate" in warning.message  # including the seadex-only catch-alls
 
-    def test_known_values_do_not_warn(self, tmp_path: Path, logger: logging.Logger) -> None:
-        capture = CaptureHandler()
-        logger.addHandler(capture)
-        loaded = self._load(tmp_path, logger, "seadex:\n  trackers: [Nyaa, OtherPrivate]\n")
+    def test_known_values_do_not_warn(self, tmp_path: Path) -> None:
+        recording = RecordingHub()
+        install_hub(recording.hub)  # conftest teardown restores the default
+        loaded = self._load(tmp_path, "seadex:\n  trackers: [Nyaa, OtherPrivate]\n")
 
         assert loaded is not None
         assert loaded.seadex.trackers == {"nyaa", "otherprivate"}
-        assert [r for r in capture.records if r.levelno >= logging.WARNING] == []
+        assert [d for d in recording.of_type(Diagnostic) if d.severity >= Severity.WARNING] == []
 
-    def test_default_trackers_do_not_warn(self, tmp_path: Path, logger: logging.Logger) -> None:
-        capture = CaptureHandler()
-        logger.addHandler(capture)
-        assert self._load(tmp_path, logger, "sonarr:\n  url: http://s\n") is not None
-        assert [r for r in capture.records if r.levelno >= logging.WARNING] == []
+    def test_default_trackers_do_not_warn(self, tmp_path: Path) -> None:
+        recording = RecordingHub()
+        install_hub(recording.hub)  # conftest teardown restores the default
+        assert self._load(tmp_path, "sonarr:\n  url: http://s\n") is not None
+        assert [d for d in recording.of_type(Diagnostic) if d.severity >= Severity.WARNING] == []
 
 
 class TestUnwritableDataDir:
@@ -1396,8 +1365,8 @@ class TestScheduledLifecycle:
     def test_invalid_config_still_skips_and_retries(self, logger: logging.Logger) -> None:
         # Only the MISSING file exits: an invalid config is likely mid-edit, so
         # scheduled mode must keep skipping + retrying, never raise out of the loop.
-        capture = CaptureHandler()
-        logger.addHandler(capture)
+        recording = RecordingHub()
+        install_hub(recording.hub)  # conftest teardown restores the default
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
         Path(paths.config).write_text("sonar:\n  url: x\n", encoding="utf-8")
@@ -1410,8 +1379,8 @@ class TestScheduledLifecycle:
         )
 
         assert result is False
-        error = next(r for r in capture.records if r.levelno == logging.ERROR)
-        assert "will retry in 6h" in error.getMessage()
+        error = next(d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR)
+        assert "will retry in 6h" in error.message
 
     def test_sigterm_handler_emits_the_hub_notice_and_exits_zero(self) -> None:
         # Call the handler directly - never deliver a real signal in-process.
@@ -1483,16 +1452,15 @@ class TestScheduledLifecycle:
 class TestScheduleHours:
     """Cadence precedence: valid SCHEDULE_TIME env (deprecated) > config > 6.
 
-    The SCHEDULE_TIME notices are plain WARNINGs through the logger; in
-    production the bridge adopts them onto the hub (file line + console badge).
-    Pinned here via a capture handler on the record they emit.
+    The SCHEDULE_TIME notices are first-party WARNING Diagnostics through the
+    hub (file line + console badge). Pinned here via a recording hub.
     """
 
     @pytest.fixture
-    def capture(self, logger: logging.Logger) -> CaptureHandler:
-        handler = CaptureHandler()
-        logger.addHandler(handler)
-        return handler
+    def recording(self) -> RecordingHub:
+        recording = RecordingHub()
+        install_hub(recording.hub)  # conftest teardown restores the default
+        return recording
 
     @staticmethod
     def _write_config(tmp_path: Path, interval_hours: float | None = None) -> str:
@@ -1505,47 +1473,44 @@ class TestScheduleHours:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        logger: logging.Logger,
-        capture: CaptureHandler,
+        recording: RecordingHub,
     ) -> None:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         missing = tmp_path / "config.yml"
-        assert _schedule_hours(str(missing), logger) == 6.0
+        assert _schedule_hours(str(missing)) == 6.0
         # No template-copy side effect: load_shared_config owns the first-run copy.
         assert not missing.exists()
-        assert capture.records == []  # nothing to warn about without the env var
+        assert recording.of_type(Diagnostic) == []  # nothing to warn about without the env var
 
     def test_unset_env_reads_the_config_value(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        logger: logging.Logger,
     ) -> None:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
-        assert _schedule_hours(self._write_config(tmp_path, 2.5), logger) == 2.5
+        assert _schedule_hours(self._write_config(tmp_path, 2.5)) == 2.5
 
     def test_unreadable_config_falls_back_to_the_default(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        logger: logging.Logger,
     ) -> None:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         path = tmp_path / "config.yml"
         path.write_text("schedule:\n  interval_hours: -1\n")  # fails validation
-        assert _schedule_hours(str(path), logger) == 6.0
+        assert _schedule_hours(str(path)) == 6.0
 
     def test_a_valid_env_value_wins_over_config_with_deprecation_warning(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        logger: logging.Logger,
-        capture: CaptureHandler,
+        recording: RecordingHub,
     ) -> None:
         monkeypatch.setenv("SCHEDULE_TIME", "0.5")
-        assert _schedule_hours(self._write_config(tmp_path, 2.5), logger) == 0.5
-        notice = next(r for r in capture.records if "deprecated" in r.getMessage())
-        assert notice.levelno == logging.WARNING
+        assert _schedule_hours(self._write_config(tmp_path, 2.5)) == 0.5
+        (notice,) = recording.of_type(Diagnostic)
+        assert notice.severity is Severity.WARNING
+        assert notice.message == "SCHEDULE_TIME is deprecated; set schedule.interval_hours in the config instead."
 
     @pytest.mark.parametrize("raw", ["banana", "0", "-3", "inf", "nan"])
     def test_bad_env_values_fall_through_to_config(
@@ -1553,37 +1518,35 @@ class TestScheduleHours:
         raw: str,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        logger: logging.Logger,
-        capture: CaptureHandler,
+        recording: RecordingHub,
     ) -> None:
         monkeypatch.setenv("SCHEDULE_TIME", raw)
-        assert _schedule_hours(self._write_config(tmp_path, 2.5), logger) == 2.5
-        notice = next(r for r in capture.records if r.levelno == logging.WARNING)
-        assert "Invalid SCHEDULE_TIME" in notice.getMessage()
+        assert _schedule_hours(self._write_config(tmp_path, 2.5)) == 2.5
+        (notice,) = recording.of_type(Diagnostic)
+        assert notice.severity is Severity.WARNING
+        assert "Invalid SCHEDULE_TIME" in notice.message
         # The notice reports the value actually used, not a claim about its source.
-        assert "using 2.5 hours" in notice.getMessage()
+        assert "using 2.5 hours" in notice.message
 
     def test_bad_env_with_missing_config_reports_the_default(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        logger: logging.Logger,
-        capture: CaptureHandler,
+        recording: RecordingHub,
     ) -> None:
         monkeypatch.setenv("SCHEDULE_TIME", "banana")
-        assert _schedule_hours(str(tmp_path / "config.yml"), logger) == 6.0
-        assert any("using 6 hours" in r.getMessage() for r in capture.records)
+        assert _schedule_hours(str(tmp_path / "config.yml")) == 6.0
+        assert any("using 6 hours" in d.message for d in recording.of_type(Diagnostic))
 
     def test_malformed_yaml_falls_back_to_the_default(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        logger: logging.Logger,
     ) -> None:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         path = tmp_path / "config.yml"
         path.write_text("schedule: [unclosed\n")
-        assert _schedule_hours(str(path), logger) == 6.0
+        assert _schedule_hours(str(path)) == 6.0
 
 
 def test_trust_os_certificates_swaps_in_the_os_trust_store() -> None:

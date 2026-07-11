@@ -19,7 +19,7 @@ from seadexarr.modules.boot_flow import BootFlow
 from seadexarr.modules.config import AppConfig, Arr
 from seadexarr.modules.manual_import import OutcomeCategory
 from seadexarr.modules.mappings import MappingEntry
-from seadexarr.modules.output import BootStepFinished, CountsMark, SeverityCounts, install_hub
+from seadexarr.modules.output import BootStepFinished, CountsMark, Diagnostic, Severity, SeverityCounts, install_hub
 from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.protocols import ImportCompleter
 from seadexarr.modules.reporter import RunContext
@@ -27,7 +27,7 @@ from seadexarr.modules.run_loop import RunLoop
 from seadexarr.modules.seadex_types import ProgressSink
 
 from .builders import FakeCacheStore, make_bare_instance, make_config, make_services
-from .fakes import CaptureHandler, FakeArrItem, FakeStrategy
+from .fakes import FakeArrItem, FakeStrategy
 
 
 class _FakeGateway:
@@ -161,22 +161,22 @@ class TestPerIdErrorContainment:
             process_raises_on=1,
         )
         finalize = _FinalizeRecorder()
-        capture = CaptureHandler()
-        logger.addHandler(capture)
-        try:
-            _engine(finalize, logger).run_sync(
-                strategy,
-                item_id=None,
-                dry_run=True,
-                boot=BootFlow(),
-            )
-        finally:
-            logger.removeHandler(capture)
+        recording = RecordingHub()
+        install_hub(recording.hub)  # conftest teardown restores the default
+        _engine(finalize, logger).run_sync(
+            strategy,
+            item_id=None,
+            dry_run=True,
+            boot=BootFlow(),
+        )
 
         # The first id raised but was contained: the sibling id 2 is still processed.
         assert strategy.process_calls == [1, 2]
-        # The per-id failure was logged at ERROR (containment is observable).
-        assert any(r.levelno == logging.ERROR for r in capture.records)
+        # The per-id failure is an ERROR Diagnostic with its traceback (containment
+        # is observable).
+        (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
+        assert error.message == "A (AniList #1): unexpected error: boom on al_id 1"
+        assert error.trace is not None
         # The single finalize still ran once on the normal end-of-run path.
         assert finalize.calls == 1
 
