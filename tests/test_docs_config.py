@@ -60,18 +60,19 @@ def test_config_docstrings_never_restate_defaults() -> None:
 def test_env_registry_matches_the_tree() -> None:
     # Every SEADEXARR_* variable mentioned anywhere (code, Docker, docs) is
     # registered, and every registered variable is actually mentioned.
+    # The one exemption: the hypothetical the naming-scheme rule is explained with.
+    hypothetical = {"SEADEXARR_SONARR__URL"}
     scanned: set[str] = set()
     files = [
         REPO_ROOT / "Dockerfile",
         REPO_ROOT / "docker-compose.example.yml",
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "CONTRIBUTING.md",
         *sorted((REPO_ROOT / "docker").glob("*")),
         *sorted((REPO_ROOT / "seadexarr").rglob("*.py")),
         *sorted((REPO_ROOT / "docs").rglob("*.md")),
     ]
-    # The registry itself is exempt: its docstring names a hypothetical future
-    # variable to document the naming scheme.
-    files.remove(REPO_ROOT / "seadexarr" / "modules" / "env_registry.py")
     for path in files:
         if path.is_file():
             scanned.update(re.findall(r"SEADEXARR_[A-Z_]+", path.read_text(encoding="utf-8")))
-    assert scanned == {var.name for var in ENV_VARS}
+    assert scanned - hypothetical == {var.name for var in ENV_VARS}

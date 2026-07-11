@@ -72,6 +72,7 @@ seadexarr = "seadexarr:seadexarr_cli"
 [project.urls]
 Homepage = "https://github.com/trevinbrooks/seadexarr"
 Repository = "https://github.com/trevinbrooks/seadexarr"
+Changelog = "https://github.com/trevinbrooks/seadexarr/blob/main/CHANGELOG.md"
 "Bug Reports" = "https://github.com/trevinbrooks/seadexarr/issues"
 
 # Dev tooling lives in PEP 735 dependency-groups (read natively by uv and pip),
@@ -105,7 +106,7 @@ dev = [
 [tool.hatch.build.targets.sdist]
 include = [
     "/seadexarr",
-    "/CHANGES.rst",
+    "/CHANGELOG.md",
     "/LICENSE",
     "/README.md",
     "/pyproject.toml",

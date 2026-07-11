@@ -1,0 +1,169 @@
+# Changelog
+
+All notable, user-observable changes to SeaDexArr are documented here.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+SeaDexArr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr); everything up to and including 0.9.0 is inherited upstream history.
+
+## [1.0.0] - Unreleased
+
+The first release of the fork.
+
+### Upgrade notes
+
+Coming from upstream 0.9.x:
+
+- **The config format changed wholesale**, from flat keys to nested groups with strict validation.
+  Rewrite your `config.yml` against the new layout (`seadexarr config init` writes a commented starter, and [docs/configuration.md](docs/configuration.md) documents every key): `sonarr_url` is now `sonarr.url`, `qbit_info` is `qbittorrent.*`, `torrent_tags` is `qbittorrent.tags`, `seadex.public_only` is replaced by `seadex.private_releases`.
+  Unknown or misspelled keys now fail at load instead of being ignored.
+- **The data location moved** off the install directory to one OS-standard data directory (`~/.local/share/seadexarr` on Linux, `~/Library/Application Support/seadexarr` on macOS).
+  Move your existing `config.yml` and cache there, or set `SEADEXARR_DATA_DIR`.
+  Logs follow the data directory instead of the working directory; `seadexarr paths` prints every resolved location.
+- **The cache moved** from `cache.json` to a SQLite `cache.db`, migrated automatically on first run (the legacy file is kept beside it as `cache.json.migrated`).
+- **Python 3.13 or newer is required** (3.12 support dropped); the Docker image runs 3.14.
+- `SCHEDULE_TIME` is deprecated in favor of `schedule.interval_hours` (a still-set `SCHEDULE_TIME` wins, with a deprecation warning).
+
+### Added
+
+- Wait-for-completion and Sonarr manual import (`imports.wait_mode`: `off`/`deferred`/`blocking`/`hybrid`): wait for qBittorrent to finish grabbed torrents, let Sonarr import them, and step in with a series-pinned manual import when Sonarr can't.
+  Downloads that outlast a run are carried as pending imports and picked up by a later run.
+- `notifications.wait_webhook_url`: a generic outbound webhook (ntfy, gotify, Home Assistant, ...) for the wait-pass summary, alongside the Discord webhook, with `notifications.wait_notify` controlling the push.
+- `imports.post_import_category`: move a torrent to a different qBittorrent category (created if missing) once its import is verified complete, e.g. to hand finished torrents different seeding rules.
+- Arr-side activity detection (`advanced.detect_arr_activity`, on by default): each pass polls the arr's history and re-checks entries whose files were imported or deleted arr-side since the last pass, so a quality upgrade or manual grab is re-evaluated without waiting for SeaDex to update.
+  The first scan covers the last 30 days; a coverage gap re-checks everything once.
+- AniBridge mappings as the primary ID/episode mapping source, mopping up titles the other sources miss.
+- `seadex.ignore_anilist_ids` (skip specific AniList IDs), `seadex.ignore_tags` (filter releases by SeaDex tag), and `qbittorrent.tags` (tag every added torrent).
+- Discord notifications are rich embeds with colors, links and a version footer; the console shows a live cockpit during startup and the import-wait pass (spinners, ticking timers, files-imported progress).
+- New CLI surface: `run single --dry-run` (simulate without grabbing, caching, or notifying), `--movie-id`/`--series-id` (single-title runs by TMDB/TVDB ID), `--import-wait-mode` and `--log-level` per-run overrides; `config validate` and `config show` (effective config with secrets redacted, safe to paste into a bug report); `cache stats` and `cache check`; `seadexarr --version`, `-h` everywhere, group commands print their help.
+- The scheduled-run cadence is a config field, `schedule.interval_hours` (default 6), re-read each cycle so an edit takes effect without a restart.
+
+### Changed
+
+- **Private releases are never grabbed** (SeaDex carries no download link for them, and no private-tracker auth is supported).
+  `seadex.private_releases` decides what happens when a title's preferred release is private-only: `warn` (default) warns and leaves the title uncached so it is re-checked every run; `fallback` grabs the entry's best public alternative, warning only when none exists.
+  Titles satisfied by a fallback are remembered; switching back to `warn` re-checks them and resurfaces the warning.
+- Where multiple preferred release groups cover exactly the same files, only one is downloaded (preferring a public release) instead of all of them.
+- Only configured arrs run: a Sonarr-only (or Radarr-only) config skips the other arr with a ledger note instead of failing every cycle; explicitly selecting an unconfigured arr fails with a one-line error naming the missing keys; a half-configured arr (URL without API key, or the reverse) is warned about by name.
+- `run single` with no selection flags runs every configured arr, mirroring scheduled mode (previously it printed a usage hint and failed).
+- Failed CLI commands exit non-zero (previously always 0); a malformed config, missing backup, unreachable arr, or rejected API key is reported as a clean one-line error naming the config keys to check, instead of a traceback.
+- `cache backup` writes via a temp file so a failed backup can never destroy the previous good one; `cache restore` copies instead of consuming the backup, so a restore is repeatable.
+- `config init` refuses to overwrite an existing `config.yml` unless `--force` is passed.
+- The Python import surface is internal as of 1.0.0: the supported interfaces are the CLI, the config schema, and the notification payloads.
+- Runtime dependencies bumped to current majors (typer 0.26, rich 15, qbittorrent-api 2026.6).
+
+### Deprecated
+
+- `SCHEDULE_TIME` (Docker-era env var): set `schedule.interval_hours` instead; an invalid `SCHEDULE_TIME` now falls back to the configured cadence with a report instead of crashing the scheduler.
+
+### Removed
+
+- `seadex.public_only` (replaced by `seadex.private_releases`, see Upgrade notes).
+- Python 3.12 support.
+
+### Fixed
+
+- `advanced.log_level` is honored everywhere: `ERROR` is a real level (the logger previously treated it as `INFO`), and CLI runs no longer force `INFO` regardless of config.
+- In `fallback` mode, a public substitute never replaces a copy of the preferred private release you already own: a stale-sized private copy warns and holds (the summary names both ways out) instead of being overwritten by the fallback.
+
+## Inherited from upstream
+
+The releases below are [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr) history, reproduced as shipped.
+
+## [0.9.0] - 2025-09-13
+
+- Include PlexAniBridge-Mappings to mop up some missed titles
+- Update cache if version/config changes
+- Add option to ignore SeaDex update time
+- Don't recreate cache on config change
+- Add a number of useful CLI commands
+- Include option to just check torrents by hash
+- Update cache if no suitable releases found
+- Check file sizes, for different versions of releases etc.
+
+## [0.8.1] - 2025-09-05
+
+- Fix cache not updating with versions
+
+## [0.8.0] - 2025-09-05
+
+- If we're ignoring Radarr movies in Sonarr, also check the cache
+- Do a more proper check for episodes in Sonarr
+- Ensure docker-compose run also uses cache
+- Fix crash if AniList ID isn't already in cache
+- Include AniList name in cache
+- Sort cache by AniList ID
+- Revert removing trackers
+
+## [0.7.0] - 2025-08-24
+
+- Create a cache to avoid checked entries that haven't updated
+- Fix grabbing multiple releases when there's a mismatch in episode parsing
+- Removed trackers that aren't used by SeaDex
+- Add support for RuTracker
+
+## [0.6.0] - 2025-08-13
+
+- Take Ja-only releases if `prefer_dual_audio` is False
+- Catch crash if SeaDex is unreachable
+- Cleanup dictionaries
+- Search specifically in qBittorrent by torrent hash, to speed up hash checks
+- Skip adding downloads to torrent client if download flag not set
+- Fix bug where maximum number of torrents added was not respected
+
+## [0.5.0] - 2025-08-08
+
+- Fix UTF-8 encoding warning in log
+- Move to episode-based filtering of torrents for Sonarr
+- Include SeaDex tags in log and Discord messages
+- Add options to ignore unmonitored series/movies
+- Save logs to file
+- Ensure SCHEDULE_TIME is brought in as a float
+- Fix Discord messages not getting pushed if no torrent client selected
+- Fix adding too many torrents in one go
+
+## [0.4.1] - 2025-07-31
+
+- Add PyYAML to pyproject.toml
+- Added support for AnimeTosho
+
+## [0.4.0] - 2025-07-31
+
+- Added ignore_movies_in_radarr for SeaDexSonarr, which will skip movies flagged as Specials in Sonarr that already exist in Radarr
+- More robust config when parameters added
+- Build Docker for every main update
+- Fix crash when AniDB mapping contains no text
+- Use IMDb for finding AniList mappings as well
+- Initial support for other trackers
+- Better handle Discord notifications and log messages when torrent already in client
+- Map potentially weird episodes SeaDexSonarr if in Season 0 (Specials)
+
+## [0.3.0] - 2025-07-30
+
+- Added scheduling in Docker mode
+
+## [0.2.0] - 2025-07-30
+
+- Add Docker support
+- Move to config files, to make the call simpler
+- Fix crash if torrent in list but not already downloaded
+
+## [0.1.0] - 2025-07-22
+
+- Add support for Radarr
+
+## [0.0.3] - 2025-07-22
+
+- Rename from seadex_sonarr to seadexarr, in preparation for Radarr support
+- Add interactive mode, for selecting when multiple "best" options are found
+- Add support for adding torrents to qBittorrent
+
+## [0.0.2] - 2025-07-13
+
+- Improved Discord messaging
+- Catch the case where we don't find any suitable SeaDex releases
+- Include potentially weird offset mappings via AniDB lists
+- Add a rest time to not hit AniList rate limiting
+
+## [0.0.1] - 2025-07-12
+
+- Initial release
