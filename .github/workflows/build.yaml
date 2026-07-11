@@ -95,7 +95,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: docker compose config
-        run: docker compose -f docker-compose.example.yml config -q
+        run: |
+          docker compose -f docker-compose.example.yml config >/dev/null 2>stderr.log || { cat stderr.log >&2; exit 1; }
+          cat stderr.log >&2
+          # Compose only warns when an interpolation var has no default; promote it.
+          if grep -q "variable is not set" stderr.log; then exit 1; fi
 
   build_sdist_and_wheel:
     name: Build source distribution
