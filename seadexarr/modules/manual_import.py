@@ -67,9 +67,16 @@ class ImportWaitMode(StrEnum):
     """
 
     OFF = "off"
+    """Disabled: no waiting, no pending-import records, no manual import."""
+
     DEFERRED = "deferred"
+    """Never block: record grabs and import the already-finished ones on a later run."""
+
     BLOCKING = "blocking"
+    """Block at the end of the run (and on an early break) until downloads finish, then import."""
+
     HYBRID = "hybrid"
+    """Recommended: reconcile deferred imports at run start plus a blocking pass at the end."""
 
 
 class WaitOutcome(Enum):

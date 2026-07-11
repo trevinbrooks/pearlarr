@@ -111,6 +111,13 @@ from .fakes import TtyStringIO, diagnostic_messages, install_recording_hub
 from .test_scan_parity import SUMMARY_MINIMAL
 
 
+def _starter_text() -> str:
+    """What a user's starter copy holds: the template minus its generated-file banner."""
+
+    template = Path(template_path()).read_text(encoding="utf-8")
+    return "".join(line for line in template.splitlines(keepends=True) if not line.startswith("# GENERATED"))
+
+
 def _build_cache(tmp_path: Path) -> None:
     """Write a real on-disk ``cache.db`` under ``tmp_path`` holding one entry.
 
@@ -382,7 +389,7 @@ class TestConfigInit:
         assert "--force" in capsys.readouterr().err
 
         assert config_init(force=True) is True
-        assert config.read_text() == Path(template_path()).read_text(encoding="utf-8")
+        assert config.read_text() == _starter_text()
         # The write is proven by the file content above; drain the post-force echo so
         # it can't spill to the terminal under `-s` (output after a mid-test
         # readouterr() is flushed there at teardown when global capture is off).
@@ -1203,7 +1210,7 @@ class TestMissingConfigExitsNonzero:
         assert result.exit_code == 1
 
         config = Path(resolve_paths().config)
-        assert config.read_text(encoding="utf-8") == Path(template_path()).read_text(encoding="utf-8")
+        assert config.read_text(encoding="utf-8") == _starter_text()
         assert "starter template was written" in result.output
         # This arm exits now; the skip-and-retry wording belongs to the others.
         assert "Skipping this run" not in result.output

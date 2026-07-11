@@ -9,3 +9,10 @@ repos:
         name: ruff lint
       - id: ruff-format
         name: ruff format
+  - repo: local
+    hooks:
+      - id: gen-docs-check
+        name: generated docs current
+        entry: uv run python scripts/gen_docs.py --check
+        language: system
+        pass_filenames: false

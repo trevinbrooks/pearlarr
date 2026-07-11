@@ -44,6 +44,16 @@ class TestFileLifecycle:
         assert cfg_path.exists()
         assert "sonarr" in yaml.safe_load(cfg_path.read_text())
 
+    def test_starter_copy_drops_generated_banner(self, tmp_path: Path) -> None:
+        # The template is a generated artifact; the copy is the user's file to
+        # edit, so the banner goes while the editor-schema pointer survives.
+        cfg_path = tmp_path / "config.yml"
+        with pytest.raises(FileNotFoundError):
+            AppConfig.load(str(cfg_path))
+        text = cfg_path.read_text()
+        assert "GENERATED" not in text
+        assert "$schema=" in text
+
     @pytest.mark.skipif(os.name != "posix", reason="mode bits are POSIX-only")
     def test_template_copy_is_owner_only(self, tmp_path: Path) -> None:
         # The config holds plaintext API keys: the first-run template copy must

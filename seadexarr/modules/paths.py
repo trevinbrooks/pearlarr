@@ -5,9 +5,10 @@ from dataclasses import dataclass
 
 from platformdirs import user_data_dir
 
-# Single override + the OS-standard default. The env var stays the canonical override
-# (Docker sets it to /config); the CLI's --data-dir flag folds into it (see cli.main).
-DATA_DIR_ENV = "SEADEXARR_DATA_DIR"
+from .env_registry import DATA_DIR_ENV
+
+# The env var stays the canonical override (Docker sets it to /config); the
+# CLI's --data-dir flag folds into it (see cli.main).
 APP_NAME = "seadexarr"
 
 # The single in-code source for the project's repository URL (the CLI epilog and

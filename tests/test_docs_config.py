@@ -1,0 +1,77 @@
+# pyright: strict
+"""Config documentation pipeline: generated artifacts current, docstrings complete and clean.
+
+The generator itself hard-fails on a missing field or enum-member docstring;
+these tests add the byte-equality drift gate and the content rules the
+generator cannot judge (no restated defaults, env registry parity).
+"""
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+from pydantic import BaseModel
+from pydantic.fields import FieldInfo
+
+from seadexarr.modules.config import AppConfig
+from seadexarr.modules.env_registry import ENV_VARS
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _leaf_fields() -> list[tuple[str, FieldInfo]]:
+    """Every (dotted key, field) pair of the config tree, groups included."""
+
+    pairs: list[tuple[str, FieldInfo]] = []
+    for group_key, group_field in AppConfig.model_fields.items():
+        pairs.append((group_key, group_field))
+        annotation = group_field.annotation
+        assert isinstance(annotation, type) and issubclass(annotation, BaseModel)
+        pairs.extend((f"{group_key}.{key}", field) for key, field in annotation.model_fields.items())
+    return pairs
+
+
+def test_generated_docs_are_current() -> None:
+    # The single-source pipeline's drift gate: config_sample.yml, the JSON
+    # schema, and configuration.md's islands must match what the models render.
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "gen_docs.py"), "--check"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"generated docs stale or invalid:\n{result.stdout}{result.stderr}"
+
+
+def test_every_config_field_has_a_docstring() -> None:
+    undocumented = [dotted for dotted, field in _leaf_fields() if not (field.description or "").strip()]
+    assert undocumented == []
+
+
+def test_config_docstrings_never_restate_defaults() -> None:
+    # The generator injects defaults and allowed values; prose restating them
+    # is the drift the single-source pipeline exists to kill.
+    banned = re.compile(r"[Dd]efaults? to|[Dd]efault:|\(default")
+    offenders = [dotted for dotted, field in _leaf_fields() if field.description and banned.search(field.description)]
+    assert offenders == []
+
+
+def test_env_registry_matches_the_tree() -> None:
+    # Every SEADEXARR_* variable mentioned anywhere (code, Docker, docs) is
+    # registered, and every registered variable is actually mentioned.
+    scanned: set[str] = set()
+    files = [
+        REPO_ROOT / "Dockerfile",
+        REPO_ROOT / "docker-compose.example.yml",
+        *sorted((REPO_ROOT / "docker").glob("*")),
+        *sorted((REPO_ROOT / "seadexarr").rglob("*.py")),
+        *sorted((REPO_ROOT / "docs").rglob("*.md")),
+    ]
+    # The registry itself is exempt: its docstring names a hypothetical future
+    # variable to document the naming scheme.
+    files.remove(REPO_ROOT / "seadexarr" / "modules" / "env_registry.py")
+    for path in files:
+        if path.is_file():
+            scanned.update(re.findall(r"SEADEXARR_[A-Z_]+", path.read_text(encoding="utf-8")))
+    assert scanned == {var.name for var in ENV_VARS}

@@ -22,8 +22,7 @@ from .config import (
     AppConfig,
     Arr,
     LogFormat,
-    restrict_config_permissions,
-    template_path,
+    write_starter_config,
 )
 from .console_caps import CapsCache
 from .json_narrow import is_json_list, is_json_obj
@@ -594,8 +593,7 @@ def config_init(
         return False
 
     try:
-        shutil.copyfile(template_path(), paths.config)
-        restrict_config_permissions(paths.config)
+        write_starter_config(paths.config)
     except OSError as e:
         # A pre-existing data dir gone read-only passes _prepare_data_dir
         # (makedirs is a no-op) and fails here instead.
