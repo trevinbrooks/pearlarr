@@ -15,12 +15,11 @@ import httpx
 import respx
 
 from seadexarr.modules.arr_http import ArrHttp
-from seadexarr.modules.output import Diagnostic, Severity, install_hub
-from seadexarr.modules.output.recording import RecordingHub
+from seadexarr.modules.output import Severity
 from seadexarr.modules.radarr_client import RadarrClient, collect_anime_movies
 from seadexarr.modules.seadex_types import HistoryRecord, MovieFile, RadarrItem, RadarrMovie
 
-from .fakes import FakeRadarrClient
+from .fakes import FakeRadarrClient, diagnostic_messages, install_recording_hub
 
 _URL = "http://radarr.test"
 _BASE = f"{_URL}/api/v3"
@@ -45,18 +44,6 @@ def _make_client() -> RadarrClient:
     )
 
 
-def _recording() -> RecordingHub:
-    """A fresh RecordingHub (the fail-open warnings ride the hub)."""
-
-    recording = RecordingHub()
-    install_hub(recording.hub)  # conftest teardown restores the default
-    return recording
-
-
-def _warnings(recording: RecordingHub) -> list[Diagnostic]:
-    return [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
-
-
 @respx.mock
 def test_movie_files_decodes_records_and_builds_request() -> None:
     # The junk non-dict element is skipped, like every other Arr list walk.
@@ -78,12 +65,12 @@ def test_movie_files_non_200_returns_empty_and_warns() -> None:
     """A Radarr 404 degrades to [] with a warning (was a JSONDecodeError mid-run)."""
 
     respx.get(f"{_BASE}/moviefile").respond(status_code=404)
-    recording = _recording()
+    recording = install_recording_hub()
     files = _make_client().movie_files(7)
 
     assert files == []
-    [warning] = _warnings(recording)
-    assert warning.message == "Could not fetch files for movie 7 from Radarr (status code 404); assuming none"
+    [warning] = diagnostic_messages(recording, Severity.WARNING)
+    assert warning == "Could not fetch files for movie 7 from Radarr (status code 404); assuming none"
 
 
 @respx.mock
@@ -99,12 +86,12 @@ def test_movie_files_non_json_body_returns_empty_and_warns() -> None:
     """A 200 with an HTML body (reverse-proxy page) fails open to [] - never an abort."""
 
     respx.get(f"{_BASE}/moviefile").respond(content=b"<html>login</html>", content_type="text/html")
-    recording = _recording()
+    recording = install_recording_hub()
     files = _make_client().movie_files(7)
 
     assert files == []
-    [warning] = _warnings(recording)
-    assert "non-JSON body" in warning.message
+    [warning] = diagnostic_messages(recording, Severity.WARNING)
+    assert "non-JSON body" in warning
 
 
 @respx.mock
@@ -163,11 +150,11 @@ def test_history_since_non_200_returns_none_and_warns() -> None:
     """A non-200 history read returns None with a warning (fail-open)."""
 
     respx.get(f"{_BASE}/history/since").respond(status_code=500)
-    recording = _recording()
+    recording = install_recording_hub()
     result = _make_client().history_since("2026-06-30T08:00:00Z")
 
     assert result is None
-    assert _warnings(recording)
+    assert diagnostic_messages(recording, Severity.WARNING)
 
 
 @respx.mock
@@ -183,11 +170,11 @@ def test_history_since_non_json_body_returns_none_and_warns() -> None:
     """A 200 with a non-JSON body fails open to None (the shared-helper hardening)."""
 
     respx.get(f"{_BASE}/history/since").respond(content=b"<html>login</html>", content_type="text/html")
-    recording = _recording()
+    recording = install_recording_hub()
     result = _make_client().history_since("2026-06-30T08:00:00Z")
 
     assert result is None
-    assert _warnings(recording)
+    assert diagnostic_messages(recording, Severity.WARNING)
 
 
 @respx.mock

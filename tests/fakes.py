@@ -22,6 +22,7 @@ from seadexarr.modules.manual_import import ImportProbe, ImportProgress, Pending
 from seadexarr.modules.mappings import MappingEntry
 from seadexarr.modules.output import (
     CapReached,
+    Diagnostic,
     EntryDetail,
     EntryHeader,
     Event,
@@ -32,7 +33,10 @@ from seadexarr.modules.output import (
     ReleaseSkipped,
     RunSummaryReady,
     ScanStarted,
+    Severity,
+    install_hub,
 )
+from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.output.scan_lines import LegacyLine, scan_event_lines
 from seadexarr.modules.protocols import ArrSync
 from seadexarr.modules.radarr_client import AbstractRadarrClient
@@ -93,6 +97,24 @@ def scan_lines_from_events(events: Iterable[Event]) -> list[LegacyLine]:
         if isinstance(event, SCAN_EVENT_TYPES):
             lines.extend(scan_event_lines(event))
     return lines
+
+
+def install_recording_hub() -> RecordingHub:
+    """Construct + install a fresh :class:`RecordingHub` as the process hub.
+
+    The conftest autouse teardown restores the renderer-less default after every
+    test, so callers never uninstall.
+    """
+
+    recording = RecordingHub()
+    install_hub(recording.hub)
+    return recording
+
+
+def diagnostic_messages(recording: RecordingHub, severity: Severity | None = None) -> list[str]:
+    """The recorded ``Diagnostic`` messages, optionally filtered to one exact severity."""
+
+    return [d.message for d in recording.of_type(Diagnostic) if severity is None or d.severity is severity]
 
 
 class TtyStringIO(io.StringIO):

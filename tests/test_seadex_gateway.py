@@ -4,11 +4,11 @@
 import httpx
 from seadex import EntryNotFoundError, EntryRecord
 
-from seadexarr.modules.output import Diagnostic, Severity, install_hub
-from seadexarr.modules.output.recording import RecordingHub
+from seadexarr.modules.output import Severity
 from seadexarr.modules.seadex_gateway import SEADEX_BATCH_SIZE, SeaDexGateway, SeaDexMiss
 
 from .builders import make_entry_record
+from .fakes import diagnostic_messages, install_recording_hub
 
 
 def _rec(al_id: int) -> EntryRecord:
@@ -77,18 +77,6 @@ def _gateway(fake: FakeSeaDex) -> SeaDexGateway:
     return SeaDexGateway(client=fake)
 
 
-def _capture_warnings() -> RecordingHub:
-    """Install a fresh RecordingHub (the outage warning rides the hub)."""
-
-    recording = RecordingHub()
-    install_hub(recording.hub)  # conftest teardown restores the default
-    return recording
-
-
-def _warnings(recording: RecordingHub) -> list[Diagnostic]:
-    return [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
-
-
 class TestSeaDexPrefetch:
     def test_prefetch_serves_from_cache_without_from_id(self) -> None:
         fake = FakeSeaDex({1: _rec(1), 2: _rec(2), 3: _rec(3)})
@@ -144,7 +132,7 @@ class TestSeaDexPrefetch:
         ids = list(range(1, SEADEX_BATCH_SIZE + 6))  # two batches
         fake = FakeSeaDex({i: _rec(i) for i in ids}, filter_blips=1)
         gateway = _gateway(fake)
-        recording = _capture_warnings()
+        recording = install_recording_hub()
 
         gateway.prefetch(ids)
 
@@ -152,7 +140,7 @@ class TestSeaDexPrefetch:
         assert gateway.outage is False
         assert gateway.entry(ids[0]) is fake.entries[ids[0]]
         assert gateway.entry(ids[-1]) is fake.entries[ids[-1]]
-        assert _warnings(recording) == []
+        assert diagnostic_messages(recording, Severity.WARNING) == []
 
     def test_batch_outage_warns_once_and_short_circuits(self) -> None:
         # A chunk failing TWICE (retry exhausted) declares the outage: it warns
@@ -161,19 +149,19 @@ class TestSeaDexPrefetch:
         ids = list(range(1, SEADEX_BATCH_SIZE * 2 + 6))  # three batches
         fake = FakeSeaDex({i: _rec(i) for i in ids}, fail_filter=True)
         gateway = _gateway(fake)
-        recording = _capture_warnings()
+        recording = install_recording_hub()
 
         gateway.prefetch(ids)
 
         assert len(fake.filter_calls) == 2  # chunk 1 + its retry; batches 2+3 short-circuited
         assert gateway.outage is True
-        warnings = _warnings(recording)
+        warnings = diagnostic_messages(recording, Severity.WARNING)
         assert len(warnings) == 1
-        assert "SeaDex request failed (ConnectError)" in warnings[0].message
+        assert "SeaDex request failed (ConnectError)" in warnings[0]
         # The per-id fallback is muted too: no fresh timeout per title.
         assert gateway.entry(ids[0]) is SeaDexMiss.OUTAGE
         assert fake.from_id_calls == []
-        assert len(_warnings(recording)) == 1  # still just the one
+        assert len(diagnostic_messages(recording, Severity.WARNING)) == 1  # still just the one
 
     def test_outage_prefetch_still_drives_progress_to_completion(self) -> None:
         # The cockpit sink must not hang on a mid-prefetch outage: every chunk
@@ -202,14 +190,14 @@ class TestSeaDexPrefetch:
         # short-circuits without another network attempt or warning.
         fake = FakeSeaDex({1: _rec(1), 2: _rec(2)}, fail_from_id=True)
         gateway = _gateway(fake)
-        recording = _capture_warnings()
+        recording = install_recording_hub()
 
         assert gateway.outage is False
         assert gateway.entry(1) is SeaDexMiss.OUTAGE
         assert gateway.entry(2) is SeaDexMiss.OUTAGE
         assert gateway.outage is True
         assert fake.from_id_calls == [1, 1]  # the retry, then id 2 never hit the network
-        assert len(_warnings(recording)) == 1
+        assert len(diagnostic_messages(recording, Severity.WARNING)) == 1
 
     def test_single_lookup_blip_recovers_on_retry(self) -> None:
         # A lone transient blip on the per-id fallback is retried immediately
@@ -217,26 +205,26 @@ class TestSeaDexPrefetch:
         # outage, no warning.
         fake = FakeSeaDex({1: _rec(1)}, from_id_blips=1)
         gateway = _gateway(fake)
-        recording = _capture_warnings()
+        recording = install_recording_hub()
 
         assert gateway.entry(1) is fake.entries[1]
         assert gateway.outage is False
         assert fake.from_id_calls == [1, 1]  # the blip + its retry
-        assert _warnings(recording) == []
+        assert diagnostic_messages(recording, Severity.WARNING) == []
 
     def test_single_lookup_double_blip_declares_outage(self) -> None:
         # The retry absorbs exactly one blip: a lookup failing twice flips the
         # run-wide outage flag with the single batch-path-style warning.
         fake = FakeSeaDex({1: _rec(1)}, from_id_blips=2)
         gateway = _gateway(fake)
-        recording = _capture_warnings()
+        recording = install_recording_hub()
 
         assert gateway.entry(1) is SeaDexMiss.OUTAGE
         assert gateway.outage is True
         assert fake.from_id_calls == [1, 1]
-        warnings = _warnings(recording)
+        warnings = diagnostic_messages(recording, Severity.WARNING)
         assert len(warnings) == 1
-        assert "SeaDex request failed (ConnectError)" in warnings[0].message
+        assert "SeaDex request failed (ConnectError)" in warnings[0]
 
     def test_batches_respect_batch_size(self) -> None:
         ids = list(range(1, SEADEX_BATCH_SIZE * 2 + 6))  # two full batches + a partial

@@ -14,6 +14,7 @@ coverage before.
 import json
 import logging
 import os
+import sqlite3
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -42,14 +43,13 @@ from seadexarr.modules.mappings import (
     MappingSources,
     _entry_from_raw,
 )
-from seadexarr.modules.output import Diagnostic, Severity, install_hub
-from seadexarr.modules.output.recording import RecordingHub
+from seadexarr.modules.output import Severity
 from seadexarr.modules.paths import resolve_paths
 from seadexarr.modules.seadex_types import TvdbMappings
 from seadexarr.modules.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge
 
 from .builders import make_bare_instance, sonarr_ep
-from .fakes import CaptureHandler
+from .fakes import CaptureHandler, diagnostic_messages, install_recording_hub
 
 # One inert shared client for the resolver ctors (inline sources: nothing downloads).
 _WEB = httpx.Client()
@@ -783,6 +783,61 @@ class TestConstructionFailureClosesStore:
         assert closed["n"] >= 1
 
 
+class TestUnwritableDbFallback:
+    """An unwritable on-disk mapping db falls back to ``:memory:`` with one warning."""
+
+    def test_file_db_write_failure_warns_and_rebuilds_in_memory(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The first store write (the file-backed db) raises; the :memory: retry
+        # runs the same _build and must serve the mappings as if nothing failed.
+        real_replace = MappingStore.replace_anime_ids
+        calls = {"n": 0}
+
+        def flaky_replace(self: MappingStore, digest: str, rows: list[AnimeIdRow]) -> None:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise sqlite3.OperationalError("attempt to write a readonly database")
+            real_replace(self, digest, rows)
+
+        monkeypatch.setattr(MappingStore, "replace_anime_ids", flaky_replace)
+        db = str(tmp_path / "mappings.db")
+        recording = install_recording_hub()
+
+        resolver = MappingResolver(
+            cache_time=1,
+            ignore_anilist_ids=set(),
+            web=_WEB,
+            sources=MappingSources(anime={"x": {"anilist_id": 1, "tvdb_id": 10}}, anidb=False, anibridge=False),
+            mappings_db=db,
+        )
+        try:
+            assert diagnostic_messages(recording, Severity.WARNING) == [
+                f"Mapping cache at {db} could not be written; rebuilding it "
+                "in memory for this run (slower startup, no data lost)",
+            ]
+            assert resolver.get_mappings_from_anime_mappings(ExternalIds(tvdb=10))[1].anilist_id == 1
+        finally:
+            resolver.close()
+
+    def test_memory_db_write_failure_reraises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # ":memory:" IS the fallback, so it has none: the error propagates.
+        def broken_replace(self: MappingStore, digest: str, rows: list[AnimeIdRow]) -> None:
+            raise sqlite3.OperationalError("disk I/O error")
+
+        monkeypatch.setattr(MappingStore, "replace_anime_ids", broken_replace)
+
+        with pytest.raises(sqlite3.OperationalError):
+            MappingResolver(
+                cache_time=1,
+                ignore_anilist_ids=set(),
+                web=_WEB,
+                sources=MappingSources(anime={"x": {"anilist_id": 1}}, anidb=False, anibridge=False),
+            )
+
+
 # --------------------------------------------------------------------------- #
 # Real-data parity: SQL backings must equal the in-memory oracle over the
 # actual source files (gitignored, so skipped in CI / when absent). This is the
@@ -953,14 +1008,13 @@ class TestMaybeDownloadFailOpen:
         os.utime(source, (old, old))
         monkeypatch.setattr(MappingResolver, "_download_file", _boom)
 
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
+        recording = install_recording_hub()
         resolver = make_bare_instance(MappingResolver, logger=None, _progress=None, cache_time=1, _web=_WEB)
         resolver._maybe_download(str(source), "https://example/anime_ids.json", "anime_ids.json")
 
         # Warned (not aborted): the fall-open notice rides the hub.
-        [warning] = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
-        assert "Could not refresh anime_ids.json" in warning.message
+        [warning] = diagnostic_messages(recording, Severity.WARNING)
+        assert "Could not refresh anime_ids.json" in warning
         assert source.exists()  # the cached copy is left intact
 
     def test_first_ever_download_failure_still_propagates(

@@ -22,8 +22,7 @@ import respx
 
 from seadexarr.modules.arr_http import ArrHttp
 from seadexarr.modules.manual_import import PendingImport
-from seadexarr.modules.output import Diagnostic, Severity, install_hub
-from seadexarr.modules.output.recording import RecordingHub
+from seadexarr.modules.output import Severity
 from seadexarr.modules.seadex_types import (
     BoundaryContractError,
     CommandResource,
@@ -37,6 +36,7 @@ from seadexarr.modules.seadex_types import (
 )
 from seadexarr.modules.sonarr_client import SonarrClient
 
+from .fakes import diagnostic_messages, install_recording_hub
 from .http_mock import sonarr_fixture
 
 _URL = "http://sonarr.test"
@@ -62,18 +62,6 @@ def _make_client() -> SonarrClient:
         ),
         logger=logging.getLogger("seadexarr.test"),
     )
-
-
-def _recording() -> RecordingHub:
-    """A fresh RecordingHub (the client's warnings ride the hub)."""
-
-    recording = RecordingHub()
-    install_hub(recording.hub)  # conftest teardown restores the default
-    return recording
-
-
-def _warnings(recording: RecordingHub) -> list[Diagnostic]:
-    return [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
 
 
 def _make_pending(*, infohash: str, title: str) -> PendingImport:
@@ -313,12 +301,12 @@ def test_episodes_non_200_returns_none_and_warns() -> None:
     """A non-200 episode read returns None and warns (the caller skips the id)."""
 
     respx.get(f"{_BASE}/episode").respond(status_code=500)
-    recording = _recording()
+    recording = install_recording_hub()
     result = _make_client().episodes(228)
 
     assert result is None
-    [warning] = _warnings(recording)
-    assert warning.message == "Could not fetch episodes for series 228 from Sonarr (status code 500); skipping"
+    [warning] = diagnostic_messages(recording, Severity.WARNING)
+    assert warning == "Could not fetch episodes for series 228 from Sonarr (status code 500); skipping"
 
 
 @respx.mock
@@ -328,11 +316,11 @@ def test_episodes_quiet_suppresses_unreachable_warning() -> None:
     """
 
     respx.get(f"{_BASE}/episode").respond(status_code=500)
-    recording = _recording()
+    recording = install_recording_hub()
     result = _make_client().episodes(228, quiet=True)
 
     assert result is None
-    assert _warnings(recording) == []
+    assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
 @respx.mock
@@ -601,12 +589,12 @@ def test_post_command_2xx_non_object_warns_and_returns_none() -> None:
     None - Sonarr may still have queued the command, so leave a breadcrumb.
     """
 
-    recording = _recording()
+    recording = install_recording_hub()
     client = _make_client()
 
     respx.post(f"{_BASE}/command").respond(status_code=201, json=[])
     assert client.refresh_monitored_downloads() is None
-    assert any("unexpected payload" in d.message for d in _warnings(recording))
+    assert any("unexpected payload" in m for m in diagnostic_messages(recording, Severity.WARNING))
 
 
 @respx.mock
@@ -743,14 +731,14 @@ def test_history_since_non_200_returns_none_and_warns() -> None:
     """A non-200 history read returns None (the activity scan fails open)."""
 
     respx.get(f"{_BASE}/history/since").respond(status_code=500)
-    recording = _recording()
+    recording = install_recording_hub()
     result = _make_client().history_since("2026-06-30T08:00:00Z")
 
     assert result is None
     # The single warning for a failed history fetch states its consequence too
     # (the activity monitor only debug-logs, so this line is all the user sees).
-    [warning] = _warnings(recording)
-    assert warning.message == "Could not fetch Sonarr history (status code 500); skipping activity detection this run"
+    [warning] = diagnostic_messages(recording, Severity.WARNING)
+    assert warning == "Could not fetch Sonarr history (status code 500); skipping activity detection this run"
 
 
 @respx.mock
@@ -766,11 +754,11 @@ def test_history_since_non_json_body_returns_none_and_warns() -> None:
     """A 200 with a non-JSON body (e.g. a proxy login page) fails open to None."""
 
     respx.get(f"{_BASE}/history/since").respond(content=b"<html>login</html>", content_type="text/html")
-    recording = _recording()
+    recording = install_recording_hub()
     result = _make_client().history_since("2026-06-30T08:00:00Z")
 
     assert result is None
-    assert _warnings(recording)
+    assert diagnostic_messages(recording, Severity.WARNING)
 
 
 @respx.mock
@@ -778,11 +766,11 @@ def test_history_since_non_array_payload_returns_none_and_warns() -> None:
     """A JSON object (not the expected array) fails open to None."""
 
     respx.get(f"{_BASE}/history/since").respond(json={"message": "unauthorized"})
-    recording = _recording()
+    recording = install_recording_hub()
     result = _make_client().history_since("2026-06-30T08:00:00Z")
 
     assert result is None
-    assert _warnings(recording)
+    assert diagnostic_messages(recording, Severity.WARNING)
 
 
 @respx.mock

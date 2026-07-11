@@ -107,7 +107,7 @@ from seadexarr.modules.paths import AppPaths, resolve_paths
 from seadexarr.modules.runlock import single_instance_lock
 
 from .builders import make_logger
-from .fakes import TtyStringIO
+from .fakes import TtyStringIO, diagnostic_messages, install_recording_hub
 from .test_scan_parity import SUMMARY_MINIMAL
 
 
@@ -466,9 +466,7 @@ class TestConfiguredArrs:
 
     @pytest.fixture
     def recording(self) -> RecordingHub:
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
-        return recording
+        return install_recording_hub()
 
     def test_implicit_selection_skips_the_unconfigured_arr(self, recording: RecordingHub) -> None:
         kept = configured_arrs(
@@ -1226,8 +1224,7 @@ class TestUnknownTrackerWarning:
         return load_shared_config(str(config), BootFlow(), "")
 
     def test_unknown_value_warns_naming_it_and_the_vocabulary(self, tmp_path: Path) -> None:
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
+        recording = install_recording_hub()
         assert self._load(tmp_path, "seadex:\n  trackers: [Nyaaa, Nyaa]\n") is not None
 
         warning = next(d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING)
@@ -1237,8 +1234,7 @@ class TestUnknownTrackerWarning:
         assert "otherprivate" in warning.message  # including the seadex-only catch-alls
 
     def test_known_values_do_not_warn(self, tmp_path: Path) -> None:
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
+        recording = install_recording_hub()
         loaded = self._load(tmp_path, "seadex:\n  trackers: [Nyaa, OtherPrivate]\n")
 
         assert loaded is not None
@@ -1246,10 +1242,33 @@ class TestUnknownTrackerWarning:
         assert [d for d in recording.of_type(Diagnostic) if d.severity >= Severity.WARNING] == []
 
     def test_default_trackers_do_not_warn(self, tmp_path: Path) -> None:
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
+        recording = install_recording_hub()
         assert self._load(tmp_path, "sonarr:\n  url: http://s\n") is not None
         assert [d for d in recording.of_type(Diagnostic) if d.severity >= Severity.WARNING] == []
+
+
+class TestUnexpectedConfigErrorSkips:
+    """``load_shared_config``'s last-resort arm: ERROR with traceback, then skip."""
+
+    def test_unexpected_load_error_reports_and_skips(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # No file content reaches this arm (undecodable bytes are a YAMLError,
+        # bad keys a ValidationError), so the "impossible" failure is injected.
+        def boom(path: str) -> AppConfig:
+            raise RuntimeError(f"config loader broke on {path}")
+
+        monkeypatch.setattr(AppConfig, "load", boom)
+        recording = install_recording_hub()
+        config = str(tmp_path / "config.yml")
+
+        assert load_shared_config(config, BootFlow(), " - will retry") is None
+
+        (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
+        assert error.message == f"Could not load config {config}; skipping this run - will retry"
+        assert error.trace is not None  # unexpected -> the traceback is kept
 
 
 class TestUnwritableDataDir:
@@ -1365,8 +1384,7 @@ class TestScheduledLifecycle:
     def test_invalid_config_still_skips_and_retries(self, logger: logging.Logger) -> None:
         # Only the MISSING file exits: an invalid config is likely mid-edit, so
         # scheduled mode must keep skipping + retrying, never raise out of the loop.
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
+        recording = install_recording_hub()
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
         Path(paths.config).write_text("sonar:\n  url: x\n", encoding="utf-8")
@@ -1384,8 +1402,7 @@ class TestScheduledLifecycle:
 
     def test_sigterm_handler_emits_the_hub_notice_and_exits_zero(self) -> None:
         # Call the handler directly - never deliver a real signal in-process.
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
+        recording = install_recording_hub()
         with pytest.raises(SystemExit) as excinfo:
             _handle_sigterm(signal.SIGTERM, None)
 
@@ -1449,6 +1466,27 @@ class TestScheduledLifecycle:
         assert "bare-metal" in result.output
 
 
+class TestRunLockContention:
+    """A second run against the same data dir warns once and returns False."""
+
+    def test_run_arrs_skips_when_the_lock_is_already_held(self, logger: logging.Logger) -> None:
+        recording = install_recording_hub()
+        paths = resolve_paths()
+        os.makedirs(paths.data_dir)
+
+        # Hold the run lock ourselves; run_arrs must find it taken and bail
+        # before ever reading the config (none exists here - a regression past
+        # the guard would raise the missing-config typer.Exit).
+        with single_instance_lock(paths.data_dir) as held:
+            assert held
+            result = run_arrs([(Arr.SONARR, None)], paths=paths, logger=logger)
+
+        assert result is False
+        assert diagnostic_messages(recording, Severity.WARNING) == [
+            f"Another SeaDexArr run is active in {paths.data_dir}; skipping this run.",
+        ]
+
+
 class TestScheduleHours:
     """Cadence precedence: valid SCHEDULE_TIME env (deprecated) > config > 6.
 
@@ -1458,9 +1496,7 @@ class TestScheduleHours:
 
     @pytest.fixture
     def recording(self) -> RecordingHub:
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
-        return recording
+        return install_recording_hub()
 
     @staticmethod
     def _write_config(tmp_path: Path, interval_hours: float | None = None) -> str:

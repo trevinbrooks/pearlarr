@@ -1,4 +1,7 @@
 # pyright: strict
+# pyright: reportPrivateUsage=false
+# Drives RunLoop._notify_wait_complete directly (the containment arm has no public
+# seam); the repo disables reportPrivateUsage for tests, strict re-flags it.
 """Guards the single end-of-run finalize site.
 
 When ``max_torrents_to_add`` is reached mid-run, ``_grab`` returns a pure bool
@@ -14,20 +17,22 @@ pinned by asserting recorded state.
 """
 
 import logging
+from typing import override
 
 from seadexarr.modules.boot_flow import BootFlow
 from seadexarr.modules.config import AppConfig, Arr
-from seadexarr.modules.manual_import import OutcomeCategory
+from seadexarr.modules.manual_import import Outcome, OutcomeCategory
 from seadexarr.modules.mappings import MappingEntry
-from seadexarr.modules.output import BootStepFinished, CountsMark, Diagnostic, Severity, SeverityCounts, install_hub
+from seadexarr.modules.output import BootStepFinished, CountsMark, Diagnostic, Severity, SeverityCounts
 from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.protocols import ImportCompleter
 from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.run_loop import RunLoop
 from seadexarr.modules.seadex_types import ProgressSink
+from seadexarr.modules.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import FakeCacheStore, make_bare_instance, make_config, make_services
-from .fakes import FakeArrItem, FakeStrategy
+from .fakes import FakeArrItem, FakeStrategy, install_recording_hub
 
 
 class _FakeGateway:
@@ -161,8 +166,7 @@ class TestPerIdErrorContainment:
             process_raises_on=1,
         )
         finalize = _FinalizeRecorder()
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
+        recording = install_recording_hub()
         _engine(finalize, logger).run_sync(
             strategy,
             item_id=None,
@@ -179,6 +183,86 @@ class TestPerIdErrorContainment:
         assert error.trace is not None
         # The single finalize still ran once on the normal end-of-run path.
         assert finalize.calls == 1
+
+
+class _ItemRaisingStrategy(FakeStrategy):
+    """A :class:`FakeStrategy` whose mapping lookup raises for one item id - the
+    seam run_sync hits per item BEFORE the per-id loop (the OUTER containment arm)."""
+
+    def __init__(
+        self,
+        *,
+        items: list[FakeArrItem],
+        anilist_ids: dict[int, MappingEntry],
+        raise_on_item: int,
+    ) -> None:
+        super().__init__(items=items, anilist_ids=anilist_ids)
+        self._raise_on_item = raise_on_item
+
+    @override
+    def item_anilist_ids(self, item: FakeArrItem, log_ignored: bool = True) -> dict[int, MappingEntry]:
+        # Only the per-item scan calls with the log_ignored default; the pre-loop
+        # activity/prefetch passes pass False and must stay healthy.
+        if log_ignored and item.id == self._raise_on_item:
+            raise RuntimeError("mapping lookup exploded")
+        return super().item_anilist_ids(item, log_ignored)
+
+
+class TestPerItemErrorContainment:
+    """A whole item's failure is contained to that item, not the run."""
+
+    def test_one_item_error_does_not_skip_siblings(self, logger: logging.Logger) -> None:
+        strategy = _ItemRaisingStrategy(
+            items=[FakeArrItem(item_id=1, title="A"), FakeArrItem(item_id=2, title="B")],
+            anilist_ids={5: MappingEntry(anilist_id=5)},
+            raise_on_item=1,
+        )
+        finalize = _FinalizeRecorder()
+        recording = install_recording_hub()
+
+        _engine(finalize, logger).run_sync(
+            strategy,
+            item_id=None,
+            dry_run=True,
+            boot=BootFlow(),
+        )
+
+        # Item A raised before its per-id loop began; sibling item B still processed.
+        assert strategy.process_calls == [5]
+        # The per-item failure is an ERROR Diagnostic with its traceback.
+        (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
+        assert error.message == "A: unexpected error: mapping lookup exploded"
+        assert error.trace is not None
+        # The run still reached the single post-loop finalize site.
+        assert finalize.calls == 1
+
+
+class _RaisingNotifier:
+    """A ``Notifier`` stand-in whose wait-summary push raises a non-HTTP error."""
+
+    def push_wait_summary(self, *, arr: Arr, result: WaitResult) -> bool:
+        del arr, result
+        raise RuntimeError("notifier exploded")
+
+
+class TestNotifyWaitCompleteContainment:
+    """A wait-notification failure warns (with traceback) and never propagates."""
+
+    def test_push_failure_is_swallowed_with_a_warning(self) -> None:
+        loop = make_bare_instance(
+            RunLoop,
+            _config=make_config(wait_notify=True),
+            _notifier=_RaisingNotifier(),
+            _ctx=RunContext(arr=Arr.SONARR),
+        )
+        recording = install_recording_hub()
+        result = WaitResult((WaitOutcomeRow("Frieren", Outcome.IMPORTED),), elapsed_s=60)
+
+        loop._notify_wait_complete(result)  # must not raise
+
+        (warning,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
+        assert warning.message == "Wait completion notification failed unexpectedly"
+        assert warning.trace is not None
 
 
 class TestSeaDexBootNote:
@@ -198,8 +282,7 @@ class TestSeaDexBootNote:
             items=[FakeArrItem(item_id=1, title="A")],
             anilist_ids={1: MappingEntry(anilist_id=1)},
         )
-        recording = RecordingHub()
-        install_hub(recording.hub)
+        recording = install_recording_hub()
         _engine(_FinalizeRecorder(), logger, seadex=seadex).run_sync(
             strategy,
             item_id=None,

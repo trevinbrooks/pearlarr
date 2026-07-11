@@ -44,8 +44,7 @@ from seadexarr.modules.manual_import import (
     TorrentTelemetry,
     WaitOutcome,
 )
-from seadexarr.modules.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitSnapshot, install_hub
-from seadexarr.modules.output.recording import RecordingHub
+from seadexarr.modules.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitSnapshot
 from seadexarr.modules.reporter import RunContext
 from seadexarr.modules.run_loop import RunLoop
 from seadexarr.modules.torrents import AddOutcome
@@ -66,7 +65,7 @@ from .builders import (
     one_release_dict,
     pending_import,
 )
-from .fakes import CaptureHandler, FakeStrategy
+from .fakes import CaptureHandler, FakeStrategy, install_recording_hub
 
 
 class FakeStateEnum:
@@ -506,8 +505,7 @@ class TestPruneExpiredPending:
             strategy=_RecordingStrategy(),
             store_records=records,
         )
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
+        recording = install_recording_hub()
 
         mgr.prune_expired_pending()
 
@@ -1201,8 +1199,7 @@ class TestRunMonitor:
             import_poll_interval=30,
         )
         view = RecordingWaitView()
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
+        recording = install_recording_hub()
 
         def interrupt(_seconds: float) -> None:
             raise KeyboardInterrupt
@@ -1270,6 +1267,21 @@ class TestRunMonitor:
 
         assert view.final("h").outcome is Outcome.NOTHING_TO_IMPORT
         assert set(mgr._pending_records()) == {"h"}
+
+    def test_swallowed_import_announces_an_error_and_leaves(self) -> None:
+        # The observable half of the swallow above: the failure is announced as
+        # an ERROR Diagnostic carrying its traceback, and the probe says LEAVE.
+        strategy = _RecordingStrategy(completed_error=RuntimeError("boom"))
+        mgr = make_orchestration_manager(qbit=None, strategy=strategy)
+        recording = install_recording_hub()
+
+        probe = mgr.try_import_completed(pending_import(infohash="h", added_at=_FRESH), "/downloads/x")
+
+        assert probe == ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
+        (error,) = recording.of_type(Diagnostic)
+        assert error.severity is Severity.ERROR
+        assert error.message == "Manual import failed for Show · SubGroup; leaving it for a later run"
+        assert error.trace is not None
 
     def test_imported_terminal_row_carries_files_count(self) -> None:
         # The graduation ledger states "(N files · elapsed)": a terminal imported
@@ -1899,8 +1911,7 @@ class TestPostImportCategory:
             strategy=_RecordingStrategy(),
             post_import_category="seadexarr-done",
         )
-        recording = RecordingHub()
-        install_hub(recording.hub)  # conftest teardown restores the default
+        recording = install_recording_hub()
         mgr.apply_post_import_category("h", "Show S01")  # must not raise
 
         assert recording.of_type(Diagnostic) == []

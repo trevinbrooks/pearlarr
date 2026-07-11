@@ -30,13 +30,13 @@ from seadexarr.modules.discord import (
 )
 from seadexarr.modules.manual_import import Outcome
 from seadexarr.modules.notify import GrabNotice, Notifier
-from seadexarr.modules.output import Diagnostic, Severity, install_hub
-from seadexarr.modules.output.recording import RecordingHub
+from seadexarr.modules.output import Severity
 from seadexarr.modules.seadex_types import SeadexDict
 from seadexarr.modules.torrents import AddOutcome, ReleaseOutcome
 from seadexarr.modules.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import SEP, make_entry_record, rg_group, url_item
+from .fakes import diagnostic_messages, install_recording_hub
 
 
 @pytest.fixture
@@ -51,20 +51,6 @@ def pushes(monkeypatch: pytest.MonkeyPatch) -> list[DiscordEmbed]:
 
     monkeypatch.setattr(notify, "discord_push", fake_discord_push)
     return recorded
-
-
-def _capture() -> RecordingHub:
-    """Install a fresh RecordingHub (the notifier's warnings ride the hub)."""
-
-    recording = RecordingHub()
-    install_hub(recording.hub)  # conftest teardown restores the default
-    return recording
-
-
-def _warnings(recording: RecordingHub) -> list[str]:
-    """The recorded WARNING-severity Diagnostic messages."""
-
-    return [d.message for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
 
 
 def _http_error(status: int, *, retry_after: str | None = None) -> httpx.HTTPStatusError:
@@ -155,11 +141,11 @@ def test_push_wait_summary_webhook_failure_warns_and_returns_false() -> None:
     respx.post("https://hook.example").mock(side_effect=httpx.ConnectError("webhook down"))
     notifier = Notifier(discord_url=None, webhook_url="https://hook.example", web=httpx.Client())
 
-    recording = _capture()
+    recording = install_recording_hub()
     posted = notifier.push_wait_summary(arr=Arr.SONARR, result=_result())  # must not raise
 
     assert posted is False
-    [warning] = _warnings(recording)
+    [warning] = diagnostic_messages(recording, Severity.WARNING)
     # The exception is never interpolated: its str embeds the webhook URL,
     # which IS the credential. The config key points the user at the fix.
     assert warning == "Wait-report webhook POST failed (ConnectError) - check notifications.wait_webhook_url"
@@ -502,11 +488,11 @@ def test_push_grab_discord_failure_warns_and_returns_false(monkeypatch: pytest.M
     monkeypatch.setattr(notify, "discord_push", raising_discord_push)
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
 
-    recording = _capture()
+    recording = install_recording_hub()
     posted = _push_grab(notifier)  # must not raise
 
     assert posted is False
-    [warning] = _warnings(recording)
+    [warning] = diagnostic_messages(recording, Severity.WARNING)
     # The exception type only - an httpx exception's str embeds the webhook
     # URL (the credential) - and the config key to check.
     assert warning == "Discord notification failed (ConnectError) - check notifications.discord_url"
@@ -526,13 +512,13 @@ def test_push_grab_4xx_disables_discord_for_the_run(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(notify, "discord_push", raising_discord_push)
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
 
-    recording = _capture()
+    recording = install_recording_hub()
     assert _push_grab(notifier) is False
     assert _push_grab(notifier) is False
 
     assert posts == ["https://discord.example"]  # the dead webhook is POSTed once
     assert notifier.enabled is False
-    warnings = _warnings(recording)
+    warnings = diagnostic_messages(recording, Severity.WARNING)
     assert warnings == [
         "Discord notification failed (HTTP 404) - disabling Discord notifications "
         "for this run; check notifications.discord_url",
@@ -549,12 +535,12 @@ def test_push_grab_429_retry_delivers_after_default_delay(monkeypatch: pytest.Mo
     sleeps = _record_sleeps(monkeypatch)
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
 
-    recording = _capture()
+    recording = install_recording_hub()
     assert _push_grab(notifier) is True
 
     assert push.posts == ["https://discord.example"] * 2  # original + retry
     assert sleeps == [1.0]  # missing header -> the 1s default
-    assert _warnings(recording) == []
+    assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
 @pytest.mark.parametrize(
@@ -593,16 +579,16 @@ def test_push_grab_429_retry_exhausted_drops_and_stays_enabled(monkeypatch: pyte
     _record_sleeps(monkeypatch)  # neutralize the retry delay + the 1s pacing
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
 
-    recording = _capture()
+    recording = install_recording_hub()
     assert _push_grab(notifier) is False
-    assert _warnings(recording) == [
+    assert diagnostic_messages(recording, Severity.WARNING) == [
         "Discord notification failed (HTTP 429) - rate limited by Discord; this notification was dropped",
     ]
     assert _push_grab(notifier) is False  # a later push still attempts
 
     assert notifier.enabled is True  # NOT disabled - later pushes still go out
     assert posts == ["https://discord.example"] * 4  # (original + retry) per push
-    warnings = _warnings(recording)
+    warnings = diagnostic_messages(recording, Severity.WARNING)
     assert len(warnings) == 2  # one truthful warning per dropped push
     assert all("discord_url" not in message for message in warnings)  # config isn't at fault
     assert all("secret-token" not in message for message in warnings)
@@ -617,13 +603,13 @@ def test_push_grab_429_long_retry_after_skips_the_retry(monkeypatch: pytest.Monk
     sleeps = _record_sleeps(monkeypatch)
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
 
-    recording = _capture()
+    recording = install_recording_hub()
     assert _push_grab(notifier) is False
 
     assert push.posts == ["https://discord.example"]  # no retry POST
     assert sleeps == []  # the 30s was NOT slept
     assert notifier.enabled is True
-    assert _warnings(recording) == [
+    assert diagnostic_messages(recording, Severity.WARNING) == [
         "Discord notification failed (HTTP 429) - rate limited by Discord; this notification was dropped",
     ]
 
@@ -641,9 +627,12 @@ def test_push_grab_5xx_stays_per_push(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(time, "sleep", no_sleep)
     notifier = Notifier(discord_url="https://discord.example", web=httpx.Client())
 
-    recording = _capture()
+    recording = install_recording_hub()
     assert _push_grab(notifier) is False
     assert _push_grab(notifier) is False
 
     assert notifier.enabled is True
-    assert _warnings(recording) == ["Discord notification failed (HTTP 500) - check notifications.discord_url"] * 2
+    assert (
+        diagnostic_messages(recording, Severity.WARNING)
+        == ["Discord notification failed (HTTP 500) - check notifications.discord_url"] * 2
+    )
