@@ -8,7 +8,7 @@
 Pearlarr automatically grabs the best anime releases tagged on [SeaDex](https://releases.moe) for your [Sonarr](https://sonarr.tv) and [Radarr](https://radarr.video) libraries.
 
 SeaDex is the curated index of the best release of every anime.
-On a schedule, Pearlarr maps your library to SeaDex's entries, picks the best release you don't already have, grabs it through qBittorrent, can shepherd the download into Sonarr, and can notify you on Discord:
+On a schedule, Pearlarr maps your library to SeaDex's entries, picks the best release you don't already have, grabs it through qBittorrent, and can shepherd the download into Sonarr and notify you on Discord:
 
 ![A Pearlarr grab notification in Discord: the release, its tracker, size and audio, the episodes covered, the group being replaced, and SeaDex's notes](https://raw.githubusercontent.com/trevinbrooks/pearlarr/main/docs/assets/example_post.png)
 
@@ -16,7 +16,7 @@ On a schedule, Pearlarr maps your library to SeaDex's entries, picks the best re
 
 Each run walks your library title by title:
 
-1. **Map** - Sonarr series and Radarr movies are resolved to AniList IDs, the key SeaDex indexes by, through three public ID-mapping sources.
+1. **Map** - Sonarr series and Radarr movies are resolved to AniList IDs (the key SeaDex indexes by) through three public ID-mapping sources.
 2. **Check** - the title's SeaDex entry is fetched, unless the cache shows nothing relevant changed since the last run.
 3. **Select** - the entry's torrents are cut down to the preferred release: your tag and tracker filters, SeaDex's "best" marks, your audio preference.
 4. **Compare** - the picks are matched against what the arr already has (release groups, episodes, file sizes), so only missing or outdated releases go further.

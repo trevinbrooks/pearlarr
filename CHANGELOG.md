@@ -37,7 +37,11 @@ Coming from upstream 0.9.x:
 - `seadex.ignore_anilist_ids` (skip specific AniList IDs), `seadex.ignore_tags` (filter releases by SeaDex tag), and `qbittorrent.tags` (tag every added torrent).
 - Discord notifications are rich embeds with colors, links and a version footer.
 - The console shows a live cockpit during startup and the import-wait pass (spinners, ticking timers, files-imported progress).
-- New CLI surface: `run single --dry-run` (simulate without grabbing, caching, or notifying), `--movie-id`/`--series-id` (single-title runs by TMDB/TVDB ID), `--import-wait-mode` and `--log-level` per-run overrides; `config validate` and `config show` (effective config with secrets redacted, safe to paste into a bug report); `cache stats` and `cache check`; `pearlarr --version`, `-h` everywhere, group commands print their help.
+- New CLI surface:
+  - `run single --dry-run` (simulate without grabbing, caching, or notifying), `--movie-id`/`--series-id` (single-title runs by TMDB/TVDB ID), and `--import-wait-mode`/`--log-level` per-run overrides.
+  - `config validate` and `config show` (effective config with secrets redacted, safe to paste into a bug report).
+  - `cache stats` and `cache check`.
+  - `pearlarr --version`, `-h` everywhere; a bare group command prints its help.
 - The scheduled-run cadence is a config field, `schedule.interval_hours` (default 6), re-read each cycle so an edit takes effect without a restart.
 
 ### Changed
