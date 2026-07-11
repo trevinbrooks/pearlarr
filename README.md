@@ -46,7 +46,7 @@ $ docker compose restart pearlarr
 $ docker compose logs -f pearlarr
 ```
 
-The container schedules its own runs - every six hours by default, tunable with `PEARLARR_CRON`.
+The container schedules its own runs; set `PEARLARR_CRON` to change the cadence.
 One-off commands run through the same service:
 
 ```console
@@ -110,7 +110,7 @@ The config is validated on load: an unknown or misspelled key fails with an erro
 - **Downloads come from public trackers only**, currently Nyaa, AnimeTosho, and RuTracker.
   A winning release on another public tracker is skipped with a warning and re-considered once support lands.
 - **Private releases are never grabbed** - SeaDex carries no download link for them, and no private-tracker auth is supported.
-  `seadex.private_releases` decides what happens when a title's preferred release is private-only: warn every run, or fall back to the best public alternative.
+  `seadex.private_releases` decides what happens when a title's preferred release is private-only.
 - **qBittorrent is the only download client**; Usenet is out of scope.
   More clients and trackers are on the roadmap.
 - **The supported interfaces** are the CLI, the config schema, and the notification payloads.

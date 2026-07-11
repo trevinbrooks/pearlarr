@@ -11,14 +11,14 @@ services:
     # HERE - not environment: keys. Match them to the ./config owner.
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
-      - TZ=America/New_York            # PEARLARR_CRON fires in this zone (default UTC)
-      # - PEARLARR_CRON=0 */6 * * *   # cron schedule (default: every 6 hours)
-      # - PEARLARR_RUN_ON_START=true  # also run once at container start (default true)
+      - TZ=America/New_York            # PEARLARR_CRON fires in this zone
+      # - PEARLARR_CRON=0 */6 * * *    # recurring-run schedule (five-field cron)
+      # - PEARLARR_RUN_ON_START=false  # skip the catch-up run at container start
     volumes:
       - ./config:/config               # config.yml, caches and logs, all in one dir
     restart: unless-stopped
-    # A blocking imports.wait_mode can hold a run for up to an hour; give
-    # SIGTERM room before Docker's 10s default SIGKILLs a mid-import run.
+    # A blocking imports.wait_mode can hold a run for up to imports.wait_timeout;
+    # give SIGTERM room before Docker's 10s default SIGKILLs a mid-import run.
     # stop_grace_period: 1h
 
   # Reference sidecars: pearlarr reaches compose services by DNS name, so

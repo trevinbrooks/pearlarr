@@ -67,7 +67,7 @@ environment:
 ### Stopping, and `stop_grace_period`
 
 `docker stop` sends SIGTERM to supercronic, which stops scheduling and waits for an in-flight run to finish; Docker escalates to SIGKILL after `stop_grace_period`, default ten seconds.
-Ten seconds is fine for the default configuration, but a blocking `imports.wait_mode` can legitimately hold a run for up to `imports.wait_timeout` (default one hour) - raise the grace period so a routine `docker stop` does not SIGKILL a mid-import run:
+Ten seconds is fine for the default configuration, but a blocking `imports.wait_mode` can legitimately hold a run for up to `imports.wait_timeout` - raise the grace period past it so a routine `docker stop` does not SIGKILL a mid-import run:
 
 ```yaml
 stop_grace_period: 1h
@@ -84,7 +84,7 @@ It is purely informational - Docker does not restart anything on unhealthy, and 
 
 Two options:
 
-- **The built-in loop** - `pearlarr run scheduled` (or bare `pearlarr`) runs every configured arr each `schedule.interval_hours` (default 6), re-reading the config each cycle so edits take effect without a restart.
+- **The built-in loop** - `pearlarr run scheduled` (or bare `pearlarr`) runs every configured arr each `schedule.interval_hours`, re-reading the config each cycle so edits take effect without a restart.
   Run it under a process supervisor (systemd service, launchd, etc.); it exits 0 on SIGTERM, so ordinary service stops are clean.
 - **Your own scheduler** - cron or a systemd timer invoking `pearlarr run single`.
   Failed runs exit non-zero, so cron mail and `OnFailure=` hooks work as expected.
