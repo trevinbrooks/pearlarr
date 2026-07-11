@@ -250,7 +250,7 @@ class TestCorruptDatabaseIsReportedNotCrashed:
 
 
 class TestActiveRunGuard:
-    """Finding #5: destructive commands refuse while a run holds the lock."""
+    """Finding #5: cache commands refuse while a run holds the lock."""
 
     def test_remove_refuses_while_a_run_holds_the_lock(
         self,
@@ -287,6 +287,22 @@ class TestActiveRunGuard:
         assert (tmp_path / "cache.db").exists()
         # The refusal is a user-facing stderr line, not a silent no-op (capturing
         # it also keeps it off the terminal under `-s`).
+        assert "another pearlarr run is active" in capsys.readouterr().err.lower()
+
+    def test_backup_refuses_while_a_run_holds_the_lock(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
+        _build_cache(tmp_path)
+
+        # A mid-run snapshot would capture half-committed cycle state; backup
+        # refuses like restore/remove and writes nothing.
+        with single_instance_lock(str(tmp_path)):
+            assert cache_backup() is False
+        assert not (tmp_path / "cache.backup.db").exists()
         assert "another pearlarr run is active" in capsys.readouterr().err.lower()
 
 

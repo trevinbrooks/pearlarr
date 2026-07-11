@@ -139,8 +139,9 @@ def _echo_missing_cache(path: str) -> bool:
 def _refused_by_active_run(acquired: bool, data_dir: str) -> bool:
     """True (after echoing why) when another run holds the single-instance lock.
 
-    Modifying cache.db while a run is live would clobber the in-flight database,
-    so the cache commands take the same lock the runner uses and refuse instead.
+    Touching the cache files while a run is live would clobber the in-flight
+    database or snapshot half-committed cycle state, so the cache commands take
+    the same lock the runner uses and refuse instead.
     """
 
     if acquired:
@@ -736,29 +737,33 @@ def cache_backup() -> bool:
     if _echo_missing_cache(paths.cache):
         return False
 
-    tmp_backup = paths.cache_backup + ".tmp"
-    source = sqlite3.connect(paths.cache)
-    try:
-        dest = sqlite3.connect(tmp_backup)
-        try:
-            source.backup(dest)
-        finally:
-            dest.close()
-    except sqlite3.DatabaseError as e:
-        # Report the corrupt/torn source cleanly and drop the torn temp file;
-        # a previous good cache.backup.db is left untouched.
-        with contextlib.suppress(OSError):
-            os.remove(tmp_backup)
-        typer.echo(f"cache backup failed: {e}", err=True)
-        return False
-    finally:
-        source.close()
+    with single_instance_lock(paths.data_dir) as acquired:
+        if _refused_by_active_run(acquired, paths.data_dir):
+            return False
 
-    try:
-        os.replace(tmp_backup, paths.cache_backup)
-    except OSError as e:
-        typer.echo(f"cache backup failed: {e}", err=True)
-        return False
+        tmp_backup = paths.cache_backup + ".tmp"
+        source = sqlite3.connect(paths.cache)
+        try:
+            dest = sqlite3.connect(tmp_backup)
+            try:
+                source.backup(dest)
+            finally:
+                dest.close()
+        except sqlite3.DatabaseError as e:
+            # Report the corrupt/torn source cleanly and drop the torn temp file;
+            # a previous good cache.backup.db is left untouched.
+            with contextlib.suppress(OSError):
+                os.remove(tmp_backup)
+            typer.echo(f"cache backup failed: {e}", err=True)
+            return False
+        finally:
+            source.close()
+
+        try:
+            os.replace(tmp_backup, paths.cache_backup)
+        except OSError as e:
+            typer.echo(f"cache backup failed: {e}", err=True)
+            return False
     typer.echo(f"Backed up cache to {paths.cache_backup}.")
     return True
 
