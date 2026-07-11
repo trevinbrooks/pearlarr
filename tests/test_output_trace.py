@@ -28,7 +28,7 @@ def _capture() -> CapturedTrace:
 def test_plain_text_carries_the_full_stdlib_traceback() -> None:
     trace = _capture()
 
-    plain = trace.plain_text()
+    plain = trace.plain
     assert "ValueError: request failed" in plain
     assert "_leak" in plain
     assert plain == trace.plain

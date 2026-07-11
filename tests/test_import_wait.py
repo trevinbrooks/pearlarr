@@ -1544,7 +1544,7 @@ class _FinalizeReporter:
         self,
         ctx: RunContext,
         *,
-        is_preview: bool,
+        preview: bool,
         has_client: bool,
     ) -> bool:
         self._calls.append("summary")

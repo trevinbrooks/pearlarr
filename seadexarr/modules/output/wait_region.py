@@ -143,6 +143,16 @@ class WaitRegion(LiveRegion):
     one fold step - and defensively by ``begin_cycle``/``close``.
     """
 
+    # The frame snapshot the refresh thread reads: caps/layout are set once at
+    # Live start (a null-probe placeholder until then; the anchor guard means a
+    # frame never builds before the first live progress). Declared here, seeded
+    # by _reset_frame — __init__ and the per-pass/per-cycle resets share ONE
+    # null-frame initializer, so the two states can never drift.
+    _caps: Capabilities
+    _layout: _TableLayout
+    _anchor: _FrameAnchor | None
+    _live_frame: _LiveFrame | None
+
     def __init__(
         self,
         console_source: Callable[[], Console | None],
@@ -155,13 +165,9 @@ class WaitRegion(LiveRegion):
         self._time_source = time_source
         # The non-TTY digest cadence (forced-rich on a non-live console).
         self._throttle = PulseThrottle()
-        # The frame snapshot the refresh thread reads: caps/layout are set once at
-        # Live start (a null-probe placeholder until then; the anchor guard means
-        # a frame never builds before the first live progress).
-        self._caps = detect_capabilities(None)
-        self._layout = _TableLayout.for_width(self._caps.width)
-        self._anchor: _FrameAnchor | None = None
-        self._live_frame: _LiveFrame | None = None
+        # Seed for _reset_frame's teardown probe, then build the null frame state.
+        self._live_frame = None
+        self._reset_frame()
 
     def handle(self, event: WaitEvent) -> None:
         # Main-thread report of any refresh-thread render failure (the latch).
@@ -230,9 +236,9 @@ class WaitRegion(LiveRegion):
     def _collect_frame_failure(self) -> None:
         """Report a latched refresh-thread render failure, from the MAIN thread.
 
-        If this lands mid-hub-dispatch the drain queue handles it; mid-BRIDGE-
-        dispatch the N2 path enqueues it file-only. Either way: never the
-        refresh thread.
+        A file-only WARNING through the hub (``_report_contained``): mid-dispatch
+        it enqueues under the baton and lands in the file — never the refresh
+        thread, and never silently dropped at a logger level gate.
         """
 
         frame = self._live_frame
@@ -240,7 +246,7 @@ class WaitRegion(LiveRegion):
             return
         failure = frame.take_failure()
         if failure is not None:
-            self._logger.debug("wait frame render failed", exc_info=failure)
+            self._report_contained("wait frame render failed", failure)
 
     def _reset_frame(self) -> None:
         """Drop any stale live slot + frame snapshot (per pass and per cycle)."""

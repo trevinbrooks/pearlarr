@@ -319,7 +319,7 @@ class TestRunSummary:
 
     def test_real_run_emits_the_scoreboard(self) -> None:
         reporter, events = _record()
-        assert reporter.log_run_summary(self._ctx_with_data(), is_preview=False, has_client=True)
+        reporter.log_run_summary(self._ctx_with_data(), preview=False, has_client=True)
 
         summary = self._summary_of(events).summary
         assert summary.dry_run is False and summary.dry_run_note is None
@@ -333,13 +333,13 @@ class TestRunSummary:
 
     def test_dry_run_note_wording_tracks_the_client(self) -> None:
         reporter, events = _record()
-        assert reporter.log_run_summary(self._ctx_with_data(), is_preview=True, has_client=False)
+        reporter.log_run_summary(self._ctx_with_data(), preview=True, has_client=False)
         summary = self._summary_of(events).summary
         assert summary.dry_run is True
         assert summary.dry_run_note == "qBittorrent not configured; nothing grabbed"
 
         reporter, events = _record()
-        assert reporter.log_run_summary(self._ctx_with_data(), is_preview=True, has_client=True)
+        reporter.log_run_summary(self._ctx_with_data(), preview=True, has_client=True)
         assert self._summary_of(events).summary.dry_run_note == "nothing grabbed"
 
     def test_counts_mark_stays_bound_to_the_counter_it_was_stamped_on(self) -> None:
@@ -370,7 +370,7 @@ class TestRunSummary:
         counters[-1].record(Severity.ERROR)
         counters[-1].record(Severity.ERROR)
 
-        reporter.log_run_summary(ctx, is_preview=False, has_client=True)
+        reporter.log_run_summary(ctx, preview=False, has_client=True)
         summary = self._summary_of(events).summary
         assert summary.warnings == 1  # the original counter's record, not garbage
         assert summary.errors == 0  # the swapped-in counter's errors never leak
@@ -385,7 +385,7 @@ def _summary_messages(
 
     ctx.import_wait_mode = import_wait_mode
     reporter, events = _record()
-    reporter.log_run_summary(ctx, is_preview=False, has_client=True)
+    reporter.log_run_summary(ctx, preview=False, has_client=True)
     return _event_messages(events)
 
 

@@ -72,7 +72,7 @@ from .scan_lines import LegacyLine, ScanEvent, render_legacy_lines, scan_event_l
 from .trace import CapturedTrace
 from .wait_region import WaitRegion
 from ..console_caps import CapsCache, console_of
-from ..log import INDENT, LOG_NAME, RichConsoleHandler, badge_line, console_level
+from ..log import INDENT, LOG_NAME, RichConsoleHandler, badge_line, console_level, print_literal
 
 
 def live_console() -> Console | None:
@@ -215,8 +215,7 @@ class RichRenderer:
         console = self._console_source()
         if console is None:
             return
-        # Messages print literally (highlight=False, no markup): "[1/182]" stays text.
-        console.print(diagnostic_text(event, indented=self._cockpit_open()), highlight=False, soft_wrap=True)
+        print_literal(console, diagnostic_text(event, indented=self._cockpit_open()))
         if event.trace is not None:
             console.print(
                 Traceback(

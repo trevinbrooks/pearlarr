@@ -333,7 +333,7 @@ class RunReporter:
 
     # --- run / item boundaries -----------------------------------------------
 
-    def log_arr_start(self, arr: Arr, n_items: int) -> bool:
+    def log_arr_start(self, arr: Arr, n_items: int) -> None:
         """Announce the start of the run (the per-arr scan-open boundary).
 
         Args:
@@ -343,7 +343,6 @@ class RunReporter:
 
         self._close_entry()
         self._emit(ScanStarted(arr=arr, total=n_items))
-        return True
 
     def log_arr_item_start(
         self,
@@ -351,7 +350,7 @@ class RunReporter:
         item_title: str,
         n_item: int,
         n_items: int,
-    ) -> bool:
+    ) -> None:
         """Announce the start of one Arr item (closes the previous item/entry).
 
         Args:
@@ -363,7 +362,6 @@ class RunReporter:
 
         self._close_entry()
         self._emit(ItemStarted(arr=arr, index=n_item, total=n_items, title=item_title))
-        return True
 
     # The two close boundaries carry no ``log_`` prefix and return nothing: they
     # state a boundary rather than report one, and no renderer draws a line for
@@ -393,7 +391,7 @@ class RunReporter:
 
     # --- self-contained ledger rows ------------------------------------------
 
-    def log_entry_status(self, state: EntryState, label: str) -> bool:
+    def log_entry_status(self, state: EntryState, label: str) -> None:
         """Emit a one-line entry status as a self-contained (col-0) ledger row.
 
         Args:
@@ -402,9 +400,8 @@ class RunReporter:
         """
 
         self._ledger(state, label)
-        return True
 
-    def log_arr_item_unmonitored(self, ctx: RunContext, item_title: str) -> bool:
+    def log_arr_item_unmonitored(self, ctx: RunContext, item_title: str) -> None:
         """Report skipping an unmonitored item (bumps the tally, emits its row).
 
         Args:
@@ -414,9 +411,8 @@ class RunReporter:
 
         ctx.stats.unmonitored += 1
         self._ledger(EntryState.UNMONITORED, item_title)
-        return True
 
-    def log_no_anilist_mappings(self, ctx: RunContext, title: str) -> bool:
+    def log_no_anilist_mappings(self, ctx: RunContext, title: str) -> None:
         """Report a title with no AniList mappings (bumps the tally, emits its row).
 
         Args:
@@ -426,9 +422,8 @@ class RunReporter:
 
         ctx.stats.no_mappings += 1
         self._ledger(EntryState.NO_MAPPING, title)
-        return True
 
-    def log_ignored_anilist_id(self, al_id: int) -> bool:
+    def log_ignored_anilist_id(self, al_id: int) -> None:
         """Report an AniList ID skipped via the ignore list.
 
         Args:
@@ -436,9 +431,8 @@ class RunReporter:
         """
 
         self._ledger(EntryState.IGNORED, f"AniList #{al_id}")
-        return True
 
-    def log_no_sd_entry(self, ctx: RunContext, al_id: int) -> bool:
+    def log_no_sd_entry(self, ctx: RunContext, al_id: int) -> None:
         """Report an id with no SeaDex entry (bumps the tally, emits a titled row).
 
         Args:
@@ -447,9 +441,9 @@ class RunReporter:
         """
 
         ctx.stats.no_seadex_entry += 1
-        return self._log_titled_entry(EntryState.NO_ENTRY, al_id)
+        self._log_titled_entry(EntryState.NO_ENTRY, al_id)
 
-    def log_seadex_outage_skip(self, ctx: RunContext, al_id: int) -> bool:
+    def log_seadex_outage_skip(self, ctx: RunContext, al_id: int) -> None:
         """Report a title whose SeaDex lookup was skipped (SeaDex unreachable).
 
         The outage skip is NOT a missing entry - the gateway warned once when
@@ -469,9 +463,8 @@ class RunReporter:
         self._log_titled_entry(EntryState.SKIPPED, al_id, name=entry.name if entry is not None else None)
         # Scope-free (the titled row closed the entry): the reason rides col-0.
         self.detail("status", StyledValue("lookup skipped (SeaDex unreachable)", Accent.DIM))
-        return True
 
-    def _log_titled_entry(self, state: EntryState, al_id: int, *, name: str | None = None) -> bool:
+    def _log_titled_entry(self, state: EntryState, al_id: int, *, name: str | None = None) -> None:
         """A ledger row for an id with no SeaDex entry block to show.
 
         Renders the caller-supplied ``name`` when one is known (the outage path
@@ -487,7 +480,6 @@ class RunReporter:
         # would just duplicate it. PLAIN accent -> style-less kv, as today.
         if title:
             self.detail("anilist", StyledValue(str(al_id)))
-        return True
 
     # --- entry-block headers -------------------------------------------------
 
@@ -497,7 +489,7 @@ class RunReporter:
         anilist_title: str,
         sd_entry: EntryRecord,
         coverage: str | None = None,
-    ) -> bool:
+    ) -> None:
         """Open the active-entry block: a focal "checking" header + coverage/URL.
 
         The entry being evaluated is the focal header of the title block, keyed on
@@ -529,7 +521,6 @@ class RunReporter:
                 incomplete=sd_entry.is_incomplete,
             ),
         )
-        return True
 
     def log_cached_entry(
         self,
@@ -540,7 +531,7 @@ class RunReporter:
         # row style on state, so a wider type would let a caller render a "cached"
         # row green/undimmed (the old always-grey50 invariant, now type-pinned).
         state: Literal[EntryState.UNCHANGED, EntryState.IN_RADARR] = EntryState.UNCHANGED,
-    ) -> bool:
+    ) -> None:
         """Emit a cached entry's self-contained block: a dim header plus its coverage/URL line.
 
         Cached entries have been unchanged since the last run, so they collapse to
@@ -582,7 +573,6 @@ class RunReporter:
                 url=entry.url if entry is not None else None,
             ),
         )
-        return True
 
     # The carried-over pending states that get an inline entry header + a
     # scoreboard counter. MISSING / ERRORED are handled (drop / leave) by the
@@ -628,7 +618,7 @@ class RunReporter:
 
     # --- entry-block details -------------------------------------------------
 
-    def log_no_seadex_releases(self, ctx: RunContext) -> bool:
+    def log_no_seadex_releases(self, ctx: RunContext) -> None:
         """Report no suitable SeaDex releases (a status detail on the open entry).
 
         Args:
@@ -637,7 +627,6 @@ class RunReporter:
 
         ctx.stats.no_releases += 1
         self.detail("status", StyledValue("no suitable releases on SeaDex", Accent.DIM))
-        return True
 
     def log_seadex_action(
         self,
@@ -717,7 +706,7 @@ class RunReporter:
         )
         return True
 
-    def log_max_torrents_added(self, cap: int) -> bool:
+    def log_max_torrents_added(self, cap: int) -> None:
         """Report hitting the per-run torrent cap (advanced.max_torrents_to_add).
 
         Args:
@@ -729,7 +718,6 @@ class RunReporter:
         # misplace any reconcile diagnostics under the capped title.
         self._close_entry()
         self._emit(CapReached(cap=cap))
-        return True
 
     # --- summary boundary ----------------------------------------------------
 
@@ -742,7 +730,7 @@ class RunReporter:
 
         return self._counts().bound_mark()
 
-    def log_run_summary(self, ctx: RunContext, *, is_preview: bool, has_client: bool) -> bool:
+    def log_run_summary(self, ctx: RunContext, *, preview: bool, has_client: bool) -> None:
         """Emit the end-of-run scoreboard (the summary boundary; closes the entry).
 
         The arr and the resolved wait mode are read off ``ctx``; the carried-over
@@ -751,7 +739,7 @@ class RunReporter:
 
         Args:
             ctx (RunContext): The run's state (arr, wait mode, stats, totals, clock).
-            is_preview (bool): The run grabbed nothing (dry run or no client).
+            preview (bool): The run grabbed nothing (dry run or no client).
             has_client (bool): A qBittorrent client is configured (distinguishes
                 the dry-run note wording).
         """
@@ -765,7 +753,7 @@ class RunReporter:
         # A run grabs nothing when explicitly flagged dry, or when no client is
         # configured at all - the note wording distinguishes the two.
         dry_run_note = None
-        if is_preview:
+        if preview:
             dry_run_note = "nothing grabbed" if has_client else "qBittorrent not configured; nothing grabbed"
 
         tally = RunTally.from_stats(ctx.stats)
@@ -775,12 +763,11 @@ class RunReporter:
             RunSummaryReady(
                 summary=RunSummary(
                     arr=ctx.arr,
-                    dry_run=is_preview,
                     dry_run_note=dry_run_note,
                     added_count=ctx.torrents_added,
                     tally=tally,
                     wait_mode_on=ctx.import_wait_mode is not ImportWaitMode.OFF,
-                    warnings=since.warnings,
+                    warnings=since.warning,
                     # The tally's errors property sums ERROR and CRITICAL, as today.
                     errors=since.errors,
                     elapsed_s=elapsed_s,
@@ -788,4 +775,3 @@ class RunReporter:
                 ),
             ),
         )
-        return True

@@ -22,6 +22,7 @@ from rich.spinner import Spinner
 from seadexarr.modules.config import Arr
 from seadexarr.modules.manual_import import Outcome
 from seadexarr.modules.output import (
+    Diagnostic,
     Event,
     Phase,
     RichRenderer,
@@ -30,6 +31,7 @@ from seadexarr.modules.output import (
     ScopeId,
     ScopeKind,
     ScopeOpened,
+    Severity,
     TorrentGraduated,
     TorrentView,
     WaitFinished,
@@ -42,7 +44,7 @@ from seadexarr.modules.output.recording import RecordingHub
 from seadexarr.modules.output.wait_lines import live_model
 from seadexarr.modules.output.wait_region import WaitRegion, _LiveFrame
 
-from .fakes import CaptureHandler, strip_ansi
+from .fakes import CaptureHandler, install_recording_hub, strip_ansi
 
 
 def _render_group(group: Group) -> str:
@@ -418,38 +420,39 @@ def _latched_region(console: Console) -> tuple[WaitRegion, _LiveFrame]:
     return region, frame
 
 
-def test_wait_region_reports_a_latched_failure_once_on_the_next_handle(app_logger: logging.Logger) -> None:
-    capture = CaptureHandler()
-    app_logger.addHandler(capture)
+def test_wait_region_reports_a_latched_failure_once_on_the_next_handle() -> None:
+    recording = install_recording_hub()
     console = Console(file=io.StringIO(), force_terminal=True, width=100)
     region, frame = _latched_region(console)
 
     # One refresh tick fails silently on the refresh thread...
     assert list(frame.__rich_console__(console, console.options)) == []
-    assert capture.records == []
+    assert recording.of_type(Diagnostic) == []
 
-    # ...and the NEXT main-thread handle() reports it exactly once, at DEBUG,
-    # carrying the latched exception instance as exc_info.
+    # ...and the NEXT main-thread handle() reports it exactly once: a file-only
+    # WARNING Diagnostic carrying the latched exception's trace — durable at any
+    # config level (the old logger.debug died at the logger gate above DEBUG).
     region.handle(_progress(_dl("Show"), elapsed=1))
-    (report,) = [r for r in capture.records if r.getMessage() == "wait frame render failed"]
-    assert report.levelno == logging.DEBUG
-    assert report.exc_info is not None and isinstance(report.exc_info[1], RuntimeError)
+    (report,) = [d for d in recording.of_type(Diagnostic) if d.message == "wait frame render failed"]
+    assert report.severity is Severity.WARNING
+    assert report.file_only
+    assert report.origin == "output.live_region"
+    assert report.trace is not None and "RuntimeError" in report.trace.plain
 
     region.handle(_progress(_dl("Show"), elapsed=2))  # one-shot: nothing left to report
-    assert len([r for r in capture.records if r.getMessage() == "wait frame render failed"]) == 1
+    assert len([d for d in recording.of_type(Diagnostic) if d.message == "wait frame render failed"]) == 1
     region.close()
 
 
-def test_wait_region_teardown_flushes_a_latched_failure(app_logger: logging.Logger) -> None:
+def test_wait_region_teardown_flushes_a_latched_failure() -> None:
     # A failure from the session's last ticks must not die with the frame: the
     # teardown routes (section_left/close/reset) also collect the latch.
-    capture = CaptureHandler()
-    app_logger.addHandler(capture)
+    recording = install_recording_hub()
     console = Console(file=io.StringIO(), force_terminal=True, width=100)
     region, frame = _latched_region(console)
 
     assert list(frame.__rich_console__(console, console.options)) == []
     region.section_left()
 
-    (report,) = [r for r in capture.records if r.getMessage() == "wait frame render failed"]
-    assert report.levelno == logging.DEBUG
+    (report,) = [d for d in recording.of_type(Diagnostic) if d.message == "wait frame render failed"]
+    assert report.severity is Severity.WARNING and report.file_only

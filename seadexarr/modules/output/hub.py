@@ -103,11 +103,9 @@ class SeverityTally:
     critical: int = 0
 
     @property
-    def warnings(self) -> int:
-        return self.warning
-
-    @property
     def errors(self) -> int:
+        """ERROR and CRITICAL together — the summary's "errors" notion."""
+
         return self.error + self.critical
 
     def delta(self, earlier: SeverityTally) -> SeverityTally:
@@ -212,6 +210,9 @@ class OutputHub:
         self._level = int(Severity.INFO)
         self._closed = False
         self._pending: deque[tuple[Event, float]] = deque()
+        # The popped event currently fanning out (baton holder only): the unwind
+        # flush re-dispatches it, so an interrupt mid-dispatch can't lose it.
+        self._in_flight: tuple[Event, float] | None = None
         self._drainer: threading.Thread | None = None
         self._idle = threading.Condition(self._lock)
         self._overflowing = False
@@ -237,14 +238,23 @@ class OutputHub:
     def console_render_active(self) -> bool:
         """True when the console seat exists and is armed (not struck out).
 
-        Deliberately lock-free (plain attribute reads): the rich handler calls this
-        under handler locks, and hub dispatch re-enters the logger — taking the hub
-        lock here is the inversion bridge.py documents. A one-record stale read at
-        a begin_cycle boundary is acceptable.
+        Deliberately lock-free (plain attribute reads): consulted from dispatch
+        paths where taking the hub lock is the inversion bridge.py documents. A
+        one-record stale read at a begin_cycle boundary is acceptable.
         """
 
         sub = self._console_sub
         return sub is not None and sub.strikes < self._strike_limit
+
+    def dispatch_active(self) -> bool:
+        """True while THIS thread is inside hub dispatch (drain or a lifecycle body).
+
+        Deliberately lock-free: the bridge consults it under handler locks for
+        the N2 file-only downgrade. The identity read is exact for the calling
+        thread — only the thread itself can have set the baton to itself.
+        """
+
+        return self._drainer is threading.current_thread()
 
     def emit(self, event: Event) -> None:
         """Enqueue under the hub lock; the combiner dispatches outside it.
@@ -270,82 +280,123 @@ class OutputHub:
         with self._lock:
             if self._closed:
                 return
+            key: tuple[str, str] | None = None
             if isinstance(event, Diagnostic) and event.once_key is not None:
                 # Deduped events are dropped whole: not enqueued, not counted.
                 key = (event.origin, event.once_key)
                 if key in self._once_keys:
                     return
-                self._once_keys.add(key)
-            # Counts = what a visible surface could show: file_only forensics never
-            # inflate the issues row or suppress the capstone.
-            if not (isinstance(event, Diagnostic) and event.file_only):
-                self._counts.record(severity_of(event))
             when = self._clock()
             if isinstance(event, Diagnostic) and len(self._pending) >= QUEUE_CAP:
                 # Shed ONLY diagnostics — the unbounded bridge-fed class. Structural/
                 # scan events are O(library) and can't themselves overflow the cap, so
-                # its memory bound survives while fold inputs are never lost. Shed
-                # rendering only (the tally above stands); one note per episode.
+                # its memory bound survives while fold inputs are never lost. A
+                # keyless diagnostic sheds rendering only (its tally stands); a
+                # once-keyed one is shed WHOLE — key unregistered, uncounted, dedup
+                # parity with the duplicate arm — so a re-emit after the queue
+                # drains still lands instead of dying on a consumed key.
+                if key is None and not event.file_only:
+                    self._counts.record(severity_of(event))
                 if not self._overflowing:
                     self._overflowing = True
                     self._pending.append((self._overflow_note(), when))
             else:
+                if key is not None:
+                    self._once_keys.add(key)
+                # Counts = what a visible surface could show: file_only forensics
+                # never inflate the issues row or suppress the capstone.
+                if not (isinstance(event, Diagnostic) and event.file_only):
+                    self._counts.record(severity_of(event))
                 self._pending.append((event, when))
             if self._drainer is not None:
                 return
         self._drain()
 
     def _drain(self) -> None:
-        """The combiner loop: pop + snapshot under the lock, dispatch outside it.
+        """The combiner entry: take the baton, run the loop, flush on unwind.
 
         The baton is taken INSIDE the try (emit only checks-and-calls), so an
         interrupt can never strand it between assignment and the clearing
-        finally; a loser of the take race just returns, its event already
-        queued for the winner. The empty re-check before releasing the baton
-        is the combiner guarantee: no event ever waits for a future emit.
+        finally. ``took`` marks THIS frame's take: a loser of the take race —
+        including a nested same-thread call from a mid-dispatch lifecycle call
+        (set_level/begin_cycle/close) — returns without touching the outer
+        frame's baton or flushing re-entrantly.
         """
 
+        took = False
         try:
             with self._lock:
                 if self._drainer is not None:
                     return
+                took = True
                 self._drainer = threading.current_thread()
-            while True:
-                with self._lock:
-                    if self._closed or not self._pending:
-                        self._pending.clear()
-                        self._overflowing = False
-                        self._drainer = None
-                        self._idle.notify_all()
-                        break
-                    event, when = self._pending.popleft()
-                    armed = [sub for sub in self._subs if sub.strikes < self._strike_limit]
-                self._dispatch(event, when, armed)
+            self._drain_loop()
         finally:
             # A propagating KeyboardInterrupt/SystemExit must not strand the baton —
             # or the queued tail (a SIGTERM handler's exit marker lands mid-unwind):
-            # flush best-effort, then release.
-            with self._lock:
-                stranded = self._drainer is threading.current_thread()
-            if stranded:
-                try:
+            # flush best-effort; the flush releases the baton itself.
+            if took:
+                with self._lock:
+                    stranded = self._drainer is threading.current_thread()
+                if stranded:
                     self._flush_on_unwind()
-                finally:
-                    with self._lock:
-                        self._drainer = None
-                        self._idle.notify_all()
 
-    def _flush_on_unwind(self) -> None:
-        """Dispatch the queued tail while an exception unwinds ``_drain`` (crash
-        fidelity: the tail must be on screen/in the file when the process dies)."""
+    def _drain_loop(self) -> None:
+        """The combiner loop: pop + snapshot under the lock, dispatch outside it.
+
+        The popped event rides ``_in_flight`` until the next locked section, so
+        an interrupt mid-dispatch can't lose it — the unwind flush re-dispatches
+        it (duplicates over loss, crash fidelity) — while the queue's occupancy
+        (the overflow cap) never counts it twice. The terminal arm clears
+        queue/overflow state and releases the baton in ONE locked section, so a
+        cross-thread emit can never park behind a baton about to be cleared; the
+        empty re-check before that release is the combiner guarantee — no event
+        ever waits for a future emit.
+        """
 
         while True:
             with self._lock:
+                self._in_flight = None
                 if self._closed or not self._pending:
+                    self._pending.clear()
+                    self._overflowing = False
+                    self._drainer = None
+                    self._idle.notify_all()
                     return
                 event, when = self._pending.popleft()
+                self._in_flight = (event, when)
                 armed = [sub for sub in self._subs if sub.strikes < self._strike_limit]
             self._dispatch(event, when, armed)
+
+    def _flush_on_unwind(self) -> None:
+        """Re-dispatch the in-flight event, then flush the queued tail, while an
+        exception unwinds ``_drain`` (crash fidelity: the tail must be on
+        screen/in the file when the process dies). The in-flight re-dispatch is
+        best-effort per renderer — even a repeat interrupt there is contained,
+        so one hostile arm can't cost the whole tail (the tail flush itself
+        stays interruptible: a second Ctrl-C still kills it). The finally
+        releases the baton no matter what — a wedged baton would silence the
+        hub for the process's remaining lifetime (the PR5 D-1 hazard)."""
+
+        try:
+            with self._lock:
+                in_flight, self._in_flight = self._in_flight, None
+                armed = [sub for sub in self._subs if sub.strikes < self._strike_limit]
+            if in_flight is not None:
+                event, when = in_flight
+                for sub in armed:
+                    try:
+                        sub.renderer.handle(event, when)
+                    except Exception:
+                        self._strike(sub)
+                    except BaseException:  # noqa: S112 - already unwinding; best-effort
+                        continue
+            self._drain_loop()
+        finally:
+            with self._lock:
+                if self._drainer is threading.current_thread():
+                    self._drainer = None
+                    self._idle.notify_all()
 
     def _await_no_drainer(self) -> None:
         """Park (lock held) until no OTHER thread holds the drain baton — the
@@ -421,18 +472,38 @@ class OutputHub:
                 self._strike(sub)
 
     def close(self) -> None:
-        """Idempotent teardown of every surface (file close, Live stop in PR2+)."""
+        """Idempotent teardown of every surface (file close, Live stop in PR2+).
+
+        The file sinks close LAST, after the teardown chatter the other closes
+        enqueued (a bridge-adopted Live.stop failure, a region's contained-
+        teardown note) is handed to them — a close-path failure still leaves a
+        file trace. Emits after the file sinks close drop at the ``_closed``
+        gate: with no file surface left they are unrecordable on every route.
+        """
 
         with self._lock:
             self._await_no_drainer()
             if self._closed:
                 return
             with self._baton_held():
-                self._closed = True
+                file_subs = [sub for sub in self._subs if sub.renderer.writes_file_only]
                 for sub in self._subs:
+                    if sub in file_subs:
+                        continue
                     with contextlib.suppress(Exception):
                         sub.renderer.close()
-        self._drain()
+                self._closed = True
+                # Dispatching under the lock is safe here: file sinks never touch
+                # the Console lock (begin_cycle's rotation is the precedent).
+                while self._pending:
+                    event, when = self._pending.popleft()
+                    for sub in file_subs:
+                        if sub.strikes < self._strike_limit:
+                            with contextlib.suppress(Exception):
+                                sub.renderer.handle(event, when)
+                for sub in file_subs:
+                    with contextlib.suppress(Exception):
+                        sub.renderer.close()
 
     def _strike(self, sub: _Sub) -> None:
         """One strike (under a brief lock re-acquire); crossing the limit also closes
@@ -483,11 +554,10 @@ class OutputHub:
         self._subs.append(sub)
         self._console_sub = sub
         self._console_format = console_format
-        # The stored level is load-bearing: the fresh console starts at it.
-        try:
-            fresh.set_level(self._level)
-        except Exception:
-            self._strike(sub)
+        # No set_level here: begin_cycle (the only caller) applies the cycle's
+        # level to every sub — the fresh console included — right after the swap,
+        # and nothing dispatches in between (re-entrant emits enqueue under the
+        # baton). A second call would just burn a strike twice on one bug.
 
     def _note(self, message: str, exc: Exception, when: float, *, skip: _Sub | None) -> None:
         """A containment note to the armed survivors.
@@ -528,5 +598,9 @@ class OutputHub:
         if self._console_factory is None or self.console_render_active():
             return
         if isinstance(event, Diagnostic) and not event.file_only and event.severity >= Severity.WARNING:
-            sys.stderr.write(f"{event.severity.name} [{event.origin}] {event.message}\n")
-            sys.stderr.flush()
+            # Contained like every renderer write: a broken/closed stderr must not
+            # break the emit-never-raises contract (a last-resort surface has no
+            # fallback of its own — the failure just drops).
+            with contextlib.suppress(Exception):
+                sys.stderr.write(f"{event.severity.name} [{event.origin}] {event.message}\n")
+                sys.stderr.flush()

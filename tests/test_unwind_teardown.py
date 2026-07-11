@@ -123,7 +123,7 @@ def _run_failing_leg(
 
     recording = RecordingHub()
     install_hub(recording.hub)
-    install_bridge(recording.hub)
+    install_bridge()
 
     completed = run_arrs([(Arr.SONARR, None)], paths=resolve_paths(), logger=app_logger)
     return completed, recording
@@ -256,7 +256,7 @@ def _run_completing_leg(
 
     recording = RecordingHub()
     install_hub(recording.hub)
-    install_bridge(recording.hub)
+    install_bridge()
 
     completed = run_arrs([(Arr.SONARR, None)], paths=resolve_paths(), logger=app_logger)
     return completed, recording

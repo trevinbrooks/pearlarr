@@ -327,17 +327,22 @@ class _LifecycleEmitter:
 
 
 class _EmitThenInterrupt:
-    """Emits a follow-up then raises KeyboardInterrupt from handle — the
-    signal-mid-dispatch shape: the queued tail must still land."""
+    """Emits a follow-up once, then raises KeyboardInterrupt from EVERY handle of
+    the trigger event — the signal-mid-dispatch shape (the marker is a SIGTERM
+    handler's exit line; the repeat raise models a hostile arm on the flush's
+    best-effort re-dispatch)."""
 
     writes_file_only: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self.hub: OutputHub | None = None
+        self._marked = False
 
     def handle(self, event: Event, when: float) -> None:
         if isinstance(event, RunStarted) and self.hub is not None:
-            self.hub.emit(Diagnostic(severity=Severity.INFO, message="exit marker"))
+            if not self._marked:
+                self._marked = True
+                self.hub.emit(Diagnostic(severity=Severity.INFO, message="exit marker"))
             raise KeyboardInterrupt
 
     def begin_cycle(self) -> None:
@@ -366,7 +371,7 @@ def test_a_raising_renderer_never_breaks_the_survivors() -> None:
     assert note.severity is Severity.WARNING
     assert note.origin == "output.hub"
     assert "_FailingRenderer failed on RunStarted" in note.message
-    assert note.trace is not None and "RuntimeError" in note.trace.plain_text()
+    assert note.trace is not None and "RuntimeError" in note.trace.plain
 
 
 def test_losing_the_file_sink_escalates_the_note_to_a_counted_visible_error() -> None:
@@ -498,7 +503,7 @@ def test_containment_notes_are_uncounted_while_a_file_surface_survives() -> None
     hub.emit(_EVENT)  # INFO event; the forensic WARNING note must not inflate the tally
 
     since = hub.counts.counts_since(mark)
-    assert (since.info, since.warnings) == (1, 0)
+    assert (since.info, since.warning) == (1, 0)
     assert any(isinstance(event, Diagnostic) for event in survivor.events)  # the note went out
 
 
@@ -583,9 +588,12 @@ def test_an_unwinding_interrupt_still_flushes_the_queued_tail() -> None:
     with pytest.raises(KeyboardInterrupt):
         hub.emit(_EVENT)
 
-    # The in-flight event's remaining fan-out is lost to the interrupt, but the
-    # QUEUED marker (a SIGTERM handler's exit line) flushes before the baton is
-    # released — crash fidelity for the tail.
+    # Crash fidelity, both halves: the IN-FLIGHT event's fan-out completes on the
+    # unwind path (the survivor gets the RunStarted the interrupt cut short —
+    # even though the hostile arm re-raises on the best-effort re-dispatch), and
+    # the QUEUED marker (a SIGTERM handler's exit line) flushes before the baton
+    # is released.
+    assert len(survivor.of_type(RunStarted)) == 1
     assert [d.message for d in survivor.of_type(Diagnostic)] == ["exit marker"]
     assert hub._drainer is None
 
@@ -694,7 +702,7 @@ def test_overflow_sheds_newest_with_one_note_per_episode() -> None:
     assert sum("overflowed" in m for m in messages) == 1  # one note, not one per drop
     # Shed events were still counted at enqueue; the note itself is never counted.
     since = hub.counts.counts_since(mark)
-    assert (since.info, since.warnings) == (QUEUE_CAP + 3, 0)
+    assert (since.info, since.warning) == (QUEUE_CAP + 3, 0)
 
 
 def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -764,7 +772,7 @@ def test_overflow_sheds_diagnostics_and_re_arms_the_note_per_episode(
     # Shed diagnostics were counted at enqueue; the note itself is never counted.
     # Per episode: _EVENT + cap diagnostics + 2 dropped = cap + 3 info.
     since = hub.counts.counts_since(mark)
-    assert (since.info, since.warnings) == (2 * (cap + 3), 0)
+    assert (since.info, since.warning) == (2 * (cap + 3), 0)
 
 
 # --- once= dedup ---------------------------------------------------------------------
@@ -777,7 +785,7 @@ def test_once_keys_dedup_and_clear_per_cycle() -> None:
     recording.emit(outage)
     recording.emit(outage)
     assert len(recording.of_type(Diagnostic)) == 1
-    assert recording.hub.counts.mark().warnings == 1  # the dropped copy is not counted
+    assert recording.hub.counts.mark().warning == 1  # the dropped copy is not counted
 
     recording.hub.begin_cycle(console_format="plain", level=logging.INFO)
     recording.emit(outage)
@@ -807,9 +815,9 @@ def test_severity_counts_mark_and_delta() -> None:
 
     since = counts.counts_since(mark)
     assert since == SeverityTally(warning=1, error=1, critical=1)
-    assert since.warnings == 1
+    assert since.warning == 1
     assert since.errors == 2  # ERROR + CRITICAL
-    assert counts.mark().warnings == 2  # totals stay monotonic
+    assert counts.mark().warning == 2  # totals stay monotonic
 
 
 def test_bound_mark_diffs_only_its_own_counter() -> None:
@@ -843,10 +851,10 @@ def test_file_only_diagnostics_are_never_counted() -> None:
     mark = recording.hub.counts.mark()
 
     recording.emit(Diagnostic(severity=Severity.WARNING, message="forensic note", file_only=True))
-    assert recording.hub.counts.counts_since(mark).warnings == 0
+    assert recording.hub.counts.counts_since(mark).warning == 0
 
     recording.emit(Diagnostic(severity=Severity.WARNING, message="visible note"))
-    assert recording.hub.counts.counts_since(mark).warnings == 1
+    assert recording.hub.counts.counts_since(mark).warning == 1
 
 
 def test_severity_is_counted_at_enqueue_even_when_every_renderer_raises() -> None:
@@ -856,7 +864,7 @@ def test_severity_is_counted_at_enqueue_even_when_every_renderer_raises() -> Non
     hub.emit(Diagnostic(severity=Severity.WARNING, message="boom"))
 
     since = hub.counts.counts_since(mark)
-    assert since.warnings == 1  # counted at enqueue, though nothing rendered it
+    assert since.warning == 1  # counted at enqueue, though nothing rendered it
     assert since.errors == 2  # with no file surface left, both notes escalate visible
 
 
@@ -1102,7 +1110,194 @@ def test_hub_note_with_exc_captures_the_trace() -> None:
     assert note.message == "it broke"
     assert note.origin == LOG_NAME
     assert note.trace is not None
-    assert "ValueError: boom" in note.trace.plain_text()
+    assert "ValueError: boom" in note.trace.plain
+
+
+# --- the p4 re-review pins (hub core) --------------------------------------------
+
+
+def test_a_once_key_shed_by_overflow_is_shed_whole_and_lands_on_re_emit() -> None:
+    """A once-keyed diagnostic arriving during an overflow episode must not
+    consume its dedup key (or its count): shed WHOLE, so the post-drain re-emit
+    is the one rendered and the one tallied."""
+
+    gated, observer = _GatedRenderer(), RecordingRenderer()
+    hub = OutputHub([gated, observer])
+    mark = hub.counts.mark()
+    keyed = Diagnostic(severity=Severity.WARNING, message="SeaDex unreachable", once_key="seadex-outage")
+
+    drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
+    drainer.start()
+    assert gated.entered.wait(timeout=5.0)
+    for i in range(QUEUE_CAP):
+        hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
+    hub.emit(keyed)  # at the cap: shed whole — key unregistered, uncounted
+
+    gated.release.set()
+    drainer.join(timeout=30.0)
+    assert not drainer.is_alive()
+
+    hub.emit(keyed)  # the queue drained: the re-emit must land
+
+    messages = [d.message for d in observer.of_type(Diagnostic)]
+    assert messages.count("SeaDex unreachable") == 1
+    # Exactly ONE keyed warning tallied (the shed one was uncounted; the
+    # overflow note is file_only forensics and never counts).
+    assert hub.counts.counts_since(mark).warning == 1
+
+
+def test_a_mid_dispatch_lifecycle_call_keeps_the_baton_and_the_emit_order() -> None:
+    """set_level from inside a renderer's handle (the documented mid-drain
+    lifecycle escape) must not flush re-entrantly or release the OUTER drain's
+    baton: the re-entrant event still dispatches AFTER the in-flight one."""
+
+    recorder = RecordingRenderer()
+
+    class _LifecycleCaller:
+        writes_file_only: ClassVar[bool] = False
+
+        def __init__(self) -> None:
+            self.hub: OutputHub | None = None
+            self._fired = False
+
+        def handle(self, event: Event, when: float) -> None:
+            del when
+            if isinstance(event, RunStarted) and self.hub is not None and not self._fired:
+                self._fired = True
+                self.hub.emit(Diagnostic(severity=Severity.INFO, message="queued behind"))
+                self.hub.set_level(logging.WARNING)
+
+        def begin_cycle(self) -> None:
+            pass
+
+        def set_level(self, level: int) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    caller = _LifecycleCaller()
+    hub = OutputHub([caller, recorder])
+    caller.hub = hub
+
+    hub.emit(_EVENT)
+
+    # Order preserved: the in-flight RunStarted completes its fan-out before the
+    # re-entrant diagnostic dispatches; nothing double-dispatches; baton released.
+    assert [type(e).__name__ for e in recorder.events] == ["RunStarted", "Diagnostic"]
+    assert hub._drainer is None
+
+
+def test_a_broken_stderr_never_raises_through_emit() -> None:
+    """The stderr fallback is contained like every renderer write: a broken pipe
+    on stderr must not abort the run (the emit-never-raises contract)."""
+
+    class _BrokenStderr:
+        def write(self, text: str) -> int:
+            raise BrokenPipeError
+
+        def flush(self) -> None:
+            raise BrokenPipeError
+
+    hub = OutputHub([], console_factory=lambda console_format: NullRenderer())
+    # No begin_cycle: the console seat is unarmed, so the fallback path fires.
+    import sys
+
+    original = sys.stderr
+    sys.stderr = _BrokenStderr()  # type: ignore[assignment]
+    try:
+        hub.emit(Diagnostic(severity=Severity.WARNING, message="watch out"))
+    finally:
+        sys.stderr = original
+
+    assert hub.counts.mark().warning == 1  # emitted, counted, contained
+
+
+def test_close_hands_teardown_chatter_to_the_file_sink_before_closing_it() -> None:
+    """close() closes the file sinks LAST: a diagnostic emitted from another
+    renderer's close path (a contained teardown failure) still reaches the file."""
+
+    class _FileRecorder:
+        writes_file_only: ClassVar[bool] = True
+
+        def __init__(self) -> None:
+            self.handled: list[Event] = []
+            self.closed = False
+
+        def handle(self, event: Event, when: float) -> None:
+            del when
+            self.handled.append(event)
+
+        def begin_cycle(self) -> None:
+            pass
+
+        def set_level(self, level: int) -> None:
+            pass
+
+        def close(self) -> None:
+            self.closed = True
+
+    class _NoisyCloser:
+        writes_file_only: ClassVar[bool] = False
+
+        def __init__(self) -> None:
+            self.hub: OutputHub | None = None
+
+        def handle(self, event: Event, when: float) -> None:
+            pass
+
+        def begin_cycle(self) -> None:
+            pass
+
+        def set_level(self, level: int) -> None:
+            pass
+
+        def close(self) -> None:
+            if self.hub is not None:
+                self.hub.emit(
+                    Diagnostic(severity=Severity.WARNING, message="teardown failed", file_only=True),
+                )
+
+    file_sink, noisy = _FileRecorder(), _NoisyCloser()
+    hub = OutputHub([file_sink, noisy])
+    noisy.hub = hub
+
+    hub.close()
+
+    assert [d.message for d in file_sink.handled if isinstance(d, Diagnostic)] == ["teardown failed"]
+    assert file_sink.closed
+    hub.emit(_EVENT)  # fully closed: drops silently
+    assert not any(isinstance(e, RunStarted) for e in file_sink.handled)
+
+
+def test_begin_cycle_applies_the_level_to_a_fresh_console_exactly_once() -> None:
+    """The swap-time set_level died (begin_cycle's tail applies the cycle level
+    to every sub): one bug must cost the fresh console ONE strike, not two."""
+
+    class _LevelRecorder:
+        writes_file_only: ClassVar[bool] = False
+
+        def __init__(self) -> None:
+            self.levels: list[int] = []
+
+        def handle(self, event: Event, when: float) -> None:
+            pass
+
+        def begin_cycle(self) -> None:
+            pass
+
+        def set_level(self, level: int) -> None:
+            self.levels.append(level)
+
+        def close(self) -> None:
+            pass
+
+    fresh = _LevelRecorder()
+    hub = OutputHub([], console_factory=lambda console_format: fresh)
+
+    hub.begin_cycle(console_format="rich", level=logging.DEBUG)
+
+    assert fresh.levels == [logging.DEBUG]
 
 
 def test_hub_note_without_exc_keeps_the_trace_none() -> None:

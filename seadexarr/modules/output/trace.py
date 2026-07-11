@@ -19,6 +19,7 @@ class CapturedTrace:
     """
 
     rich_trace: Trace
+    # The full plain-text traceback for the file sink (stdlib format, no locals).
     plain: str
 
     # Frames kept per stack at capture (outermost + innermost halves, rich-style elide).
@@ -36,8 +37,3 @@ class CapturedTrace:
                 stack.frames[:] = [*stack.frames[:head], *stack.frames[-tail:]]
         plain = "".join(traceback.format_exception(exc))
         return cls(rich_trace=trace, plain=plain)
-
-    def plain_text(self) -> str:
-        """The full plain-text traceback for the file sink (stdlib format, no locals)."""
-
-        return self.plain

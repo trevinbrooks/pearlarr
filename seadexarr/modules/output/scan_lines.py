@@ -59,6 +59,7 @@ from ..log import (
     group_highlight,
     indent_string,
     kv_string,
+    print_literal,
     print_titled_rule,
     render_kv,
     render_rule,
@@ -92,10 +93,9 @@ class LegacyLine:
 _BLANK = LegacyLine(logging.INFO, "")
 
 # The summary scoreboard's key column (narrower than the entry-detail column;
-# see log_run_summary), its per-entry block column, and the closing rule width.
+# see log_run_summary) and its per-entry block column.
 _SUMMARY_KEY_WIDTH: Final = 12
 _BLOCK_KEY_WIDTH: Final = 7
-_RULE_WIDTH: Final = 80
 
 _CAP_MESSAGE: Final = "Reached the maximum number of torrents for this run (advanced.max_torrents_to_add); stopping"
 
@@ -367,12 +367,13 @@ def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
 
     title = f"SeaDexArr ({summary.arr.capitalize()}) run complete"
     rule_title = title
-    if summary.dry_run:
+    if summary.dry_run_note is not None:
         rule_title += f"   (DRY RUN — {summary.dry_run_note})"
 
     lines: list[LegacyLine] = [
         _BLANK,
-        # The file keeps the plain title; the DRY RUN note rides the console only.
+        # The DRY RUN note rides the rule title only; the message stays plain (the
+        # text surfaces carry dry_run/note as structured fields via _fact_of).
         LegacyLine(logging.INFO, title, TitledRule(title=rule_title, heavy=True)),
         _BLANK,
         _summary_kv("checked", str(tally.checked)),
@@ -426,7 +427,7 @@ def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
     if tip is not None:
         lines.append(_info(indent_string(tip, level=1), StyledLine(style="grey50")))
 
-    lines.append(LegacyLine(logging.INFO, rule_string("=", _RULE_WIDTH), SectionRule("=")))
+    lines.append(LegacyLine(logging.INFO, rule_string("="), SectionRule("=")))
     return tuple(lines)
 
 
@@ -473,8 +474,7 @@ def render_legacy_lines(console: Console, lines: Iterable[LegacyLine], level: in
             case SectionRule(char=char):
                 console.print(render_rule(char))
             case KvLine() as kv:
-                console.print(render_kv(kv), highlight=False, soft_wrap=True)
+                print_literal(console, render_kv(kv))
             case (StyledLine() | None) as payload:
-                # Literal text (no markup/highlight): "[1/182]" stays text.
                 style = payload.style if payload is not None else ""
-                console.print(Text(line.message, style=style), highlight=False, soft_wrap=True)
+                print_literal(console, Text(line.message, style=style))

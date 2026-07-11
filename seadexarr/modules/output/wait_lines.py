@@ -139,7 +139,7 @@ def wait_tally_lines(event: WaitFinished) -> list[LegacyLine]:
         parts.append(f"{event.failed} failed")
     parts.append(format_elapsed(event.elapsed_s))
     return [
-        LegacyLine(logging.INFO, rule_string("-", 80), SectionRule(char="-")),
+        LegacyLine(logging.INFO, rule_string("-"), SectionRule(char="-")),
         LegacyLine(logging.INFO, indent_string("wait complete · " + " · ".join(parts))),
     ]
 

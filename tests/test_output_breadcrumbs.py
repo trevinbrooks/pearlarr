@@ -56,7 +56,6 @@ def _summary_ready() -> RunSummaryReady:
     return RunSummaryReady(
         RunSummary(
             arr=Arr.SONARR,
-            dry_run=False,
             dry_run_note=None,
             added_count=0,
             tally=RunTally.from_stats(RunStats()),

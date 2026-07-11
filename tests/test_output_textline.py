@@ -30,7 +30,6 @@ from seadexarr.modules.output import (
     BootStepProgressed,
     BootStepSlow,
     BootStepStarted,
-    BreadcrumbFold,
     CapReached,
     CycleStarted,
     Diagnostic,
@@ -72,7 +71,6 @@ from seadexarr.modules.output import (
     WaitProgress,
     WaitSnapshot,
     WaitStarted,
-    format_line,
 )
 from seadexarr.modules.output.textline import _JSON_SKIP, _TEXT_SKIP
 from seadexarr.modules.output.trace import CapturedTrace
@@ -89,12 +87,24 @@ _WAIT = ScopeId(ScopeKind.WAIT_REGION, 3)
 
 
 def _format(event: Event, *events_before: Event) -> str | None:
-    """format_line against a fold pre-loaded with ``events_before``."""
+    """The REAL plain sink's rendering of one event (None = wrote nothing).
 
-    fold = BreadcrumbFold()
+    Goldens pin the shipping ``LineRenderer`` path — not a parallel formatter —
+    so an assembly change in ``_GrammarSink._render`` moves these bytes. Context
+    events render+fold first (their output is discarded via the stream mark);
+    the DEBUG threshold admits every line, matching the old unthresholded
+    ``format_line``. The trailing newline is the sink's write framing, not part
+    of the line."""
+
+    stream = io.StringIO()
+    sink = LineRenderer(stream)
+    sink.set_level(logging.DEBUG)
     for before in events_before:
-        fold.apply(before)
-    return format_line(event, crumbs=fold, when=_WHEN)
+        sink.handle(before, _EPOCH)
+    mark = len(stream.getvalue())
+    sink.handle(event, _EPOCH)
+    text = stream.getvalue()[mark:]
+    return text.removesuffix("\n") if text else None
 
 
 def _entry_context() -> tuple[Event, Event, Event]:
@@ -329,7 +339,6 @@ def _summary_ready() -> RunSummaryReady:
     return RunSummaryReady(
         RunSummary(
             arr=Arr.SONARR,
-            dry_run=False,
             dry_run_note=None,
             added_count=1,
             tally=RunTally.from_stats(stats),
@@ -348,7 +357,6 @@ def _quiet_summary_ready() -> RunSummaryReady:
     return RunSummaryReady(
         RunSummary(
             arr=Arr.SONARR,
-            dry_run=False,
             dry_run_note=None,
             added_count=0,
             tally=RunTally.from_stats(RunStats()),
@@ -867,6 +875,66 @@ def _exemplars() -> list[Event]:
         RunFinished(arr=Arr.SONARR),
         Diagnostic(severity=Severity.INFO, message="m", origin="app", trace=trace),
     ]
+
+
+def test_a_newline_in_a_breadcrumb_label_cannot_break_the_line_grammar() -> None:
+    """Bracket labels carry external titles (Arr/AniList): a smuggled newline is
+    escaped exactly like the message, so the one-line grammar holds (a rendered
+    traceback stays the sole multi-line form)."""
+
+    context = (
+        ScanStarted(arr=Arr.SONARR, total=1),
+        ItemStarted(arr=Arr.SONARR, index=1, total=1, title="evil\ntitle"),
+        ScopeOpened(scope=_ENTRY, label="entry"),
+    )
+    detail = EntryDetail(label="files", value=StyledValue("S01"), scope=_ENTRY)
+    line = _format(detail, *context)
+    assert line is not None
+    assert "\n" not in line  # ONE physical line, the escape in place
+    assert "evil\\ntitle" in line
+
+
+_JSON_ENVELOPE_KEYS = frozenset(
+    {"time", "event", "level", "message", "origin", "path", "exc", "needs_action_records", "added_records"}
+)
+
+
+def test_no_fact_field_key_can_collide_with_the_json_envelope() -> None:
+    """JsonRenderer writes fact fields into the envelope dict: a Field keyed
+    like an envelope member would silently clobber it in every json line. Every
+    Field key in textline.py is a string literal, so this AST canary pins the
+    disjointness for current AND future field vocabulary."""
+
+    import ast
+    import inspect
+
+    from seadexarr.modules.output import textline as _textline
+
+    tree = ast.parse(inspect.getsource(_textline))
+    offenders: list[str] = []
+    keys: list[str] = []
+    for node in ast.walk(tree):
+        match node:
+            case ast.Call(func=ast.Name(id="Field"), args=[first, *_]):
+                # Literal keys check directly; a plain Name is a loop variable fed
+                # by in-file tuple literals (collected below); anything fancier is
+                # flagged — the canary must never go silently blind.
+                match first:
+                    case ast.Constant(value=str(key)):
+                        keys.append(key)
+                    case ast.Name():
+                        pass
+                    case _:
+                        offenders.append(f"unrecognized Field key expression at line {node.lineno}")
+            case ast.Tuple(elts=[ast.Constant(value=str(key)), _]):
+                # ("queued", tally.queued)-style pairs feeding the Field loops.
+                keys.append(key)
+            case _:
+                pass
+    assert keys, "the canary went blind: no Field keys found"
+    collisions = sorted(set(keys) & _JSON_ENVELOPE_KEYS)
+    assert not offenders, "; ".join(offenders)
+    assert not collisions, f"json envelope collisions: {collisions}"
 
 
 # Events with no format_line form: pure boundaries + per-event-fact-less ephemera

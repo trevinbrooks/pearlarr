@@ -21,26 +21,30 @@ Adoption rules:
 
 The bridge CONSTRUCTS new events and never mutates the LogRecord (caplog
 safety). A record fired from inside hub dispatch on the same thread (a renderer
-or signal handler logging mid-dispatch) downgrades to file-only adoption
-(S5 pin 4 / N2). ``logging.captureWarnings`` is flipped on at install, so
-warnings-module output arrives via the "py.warnings" logger.
+or signal handler logging mid-dispatch, whichever producer entered the drain)
+downgrades to file-only adoption (S5 pin 4 / N2) — the hub's own
+``dispatch_active`` baton read decides, so the rule holds for every drain, not
+just bridge-entered ones. The hub is resolved through the process registry at
+every record (like every other producer), so an ``install_hub`` swap can never
+orphan the bridge onto a closed hub. ``logging.captureWarnings`` is flipped on
+at install, so warnings-module output arrives via the "py.warnings" logger.
 """
 
 from __future__ import annotations
 
 import logging
-import threading
 from dataclasses import replace
 from typing import final, override
 
 from .events import Diagnostic, Severity
 from .hub import OutputHub
+from .runtime import current_hub
 from .trace import CapturedTrace
 from ..log import (
     LOG_NAME,
     HubBridgeBase,
     clear_console_owner,
-    register_console_owner,
+    mark_hub_console_owner,
 )
 
 
@@ -67,20 +71,16 @@ def _severity_of(levelno: int) -> Severity:
     return Severity.DEBUG
 
 
-class _DispatchFlag(threading.local):
-    """Per-thread reentrancy marker: True while this thread is inside hub dispatch."""
-
-    active: bool = False
-
-
 @final
 class HubBridgeHandler(HubBridgeBase):
-    """Adopts stdlib records into Diagnostic events — constructs, never mutates."""
+    """Adopts stdlib records into Diagnostic events — constructs, never mutates.
 
-    def __init__(self, hub: OutputHub) -> None:
+    Holds no hub: the process registry resolves one per record, so a hub swap
+    re-points the bridge automatically (the pre-install default drops silently).
+    """
+
+    def __init__(self) -> None:
         super().__init__(level=logging.NOTSET)
-        self._hub = hub
-        self._flag = _DispatchFlag()
 
     @override
     def handle(self, record: logging.LogRecord) -> bool:
@@ -92,22 +92,20 @@ class HubBridgeHandler(HubBridgeBase):
     @override
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            diagnostic = self._adopt(record)
+            hub = current_hub()
+            diagnostic = self._adopt(record, hub)
             if diagnostic is None:
                 return
-            if self._flag.active:
-                # Fired mid-dispatch on this thread: file-only adoption (N2).
-                self._hub.emit(replace(diagnostic, file_only=True))
+            if hub.dispatch_active():
+                # Fired mid-dispatch on this thread (a renderer or lifecycle body
+                # logging): file-only adoption (N2).
+                hub.emit(replace(diagnostic, file_only=True))
                 return
-            self._flag.active = True
-            try:
-                self._hub.emit(diagnostic)
-            finally:
-                self._flag.active = False
+            hub.emit(diagnostic)
         except Exception:
             self.handleError(record)
 
-    def _adopt(self, record: logging.LogRecord) -> Diagnostic | None:
+    def _adopt(self, record: logging.LogRecord, hub: OutputHub) -> Diagnostic | None:
         """The adoption table (module docstring); None = the record is dropped."""
 
         if record.levelno >= logging.WARNING:
@@ -116,14 +114,14 @@ class HubBridgeHandler(HubBridgeBase):
             # Visible only at DEBUG config on a plain/json seat (the only console
             # route there); a rich seat already prints the raw record, so visible
             # adoption would double it.
-            file_only = self._hub.level > logging.DEBUG or self._hub.console_format == "rich"
-        elif record.levelno < self._hub.level:
+            file_only = hub.level > logging.DEBUG or hub.console_format == "rich"
+        elif record.levelno < hub.level:
             # Sub-threshold third-party records aren't constructed/counted.
             return None
         else:
             # At a configured DEBUG the hub is a library record's only console
             # route, so it stays visible; at INFO+ the file alone keeps it.
-            file_only = self._hub.level > logging.DEBUG
+            file_only = hub.level > logging.DEBUG
         exc = record.exc_info[1] if record.exc_info is not None else None
         return Diagnostic(
             severity=_severity_of(record.levelno),
@@ -134,23 +132,24 @@ class HubBridgeHandler(HubBridgeBase):
         )
 
 
-def install_bridge(hub: OutputHub) -> HubBridgeHandler:
+def install_bridge() -> HubBridgeHandler:
     """Attach ONE bridge to the root and app loggers; flip warnings capture on.
 
-    Idempotent by replacement: any prior bridge is removed first, so a repeat
-    install (a fresh hub) never doubles up — and ``setup_logger``'s per-cycle
-    handler rebuilds preserve the installed one (``HubBridgeBase``).
+    The bridge feeds whatever hub the registry holds (``install_hub`` pairs
+    freely). Idempotent by replacement: any prior bridge is removed first, so a
+    repeat install never doubles up — and ``setup_logger``'s per-cycle handler
+    rebuilds preserve the installed one (``HubBridgeBase``).
     """
 
     uninstall_bridge()
-    bridge = HubBridgeHandler(hub)
+    bridge = HubBridgeHandler()
     logging.getLogger().addHandler(bridge)
     app_logger = logging.getLogger(LOG_NAME)
     app_logger.addHandler(bridge)
     # setup_logger does this too, but doing it here kills the install-window in
     # which an app record would be adopted twice (app seat + root propagation).
     app_logger.propagate = False
-    register_console_owner(hub.console_render_active)
+    mark_hub_console_owner()
     logging.captureWarnings(True)
     return bridge
 

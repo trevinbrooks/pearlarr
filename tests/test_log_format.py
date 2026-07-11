@@ -36,7 +36,7 @@ from seadexarr.modules.console_caps import console_of
 from seadexarr.modules.log import (
     RichConsoleHandler,
     apply_log_level,
-    register_console_owner,
+    mark_hub_console_owner,
     setup_logger,
 )
 from seadexarr.modules.output import (
@@ -44,6 +44,7 @@ from seadexarr.modules.output import (
     OutputHub,
     Severity,
     install_bridge,
+    install_hub,
     uninstall_bridge,
 )
 from seadexarr.modules.output.bridge import HubBridgeHandler
@@ -163,15 +164,16 @@ def _rich_setup(name: str) -> tuple[logging.Logger, io.StringIO]:
 
 
 class TestRichHandlerSeam:
-    """The badge seam: hub placement owns the badge class only while the registered
-    console owner answers True; otherwise the legacy badge renders (fallback)."""
+    """The badge seam: while a bridge is installed the hub owns the badge class
+    outright (armed seat in-context, stderr fallback otherwise), so the handler
+    stands down; with no bridge the legacy badge renders (standalone fallback)."""
 
     def test_plain_warning_and_error_records_skip_the_handler_when_the_hub_owns_the_console(self) -> None:
-        """Plain WARNING+ (incl. exc_info) never render here while the hub's
-        renderer owns the console - it draws the badge (double render otherwise)."""
+        """Plain WARNING+ (incl. exc_info) never render here while a bridge is
+        installed - the hub places the badge (double render otherwise)."""
 
         logger, stream = _rich_setup("seadexarr-test-rich-seam-badge")
-        register_console_owner(lambda: True)  # conftest's uninstall_bridge clears it
+        mark_hub_console_owner()  # conftest's uninstall_bridge clears it
 
         logger.warning("watch out")
         try:
@@ -190,17 +192,17 @@ class TestRichHandlerSeam:
 
         assert "WARNING  watch out" in strip_ansi(stream.getvalue())
 
-    def test_plain_warning_renders_the_badge_when_the_console_seat_struck_out(self) -> None:
-        """The quarantine fallback: a False owner (struck-out seat) means the hub
-        renderer is NOT drawing badges, so the legacy badge must - never both,
-        never neither."""
+    def test_plain_warning_skips_the_handler_even_with_the_hub_seat_inactive(self) -> None:
+        """Ownership is registration, not seat state: pre-begin_cycle or after a
+        strike-out the hub's STDERR fallback is the single net - the handler
+        rendering here too printed the same warning twice (once per net)."""
 
         logger, stream = _rich_setup("seadexarr-test-rich-seam-struck-out")
-        register_console_owner(lambda: False)
+        mark_hub_console_owner()
 
         logger.warning("watch out")
 
-        assert "WARNING  watch out" in strip_ansi(stream.getvalue())
+        assert stream.getvalue() == ""
 
     def test_plain_info_still_renders_without_a_badge(self) -> None:
         logger, stream = _rich_setup("seadexarr-test-rich-seam-info")
@@ -258,7 +260,8 @@ class TestInvalidLevelComplaint:
         last_resort = CaptureHandler()
         monkeypatch.setattr(logging, "lastResort", last_resort)
         recorder = RecordingRenderer()
-        install_bridge(OutputHub([recorder]))
+        install_hub(OutputHub([recorder]))
+        install_bridge()
 
         try:
             setup_logger(log_level="BOGUS", console_format="plain")

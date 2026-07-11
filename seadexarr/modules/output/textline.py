@@ -134,7 +134,9 @@ def _logfmt(fields: tuple[Field, ...]) -> str:
 def _render_line(line: _Line, ts: str) -> str:
     parts = [ts, line.severity.name]
     if line.bracket:
-        parts.append(f"[{line.bracket}]")
+        # Escaped like the message: breadcrumb labels carry external titles
+        # (Arr/AniList), and a newline there would break the one-line grammar.
+        parts.append(f"[{_flat(line.bracket)}]")
     parts.append(_flat(line.message))
     if line.fields:
         parts.append(_logfmt(line.fields))
@@ -275,10 +277,9 @@ def _pulse_fact(event: WaitProgress) -> _Fact:
 def _fields_summary_head(summary: RunSummary) -> tuple[Field, ...]:
     tally = summary.tally
     fields: list[Field] = [Field("arr", str(summary.arr))]
-    if summary.dry_run:
+    if summary.dry_run_note is not None:
         fields.append(Field("dry_run", True))
-        if summary.dry_run_note:
-            fields.append(Field("note", summary.dry_run_note))
+        fields.append(Field("note", summary.dry_run_note))
     fields.append(Field("checked", tally.checked))
     fields.append(Field("needs_action", len(tally.needs_action)))
     fields.append(Field("added", summary.added_count))
@@ -439,28 +440,19 @@ def _record_lines(summary: RunSummary) -> tuple[_Line, ...]:
 def _lines_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> tuple[_Line, ...]:
     """The text grammar: the shared fact plus text-only decoration."""
 
+    # Skip first: scope boundaries fire per entry on BOTH grammar sinks, so
+    # building their facts just to drop them is pure hot-path waste.
+    if type(event) in _TEXT_SKIP:
+        return ()
     fact = _fact_of(event, crumbs, severity)
-    if fact is None or type(event) in _TEXT_SKIP:
+    if fact is None:
         return ()
     bracket = _scope_bracket(fact.scope, crumbs, fact.component)
-    trace = event.trace.plain_text() if isinstance(event, Diagnostic) and event.trace is not None else None
+    trace = event.trace.plain if isinstance(event, Diagnostic) and event.trace is not None else None
     head = _Line(fact.severity, bracket, fact.message, fact.fields, trace)
     if isinstance(event, RunSummaryReady):
         return (head, *_record_lines(event.summary))
     return (head,)
-
-
-def format_line(event: Event, *, crumbs: BreadcrumbFold, when: datetime) -> str | None:
-    """Render one event into the shared text grammar (None = no text-line form).
-
-    The full, unthresholded rendering — the sinks apply per-line severity floors.
-    """
-
-    lines = _lines_of(event, crumbs, severity_of(event))
-    if not lines:
-        return None
-    ts = when.strftime(TS_FORMAT)
-    return "\n".join(_render_line(line, ts) for line in lines)
 
 
 def _json_of(event: Event, crumbs: BreadcrumbFold, iso: str, severity: Severity) -> dict[str, JsonValue] | None:
@@ -490,7 +482,7 @@ def _json_of(event: Event, crumbs: BreadcrumbFold, iso: str, severity: Severity)
         ]
         payload["added_records"] = [dict[str, JsonValue](_fields_added(record)) for record in tally.added]
     if isinstance(event, Diagnostic) and event.trace is not None:
-        payload["exc"] = event.trace.plain_text()
+        payload["exc"] = event.trace.plain
     return payload
 
 
@@ -528,7 +520,6 @@ class _TextLineSink:
     def __init__(self) -> None:
         self._crumbs = BreadcrumbFold()
         self._threshold: int = int(Severity.INFO)
-        self._ts = _PerSecondMemo(lambda dt: dt.strftime(TS_FORMAT))
 
     def handle(self, event: Event, when: float) -> None:
         severity = severity_of(event)
@@ -571,6 +562,7 @@ class _GrammarSink(_TextLineSink):
     def __init__(self) -> None:
         super().__init__()
         self._pulse = PulseThrottle()
+        self._ts = _PerSecondMemo(lambda dt: dt.strftime(TS_FORMAT))
 
     @override
     def begin_cycle(self) -> None:

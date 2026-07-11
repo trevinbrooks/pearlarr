@@ -51,7 +51,8 @@ def bridged(app_logger: logging.Logger) -> Generator[tuple[RecordingRenderer, lo
     """A recording hub bridged to the real root + app loggers, torn down after."""
 
     recorder = RecordingRenderer()
-    install_bridge(OutputHub([recorder]))
+    install_hub(OutputHub([recorder]))
+    install_bridge()
     yield recorder, app_logger
     uninstall_bridge()
 
@@ -101,7 +102,8 @@ class TestAdoption:
         recorder = RecordingRenderer()
         hub = OutputHub([recorder], console_factory=lambda console_format: NullRenderer())
         hub.begin_cycle(console_format="plain", level=logging.DEBUG)
-        install_bridge(hub)
+        install_hub(hub)
+        install_bridge()
 
         try:
             app_logger.debug("cache hit")
@@ -123,7 +125,8 @@ class TestAdoption:
         recorder = RecordingRenderer()
         hub = OutputHub([recorder], console_factory=lambda console_format: NullRenderer())
         hub.begin_cycle(console_format="rich", level=logging.DEBUG)
-        install_bridge(hub)
+        install_hub(hub)
+        install_bridge()
 
         try:
             app_logger.debug("cache hit")
@@ -141,7 +144,8 @@ class TestAdoption:
         recorder = RecordingRenderer()
         hub = OutputHub([recorder])
         hub.set_level(logging.DEBUG)
-        install_bridge(hub)
+        install_hub(hub)
+        install_bridge()
         library = _third_party("bridge-test-httpx")
 
         try:
@@ -202,14 +206,15 @@ class TestAdoption:
 
         (diagnostic,) = recorder.of_type(Diagnostic)
         assert diagnostic.trace is not None
-        assert "ValueError: boom" in diagnostic.trace.plain_text()
+        assert "ValueError: boom" in diagnostic.trace.plain
 
     def test_adoption_never_mutates_the_record(self) -> None:
         """caplog safety: the bridge constructs a new event and hands back the
         record byte-identical - no attribute added, consumed or flattened."""
 
         recorder = RecordingRenderer()
-        bridge = HubBridgeHandler(OutputHub([recorder]))
+        install_hub(OutputHub([recorder]))
+        bridge = HubBridgeHandler()
         record = logging.LogRecord("bridge-test-mutation", logging.WARNING, __file__, 1, "flaky %s", ("pool",), None)
         snapshot = dict(record.__dict__)
 
@@ -237,7 +242,8 @@ class TestAdoption:
         adopted file-only: no frontier placement mid-fold (S5 pin 4 / N2)."""
 
         recorder = RecordingRenderer()
-        install_bridge(OutputHub([recorder, _MidDispatchLogger("bridge-test-reentrant")]))
+        install_hub(OutputHub([recorder, _MidDispatchLogger("bridge-test-reentrant")]))
+        install_bridge()
         try:
             app_logger.warning("outer")
         finally:
@@ -248,6 +254,46 @@ class TestAdoption:
         assert not outer.file_only
         assert inner.origin == "bridge-test-reentrant"
         assert inner.file_only
+
+    def test_reentrant_records_downgrade_on_a_producer_entered_drain(self, app_logger: logging.Logger) -> None:
+        """N2 holds for EVERY drain: a renderer logging while a DIRECT producer
+        emit (reporter/hub_note — the majority path) drives dispatch is adopted
+        file-only too. The hub's own baton read decides, not bridge-private
+        state that only its own emits used to set."""
+
+        del app_logger
+        recorder = RecordingRenderer()
+        hub = OutputHub([recorder, _MidDispatchLogger("bridge-test-producer-drain")])
+        install_hub(hub)
+        install_bridge()
+        try:
+            hub.emit(Diagnostic(severity=Severity.WARNING, message="outer", origin=LOG_NAME))
+        finally:
+            uninstall_bridge()
+
+        outer, inner = recorder.of_type(Diagnostic)
+        assert outer.message == "outer"
+        assert inner.origin == "bridge-test-producer-drain"
+        assert inner.file_only
+
+    def test_a_hub_swap_repoints_the_bridge_without_a_reinstall(self, app_logger: logging.Logger) -> None:
+        """The bridge resolves the hub through the registry per record: an
+        install_hub swap must never orphan it onto the closed old hub (silent
+        loss of every third-party WARNING/ERROR)."""
+
+        del app_logger
+        first, second = RecordingRenderer(), RecordingRenderer()
+        install_hub(OutputHub([first]))
+        install_bridge()
+        try:
+            install_hub(OutputHub([second]))  # closes the first hub; NO re-install
+            _third_party("bridge-test-swap").warning("flaky pool")
+        finally:
+            uninstall_bridge()
+
+        assert first.of_type(Diagnostic) == []
+        (diagnostic,) = second.of_type(Diagnostic)
+        assert diagnostic.message == "flaky pool"
 
 
 class _MidDispatchLogger:
@@ -285,7 +331,8 @@ class TestRootGate:
     def test_third_party_info_reaches_the_bridge_at_info_config(self, app_logger: logging.Logger) -> None:
         del app_logger
         recorder = RecordingRenderer()
-        install_bridge(OutputHub([recorder]))
+        install_hub(OutputHub([recorder]))
+        install_bridge()
         setup_logger(log_level="INFO", console_format="plain")
         library = _third_party("bridge-test-rootgate-info", level=logging.NOTSET)
 
@@ -305,7 +352,8 @@ class TestRootGate:
         recorder = RecordingRenderer()
         hub = OutputHub([recorder])
         hub.set_level(logging.DEBUG)
-        install_bridge(hub)
+        install_hub(hub)
+        install_bridge()
         setup_logger(log_level="DEBUG", console_format="plain")
         library = _third_party("bridge-test-rootgate-debug", level=logging.NOTSET)
 
@@ -324,10 +372,8 @@ class TestRootGate:
 
 class TestInstall:
     def test_install_is_idempotent(self, app_logger: logging.Logger) -> None:
-        hub = OutputHub([RecordingRenderer()])
-
-        first = install_bridge(hub)
-        second = install_bridge(hub)
+        first = install_bridge()
+        second = install_bridge()
         try:
             root_bridges = [h for h in logging.getLogger().handlers if isinstance(h, HubBridgeHandler)]
             app_bridges = [h for h in app_logger.handlers if isinstance(h, HubBridgeHandler)]
@@ -342,7 +388,7 @@ class TestInstall:
         the handler teardown with its identity intact (installed once, S3)."""
 
         del app_logger
-        bridge = install_bridge(OutputHub([RecordingRenderer()]))
+        bridge = install_bridge()
         try:
             for _ in range(2):
                 logger = setup_logger(log_level="INFO", console_format="plain")
@@ -352,7 +398,7 @@ class TestInstall:
             uninstall_bridge()
 
     def test_uninstall_detaches_from_both_loggers(self, app_logger: logging.Logger) -> None:
-        install_bridge(OutputHub([RecordingRenderer()]))
+        install_bridge()
 
         uninstall_bridge()
 
@@ -403,7 +449,7 @@ def full_stack(
     monkeypatch.setattr(sys, "stdout", stream)
     hub = OutputHub([FileLogSink(str(tmp_path / "logs"))], console=RichRenderer())
     install_hub(hub)
-    install_bridge(hub)
+    install_bridge()
     logger = setup_logger(log_level="INFO", console_format="rich")
     yield logger, stream, tmp_path / "logs" / "SeaDexArr.log"
     uninstall_bridge()
@@ -453,7 +499,7 @@ class TestFullStackSeams:
         # The FileLogSink is the file path, and the hub counts third-party
         # stragglers (N1, the deliberate tally fix).
         assert _file_text(log_file).count("flaky pool") == 1
-        assert current_hub().counts.mark().warnings == 1
+        assert current_hub().counts.mark().warning == 1
 
     def test_third_party_info_reaches_the_file_only(self, full_stack: tuple[logging.Logger, TtyStringIO, Path]) -> None:
         logger, stream, log_file = full_stack
@@ -500,7 +546,7 @@ class TestFullStackSeams:
         monkeypatch.setattr(sys, "stdout", stream_one)
         hub = OutputHub([], console=RichRenderer())
         install_hub(hub)
-        bridge = install_bridge(hub)
+        bridge = install_bridge()
         try:
             logger = setup_logger(log_level="INFO", console_format="rich")
             hub.begin_cycle(console_format="rich", level=logging.INFO)

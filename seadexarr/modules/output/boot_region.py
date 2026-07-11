@@ -31,7 +31,7 @@ from .events import (
 )
 from .live_region import LiveRegion
 from ..console_caps import Capabilities, CapsCache, block_bar, make_live, spinner_name
-from ..log import INDENT, format_elapsed, indent_string, print_titled_rule
+from ..log import INDENT, format_elapsed, indent_string, print_literal, print_titled_rule
 
 # Width of the live download bar (mapping refresh); only the live cockpit draws
 # it, so it doesn't need to scale with the terminal like the wait cockpit's does.
@@ -202,5 +202,4 @@ class BootRegion(LiveRegion):
 
     @staticmethod
     def _print(console: Console, text: Text) -> None:
-        # Literal text (no markup/highlight): "[1/182]" stays text.
-        console.print(text, highlight=False, soft_wrap=True)
+        print_literal(console, text)

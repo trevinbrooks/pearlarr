@@ -52,21 +52,11 @@ class Accent(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class Span:
-    """An accented [start:end) slice over a value's plain text (e.g. a release group)."""
-
-    start: int
-    end: int
-    accent: Accent
-
-
-@dataclass(frozen=True, slots=True)
 class StyledValue:
-    """A plain string plus semantic emphasis — the group_highlight data, unstyled."""
+    """A plain string plus one semantic emphasis, unstyled (renderers map the accent)."""
 
     text: str
     accent: Accent = Accent.PLAIN
-    spans: tuple[Span, ...] = ()
 
 
 class ScopeKind(Enum):
@@ -423,10 +413,13 @@ class RunTally:
 
 @dataclass(frozen=True, slots=True)
 class RunSummary:
-    """The whole end-of-run scoreboard as one value; the tally rides embedded whole."""
+    """The whole end-of-run scoreboard as one value; the tally rides embedded whole.
+
+    ``dry_run_note`` is the dry-run marker AND its human note in one field
+    (None = a real run), so a noteless "DRY RUN" title is unrepresentable.
+    """
 
     arr: Arr
-    dry_run: bool
     dry_run_note: str | None
     added_count: int
     tally: RunTally
@@ -435,6 +428,10 @@ class RunSummary:
     errors: int
     elapsed_s: float | None
     tip: NeedsActionCause | None
+
+    @property
+    def dry_run(self) -> bool:
+        return self.dry_run_note is not None
 
 
 @dataclass(frozen=True, slots=True)

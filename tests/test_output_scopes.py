@@ -187,26 +187,6 @@ def test_entry_opens_with_its_header_stamped() -> None:
     assert recorder.events[0] == opened[0]  # header-at-open: ScopeOpened first
 
 
-def test_entry_detail_warn_and_fail_carry_severity_and_accent() -> None:
-    factory, recorder, _ = _factory()
-    entry = factory.entry(EntryHeader(state=EntryState.CHECKING, title="T"))
-
-    entry.detail("files", "S01 E01-E28")
-    entry.warn("skipped", "Okay-Subs on AB (private-only)")
-    entry.fail("status", "manual import rejected")
-
-    details = recorder.of_type(EntryDetail)
-    assert details[0] == EntryDetail(
-        label="files",
-        value=StyledValue("S01 E01-E28"),
-        scope=entry.scope_id,
-    )
-    assert details[1].severity is Severity.WARNING
-    assert details[1].value.accent is Accent.CAUTION
-    assert details[2].severity is Severity.ERROR
-    assert details[2].value.accent is Accent.BAD
-
-
 def test_entry_post_stamps_the_scope_id() -> None:
     factory, recorder, _ = _factory()
     entry = factory.entry(EntryHeader(state=EntryState.CHECKING, title="T"))
@@ -232,7 +212,13 @@ def test_late_entry_post_demotes_and_keeps_the_severity() -> None:
     entry = factory.entry(EntryHeader(state=EntryState.CHECKING, title="Frieren"))
     entry.close()
 
-    entry.warn("skipped", "Okay-Subs on AB (private-only)")
+    entry.post(
+        EntryDetail(
+            label="skipped",
+            value=StyledValue("Okay-Subs on AB (private-only)", accent=Accent.CAUTION),
+            severity=Severity.WARNING,
+        ),
+    )
     entry.post(
         GrabAction(status=GrabStatus.ADDING, groups=(), added=(), downloading=()),
     )
@@ -317,25 +303,6 @@ def test_late_wait_emissions_demote() -> None:
     assert "imported T" in late[1].message
 
 
-# --- Diagnostics ---------------------------------------------------------------------
-
-
-def test_diagnostics_bind_origin_once_and_narrow_via_child() -> None:
-    recorder = _Recorder()
-    factory = ScopeFactory(recorder)
-    diag = factory.diagnostics("arr_http")
-
-    diag.warn("fail-open: could not fetch the queue")
-    diag.child("Sonarr").error("boom", exc=ValueError("x"))
-    diag.info("backing off 30s", once="anilist-backoff")
-
-    events = recorder.of_type(Diagnostic)
-    assert [(d.origin, d.severity) for d in events] == [
-        ("arr_http", Severity.WARNING),
-        ("arr_http:Sonarr", Severity.ERROR),
-        ("arr_http", Severity.INFO),
-    ]
-    assert events[1].trace is not None
-    assert "ValueError" in events[1].trace.plain_text()
-    assert events[2].once_key == "anilist-backoff"
-    assert all(d.placed_by is PlacedBy.AMBIENT for d in events)
+# (The Diagnostics handle died at the p4 re-review: hub_note/hub_warn/hub_error
+# — settled at PR7 — are the position-free one-liner surface; the hub's once_key
+# dedup mechanism is pinned in test_output_hub.)

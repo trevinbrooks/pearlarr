@@ -256,25 +256,21 @@ class _FakeRunServices(RunServices):
         return self._grab_result
 
     @override
-    def log_entry_status(self, state: EntryState, label: str) -> bool:
+    def log_entry_status(self, state: EntryState, label: str) -> None:
         self.log_entry_status_calls.append((state, label))
-        return True
 
     @override
-    def log_anilist_item_unmonitored(self, item_title: str) -> bool:
+    def log_anilist_item_unmonitored(self, item_title: str) -> None:
         del item_title
-        return True
 
     @override
-    def log_al_title(self, anilist_title: str, sd_entry: EntryRecord, coverage: str | None = None) -> bool:
+    def log_al_title(self, anilist_title: str, sd_entry: EntryRecord, coverage: str | None = None) -> None:
         del sd_entry, coverage
         self.log_al_title_calls.append(anilist_title)
-        return True
 
     @override
-    def log_cached_entry(self, arr: Arr, al_id: int, state: EntryState = EntryState.UNCHANGED) -> bool:
+    def log_cached_entry(self, arr: Arr, al_id: int, state: EntryState = EntryState.UNCHANGED) -> None:
         self.log_cached_entry_calls.append(LogCachedEntryCall(arr, al_id, state))
-        return True
 
 
 def test_fake_overrides_the_full_public_surface() -> None:

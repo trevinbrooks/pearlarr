@@ -1,8 +1,9 @@
 """Typed capability scope handles: position rides the handle, never the call site.
 
-The handle set is exactly Step / Entry / Wait plus the position-free
-:class:`Diagnostics` (S2: no SummaryScope — the summary is one atomic event;
-Run/Item boundaries are plain events with no handle ceremony). Handles are
+The handle set is exactly Step / Entry / Wait (S2: no SummaryScope — the
+summary is one atomic event; Run/Item boundaries are plain events with no
+handle ceremony; position-free one-liners are the ``hub_note`` family in
+``runtime``, settled at PR7). Handles are
 runtime-total: emitting on a closed handle demotes to an attributed
 :class:`~.events.Diagnostic` (``placed_by=HANDLE``) instead of raising or
 corrupting layout; tests pin that no production path ever demotes.
@@ -19,7 +20,6 @@ from types import TracebackType
 from typing import ClassVar, Final, assert_never, final
 
 from .events import (
-    Accent,
     BootStepFinished,
     BootStepProgressed,
     BootStepSlow,
@@ -38,17 +38,16 @@ from .events import (
     ScopeKind,
     ScopeOpened,
     Severity,
-    StyledValue,
     TorrentGraduated,
     WaitFinished,
     WaitProgress,
     WaitSnapshot,
     WaitStarted,
+    clamp01,
     severity_of,
 )
 from .hub import SeverityCounts
 from .runtime import emit_to_hub
-from .trace import CapturedTrace
 from ..manual_import import OutcomeCategory
 
 type Emit = Callable[[Event], None]
@@ -184,8 +183,7 @@ class StepScope(_ScopeBase):
             self._emit(BootStepSlow(scope=self._scope, label=self._label))
         if detail is not None:
             self._detail = detail
-        clamped = max(0.0, min(1.0, fraction))
-        self._emit(BootStepProgressed(scope=self._scope, fraction=clamped, detail=self._detail))
+        self._emit(BootStepProgressed(scope=self._scope, fraction=clamp01(fraction), detail=self._detail))
 
     def note(self, text: str) -> None:
         """Set the detail the finished ledger line carries (e.g. "42 series")."""
@@ -250,25 +248,6 @@ class EntryScope(_ScopeBase):
     def scope_id(self) -> ScopeId:
         return self._scope
 
-    def detail(
-        self,
-        label: str,
-        value: str | StyledValue,
-        *,
-        severity: Severity = Severity.INFO,
-        tail: str | None = None,
-    ) -> None:
-        styled = StyledValue(value) if isinstance(value, str) else value
-        self.post(EntryDetail(label=label, value=styled, severity=severity, tail=tail))
-
-    def warn(self, label: str, message: str) -> None:
-        """An in-block, counted warning — there is no API here for a column-0 badge."""
-
-        self.detail(label, StyledValue(message, accent=Accent.CAUTION), severity=Severity.WARNING)
-
-    def fail(self, label: str, message: str) -> None:
-        self.detail(label, StyledValue(message, accent=Accent.BAD), severity=Severity.ERROR)
-
     def post(self, fact: EntryFact) -> None:
         """Emit an entry-block fact stamped with this scope's id (demotes when stale)."""
 
@@ -331,50 +310,6 @@ class WaitScope(_ScopeBase):
 
 
 @final
-class Diagnostics:
-    """The weakest handle: report problems from anywhere, claim no position.
-
-    Replaces a leaf client's ``logger`` parameter 1:1; ``origin`` is bound once at
-    construction. ``once=`` keys dedup in the hub per (origin, key), cleared per
-    cycle (S9).
-    """
-
-    def __init__(self, emit: Emit, origin: str) -> None:
-        self._emit = emit
-        self._origin = origin
-
-    @property
-    def origin(self) -> str:
-        return self._origin
-
-    def child(self, suffix: str) -> Diagnostics:
-        """A narrower origin, e.g. "arr_http" -> "arr_http:Sonarr"."""
-
-        return Diagnostics(self._emit, f"{self._origin}:{suffix}")
-
-    def info(self, message: str, *, once: str | None = None) -> None:
-        self._diag(Severity.INFO, message, once, None)
-
-    def warn(self, message: str, *, once: str | None = None) -> None:
-        self._diag(Severity.WARNING, message, once, None)
-
-    def error(self, message: str, *, exc: BaseException | None = None, once: str | None = None) -> None:
-        trace = CapturedTrace.from_exception(exc) if exc is not None else None
-        self._diag(Severity.ERROR, message, once, trace)
-
-    def _diag(self, severity: Severity, message: str, once: str | None, trace: CapturedTrace | None) -> None:
-        self._emit(
-            Diagnostic(
-                severity=severity,
-                message=message,
-                origin=self._origin,
-                once_key=once,
-                trace=trace,
-            ),
-        )
-
-
-@final
 class ScopeFactory:
     """Bind-once producer bundle: one emitter, one id minter, one clock.
 
@@ -401,6 +336,3 @@ class ScopeFactory:
 
     def wait(self, total: int, *, pulse_s: float) -> WaitScope:
         return WaitScope(self._emit, self._ids.mint(ScopeKind.WAIT_REGION), total, pulse_s=pulse_s)
-
-    def diagnostics(self, origin: str) -> Diagnostics:
-        return Diagnostics(self._emit, origin)

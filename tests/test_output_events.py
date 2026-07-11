@@ -29,6 +29,7 @@ from seadexarr.modules.output import (
     PlacedBy,
     ReleaseSkipped,
     RunFinished,
+    RunSummary,
     RunTally,
     ScanFinished,
     ScanStarted,
@@ -36,7 +37,6 @@ from seadexarr.modules.output import (
     ScopeKind,
     Severity,
     SkipReason,
-    Span,
     StyledValue,
     TorrentGraduated,
     severity_of,
@@ -59,11 +59,28 @@ def test_events_compare_by_value() -> None:
     assert a == b
 
 
-def test_styled_value_defaults_to_plain_with_no_spans() -> None:
+def test_styled_value_defaults_to_plain() -> None:
     value = StyledValue("S01 E01-E28")
     assert value.accent is Accent.PLAIN
-    assert value.spans == ()
-    assert Span(0, 4, Accent.ACCENT).accent is Accent.ACCENT
+
+
+def test_dry_run_derives_from_the_note() -> None:
+    """One field carries the dry-run marker AND its note: a noteless "DRY RUN"
+    title (the literal-None render bug class) is unrepresentable."""
+
+    real = RunSummary(
+        arr=Arr.SONARR,
+        dry_run_note=None,
+        added_count=0,
+        tally=RunTally.from_stats(RunStats()),
+        wait_mode_on=False,
+        warnings=0,
+        errors=0,
+        elapsed_s=None,
+        tip=None,
+    )
+    assert not real.dry_run
+    assert dataclasses.replace(real, dry_run_note="nothing grabbed").dry_run
 
 
 def test_scope_id_is_a_value() -> None:

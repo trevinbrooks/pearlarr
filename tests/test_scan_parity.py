@@ -495,7 +495,6 @@ def _rich_stats() -> RunStats:
 SUMMARY_RICH = RunSummaryReady(
     summary=RunSummary(
         arr=Arr.SONARR,
-        dry_run=False,
         dry_run_note=None,
         added_count=2,
         tally=RunTally.from_stats(_rich_stats()),
@@ -584,7 +583,6 @@ def _dry_stats() -> RunStats:
 SUMMARY_DRY_HAS_CLIENT = RunSummaryReady(
     summary=RunSummary(
         arr=Arr.SONARR,
-        dry_run=True,
         dry_run_note="nothing grabbed",
         added_count=1,
         tally=RunTally.from_stats(_dry_stats()),
@@ -652,7 +650,6 @@ def _preview_stats() -> RunStats:
 SUMMARY_DRY_NO_CLIENT = RunSummaryReady(
     summary=RunSummary(
         arr=Arr.RADARR,
-        dry_run=True,
         dry_run_note="qBittorrent not configured; nothing grabbed",
         added_count=1,
         tally=RunTally.from_stats(_preview_stats()),
@@ -692,7 +689,6 @@ SUMMARY_DRY_NO_CLIENT_LINES: tuple[Line, ...] = (
 SUMMARY_MINIMAL = RunSummaryReady(
     summary=RunSummary(
         arr=Arr.SONARR,
-        dry_run=False,
         dry_run_note=None,
         added_count=0,
         tally=RunTally.from_stats(RunStats()),
@@ -741,7 +737,6 @@ def _wait_off_stats() -> RunStats:
 SUMMARY_WAIT_OFF = RunSummaryReady(
     summary=RunSummary(
         arr=Arr.SONARR,
-        dry_run=False,
         dry_run_note=None,
         added_count=0,
         tally=RunTally.from_stats(_wait_off_stats()),
@@ -1163,7 +1158,7 @@ class TestActionBlockParity:
 def _summary_lines(
     ctx: RunContext,
     *,
-    is_preview: bool,
+    preview: bool,
     has_client: bool,
     warnings: int = 0,
     errors: int = 0,
@@ -1180,7 +1175,7 @@ def _summary_lines(
         harness.counts.record(Severity.WARNING)
     for _ in range(errors):
         harness.counts.record(Severity.ERROR)
-    harness.reporter.log_run_summary(ctx, is_preview=is_preview, has_client=has_client)
+    harness.reporter.log_run_summary(ctx, preview=preview, has_client=has_client)
     return harness.lines()
 
 
@@ -1191,31 +1186,31 @@ class TestRunSummaryParity:
         ctx = RunContext(arr=Arr.SONARR, import_wait_mode=ImportWaitMode.BLOCKING, stats=_rich_stats())
         ctx.torrents_added = 2
         ctx.started_monotonic = 38.0
-        assert _summary_lines(ctx, is_preview=False, has_client=True, warnings=2, errors=1) == SUMMARY_RICH_LINES
+        assert _summary_lines(ctx, preview=False, has_client=True, warnings=2, errors=1) == SUMMARY_RICH_LINES
 
     def test_dry_run_with_client(self) -> None:
         ctx = RunContext(arr=Arr.SONARR, stats=_dry_stats())
         ctx.torrents_added = 1
-        assert _summary_lines(ctx, is_preview=True, has_client=True) == SUMMARY_DRY_HAS_CLIENT_LINES
+        assert _summary_lines(ctx, preview=True, has_client=True) == SUMMARY_DRY_HAS_CLIENT_LINES
 
     def test_dry_run_without_client(self) -> None:
         ctx = RunContext(arr=Arr.RADARR, stats=_preview_stats())
         ctx.torrents_added = 1
-        assert _summary_lines(ctx, is_preview=True, has_client=False) == SUMMARY_DRY_NO_CLIENT_LINES
+        assert _summary_lines(ctx, preview=True, has_client=False) == SUMMARY_DRY_NO_CLIENT_LINES
 
     def test_minimal_all_zeros(self) -> None:
         ctx = RunContext(arr=Arr.SONARR)
-        assert _summary_lines(ctx, is_preview=False, has_client=True) == SUMMARY_MINIMAL_LINES
+        assert _summary_lines(ctx, preview=False, has_client=True) == SUMMARY_MINIMAL_LINES
 
     def test_wait_mode_off_hides_pending_rows(self) -> None:
         ctx = RunContext(arr=Arr.SONARR, stats=_wait_off_stats())
-        assert _summary_lines(ctx, is_preview=False, has_client=True) == SUMMARY_WAIT_OFF_LINES
+        assert _summary_lines(ctx, preview=False, has_client=True) == SUMMARY_WAIT_OFF_LINES
 
     def test_warnings_only_issues_row_renders_yellow(self) -> None:
         # The style ladder's middle rung (warnings without errors) has no golden
         # of its own: bold-red needs errors, yellow needs warnings alone.
         ctx = RunContext(arr=Arr.SONARR)
-        lines = _summary_lines(ctx, is_preview=False, has_client=True, warnings=2)
+        lines = _summary_lines(ctx, preview=False, has_client=True, warnings=2)
         expected = _srow("  issues       : 2 warnings, 0 errors", "issues", "2 warnings, 0 errors", style="yellow")
         assert expected in lines
 

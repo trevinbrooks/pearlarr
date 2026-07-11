@@ -625,22 +625,22 @@ class RunServices:
     # only log_* methods kept here are the ones the Sonarr/Radarr strategies
     # invoke through their services view; each delegates the same way.
 
-    def log_entry_status(self, state: EntryState, label: str) -> bool:
+    def log_entry_status(self, state: EntryState, label: str) -> None:
         """Log a one-line entry status row (delegates to RunReporter)."""
-        return self._reporter.log_entry_status(state, label)
+        self._reporter.log_entry_status(state, label)
 
-    def log_anilist_item_unmonitored(self, item_title: str) -> bool:
+    def log_anilist_item_unmonitored(self, item_title: str) -> None:
         """Log an unmonitored-item skip (delegates to RunReporter)."""
-        return self._reporter.log_arr_item_unmonitored(self._ctx, item_title)
+        self._reporter.log_arr_item_unmonitored(self._ctx, item_title)
 
     def log_al_title(
         self,
         anilist_title: str,
         sd_entry: EntryRecord,
         coverage: str | None = None,
-    ) -> bool:
+    ) -> None:
         """Log the active-entry header (delegates to RunReporter)."""
-        return self._reporter.log_al_title(
+        self._reporter.log_al_title(
             self._ctx,
             anilist_title,
             sd_entry,
@@ -652,10 +652,10 @@ class RunServices:
         arr: Arr,
         al_id: int,
         state: Literal[EntryState.UNCHANGED, EntryState.IN_RADARR] = EntryState.UNCHANGED,
-    ) -> bool:
+    ) -> None:
         """Log a cached entry (delegates to RunReporter)."""
-        return self._reporter.log_cached_entry(self._ctx, arr, al_id, state=state)
+        self._reporter.log_cached_entry(self._ctx, arr, al_id, state=state)
 
-    def _log_no_seadex_releases(self) -> bool:
+    def _log_no_seadex_releases(self) -> None:
         """Log a no-suitable-releases outcome (delegates to RunReporter)."""
-        return self._reporter.log_no_seadex_releases(self._ctx)
+        self._reporter.log_no_seadex_releases(self._ctx)

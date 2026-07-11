@@ -9,15 +9,16 @@ handling and extend :meth:`_reset` with per-cycle frame state of their own.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 
 from rich.console import Console
 from rich.live import Live
 from rich.spinner import Spinner
 
+from .events import Diagnostic, Severity
+from .runtime import emit_to_hub
+from .trace import CapturedTrace
 from ..console_caps import CapsCache
-from ..log import LOG_NAME
 
 
 class LiveRegion:
@@ -36,13 +37,6 @@ class LiveRegion:
         self._caps_cache = caps_cache if caps_cache is not None else CapsCache()
         # The RichRenderer's level store, read live (no duplicate _level here).
         self._level_source = level_source
-        # For contained teardown failures. The refresh thread must never reach
-        # the bridge/hub at all (adoption makes ANY level dangerous — the ABBA
-        # pin); every log through this logger is main-thread-only: _stop_live
-        # runs on the dispatch thread, and WaitRegion's frame latch reports here
-        # from handle()/teardown (verified — the only custom __rich_console__ is
-        # _LiveFrame, which latches instead of logging).
-        self._logger = logging.getLogger(LOG_NAME)
         self._live: Live | None = None
         self._spinner: Spinner | None = None
 
@@ -74,5 +68,27 @@ class LiveRegion:
         if live is not None:
             try:
                 live.stop()
-            except Exception:
-                self._logger.debug("live region stop failed", exc_info=True)
+            except Exception as exc:
+                self._report_contained("live region stop failed", exc)
+
+    def _report_contained(self, message: str, exc: Exception) -> None:
+        """A contained-failure note: a file-only WARNING Diagnostic, main-thread only.
+
+        Straight to the hub, never stdlib logging: the old ``logger.debug`` died
+        at the logger's level gate on any config above DEBUG, so a persistently
+        broken cockpit left zero forensics on every sink. ``file_only`` keeps it
+        off the console and out of the counts (forensic, like the hub's own
+        containment notes); emitting from inside dispatch is the documented
+        re-entrant path (it enqueues under the baton). The refresh thread must
+        still never call this — ``_LiveFrame`` latches instead (the ABBA pin).
+        """
+
+        emit_to_hub(
+            Diagnostic(
+                severity=Severity.WARNING,
+                message=message,
+                origin="output.live_region",
+                trace=CapturedTrace.from_exception(exc),
+                file_only=True,
+            ),
+        )

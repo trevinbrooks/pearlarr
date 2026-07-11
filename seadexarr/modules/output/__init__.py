@@ -56,7 +56,6 @@ from .events import (
     ScopeOpened,
     Severity,
     SkipReason,
-    Span,
     StyledValue,
     TorrentGraduated,
     TorrentView,
@@ -72,7 +71,6 @@ from .runtime import current_hub, emit_to_hub, hub_counts, hub_error, hub_note, 
 from .scopes import (
     PROCESS_SCOPE_IDS,
     CountsSource,
-    Diagnostics,
     Emit,
     EntryFact,
     EntryScope,
@@ -82,7 +80,7 @@ from .scopes import (
     StepScope,
     WaitScope,
 )
-from .textline import Field, FileLogSink, JsonRenderer, LineRenderer, format_line
+from .textline import Field, FileLogSink, JsonRenderer, LineRenderer
 from .trace import CapturedTrace
 
 __all__ = [
@@ -105,7 +103,6 @@ __all__ = [
     "CountsSource",
     "CycleStarted",
     "Diagnostic",
-    "Diagnostics",
     "Emit",
     "EntryDetail",
     "EntryFact",
@@ -154,7 +151,6 @@ __all__ = [
     "SeverityCounts",
     "SeverityTally",
     "SkipReason",
-    "Span",
     "StepScope",
     "StyledValue",
     "TorrentGraduated",
@@ -169,7 +165,6 @@ __all__ = [
     "diagnostic_text",
     "diagnostic_threshold",
     "emit_to_hub",
-    "format_line",
     "hub_counts",
     "hub_error",
     "hub_note",

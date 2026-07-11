@@ -410,7 +410,7 @@ class RunLoop:
 
             self._reporter.log_run_summary(
                 self._ctx,
-                is_preview=preview,
+                preview=preview,
                 has_client=self.qbit is not None,
             )
 

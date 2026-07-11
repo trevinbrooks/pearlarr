@@ -1,6 +1,5 @@
 import logging
 import sys
-from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import override
@@ -69,25 +68,27 @@ shared payload renderers below (``render_kv`` / ``render_rule`` /
 ``print_titled_rule``). Lives here beside those renderers.
 """
 
-# The hub's console-ownership probe, registered by ``install_bridge``: when it
-# answers True the hub's renderer owns the badge class, so the rich handler skips
-# plain WARNING+ records; absent/False (no bridge, struck-out console seat) the
-# legacy badge renders — warnings can never vanish.
-_console_owner: Callable[[], bool] | None = None
+# True while the output bridge is installed: the hub owns the plain WARNING+
+# badge class outright — in-context placement while its console seat is armed,
+# its stderr fallback otherwise — so the rich handler stands down entirely, or
+# the same record renders twice (once per safety net). With no bridge
+# (standalone setup_logger) the legacy badge below still renders, so a warning
+# can never vanish.
+_hub_owns_badges = False
 
 
-def register_console_owner(owner: Callable[[], bool]) -> None:
-    """Install the hub's console-ownership probe (``install_bridge``)."""
+def mark_hub_console_owner() -> None:
+    """The output bridge is installed: the hub owns the badge class (``install_bridge``)."""
 
-    global _console_owner
-    _console_owner = owner
+    global _hub_owns_badges
+    _hub_owns_badges = True
 
 
 def clear_console_owner() -> None:
-    """Remove the probe (``uninstall_bridge``, tests)."""
+    """Release badge ownership (``uninstall_bridge``, tests)."""
 
-    global _console_owner
-    _console_owner = None
+    global _hub_owns_badges
+    _hub_owns_badges = False
 
 
 class HubBridgeBase(logging.Handler):
@@ -99,6 +100,17 @@ class HubBridgeBase(logging.Handler):
     """
 
 
+def print_literal(console: Console, text: Text) -> None:
+    """Print ``text`` as literal content: no markup/highlight, whole-line soft wrap.
+
+    THE one home of the literal-print rule - bracketed content ("[1/182]",
+    "[MARKED INCOMPLETE]") stays text instead of re-styling as markup, and the
+    terminal owns any overflow (rich re-wrapping loses the indent).
+    """
+
+    console.print(text, highlight=False, soft_wrap=True)
+
+
 def print_titled_rule(console: Console, title: str, style: str, *, heavy: bool) -> None:
     """A titled section header: a full-width rule, then the bold title line.
 
@@ -107,7 +119,7 @@ def print_titled_rule(console: Console, title: str, style: str, *, heavy: bool) 
     """
 
     console.print(Rule(style=style, characters="━" if heavy else "─"))
-    console.print(Text(title, style=f"{style} bold"), highlight=False, soft_wrap=True)
+    print_literal(console, Text(title, style=f"{style} bold"))
 
 
 def render_kv(kv: KvLine) -> Text:
@@ -155,12 +167,12 @@ class RichConsoleHandler(logging.Handler):
     here is DEBUG chatter, unmigrated INFO one-liners, the WARNING+ fallback,
     and exc_info tracebacks. Routine INFO/DEBUG lines print with no level
     prefix, so the output reads as clean text. PLAIN records at WARNING+ (the
-    badge class, including exc_info records) are NOT rendered here while the
-    registered console owner (the hub, via ``install_bridge``) answers True:
-    the logging bridge (output/bridge.py) adopts them and the hub's rich
-    renderer places them in-context (S5 pin 2) - rendering here too would
-    double them. With no owner, or a struck-out console seat, the legacy badge
-    renders so a warning can never vanish.
+    badge class, including exc_info records) are NOT rendered here while a
+    bridge is installed (``_hub_owns_badges``): the logging bridge
+    (output/bridge.py) adopts them and the hub places them - the armed console
+    seat in-context (S5 pin 2), its stderr fallback otherwise - so rendering
+    here too would double them. With no bridge, the legacy badge renders so a
+    warning can never vanish.
 
     Messages are rendered as literal text rather than ``rich`` markup, so
     bracketed content such as "[1/1]" or "[MARKED INCOMPLETE]" is never
@@ -196,16 +208,17 @@ class RichConsoleHandler(logging.Handler):
         else:
             line = badge_line(record.levelno, message)
 
-        self.console.print(line, highlight=False, soft_wrap=True)
+        print_literal(self.console, line)
 
     @override
     def emit(self, record: logging.LogRecord) -> None:
         try:
             # The badge class moved to hub placement (S5 pin 2): the bridge
-            # adopts WARNING+ records, the hub's renderer draws the badge — but
-            # only while the hub actually owns the console; with no bridge or
-            # a struck-out console seat, the legacy badge below still renders.
-            if record.levelno >= logging.WARNING and _console_owner is not None and _console_owner():
+            # adopts WARNING+ records and the hub places them — the armed console
+            # seat in-context, its stderr fallback otherwise — so this handler
+            # stands down whenever a bridge is installed (rendering here too
+            # doubled the record). No bridge: the legacy badge below renders.
+            if record.levelno >= logging.WARNING and _hub_owns_badges:
                 return
 
             message = record.getMessage()
@@ -217,7 +230,7 @@ class RichConsoleHandler(logging.Handler):
             # The bridge-adopted event still carries the full plain-text
             # traceback to the FileLogSink, so nothing is lost from the log file.
             if record.exc_info:
-                self.console.print(badge_line(record.levelno, message), highlight=False, soft_wrap=True)
+                print_literal(self.console, badge_line(record.levelno, message))
                 exc_type, exc_value, exc_tb = record.exc_info
                 if exc_type is not None and exc_value is not None:
                     self.console.print(

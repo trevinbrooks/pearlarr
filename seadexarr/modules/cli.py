@@ -372,7 +372,7 @@ def _install_output_hub(paths: AppPaths) -> OutputHub:
         console_factory=partial(_console_seat, caps_cache=caps_cache),
     )
     install_hub(hub)
-    install_bridge(hub)
+    install_bridge()
     return hub
 
 

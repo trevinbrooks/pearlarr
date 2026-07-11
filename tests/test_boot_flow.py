@@ -268,7 +268,7 @@ def test_logger_error_via_the_bridge_suppresses_the_capstone() -> None:
     flow, recording, clock = _flow()
     app_logger = logging.getLogger(LOG_NAME)
     propagate_before = app_logger.propagate
-    install_bridge(recording.hub)
+    install_bridge()
     try:
         with flow.step("Reading config"):
             clock.tick(0.02)
