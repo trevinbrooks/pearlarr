@@ -79,7 +79,7 @@ def _data_dir_text() -> str:
     """Every log file the run left in the data directory, concatenated."""
 
     paths = resolve_paths()
-    logs = sorted(Path(paths.log_dir).rglob("*.log")) if os.path.isdir(paths.log_dir) else []
+    logs: list[Path] = sorted(Path(paths.log_dir).rglob("*.log")) if os.path.isdir(paths.log_dir) else []
     return "\n".join(log.read_text(encoding="utf-8") for log in logs)
 
 
