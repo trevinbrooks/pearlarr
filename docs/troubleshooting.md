@@ -9,6 +9,8 @@ A test greps every quoted fragment against the source tree, so the quotes cannot
 | A run or cache command refuses to start | [Another run is active](#another-run-is-active) |
 | Pearlarr exits immediately with a permissions error | [The data directory is not writable](#the-data-directory-is-not-writable) |
 | The config file fails to load | [The config is missing or invalid](#the-config-is-missing-or-invalid) |
+| Every run warns about an older config schema | [Old config schema](#old-config-schema) |
+| The config refuses to load after a downgrade | [Config from a newer Pearlarr](#config-from-a-newer-pearlarr) |
 | Every run skips both arrs | [No arr is configured](#no-arr-is-configured) |
 | Sonarr or Radarr is unreachable or rejects the key | [The arr connection fails](#the-arr-connection-fails) |
 | qBittorrent is unreachable | [The qBittorrent connection fails](#the-qbittorrent-connection-fails) |
@@ -63,6 +65,26 @@ Unreadable YAML in ...
 A run with no config writes the starter template and stops; fill it in and run again.
 A validation failure lists each offending key with what is wrong - unknown or misspelled keys fail loudly rather than being silently ignored.
 `pearlarr config validate` runs the same checks without starting a run, and [configuration.md](configuration.md) documents every key.
+
+## Old config schema
+
+```text
+Config file ... uses an older config schema - migrated in memory ... run pearlarr config migrate to update the file (a backup is kept)
+```
+
+Harmless: the file was written for an older Pearlarr, and every load brings it forward in memory, so runs behave as if the file were current.
+The parenthesized part of the warning names each key or value that was folded, if any.
+`pearlarr config migrate` rewrites the file at the current schema and the warning stops; the previous file is kept beside it as `config.yml.bak`.
+See [configuration.md](configuration.md#the-config-schema-version) for what the rewrite does and does not preserve.
+
+## Config from a newer Pearlarr
+
+```text
+the file was written for a newer Pearlarr (schema version ... - upgrade Pearlarr
+```
+
+The `config_version` in the file is higher than this Pearlarr understands - almost always a downgraded install reading a config a newer version wrote (or migrated).
+Upgrade Pearlarr back, restore the pre-migration `config.yml.bak` if you have one, or lower `config_version` by hand and fix whatever the load then rejects.
 
 ## No arr is configured
 

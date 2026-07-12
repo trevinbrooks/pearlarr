@@ -44,6 +44,8 @@ Coming from upstream 0.9.x:
   - `cache stats` and `cache check`.
   - `pearlarr --version`, `-h` everywhere; a bare group command prints its help.
 - The scheduled-run cadence is a config field, `schedule.interval_hours` (default 6), re-read each cycle so an edit takes effect without a restart.
+- Config schema versioning: `config_version` stamps the file, and a file from an older Pearlarr is migrated automatically in memory at every load (a nested-format file still saying `seadex.public_only`, `private_releases: allow`, or a pre-validation `log_level`/`imports.mode` spelling keeps loading, with a warning naming the fold).
+  `pearlarr config migrate` rewrites the file itself at the current schema, keeping the previous file as `config.yml.bak`.
 
 ### Changed
 
