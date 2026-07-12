@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "pearlarr"
 version = "1.0.0"
-description = "Automatically grab the best anime releases tagged on SeaDex for your Sonarr and Radarr libraries"
+description = "Automatically grab the releases SeaDex recommends for the anime in your Sonarr and Radarr libraries"
 readme = "README.md"
 requires-python = ">=3.13"
 license = "GPL-3.0-or-later"

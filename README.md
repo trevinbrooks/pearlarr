@@ -1,16 +1,16 @@
 # Pearlarr
 
-[![PyPI](https://img.shields.io/pypi/v/pearlarr.svg?label=PyPI&style=flat-square)](https://pypi.org/pypi/pearlarr/)
-[![Python](https://img.shields.io/pypi/pyversions/pearlarr.svg?label=Python&color=yellow&style=flat-square)](https://pypi.org/pypi/pearlarr/)
+[![PyPI](https://img.shields.io/pypi/v/pearlarr.svg?label=PyPI&style=flat-square)](https://pypi.org/project/pearlarr/)
+[![Python](https://img.shields.io/pypi/pyversions/pearlarr.svg?label=Python&color=yellow&style=flat-square)](https://pypi.org/project/pearlarr/)
 [![Actions](https://img.shields.io/github/actions/workflow/status/trevinbrooks/pearlarr/build.yaml?branch=main&style=flat-square)](https://github.com/trevinbrooks/pearlarr/actions)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg?label=License&style=flat-square)](LICENSE)
 
-Pearlarr automatically grabs the best anime releases tagged on [SeaDex](https://releases.moe) for your [Sonarr](https://sonarr.tv) and [Radarr](https://radarr.video) libraries.
+Pearlarr automatically grabs the releases [SeaDex](https://releases.moe) recommends for the anime in your [Sonarr](https://sonarr.tv) and [Radarr](https://radarr.video) libraries.
 
 SeaDex is the curated index of the best release of every anime.
-On a schedule, Pearlarr maps your library to SeaDex's entries, picks the best release you don't already have, grabs it through qBittorrent, and can shepherd the download into Sonarr and notify you on Discord:
+On a schedule, Pearlarr maps your library to SeaDex's entries, compares each recommendation against what you already have, grabs anything missing or outdated through qBittorrent, and can shepherd the download into Sonarr and notify you on Discord:
 
-![A Pearlarr grab notification in Discord: the release, its tracker, size and audio, the episodes covered, the group being replaced, and SeaDex's notes](https://raw.githubusercontent.com/trevinbrooks/pearlarr/main/docs/assets/example_post.png)
+![A Pearlarr grab notification in Discord: the release, its tracker, size, and audio, the episodes covered, the group being replaced, and SeaDex's notes](https://raw.githubusercontent.com/trevinbrooks/pearlarr/main/docs/assets/example_post.png)
 
 ## How it works
 
@@ -23,7 +23,7 @@ Each run walks your library title by title:
 5. **Grab** - the release is added to qBittorrent with your category and tags, a Discord notification goes out, and the result is cached.
 6. **Import** (optional, Sonarr) - Pearlarr waits for the downloads to finish and shepherds them into Sonarr, stepping in with a manual import when Sonarr can't place the files itself.
 
-Runs are incremental and safe to repeat: results live in a SQLite cache and are re-evaluated only when SeaDex or your arr changed something, and an interrupted run never corrupts state.
+Runs are incremental and safe to repeat: results live in a SQLite cache, a title is re-checked only when SeaDex or your arr changed something, and an interrupted run never corrupts state.
 
 ## Install
 
@@ -58,7 +58,7 @@ Everything operational lives in [docs/deployment.md](docs/deployment.md): permis
 
 ### uv / pipx / pip
 
-Pearlarr needs Python 3.13 or newer; [uv](https://docs.astral.sh/uv/) or pipx give it its own environment no matter what your system Python is:
+Pearlarr needs Python 3.13 or newer; [uv](https://docs.astral.sh/uv/) or pipx give it its own environment (and uv fetches a matching Python if your system's is too old):
 
 ```console
 $ uv tool install pearlarr    # or: pipx install pearlarr
