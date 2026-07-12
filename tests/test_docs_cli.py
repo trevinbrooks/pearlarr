@@ -12,7 +12,7 @@ import re
 import typer.core
 import typer.main
 
-from pearlarr.modules.cli import pearlarr_cli
+from pearlarr.cli import pearlarr_cli
 
 type _Node = typer.core.TyperCommand | typer.core.TyperGroup
 

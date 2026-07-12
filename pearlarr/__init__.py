@@ -8,29 +8,17 @@ version if you script against it anyway.
 
 from typing import TYPE_CHECKING
 
-from .modules import pearlarr_cli, setup_logger
+from .cli import pearlarr_cli
+from .log import setup_logger
 
-# `__version__` and the run-machinery re-exports are resolved LAZILY (PEP 562):
-# the `pearlarr` entry point imports this package only to reach
-# `pearlarr_cli`, so it must not eagerly pay the `importlib.metadata` lookup
-# or pull the heavy run machinery (qBittorrent / the SeaDex+httpx chain).
-# `from .. import __version__` in cache.py and `pearlarr.<Sync>` for
-# programmatic use both still resolve through `__getattr__`.
-_LAZY_EXPORTS = frozenset({"RadarrSync", "RunDeps", "RunLoop", "RunServices", "SonarrSync"})
-
+# `__version__` is resolved LAZILY (PEP 562): the `pearlarr` entry point
+# imports this package only to reach `pearlarr_cli`, so it must not eagerly
+# pay the `importlib.metadata` lookup. `from . import __version__` in
+# cache.py still resolves through `__getattr__`.
 if TYPE_CHECKING:
-    # Declared for type checkers; the values are produced at runtime by
-    # __getattr__ (PEP 562), so these never execute / never import eagerly.
     __version__: str
-    from .modules import RadarrSync, RunDeps, RunLoop, RunServices, SonarrSync
 
 __all__ = [
-    "RadarrSync",
-    "RunDeps",
-    "RunLoop",
-    "RunServices",
-    "SonarrSync",
-    "__version__",
     "pearlarr_cli",
     "setup_logger",
 ]
@@ -41,8 +29,4 @@ def __getattr__(name: str) -> object:
         from importlib.metadata import version
 
         return version("pearlarr")
-    if name in _LAZY_EXPORTS:
-        from . import modules
-
-        return getattr(modules, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

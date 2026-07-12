@@ -19,9 +19,9 @@ import logging
 from rich.console import Console, Group
 from rich.spinner import Spinner
 
-from pearlarr.modules.config import Arr
-from pearlarr.modules.manual_import import Outcome
-from pearlarr.modules.output import (
+from pearlarr.config import Arr
+from pearlarr.manual_import import Outcome
+from pearlarr.output import (
     Diagnostic,
     Event,
     Phase,
@@ -40,9 +40,9 @@ from pearlarr.modules.output import (
     WaitStarted,
     install_hub,
 )
-from pearlarr.modules.output.recording import RecordingHub
-from pearlarr.modules.output.wait_lines import live_model
-from pearlarr.modules.output.wait_region import WaitRegion, _LiveFrame
+from pearlarr.output.recording import RecordingHub
+from pearlarr.output.wait_lines import live_model
+from pearlarr.output.wait_region import WaitRegion, _LiveFrame
 
 from .fakes import CaptureHandler, install_recording_hub, strip_ansi
 

@@ -14,8 +14,8 @@ from pathlib import Path
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 
-from pearlarr.modules.config import AppConfig
-from pearlarr.modules.env_registry import ENV_VARS
+from pearlarr.config import AppConfig
+from pearlarr.env_registry import ENV_VARS
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

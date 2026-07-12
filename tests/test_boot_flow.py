@@ -16,12 +16,12 @@ from pathlib import Path
 import httpx
 import pytest
 
-from pearlarr.modules.boot_flow import BootFlow
-from pearlarr.modules.config import Arr
-from pearlarr.modules.log import LOG_NAME
-from pearlarr.modules.manual_import import OutcomeCategory
-from pearlarr.modules.mappings import MappingResolver
-from pearlarr.modules.output import (
+from pearlarr.boot_flow import BootFlow
+from pearlarr.config import Arr
+from pearlarr.log import LOG_NAME
+from pearlarr.manual_import import OutcomeCategory
+from pearlarr.mappings import MappingResolver
+from pearlarr.output import (
     BootReady,
     BootStepFinished,
     BootStepSlow,
@@ -35,8 +35,8 @@ from pearlarr.modules.output import (
     install_bridge,
     install_hub,
 )
-from pearlarr.modules.output.recording import RecordingHub
-from pearlarr.modules.run_services import RunDeps
+from pearlarr.output.recording import RecordingHub
+from pearlarr.run_services import RunDeps
 
 from .builders import make_bare_instance, make_config
 from .fakes import FakeClock

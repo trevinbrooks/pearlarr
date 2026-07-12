@@ -8,9 +8,9 @@ movie matching on both ids appears once. `process_al_id` keeps the outer
 feature guard and the skip logging; this pins the matching itself.
 """
 
-from pearlarr.modules.mappings import MappingEntry
-from pearlarr.modules.seadex_sonarr import radarr_movies_matching
-from pearlarr.modules.seadex_types import RadarrMovie
+from pearlarr.mappings import MappingEntry
+from pearlarr.seadex_sonarr import radarr_movies_matching
+from pearlarr.seadex_types import RadarrMovie
 
 
 def test_non_zero_seasons_never_match() -> None:

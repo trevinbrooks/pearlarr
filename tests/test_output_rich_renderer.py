@@ -18,9 +18,9 @@ from datetime import datetime, timedelta, timezone
 
 from rich.console import Console
 
-from pearlarr.modules.config import Arr
-from pearlarr.modules.log import INDENT, LOG_NAME
-from pearlarr.modules.output import (
+from pearlarr.config import Arr
+from pearlarr.log import INDENT, LOG_NAME
+from pearlarr.output import (
     CapturedTrace,
     Diagnostic,
     Event,

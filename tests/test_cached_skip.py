@@ -13,10 +13,10 @@ re-processed.
 
 from datetime import datetime
 
-from pearlarr.modules.config import Arr
-from pearlarr.modules.log import EntryState
-from pearlarr.modules.reporter import RunContext
-from pearlarr.modules.run_services import RunServices
+from pearlarr.config import Arr
+from pearlarr.log import EntryState
+from pearlarr.reporter import RunContext
+from pearlarr.run_services import RunServices
 
 from .builders import FakeCacheStore, FakeSeaDexSource, make_entry_record, make_services
 

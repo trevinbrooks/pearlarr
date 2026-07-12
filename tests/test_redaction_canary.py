@@ -16,13 +16,13 @@ import pytest
 import respx
 from typer.testing import CliRunner
 
-from pearlarr.modules.arr_http import ArrConnectionError, ArrHttp
-from pearlarr.modules.cli import pearlarr_cli
-from pearlarr.modules.config import Arr
-from pearlarr.modules.manual_import import Outcome
-from pearlarr.modules.notify import Notifier
-from pearlarr.modules.paths import resolve_paths
-from pearlarr.modules.wait_view import WaitOutcomeRow, WaitResult
+from pearlarr.arr_http import ArrConnectionError, ArrHttp
+from pearlarr.cli import pearlarr_cli
+from pearlarr.config import Arr
+from pearlarr.manual_import import Outcome
+from pearlarr.notify import Notifier
+from pearlarr.paths import resolve_paths
+from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
 from .fakes import diagnostic_messages, install_recording_hub
 

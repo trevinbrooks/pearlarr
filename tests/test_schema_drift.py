@@ -22,8 +22,8 @@ import pytest
 from pydantic import AliasChoices, AliasPath, BaseModel
 from pydantic.fields import FieldInfo
 
-from pearlarr.modules.json_narrow import is_json_list, is_json_obj
-from pearlarr.modules.seadex_types import (
+from pearlarr.json_narrow import is_json_list, is_json_obj
+from pearlarr.seadex_types import (
     CommandResource,
     HistoryRecord,
     ImportRejection,

@@ -1,11 +1,11 @@
 """Generate the documentation artifacts whose source of truth is code.
 
 One authored home per fact: config facts live as attribute docstrings on the
-pydantic models in `pearlarr/modules/config.py` (plus enum member docstrings
+pydantic models in `pearlarr/config.py` (plus enum member docstrings
 and the env-var registry), and this script renders every other surface from
 them:
 
-- `pearlarr/modules/config_sample.yml` - the starter config template
+- `pearlarr/config_sample.yml` - the starter config template
 - `schemas/config.schema.json` - JSON Schema for editor validation
 - `docs/configuration.md` - the generated islands between `gen:` markers
 - `docs/cli.md` - the command reference, from the typer app
@@ -44,35 +44,35 @@ from pydantic import BaseModel
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 
-from pearlarr.modules.cli import pearlarr_cli
-from pearlarr.modules.config import (
+from pearlarr.cli import pearlarr_cli
+from pearlarr.config import (
     OTHER_TRACKER_NAMES,
     PRIVATE_TRACKER_NAMES,
     PUBLIC_TRACKER_NAMES,
     AppConfig,
     Arr,
 )
-from pearlarr.modules.env_registry import ENV_VARS
-from pearlarr.modules.json_narrow import is_json_obj
-from pearlarr.modules.log import EntryState
-from pearlarr.modules.manual_import import Outcome, OutcomeCategory
-from pearlarr.modules.output import JsonRenderer
-from pearlarr.modules.output import events as ev
-from pearlarr.modules.paths import PROJECT_URL
+from pearlarr.env_registry import ENV_VARS
+from pearlarr.json_narrow import is_json_obj
+from pearlarr.log import EntryState
+from pearlarr.manual_import import Outcome, OutcomeCategory
+from pearlarr.output import JsonRenderer
+from pearlarr.output import events as ev
+from pearlarr.paths import PROJECT_URL
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CONFIG_SOURCE = "pearlarr/modules/config.py"
+CONFIG_SOURCE = "pearlarr/config.py"
 REGEN_COMMAND = "uv run python scripts/gen_docs.py"
 
-SAMPLE_PATH = REPO_ROOT / "pearlarr" / "modules" / "config_sample.yml"
+SAMPLE_PATH = REPO_ROOT / "pearlarr" / "config_sample.yml"
 SCHEMA_PATH = REPO_ROOT / "schemas" / "config.schema.json"
 CONFIGURATION_PATH = REPO_ROOT / "docs" / "configuration.md"
 CONTRIBUTING_PATH = REPO_ROOT / "CONTRIBUTING.md"
 ARCHITECTURE_PATH = REPO_ROOT / "docs" / "architecture.md"
 CLI_PATH = REPO_ROOT / "docs" / "cli.md"
 OUTPUT_PATH = REPO_ROOT / "docs" / "output.md"
-CLI_SOURCE = "pearlarr/modules/cli.py"
-EVENTS_SOURCE = "pearlarr/modules/output/events.py + textline.py"
+CLI_SOURCE = "pearlarr/cli.py"
+EVENTS_SOURCE = "pearlarr/output/events.py + textline.py"
 
 # Comments in the sample wrap so the whole line stays inside this width.
 SAMPLE_WIDTH = 100
@@ -445,7 +445,7 @@ def render_configuration(groups: tuple[GroupDoc, ...]) -> str:
     if not CONFIGURATION_PATH.exists():
         raise GenerationError(f"{CONFIGURATION_PATH} does not exist; author its prose skeleton first")
     document = CONFIGURATION_PATH.read_text(encoding="utf-8")
-    document = stitch(document, "env-vars", render_env_table(), "pearlarr/modules/env_registry.py")
+    document = stitch(document, "env-vars", render_env_table(), "pearlarr/env_registry.py")
     for group in groups:
         document = stitch(document, f"group-{group.key}", render_group_table(group), CONFIG_SOURCE)
     return document
@@ -457,7 +457,7 @@ def render_contributing() -> str:
     if not CONTRIBUTING_PATH.exists():
         raise GenerationError(f"{CONTRIBUTING_PATH} does not exist")
     document = CONTRIBUTING_PATH.read_text(encoding="utf-8")
-    return stitch(document, "env-vars", render_env_table(), "pearlarr/modules/env_registry.py")
+    return stitch(document, "env-vars", render_env_table(), "pearlarr/env_registry.py")
 
 
 def collect_invariants() -> tuple[tuple[str, str], ...]:

@@ -20,7 +20,7 @@ PACKAGE = Path(__file__).resolve().parent.parent / "pearlarr"
 BANNED_METHODS = frozenset({"warning", "warn", "error", "critical", "fatal", "exception", "info", "log"})
 
 # (path relative to the package, enclosing function, method) — the sanctioned straggler.
-ALLOWED = frozenset({("modules/log.py", "setup_logger", "critical")})
+ALLOWED = frozenset({("log.py", "setup_logger", "critical")})
 
 
 class RawCall(NamedTuple):

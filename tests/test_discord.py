@@ -14,13 +14,13 @@ import httpx
 import pytest
 import respx
 
-from pearlarr.modules.discord import (
+from pearlarr.discord import (
     PROJECT_URL,
     DiscordEmbed,
     EmbedField,
     discord_push,
 )
-from pearlarr.modules.seadex_types import Json
+from pearlarr.seadex_types import Json
 
 
 def _str_at(payload: dict[str, Json], key: str) -> str:

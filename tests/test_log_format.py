@@ -31,15 +31,15 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from pearlarr.modules.config import LogFormat
-from pearlarr.modules.console_caps import console_of
-from pearlarr.modules.log import (
+from pearlarr.config import LogFormat
+from pearlarr.console_caps import console_of
+from pearlarr.log import (
     RichConsoleHandler,
     apply_log_level,
     mark_hub_console_owner,
     setup_logger,
 )
-from pearlarr.modules.output import (
+from pearlarr.output import (
     Diagnostic,
     OutputHub,
     Severity,
@@ -47,8 +47,8 @@ from pearlarr.modules.output import (
     install_hub,
     uninstall_bridge,
 )
-from pearlarr.modules.output.bridge import HubBridgeHandler
-from pearlarr.modules.output.recording import RecordingRenderer
+from pearlarr.output.bridge import HubBridgeHandler
+from pearlarr.output.recording import RecordingRenderer
 
 from .fakes import AsciiStringIO, CaptureHandler, TtyStringIO, strip_ansi
 

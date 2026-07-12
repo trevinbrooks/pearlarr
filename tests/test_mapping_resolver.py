@@ -29,10 +29,10 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn
 
-import pearlarr.modules.mappings as m
-from pearlarr.modules.anibridge import AniBridge, AniBridgeGraph, _parse_ranges
-from pearlarr.modules.mapping_store import AnidbMappingRow, AnimeIdRow, MappingStore
-from pearlarr.modules.mappings import (
+import pearlarr.mappings as m
+from pearlarr.anibridge import AniBridge, AniBridgeGraph, _parse_ranges
+from pearlarr.mapping_store import AnidbMappingRow, AnimeIdRow, MappingStore
+from pearlarr.mappings import (
     AnimeIdsMap,
     AnimeIdsRecord,
     ExternalIds,
@@ -43,10 +43,10 @@ from pearlarr.modules.mappings import (
     MappingSources,
     _entry_from_raw,
 )
-from pearlarr.modules.output import Severity
-from pearlarr.modules.paths import resolve_paths
-from pearlarr.modules.seadex_types import TvdbMappings
-from pearlarr.modules.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge
+from pearlarr.output import Severity
+from pearlarr.paths import resolve_paths
+from pearlarr.seadex_types import TvdbMappings
+from pearlarr.sonarr_episodes import SonarrEpisodes, check_ep_by_anibridge
 
 from .builders import make_bare_instance, sonarr_ep
 from .fakes import CaptureHandler, diagnostic_messages, install_recording_hub

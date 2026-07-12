@@ -20,19 +20,19 @@ from typing import NamedTuple, override
 import pytest
 from seadex import EntryRecord
 
-from pearlarr.modules.cache import CacheRecord
-from pearlarr.modules.config import Arr
-from pearlarr.modules.grab_pipeline import GrabRequest
-from pearlarr.modules.log import EntryState
-from pearlarr.modules.manual_import import ImportProgress, ImportReadiness, ImportWaitMode, PendingImport
-from pearlarr.modules.mappings import ExternalIds, MappingEntry, MappingSource
-from pearlarr.modules.output import Severity
-from pearlarr.modules.output.recording import RecordingHub
-from pearlarr.modules.run_services import RunServices
-from pearlarr.modules.seadex_filter import FilterResult
-from pearlarr.modules.seadex_radarr import RadarrSync
-from pearlarr.modules.seadex_sonarr import SonarrSync
-from pearlarr.modules.seadex_types import (
+from pearlarr.cache import CacheRecord
+from pearlarr.config import Arr
+from pearlarr.grab_pipeline import GrabRequest
+from pearlarr.log import EntryState
+from pearlarr.manual_import import ImportProgress, ImportReadiness, ImportWaitMode, PendingImport
+from pearlarr.mappings import ExternalIds, MappingEntry, MappingSource
+from pearlarr.output import Severity
+from pearlarr.output.recording import RecordingHub
+from pearlarr.run_services import RunServices
+from pearlarr.seadex_filter import FilterResult
+from pearlarr.seadex_radarr import RadarrSync
+from pearlarr.seadex_sonarr import SonarrSync
+from pearlarr.seadex_types import (
     ArrReleaseDict,
     CommandResource,
     Language,
@@ -46,8 +46,8 @@ from pearlarr.modules.seadex_types import (
     SonarrEpisode,
     SonarrItem,
 )
-from pearlarr.modules.sonarr_episodes import sonarr_series_fingerprint
-from pearlarr.modules.sonarr_import_plan import resolve_language_objects
+from pearlarr.sonarr_episodes import sonarr_series_fingerprint
+from pearlarr.sonarr_import_plan import resolve_language_objects
 
 from .builders import (
     FakeCacheStore,

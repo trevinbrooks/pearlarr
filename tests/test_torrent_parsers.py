@@ -17,15 +17,15 @@ import httpx
 import pytest
 import respx
 
-import pearlarr.modules.torrent as torrent
-from pearlarr.modules.torrent import (
+import pearlarr.torrent as torrent
+from pearlarr.torrent import (
     ANIMETOSHO_FEED_URL,
     TorrentParseError,
     get_animetosho_torrent,
     get_nyaa_torrent,
     get_rutracker_torrent,
 )
-from pearlarr.modules.web_client import get_with_retries
+from pearlarr.web_client import get_with_retries
 
 _TORRENT_FIXTURES = Path(__file__).parent / "fixtures" / "torrent"
 

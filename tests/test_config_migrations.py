@@ -16,23 +16,23 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from pearlarr.modules import config as config_mod
-from pearlarr.modules import config_migrations
-from pearlarr.modules.config import (
+from pearlarr import config as config_mod
+from pearlarr import config_migrations
+from pearlarr.config import (
     AppConfig,
     ConfigRewriteError,
     ConfigUpgrade,
     starter_template_text,
     upgrade_config_file,
 )
-from pearlarr.modules.config_migrations import (
+from pearlarr.config_migrations import (
     CONFIG_VERSION,
     declared_version,
     migrate_mapping,
     render_migrated_config,
 )
-from pearlarr.modules.json_narrow import is_json_obj
-from pearlarr.modules.seadex_types import Json
+from pearlarr.json_narrow import is_json_obj
+from pearlarr.seadex_types import Json
 
 
 class TestDeclaredVersion:

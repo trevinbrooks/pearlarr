@@ -27,12 +27,12 @@ from typing import override
 import pytest
 import qbittorrentapi
 
-from pearlarr.modules.cache import UPDATED_AT_STR_FORMAT
-from pearlarr.modules.config import Arr
-from pearlarr.modules.grab_pipeline import GrabPipeline
-from pearlarr.modules.import_wait import ImportWaitManager, MonitorPass
-from pearlarr.modules.log import LOG_NAME
-from pearlarr.modules.manual_import import (
+from pearlarr.cache import UPDATED_AT_STR_FORMAT
+from pearlarr.config import Arr
+from pearlarr.grab_pipeline import GrabPipeline
+from pearlarr.import_wait import ImportWaitManager, MonitorPass
+from pearlarr.log import LOG_NAME
+from pearlarr.manual_import import (
     ImportProbe,
     ImportProgress,
     ImportReadiness,
@@ -44,11 +44,11 @@ from pearlarr.modules.manual_import import (
     TorrentTelemetry,
     WaitOutcome,
 )
-from pearlarr.modules.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitSnapshot
-from pearlarr.modules.reporter import RunContext
-from pearlarr.modules.run_loop import RunLoop
-from pearlarr.modules.torrents import AddOutcome
-from pearlarr.modules.wait_view import WaitResult, WaitView
+from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitSnapshot
+from pearlarr.reporter import RunContext
+from pearlarr.run_loop import RunLoop
+from pearlarr.torrents import AddOutcome
+from pearlarr.wait_view import WaitResult, WaitView
 
 from .builders import (
     CLIENT_SENTINEL,

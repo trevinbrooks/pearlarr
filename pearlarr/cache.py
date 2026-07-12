@@ -49,11 +49,11 @@ from typing import Any, NamedTuple, TypedDict, cast, override
 
 from seadex import EntryRecord
 
+from . import __version__
 from .config import Arr
 from .output import hub_note
 from .sqlite_util import connect as _sqlite_connect
 from .sqlite_util import open_or_quarantine, rollback_and_close
-from .. import __version__
 
 # Timestamp format for cache record fields (entry `updated_at` and the AniList
 # meta / Sonarr parse `fetched_at`). Lives here because the cache owns the

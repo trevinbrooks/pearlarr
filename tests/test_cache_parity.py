@@ -16,8 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from pearlarr.modules.cache import AbstractCacheStore, CacheRecord, CacheStore, HistoryCheckpoint
-from pearlarr.modules.config import Arr
+from pearlarr.cache import AbstractCacheStore, CacheRecord, CacheStore, HistoryCheckpoint
+from pearlarr.config import Arr
 
 from .builders import FakeCacheStore, make_entry_record
 

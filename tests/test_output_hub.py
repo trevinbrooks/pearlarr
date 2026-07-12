@@ -16,10 +16,10 @@ from typing import ClassVar, override
 
 import pytest
 
-from pearlarr.modules.cli import _install_output_hub
-from pearlarr.modules.config import Arr, LogFormat
-from pearlarr.modules.log import LOG_NAME
-from pearlarr.modules.output import (
+from pearlarr.cli import _install_output_hub
+from pearlarr.config import Arr, LogFormat
+from pearlarr.log import LOG_NAME
+from pearlarr.output import (
     STRIKE_LIMIT,
     Diagnostic,
     Event,
@@ -38,9 +38,9 @@ from pearlarr.modules.output import (
     uninstall_bridge,
     uninstall_hub,
 )
-from pearlarr.modules.output.hub import QUEUE_CAP
-from pearlarr.modules.output.recording import RecordingHub, RecordingRenderer
-from pearlarr.modules.paths import resolve_paths
+from pearlarr.output.hub import QUEUE_CAP
+from pearlarr.output.recording import RecordingHub, RecordingRenderer
+from pearlarr.paths import resolve_paths
 
 _EVENT = RunStarted(version="v1.0.0", data_dir="/data")
 
@@ -732,7 +732,7 @@ def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch
     """
 
     cap = 3
-    monkeypatch.setattr("pearlarr.modules.output.hub.QUEUE_CAP", cap)
+    monkeypatch.setattr("pearlarr.output.hub.QUEUE_CAP", cap)
     gated, observer = _GatedRenderer(), RecordingRenderer()
     hub = OutputHub([gated, observer])
 
@@ -764,7 +764,7 @@ def test_overflow_sheds_diagnostics_and_re_arms_the_note_per_episode(
     """
 
     cap = 3
-    monkeypatch.setattr("pearlarr.modules.output.hub.QUEUE_CAP", cap)
+    monkeypatch.setattr("pearlarr.output.hub.QUEUE_CAP", cap)
     gate, observer = _ReArmableGate(), RecordingRenderer()
     hub = OutputHub([gate, observer])
     mark = hub.counts.mark()

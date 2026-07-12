@@ -68,7 +68,7 @@ dependencies = [
 [project.scripts]
 pearlarr = "pearlarr:pearlarr_cli"
 
-# Keep in step with PROJECT_URL in pearlarr/modules/paths.py (TOML can't import it).
+# Keep in step with PROJECT_URL in pearlarr/paths.py (TOML can't import it).
 [project.urls]
 Homepage = "https://github.com/trevinbrooks/pearlarr"
 Repository = "https://github.com/trevinbrooks/pearlarr"

@@ -17,14 +17,14 @@ from pathlib import Path
 import httpx
 import pytest
 
-from pearlarr.modules import run_services
-from pearlarr.modules.boot_flow import BootFlow
-from pearlarr.modules.config import Arr
-from pearlarr.modules.mappings import MappingResolver
-from pearlarr.modules.run_loop import RunLoop
-from pearlarr.modules.run_services import RunDeps, RunServices
-from pearlarr.modules.seadex_radarr import RadarrSync
-from pearlarr.modules.seadex_sonarr import SonarrSync
+from pearlarr import run_services
+from pearlarr.boot_flow import BootFlow
+from pearlarr.config import Arr
+from pearlarr.mappings import MappingResolver
+from pearlarr.run_loop import RunLoop
+from pearlarr.run_services import RunDeps, RunServices
+from pearlarr.seadex_radarr import RadarrSync
+from pearlarr.seadex_sonarr import SonarrSync
 
 from .builders import FakeCacheStore, make_bare_instance, make_config, make_run_deps
 from .fakes import FakeRadarrClient, FakeSonarrClient

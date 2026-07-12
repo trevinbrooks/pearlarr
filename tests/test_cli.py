@@ -55,10 +55,10 @@ import pytest
 import truststore
 from typer.testing import CliRunner
 
-from pearlarr.modules.boot_flow import BootFlow
-from pearlarr.modules.bootstrap import configured_arrs, load_shared_config, run_arrs
-from pearlarr.modules.cache import CacheStore
-from pearlarr.modules.cli import (
+from pearlarr.boot_flow import BootFlow
+from pearlarr.bootstrap import configured_arrs, load_shared_config, run_arrs
+from pearlarr.cache import CacheStore
+from pearlarr.cli import (
     _console_format,
     _console_seat,
     _handle_sigterm,
@@ -78,10 +78,10 @@ from pearlarr.modules.cli import (
     run_scheduled,
     run_single,
 )
-from pearlarr.modules.config import AppConfig, Arr, LogFormat, template_path
-from pearlarr.modules.config_migrations import CONFIG_VERSION
-from pearlarr.modules.console_caps import CapsCache
-from pearlarr.modules.log import (
+from pearlarr.config import AppConfig, Arr, LogFormat, template_path
+from pearlarr.config_migrations import CONFIG_VERSION
+from pearlarr.console_caps import CapsCache
+from pearlarr.log import (
     LOG_NAME,
     HubBridgeBase,
     LogLevel,
@@ -89,8 +89,8 @@ from pearlarr.modules.log import (
     apply_log_level,
     setup_logger,
 )
-from pearlarr.modules.manual_import import ImportWaitMode, Outcome
-from pearlarr.modules.output import (
+from pearlarr.manual_import import ImportWaitMode, Outcome
+from pearlarr.output import (
     CycleStarted,
     Diagnostic,
     Event,
@@ -104,9 +104,9 @@ from pearlarr.modules.output import (
     TorrentGraduated,
     install_hub,
 )
-from pearlarr.modules.output.recording import RecordingHub
-from pearlarr.modules.paths import AppPaths, resolve_paths
-from pearlarr.modules.runlock import single_instance_lock
+from pearlarr.output.recording import RecordingHub
+from pearlarr.paths import AppPaths, resolve_paths
+from pearlarr.runlock import single_instance_lock
 
 from .builders import make_logger
 from .fakes import TtyStringIO, diagnostic_messages, install_recording_hub
@@ -459,7 +459,7 @@ class TestRunSingleSelection:
     @pytest.fixture
     def recorder(self, monkeypatch: pytest.MonkeyPatch) -> _RunArrsRecorder:
         recorder = _RunArrsRecorder()
-        monkeypatch.setattr("pearlarr.modules.bootstrap.run_arrs", recorder)
+        monkeypatch.setattr("pearlarr.bootstrap.run_arrs", recorder)
         return recorder
 
     def test_no_selection_requests_both_arrs_implicitly(self, recorder: _RunArrsRecorder) -> None:
@@ -629,9 +629,9 @@ class TestRunFailuresAreCleanAndNonzero:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        from pearlarr.modules.arr_http import ArrAuthError, ArrConnectionError
-        from pearlarr.modules.run_services import QbitConnectionError, RunDeps
-        from pearlarr.modules.seadex_types import BoundaryContractError
+        from pearlarr.arr_http import ArrAuthError, ArrConnectionError
+        from pearlarr.run_services import QbitConnectionError, RunDeps
+        from pearlarr.seadex_types import BoundaryContractError
 
         exceptions: dict[str, Exception] = {
             "qbit": QbitConnectionError("qBittorrent connection failed - check the host and credentials"),
@@ -676,8 +676,8 @@ class TestRunFailuresAreCleanAndNonzero:
         # Under ignore_movies_in_radarr a Sonarr leg also builds a Radarr client,
         # so a connection/auth failure there must not be pinned on Sonarr alone: a
         # Radarr outage would otherwise read "check sonarr.url" - confidently wrong.
-        from pearlarr.modules.arr_http import ArrAuthError, ArrConnectionError
-        from pearlarr.modules.run_services import RunDeps
+        from pearlarr.arr_http import ArrAuthError, ArrConnectionError
+        from pearlarr.run_services import RunDeps
 
         exceptions: dict[str, Exception] = {
             "unreachable": ArrConnectionError(
@@ -723,7 +723,7 @@ class TestRunFailuresAreCleanAndNonzero:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        import pearlarr.modules.mappings as mappings_mod
+        import pearlarr.mappings as mappings_mod
 
         def fail_resolver(*args: object, **kwargs: object) -> NoReturn:
             raise RuntimeError("source down")
@@ -743,7 +743,7 @@ class TestRunFailuresAreCleanAndNonzero:
         # (the refresh path falls open to the cached copy; a first download has
         # none): the downloader translates the httpx failure into an OSError,
         # which must surface as a one-line hint, not a ten-frame traceback.
-        import pearlarr.modules.mappings as mappings_mod
+        import pearlarr.mappings as mappings_mod
 
         def fail_resolver(*args: object, **kwargs: object) -> NoReturn:
             raise OSError("download failed: ConnectError")
@@ -784,7 +784,7 @@ class TestSelectionSettlesBeforeMappingFetch:
         def fail_build(*args: object, **kwargs: object) -> NoReturn:
             raise AssertionError("mapping sources must not be fetched when nothing can run")
 
-        monkeypatch.setattr("pearlarr.modules.bootstrap.build_resolver", fail_build)
+        monkeypatch.setattr("pearlarr.bootstrap.build_resolver", fail_build)
         paths = resolve_paths()
         os.makedirs(paths.data_dir)
         Path(paths.config).write_text("", encoding="utf-8")  # valid config, neither arr configured
@@ -1040,7 +1040,7 @@ class TestLogLevelWiring:
         def record(logger: logging.Logger, log_level: str) -> None:
             calls.append(log_level)
 
-        monkeypatch.setattr("pearlarr.modules.bootstrap.apply_log_level", record)
+        monkeypatch.setattr("pearlarr.bootstrap.apply_log_level", record)
         return calls
 
     @staticmethod
@@ -1145,7 +1145,7 @@ def _install_cycle_recorder(monkeypatch: pytest.MonkeyPatch) -> _CycleStampingRe
         install_hub(hub)  # emit_to_hub resolves this hub; conftest restores
         return hub
 
-    monkeypatch.setattr("pearlarr.modules.cli._install_output_hub", install)
+    monkeypatch.setattr("pearlarr.cli._install_output_hub", install)
     return renderer
 
 
@@ -1163,7 +1163,7 @@ class TestLogFormatWiring:
     @pytest.fixture
     def setup_recorder(self, monkeypatch: pytest.MonkeyPatch) -> _SetupLoggerRecorder:
         recorder = _SetupLoggerRecorder()
-        monkeypatch.setattr("pearlarr.modules.cli.setup_logger", recorder)
+        monkeypatch.setattr("pearlarr.cli.setup_logger", recorder)
         return recorder
 
     @staticmethod
@@ -1177,7 +1177,7 @@ class TestLogFormatWiring:
         setup_recorder: _SetupLoggerRecorder,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr("pearlarr.modules.bootstrap.run_arrs", _RunArrsRecorder())
+        monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _RunArrsRecorder())
         self._write_config_with_format()
         assert run_single() is True
         assert setup_recorder.console_formats == ["json"]
@@ -1190,7 +1190,7 @@ class TestLogFormatWiring:
     ) -> None:
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         monkeypatch.setattr(signal, "signal", _swallow_signal)
-        monkeypatch.setattr("pearlarr.modules.bootstrap.run_arrs", _stop_loop)
+        monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _stop_loop)
         self._write_config_with_format()
         with pytest.raises(_StopScheduledLoop):
             run_scheduled()
@@ -1562,7 +1562,7 @@ class TestScheduledLifecycle:
         def refuse_resolver(*args: object, **kwargs: object) -> None:
             return None
 
-        monkeypatch.setattr("pearlarr.modules.bootstrap.build_resolver", refuse_resolver)
+        monkeypatch.setattr("pearlarr.bootstrap.build_resolver", refuse_resolver)
 
         assert run_arrs([(Arr.SONARR, None)], paths=paths, logger=logger) is False
 
@@ -1587,8 +1587,8 @@ class TestScheduledLifecycle:
     def test_cycle_started_is_emitted_after_begin_cycle(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Post-begin (rotation): the boundary must land in the FRESH cycle's file.
         monkeypatch.setattr(signal, "signal", _swallow_signal)
-        monkeypatch.setattr("pearlarr.modules.cli.setup_logger", _SetupLoggerRecorder())
-        monkeypatch.setattr("pearlarr.modules.bootstrap.run_arrs", _stop_loop)
+        monkeypatch.setattr("pearlarr.cli.setup_logger", _SetupLoggerRecorder())
+        monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _stop_loop)
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         renderer = _install_cycle_recorder(monkeypatch)
 
@@ -1602,9 +1602,9 @@ class TestScheduledLifecycle:
         # After a completed cycle the loop states the next run as a typed event
         # (default cadence: 6h out on a missing config), then sleeps.
         monkeypatch.setattr(signal, "signal", _swallow_signal)
-        monkeypatch.setattr("pearlarr.modules.cli.setup_logger", _SetupLoggerRecorder())
-        monkeypatch.setattr("pearlarr.modules.bootstrap.run_arrs", _RunArrsRecorder())
-        monkeypatch.setattr("pearlarr.modules.cli.time.sleep", _stop_loop)
+        monkeypatch.setattr("pearlarr.cli.setup_logger", _SetupLoggerRecorder())
+        monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _RunArrsRecorder())
+        monkeypatch.setattr("pearlarr.cli.time.sleep", _stop_loop)
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
         renderer = _install_cycle_recorder(monkeypatch)
 
@@ -1623,8 +1623,8 @@ class TestScheduledLifecycle:
             registered.append((signum, handler))
 
         monkeypatch.setattr(signal, "signal", record_signal)
-        monkeypatch.setattr("pearlarr.modules.cli.setup_logger", _SetupLoggerRecorder())
-        monkeypatch.setattr("pearlarr.modules.bootstrap.run_arrs", _stop_loop)
+        monkeypatch.setattr("pearlarr.cli.setup_logger", _SetupLoggerRecorder())
+        monkeypatch.setattr("pearlarr.bootstrap.run_arrs", _stop_loop)
         monkeypatch.delenv("SCHEDULE_TIME", raising=False)
 
         with pytest.raises(_StopScheduledLoop):

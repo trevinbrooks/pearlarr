@@ -16,8 +16,8 @@ from collections.abc import Callable
 
 import httpx
 
+from . import __version__
 from .arr_http import BACKOFF_BASE_S, GET_RETRIES, RETRYABLE_STATUS
-from .. import __version__
 
 # Cap on an honored Retry-After window (mirrors the AniList loop's MAX_BACKOFF):
 # long enough for a real throttle, short enough that a broken header can't

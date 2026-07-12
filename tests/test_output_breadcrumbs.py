@@ -6,10 +6,10 @@ deterministic close-deeper behavior, unwind close-all, idempotent defensive
 closes, and the label-only read APIs (path text, path_for, during).
 """
 
-from pearlarr.modules.config import Arr
-from pearlarr.modules.log import EntryState
-from pearlarr.modules.manual_import import OutcomeCategory
-from pearlarr.modules.output import (
+from pearlarr.config import Arr
+from pearlarr.log import EntryState
+from pearlarr.manual_import import OutcomeCategory
+from pearlarr.output import (
     KIND_DEPTH,
     BootStepFinished,
     BootStepStarted,
@@ -33,7 +33,7 @@ from pearlarr.modules.output import (
     Severity,
     WaitStarted,
 )
-from pearlarr.modules.reporter import RunStats
+from pearlarr.reporter import RunStats
 
 _BOOT = ScopeId(ScopeKind.BOOT_SECTION, 1)
 _STEP = ScopeId(ScopeKind.BOOT_STEP, 2)

@@ -14,7 +14,7 @@ pure, no network or disk; `SonarrEpisode` is built directly via
 
 import pytest
 
-from pearlarr.modules.manual_import import (
+from pearlarr.manual_import import (
     ImportProbe,
     ImportReadiness,
     ImportWaitMode,
@@ -28,8 +28,8 @@ from pearlarr.modules.manual_import import (
     resolve_wait_mode,
     sanitize_torrent_telemetry,
 )
-from pearlarr.modules.planner import normalize_rg
-from pearlarr.modules.seadex_types import (
+from pearlarr.planner import normalize_rg
+from pearlarr.seadex_types import (
     SONARR_MISSING_KEY,
     CommandResource,
     Quality,
@@ -39,7 +39,7 @@ from pearlarr.modules.seadex_types import (
     Revision,
     SonarrEpisode,
 )
-from pearlarr.modules.sonarr_import_plan import (
+from pearlarr.sonarr_import_plan import (
     CandidateFile,
     EpisodeFileStatus,
     EpisodeSnapshot,

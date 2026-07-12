@@ -19,7 +19,7 @@ import yaml
 from pydantic import SecretStr, ValidationError
 from seadex import Tracker
 
-from pearlarr.modules.config import (
+from pearlarr.config import (
     KNOWN_TRACKERS,
     PRIVATE_TRACKERS,
     PUBLIC_TRACKERS,
@@ -35,8 +35,8 @@ from pearlarr.modules.config import (
     config_permissions_loose,
     secret_value,
 )
-from pearlarr.modules.config_migrations import CONFIG_VERSION, MigrationOutcome
-from pearlarr.modules.manual_import import ImportWaitMode
+from pearlarr.config_migrations import CONFIG_VERSION, MigrationOutcome
+from pearlarr.manual_import import ImportWaitMode
 
 from .builders import make_config
 

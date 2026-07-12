@@ -11,10 +11,10 @@ from typing import Final
 
 import pytest
 
-from pearlarr.modules.config import Arr
-from pearlarr.modules.log import EntryState
-from pearlarr.modules.manual_import import Outcome, OutcomeCategory
-from pearlarr.modules.output import (
+from pearlarr.config import Arr
+from pearlarr.log import EntryState
+from pearlarr.manual_import import Outcome, OutcomeCategory
+from pearlarr.output import (
     Accent,
     BootStepFinished,
     Diagnostic,
@@ -41,7 +41,7 @@ from pearlarr.modules.output import (
     TorrentGraduated,
     severity_of,
 )
-from pearlarr.modules.reporter import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
+from pearlarr.reporter import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
 
 # --- value model -----------------------------------------------------------------
 

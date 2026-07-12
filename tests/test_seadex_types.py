@@ -11,9 +11,9 @@ contract the AniList gateway depends on), and the frozen-model violation shape
 import pytest
 from pydantic import ValidationError
 
-from pearlarr.modules.output import Diagnostic, Severity, install_hub
-from pearlarr.modules.output.recording import RecordingHub
-from pearlarr.modules.seadex_types import (
+from pearlarr.output import Diagnostic, Severity, install_hub
+from pearlarr.output.recording import RecordingHub
+from pearlarr.seadex_types import (
     AniListMediaNode,
     BoundaryContractError,
     CommandResource,

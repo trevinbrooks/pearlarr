@@ -24,9 +24,9 @@ from typing import ClassVar
 
 import pytest
 
-from pearlarr.modules.boot_flow import BootFlow
-from pearlarr.modules.log import LOG_NAME, apply_log_level, setup_logger
-from pearlarr.modules.output import (
+from pearlarr.boot_flow import BootFlow
+from pearlarr.log import LOG_NAME, apply_log_level, setup_logger
+from pearlarr.output import (
     Diagnostic,
     Event,
     FileLogSink,
@@ -43,7 +43,7 @@ from pearlarr.modules.output import (
     uninstall_bridge,
     uninstall_hub,
 )
-from pearlarr.modules.output.recording import RecordingRenderer
+from pearlarr.output.recording import RecordingRenderer
 
 from .fakes import TtyStringIO, strip_ansi
 

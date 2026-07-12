@@ -27,11 +27,11 @@ import pytest
 from rich.text import Span, Text
 from seadex import Tag
 
-from pearlarr.modules.anilist_client import AniListClient
-from pearlarr.modules.anilist_gateway import AniListGateway
-from pearlarr.modules.cache import AbstractCacheStore, CacheRecord
-from pearlarr.modules.config import Arr
-from pearlarr.modules.log import (
+from pearlarr.anilist_client import AniListClient
+from pearlarr.anilist_gateway import AniListGateway
+from pearlarr.cache import AbstractCacheStore, CacheRecord
+from pearlarr.config import Arr
+from pearlarr.log import (
     ConsoleRender,
     EntryState,
     KvLine,
@@ -40,8 +40,8 @@ from pearlarr.modules.log import (
     TitledRule,
     group_highlight,
 )
-from pearlarr.modules.manual_import import ImportWaitMode, PendingState
-from pearlarr.modules.output import (
+from pearlarr.manual_import import ImportWaitMode, PendingState
+from pearlarr.output import (
     Accent,
     CapReached,
     EntryDetail,
@@ -67,8 +67,8 @@ from pearlarr.modules.output import (
     SkipReason,
     StyledValue,
 )
-from pearlarr.modules.output.scan_lines import _TIP_TEXTS, ScanEvent
-from pearlarr.modules.reporter import (
+from pearlarr.output.scan_lines import _TIP_TEXTS, ScanEvent
+from pearlarr.reporter import (
     _TIP_PRECEDENCE,
     GrabRecord,
     NeedsActionKind,
@@ -77,7 +77,7 @@ from pearlarr.modules.reporter import (
     RunReporter,
     RunStats,
 )
-from pearlarr.modules.torrents import AddOutcome, ReleaseOutcome
+from pearlarr.torrents import AddOutcome, ReleaseOutcome
 
 from .builders import FakeCacheStore, make_entry_record, pending_import, rg_group, url_item
 from .fakes import SCAN_EVENT_TYPES, scan_lines_from_events

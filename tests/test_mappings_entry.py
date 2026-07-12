@@ -14,8 +14,8 @@ import dataclasses
 import httpx
 import pytest
 
-from pearlarr.modules.anibridge import AniBridgeGraph
-from pearlarr.modules.mappings import (
+from pearlarr.anibridge import AniBridgeGraph
+from pearlarr.mappings import (
     AnimeIdsMap,
     ExternalIds,
     MappingEntry,

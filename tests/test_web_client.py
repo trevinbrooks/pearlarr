@@ -24,8 +24,8 @@ import pytest
 import respx
 
 from pearlarr import __version__
-from pearlarr.modules.arr_http import GET_RETRIES
-from pearlarr.modules.web_client import RETRY_AFTER_CAP_S, USER_AGENT, get_with_retries, make_web_client
+from pearlarr.arr_http import GET_RETRIES
+from pearlarr.web_client import RETRY_AFTER_CAP_S, USER_AGENT, get_with_retries, make_web_client
 
 _URL = "https://web.test/page"
 

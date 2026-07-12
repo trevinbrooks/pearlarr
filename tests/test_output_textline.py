@@ -20,11 +20,11 @@ from typing import get_args, override
 
 import pytest
 
-from pearlarr.modules.config import Arr
-from pearlarr.modules.json_narrow import is_json_list, is_json_obj
-from pearlarr.modules.log import EntryState
-from pearlarr.modules.manual_import import Outcome, OutcomeCategory
-from pearlarr.modules.output import (
+from pearlarr.config import Arr
+from pearlarr.json_narrow import is_json_list, is_json_obj
+from pearlarr.log import EntryState
+from pearlarr.manual_import import Outcome, OutcomeCategory
+from pearlarr.output import (
     BootReady,
     BootStepFinished,
     BootStepProgressed,
@@ -72,10 +72,10 @@ from pearlarr.modules.output import (
     WaitSnapshot,
     WaitStarted,
 )
-from pearlarr.modules.output.textline import _JSON_SKIP, _TEXT_SKIP
-from pearlarr.modules.output.trace import CapturedTrace
-from pearlarr.modules.reporter import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
-from pearlarr.modules.seadex_types import Json
+from pearlarr.output.textline import _JSON_SKIP, _TEXT_SKIP
+from pearlarr.output.trace import CapturedTrace
+from pearlarr.reporter import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
+from pearlarr.seadex_types import Json
 
 _EPOCH = 1_751_990_000.0
 _WHEN = datetime.fromtimestamp(_EPOCH)
@@ -925,7 +925,7 @@ def test_no_fact_field_key_can_collide_with_the_json_envelope() -> None:
     import ast
     import inspect
 
-    from pearlarr.modules.output import textline as _textline
+    from pearlarr.output import textline as _textline
 
     tree = ast.parse(inspect.getsource(_textline))
     offenders: list[str] = []

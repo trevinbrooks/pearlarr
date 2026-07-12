@@ -13,10 +13,10 @@ category-based graduation level), and the pure cockpit reducers
 
 import logging
 
-from pearlarr.modules.console_caps import Capabilities, detect_capabilities
-from pearlarr.modules.log import StyledLine
-from pearlarr.modules.manual_import import Outcome
-from pearlarr.modules.output import (
+from pearlarr.console_caps import Capabilities, detect_capabilities
+from pearlarr.log import StyledLine
+from pearlarr.manual_import import Outcome
+from pearlarr.output import (
     Phase,
     TorrentGraduated,
     TorrentView,
@@ -24,7 +24,7 @@ from pearlarr.modules.output import (
     WaitSnapshot,
     WaitStarted,
 )
-from pearlarr.modules.output.wait_lines import (
+from pearlarr.output.wait_lines import (
     _PHASE_RANK,
     PulseThrottle,
     _compact_eta,

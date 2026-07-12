@@ -9,9 +9,9 @@ never a raise and never a mispositioned structured event.
 
 import pytest
 
-from pearlarr.modules.log import EntryState
-from pearlarr.modules.manual_import import Outcome, OutcomeCategory
-from pearlarr.modules.output import (
+from pearlarr.log import EntryState
+from pearlarr.manual_import import Outcome, OutcomeCategory
+from pearlarr.output import (
     Accent,
     BootStepFinished,
     BootStepProgressed,

@@ -23,14 +23,14 @@ import pytest
 import qbittorrentapi
 from seadex import Tracker
 
-import pearlarr.modules.torrents as torrents
-from pearlarr.modules.boot_flow import BootFlow
-from pearlarr.modules.config import Arr
-from pearlarr.modules.mappings import MappingResolver
-from pearlarr.modules.run_services import QbitConnectionError, RunDeps
-from pearlarr.modules.seadex_types import SeadexUrlItem
-from pearlarr.modules.torrent import TorrentParseError
-from pearlarr.modules.torrents import (
+import pearlarr.torrents as torrents
+from pearlarr.boot_flow import BootFlow
+from pearlarr.config import Arr
+from pearlarr.mappings import MappingResolver
+from pearlarr.run_services import QbitConnectionError, RunDeps
+from pearlarr.seadex_types import SeadexUrlItem
+from pearlarr.torrent import TorrentParseError
+from pearlarr.torrents import (
     GRAB_FAILURES,
     PARSEABLE_TRACKERS,
     AddOutcome,

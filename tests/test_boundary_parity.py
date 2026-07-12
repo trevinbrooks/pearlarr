@@ -16,14 +16,14 @@ import logging
 import httpx
 import respx
 
-from pearlarr.modules.arr_http import ArrHttp
-from pearlarr.modules.manual_import import ImportReadiness
-from pearlarr.modules.radarr_client import RadarrClient, make_radarr_client
-from pearlarr.modules.seadex_types import HistoryRecord, ImportRejection, QueueRecord
-from pearlarr.modules.sonarr_client import SonarrClient
-from pearlarr.modules.sonarr_import import ImportExecutor
-from pearlarr.modules.sonarr_import_plan import EpisodeSnapshot, QueueVerdict, classify_queue
-from pearlarr.modules.sonarr_mapper import FileEpisodeMapper
+from pearlarr.arr_http import ArrHttp
+from pearlarr.manual_import import ImportReadiness
+from pearlarr.radarr_client import RadarrClient, make_radarr_client
+from pearlarr.seadex_types import HistoryRecord, ImportRejection, QueueRecord
+from pearlarr.sonarr_client import SonarrClient
+from pearlarr.sonarr_import import ImportExecutor
+from pearlarr.sonarr_import_plan import EpisodeSnapshot, QueueVerdict, classify_queue
+from pearlarr.sonarr_mapper import FileEpisodeMapper
 
 from .builders import make_run_deps, pending_import
 

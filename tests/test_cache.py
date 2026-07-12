@@ -15,12 +15,12 @@ from pathlib import Path
 import pytest
 
 import pearlarr
-from pearlarr.modules.cache import SCHEMA_VERSION, CacheSchemaError, CacheStore, HistoryCheckpoint
-from pearlarr.modules.config import Arr
-from pearlarr.modules.log import LOG_NAME
-from pearlarr.modules.output import Diagnostic, Severity, install_hub
-from pearlarr.modules.output.recording import RecordingHub
-from pearlarr.modules.sqlite_util import is_corruption
+from pearlarr.cache import SCHEMA_VERSION, CacheSchemaError, CacheStore, HistoryCheckpoint
+from pearlarr.config import Arr
+from pearlarr.log import LOG_NAME
+from pearlarr.output import Diagnostic, Severity, install_hub
+from pearlarr.output.recording import RecordingHub
+from pearlarr.sqlite_util import is_corruption
 
 from .builders import make_entry_record
 
@@ -558,7 +558,7 @@ class TestPromoteFailure:
         store.update_cache(Arr.SONARR, 7, {"name": "T"})
         # Scope the patch to this save only: the later `again.save` must promote for real.
         with monkeypatch.context() as mp, contextlib.suppress(OSError):
-            mp.setattr("pearlarr.modules.cache.os.replace", _raise_os_replace)
+            mp.setattr("pearlarr.cache.os.replace", _raise_os_replace)
             store.save(preview=False)
         store.close()
 
@@ -695,7 +695,7 @@ class TestCorruptStore:
 
         # Simulate a transient lock at open time (e.g. the WAL switch hitting BUSY).
         with monkeypatch.context() as mp:
-            mp.setattr("pearlarr.modules.cache._connect", _raise_locked)
+            mp.setattr("pearlarr.cache._connect", _raise_locked)
             raised = False
             try:
                 CacheStore.load(str(db), config_checksum=CHECKSUM)

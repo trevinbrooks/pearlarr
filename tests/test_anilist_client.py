@@ -18,7 +18,7 @@ import httpx
 import pytest
 import respx
 
-from pearlarr.modules.anilist_client import (
+from pearlarr.anilist_client import (
     _MEDIA_FIELDS,
     API_URL,
     MAX_RETRIES,
@@ -30,10 +30,10 @@ from pearlarr.modules.anilist_client import (
     extract_path,
     media_from,
 )
-from pearlarr.modules.log import LOG_NAME
-from pearlarr.modules.output import Diagnostic, Severity, install_hub
-from pearlarr.modules.output.recording import RecordingHub
-from pearlarr.modules.seadex_types import AniListError, AniListMediaNode
+from pearlarr.log import LOG_NAME
+from pearlarr.output import Diagnostic, Severity, install_hub
+from pearlarr.output.recording import RecordingHub
+from pearlarr.seadex_types import AniListError, AniListMediaNode
 
 
 def _no_sleep(_seconds: float) -> None:

@@ -29,17 +29,17 @@ import httpx
 import pytest
 import yaml
 
-import pearlarr.modules.bootstrap as bootstrap
-from pearlarr.modules.boot_flow import BootFlow
-from pearlarr.modules.bootstrap import run_arrs
-from pearlarr.modules.cache import CacheSchemaError
-from pearlarr.modules.config import AppConfig, Arr
-from pearlarr.modules.manual_import import ImportWaitMode
-from pearlarr.modules.mappings import MappingResolver, MappingSources
-from pearlarr.modules.output import Diagnostic, RunFinished, Severity, install_bridge, install_hub
-from pearlarr.modules.output.recording import RecordingHub
-from pearlarr.modules.paths import resolve_paths
-from pearlarr.modules.run_services import RunDeps
+import pearlarr.bootstrap as bootstrap
+from pearlarr.boot_flow import BootFlow
+from pearlarr.bootstrap import run_arrs
+from pearlarr.cache import CacheSchemaError
+from pearlarr.config import AppConfig, Arr
+from pearlarr.manual_import import ImportWaitMode
+from pearlarr.mappings import MappingResolver, MappingSources
+from pearlarr.output import Diagnostic, RunFinished, Severity, install_bridge, install_hub
+from pearlarr.output.recording import RecordingHub
+from pearlarr.paths import resolve_paths
+from pearlarr.run_services import RunDeps
 
 from .builders import make_config
 
@@ -250,9 +250,9 @@ def _run_completing_leg(
     _write_config()
     monkeypatch.setattr(bootstrap, "build_resolver", _memory_resolver)
     monkeypatch.setattr(RunDeps, "build", _completing_build())
-    monkeypatch.setattr("pearlarr.modules.run_services.RunServices", _FakeRunServices)
-    monkeypatch.setattr("pearlarr.modules.run_loop.RunLoop", _FakeRunLoop)
-    monkeypatch.setattr("pearlarr.modules.seadex_sonarr.SonarrSync", _FakeSonarrSync)
+    monkeypatch.setattr("pearlarr.run_services.RunServices", _FakeRunServices)
+    monkeypatch.setattr("pearlarr.run_loop.RunLoop", _FakeRunLoop)
+    monkeypatch.setattr("pearlarr.seadex_sonarr.SonarrSync", _FakeSonarrSync)
 
     recording = RecordingHub()
     install_hub(recording.hub)

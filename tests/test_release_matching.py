@@ -5,14 +5,14 @@ These functions move to `planner.py` in Phase 1; pinning them here proves the
 relocation is behavior-preserving.
 """
 
-from pearlarr.modules.coverage import format_episode_ranges
-from pearlarr.modules.planner import (
+from pearlarr.coverage import format_episode_ranges
+from pearlarr.planner import (
     get_all_seadex_rgs_per_episode,
     get_episode_keys,
     get_same_files_groups,
     normalize_rg,
 )
-from pearlarr.modules.seadex_types import (
+from pearlarr.seadex_types import (
     EpisodeRecord,
     SeadexReleaseGroupItem,
     SeadexUrlItem,

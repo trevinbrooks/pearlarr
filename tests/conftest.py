@@ -12,10 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from pearlarr.modules.log import LOG_NAME
-from pearlarr.modules.mapping_store import MappingStore
-from pearlarr.modules.output import uninstall_bridge, uninstall_hub
-from pearlarr.modules.paths import DATA_DIR_ENV
+from pearlarr.log import LOG_NAME
+from pearlarr.mapping_store import MappingStore
+from pearlarr.output import uninstall_bridge, uninstall_hub
+from pearlarr.paths import DATA_DIR_ENV
 
 from .builders import make_logger
 

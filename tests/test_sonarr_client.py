@@ -20,10 +20,10 @@ import httpx
 import pytest
 import respx
 
-from pearlarr.modules.arr_http import ArrHttp
-from pearlarr.modules.manual_import import PendingImport
-from pearlarr.modules.output import Severity
-from pearlarr.modules.seadex_types import (
+from pearlarr.arr_http import ArrHttp
+from pearlarr.manual_import import PendingImport
+from pearlarr.output import Severity
+from pearlarr.seadex_types import (
     BoundaryContractError,
     CommandResource,
     HistoryRecord,
@@ -34,7 +34,7 @@ from pearlarr.modules.seadex_types import (
     QueueRecord,
     SonarrItem,
 )
-from pearlarr.modules.sonarr_client import SonarrClient
+from pearlarr.sonarr_client import SonarrClient
 
 from .fakes import diagnostic_messages, install_recording_hub
 from .http_mock import sonarr_fixture

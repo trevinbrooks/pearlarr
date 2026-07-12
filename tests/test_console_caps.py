@@ -11,7 +11,7 @@ import io
 
 from rich.console import Console
 
-from pearlarr.modules.console_caps import CapsCache, detect_capabilities
+from pearlarr.console_caps import CapsCache, detect_capabilities
 
 
 def _console(width: int = 100) -> Console:

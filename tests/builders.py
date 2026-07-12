@@ -23,9 +23,9 @@ import httpx
 from pydantic import BaseModel
 from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
-from pearlarr.modules.anilist_client import AniListClient
-from pearlarr.modules.anilist_gateway import AniListGateway
-from pearlarr.modules.cache import (
+from pearlarr.anilist_client import AniListClient
+from pearlarr.anilist_gateway import AniListGateway
+from pearlarr.cache import (
     _ENTRY_SCALAR_COLUMNS,
     UPDATED_AT_STR_FORMAT,
     AbstractCacheStore,
@@ -35,20 +35,20 @@ from pearlarr.modules.cache import (
     HistoryCheckpoint,
     selection_digest_key,
 )
-from pearlarr.modules.config import AppConfig, Arr
-from pearlarr.modules.grab_pipeline import GrabPipeline
-from pearlarr.modules.import_wait import ImportWaitManager
-from pearlarr.modules.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport
-from pearlarr.modules.mappings import MappingResolver, MappingSources
-from pearlarr.modules.notify import Notifier
-from pearlarr.modules.output import SeverityCounts, emit_to_hub
-from pearlarr.modules.planner import DownloadPlanner
-from pearlarr.modules.reporter import RunContext, RunReporter
-from pearlarr.modules.run_services import RunDeps, RunServices
-from pearlarr.modules.seadex_filter import SeadexReleaseFilter
-from pearlarr.modules.seadex_gateway import SeaDexMiss, SeaDexSource
-from pearlarr.modules.seadex_sonarr import SonarrSync
-from pearlarr.modules.seadex_types import (
+from pearlarr.config import AppConfig, Arr
+from pearlarr.grab_pipeline import GrabPipeline
+from pearlarr.import_wait import ImportWaitManager
+from pearlarr.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport
+from pearlarr.mappings import MappingResolver, MappingSources
+from pearlarr.notify import Notifier
+from pearlarr.output import SeverityCounts, emit_to_hub
+from pearlarr.planner import DownloadPlanner
+from pearlarr.reporter import RunContext, RunReporter
+from pearlarr.run_services import RunDeps, RunServices
+from pearlarr.seadex_filter import SeadexReleaseFilter
+from pearlarr.seadex_gateway import SeaDexMiss, SeaDexSource
+from pearlarr.seadex_sonarr import SonarrSync
+from pearlarr.seadex_types import (
     EpisodeRecord,
     ManualImportCandidate,
     ProgressSink,
@@ -57,11 +57,11 @@ from pearlarr.modules.seadex_types import (
     SeadexUrlItem,
     SonarrEpisode,
 )
-from pearlarr.modules.sonarr_client import AbstractSonarrClient
-from pearlarr.modules.sonarr_episodes import SonarrEpisodes
-from pearlarr.modules.sonarr_mapper import FileEpisodeMapper
-from pearlarr.modules.sonarr_parse import SonarrParseCache
-from pearlarr.modules.torrents import AddOutcome, AddResult, TorrentService
+from pearlarr.sonarr_client import AbstractSonarrClient
+from pearlarr.sonarr_episodes import SonarrEpisodes
+from pearlarr.sonarr_mapper import FileEpisodeMapper
+from pearlarr.sonarr_parse import SonarrParseCache
+from pearlarr.torrents import AddOutcome, AddResult, TorrentService
 
 from .fakes import FakeSonarrClient
 

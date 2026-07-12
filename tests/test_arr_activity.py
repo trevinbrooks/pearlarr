@@ -16,19 +16,19 @@ fetch entirely.
 import logging
 from datetime import UTC, datetime, timedelta
 
-from pearlarr.modules.arr_activity import (
+from pearlarr.arr_activity import (
     HISTORY_MAX_LOOKBACK_DAYS,
     HISTORY_QUERY_OVERLAP_HOURS,
     ArrActivityMonitor,
     format_history_date,
     parse_history_date,
 )
-from pearlarr.modules.boot_flow import BootFlow
-from pearlarr.modules.cache import HistoryCheckpoint
-from pearlarr.modules.config import AppConfig, Arr
-from pearlarr.modules.mappings import MappingEntry
-from pearlarr.modules.run_loop import RunLoop
-from pearlarr.modules.seadex_types import HistoryRecord
+from pearlarr.boot_flow import BootFlow
+from pearlarr.cache import HistoryCheckpoint
+from pearlarr.config import AppConfig, Arr
+from pearlarr.mappings import MappingEntry
+from pearlarr.run_loop import RunLoop
+from pearlarr.seadex_types import HistoryRecord
 
 from .builders import FakeCacheStore, make_config, make_logger
 from .fakes import CaptureHandler, FakeArrItem, FakeStrategy

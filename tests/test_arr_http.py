@@ -20,15 +20,15 @@ import httpx
 import pytest
 import respx
 
-from pearlarr.modules.arr_http import (
+from pearlarr.arr_http import (
     GET_RETRIES,
     ArrAuthError,
     ArrConnectionError,
     ArrHttp,
     make_httpx_client,
 )
-from pearlarr.modules.output import Diagnostic, Severity, install_hub
-from pearlarr.modules.output.recording import RecordingHub
+from pearlarr.output import Diagnostic, Severity, install_hub
+from pearlarr.output.recording import RecordingHub
 
 _URL = "http://arr.test"
 

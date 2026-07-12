@@ -18,11 +18,11 @@ import pytest
 from rich.console import Console
 from rich.live import Live
 
-from pearlarr.modules.config import Arr
-from pearlarr.modules.console_caps import Capabilities
-from pearlarr.modules.log import LOG_NAME
-from pearlarr.modules.manual_import import OutcomeCategory
-from pearlarr.modules.output import (
+from pearlarr.config import Arr
+from pearlarr.console_caps import Capabilities
+from pearlarr.log import LOG_NAME
+from pearlarr.manual_import import OutcomeCategory
+from pearlarr.output import (
     BootReady,
     BootStepFinished,
     BootStepProgressed,
@@ -41,7 +41,7 @@ from pearlarr.modules.output import (
     ScopeOpened,
     Severity,
 )
-from pearlarr.modules.output.boot_region import (
+from pearlarr.output.boot_region import (
     BootRegion,
     format_step_secs,
     graduation_line,

@@ -19,17 +19,17 @@ pinned by asserting recorded state.
 import logging
 from typing import override
 
-from pearlarr.modules.boot_flow import BootFlow
-from pearlarr.modules.config import AppConfig, Arr
-from pearlarr.modules.manual_import import Outcome, OutcomeCategory
-from pearlarr.modules.mappings import MappingEntry
-from pearlarr.modules.output import BootStepFinished, CountsMark, Diagnostic, Severity, SeverityCounts
-from pearlarr.modules.output.recording import RecordingHub
-from pearlarr.modules.protocols import ImportCompleter
-from pearlarr.modules.reporter import RunContext
-from pearlarr.modules.run_loop import RunLoop
-from pearlarr.modules.seadex_types import ProgressSink
-from pearlarr.modules.wait_view import WaitOutcomeRow, WaitResult
+from pearlarr.boot_flow import BootFlow
+from pearlarr.config import AppConfig, Arr
+from pearlarr.manual_import import Outcome, OutcomeCategory
+from pearlarr.mappings import MappingEntry
+from pearlarr.output import BootStepFinished, CountsMark, Diagnostic, Severity, SeverityCounts
+from pearlarr.output.recording import RecordingHub
+from pearlarr.protocols import ImportCompleter
+from pearlarr.reporter import RunContext
+from pearlarr.run_loop import RunLoop
+from pearlarr.seadex_types import ProgressSink
+from pearlarr.wait_view import WaitOutcomeRow, WaitResult
 
 from .builders import FakeCacheStore, make_bare_instance, make_config, make_services
 from .fakes import FakeArrItem, FakeStrategy, install_recording_hub
