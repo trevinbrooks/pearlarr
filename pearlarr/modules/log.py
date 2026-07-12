@@ -382,9 +382,11 @@ def setup_logger(
     The hub's sinks own the file/plain/json surfaces (`output.textline`); the
     logging module is an INPUT channel (the bridge adopts records into events)
     with one exception: under "rich"/"auto"-on-a-TTY a `RichConsoleHandler`
-    is attached as the shared-Console owner and the TTY surface for raw
-    first-party records. Under plain/json NO console handler is attached -
-    level-only configuration; the bridge is the only handler.
+    is attached as the shared Console's home (`console_of`). It renders
+    nothing while a bridge is installed — the hub renders everything — and is
+    the raw-record TTY fallback only without one. Under plain/json NO console
+    handler is attached - level-only configuration; the bridge is the only
+    handler.
 
     Args:
         log_level: Level name, case-insensitive; an unknown name falls back
@@ -425,8 +427,8 @@ def setup_logger(
     console_format = resolve_console_format(console_format)
 
     if console_format == "rich":
-        # Console logging through rich: routine lines print with no level
-        # prefix; warnings and errors get a colored badge (RichConsoleHandler).
+        # The shared Console's home (console_of) and the no-bridge fallback
+        # surface; under a bridge the handler stands down and the hub renders.
         console_handler = RichConsoleHandler(Console(file=sys.stdout))
         console_handler.setLevel(console_level(level))
         logger.addHandler(console_handler)
@@ -532,7 +534,12 @@ def indent_string(
     text: str,
     level: int = 1,
 ) -> str:
-    """Indent a detail line for the (flat-style) logger by `level` levels, each `INDENT` wide."""
+    """Indent a rendered console row by `level` levels, each `INDENT` wide.
+
+    For renderer surfaces and interactive prompt rows — never log messages:
+    the renderer owns a diagnostic's placement, so a producer-baked indent
+    double-indents the rich seat and pollutes the text-seat message field.
+    """
 
     return f"{INDENT * level}{text}"
 

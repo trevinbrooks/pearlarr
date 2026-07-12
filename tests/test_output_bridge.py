@@ -1,10 +1,10 @@
 # pyright: strict
 """Tests for the logging bridge (`output.bridge`) + the real-seat wiring.
 
-Pin the adoption table (WARNING+ visible; first-party sub-WARNING visible at
-or above the configured level and file_only below it, on every seat — the
-rich handler stands down while a bridge is installed; third-party sub-WARNING
-gated by the hub level, then file_only unless
+Pin the adoption table (WARNING+ visible; sub-WARNING below the configured
+level never constructed, either party; first-party at-level sub-WARNING
+visible on every seat — the rich handler stands down while a bridge is
+installed; third-party at-level sub-WARNING file_only unless
 configured DEBUG), the root-logger gate `setup_logger` opens for the bridge,
 construct-never-mutate (caplog safety), warnings capture,
 idempotent install surviving `setup_logger` rebuilds, the per-thread
@@ -18,13 +18,14 @@ import logging
 import sys
 import warnings
 from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import ClassVar
 
 import pytest
 
 from pearlarr.modules.boot_flow import BootFlow
-from pearlarr.modules.log import LOG_NAME, setup_logger
+from pearlarr.modules.log import LOG_NAME, apply_log_level, setup_logger
 from pearlarr.modules.output import (
     Diagnostic,
     Event,
@@ -82,24 +83,36 @@ class TestAdoption:
         (diagnostic,) = recorder.of_type(Diagnostic)
         assert diagnostic == Diagnostic(severity=Severity.WARNING, message="watch out", origin=LOG_NAME)
 
-    def test_first_party_sub_warning_below_the_configured_level_adopts_file_only(
+    def test_first_party_info_at_the_configured_level_adopts_visible(
         self, bridged: tuple[RecordingRenderer, logging.Logger]
     ) -> None:
-        """P3: at INFO config (the bridged hub's default), DEBUG chatter stays in the FILE.
+        """An INFO straggler at INFO config (the bridged hub's default) adopts visible.
 
-        An INFO straggler is at the level, so it adopts visible (the bridge is
-        its only console route); stdout omits only the sub-level forensics.
+        The bridge is the record's only console route on every seat, so
+        at-level visibility is uniform - the old rich/plain split is gone.
         """
 
         recorder, logger = bridged
 
         logger.info("checking Frieren")
+
+        (diagnostic,) = recorder.of_type(Diagnostic)
+        assert (diagnostic.severity, diagnostic.file_only) == (Severity.INFO, False)
+
+    def test_first_party_sub_threshold_records_are_never_constructed(
+        self, bridged: tuple[RecordingRenderer, logging.Logger]
+    ) -> None:
+        """P3: at INFO config, DEBUG chatter is dropped whole - like the third-party arm.
+
+        No surface would keep a below-level record (the file sink thresholds
+        at the same configured level), so a file_only Diagnostic is not built.
+        """
+
+        recorder, logger = bridged
+
         logger.debug("cache hit")
 
-        assert [(d.severity, d.file_only) for d in recorder.of_type(Diagnostic)] == [
-            (Severity.INFO, False),
-            (Severity.DEBUG, True),
-        ]
+        assert recorder.of_type(Diagnostic) == []
 
     def test_first_party_sub_warning_visible_at_debug_config_on_a_plain_seat(self, app_logger: logging.Logger) -> None:
         """At DEBUG config the bridge is a first-party record's ONLY console route, so DEBUG/INFO adopt visible."""
@@ -466,19 +479,17 @@ def _file_text(log_file: Path) -> str:
     return log_file.read_text(encoding="utf-8")
 
 
-@pytest.fixture
-def full_stack(
-    app_logger: logging.Logger,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+@contextmanager
+def _production_stack(
+    log_level: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Generator[tuple[logging.Logger, TtyStringIO, Path]]:
-    """This fixture wires the real production stack under `rich`.
+    """The real production wiring under `rich`, at `log_level` on logger AND hub.
 
     The hub (`FileLogSink` first) and bridge install BEFORE `setup_logger`
-    builds the rich console over a fake TTY.
+    builds the rich console over a fake TTY; `apply_log_level` then lands the
+    level on every surface, as bootstrap does.
     """
 
-    del app_logger  # isolation + teardown ordering only
     stream = TtyStringIO()
     monkeypatch.setattr(sys, "stdout", stream)
     # Windows CI has no VT console; the fake TTY plays a modern terminal.
@@ -486,10 +497,26 @@ def full_stack(
     hub = OutputHub([FileLogSink(str(tmp_path / "logs"))], console=RichRenderer())
     install_hub(hub)
     install_bridge()
-    logger = setup_logger(log_level="INFO", console_format="rich")
-    yield logger, stream, tmp_path / "logs" / "Pearlarr.log"
-    uninstall_bridge()
-    uninstall_hub()
+    logger = setup_logger(log_level=log_level, console_format="rich")
+    apply_log_level(logger, log_level)
+    try:
+        yield logger, stream, tmp_path / "logs" / "Pearlarr.log"
+    finally:
+        uninstall_bridge()
+        uninstall_hub()
+
+
+@pytest.fixture
+def full_stack(
+    app_logger: logging.Logger,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[tuple[logging.Logger, TtyStringIO, Path]]:
+    """The production stack at the default INFO config (`_production_stack`)."""
+
+    del app_logger  # isolation + teardown ordering only
+    with _production_stack("INFO", tmp_path, monkeypatch) as stack:
+        yield stack
 
 
 class TestFullStackSeams:
@@ -524,6 +551,27 @@ class TestFullStackSeams:
 
         assert _console_text(stream).count("checking Frieren") == 1
         assert _file_text(log_file).count("checking Frieren") == 1
+
+    def test_first_party_debug_at_debug_config_renders_once_on_console_once_in_file(
+        self,
+        app_logger: logging.Logger,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """DEBUG chatter at DEBUG config on the rich seat - the route this migration built.
+
+        The raw handler stands down, the bridge adopts visible, the renderer
+        places the line, and the file keeps its grammar twin - once each.
+        """
+
+        del app_logger  # isolation + teardown ordering only
+        with _production_stack("DEBUG", tmp_path, monkeypatch) as (logger, stream, log_file):
+            logger.debug("cache hit")
+
+            assert _console_text(stream).count("cache hit") == 1
+            file_text = _file_text(log_file)
+            assert file_text.count("cache hit") == 1
+            assert "DEBUG [Pearlarr] cache hit" in file_text
 
     def test_third_party_warning_renders_once_on_console_once_in_file(
         self, full_stack: tuple[logging.Logger, TtyStringIO, Path]

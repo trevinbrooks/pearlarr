@@ -4,21 +4,22 @@ One `HubBridgeHandler` per process, attached to the root logger AND to the
 app logger (its `propagate` stays False, so the app path needs its own seat).
 Adoption rules:
 
+* Sub-WARNING records below the hub's level are never constructed, either
+  party: no surface would keep them — the file sink thresholds at the same
+  configured level.
 * App-logger records: WARNING+ adopt visible (the badge class) — a defensive
   arm, since first-party WARNING+ emits hub Diagnostics directly
   (tests/test_logging_ban.py enforces it; log.py's invalid-level critical is
-  the one sanctioned raw site). Sub-WARNING (DEBUG chatter, which stays raw
-  forever) adopts visible at or above the configured level and `file_only`
-  below it — the bridge is a raw record's ONLY console route on every seat
-  (RichConsoleHandler stands down whenever a bridge is installed), so the
-  renderer's frontier owns the line's placement instead of a producer-baked
-  indent.
+  the one sanctioned raw site). At-level sub-WARNING (DEBUG chatter, which
+  stays raw forever) adopts visible — the bridge is a raw record's ONLY
+  console route on every seat (RichConsoleHandler stands down whenever a
+  bridge is installed), so the renderer's frontier owns the line's placement
+  instead of a producer-baked indent.
 * Root records (third-party: httpx, urllib3, pydantic, py.warnings, ...):
-  WARNING+ adopt visible with `origin = record.name`; sub-WARNING records below
-  the hub's level are never constructed, at-or-above it they adopt `file_only`
-  unless the configured level is DEBUG (at DEBUG the hub is a library record's
-  only console route, so today's visibility is preserved; at INFO+ the file
-  keeps the forensics and stdout loses library chatter).
+  WARNING+ adopt visible with `origin = record.name`; at-level sub-WARNING
+  adopts `file_only` unless the configured level is DEBUG (at DEBUG the hub is
+  a library record's only console route, so today's visibility is preserved;
+  at INFO+ the file keeps the forensics and stdout loses library chatter).
 
 The bridge CONSTRUCTS new events and never mutates the LogRecord (caplog
 safety). A record fired from inside hub dispatch on the same thread (a renderer
@@ -111,15 +112,15 @@ class HubBridgeHandler(HubBridgeBase):
 
         if record.levelno >= logging.WARNING:
             file_only = False
-        elif is_first_party(record.name):
-            # Visible at or above the configured level: the bridge is the raw
-            # record's only console route (the rich handler stands down while a
-            # bridge is installed), and the hub's placement owns the indent.
-            # Below the level (a mis-leveled logger) the file keeps forensics.
-            file_only = record.levelno < hub.level
         elif record.levelno < hub.level:
-            # Sub-threshold third-party records aren't constructed/counted.
+            # Sub-threshold records aren't constructed/counted, either party:
+            # no surface would keep them (the file thresholds at this level).
             return None
+        elif is_first_party(record.name):
+            # Visible: the bridge is the raw record's only console route (the
+            # rich handler stands down while a bridge is installed), and the
+            # hub's placement owns the indent.
+            file_only = False
         else:
             # At a configured DEBUG the hub is a library record's only console
             # route, so it stays visible; at INFO+ the file alone keeps it.
