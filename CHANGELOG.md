@@ -37,6 +37,7 @@ Coming from upstream 0.9.x:
 - `seadex.ignore_anilist_ids` (skip specific AniList IDs), `seadex.ignore_tags` (filter releases by SeaDex tag), and `qbittorrent.tags` (tag every added torrent).
 - Discord notifications are rich embeds with colors, links, and a version footer.
 - The console shows a live cockpit during startup and the import-wait pass (spinners, ticking timers, files-imported progress).
+- `advanced.log_format` picks the console surface (`auto`/`rich`/`plain`/`json`); `json` writes one JSON object per event to stdout - a versioned machine interface with a generated event catalog ([docs/output.md](docs/output.md)).
 - New CLI surface:
   - `run single --dry-run` (simulate without grabbing, caching, or notifying), `--movie-id`/`--series-id` (single-title runs by TMDB/TVDB ID), and `--import-wait-mode`/`--log-level` per-run overrides.
   - `config validate` and `config show` (effective config with secrets redacted, safe to paste into a bug report).
@@ -55,7 +56,7 @@ Coming from upstream 0.9.x:
 - Failed CLI commands exit non-zero (previously always 0); a malformed config, missing backup, unreachable arr, or rejected API key is reported as a clean one-line error naming the config keys to check, instead of a traceback.
 - `cache backup` writes via a temp file so a failed backup can never destroy the previous good one; `cache restore` copies instead of consuming the backup, so a restore is repeatable.
 - `config init` refuses to overwrite an existing `config.yml` unless `--force` is passed.
-- The Python import surface is internal as of 1.0.0: the supported interfaces are the CLI, the config schema, and the notification payloads.
+- The Python import surface is internal as of 1.0.0: the supported interfaces are the CLI, the config schema, the JSON event stream, and the notification payloads.
 - Runtime dependencies bumped to current majors (typer 0.26, rich 15, qbittorrent-api 2026.6).
 
 ### Deprecated
