@@ -447,7 +447,7 @@ class Notifier:
                 self.discord_url = None
                 hub_warn(
                     f"Discord notification failed ({detail}) - disabling Discord notifications "
-                    f"for this run; check notifications.discord_url"
+                    f"for this run - check notifications.discord_url"
                 )
             else:
                 hub_warn(f"Discord notification failed ({detail}) - check notifications.discord_url")
@@ -473,7 +473,7 @@ class Notifier:
             else:
                 return True
         hub_warn(
-            f"Discord notification failed ({_failure_detail(exc)}) - rate limited by Discord; "
+            f"Discord notification failed ({_failure_detail(exc)}) - rate limited by Discord - "
             f"this notification was dropped"
         )
         return False

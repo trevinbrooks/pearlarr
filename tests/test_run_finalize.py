@@ -179,7 +179,7 @@ class TestPerIdErrorContainment:
         # The per-id failure is an ERROR Diagnostic with its traceback (containment
         # is observable).
         (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
-        assert error.message == "A (AniList #1): unexpected error: boom on al_id 1"
+        assert error.message == "A (AniList #1): unexpected error (boom on al_id 1) - skipping this AniList id"
         assert error.trace is not None
         # The single finalize still ran once on the normal end-of-run path.
         assert finalize.calls == 1
@@ -234,7 +234,7 @@ class TestPerItemErrorContainment:
         assert strategy.process_calls == [5]
         # The per-item failure is an ERROR Diagnostic with its traceback.
         (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
-        assert error.message == "A: unexpected error: mapping lookup exploded"
+        assert error.message == "A: unexpected error (mapping lookup exploded) - skipping this title"
         assert error.trace is not None
         # The run still reached the single post-loop finalize site.
         assert finalize.calls == 1
@@ -264,7 +264,7 @@ class TestNotifyWaitCompleteContainment:
         loop._notify_wait_complete(result)  # must not raise
 
         (warning,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.WARNING]
-        assert warning.message == "Wait completion notification failed unexpectedly"
+        assert warning.message == "Wait completion notification failed unexpectedly - the notification was dropped"
         assert warning.trace is not None
 
 

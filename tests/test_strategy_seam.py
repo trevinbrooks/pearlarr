@@ -1331,7 +1331,7 @@ class TestDefaultQualityWarning:
         # Both polls stepped in (rebuilt the payload), yet the typo warned once.
         assert len(sonarr.execute_calls) == 2
         assert self._default_quality_warnings(recording) == [
-            "imports.default_quality 'Blueray-1080p' matches no Sonarr quality definition; ignoring it",
+            "imports.default_quality 'Blueray-1080p' matches no Sonarr quality definition - ignoring it",
         ]
 
         # The guard is per-run scratch: the run-start reset re-arms it.

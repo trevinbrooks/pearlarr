@@ -312,7 +312,7 @@ def test_episodes_non_200_returns_none_and_warns() -> None:
 
     assert result is None
     [warning] = diagnostic_messages(recording, Severity.WARNING)
-    assert warning == "Could not fetch episodes for series 228 from Sonarr (status code 500); skipping"
+    assert warning == "Could not fetch episodes for series 228 from Sonarr (status code 500) - skipping"
 
 
 @respx.mock
@@ -761,7 +761,7 @@ def test_history_since_non_200_returns_none_and_warns() -> None:
     # The single warning for a failed history fetch states its consequence too
     # (the activity monitor only debug-logs, so this line is all the user sees).
     [warning] = diagnostic_messages(recording, Severity.WARNING)
-    assert warning == "Could not fetch Sonarr history (status code 500); skipping activity detection this run"
+    assert warning == "Could not fetch Sonarr history (status code 500) - skipping activity detection this run"
 
 
 @respx.mock

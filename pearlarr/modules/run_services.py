@@ -149,7 +149,8 @@ class RunDeps:
                     # LoginFailed (bad credentials) subclasses APIConnectionError, so
                     # this one arm covers both a wrong host and wrong credentials.
                     raise QbitConnectionError(
-                        "qBittorrent connection failed - check the qbittorrent host and credentials in your config",
+                        "qBittorrent connection failed - check qbittorrent.host, qbittorrent.username, and "
+                        "qbittorrent.password in your config",
                     ) from e
             qbit = client
         else:

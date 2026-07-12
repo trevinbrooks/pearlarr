@@ -291,7 +291,7 @@ class ImportExecutor:
             # never dropped silently.
             message = indent_string(
                 f"{content_path}: {count_noun(len(missing), 'intended file')} "
-                f"not visible to Sonarr for {pending.display_label}; will retry",
+                f"not visible to Sonarr for {pending.display_label} - will retry",
             )
             if at_deadline:
                 hub_warn(message)
@@ -400,7 +400,7 @@ class ImportExecutor:
         # surface the (likely) typo once per run instead of staying silent.
         if default_name and default_axes == ParsedQuality() and not self._warned_default_quality:
             self._warned_default_quality = True
-            hub_warn(f"imports.default_quality '{default_name}' matches no Sonarr quality definition; ignoring it")
+            hub_warn(f"imports.default_quality '{default_name}' matches no Sonarr quality definition - ignoring it")
         quality = resolve_quality(
             sonarr_axes,
             our_axes,
@@ -414,7 +414,8 @@ class ImportExecutor:
         if resolved is None or QualitySource.parse(resolved.source) is None:
             hub_warn(
                 indent_string(
-                    f"{content_path}: could not confidently resolve quality for {base}; importing as Unknown (re-grab risk)",
+                    f"{content_path}: could not confidently resolve quality for {base} - importing as Unknown "
+                    "(re-grab risk)",
                 )
             )
         return ManualImportFile(

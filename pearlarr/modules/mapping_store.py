@@ -287,7 +287,7 @@ class MappingStore:
             connect_fn=connect,
             ensure=_ensure_schema,
             what="Mappings database",
-            recovery="started a fresh one (sources will be re-parsed this run).",
+            recovery="started a fresh one (sources will be re-parsed this run)",
         )
         return cls(conn, path)
 

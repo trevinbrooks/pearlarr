@@ -107,7 +107,7 @@ class SeaDexGateway(SeaDexSource):
         """Warn ONCE that SeaDex is unreachable; the flag mutes every later call."""
 
         if not self._outage:
-            hub_warn(f"SeaDex request failed ({type(e).__name__}); affected titles will be skipped this run")
+            hub_warn(f"SeaDex request failed ({type(e).__name__}) - affected titles will be skipped this run")
         self._outage = True
 
     @override

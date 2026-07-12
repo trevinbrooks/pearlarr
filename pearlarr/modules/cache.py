@@ -178,8 +178,8 @@ def _ensure_schema(conn: sqlite3.Connection, path: str) -> None:
     if version > SCHEMA_VERSION:
         raise CacheSchemaError(
             f"Cache database at {path} uses schema v{version}, newer than this pearlarr understands "
-            f"(v{SCHEMA_VERSION}) - it was written by a newer release. Upgrade pearlarr, or move the "
-            "file away to start a fresh cache.",
+            f"(v{SCHEMA_VERSION}) - it was written by a newer release - upgrade pearlarr, or move the "
+            "file away to start a fresh cache",
         )
     fresh = conn.execute("SELECT count(*) FROM sqlite_master WHERE type = 'table'").fetchone()[0] == 0
     # Creates any missing tables/indexes; never alters an existing table (that's
@@ -452,7 +452,7 @@ class CacheStore(AbstractCacheStore):
             ensure=lambda c: _ensure_schema(c, path),
             what="Cache database",
             recovery="started a fresh cache (titles will be re-checked; grab-dedup and "
-            "pending-import tracking reset, so recent grabs may be re-offered).",
+            "pending-import tracking reset, so recent grabs may be re-offered)",
         )
         if fell_back:
             exists = False

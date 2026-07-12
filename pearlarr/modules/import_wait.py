@@ -207,7 +207,7 @@ class ImportWaitManager:
                 at_deadline=at_deadline,
             )
         except Exception as e:
-            hub_error(f"Manual import failed for {pending.display_label}; leaving it for a later run", exc=e)
+            hub_error(f"Manual import failed for {pending.display_label} - leaving it for a later run", exc=e)
             return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
 
     def import_progress(self, pending: PendingImport) -> ImportProgress:
@@ -419,7 +419,7 @@ class ImportWaitManager:
                     # the tally's elapsed reads interrupt time (the view is total,
                     # so the push can't raise past the break).
                     view.update(mp.snapshot())
-                    hub_note(f"Wait interrupted; {len(mp.active)} left pending")
+                    hub_note(f"Wait interrupted - {len(mp.active)} left pending")
                     break
         finally:
             if own_view:
@@ -515,7 +515,7 @@ class ImportWaitManager:
             if added_at < cutoff:
                 hub_note(
                     f"Pending import {pending.display_label} is older than "
-                    f"{count_noun(self._config.imports.pending_max_age_days, 'day')}; giving up on it",
+                    f"{count_noun(self._config.imports.pending_max_age_days, 'day')} - giving up on it",
                 )
                 self.drop_pending(infohash)
 
@@ -545,7 +545,10 @@ class ImportWaitManager:
                 self.qbit.torrents_create_category(name=category)
                 self.qbit.torrents_set_category(category=category, torrent_hashes=infohash)
         except (qbittorrentapi.APIError, qbittorrentapi.APIConnectionError) as e:
-            hub_warn(f"Could not move imported torrent {label} to category {category!r}: {e}")
+            hub_warn(
+                f"Could not move imported torrent {label} to category {category!r} ({e}) - "
+                "leaving its category unchanged"
+            )
 
 
 class MonitorPass:

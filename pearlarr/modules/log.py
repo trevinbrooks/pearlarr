@@ -405,7 +405,7 @@ def setup_logger(
     # Deliberately raw — the sanctioned straggler the bridge adopts (this module
     # cannot lean on the hub it configures); allowlisted in tests/test_logging_ban.py.
     if invalid_log_level is not None:
-        logger.critical(f"Invalid log level '{invalid_log_level}', defaulting to 'INFO'")
+        logger.critical(f"Invalid log level '{invalid_log_level}' - defaulting to 'INFO'")
 
     return logger
 

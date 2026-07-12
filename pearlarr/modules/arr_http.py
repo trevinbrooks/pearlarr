@@ -310,7 +310,7 @@ class ArrHttp:
         raw = self.get_json_list(
             "/api/v3/history/since",
             params={"date": date, **include_flags},
-            warn=f"Could not fetch {self.label} history ({{detail}}); skipping activity detection this run",
+            warn=f"Could not fetch {self.label} history ({{detail}}) - skipping activity detection this run",
         )
         if raw is None:
             return None

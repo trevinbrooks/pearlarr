@@ -456,7 +456,7 @@ class MappingResolver:
                 if mappings_db == ":memory:":
                     raise
                 hub_warn(
-                    f"Mapping cache at {mappings_db} could not be written; rebuilding it "
+                    f"Mapping cache at {mappings_db} could not be written - rebuilding it "
                     "in memory for this run (slower startup, no data lost)"
                 )
                 if self.logger is not None:
@@ -589,7 +589,7 @@ class MappingResolver:
                 # A transient blip refreshing a stale-but-valid cached source must not abort
                 # the run: the atomic .part write left the cached file intact, so fall open to
                 # it and warn (next cycle re-attempts). A first-ever download above stays fatal.
-                hub_warn(f"Could not refresh {label} ({e}); using the cached copy")
+                hub_warn(f"Could not refresh {label} ({e}) - using the cached copy")
 
     def _load_anime_ids(self) -> None:
         """Download + (re)index the Kometa Anime-IDs map only if its content changed."""

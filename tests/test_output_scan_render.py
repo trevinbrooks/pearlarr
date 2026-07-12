@@ -316,7 +316,7 @@ class TestRichRendererScanArm:
         lines = _plain_lines(stream)
         assert lines == _expected_console(SUMMARY_DRY_HAS_CLIENT_LINES)
         # The DRY RUN note the file log drops rides the console title.
-        assert "Pearlarr (Sonarr) run complete   (DRY RUN — nothing grabbed)" in lines
+        assert "Pearlarr (Sonarr) run complete   (DRY RUN - nothing grabbed)" in lines
 
     def test_renders_the_rich_summary(self) -> None:
         renderer, stream = _renderer()

@@ -106,7 +106,7 @@ class RadarrClient(AbstractRadarrClient):
         raw = self._http.get_json_list(
             "/api/v3/moviefile",
             params={"movieId": str(movie_id)},
-            warn=f"Could not fetch files for movie {movie_id} from Radarr ({{detail}}); assuming none",
+            warn=f"Could not fetch files for movie {movie_id} from Radarr ({{detail}}) - assuming none",
         )
         if raw is None:
             return []

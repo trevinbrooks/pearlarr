@@ -70,7 +70,7 @@ def test_movie_files_non_200_returns_empty_and_warns() -> None:
 
     assert files == []
     [warning] = diagnostic_messages(recording, Severity.WARNING)
-    assert warning == "Could not fetch files for movie 7 from Radarr (status code 404); assuming none"
+    assert warning == "Could not fetch files for movie 7 from Radarr (status code 404) - assuming none"
 
 
 @respx.mock

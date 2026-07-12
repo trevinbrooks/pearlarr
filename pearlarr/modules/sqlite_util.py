@@ -192,4 +192,4 @@ def quarantine_corrupt(
     for suffix in ("-wal", "-shm"):
         with contextlib.suppress(OSError):
             os.replace(path + suffix, dest + suffix)
-    hub_warn(f"{what} at {path} was unreadable/corrupt; moved it to {dest} and {recovery}")
+    hub_warn(f"{what} at {path} was unreadable/corrupt - moved it to {dest} and {recovery}")

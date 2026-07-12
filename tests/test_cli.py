@@ -150,14 +150,14 @@ class TestCacheRoundTrip:
         assert cache_backup() is True
         assert (tmp_path / "cache.backup.db").exists()
         # Success is confirmed out loud (on stdout), not silently.
-        assert f"Backed up cache to {tmp_path / 'cache.backup.db'}." in capsys.readouterr().out
+        assert f"Backed up cache to {tmp_path / 'cache.backup.db'}" in capsys.readouterr().out
 
         # A stale WAL left next to cache.db must not shadow the restored snapshot;
         # restore clears the sidecars before swapping the copy into place.
         (tmp_path / "cache.db-wal").write_text("stale")
 
         assert cache_restore() is True
-        assert f"Restored cache from {tmp_path / 'cache.backup.db'}." in capsys.readouterr().out
+        assert f"Restored cache from {tmp_path / 'cache.backup.db'}" in capsys.readouterr().out
         # Copy-restore: the backup SURVIVES (a post-restore corruption can be
         # restored again) and no temp file is left behind.
         assert (tmp_path / "cache.backup.db").exists()
@@ -189,7 +189,7 @@ class TestCacheRoundTrip:
         (tmp_path / "cache.db-shm").write_text("stale")
 
         assert cache_remove() is True
-        assert f"Removed {tmp_path / 'cache.db'}." in capsys.readouterr().out
+        assert f"Removed {tmp_path / 'cache.db'}" in capsys.readouterr().out
         assert not (tmp_path / "cache.db").exists()
         assert not (tmp_path / "cache.db-wal").exists()
         assert not (tmp_path / "cache.db-shm").exists()
@@ -239,7 +239,7 @@ class TestCorruptDatabaseIsReportedNotCrashed:
         (tmp_path / "cache.db").write_text("not a database")
 
         assert cache_stats() is False
-        assert "cache stats" in capsys.readouterr().err
+        assert "Cache stats failed" in capsys.readouterr().err
 
     def test_backup_on_corrupt_db_returns_false_without_raising(
         self,
@@ -253,7 +253,7 @@ class TestCorruptDatabaseIsReportedNotCrashed:
         # backup reads the source through the online-backup API, so a corrupt source
         # surfaces as a clean failure line (on stderr), not a traceback.
         assert cache_backup() is False
-        assert "cache backup failed" in capsys.readouterr().err
+        assert "Cache backup failed" in capsys.readouterr().err
 
 
 class TestActiveRunGuard:
@@ -333,7 +333,7 @@ class TestMissingFilesAreReportedNotRaised:
             (cache_backup, "it is created by the first run"),
             (cache_remove, "nothing to remove"),
             (cache_restore, "No backup at"),
-            (cache_restore, "run 'pearlarr cache backup' first"),
+            (cache_restore, "run pearlarr cache backup first"),
         ]
         for command, expected in checks:
             assert command() is False
@@ -355,7 +355,7 @@ class TestMissingFilesAreReportedNotRaised:
         # A torn snapshot must not survive a failed backup: a later restore would
         # move it over the live database.
         assert cache_backup() is False
-        assert "cache backup failed" in capsys.readouterr().err
+        assert "Cache backup failed" in capsys.readouterr().err
         assert not (tmp_path / "cache.backup.db").exists()
         assert not (tmp_path / "cache.backup.db.tmp").exists()
 
@@ -570,7 +570,8 @@ class TestConfiguredArrs:
         # Both per-arr skip notes precede the refusal; the ERROR is the verdict.
         (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
         assert error.message == (
-            "Neither sonarr nor radarr is configured - set url and api_key for at least one in config.yml"
+            "Neither sonarr nor radarr is configured - set sonarr.url and sonarr.api_key, or radarr.url and "
+            "radarr.api_key, in config.yml"
         )
 
     def test_fully_configured_passes_through_unchanged(self, recording: RecordingHub) -> None:
@@ -605,7 +606,7 @@ class TestRunFailuresAreCleanAndNonzero:
                 "unreachable",
                 # The failing URL (from the error's message) is surfaced, so the
                 # user sees which connection broke, not just which leg was running.
-                "Sonarr run failed: Could not reach Sonarr at http://sonarr:8989 "
+                "Sonarr run failed - Could not reach Sonarr at http://sonarr:8989 "
                 "(request failed (ConnectError)) - check sonarr.url",
                 id="arr-unreachable",
             ),
@@ -614,7 +615,7 @@ class TestRunFailuresAreCleanAndNonzero:
                 "contract",
                 # The library answered but validated to nothing: the one-line
                 # contract arm, never the traceback arm.
-                "Sonarr run failed: none of the 3 SonarrSeries records validated",
+                "Sonarr run failed - none of the 3 SonarrSeries records validated",
                 id="arr-contract",
             ),
         ],
@@ -1317,7 +1318,7 @@ class TestUnexpectedConfigErrorSkips:
         assert load_shared_config(config, BootFlow(), " - will retry") is None
 
         (error,) = [d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR]
-        assert error.message == f"Could not load config {config}; skipping this run - will retry"
+        assert error.message == f"Could not load config {config} - skipping this run - will retry"
         assert error.trace is not None  # unexpected -> the traceback is kept
 
 
@@ -1422,7 +1423,7 @@ class TestUnwritableDataDir:
 
         out = capsys.readouterr().out
         assert "Could not access config" in out
-        assert "Skipping this run" in out
+        assert "skipping this run" in out
         assert "Traceback" not in out
 
 
@@ -1470,7 +1471,7 @@ class TestScheduledLifecycle:
         assert excinfo.value.code == 0
         (note,) = recording.of_type(Diagnostic)
         assert note.severity is Severity.INFO
-        assert note.message == "Received SIGTERM; exiting."
+        assert note.message == "Received SIGTERM - exiting"
         assert note.origin == LOG_NAME
 
     def test_cycle_started_is_emitted_after_begin_cycle(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1544,7 +1545,7 @@ class TestRunLockContention:
 
         assert result is False
         assert diagnostic_messages(recording, Severity.WARNING) == [
-            f"Another Pearlarr run is active in {paths.data_dir}; skipping this run.",
+            f"Another Pearlarr run is active in {paths.data_dir} - skipping this run",
         ]
 
 
@@ -1607,7 +1608,7 @@ class TestScheduleHours:
         assert _schedule_hours(self._write_config(tmp_path, 2.5)) == 0.5
         (notice,) = recording.of_type(Diagnostic)
         assert notice.severity is Severity.WARNING
-        assert notice.message == "SCHEDULE_TIME is deprecated; set schedule.interval_hours in the config instead."
+        assert notice.message == "SCHEDULE_TIME is deprecated - set schedule.interval_hours in the config instead"
 
     @pytest.mark.parametrize("raw", ["banana", "0", "-3", "inf", "nan"])
     def test_bad_env_values_fall_through_to_config(

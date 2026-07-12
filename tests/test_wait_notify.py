@@ -521,7 +521,7 @@ def test_push_grab_4xx_disables_discord_for_the_run(monkeypatch: pytest.MonkeyPa
     warnings = diagnostic_messages(recording, Severity.WARNING)
     assert warnings == [
         "Discord notification failed (HTTP 404) - disabling Discord notifications "
-        "for this run; check notifications.discord_url",
+        "for this run - check notifications.discord_url",
     ]
     assert all("secret-token" not in message for message in warnings)
 
@@ -582,7 +582,7 @@ def test_push_grab_429_retry_exhausted_drops_and_stays_enabled(monkeypatch: pyte
     recording = install_recording_hub()
     assert _push_grab(notifier) is False
     assert diagnostic_messages(recording, Severity.WARNING) == [
-        "Discord notification failed (HTTP 429) - rate limited by Discord; this notification was dropped",
+        "Discord notification failed (HTTP 429) - rate limited by Discord - this notification was dropped",
     ]
     assert _push_grab(notifier) is False  # a later push still attempts
 
@@ -610,7 +610,7 @@ def test_push_grab_429_long_retry_after_skips_the_retry(monkeypatch: pytest.Monk
     assert sleeps == []  # the 30s was NOT slept
     assert notifier.enabled is True
     assert diagnostic_messages(recording, Severity.WARNING) == [
-        "Discord notification failed (HTTP 429) - rate limited by Discord; this notification was dropped",
+        "Discord notification failed (HTTP 429) - rate limited by Discord - this notification was dropped",
     ]
 
 

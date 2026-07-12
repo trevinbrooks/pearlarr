@@ -105,14 +105,14 @@ class AniListRetryLog:
     def waiting(self, reason: str, wait: float, retry: int, *, severity: Severity = Severity.INFO) -> None:
         """One backoff notice, so a long Retry-After wait doesn't look like a hang."""
 
-        hub_note(f"AniList {reason}; waiting {wait:.0f}s (retry {retry}/{MAX_RETRIES})", severity=severity)
+        hub_note(f"AniList {reason} - waiting {wait:.0f}s (retry {retry}/{MAX_RETRIES})", severity=severity)
 
     def gave_up(self) -> None:
         """Warn ONCE per run that AniList lookups are degraded, then stay quiet."""
 
         if not self._gave_up:
             hub_warn(
-                f"AniList request failed after {MAX_RETRIES} retries; "
+                f"AniList request failed after {MAX_RETRIES} retries - "
                 "some titles/episode counts may be missing this run"
             )
         self._gave_up = True

@@ -166,7 +166,7 @@ class SonarrClient(AbstractSonarrClient):
         re-fetches.
         """
 
-        warn = f"Could not fetch episodes for series {series_id} from Sonarr ({{detail}}); skipping"
+        warn = f"Could not fetch episodes for series {series_id} from Sonarr ({{detail}}) - skipping"
         raw = self._http.get_json_list(
             "/api/v3/episode",
             params={"seriesId": str(series_id), "includeImages": "false", "includeEpisodeFile": "true"},
@@ -212,7 +212,7 @@ class SonarrClient(AbstractSonarrClient):
         payload = self._http.get_json_dict(
             "/api/v3/parse",
             params={"title": filename},
-            warn=indent_string(f"Could not parse {filename} via Sonarr ({{detail}}); skipping file"),
+            warn=indent_string(f"Could not parse {filename} via Sonarr ({{detail}}) - skipping file"),
         )
         if payload is None:
             return None
@@ -270,7 +270,7 @@ class SonarrClient(AbstractSonarrClient):
         payload = self._http.get_json_dict(
             "/api/v3/parse",
             params={"title": filename},
-            warn=indent_string(f"Could not parse {filename} via Sonarr ({{detail}}); will retry"),
+            warn=indent_string(f"Could not parse {filename} via Sonarr ({{detail}}) - will retry"),
             timeout=MANUAL_IMPORT_TIMEOUT_S,
         )
         if payload is None:
@@ -282,7 +282,9 @@ class SonarrClient(AbstractSonarrClient):
             return ParsedFileInfo.model_validate(payload)
         except ValidationError as e:
             hub_warn(
-                indent_string(f"Could not parse {filename} via Sonarr (malformed response: {validation_summary(e)})")
+                indent_string(
+                    f"Could not parse {filename} via Sonarr (malformed response: {validation_summary(e)}) - will retry"
+                )
             )
             return None
 
@@ -327,7 +329,7 @@ class SonarrClient(AbstractSonarrClient):
                 "filterExistingFiles": "false",
             },
             warn=indent_string(
-                f"Could not fetch manual-import candidates for {pending.title} ({{detail}}); will retry"
+                f"Could not fetch manual-import candidates for {pending.title} ({{detail}}) - will retry"
             ),
             timeout=MANUAL_IMPORT_TIMEOUT_S,
         )
@@ -393,14 +395,16 @@ class SonarrClient(AbstractSonarrClient):
         payload = self._http.post_json(
             "/api/v3/command",
             json=body.model_dump(exclude_unset=True),
-            warn=indent_string(f"Could not queue {body.name} command ({{detail}})"),
+            warn=indent_string(f"Could not queue {body.name} command ({{detail}}) - will retry"),
         )
         if payload is None:
             return None
         if not isinstance(payload, dict):
             # A 2xx whose body carries no readable id: Sonarr may still have
             # queued the command, so leave a breadcrumb before reporting None.
-            hub_warn(indent_string(f"Could not queue {body.name} command (unexpected payload)"))
+            hub_warn(
+                indent_string(f"Could not confirm the {body.name} command was queued (unexpected payload) - will retry")
+            )
             return None
 
         # The returned CommandResource's "id" is the queued command id (0 when
@@ -409,7 +413,10 @@ class SonarrClient(AbstractSonarrClient):
             command = CommandResource.model_validate(payload)
         except ValidationError as e:
             hub_warn(
-                indent_string(f"Could not queue {body.name} command (malformed response: {validation_summary(e)})")
+                indent_string(
+                    f"Could not confirm the {body.name} command was queued (malformed response: "
+                    f"{validation_summary(e)}) - will retry"
+                )
             )
             return None
         return command.id or None
@@ -448,7 +455,7 @@ class SonarrClient(AbstractSonarrClient):
                     "pageSize": "1000",
                     "includeUnknownSeriesItems": "true",
                 },
-                warn=indent_string("Could not fetch the Sonarr queue ({detail})"),
+                warn=indent_string("Could not fetch the Sonarr queue ({detail}) - continuing without queue state"),
             )
             if paged is None:
                 # A failed LATER page keeps what was fetched: partial beats empty
@@ -484,7 +491,7 @@ class SonarrClient(AbstractSonarrClient):
 
         raw = self._http.get_json_list(
             "/api/v3/qualitydefinition",
-            warn="Could not fetch quality definitions from Sonarr ({detail})",
+            warn="Could not fetch quality definitions from Sonarr ({detail}) - falling back to other quality sources",
         )
         if raw is None:
             return []
@@ -510,7 +517,7 @@ class SonarrClient(AbstractSonarrClient):
 
         raw = self._http.get_json_list(
             "/api/v3/language",
-            warn="Could not fetch languages from Sonarr ({detail})",
+            warn="Could not fetch languages from Sonarr ({detail}) - using the candidate's languages",
         )
         if raw is None:
             return []
@@ -537,7 +544,9 @@ class SonarrClient(AbstractSonarrClient):
 
         payload = self._http.get_json_dict(
             f"/api/v3/command/{command_id}",
-            warn=indent_string(f"Could not fetch status for command {command_id} ({{detail}})"),
+            warn=indent_string(
+                f"Could not fetch status for command {command_id} ({{detail}}) - leaving the import unverified"
+            ),
         )
         if payload is None:
             return CommandResource()
@@ -547,7 +556,12 @@ class SonarrClient(AbstractSonarrClient):
         try:
             return CommandResource.model_validate(payload)
         except ValidationError as e:
-            hub_warn(indent_string(f"Could not read status for command {command_id} ({validation_summary(e)})"))
+            hub_warn(
+                indent_string(
+                    f"Could not read status for command {command_id} ({validation_summary(e)}) - "
+                    "leaving the import unverified"
+                )
+            )
             return CommandResource()
 
     @override
@@ -573,7 +587,7 @@ class SonarrClient(AbstractSonarrClient):
 
         raw = self._http.get_json_list(
             "/api/v3/command",
-            warn=indent_string("Could not fetch the Sonarr command list ({detail})"),
+            warn=indent_string("Could not fetch the Sonarr command list ({detail}) - assuming nothing is in flight"),
         )
         if raw is None:
             return []

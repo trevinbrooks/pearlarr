@@ -101,7 +101,7 @@ def load_shared_config(
             )
         return loaded
     except FileNotFoundError:
-        hub_error(f"No config file at {config} - a starter template was written; fill it in and re-run.")
+        hub_error(f"No config file at {config} - a starter template was written - fill it in and re-run")
         # typer.Exit is an Exception subclass, but it escapes cleanly: sibling
         # arms can't catch a raise from THIS arm, and run_arrs wraps this call
         # in try/FINALLY only - so the boot view, web client and run lock all
@@ -113,24 +113,24 @@ def load_shared_config(
         # exiting would kill a scheduled daemon over a possibly transient error.
         # Must sit after FileNotFoundError (its subclass) and before Exception.
         hub_error(
-            f"Could not access config {config} ({e}); check permissions on it and the data directory. "
-            f"Skipping this run{retry}."
+            f"Could not access config {config} ({e}) - check permissions on it and the data directory - "
+            f"skipping this run{retry}"
         )
     except ValidationError as e:
         # Surface the specific bad keys (nested path -> message) without a traceback,
         # then skip + retry next cycle - same contract as the missing-file branch.
         hub_error(
             f"Invalid configuration in {config}:\n{format_validation_errors(e)}\n"
-            f"Fix the listed keys and re-run. Skipping this run{retry}."
+            f"Fix the listed keys and re-run - skipping this run{retry}"
         )
     except yaml.YAMLError as e:
         # Malformed YAML is a user-facing config problem like a failed validation:
         # a clean report + retry, not the unexpected-error traceback arm below.
         hub_error(
-            f"Unreadable YAML in {config} ({format_yaml_error(e)}). Fix the file and re-run. Skipping this run{retry}."
+            f"Unreadable YAML in {config} ({format_yaml_error(e)}) - fix the file and re-run - skipping this run{retry}"
         )
     except Exception as e:
-        hub_error(f"Could not load config {config}; skipping this run{retry}", exc=e)
+        hub_error(f"Could not load config {config} - skipping this run{retry}", exc=e)
     return None
 
 
@@ -177,11 +177,12 @@ def build_resolver(
         # refresh of an existing copy falls open inside the resolver): a clean
         # one-liner, not a traceback.
         hub_error(
-            f"Could not download the id-mapping sources ({e}); check your network connection. Skipping this run{retry}"
+            f"Could not download the id-mapping sources ({e}) - check your network connection - "
+            f"skipping this run{retry}"
         )
         return None
     except Exception as e:
-        hub_error(f"Could not fetch/parse the id-mapping sources; skipping this run{retry}", exc=e)
+        hub_error(f"Could not fetch/parse the id-mapping sources - skipping this run{retry}", exc=e)
         return None
 
     return resolver
@@ -226,7 +227,10 @@ def configured_arrs(
 
     kept = [(arr, item_id) for arr, item_id in arrs if arr not in missing]
     if not kept:
-        hub_error(f"Neither sonarr nor radarr is configured - set url and api_key for at least one in {config_path}")
+        hub_error(
+            f"Neither sonarr nor radarr is configured - set sonarr.url and sonarr.api_key, or radarr.url and "
+            f"radarr.api_key, in {config_path}"
+        )
         return None
     return kept
 
@@ -289,7 +293,7 @@ def run_arrs(
     # instances are still fine.
     with single_instance_lock(paths.data_dir, logger=logger) as acquired:
         if not acquired:
-            hub_warn(f"Another Pearlarr run is active in {paths.data_dir}; skipping this run.")
+            hub_warn(f"Another Pearlarr run is active in {paths.data_dir} - skipping this run")
             return False
 
         # The banner names the data dir every cycle: scheduled mode rotates the
@@ -393,12 +397,12 @@ def run_arrs(
                         # disambiguates when this leg contacted more than one arr.
                         all_arrs_completed = False
                         keys = " / ".join(f"{a}.url" for a in implicated_arrs(arr_name, app_config))
-                        hub_error(f"{arr_name.capitalize()} run failed: {e} - check {keys} in your config")
+                        hub_error(f"{arr_name.capitalize()} run failed - {e} - check {keys} in your config")
                     except BoundaryContractError as e:
                         # The arr answered but its library payload validated to
                         # nothing: a one-line contract error, never a traceback.
                         all_arrs_completed = False
-                        hub_error(f"{arr_name.capitalize()} run failed: {e}")
+                        hub_error(f"{arr_name.capitalize()} run failed - {e}")
                     except ArrAuthError:
                         all_arrs_completed = False
                         implicated = implicated_arrs(arr_name, app_config)
@@ -416,7 +420,11 @@ def run_arrs(
                             )
                     except Exception as e:
                         all_arrs_completed = False
-                        hub_error(f"Unexpected error during {arr_name.capitalize()} run", exc=e)
+                        hub_error(
+                            f"Unexpected error during {arr_name.capitalize()} run - "
+                            f"skipping the rest of this arr's run",
+                            exc=e,
+                        )
                     finally:
                         # Cap this arr's boot section so the next arr opens a fresh
                         # one; a no-op on the happy path (run_sync already ended it

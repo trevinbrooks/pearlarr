@@ -368,7 +368,7 @@ def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
     title = f"Pearlarr ({summary.arr.capitalize()}) run complete"
     rule_title = title
     if summary.dry_run_note is not None:
-        rule_title += f"   (DRY RUN — {summary.dry_run_note})"
+        rule_title += f"   (DRY RUN - {summary.dry_run_note})"
 
     lines: list[LegacyLine] = [
         _BLANK,

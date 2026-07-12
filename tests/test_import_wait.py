@@ -1218,7 +1218,7 @@ class TestRunMonitor:
         # The break is announced as an INFO hub Diagnostic.
         (note,) = recording.of_type(Diagnostic)
         assert note.severity is Severity.INFO
-        assert note.message == "Wait interrupted; 1 left pending"
+        assert note.message == "Wait interrupted - 1 left pending"
         assert note.origin == LOG_NAME
 
     def test_interrupt_mid_cycle_still_graduates_that_cycles_terminals(self) -> None:
@@ -1281,7 +1281,7 @@ class TestRunMonitor:
         assert probe == ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
         (error,) = recording.of_type(Diagnostic)
         assert error.severity is Severity.ERROR
-        assert error.message == "Manual import failed for Show · SubGroup; leaving it for a later run"
+        assert error.message == "Manual import failed for Show · SubGroup - leaving it for a later run"
         assert error.trace is not None
 
     def test_imported_terminal_row_carries_files_count(self) -> None:

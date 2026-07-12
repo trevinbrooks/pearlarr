@@ -684,5 +684,5 @@ class TestCorruptStore:
         assert "moved it to" in notice.message
         assert notice.message.endswith(
             "started a fresh cache (titles will be re-checked; grab-dedup and "
-            "pending-import tracking reset, so recent grabs may be re-offered).",
+            "pending-import tracking reset, so recent grabs may be re-offered)",
         )

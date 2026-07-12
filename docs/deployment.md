@@ -89,7 +89,7 @@ Two options:
 - **Your own scheduler** - cron or a systemd timer invoking `pearlarr run single`.
   Failed runs exit non-zero, so cron mail and `OnFailure=` hooks work as expected.
 
-If two invocations pointing at the same data directory ever overlap, the second warns `Another Pearlarr run is active in <data_dir>; skipping this run.` and exits non-zero (in scheduled mode, the loop retries next cycle).
+If two invocations pointing at the same data directory ever overlap, the second warns `Another Pearlarr run is active in <data_dir> - skipping this run` and exits non-zero (in scheduled mode, the loop retries next cycle).
 Running multiple instances *intentionally* is fine - give each its own data directory (`--data-dir` or `PEARLARR_DATA_DIR`), which also gives each its own lock.
 
 ## The data directory
@@ -121,7 +121,7 @@ The mapping cache is regenerable; the logs are disposable.
 
 - `pearlarr cache backup` snapshots `cache.db` to `cache.backup.db` using SQLite's online-backup API, so the copy is consistent even if taken mid-write; it writes through a temp file, so a failed backup can never destroy the previous good one.
 - `pearlarr cache restore` replaces `cache.db` with a copy of the backup; the backup is kept, so a restore is repeatable.
-- Both refuse to touch the cache while a run is active in the same data directory: `Another Pearlarr run is active in <data_dir>; refusing to modify the cache.`
+- Both refuse to touch the cache while a run is active in the same data directory: `Another Pearlarr run is active in <data_dir> - refusing to modify the cache`
 
 Copying the whole data directory while Pearlarr is not running is also a complete backup.
 

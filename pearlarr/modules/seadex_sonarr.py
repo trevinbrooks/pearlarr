@@ -243,7 +243,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         filtered = [s for s in items if s.tvdbId == item_id]
         if len(filtered) == 0:
-            hub_warn(f"No anime series with TVDB ID {item_id} found in Sonarr")
+            hub_warn(f"No anime series with TVDB ID {item_id} found in Sonarr - check the --series-id value")
         return filtered
 
     @override
@@ -382,7 +382,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 # Keys off source, so it covers BOTH an empty-{} tvdb entry (mode
                 # ANIBRIDGE) and a degraded imdb/tmdb-resolved entry (mode ANIME_IDS),
                 # while a legit Kometa whole-series entry (source ANIME_IDS) stays quiet.
-                hub_warn(indent_string(f"AniBridge has no usable season ranges for {anilist_title}; skipping"))
+                hub_warn(indent_string(f"AniBridge has no usable season ranges for {anilist_title} - skipping"))
             time.sleep(self._config.advanced.sleep_time)
             return False
 

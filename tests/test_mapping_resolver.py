@@ -837,7 +837,7 @@ class TestUnwritableDbFallback:
         )
         try:
             assert diagnostic_messages(recording, Severity.WARNING) == [
-                f"Mapping cache at {db} could not be written; rebuilding it "
+                f"Mapping cache at {db} could not be written - rebuilding it "
                 "in memory for this run (slower startup, no data lost)",
             ]
             assert resolver.get_mappings_from_anime_mappings(ExternalIds(tvdb=10))[1].anilist_id == 1

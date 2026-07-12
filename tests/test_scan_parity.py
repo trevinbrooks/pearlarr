@@ -598,7 +598,7 @@ SUMMARY_DRY_HAS_CLIENT_LINES: tuple[Line, ...] = (
     # The DRY RUN note rides the console title only; the file keeps the plain title.
     _titled(
         "Pearlarr (Sonarr) run complete",
-        title="Pearlarr (Sonarr) run complete   (DRY RUN — nothing grabbed)",
+        title="Pearlarr (Sonarr) run complete   (DRY RUN - nothing grabbed)",
         heavy=True,
     ),
     _blank(),
@@ -664,7 +664,7 @@ SUMMARY_DRY_NO_CLIENT_LINES: tuple[Line, ...] = (
     _blank(),
     _titled(
         "Pearlarr (Radarr) run complete",
-        title="Pearlarr (Radarr) run complete   (DRY RUN — qBittorrent not configured; nothing grabbed)",
+        title="Pearlarr (Radarr) run complete   (DRY RUN - qBittorrent not configured; nothing grabbed)",
         heavy=True,
     ),
     _blank(),

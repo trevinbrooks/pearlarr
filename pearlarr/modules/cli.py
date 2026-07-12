@@ -94,13 +94,13 @@ pearlarr_run = typer.Typer(
 )
 pearlarr_config = typer.Typer(
     name="config",
-    help="Initialize, validate or inspect the config file.",
+    help="Initialize, validate, or inspect the config file.",
     no_args_is_help=True,
     result_callback=_exit_on_failure,
 )
 pearlarr_cache = typer.Typer(
     name="cache",
-    help="Back up, restore, remove or inspect the cache database.",
+    help="Back up, restore, remove, or inspect the cache database.",
     no_args_is_help=True,
     result_callback=_exit_on_failure,
 )
@@ -128,7 +128,7 @@ def _echo_missing(path: str, *, what: str, hint: str) -> bool:
 
     if os.path.exists(path):
         return False
-    typer.echo(f"No {what} at {path} - {hint}.", err=True)
+    typer.echo(f"No {what} at {path} - {hint}", err=True)
     return True
 
 
@@ -149,7 +149,7 @@ def _refused_by_active_run(acquired: bool, data_dir: str) -> bool:
     if acquired:
         return False
     typer.echo(
-        f"Another Pearlarr run is active in {data_dir}; refusing to modify the cache.",
+        f"Another Pearlarr run is active in {data_dir} - refusing to modify the cache",
         err=True,
     )
     return True
@@ -210,8 +210,8 @@ def main(
     data_dir: Annotated[
         str | None,
         typer.Option(
-            help="Override the data directory holding config, caches and logs "
-            "(default: PEARLARR_DATA_DIR or the OS per-user data directory).",
+            help="Override the data directory holding config, caches, and logs "
+            "(otherwise PEARLARR_DATA_DIR or the OS per-user data directory)",
         ),
     ] = None,
     version: Annotated[
@@ -221,7 +221,7 @@ def main(
             "-V",
             callback=_print_version,
             is_eager=True,
-            help="Print the installed version and exit.",
+            help="Print the installed version and exit",
         ),
     ] = False,
 ) -> None:
@@ -307,8 +307,8 @@ def _data_dir_unwritable(data_dir: str, e: OSError) -> NoReturn:
     """
 
     typer.echo(
-        f"Cannot write to the data directory {data_dir} ({e}). "
-        f"Fix its permissions, or point --data-dir / PEARLARR_DATA_DIR at a writable location.",
+        f"Cannot write to the data directory {data_dir} ({e}) - fix its permissions, or point "
+        f"--data-dir / PEARLARR_DATA_DIR at a writable location",
         err=True,
     )
     raise typer.Exit(1) from None
@@ -388,13 +388,13 @@ def _schedule_hours(config_path: str) -> float:
         except ValueError:
             hours = math.nan
         if math.isfinite(hours) and hours > 0:
-            hub_warn("SCHEDULE_TIME is deprecated; set schedule.interval_hours in the config instead.")
+            hub_warn("SCHEDULE_TIME is deprecated - set schedule.interval_hours in the config instead")
             return hours
 
     peeked = _peek_config(config_path)
     fallback = peeked.schedule.interval_hours if peeked is not None else _DEFAULT_SCHEDULE_HOURS
     if raw is not None:
-        hub_warn(f"Invalid SCHEDULE_TIME {raw!r}; using {fallback:g} hours.")
+        hub_warn(f"Invalid SCHEDULE_TIME {raw!r} - using {fallback:g} hours")
     return fallback
 
 
@@ -405,7 +405,7 @@ def _handle_sigterm(signum: int, frame: FrameType | None) -> NoReturn:
     inter-cycle `time.sleep`, so shutdown is prompt at any point in the loop.
     """
 
-    hub_note("Received SIGTERM; exiting.")
+    hub_note("Received SIGTERM - exiting")
     raise SystemExit(0)
 
 
@@ -413,10 +413,10 @@ def _handle_sigterm(signum: int, frame: FrameType | None) -> NoReturn:
 def run_scheduled(
     log_level: Annotated[
         LogLevel | None,
-        typer.Option(case_sensitive=False, help="Override the configured advanced.log_level."),
+        typer.Option(case_sensitive=False, help="Override the configured advanced.log_level"),
     ] = None,
 ) -> None:
-    """Run every configured arr module on a loop (each schedule.interval_hours, default 6).
+    """Run every configured arr module on a loop (each schedule.interval_hours).
 
     This is the bare-metal fallback scheduler; containers should use the
     image's built-in scheduler instead.
@@ -479,27 +479,27 @@ def run_scheduled(
     help="Do a single Pearlarr run (every configured arr, unless narrowed by the flags below).",
 )
 def run_single(
-    radarr: Annotated[bool, typer.Option("--radarr", help="Run the Radarr module.")] = False,
-    sonarr: Annotated[bool, typer.Option("--sonarr", help="Run the Sonarr module.")] = False,
+    radarr: Annotated[bool, typer.Option("--radarr", help="Run the Radarr module")] = False,
+    sonarr: Annotated[bool, typer.Option("--sonarr", help="Run the Sonarr module")] = False,
     movie_id: Annotated[
         int | None,
-        typer.Option(metavar="TMDB_ID", help="Only process the movie with this TMDB ID (implies --radarr)."),
+        typer.Option(metavar="TMDB_ID", help="Only process the movie with this TMDB ID (implies --radarr)"),
     ] = None,
     series_id: Annotated[
         int | None,
-        typer.Option(metavar="TVDB_ID", help="Only process the series with this TVDB ID (implies --sonarr)."),
+        typer.Option(metavar="TVDB_ID", help="Only process the series with this TVDB ID (implies --sonarr)"),
     ] = None,
     dry_run: Annotated[
         bool,
-        typer.Option("--dry-run", help="Simulate the run: no grabs, no cache writes, no notifications."),
+        typer.Option("--dry-run", help="Simulate the run: no grabs, no cache writes, no notifications"),
     ] = False,
     import_wait_mode: Annotated[
         ImportWaitMode | None,
-        typer.Option(help="Override the configured imports.wait_mode for this run."),
+        typer.Option(help="Override the configured imports.wait_mode for this run"),
     ] = None,
     log_level: Annotated[
         LogLevel | None,
-        typer.Option(case_sensitive=False, help="Override the configured advanced.log_level for this run."),
+        typer.Option(case_sensitive=False, help="Override the configured advanced.log_level for this run"),
     ] = None,
 ) -> bool:
     """Do a single Pearlarr run.
@@ -568,7 +568,7 @@ def run_single(
 # Config commands
 @pearlarr_config.command("init")
 def config_init(
-    force: Annotated[bool, typer.Option(help="Overwrite an existing config.yml with the starter template.")] = False,
+    force: Annotated[bool, typer.Option(help="Overwrite an existing config.yml with the starter template")] = False,
 ) -> bool:
     """Write a starter config.yml to the data directory.
 
@@ -583,7 +583,7 @@ def config_init(
 
     if os.path.exists(paths.config) and not force:
         typer.echo(
-            f"{paths.config} already exists; pass --force to overwrite it with the starter template.",
+            f"{paths.config} already exists - pass --force to overwrite it with the starter template",
             err=True,
         )
         return False
@@ -594,7 +594,7 @@ def config_init(
         # A pre-existing data dir gone read-only passes _prepare_data_dir
         # (makedirs is a no-op) and fails here instead.
         _data_dir_unwritable(paths.data_dir, e)
-    typer.echo(f"Wrote a starter config to {paths.config}.")
+    typer.echo(f"Wrote a starter config to {paths.config}")
 
     return True
 
@@ -608,7 +608,7 @@ def _load_config_reporting(path: str) -> AppConfig | None:
     """
 
     if not os.path.exists(path):
-        typer.echo(f"No config file at {path}; run `pearlarr config init` to write a starter template.", err=True)
+        typer.echo(f"No config file at {path} - run pearlarr config init to write a starter template", err=True)
         return None
     try:
         return AppConfig.load(path)
@@ -616,10 +616,10 @@ def _load_config_reporting(path: str) -> AppConfig | None:
         typer.echo(f"Invalid configuration in {path}:\n{bootstrap.format_validation_errors(e)}", err=True)
         return None
     except yaml.YAMLError as e:
-        typer.echo(f"Unreadable YAML in {path}: {bootstrap.format_yaml_error(e)}", err=True)
+        typer.echo(f"Unreadable YAML in {path} ({bootstrap.format_yaml_error(e)})", err=True)
         return None
     except OSError as e:
-        typer.echo(f"Could not read {path}: {e}", err=True)
+        typer.echo(f"Could not read {path} ({e}) - check its permissions", err=True)
         return None
 
 
@@ -637,7 +637,7 @@ def config_validate() -> bool:
     if app_config is None:
         return False
 
-    typer.echo(f"OK: {paths.config} is valid.")
+    typer.echo(f"OK: {paths.config} is valid")
     for arr in (Arr.SONARR, Arr.RADARR):
         keys = app_config.missing_arr_keys(arr)
         if not keys:
@@ -645,12 +645,12 @@ def config_validate() -> bool:
         elif len(keys) == 1:
             # Half-configured is almost certainly a mistake - name the gap here,
             # where the user is actively checking, not just at run time.
-            status = f"not configured ({keys[0]} is not set; runs will skip it)"
+            status = f"not configured ({keys[0]} is not set - runs will skip it)"
         else:
             status = "not configured (runs will skip it)"
         typer.echo(f"  {f'{arr}:':<13}{status}")
     qbit_status = (
-        "configured" if app_config.qbittorrent.credentials() else "not configured (preview mode: nothing is grabbed)"
+        "configured" if app_config.qbittorrent.credentials() else "not configured (preview mode - nothing is grabbed)"
     )
     typer.echo(f"  {'qbittorrent:':<13}{qbit_status}")
     return True
@@ -748,7 +748,7 @@ def cache_backup() -> bool:
             # a previous good cache.backup.db is left untouched.
             with contextlib.suppress(OSError):
                 os.remove(tmp_backup)
-            typer.echo(f"cache backup failed: {e}", err=True)
+            typer.echo(f"Cache backup failed ({e}) - run pearlarr cache check to inspect cache.db", err=True)
             return False
         finally:
             source.close()
@@ -756,9 +756,9 @@ def cache_backup() -> bool:
         try:
             os.replace(tmp_backup, paths.cache_backup)
         except OSError as e:
-            typer.echo(f"cache backup failed: {e}", err=True)
+            typer.echo(f"Cache backup failed ({e}) - check the data directory's permissions", err=True)
             return False
-    typer.echo(f"Backed up cache to {paths.cache_backup}.")
+    typer.echo(f"Backed up cache to {paths.cache_backup}")
     return True
 
 
@@ -773,7 +773,7 @@ def cache_restore() -> bool:
 
     paths = resolve_paths()
 
-    if _echo_missing(paths.cache_backup, what="backup", hint="run 'pearlarr cache backup' first"):
+    if _echo_missing(paths.cache_backup, what="backup", hint="run pearlarr cache backup first"):
         return False
 
     with single_instance_lock(paths.data_dir) as acquired:
@@ -787,10 +787,10 @@ def cache_restore() -> bool:
             os.replace(tmp_restore, paths.cache)
         except OSError as e:
             # A read-only data dir / vanished backup: one clean line, no traceback.
-            typer.echo(f"cache restore failed: {e}", err=True)
+            typer.echo(f"Cache restore failed ({e}) - cache.db is left unchanged", err=True)
             return False
 
-    typer.echo(f"Restored cache from {paths.cache_backup}.")
+    typer.echo(f"Restored cache from {paths.cache_backup}")
     return True
 
 
@@ -810,7 +810,7 @@ def cache_remove() -> bool:
         os.remove(paths.cache)
         _remove_db_sidecars(paths.cache)
 
-    typer.echo(f"Removed {paths.cache}.")
+    typer.echo(f"Removed {paths.cache}")
     return True
 
 
@@ -826,7 +826,9 @@ def cache_stats() -> bool:
         try:
             s = store.stats()
         except sqlite3.DatabaseError as e:
-            typer.echo(f"cache stats: unreadable database ({e})", err=True)
+            typer.echo(
+                f"Cache stats failed - unreadable database ({e}) - run pearlarr cache check to diagnose it", err=True
+            )
             return False
 
     rows = [

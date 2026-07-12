@@ -336,7 +336,7 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
     assert body == success
     (waited,) = recording.of_type(Diagnostic)
     assert waited.severity is Severity.INFO
-    assert waited.message == f"AniList rate-limited; waiting 42s (retry 1/{MAX_RETRIES})"
+    assert waited.message == f"AniList rate-limited - waiting 42s (retry 1/{MAX_RETRIES})"
     assert waited.origin == LOG_NAME
 
 

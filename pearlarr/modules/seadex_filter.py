@@ -244,14 +244,14 @@ class SeadexReleaseFilter:
                 except (ValueError, IndexError):
                     # ValueError: a non-numeric entry (a typo); IndexError: out of
                     # range. Skip the bad token instead of abandoning the whole entry.
-                    hub_warn(indent_string(f"Skipping invalid selection: {srg_idx!r}"))
+                    hub_warn(indent_string(f"Skipping invalid selection {srg_idx!r}"))
                     continue
                 seadex_dict_filtered[srg] = copy.deepcopy(seadex_dict[srg])
 
             # Every token was invalid (blank input means "all" and never gets
             # here), so the title proceeds with zero releases - say so.
             if not seadex_dict_filtered:
-                hub_warn(indent_string("No valid selection; skipping this title"))
+                hub_warn(indent_string("No valid selection - skipping this title"))
 
             seadex_dict = seadex_dict_filtered
 
