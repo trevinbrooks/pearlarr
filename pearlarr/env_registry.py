@@ -13,6 +13,12 @@ from typing import Literal
 DATA_DIR_ENV = "PEARLARR_DATA_DIR"
 """The data-directory override variable (also read by the Docker entrypoint)."""
 
+ENV_CONFIG_PREFIX = "PEARLARR_"
+"""Prefix marking an environment variable as a config-key override."""
+
+ENV_CONFIG_DELIMITER = "__"
+"""Nesting delimiter in a config-override variable name (`PEARLARR_SONARR__URL` -> `sonarr.url`)."""
+
 
 @dataclass(frozen=True, slots=True)
 class EnvVar:
@@ -29,6 +35,12 @@ class EnvVar:
 
 ENV_VARS: tuple[EnvVar, ...] = (
     EnvVar(DATA_DIR_ENV, "app", "Override the data directory; the global `--data-dir` flag wins over it."),
+    EnvVar(
+        "PEARLARR_<GROUP>__<KEY>",
+        "app",
+        "Override any config key by its double-underscore path; the value is parsed as YAML. "
+        "See docs/configuration.md.",
+    ),
     EnvVar("PEARLARR_CRON", "docker", "Cron schedule for the container's recurring runs."),
     EnvVar(
         "PEARLARR_RUN_ON_START",

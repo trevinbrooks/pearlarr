@@ -16,6 +16,7 @@ one arr still validates and runs.
 import contextlib
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import md5, sha256
@@ -33,6 +34,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from .config_migrations import (
     CONFIG_VERSION,
@@ -40,6 +42,7 @@ from .config_migrations import (
     migrate_mapping,
     render_migrated_config,
 )
+from .env_registry import ENV_CONFIG_DELIMITER, ENV_CONFIG_PREFIX
 from .json_narrow import is_json_obj
 from .manual_import import ImportWaitMode
 from .seadex_types import Json
@@ -729,9 +732,9 @@ class AppConfig(_ConfigBase):
         Copies the bundled template to `path` and raises `FileNotFoundError` when
         the file is missing (so a first run writes a starter config), then parses,
         migrates an older file's mapping to the current schema (in memory only -
-        see `migration`), and validates it. An invalid config raises
-        `pydantic.ValidationError` (a `ValueError` subclass) naming the offending
-        keys.
+        see `migration`), overlays any `PEARLARR_*__*` environment overrides, and
+        validates it. An invalid config raises `pydantic.ValidationError` (a
+        `ValueError` subclass) naming the offending keys.
         """
 
         if not os.path.exists(path):
@@ -741,12 +744,18 @@ class AppConfig(_ConfigBase):
         with open(path, "rb") as f:
             raw = f.read()
         parsed, migration = _parse_and_migrate(raw)
+        environ = os.environ
+        overlay = _env_overlay(environ)
+        # Env wins per leaf; a non-mapping file (junk) skips the merge so its own
+        # validation error stands unchanged.
+        if overlay and is_json_obj(parsed):
+            _deep_merge(cast("dict[str, object]", parsed), overlay)
         config = cls.model_validate(parsed)
         # PrivateAttr writes on a frozen model: go through object.__setattr__ so the
         # type checkers don't read it as a frozen-field mutation (it isn't - these are
         # private attrs, set once here at load and never again).
         object.__setattr__(config, "_path", path)
-        object.__setattr__(config, "_checksum", md5(raw, usedforsecurity=False).hexdigest())
+        object.__setattr__(config, "_checksum", _config_checksum(raw, environ))
         object.__setattr__(config, "_migration", migration)
         return config
 
@@ -825,6 +834,94 @@ class AppConfig(_ConfigBase):
         if not sub.api_key:
             raise ValueError(f"{arr.value}.api_key must be set in {self._path}")
         return sub.url, sub.api_key.get_secret_value()
+
+
+def _qualifying_env(environ: Mapping[str, str]) -> list[tuple[str, str]]:
+    """The config-override environment variables, sorted by name.
+
+    A variable qualifies only when it starts with `PEARLARR_` and carries the
+    `__` nesting delimiter after that prefix; a delimiter-less `PEARLARR_*` name
+    (the data-dir and Docker operational vars) is reserved and never read as
+    config. Sorted for a deterministic overlay and checksum.
+    """
+
+    return sorted(
+        (name, value)
+        for name, value in environ.items()
+        if name.startswith(ENV_CONFIG_PREFIX) and ENV_CONFIG_DELIMITER in name.removeprefix(ENV_CONFIG_PREFIX)
+    )
+
+
+def _env_overlay(environ: Mapping[str, str]) -> dict[str, object]:
+    """The environment's config-key overrides as a nested mapping.
+
+    Each qualifying variable's name (minus the prefix) splits on `__` into a
+    lowercased key path, and its value is parsed with `yaml.safe_load` so an env
+    value means exactly what the same text means in `config.yml` (an empty string
+    parses to None, which the blank-key handling then coalesces to the default).
+    A malformed value raises a `ValidationError` naming only the variable, so it
+    renders through the invalid-configuration arms like a bad file key.
+    """
+
+    overlay: dict[str, object] = {}
+    for name, raw_value in _qualifying_env(environ):
+        try:
+            value: object = yaml.safe_load(raw_value)
+        except yaml.YAMLError:
+            # Severed chain + no input attached: yaml's marks and the raw value
+            # may both hold a secret.
+            raise ValidationError.from_exception_data(
+                "AppConfig",
+                [
+                    InitErrorDetails(
+                        type=PydanticCustomError(
+                            "env_override", "is not valid YAML - fix or unset the environment variable"
+                        ),
+                        loc=(name,),
+                        input=None,
+                    )
+                ],
+                hide_input=True,
+            ) from None
+        path = [segment.lower() for segment in name.removeprefix(ENV_CONFIG_PREFIX).split(ENV_CONFIG_DELIMITER)]
+        cursor = overlay
+        for segment in path[:-1]:
+            branch = cursor.get(segment)
+            if not isinstance(branch, dict):
+                fresh: dict[str, object] = {}
+                cursor[segment] = fresh
+                cursor = fresh
+            else:
+                cursor = cast("dict[str, object]", branch)
+        cursor[path[-1]] = value
+    return overlay
+
+
+def _deep_merge(base: dict[str, object], overlay: Mapping[str, object]) -> None:
+    """Merge `overlay` into `base` in place: a leaf overrides, two dicts merge per key.
+
+    So `PEARLARR_SONARR__URL` replaces `sonarr.url` without clobbering the file's
+    sibling `sonarr.api_key`.
+    """
+
+    for key, value in overlay.items():
+        existing = base.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            _deep_merge(cast("dict[str, object]", existing), cast("Mapping[str, object]", value))
+        else:
+            base[key] = value
+
+
+def _config_checksum(raw: bytes, environ: Mapping[str, str]) -> str:
+    """MD5 over the config bytes plus the qualifying env overrides (the cache descriptor).
+
+    Folding the overrides in means an env change registers as a config change,
+    so the cache re-checks against the effective settings; an unrelated env var
+    leaves the digest untouched.
+    """
+
+    lines = "".join(f"{name}={value}\n" for name, value in _qualifying_env(environ))
+    return md5(raw + lines.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _parse_and_migrate(raw: bytes) -> tuple[object, MigrationOutcome | None]:

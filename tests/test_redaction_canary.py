@@ -138,6 +138,41 @@ class TestCliSurfaces:
         _assert_clean(result.output)
 
 
+class TestEnvOverrideSurfaces:
+    """A canary secret supplied via a `PEARLARR_*__*` environment override never leaks into config output."""
+
+    ENV_KEY = "CANARY-env-key-6b2d19"
+
+    @staticmethod
+    def _write_min_config(text: str) -> None:
+        paths = resolve_paths()
+        os.makedirs(paths.data_dir, exist_ok=True)
+        Path(paths.config).write_text(text, encoding="utf-8")
+
+    def test_config_show_redacts_an_env_supplied_secret(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # An env-supplied api_key lands in the same SecretStr field a file value
+        # would, so `config show` masks it exactly like a file secret.
+        monkeypatch.setenv("PEARLARR_SONARR__API_KEY", self.ENV_KEY)
+        self._write_min_config("sonarr:\n  url: http://127.0.0.1:9\n")
+        result = CliRunner().invoke(pearlarr_cli, ["config", "show"])
+        assert result.exit_code == 0
+        assert "REDACTED" in result.output
+        assert self.ENV_KEY not in result.output
+
+    def test_config_validate_hides_env_secret_when_another_key_is_invalid(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The env supplies a valid secret while a bad file key drives the error
+        # path; the error names the bad key and never echoes the env secret.
+        monkeypatch.setenv("PEARLARR_SONARR__API_KEY", self.ENV_KEY)
+        self._write_min_config("advanced:\n  sleep_time: not-a-number\n")
+        result = CliRunner().invoke(pearlarr_cli, ["config", "validate"])
+        assert result.exit_code == 1
+        assert "sleep_time" in result.output
+        assert self.ENV_KEY not in result.output
+
+
 class TestArrClientMessages:
     """An arr connection error masks a url-embedded login while still naming the host."""
 

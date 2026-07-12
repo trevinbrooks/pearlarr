@@ -7,6 +7,7 @@ For the ten-minute first run, start with the README's [Install](../README.md#ins
 
 `ghcr.io/trevinbrooks/pearlarr` is a multi-arch image (linux/amd64 and linux/arm64) on a `python:3.14-slim` base.
 It runs as the unprivileged `pearlarr` user (uid 1000) unless the compose `user:` key says otherwise, and sets `PEARLARR_DATA_DIR=/config`, so the single `/config` mount holds the config, caches, and logs together.
+Any config key can also be set through the container's `environment:` as `PEARLARR_<GROUP>__<KEY>` (for example `PEARLARR_SONARR__URL`); see [Overriding config keys](configuration.md#overriding-config-keys).
 
 | Tag | Meaning |
 | --- | --- |

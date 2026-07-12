@@ -26,11 +26,25 @@ A file written by a newer Pearlarr (a downgraded install) refuses to load, namin
 | Variable | Read by | Meaning |
 | --- | --- | --- |
 | `PEARLARR_DATA_DIR` | application | Override the data directory; the global `--data-dir` flag wins over it. |
+| `PEARLARR_<GROUP>__<KEY>` | application | Override any config key by its double-underscore path; the value is parsed as YAML. See docs/configuration.md. |
 | `PEARLARR_CRON` | Docker entrypoint | Cron schedule for the container's recurring runs. |
 | `PEARLARR_RUN_ON_START` | Docker entrypoint | Whether the container starts with a catch-up run, before the cron cadence takes over. |
 <!-- /gen:env-vars -->
 
 `PEARLARR_CRON` and `PEARLARR_RUN_ON_START` only exist inside the Docker image; on bare metal, scheduling is the `schedule` group below.
+
+### Overriding config keys
+
+Any config key can be set from the environment, which is handy for containers and secret managers that inject values rather than editing a file.
+The variable name is the key's dotted path with `PEARLARR_` in front and each dot written as a double underscore: `PEARLARR_SONARR__URL` sets `sonarr.url`, `PEARLARR_SEADEX__WANT_BEST` sets `seadex.want_best`, and a deeper path keeps nesting (`PEARLARR_QBITTORRENT__OPTIONS__VERIFY_WEBUI_CERTIFICATE`).
+An environment override beats the file, per key: setting `PEARLARR_SONARR__URL` leaves the file's `sonarr.api_key` untouched.
+
+The value is parsed as YAML, so it means exactly what the same text means in `config.yml`: `PEARLARR_ADVANCED__SLEEP_TIME=0` is the number zero, `PEARLARR_SONARR__VERIFY_SSL=false` is a boolean, and `PEARLARR_SEADEX__IGNORE_TAGS='[Dolby Vision, Deband Required]'` is a list.
+Quote to force a string, exactly as in the file: an API key that reads as a number or a keyword (`123`, `no`) needs quotes, as in `PEARLARR_SONARR__API_KEY='123'`.
+A blank value (`PEARLARR_SONARR__URL=`) reads like a blank key in the file and falls back to the built-in default.
+
+A misspelled path fails loudly: `PEARLARR_SONAR__URL` (or any name that resolves to an unknown key) is rejected by the same validation that catches a typo'd file key, naming the offending key rather than being silently ignored.
+`pearlarr config show` prints the effective configuration with every override already merged in, so it is the way to confirm an override landed.
 
 ## Configuration changes and the cache
 

@@ -189,14 +189,17 @@ GHCR with the workflow's own identity - no long-lived secrets to rotate.
 | Variable | Read by | Meaning |
 | --- | --- | --- |
 | `PEARLARR_DATA_DIR` | application | Override the data directory; the global `--data-dir` flag wins over it. |
+| `PEARLARR_<GROUP>__<KEY>` | application | Override any config key by its double-underscore path; the value is parsed as YAML. See docs/configuration.md. |
 | `PEARLARR_CRON` | Docker entrypoint | Cron schedule for the container's recurring runs. |
 | `PEARLARR_RUN_ON_START` | Docker entrypoint | Whether the container starts with a catch-up run, before the cron cadence takes over. |
 <!-- /gen:env-vars -->
 
-Names use the `PEARLARR_` prefix with `__` as the nesting delimiter (a future
-settings layer would read `PEARLARR_SONARR__URL` into `sonarr.url`), so new
-names must stay unambiguous under that split. Register new variables in
-`pearlarr/env_registry.py`.
+Names use the `PEARLARR_` prefix with `__` as the nesting delimiter: the
+config-override layer reads `PEARLARR_SONARR__URL` into `sonarr.url` (see
+[docs/configuration.md](docs/configuration.md#overriding-config-keys)), so new
+operational names must stay unambiguous under that split - a delimiter-less
+`PEARLARR_*` name is reserved for them and never read as config. Register new
+variables in `pearlarr/env_registry.py`.
 
 ## License
 

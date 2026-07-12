@@ -9,6 +9,7 @@ generator cannot judge (no restated defaults, env registry parity).
 import re
 import subprocess
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -58,11 +59,21 @@ def test_config_docstrings_never_restate_defaults() -> None:
     assert offenders == []
 
 
+def _operational(names: Iterable[str]) -> set[str]:
+    """The operational env vars in `names`, dropping the config-override pattern.
+
+    A name carrying the `__` nesting delimiter (`PEARLARR_SONARR__URL`, or the
+    `PEARLARR_<GROUP>__<KEY>` pattern row) is an instance of the one config-override
+    row, documented by example rather than registered one variable at a time.
+    """
+
+    return {name for name in names if "__" not in name.removeprefix("PEARLARR_")}
+
+
 def test_env_registry_matches_the_tree() -> None:
-    # Every PEARLARR_* variable mentioned anywhere (code, Docker, docs) is
-    # registered, and every registered variable is actually mentioned.
-    # The one exemption: the hypothetical the naming-scheme rule is explained with.
-    hypothetical = {"PEARLARR_SONARR__URL"}
+    # Every operational PEARLARR_* variable mentioned anywhere (code, Docker,
+    # docs) is registered, and every registered one is actually mentioned;
+    # config-override names are covered by the single pattern row, not each.
     scanned: set[str] = set()
     files = [
         REPO_ROOT / "Dockerfile",
@@ -76,4 +87,4 @@ def test_env_registry_matches_the_tree() -> None:
     for path in files:
         if path.is_file():
             scanned.update(re.findall(r"PEARLARR_[A-Z_]+", path.read_text(encoding="utf-8")))
-    assert scanned - hypothetical == {var.name for var in ENV_VARS}
+    assert _operational(scanned) == _operational(var.name for var in ENV_VARS)
