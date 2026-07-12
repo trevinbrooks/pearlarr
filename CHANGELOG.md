@@ -44,6 +44,7 @@ Coming from upstream 0.9.x:
   - `config validate` and `config show` (effective config with secrets redacted, safe to paste into a bug report).
   - `cache stats` and `cache check`.
   - `pearlarr --version`, `-h` everywhere; a bare group command prints its help.
+- `--json` on every subcommand (`paths`, `config init`/`validate`/`migrate`/`show`, `cache backup`/`restore`/`remove`/`stats`/`check`) emitting the same `schema_version` 1 envelope as run logs.
 - Every config key can be set by environment variable as `PEARLARR_<GROUP>__<KEY>` (for example `PEARLARR_SONARR__URL`); values are parsed as YAML and an environment override beats the file.
 - The scheduled-run cadence is a config field, `schedule.interval_hours` (default 6), re-read each cycle so an edit takes effect without a restart.
 - Config schema versioning: `config_version` stamps the file, and a file from an older Pearlarr is migrated automatically in memory at every load (a nested-format file still saying `seadex.public_only` or `private_releases: allow` keeps loading, with a warning naming the fold).

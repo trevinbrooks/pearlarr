@@ -29,25 +29,37 @@ from .config import (
     upgrade_config_file,
     write_starter_config,
 )
-from .config_migrations import MIGRATE_HINT
 from .console_caps import CapsCache
-from .json_narrow import is_json_list, is_json_obj
 from .log import LogLevel, resolve_console_format, setup_logger
 from .manual_import import ImportWaitMode
 from .output import (
+    CacheBackedUp,
+    CacheIntegrityReported,
+    CacheRemoved,
+    CacheRestored,
+    CacheStatsReported,
+    ConfigMigrated,
+    ConfigUpToDate,
+    ConfigValidated,
     CycleStarted,
+    EffectiveConfigShown,
     FileLogSink,
     JsonRenderer,
+    JsonValue,
     LineRenderer,
     NextRunScheduled,
     OutputHub,
+    PathsShown,
     Renderer,
+    StarterConfigWritten,
     emit_to_hub,
+    hub_error,
     hub_note,
     hub_warn,
     install_hub,
 )
 from .output.bridge import install_bridge
+from .output.cli_surface import cli_surface
 from .output.rich_renderer import RichRenderer
 from .paths import PROJECT_URL, AppPaths, ensure_data_dir, resolve_paths
 from .runlock import single_instance_lock
@@ -131,7 +143,7 @@ def _echo_missing(path: str, *, what: str, hint: str) -> bool:
 
     if os.path.exists(path):
         return False
-    typer.echo(f"No {what} at {path} - {hint}", err=True)
+    hub_error(f"No {what} at {path} - {hint}")
     return True
 
 
@@ -151,10 +163,7 @@ def _refused_by_active_run(acquired: bool, data_dir: str) -> bool:
 
     if acquired:
         return False
-    typer.echo(
-        f"Another Pearlarr run is active in {data_dir} - refusing to modify the cache",
-        err=True,
-    )
+    hub_error(f"Another Pearlarr run is active in {data_dir} - refusing to modify the cache")
     return True
 
 
@@ -247,17 +256,25 @@ def main(
         run_scheduled()
 
 
+_JSON_HELP = "Emit machine-readable JSON events, one object per line"
+
+
 @pearlarr_cli.command("paths")
-def show_paths() -> bool:
+def show_paths(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False) -> bool:
     """Print the resolved data directory and the files within it."""
 
-    paths = resolve_paths()
-    typer.echo(f"data_dir:    {paths.data_dir}")
-    typer.echo(f"config:      {paths.config}")
-    typer.echo(f"cache:       {paths.cache}")
-    typer.echo(f"mappings_db: {paths.mappings_db}")
-    typer.echo(f"logs:        {paths.log_dir}")
-    return True
+    with cli_surface(json_output):
+        paths = resolve_paths()
+        emit_to_hub(
+            PathsShown(
+                data_dir=paths.data_dir,
+                config=paths.config,
+                cache=paths.cache,
+                mappings_db=paths.mappings_db,
+                log_dir=paths.log_dir,
+            ),
+        )
+        return True
 
 
 _DEFAULT_SCHEDULE_HOURS = 6.0
@@ -578,6 +595,7 @@ def run_single(
 @pearlarr_config.command("init")
 def config_init(
     force: Annotated[bool, typer.Option(help="Overwrite an existing config.yml with the starter template")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False,
 ) -> bool:
     """Write a starter config.yml to the data directory.
 
@@ -587,25 +605,26 @@ def config_init(
     wipe out a filled-in configuration.
     """
 
-    paths = resolve_paths()
-    _prepare_data_dir(paths)
+    # Install the cli surface first so every emit below renders through it; the
+    # data-dir failures deliberately stay on the pre-hub stderr path (they also
+    # fire pre-hub on the run path, where a hub_error would drop silently).
+    with cli_surface(json_output):
+        paths = resolve_paths()
+        _prepare_data_dir(paths)
 
-    if os.path.exists(paths.config) and not force:
-        typer.echo(
-            f"{paths.config} already exists - pass --force to overwrite it with the starter template",
-            err=True,
-        )
-        return False
+        if os.path.exists(paths.config) and not force:
+            hub_error(f"{paths.config} already exists - pass --force to overwrite it with the starter template")
+            return False
 
-    try:
-        write_starter_config(paths.config)
-    except OSError as e:
-        # A pre-existing data dir gone read-only passes _prepare_data_dir
-        # (makedirs is a no-op) and fails here instead.
-        _data_dir_unwritable(paths.data_dir, e)
-    typer.echo(f"Wrote a starter config to {paths.config}")
+        try:
+            write_starter_config(paths.config)
+        except OSError as e:
+            # A pre-existing data dir gone read-only passes _prepare_data_dir
+            # (makedirs is a no-op) and fails here instead.
+            _data_dir_unwritable(paths.data_dir, e)
+        emit_to_hub(StarterConfigWritten(path=paths.config))
 
-    return True
+        return True
 
 
 def _run_config_action[T](path: str, action: Callable[[str], T]) -> T | None:
@@ -618,28 +637,28 @@ def _run_config_action[T](path: str, action: Callable[[str], T]) -> T | None:
     """
 
     if not os.path.exists(path):
-        typer.echo(f"No config file at {path} - run pearlarr config init to write a starter template", err=True)
+        hub_error(f"No config file at {path} - run pearlarr config init to write a starter template")
         return None
     try:
         return action(path)
     except ValidationError as e:
-        typer.echo(f"Invalid configuration in {path}:\n{bootstrap.format_validation_errors(e)}", err=True)
+        hub_error(f"Invalid configuration in {path}:\n{bootstrap.format_validation_errors(e)}")
         return None
     except yaml.YAMLError as e:
-        typer.echo(f"Unreadable YAML in {path} ({bootstrap.format_yaml_error(e)})", err=True)
+        hub_error(f"Unreadable YAML in {path} ({bootstrap.format_yaml_error(e)})")
         return None
     except ConfigRewriteError as e:
-        typer.echo(str(e), err=True)
+        hub_error(str(e))
         return None
     except OSError as e:
         # The error text names the exact file (possibly a .bak/.tmp sibling the
         # migrate action writes), so the advice covers the directory too.
-        typer.echo(f"Could not access {path} ({e}) - check permissions on it and the data directory", err=True)
+        hub_error(f"Could not access {path} ({e}) - check permissions on it and the data directory")
         return None
 
 
 @pearlarr_config.command("validate")
-def config_validate() -> bool:
+def config_validate(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False) -> bool:
     """Check config.yml parses and validates, and report what a run would use.
 
     The status lines call out the settings that silently change a run's shape:
@@ -647,39 +666,27 @@ def config_validate() -> bool:
     mean preview mode (nothing is grabbed).
     """
 
-    paths = resolve_paths()
-    app_config = _run_config_action(paths.config, AppConfig.load)
-    if app_config is None:
-        return False
+    with cli_surface(json_output):
+        paths = resolve_paths()
+        app_config = _run_config_action(paths.config, AppConfig.load)
+        if app_config is None:
+            return False
 
-    typer.echo(f"OK: {paths.config} is valid")
-    outcome = app_config.migration()
-    if outcome is not None:
-        # Valid but old-schema: the file loads through the in-memory migration;
-        # say so here, where the user is actively checking.
-        typer.echo(f"  {'schema:':<13}older config schema, migrated in memory at load - {MIGRATE_HINT}")
-        for note in outcome.notes:
-            typer.echo(f"  {'':<13}- {note}")
-    for arr in (Arr.SONARR, Arr.RADARR):
-        keys = app_config.missing_arr_keys(arr)
-        if not keys:
-            status = "configured"
-        elif len(keys) == 1:
-            # Half-configured is almost certainly a mistake - name the gap here,
-            # where the user is actively checking, not just at run time.
-            status = f"not configured ({keys[0]} is not set - runs will skip it)"
-        else:
-            status = "not configured (runs will skip it)"
-        typer.echo(f"  {f'{arr}:':<13}{status}")
-    qbit_status = (
-        "configured" if app_config.qbittorrent.credentials() else "not configured (preview mode - nothing is grabbed)"
-    )
-    typer.echo(f"  {'qbittorrent:':<13}{qbit_status}")
-    return True
+        outcome = app_config.migration()
+        emit_to_hub(
+            ConfigValidated(
+                path=paths.config,
+                migration_notes=outcome.notes if outcome is not None else None,
+                sonarr_missing_keys=app_config.missing_arr_keys(Arr.SONARR),
+                radarr_missing_keys=app_config.missing_arr_keys(Arr.RADARR),
+                qbit_configured=app_config.qbittorrent.credentials() is not None,
+            ),
+        )
+        return True
 
 
 @pearlarr_config.command("migrate")
-def config_migrate() -> bool:
+def config_migrate(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False) -> bool:
     """Rewrite config.yml at the current config schema version, keeping a backup.
 
     Runs never require this - an older file is migrated in memory at every load -
@@ -689,18 +696,21 @@ def config_migrate() -> bool:
     file already at the current version is left untouched.
     """
 
-    paths = resolve_paths()
-    upgrade = _run_config_action(paths.config, upgrade_config_file)
-    if upgrade is None:
-        return False
-    if upgrade.migration is None:
-        typer.echo(f"{paths.config} is already at the current config schema - nothing to do")
-        return True
+    with cli_surface(json_output):
+        paths = resolve_paths()
+        upgrade = _run_config_action(paths.config, upgrade_config_file)
+        if upgrade is None:
+            return False
+        if upgrade.migration is None:
+            emit_to_hub(ConfigUpToDate(path=paths.config))
+            return True
 
-    typer.echo(f"Migrated {paths.config} to the current config schema - previous file saved as {upgrade.backup_path}")
-    for note in upgrade.migration.notes:
-        typer.echo(f"  - {note}")
-    return True
+        # backup_path is set in lockstep with a non-None migration (ConfigUpgrade).
+        assert upgrade.backup_path is not None
+        emit_to_hub(
+            ConfigMigrated(path=paths.config, backup_path=upgrade.backup_path, notes=upgrade.migration.notes),
+        )
+        return True
 
 
 # Values under these keys hold credentials (the webhook URLs embed tokens), so
@@ -715,7 +725,7 @@ _SECRET_KEY_MARKERS = ("api_key", "password", "webhook", "discord", "username")
 _MASK_ALL_SUBTREES = ("options",)
 
 
-def _redact_secrets(node: object, *, mask_values: bool = False) -> object:
+def _redact_secrets(node: JsonValue, *, mask_values: bool = False) -> JsonValue:
     """A deep copy of a dumped config with every set secret value masked.
 
     Only non-None values are masked, so an unset secret still reads as `null`
@@ -725,8 +735,8 @@ def _redact_secrets(node: object, *, mask_values: bool = False) -> object:
     value regardless of key name.
     """
 
-    if is_json_obj(node):
-        redacted: dict[str, object] = {}
+    if isinstance(node, dict):
+        redacted: dict[str, JsonValue] = {}
         for key, value in node.items():
             lowered = key.lower()
             if value is not None and (mask_values or any(marker in lowered for marker in _SECRET_KEY_MARKERS)):
@@ -736,13 +746,13 @@ def _redact_secrets(node: object, *, mask_values: bool = False) -> object:
             else:
                 redacted[key] = _redact_secrets(value, mask_values=mask_values or lowered in _MASK_ALL_SUBTREES)
         return redacted
-    if is_json_list(node):
+    if isinstance(node, list):
         return [_redact_secrets(item, mask_values=mask_values) for item in node]
     return node
 
 
 @pearlarr_config.command("show")
-def config_show() -> bool:
+def config_show(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False) -> bool:
     """Print the effective config (defaults applied) with secrets redacted.
 
     Safe to paste into a bug report: values under secret-named keys (api keys,
@@ -751,20 +761,23 @@ def config_show() -> bool:
     embedded in a URL/host is masked, and unset secrets still show as `null`.
     """
 
-    paths = resolve_paths()
-    app_config = _run_config_action(paths.config, AppConfig.load)
-    if app_config is None:
-        return False
+    with cli_surface(json_output):
+        paths = resolve_paths()
+        app_config = _run_config_action(paths.config, AppConfig.load)
+        if app_config is None:
+            return False
 
-    typer.echo(f"# Effective config from {paths.config} (defaults applied, secrets redacted)")
-    dump = _redact_secrets(app_config.model_dump(mode="json"))
-    typer.echo(yaml.safe_dump(dump, sort_keys=False).rstrip())
-    return True
+        # Redact before the emit; a model dump is always an object, the assert
+        # only narrows the recursive helper's return type.
+        redacted = _redact_secrets(app_config.model_dump(mode="json"))
+        assert isinstance(redacted, dict)
+        emit_to_hub(EffectiveConfigShown(path=paths.config, config=redacted))
+        return True
 
 
 # Cache commands
 @pearlarr_cache.command("backup")
-def cache_backup() -> bool:
+def cache_backup(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False) -> bool:
     """Back up the cache database to cache.backup.db.
 
     Uses the SQLite online-backup API so a consistent snapshot is taken even if a
@@ -773,44 +786,45 @@ def cache_backup() -> bool:
     replace or delete a previous good cache.backup.db.
     """
 
-    paths = resolve_paths()
+    with cli_surface(json_output):
+        paths = resolve_paths()
 
-    if _echo_missing_cache(paths.cache):
-        return False
-
-    with single_instance_lock(paths.data_dir) as acquired:
-        if _refused_by_active_run(acquired, paths.data_dir):
+        if _echo_missing_cache(paths.cache):
             return False
 
-        tmp_backup = paths.cache_backup + ".tmp"
-        source = sqlite3.connect(paths.cache)
-        try:
-            dest = sqlite3.connect(tmp_backup)
+        with single_instance_lock(paths.data_dir) as acquired:
+            if _refused_by_active_run(acquired, paths.data_dir):
+                return False
+
+            tmp_backup = paths.cache_backup + ".tmp"
+            source = sqlite3.connect(paths.cache)
             try:
-                source.backup(dest)
+                dest = sqlite3.connect(tmp_backup)
+                try:
+                    source.backup(dest)
+                finally:
+                    dest.close()
+            except sqlite3.DatabaseError as e:
+                # Report the corrupt/torn source cleanly and drop the torn temp file;
+                # a previous good cache.backup.db is left untouched.
+                with contextlib.suppress(OSError):
+                    os.remove(tmp_backup)
+                hub_error(f"Cache backup failed ({e}) - run pearlarr cache check to inspect cache.db")
+                return False
             finally:
-                dest.close()
-        except sqlite3.DatabaseError as e:
-            # Report the corrupt/torn source cleanly and drop the torn temp file;
-            # a previous good cache.backup.db is left untouched.
-            with contextlib.suppress(OSError):
-                os.remove(tmp_backup)
-            typer.echo(f"Cache backup failed ({e}) - run pearlarr cache check to inspect cache.db", err=True)
-            return False
-        finally:
-            source.close()
+                source.close()
 
-        try:
-            os.replace(tmp_backup, paths.cache_backup)
-        except OSError as e:
-            typer.echo(f"Cache backup failed ({e}) - check the data directory's permissions", err=True)
-            return False
-    typer.echo(f"Backed up cache to {paths.cache_backup}")
-    return True
+            try:
+                os.replace(tmp_backup, paths.cache_backup)
+            except OSError as e:
+                hub_error(f"Cache backup failed ({e}) - check the data directory's permissions")
+                return False
+        emit_to_hub(CacheBackedUp(backup_path=paths.cache_backup))
+        return True
 
 
 @pearlarr_cache.command("restore")
-def cache_restore() -> bool:
+def cache_restore(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False) -> bool:
     """Restore the cache database from cache.backup.db, keeping the backup.
 
     Copy-restore via temp file + atomic swap: the backup survives (so a restore
@@ -818,95 +832,97 @@ def cache_restore() -> bool:
     sidecars are cleared so the restored snapshot isn't shadowed by them.
     """
 
-    paths = resolve_paths()
+    with cli_surface(json_output):
+        paths = resolve_paths()
 
-    if _echo_missing(paths.cache_backup, what="backup", hint="run pearlarr cache backup first"):
-        return False
-
-    with single_instance_lock(paths.data_dir) as acquired:
-        if _refused_by_active_run(acquired, paths.data_dir):
+        if _echo_missing(paths.cache_backup, what="backup", hint="run pearlarr cache backup first"):
             return False
 
-        tmp_restore = paths.cache + ".tmp"
-        try:
-            shutil.copyfile(paths.cache_backup, tmp_restore)
-            _remove_db_sidecars(paths.cache)
-            os.replace(tmp_restore, paths.cache)
-        except OSError as e:
-            # A read-only data dir / vanished backup: one clean line, no traceback.
-            typer.echo(f"Cache restore failed ({e}) - cache.db is left unchanged", err=True)
-            return False
+        with single_instance_lock(paths.data_dir) as acquired:
+            if _refused_by_active_run(acquired, paths.data_dir):
+                return False
 
-    typer.echo(f"Restored cache from {paths.cache_backup}")
-    return True
+            tmp_restore = paths.cache + ".tmp"
+            try:
+                shutil.copyfile(paths.cache_backup, tmp_restore)
+                _remove_db_sidecars(paths.cache)
+                os.replace(tmp_restore, paths.cache)
+            except OSError as e:
+                # A read-only data dir / vanished backup: one clean line, no traceback.
+                hub_error(f"Cache restore failed ({e}) - cache.db is left unchanged")
+                return False
+
+        emit_to_hub(CacheRestored(backup_path=paths.cache_backup))
+        return True
 
 
 @pearlarr_cache.command("remove")
-def cache_remove() -> bool:
+def cache_remove(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False) -> bool:
     """Remove the cache database (cache.db and its WAL/SHM sidecars)."""
 
-    paths = resolve_paths()
+    with cli_surface(json_output):
+        paths = resolve_paths()
 
-    if _echo_missing(paths.cache, what="cache database", hint="nothing to remove"):
-        return False
-
-    with single_instance_lock(paths.data_dir) as acquired:
-        if _refused_by_active_run(acquired, paths.data_dir):
+        if _echo_missing(paths.cache, what="cache database", hint="nothing to remove"):
             return False
 
-        os.remove(paths.cache)
-        _remove_db_sidecars(paths.cache)
+        with single_instance_lock(paths.data_dir) as acquired:
+            if _refused_by_active_run(acquired, paths.data_dir):
+                return False
 
-    typer.echo(f"Removed {paths.cache}")
-    return True
+            os.remove(paths.cache)
+            _remove_db_sidecars(paths.cache)
+
+        emit_to_hub(CacheRemoved(path=paths.cache))
+        return True
 
 
 @pearlarr_cache.command("stats")
-def cache_stats() -> bool:
+def cache_stats(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False) -> bool:
     """Print cache health: per-block row counts and on-disk size."""
 
-    paths = resolve_paths()
-    if _echo_missing_cache(paths.cache):
-        return False
-
-    with _open_cache_readonly(paths.cache) as store:
-        try:
-            s = store.stats()
-        except sqlite3.DatabaseError as e:
-            typer.echo(
-                f"Cache stats failed - unreadable database ({e}) - run pearlarr cache check to diagnose it", err=True
-            )
+    with cli_surface(json_output):
+        paths = resolve_paths()
+        if _echo_missing_cache(paths.cache):
             return False
 
-    rows = [
-        ("entries", str(s.entries)),
-        ("torrent_hashes", str(s.torrent_hashes)),
-        ("anilist_meta", str(s.anilist_meta)),
-        ("sonarr_parse", str(s.sonarr_parse)),
-        ("pending_imports", str(s.pending_imports)),
-        ("size", f"{s.size_bytes / (1024 * 1024):.2f} MiB"),
-    ]
-    for key, value in rows:
-        typer.echo(f"{f'{key}:':<17}{value}")
-    return True
+        with _open_cache_readonly(paths.cache) as store:
+            try:
+                s = store.stats()
+            except sqlite3.DatabaseError as e:
+                hub_error(f"Cache stats failed - unreadable database ({e}) - run pearlarr cache check to diagnose it")
+                return False
+
+        emit_to_hub(
+            CacheStatsReported(
+                entries=s.entries,
+                torrent_hashes=s.torrent_hashes,
+                anilist_meta=s.anilist_meta,
+                sonarr_parse=s.sonarr_parse,
+                pending_imports=s.pending_imports,
+                size_bytes=s.size_bytes,
+            ),
+        )
+        return True
 
 
 @pearlarr_cache.command("check")
-def cache_check() -> bool:
+def cache_check(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HELP)] = False) -> bool:
     """Run a SQLite integrity check on the cache database and print the result."""
 
-    paths = resolve_paths()
-    if _echo_missing_cache(paths.cache):
-        return False
-
-    with _open_cache_readonly(paths.cache) as store:
-        try:
-            result = store.integrity_check()
-        except sqlite3.DatabaseError as e:
-            # Reporting bad integrity IS this command's job: a result line, not
-            # a traceback. To stderr like every failure path (the command exits 1).
-            typer.echo(f"integrity: {e}", err=True)
+    with cli_surface(json_output):
+        paths = resolve_paths()
+        if _echo_missing_cache(paths.cache):
             return False
 
-    typer.echo(f"integrity: {result}")
-    return True
+        with _open_cache_readonly(paths.cache) as store:
+            try:
+                result = store.integrity_check()
+            except sqlite3.DatabaseError as e:
+                # Reporting bad integrity IS this command's job: a result line, not
+                # a traceback. To stderr like every failure path (the command exits 1).
+                hub_error(f"integrity: {e}")
+                return False
+
+        emit_to_hub(CacheIntegrityReported(result=result))
+        return True

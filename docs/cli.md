@@ -38,6 +38,10 @@ Without a subcommand, runs in scheduled mode (every configured arr, every few ho
 
 Print the resolved data directory and the files within it.
 
+| Option | Value | Description |
+| --- | --- | --- |
+| `--json` |  | Emit machine-readable JSON events, one object per line |
+
 ## `pearlarr run`
 
 Run Pearlarr: a scheduled loop or a one-off single run.
@@ -91,6 +95,7 @@ The file lands in the resolved data directory (see the paths command); override 
 | Option | Value | Description |
 | --- | --- | --- |
 | `--force` / `--no-force` |  | Overwrite an existing config.yml with the starter template |
+| `--json` |  | Emit machine-readable JSON events, one object per line |
 
 ### `pearlarr config validate`
 
@@ -98,17 +103,29 @@ Check config.yml parses and validates, and report what a run would use.
 
 The status lines call out the settings that silently change a run's shape: an unconfigured arr is skipped, and unconfigured qBittorrent credentials mean preview mode (nothing is grabbed).
 
+| Option | Value | Description |
+| --- | --- | --- |
+| `--json` |  | Emit machine-readable JSON events, one object per line |
+
 ### `pearlarr config migrate`
 
 Rewrite config.yml at the current config schema version, keeping a backup.
 
 Runs never require this - an older file is migrated in memory at every load - but the file itself keeps the old spelling until rewritten. The rewrite is the current annotated template with this file's values (and any schema fixes) filled in; the previous file is saved beside it as config.yml.bak first. A file already at the current version is left untouched.
 
+| Option | Value | Description |
+| --- | --- | --- |
+| `--json` |  | Emit machine-readable JSON events, one object per line |
+
 ### `pearlarr config show`
 
 Print the effective config (defaults applied) with secrets redacted.
 
 Safe to paste into a bug report: values under secret-named keys (api keys, passwords, usernames, webhook URLs) are masked, every value in the free-form `qbittorrent.options` block is masked, a `user:pass@` login embedded in a URL/host is masked, and unset secrets still show as `null`.
+
+| Option | Value | Description |
+| --- | --- | --- |
+| `--json` |  | Emit machine-readable JSON events, one object per line |
 
 ## `pearlarr cache`
 
@@ -128,20 +145,40 @@ Back up the cache database to cache.backup.db.
 
 Uses the SQLite online-backup API so a consistent snapshot is taken even if a WAL has uncommitted pages, rather than a raw file copy that could miss them. The snapshot lands via temp file + rename, so a failed backup can never replace or delete a previous good cache.backup.db.
 
+| Option | Value | Description |
+| --- | --- | --- |
+| `--json` |  | Emit machine-readable JSON events, one object per line |
+
 ### `pearlarr cache restore`
 
 Restore the cache database from cache.backup.db, keeping the backup.
 
 Copy-restore via temp file + atomic swap: the backup survives (so a restore is repeatable), cache.db never vanishes mid-restore, and stale WAL/SHM sidecars are cleared so the restored snapshot isn't shadowed by them.
 
+| Option | Value | Description |
+| --- | --- | --- |
+| `--json` |  | Emit machine-readable JSON events, one object per line |
+
 ### `pearlarr cache remove`
 
 Remove the cache database (cache.db and its WAL/SHM sidecars).
+
+| Option | Value | Description |
+| --- | --- | --- |
+| `--json` |  | Emit machine-readable JSON events, one object per line |
 
 ### `pearlarr cache stats`
 
 Print cache health: per-block row counts and on-disk size.
 
+| Option | Value | Description |
+| --- | --- | --- |
+| `--json` |  | Emit machine-readable JSON events, one object per line |
+
 ### `pearlarr cache check`
 
 Run a SQLite integrity check on the cache database and print the result.
+
+| Option | Value | Description |
+| --- | --- | --- |
+| `--json` |  | Emit machine-readable JSON events, one object per line |
