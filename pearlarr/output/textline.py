@@ -41,9 +41,18 @@ from .events import (
     BootStepProgressed,
     BootStepSlow,
     BootStepStarted,
+    CacheBackedUp,
+    CacheIntegrityReported,
+    CacheRemoved,
+    CacheRestored,
+    CacheStatsReported,
     CapReached,
+    ConfigMigrated,
+    ConfigUpToDate,
+    ConfigValidated,
     CycleStarted,
     Diagnostic,
+    EffectiveConfigShown,
     EntryDetail,
     EntryHeader,
     Event,
@@ -52,9 +61,11 @@ from .events import (
     GrabFailed,
     GrabStatus,
     ItemStarted,
+    JsonValue,
     LedgerRow,
     NeedsActionFact,
     NextRunScheduled,
+    PathsShown,
     Phase,
     PlacedBy,
     ReleaseName,
@@ -69,6 +80,7 @@ from .events import (
     ScopeId,
     ScopeOpened,
     Severity,
+    StarterConfigWritten,
     TorrentGraduated,
     WaitFinished,
     WaitProgress,
@@ -93,7 +105,9 @@ _BACKSTOP_MAX_BACKUPS = 500
 # (docs/output.md states the policy; the event catalog there is generated).
 JSON_SCHEMA_VERSION: Final = 1
 
-type FieldValue = str | int | float | bool
+# A field value is any JSON value: scalars for run events, plus lists/objects on
+# the json-only cli command facts (which never reach a grammar-sink text line).
+type FieldValue = JsonValue
 
 
 class Field(NamedTuple):
@@ -101,9 +115,6 @@ class Field(NamedTuple):
 
     key: str
     value: FieldValue
-
-
-type JsonValue = str | int | float | bool | None | list[JsonValue] | dict[str, JsonValue]
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,10 +146,13 @@ def _field_text(value: FieldValue) -> str:
         return str(value)
     if isinstance(value, float):
         return f"{value:.2f}"
-    if _needs_quote(value):
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
+    # Containers/None ride only the json-only cli facts (which never reach a
+    # grammar-sink line); compact-encode them so the formatter stays total.
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    if _needs_quote(text):
+        escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
         return f'"{escaped}"'
-    return value
+    return text
 
 
 def _logfmt(fields: tuple[Field, ...]) -> str:
@@ -361,6 +375,47 @@ def _scope_fields(scope: ScopeId) -> tuple[Field, ...]:
     return (Field("kind", scope.kind.name.lower()), Field("serial", scope.serial))
 
 
+def _fields_paths_shown(event: PathsShown) -> tuple[Field, ...]:
+    return (
+        Field("data_dir", event.data_dir),
+        Field("config", event.config),
+        Field("cache", event.cache),
+        Field("mappings_db", event.mappings_db),
+        Field("log_dir", event.log_dir),
+    )
+
+
+def _fields_config_validated(event: ConfigValidated) -> tuple[Field, ...]:
+    # "config_path" not "path": the json envelope reserves "path" for the breadcrumb.
+    migrated = event.migration_notes is not None
+    fields: list[Field] = [Field("config_path", event.path), Field("migrated", migrated)]
+    if event.migration_notes is not None:
+        fields.append(Field("migration_notes", list[JsonValue](event.migration_notes)))
+    fields.append(Field("sonarr_missing_keys", list[JsonValue](event.sonarr_missing_keys)))
+    fields.append(Field("radarr_missing_keys", list[JsonValue](event.radarr_missing_keys)))
+    fields.append(Field("qbit_configured", event.qbit_configured))
+    return tuple(fields)
+
+
+def _fields_config_migrated(event: ConfigMigrated) -> tuple[Field, ...]:
+    return (
+        Field("config_path", event.path),
+        Field("backup_path", event.backup_path),
+        Field("notes", list[JsonValue](event.notes)),
+    )
+
+
+def _fields_cache_stats(event: CacheStatsReported) -> tuple[Field, ...]:
+    return (
+        Field("entries", event.entries),
+        Field("torrent_hashes", event.torrent_hashes),
+        Field("anilist_meta", event.anilist_meta),
+        Field("sonarr_parse", event.sonarr_parse),
+        Field("pending_imports", event.pending_imports),
+        Field("size_bytes", event.size_bytes),
+    )
+
+
 def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact | None:
     """THE exhaustive per-event table: None = the event has no rendered form."""
 
@@ -423,11 +478,44 @@ def _fact_of(event: Event, crumbs: BreadcrumbFold, severity: Severity) -> _Fact 
             return _Fact("run_finished", severity, "run finished", (Field("arr", str(arr)),), None, "run")
         case Diagnostic(message=message, origin=origin):
             return _Fact("diagnostic", severity, message, _placement_fields(event, crumbs), None, origin)
+        case PathsShown():
+            return _Fact("paths_shown", severity, "resolved paths", _fields_paths_shown(event), None, "cli")
+        case StarterConfigWritten(path=path):
+            # "config_path" not "path": the json envelope reserves "path" for the breadcrumb.
+            return _Fact(
+                "starter_config_written", severity, "starter config written", (Field("config_path", path),), None, "cli"
+            )
+        case ConfigValidated():
+            return _Fact("config_validated", severity, "config valid", _fields_config_validated(event), None, "cli")
+        case ConfigUpToDate(path=path):
+            return _Fact("config_up_to_date", severity, "config up to date", (Field("config_path", path),), None, "cli")
+        case ConfigMigrated():
+            return _Fact("config_migrated", severity, "config migrated", _fields_config_migrated(event), None, "cli")
+        case EffectiveConfigShown(path=path, config=config):
+            fields = (Field("config_path", path), Field("config", config))
+            return _Fact("effective_config_shown", severity, "effective config", fields, None, "cli")
+        case CacheBackedUp(backup_path=backup_path):
+            return _Fact(
+                "cache_backed_up", severity, "cache backed up", (Field("backup_path", backup_path),), None, "cli"
+            )
+        case CacheRestored(backup_path=backup_path):
+            return _Fact(
+                "cache_restored", severity, "cache restored", (Field("backup_path", backup_path),), None, "cli"
+            )
+        case CacheRemoved(path=path):
+            return _Fact("cache_removed", severity, "cache removed", (Field("cache_path", path),), None, "cli")
+        case CacheStatsReported():
+            return _Fact("cache_stats_reported", severity, "cache stats", _fields_cache_stats(event), None, "cli")
+        case CacheIntegrityReported(result=result):
+            return _Fact(
+                "cache_integrity_reported", severity, "cache integrity", (Field("result", result),), None, "cli"
+            )
     assert_never(event)
 
 
-# Facts with no TEXT-line form: pure boundaries (the summary is the run-end marker).
-_TEXT_SKIP: Final = frozenset({ScopeOpened, ScopeClosed, ScanFinished, RunFinished})
+# Facts with no TEXT-line form: pure boundaries (the summary is the run-end
+# marker), plus the effective-config document (its config object has no logfmt line).
+_TEXT_SKIP: Final = frozenset({ScopeOpened, ScopeClosed, ScanFinished, RunFinished, EffectiveConfigShown})
 # Facts the JSON stream drops: the slow heads-up is a text-sink affordance only.
 _JSON_SKIP: Final = frozenset({BootStepSlow})
 

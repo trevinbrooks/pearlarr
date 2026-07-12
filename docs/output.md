@@ -61,6 +61,8 @@ Absent facts are omitted, never `null`.
 
 The stream honors `advanced.log_level`, with one carve-out: a `run_summary` carrying needs-action records or errors is admitted at `WARNING`, so a warnings-only stream still ends each run with its scoreboard.
 
+The `paths_shown`, `config_*`, and `cache_*` command events at the end of the catalog appear only in a subcommand's own `--json` stream (`pearlarr cache stats --json`, `pearlarr config show --json`, ...), never in a run's stream; `advanced.log_format` does not affect them, only the per-command `--json` flag does.
+
 ### Stability policy
 
 `schema_version` is currently `1`.
@@ -486,6 +488,196 @@ Scheduled mode only: when the next cycle fires.
   "level": "INFO",
   "message": "next run scheduled",
   "at": "2026-01-02T00:00:00+00:00"
+}
+```
+
+### `paths_shown`
+
+The `paths` command: the resolved data directory and the files within it.
+
+```json
+{
+  "schema_version": 1,
+  "time": "2026-01-01T18:00:00+00:00",
+  "event": "paths_shown",
+  "level": "INFO",
+  "message": "resolved paths",
+  "data_dir": "/home/user/.local/share/pearlarr",
+  "config": "/home/user/.local/share/pearlarr/config.yml",
+  "cache": "/home/user/.local/share/pearlarr/cache.db",
+  "mappings_db": "/home/user/.local/share/pearlarr/mappings.db",
+  "log_dir": "/home/user/.local/share/pearlarr/logs"
+}
+```
+
+### `starter_config_written`
+
+`config init` wrote a starter template to `path`.
+
+```json
+{
+  "schema_version": 1,
+  "time": "2026-01-01T18:00:00+00:00",
+  "event": "starter_config_written",
+  "level": "INFO",
+  "message": "starter config written",
+  "config_path": "/home/user/.local/share/pearlarr/config.yml"
+}
+```
+
+### `config_validated`
+
+`config validate` succeeded; `migrated` flags an in-memory schema migration (with `migration_notes`), and the `*_missing_keys` arrays and `qbit_configured` say what a run would use.
+
+```json
+{
+  "schema_version": 1,
+  "time": "2026-01-01T18:00:00+00:00",
+  "event": "config_validated",
+  "level": "INFO",
+  "message": "config valid",
+  "config_path": "/home/user/.local/share/pearlarr/config.yml",
+  "migrated": false,
+  "sonarr_missing_keys": [],
+  "radarr_missing_keys": [
+    "radarr.api_key"
+  ],
+  "qbit_configured": false
+}
+```
+
+### `config_up_to_date`
+
+`config migrate` had nothing to do: the file is already at the current schema.
+
+```json
+{
+  "schema_version": 1,
+  "time": "2026-01-01T18:00:00+00:00",
+  "event": "config_up_to_date",
+  "level": "INFO",
+  "message": "config up to date",
+  "config_path": "/home/user/.local/share/pearlarr/config.yml"
+}
+```
+
+### `config_migrated`
+
+`config migrate` rewrote the file at the current schema; `backup_path` is the saved previous file and `notes` lists what was folded.
+
+```json
+{
+  "schema_version": 1,
+  "time": "2026-01-01T18:00:00+00:00",
+  "event": "config_migrated",
+  "level": "INFO",
+  "message": "config migrated",
+  "config_path": "/home/user/.local/share/pearlarr/config.yml",
+  "backup_path": "/home/user/.local/share/pearlarr/config.yml.bak",
+  "notes": [
+    "replaced seadex.public_only with seadex.private_releases"
+  ]
+}
+```
+
+### `effective_config_shown`
+
+`config show`: the effective config (defaults applied) as `config`, with secrets already redacted.
+
+```json
+{
+  "schema_version": 1,
+  "time": "2026-01-01T18:00:00+00:00",
+  "event": "effective_config_shown",
+  "level": "INFO",
+  "message": "effective config",
+  "config_path": "/home/user/.local/share/pearlarr/config.yml",
+  "config": {
+    "sonarr": {
+      "url": "http://sonarr:8989",
+      "api_key": "REDACTED"
+    }
+  }
+}
+```
+
+### `cache_backed_up`
+
+`cache backup` wrote a fresh snapshot to `backup_path`.
+
+```json
+{
+  "schema_version": 1,
+  "time": "2026-01-01T18:00:00+00:00",
+  "event": "cache_backed_up",
+  "level": "INFO",
+  "message": "cache backed up",
+  "backup_path": "/home/user/.local/share/pearlarr/cache.backup.db"
+}
+```
+
+### `cache_restored`
+
+`cache restore` restored the database from `backup_path`.
+
+```json
+{
+  "schema_version": 1,
+  "time": "2026-01-01T18:00:00+00:00",
+  "event": "cache_restored",
+  "level": "INFO",
+  "message": "cache restored",
+  "backup_path": "/home/user/.local/share/pearlarr/cache.backup.db"
+}
+```
+
+### `cache_removed`
+
+`cache remove` deleted the database at `path`.
+
+```json
+{
+  "schema_version": 1,
+  "time": "2026-01-01T18:00:00+00:00",
+  "event": "cache_removed",
+  "level": "INFO",
+  "message": "cache removed",
+  "cache_path": "/home/user/.local/share/pearlarr/cache.db"
+}
+```
+
+### `cache_stats_reported`
+
+`cache stats`: per-block row counts and the on-disk `size_bytes`.
+
+```json
+{
+  "schema_version": 1,
+  "time": "2026-01-01T18:00:00+00:00",
+  "event": "cache_stats_reported",
+  "level": "INFO",
+  "message": "cache stats",
+  "entries": 128,
+  "torrent_hashes": 141,
+  "anilist_meta": 96,
+  "sonarr_parse": 412,
+  "pending_imports": 0,
+  "size_bytes": 1179648
+}
+```
+
+### `cache_integrity_reported`
+
+`cache check`'s success arm: the SQLite integrity-check `result`.
+
+```json
+{
+  "schema_version": 1,
+  "time": "2026-01-01T18:00:00+00:00",
+  "event": "cache_integrity_reported",
+  "level": "INFO",
+  "message": "cache integrity",
+  "result": "ok"
 }
 ```
 

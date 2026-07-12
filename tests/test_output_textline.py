@@ -32,9 +32,18 @@ from pearlarr.output import (
     BootStepProgressed,
     BootStepSlow,
     BootStepStarted,
+    CacheBackedUp,
+    CacheIntegrityReported,
+    CacheRemoved,
+    CacheRestored,
+    CacheStatsReported,
     CapReached,
+    ConfigMigrated,
+    ConfigUpToDate,
+    ConfigValidated,
     CycleStarted,
     Diagnostic,
+    EffectiveConfigShown,
     EntryDetail,
     EntryHeader,
     Event,
@@ -48,6 +57,7 @@ from pearlarr.output import (
     LineRenderer,
     NeedsActionCause,
     NextRunScheduled,
+    PathsShown,
     Phase,
     PlacedBy,
     RecommendedGroup,
@@ -66,6 +76,7 @@ from pearlarr.output import (
     ScopeOpened,
     Severity,
     SkipReason,
+    StarterConfigWritten,
     StyledValue,
     TorrentGraduated,
     TorrentView,
@@ -981,6 +992,32 @@ def _exemplars() -> list[Event]:
         WaitFinished(imported=1, deferred=0, failed=0, elapsed_s=1.0),
         RunFinished(arr=Arr.SONARR),
         Diagnostic(severity=Severity.INFO, message="m", origin="app", trace=trace),
+        PathsShown(
+            data_dir="/d", config="/d/config.yml", cache="/d/cache.db", mappings_db="/d/mappings.db", log_dir="/d/logs"
+        ),
+        StarterConfigWritten(path="/d/config.yml"),
+        ConfigValidated(
+            path="/d/config.yml",
+            migration_notes=("folded X",),
+            sonarr_missing_keys=(),
+            radarr_missing_keys=("radarr.api_key",),
+            qbit_configured=False,
+        ),
+        ConfigUpToDate(path="/d/config.yml"),
+        ConfigMigrated(path="/d/config.yml", backup_path="/d/config.yml.bak", notes=("folded X",)),
+        EffectiveConfigShown(path="/d/config.yml", config={"sonarr": {"url": "http://s", "api_key": "REDACTED"}}),
+        CacheBackedUp(backup_path="/d/cache.backup.db"),
+        CacheRestored(backup_path="/d/cache.backup.db"),
+        CacheRemoved(path="/d/cache.db"),
+        CacheStatsReported(
+            entries=1,
+            torrent_hashes=1,
+            anilist_meta=1,
+            sonarr_parse=1,
+            pending_imports=0,
+            size_bytes=4096,
+        ),
+        CacheIntegrityReported(result="ok"),
     ]
 
 
@@ -1060,8 +1097,18 @@ def test_no_fact_field_key_can_collide_with_the_json_envelope() -> None:
 
 
 # Events with no format_line form: pure boundaries + per-event-fact-less ephemera
-# (WaitProgress's text form is the grammar sinks' throttled pulse, tested above).
-_TEXT_SILENT = {ScopeOpened, ScopeClosed, BootStepStarted, BootStepProgressed, WaitProgress, ScanFinished, RunFinished}
+# (WaitProgress's text form is the grammar sinks' throttled pulse, tested above),
+# plus the effective-config document (its config object has no logfmt line form).
+_TEXT_SILENT = {
+    ScopeOpened,
+    ScopeClosed,
+    BootStepStarted,
+    BootStepProgressed,
+    WaitProgress,
+    ScanFinished,
+    RunFinished,
+    EffectiveConfigShown,
+}
 # Events the json stream drops: ephemera (json keeps the boundaries).
 _JSON_SILENT = {BootStepStarted, BootStepProgressed, BootStepSlow, WaitProgress}
 
@@ -1092,7 +1139,7 @@ def test_skip_sets_are_event_members_pinned_to_their_current_membership() -> Non
     union_members: set[object] = set(get_args(Event.__value__))
     assert _TEXT_SKIP <= union_members
     assert _JSON_SKIP <= union_members
-    assert _TEXT_SKIP == {ScopeOpened, ScopeClosed, ScanFinished, RunFinished}
+    assert _TEXT_SKIP == {ScopeOpened, ScopeClosed, ScanFinished, RunFinished, EffectiveConfigShown}
     assert _JSON_SKIP == {BootStepSlow}
 
 

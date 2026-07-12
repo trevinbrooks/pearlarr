@@ -655,6 +655,115 @@ class Diagnostic:
     file_only: bool = False
 
 
+# --- json value model (the wire types the json surface and cli facts share) --------
+
+type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
+type JsonObj = dict[str, JsonValue]
+
+
+# --- cli command facts ------------------------------------------------------------
+# Emitted only by a subcommand's --json / human seat, never during a run; the run
+# renderers ignore them. Error/refusal arms reuse Diagnostic (via hub_error).
+
+
+@dataclass(frozen=True, slots=True)
+class PathsShown:
+    """The `paths` command's resolved data directory and the files within it."""
+
+    data_dir: str
+    config: str
+    cache: str
+    mappings_db: str
+    log_dir: str
+
+
+@dataclass(frozen=True, slots=True)
+class StarterConfigWritten:
+    """`config init` wrote a starter template to `path`."""
+
+    path: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigValidated:
+    """`config validate` succeeded: the run-shaping facts it reports.
+
+    `migration_notes` None = the file is already at the current schema; non-None
+    (possibly empty) = an older schema was migrated in memory at load. An empty
+    missing-keys tuple = that arr is configured.
+    """
+
+    path: str
+    migration_notes: tuple[str, ...] | None
+    sonarr_missing_keys: tuple[str, ...]
+    radarr_missing_keys: tuple[str, ...]
+    qbit_configured: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigUpToDate:
+    """`config migrate` had nothing to do: the file is already at the current schema."""
+
+    path: str
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigMigrated:
+    """`config migrate` rewrote the file, saving the previous one as `backup_path`."""
+
+    path: str
+    backup_path: str
+    notes: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class EffectiveConfigShown:
+    """`config show` output: `config` is the ALREADY-REDACTED effective dump."""
+
+    path: str
+    config: JsonObj
+
+
+@dataclass(frozen=True, slots=True)
+class CacheBackedUp:
+    """`cache backup` wrote a fresh snapshot to `backup_path`."""
+
+    backup_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class CacheRestored:
+    """`cache restore` restored the database from `backup_path`."""
+
+    backup_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class CacheRemoved:
+    """`cache remove` deleted the database at `path`."""
+
+    path: str
+
+
+@dataclass(frozen=True, slots=True)
+class CacheStatsReported:
+    """`cache stats`: per-block row counts and the on-disk size in bytes."""
+
+    entries: int
+    torrent_hashes: int
+    anilist_meta: int
+    sonarr_parse: int
+    pending_imports: int
+    size_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class CacheIntegrityReported:
+    """`cache check`'s success arm: the SQLite integrity-check result string."""
+
+    result: str
+
+
 # --- the closed union --------------------------------------------------------------
 
 type Event = (
@@ -685,6 +794,17 @@ type Event = (
     | WaitFinished
     | RunFinished
     | Diagnostic
+    | PathsShown
+    | StarterConfigWritten
+    | ConfigValidated
+    | ConfigUpToDate
+    | ConfigMigrated
+    | EffectiveConfigShown
+    | CacheBackedUp
+    | CacheRestored
+    | CacheRemoved
+    | CacheStatsReported
+    | CacheIntegrityReported
 )
 
 
@@ -737,6 +857,17 @@ def severity_of(event: Event) -> Severity:
             | WaitProgress()
             | WaitFinished()
             | RunFinished()
+            | PathsShown()
+            | StarterConfigWritten()
+            | ConfigValidated()
+            | ConfigUpToDate()
+            | ConfigMigrated()
+            | EffectiveConfigShown()
+            | CacheBackedUp()
+            | CacheRestored()
+            | CacheRemoved()
+            | CacheStatsReported()
+            | CacheIntegrityReported()
         ):
             return Severity.INFO
     assert_never(event)

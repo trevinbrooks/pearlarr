@@ -725,6 +725,20 @@ EVENT_DESCRIPTIONS: dict[str, str] = {
     "wait_finished": "The wait pass closed, with its imported/deferred/failed tally.",
     "run_finished": "The per-arr run closed (a boundary event).",
     "next_run_scheduled": "Scheduled mode only: when the next cycle fires.",
+    "paths_shown": "The `paths` command: the resolved data directory and the files within it.",
+    "starter_config_written": "`config init` wrote a starter template to `path`.",
+    "config_validated": "`config validate` succeeded; `migrated` flags an in-memory schema migration "
+    "(with `migration_notes`), and the `*_missing_keys` arrays and `qbit_configured` say what a run would use.",
+    "config_up_to_date": "`config migrate` had nothing to do: the file is already at the current schema.",
+    "config_migrated": "`config migrate` rewrote the file at the current schema; `backup_path` is the saved "
+    "previous file and `notes` lists what was folded.",
+    "effective_config_shown": "`config show`: the effective config (defaults applied) as `config`, with secrets "
+    "already redacted.",
+    "cache_backed_up": "`cache backup` wrote a fresh snapshot to `backup_path`.",
+    "cache_restored": "`cache restore` restored the database from `backup_path`.",
+    "cache_removed": "`cache remove` deleted the database at `path`.",
+    "cache_stats_reported": "`cache stats`: per-block row counts and the on-disk `size_bytes`.",
+    "cache_integrity_reported": "`cache check`'s success arm: the SQLite integrity-check `result`.",
 }
 
 # Event types that never reach the JSON stream, with the reason readers need.
@@ -788,6 +802,10 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         elapsed_s=63.4,
         tip=ev.NeedsActionCause.PRIVATE_ONLY_NO_FALLBACK,
     )
+    # The cli command facts ride a subcommand's --json stream, never a run's; they
+    # appear at the tail of the catalog for completeness (one specimen per member).
+    data_dir = "/home/user/.local/share/pearlarr"
+    redacted_config: ev.JsonObj = {"sonarr": {"url": "http://sonarr:8989", "api_key": "REDACTED"}}
     return (
         ev.RunStarted(version="v1.0.0", data_dir="/home/user/.local/share/pearlarr"),
         ev.CycleStarted(number=1),
@@ -864,6 +882,40 @@ def _specimen_stream() -> tuple[ev.Event, ...]:
         ev.ScopeClosed(scope=_WAIT_SCOPE),
         ev.RunFinished(arr=Arr.SONARR),
         ev.NextRunScheduled(at=datetime(2026, 1, 2, 0, 0, tzinfo=UTC)),
+        ev.PathsShown(
+            data_dir=data_dir,
+            config=f"{data_dir}/config.yml",
+            cache=f"{data_dir}/cache.db",
+            mappings_db=f"{data_dir}/mappings.db",
+            log_dir=f"{data_dir}/logs",
+        ),
+        ev.StarterConfigWritten(path=f"{data_dir}/config.yml"),
+        ev.ConfigValidated(
+            path=f"{data_dir}/config.yml",
+            migration_notes=None,
+            sonarr_missing_keys=(),
+            radarr_missing_keys=("radarr.api_key",),
+            qbit_configured=False,
+        ),
+        ev.ConfigUpToDate(path=f"{data_dir}/config.yml"),
+        ev.ConfigMigrated(
+            path=f"{data_dir}/config.yml",
+            backup_path=f"{data_dir}/config.yml.bak",
+            notes=("replaced seadex.public_only with seadex.private_releases",),
+        ),
+        ev.EffectiveConfigShown(path=f"{data_dir}/config.yml", config=redacted_config),
+        ev.CacheBackedUp(backup_path=f"{data_dir}/cache.backup.db"),
+        ev.CacheRestored(backup_path=f"{data_dir}/cache.backup.db"),
+        ev.CacheRemoved(path=f"{data_dir}/cache.db"),
+        ev.CacheStatsReported(
+            entries=128,
+            torrent_hashes=141,
+            anilist_meta=96,
+            sonarr_parse=412,
+            pending_imports=0,
+            size_bytes=1179648,
+        ),
+        ev.CacheIntegrityReported(result="ok"),
     )
 
 

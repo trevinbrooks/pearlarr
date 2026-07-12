@@ -24,9 +24,18 @@ from .events import (
     BootStepProgressed,
     BootStepSlow,
     BootStepStarted,
+    CacheBackedUp,
+    CacheIntegrityReported,
+    CacheRemoved,
+    CacheRestored,
+    CacheStatsReported,
     CapReached,
+    ConfigMigrated,
+    ConfigUpToDate,
+    ConfigValidated,
     CycleStarted,
     Diagnostic,
+    EffectiveConfigShown,
     EntryDetail,
     EntryHeader,
     Event,
@@ -35,6 +44,7 @@ from .events import (
     ItemStarted,
     LedgerRow,
     NextRunScheduled,
+    PathsShown,
     ReleaseSkipped,
     RunFinished,
     RunStarted,
@@ -45,6 +55,7 @@ from .events import (
     ScopeId,
     ScopeKind,
     ScopeOpened,
+    StarterConfigWritten,
     TorrentGraduated,
     WaitFinished,
     WaitProgress,
@@ -134,6 +145,21 @@ class BreadcrumbFold:
                 | WaitFinished()
                 | Diagnostic()
             ):
+                pass
+            case (
+                PathsShown()
+                | StarterConfigWritten()
+                | ConfigValidated()
+                | ConfigUpToDate()
+                | ConfigMigrated()
+                | EffectiveConfigShown()
+                | CacheBackedUp()
+                | CacheRestored()
+                | CacheRemoved()
+                | CacheStatsReported()
+                | CacheIntegrityReported()
+            ):
+                # cli command facts - never emitted during a run.
                 pass
             case _:
                 assert_never(event)

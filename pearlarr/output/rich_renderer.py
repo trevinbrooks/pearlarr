@@ -40,9 +40,18 @@ from .events import (
     BootStepProgressed,
     BootStepSlow,
     BootStepStarted,
+    CacheBackedUp,
+    CacheIntegrityReported,
+    CacheRemoved,
+    CacheRestored,
+    CacheStatsReported,
     CapReached,
+    ConfigMigrated,
+    ConfigUpToDate,
+    ConfigValidated,
     CycleStarted,
     Diagnostic,
+    EffectiveConfigShown,
     EntryDetail,
     EntryHeader,
     Event,
@@ -51,6 +60,7 @@ from .events import (
     ItemStarted,
     LedgerRow,
     NextRunScheduled,
+    PathsShown,
     ReleaseSkipped,
     RunFinished,
     RunStarted,
@@ -61,6 +71,7 @@ from .events import (
     ScopeKind,
     ScopeOpened,
     Severity,
+    StarterConfigWritten,
     TorrentGraduated,
     WaitFinished,
     WaitProgress,
@@ -188,6 +199,21 @@ class RichRenderer:
             case CycleStarted() | ScanFinished() | RunFinished():
                 # Pure boundaries: the banner leads each cycle and the summary
                 # closes each run, so none draws a console line of its own.
+                pass
+            case (
+                PathsShown()
+                | StarterConfigWritten()
+                | ConfigValidated()
+                | ConfigUpToDate()
+                | ConfigMigrated()
+                | EffectiveConfigShown()
+                | CacheBackedUp()
+                | CacheRestored()
+                | CacheRemoved()
+                | CacheStatsReported()
+                | CacheIntegrityReported()
+            ):
+                # cli command facts - never emitted during a run.
                 pass
             case _:
                 assert_never(event)
