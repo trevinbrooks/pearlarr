@@ -289,9 +289,9 @@ class ImportExecutor:
             # noisy at the deadline, where a still-missing file is terminal: warn
             # loudly only then, debug otherwise. Either way the record is retried,
             # never dropped silently.
-            message = indent_string(
+            message = (
                 f"{content_path}: {count_noun(len(missing), 'intended file')} "
-                f"not visible to Sonarr for {pending.display_label} - will retry",
+                f"not visible to Sonarr for {pending.display_label} - will retry"
             )
             if at_deadline:
                 hub_warn(message)
@@ -343,10 +343,8 @@ class ImportExecutor:
         label = pending.display_label
         coverage = f" ({pending.coverage})" if pending.coverage else ""
         hub_warn(
-            indent_string(
-                f"{label}{coverage}: {count_noun(len(unplaceable), 'file')} could not be matched "
-                f"to an episode and {pluralize(len(unplaceable), 'was', 'were')} not imported",
-            )
+            f"{label}{coverage}: {count_noun(len(unplaceable), 'file')} could not be matched "
+            f"to an episode and {pluralize(len(unplaceable), 'was', 'were')} not imported"
         )
 
     def _import_language_objects(self, pending: PendingImport) -> list[Language]:
@@ -413,10 +411,8 @@ class ImportExecutor:
         resolved = quality.quality
         if resolved is None or QualitySource.parse(resolved.source) is None:
             hub_warn(
-                indent_string(
-                    f"{content_path}: could not confidently resolve quality for {base} - importing as Unknown "
-                    "(re-grab risk)",
-                )
+                f"{content_path}: could not confidently resolve quality for {base} - importing as Unknown "
+                "(re-grab risk)"
             )
         return ManualImportFile(
             path=path,
