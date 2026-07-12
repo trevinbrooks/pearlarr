@@ -29,12 +29,15 @@ jobs:
     name: Upload to PyPI
     needs: [build_sdist_and_wheel]
     runs-on: ubuntu-latest
+    # Trusted Publishing (OIDC): PyPI trusts this exact repo + workflow +
+    # environment instead of a long-lived API token. The matching trusted
+    # publisher must be registered on PyPI before the first tag push.
+    environment: pypi
+    permissions:
+      id-token: write
     steps:
       - uses: actions/download-artifact@v8
         with:
           name: artifact-source
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN }}
