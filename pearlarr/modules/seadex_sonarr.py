@@ -320,10 +320,18 @@ class SonarrSync(ArrSync[SonarrItem]):
         ):
             return False
 
-        # Also check if it's in the Radarr cache, if we have that option.
+        # Also check if it's in the Radarr cache, if we have that option. Skipped
+        # alongside the same re-check signals the per-id gate honors: a forced
+        # re-check (ignore flag) or moved matching settings (selection stale -
+        # shared seadex config, so Radarr's verdict is suspect too) must fall
+        # through to the live check, not short-circuit on a cached cross-arr verdict.
         # Invariant: this dedup names Arr.RADARR explicitly while running Sonarr -
         # folding the arr param into the run's bound arr breaks the cross-arr read.
-        if self.ignore_movies_in_radarr and not self._config.seadex.ignore_seadex_update_times:
+        if (
+            self.ignore_movies_in_radarr
+            and not self._config.seadex.ignore_seadex_update_times
+            and not run.selection_stale
+        ):
             al_id_in_radarr_cache = run.check_al_id_in_cache(
                 arr=Arr.RADARR,
                 al_id=al_id,

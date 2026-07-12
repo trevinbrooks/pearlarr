@@ -1,4 +1,8 @@
 # pyright: strict
+# pyright: reportPrivateUsage=false
+# TestSelectionDigest reaches the private `_digest_canonical` (its set-order
+# guarantee is unobservable through the opaque hex digest); strict re-flags that
+# and the repo disables reportPrivateUsage for tests.
 """Characterization tests for the Pydantic `AppConfig` model tree.
 
 Pins the validated-settings behavior: per-group defaults, blank-YAML coalescing,
@@ -27,11 +31,14 @@ from pearlarr.modules.config import (
     PrivateReleaseAction,
     QbittorrentSettings,
     SeadexSettings,
+    _digest_canonical,
     config_permissions_loose,
     secret_value,
 )
 from pearlarr.modules.config_migrations import CONFIG_VERSION, MigrationOutcome
 from pearlarr.modules.manual_import import ImportWaitMode
+
+from .builders import make_config
 
 
 class TestFileLifecycle:
@@ -649,3 +656,38 @@ class TestSecrets:
         # (a blank quoted value) must read as unset, like an empty plain string.
         cfg = AppConfig.model_validate({"sonarr": {"url": "http://s", "api_key": ""}})
         assert cfg.missing_arr_keys(Arr.SONARR) == ("sonarr.api_key",)
+
+
+class TestSelectionDigest:
+    """The selection digest moves with matching preferences only, and stably."""
+
+    def test_stable_across_builds(self) -> None:
+        assert make_config().selection_digest() == make_config().selection_digest()
+
+    def test_moves_with_each_selection_setting_kind(self) -> None:
+        base = make_config().selection_digest()
+        changed = [
+            make_config(want_best=False),  # bool
+            make_config(private_releases="fallback"),  # enum
+            make_config(trackers=["nyaa"]),  # str set
+            make_config(ignore_anilist_ids=[5]),  # int set
+            make_config(ignore_tags=["Dolby Vision"]),  # list
+            make_config(import_languages_dual=["English"]),  # the covered imports fields
+            make_config(import_languages_single=["English"]),  # (both, independently)
+        ]
+        digests = [config.selection_digest() for config in changed]
+        assert base not in digests
+        assert len(set(digests)) == len(digests)  # each change lands a distinct digest
+
+    def test_ignores_non_selection_settings(self) -> None:
+        base = make_config().selection_digest()
+        assert make_config(discord_url="https://discord.example/hook").selection_digest() == base
+        assert make_config(import_wait_timeout=99).selection_digest() == base
+        assert make_config(max_torrents_to_add=1).selection_digest() == base
+
+    def test_sets_canonicalize_sorted_not_iteration_ordered(self) -> None:
+        # Set iteration order is hash-seed dependent (it differs across processes);
+        # without sorting, the digest would move between container restarts and
+        # trigger phantom re-checks.
+        assert _digest_canonical({"b", "c", "a"}) == ["a", "b", "c"]
+        assert _digest_canonical({"ids": {3, 1, 2}}) == {"ids": ["1", "2", "3"]}

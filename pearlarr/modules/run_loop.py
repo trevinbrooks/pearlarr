@@ -11,7 +11,7 @@ from .manual_import import (
     ImportWaitMode,
     resolve_wait_mode,
 )
-from .output import hub_error, hub_warn
+from .output import hub_error, hub_note, hub_warn
 from .protocols import ArrSync, ImportCompleter
 from .reporter import RunContext
 from .run_services import RunDeps, RunServices
@@ -279,6 +279,14 @@ class RunLoop:
 
         self._reporter.log_arr_start(arr, n_items)
 
+        # Matching preferences changed since the last vouched pass: the skip gate
+        # re-checks every cached verdict this run - say so once (the ignore flag
+        # already re-checks everything, so it needs no announcement). Only on a
+        # full run, mirroring the vouch: a single-item run re-checks just its id,
+        # so the whole-library note would overstate it and recur every time.
+        if item_id is None and self._services.selection_stale and not self._config.seadex.ignore_seadex_update_times:
+            hub_note("Matching settings changed - rechecking cached entries")
+
         # Set when a per-id grab hits max_torrents_to_add: breaks the scan and falls
         # through to the single _finalize_run site below.
         cap_reached = False
@@ -357,6 +365,17 @@ class RunLoop:
         # staged write persists only at _finalize_run's non-preview save.
         if monitor is not None and item_id is None and not cap_reached:
             monitor.commit_checkpoint()
+
+        # Same full-coverage rule for the selection digest: an un-capped whole-
+        # library pass re-checked every cached verdict under the current matching
+        # settings, so vouch for them (also seeds the digest on a first run). An
+        # outage run skipped whatever SeaDex never served, so it cannot vouch.
+        # A per-id error contained mid-scan leaves that one title on its prior
+        # verdict (retried on its next SeaDex update / dirty mark); we vouch anyway
+        # - blocking on any flaky title would re-scan the whole library every run,
+        # and dropping its entry to force a re-check could re-grab.
+        if item_id is None and not cap_reached and not self._seadex.outage:
+            self.cache_store.vouch_selection(arr, self._config.selection_digest())
 
         # Run the end-of-run blocking pass (blocking/hybrid only), then persist
         # the run and log the summary. Per-title update_cache calls only mutate

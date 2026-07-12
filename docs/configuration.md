@@ -35,8 +35,15 @@ A file written by a newer Pearlarr (a downgraded install) refuses to load, namin
 ## Configuration changes and the cache
 
 Titles that have been handled are cached in `cache.db` and skipped on later runs.
-Editing the config does not re-evaluate them.
-After changing a selection-affecting setting (anything in the `seadex` group, or `imports.languages_*`), run `pearlarr cache remove`; the next run then re-checks every title against the new rules.
+Changing a selection-affecting setting (anything in the `seadex` group, or `imports.languages_*`) is detected automatically: the next run re-checks every cached title against the new rules and says so:
+
+```text
+Matching settings changed - rechecking cached entries
+```
+
+That one run does a full evaluation pass (roughly first-run speed); grab history, pending imports, and the arr-activity checkpoint are all kept, so titles the new rules still consider satisfied are not re-downloaded or re-announced.
+Other settings take effect immediately and trigger no re-check, and nothing needs to be deleted by hand.
+A preview-only run (qBittorrent not configured) never records the pass, so it re-checks and re-announces every run until qBittorrent is set and a real run confirms the new settings.
 
 ## sonarr
 

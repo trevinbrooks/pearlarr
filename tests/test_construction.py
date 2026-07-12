@@ -26,7 +26,7 @@ from pearlarr.modules.run_services import RunDeps, RunServices
 from pearlarr.modules.seadex_radarr import RadarrSync
 from pearlarr.modules.seadex_sonarr import SonarrSync
 
-from .builders import make_bare_instance, make_config, make_run_deps
+from .builders import FakeCacheStore, make_bare_instance, make_config, make_run_deps
 from .fakes import FakeRadarrClient, FakeSonarrClient
 
 
@@ -69,6 +69,23 @@ def test_runner_adopts_placeholder_then_rebinds_fresh_ctx() -> None:
     assert runner._ctx is not first_ctx  # a fresh ctx was swapped in
     assert services.ctx is runner._ctx  # the hub rebound to it
     assert all(vars(c)["_ctx"] is runner._ctx for c in holders)
+
+
+def test_services_read_selection_staleness_from_the_store_at_construction() -> None:
+    # The real __init__ compares the store's vouched digest against the config's:
+    # an older vouch arms the run-wide re-check; a matching vouch or a fresh
+    # store (nothing vouched yet) stays quiet.
+    config = make_config()
+
+    vouched_old = FakeCacheStore()
+    vouched_old.vouch_selection(Arr.SONARR, "a-previous-digest")
+    assert RunServices(make_run_deps(config=config, cache_store=vouched_old), Arr.SONARR).selection_stale is True
+
+    vouched_current = FakeCacheStore()
+    vouched_current.vouch_selection(Arr.SONARR, config.selection_digest())
+    assert RunServices(make_run_deps(config=config, cache_store=vouched_current), Arr.SONARR).selection_stale is False
+
+    assert RunServices(make_run_deps(config=config), Arr.SONARR).selection_stale is False
 
 
 def test_sonarr_sync_init_shares_cache_store_for_staged_writes() -> None:

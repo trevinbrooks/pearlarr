@@ -101,6 +101,13 @@ class TestCachedEntrySkip:
         run.mark_dirty([7])
         assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
 
+    def test_selection_stale_reprocesses_even_when_fresh(self) -> None:
+        # A matching-preference change bypasses the skip despite a matching timestamp.
+        cache = FakeCacheStore()
+        cache.update_cache(Arr.SONARR, 7, {"url": "u", "updated_at": datetime(2021, 1, 1)})
+        run = make_services(cache_store=cache, _reporter=_RecordingReporter(), _selection_stale=True)
+        assert run.cached_entry_skip(7, make_entry_record(updated_at=datetime(2021, 1, 1)), lambda: "") is False
+
     def test_non_dirty_sibling_still_skips(self) -> None:
         # Marking one id dirty must not widen the bypass to other cached ids.
         cache = FakeCacheStore()

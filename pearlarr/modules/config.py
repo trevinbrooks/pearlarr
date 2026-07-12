@@ -14,10 +14,11 @@ one arr still validates and runs.
 """
 
 import contextlib
+import json
 import os
 from dataclasses import dataclass
 from enum import StrEnum
-from hashlib import md5
+from hashlib import md5, sha256
 from typing import Any, Literal, cast
 
 import yaml
@@ -41,6 +42,7 @@ from .config_migrations import (
 )
 from .json_narrow import is_json_obj
 from .manual_import import ImportWaitMode
+from .seadex_types import Json
 
 # Tracker name classification. The *_TRACKER_NAMES tuples keep SeaDex's exact casings
 # (the docs generator renders them into the sample and reference); the sets are
@@ -619,6 +621,26 @@ class MappingsSettings(_ConfigBase):
     """
 
 
+def _digest_canonical(value: object) -> Json:
+    """A model-dump value as digest-stable JSON data.
+
+    Sets are sorted (their iteration order is hash-seed dependent, so it differs
+    between processes); dict keys are left to `json.dumps(sort_keys=True)`. A
+    `StrEnum` member passes through the `str` arm - `json.dumps` writes a str
+    subclass's raw content, which IS the enum's plain value.
+    """
+
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, (set, frozenset)):
+        return sorted(str(item) for item in cast("set[object] | frozenset[object]", value))
+    if isinstance(value, (list, tuple)):
+        return [_digest_canonical(item) for item in cast("list[object] | tuple[object, ...]", value)]
+    if isinstance(value, dict):
+        return {str(key): _digest_canonical(item) for key, item in cast("dict[object, object]", value).items()}
+    return str(value)
+
+
 class AppConfig(_ConfigBase):
     """The full validated config: one submodel per settings group.
 
@@ -678,6 +700,8 @@ class AppConfig(_ConfigBase):
     _path: str = PrivateAttr(default="")
     _checksum: str = PrivateAttr(default="")
     _migration: MigrationOutcome | None = PrivateAttr(default=None)
+    # Memoized on first `selection_digest()` call (immutable model); "" = not yet computed.
+    _selection_digest: str = PrivateAttr(default="")
 
     @field_validator("config_version")
     @classmethod
@@ -723,6 +747,28 @@ class AppConfig(_ConfigBase):
         """MD5 hex digest of the config file's bytes at load time (cache descriptor)."""
 
         return self._checksum
+
+    def selection_digest(self) -> str:
+        """SHA-256 hex over the selection-affecting settings (the cache's re-check key).
+
+        Covers the whole `seadex` group plus `imports.languages_*` - the settings
+        that change which release a title should end up with. The cache compares
+        this against the digest a previous full pass vouched for
+        (`selection_stale`) and re-checks every cached verdict when it moved.
+        Whole-group on purpose: a future seadex knob is covered by default
+        (over-inclusion costs one re-check run; omission would leave stale verdicts).
+        Memoized (the model is immutable) so the run's repeated reads hash once.
+        """
+
+        if not self._selection_digest:
+            payload: dict[str, object] = {
+                "seadex": self.seadex.model_dump(mode="python"),
+                "languages_dual": self.imports.languages_dual,
+                "languages_single": self.imports.languages_single,
+            }
+            canonical = json.dumps(_digest_canonical(payload), sort_keys=True, separators=(",", ":"))
+            object.__setattr__(self, "_selection_digest", sha256(canonical.encode("utf-8")).hexdigest())
+        return self._selection_digest
 
     def migration(self) -> MigrationOutcome | None:
         """The in-memory schema migration `load` applied, or None for a current file.

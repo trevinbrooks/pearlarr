@@ -137,7 +137,9 @@ class _FakeRunServices(RunServices):
         grab_result: bool = False,
         no_releases_result: bool = False,
         import_wait_mode: ImportWaitMode = ImportWaitMode.OFF,
+        selection_stale: bool = False,
     ) -> None:
+        self._selection_stale = selection_stale
         self._anilist_ids = anilist_ids or {}
         self._prologue_entry = prologue_entry
         self._anilist_title = anilist_title
@@ -163,6 +165,11 @@ class _FakeRunServices(RunServices):
         self.grab_requests: list[GrabRequest] = []
         self.no_releases_calls: list[tuple[int, CacheRecord]] = []
         self.invalid_selection_skips = 0
+
+    @property
+    @override
+    def selection_stale(self) -> bool:
+        return self._selection_stale
 
     @override
     def check_al_id_in_cache(self, arr: Arr, al_id: int, seadex_entry: EntryRecord) -> bool:
@@ -545,6 +552,27 @@ class TestProcessAlIdThreadsServices:
         assert result is False
         assert run.check_al_id_in_cache_calls == [CheckAlIdInCacheCall(Arr.RADARR, 5, entry)]
         assert run.log_cached_entry_calls == [LogCachedEntryCall(Arr.RADARR, 5, EntryState.IN_RADARR)]
+
+    def test_selection_stale_bypasses_the_radarr_cache_dedup(self) -> None:
+        # A moved matching setting makes every cached verdict suspect (the shared
+        # seadex config drives both arrs), so the cross-arr Radarr short-circuit is
+        # skipped just like ignore_seadex_update_times - the id flows on to a fresh
+        # evaluation instead of a stale IN_RADARR skip. Radarr's own run re-vouches.
+        run = _FakeRunServices(prologue_entry=make_entry_record(), al_id_in_cache=True, selection_stale=True)
+        strat = make_bare_instance(
+            SonarrSync,
+            _services=run,
+            _episodes=_FakeEpisodes(ep_list=[]),
+            _config=make_config(sleep_time=0),
+            ignore_movies_in_radarr=True,
+            all_radarr_movies=None,
+            logger=make_logger(),
+        )
+
+        result = strat.process_al_id(_Item(id=1, title="Title"), 5, MappingEntry(anilist_id=5))
+
+        assert result is False
+        assert run.check_al_id_in_cache_calls == []  # the stale run never trusts the cross-arr cache
 
 
 def _ep_with_file(ep_id: int, *, group: str | None) -> SonarrEpisode:

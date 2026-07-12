@@ -33,6 +33,7 @@ from pearlarr.modules.cache import (
     CacheRecord,
     CacheStats,
     HistoryCheckpoint,
+    selection_digest_key,
 )
 from pearlarr.modules.config import AppConfig, Arr
 from pearlarr.modules.grab_pipeline import GrabPipeline
@@ -217,6 +218,7 @@ class FakeCacheStore(AbstractCacheStore):
         self._entry_hashes: dict[tuple[str, int], list[str | None]] = {}
         self._anilist_meta: dict[int, dict[str, Any]] = {}
         self._history_checkpoints: dict[str, HistoryCheckpoint] = {}
+        self._kv: dict[str, str] = {}
 
     # -- lifecycle --
     @override
@@ -226,6 +228,16 @@ class FakeCacheStore(AbstractCacheStore):
     @override
     def close(self) -> None:
         pass
+
+    # -- selection digest --
+    @override
+    def selection_stale(self, arr: Arr, digest: str) -> bool:
+        stored = self._kv.get(selection_digest_key(arr))
+        return stored is not None and stored != digest
+
+    @override
+    def vouch_selection(self, arr: Arr, digest: str) -> None:
+        self._kv[selection_digest_key(arr)] = digest
 
     # -- per-entry records (entries + torrent_hashes) --
     @override
@@ -591,9 +603,10 @@ def make_services(**overrides: Any) -> RunServices:
         # a specific run state.
         "arr": Arr.SONARR,
         "_ctx": RunContext(arr=Arr.SONARR),
-        # The real __init__ always mints this; bare instances need it too or the
-        # dirty-aware skip predicates fail at runtime.
+        # The real __init__ always mints these; bare instances need them too or
+        # the dirty-aware / selection-aware skip predicates fail at runtime.
         "_dirty_al_ids": set[int](),
+        "_selection_stale": False,
     }
     defaults.update(overrides)
     return make_bare_instance(RunServices, **defaults)

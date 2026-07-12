@@ -337,6 +337,12 @@ def _arr_key(arr: Arr) -> str:
     return str(arr)
 
 
+def selection_digest_key(arr: Arr) -> str:
+    """The `kv` key holding the selection digest an arr's verdicts were vouched under."""
+
+    return f"selection_digest_{_arr_key(arr)}"
+
+
 def _connect(path: str, *, ensure_wal: bool = True) -> sqlite3.Connection:
     """Open a cache-db connection (see `sqlite_util.connect`).
 
@@ -369,6 +375,10 @@ class AbstractCacheStore(ABC):
     def save(self, *, preview: bool) -> None: ...
     @abstractmethod
     def close(self) -> None: ...
+    @abstractmethod
+    def selection_stale(self, arr: Arr, digest: str) -> bool: ...
+    @abstractmethod
+    def vouch_selection(self, arr: Arr, digest: str) -> None: ...
     @abstractmethod
     def check_al_id_in_cache(self, arr: Arr, al_id: int, seadex_entry: EntryRecord) -> bool: ...
     @abstractmethod
@@ -556,6 +566,34 @@ class CacheStore(AbstractCacheStore):
             "INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
             (key, value),
         )
+
+    def _get_kv(self, key: str) -> str | None:
+        row = self._conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
+        return None if row is None else str(row[0])
+
+    @override
+    def selection_stale(self, arr: Arr, digest: str) -> bool:
+        """Whether the arr's cached verdicts predate `digest` (matching settings moved).
+
+        Pure read - `vouch_selection` records the digest once a full pass has
+        re-checked under it. No digest on record reads as fresh: a new cache has
+        nothing to re-check, and the first full sweep vouches one.
+        """
+
+        stored = self._get_kv(selection_digest_key(arr))
+        return stored is not None and stored != digest
+
+    @override
+    def vouch_selection(self, arr: Arr, digest: str) -> None:
+        """Stage `digest` as the selection settings this arr's verdicts now reflect.
+
+        Only a run that re-checked the full library may vouch (never a
+        single-item, capped, or SeaDex-outage run - what such a run skipped was
+        not re-checked). Staged like every write: a preview run's stamp is
+        rolled back, so it never consumes a pending re-check.
+        """
+
+        self._set_kv(selection_digest_key(arr), digest)
 
     # -- per-entry records (entries + torrent_hashes) ------------------------
 

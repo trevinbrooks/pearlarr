@@ -384,6 +384,52 @@ class TestPreviewGate:
         reopened.close()
 
 
+class TestSelectionDigest:
+    """`selection_stale`/`vouch_selection`: missing-key-fresh, per-arr, commit-gated."""
+
+    def test_no_digest_on_record_reads_fresh(self, tmp_path: Path) -> None:
+        store = _open(tmp_path)
+        assert store.selection_stale(Arr.SONARR, "d1") is False
+        store.close()
+
+    def test_vouch_round_trips_through_a_real_save(self, tmp_path: Path) -> None:
+        store = _open(tmp_path)
+        store.vouch_selection(Arr.SONARR, "d1")
+        store.save(preview=False)
+        store.close()
+
+        reopened = _open(tmp_path)
+        assert reopened.selection_stale(Arr.SONARR, "d1") is False
+        assert reopened.selection_stale(Arr.SONARR, "d2") is True
+        reopened.close()
+
+    def test_preview_save_does_not_consume_a_pending_recheck(self, tmp_path: Path) -> None:
+        # Matching prefs changed (the committed digest is old); a preview run
+        # stages the new one, but its rollback must leave the re-check armed
+        # for the next real run.
+        store = _open(tmp_path)
+        store.vouch_selection(Arr.SONARR, "old")
+        store.save(preview=False)
+        store.close()
+
+        previewing = _open(tmp_path)
+        assert previewing.selection_stale(Arr.SONARR, "new") is True
+        previewing.vouch_selection(Arr.SONARR, "new")
+        previewing.save(preview=True)
+        previewing.close()
+
+        real = _open(tmp_path)
+        assert real.selection_stale(Arr.SONARR, "new") is True
+        real.close()
+
+    def test_arrs_vouch_independently(self, tmp_path: Path) -> None:
+        store = _open(tmp_path)
+        store.vouch_selection(Arr.SONARR, "d1")
+        assert store.selection_stale(Arr.SONARR, "d2") is True
+        assert store.selection_stale(Arr.RADARR, "d2") is False
+        store.close()
+
+
 class TestAnilistMeta:
     """AniList metadata records round-trip by id, are iterable, and a later `put` overwrites the prior record."""
 

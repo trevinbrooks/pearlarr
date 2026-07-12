@@ -310,3 +310,89 @@ class TestSeaDexBootNote:
 
         assert step.detail == "cached"  # the fake reports 0 fetched -> cache-warm
         assert step.outcome is OutcomeCategory.SUCCESS
+
+
+class TestSelectionRecheck:
+    """The stale-selection announcement + the full-coverage vouch rule.
+
+    Vouch state is read back through `selection_stale`: after a vouch, any
+    OTHER digest reads stale; with nothing vouched, everything reads fresh.
+    """
+
+    _NOTE = "Matching settings changed - rechecking cached entries"
+
+    def _run(
+        self,
+        logger: logging.Logger,
+        *,
+        stale: bool = False,
+        item_id: int | None = None,
+        config: AppConfig | None = None,
+        seadex: _FakeGateway | None = None,
+        process_returns: bool = False,
+    ) -> tuple[RunLoop, RecordingHub]:
+        strategy = FakeStrategy(
+            items=[FakeArrItem(item_id=3, title="A")],
+            anilist_ids={11: MappingEntry(anilist_id=11)},
+            process_returns=process_returns,
+        )
+        recording = install_recording_hub()
+        engine = _engine(_FinalizeRecorder(), logger, config=config, seadex=seadex)
+        engine._services._selection_stale = stale
+        engine.run_sync(strategy, item_id=item_id, dry_run=True, boot=BootFlow())
+        return engine, recording
+
+    def _notes(self, recording: RecordingHub) -> list[str]:
+        return [d.message for d in recording.of_type(Diagnostic)]
+
+    def _vouched_any(self, engine: RunLoop) -> bool:
+        """Whether the run recorded a digest at all (an alien digest then reads stale)."""
+
+        return engine.cache_store.selection_stale(Arr.SONARR, "some-other-digest")
+
+    def test_stale_selection_is_announced(self, logger: logging.Logger) -> None:
+        _, recording = self._run(logger, stale=True)
+
+        assert self._NOTE in self._notes(recording)
+
+    def test_fresh_selection_stays_quiet(self, logger: logging.Logger) -> None:
+        _, recording = self._run(logger, stale=False)
+
+        assert self._NOTE not in self._notes(recording)
+
+    def test_single_item_run_does_not_announce(self, logger: logging.Logger) -> None:
+        # A single-item run re-checks only its id and cannot vouch, so the whole-
+        # library note is suppressed (it would overstate the pass and recur).
+        _, recording = self._run(logger, stale=True, item_id=3)
+
+        assert self._NOTE not in self._notes(recording)
+
+    def test_ignore_update_times_suppresses_the_announcement(self, logger: logging.Logger) -> None:
+        # The ignore flag already re-checks everything; announcing a selection
+        # re-check on top would be noise.
+        _, recording = self._run(logger, stale=True, config=make_config(ignore_seadex_update_times=True))
+
+        assert self._NOTE not in self._notes(recording)
+
+    def test_full_run_vouches_the_current_digest(self, logger: logging.Logger) -> None:
+        engine, _ = self._run(logger)
+
+        assert engine.cache_store.selection_stale(Arr.SONARR, engine._config.selection_digest()) is False
+        assert self._vouched_any(engine) is True
+
+    def test_single_item_run_does_not_vouch(self, logger: logging.Logger) -> None:
+        engine, _ = self._run(logger, item_id=3)
+
+        assert self._vouched_any(engine) is False
+
+    def test_capped_run_does_not_vouch(self, logger: logging.Logger) -> None:
+        engine, _ = self._run(logger, process_returns=True)
+
+        assert self._vouched_any(engine) is False
+
+    def test_outage_run_does_not_vouch(self, logger: logging.Logger) -> None:
+        outage = _FakeGateway()
+        outage.outage = True
+        engine, _ = self._run(logger, seadex=outage)
+
+        assert self._vouched_any(engine) is False

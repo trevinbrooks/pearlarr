@@ -275,6 +275,11 @@ class RunServices:
 
         self.arr = arr
 
+        # Whether matching preferences moved since a prior full pass vouched for
+        # this arr's cached verdicts; `_skippable_entry` then re-checks every
+        # cached entry, and the run loop re-vouches once a full sweep finishes.
+        self._selection_stale = deps.cache_store.selection_stale(arr, deps.config.selection_digest())
+
         # All per-run state (stats tally, running torrent count, the active
         # title/url/coverage, the run clock, the private-only skip flags, plus the
         # run's dry_run + resolved wait-mode flags) lives on this context, replaced
@@ -302,6 +307,16 @@ class RunServices:
         """
 
         return self._ctx
+
+    @property
+    def selection_stale(self) -> bool:
+        """Whether matching settings changed since this arr's verdicts were vouched.
+
+        Read by the run loop to announce the run-wide re-check
+        `_skippable_entry` applies.
+        """
+
+        return self._selection_stale
 
     def begin_run(self, ctx: RunContext) -> None:
         """Bind the fresh run context to the hub and its per-id collaborators.
@@ -349,13 +364,15 @@ class RunServices:
         The single decision BOTH cache gates share: `al_id_needs_scan` picks
         what prefetch warms and `cached_entry_skip` what the loop skips, and
         the two must agree or un-warmed ids hit AniList one at a time. Run-wide
-        bypasses come first (no db read); then the SeaDex-timestamp compare
+        bypasses come first (no db read): the ignore flag, a selection-digest
+        change (matching preferences moved, so every cached verdict is suspect),
+        or a dirty id; then the SeaDex-timestamp compare
         (mirrors `check_al_id_in_cache`); then warn mode re-processes
         fallback-satisfied entries, so their private-only warning resurfaces
         after a switch back from fallback mode.
         """
 
-        if self._config.seadex.ignore_seadex_update_times or al_id in self._dirty_al_ids:
+        if self._config.seadex.ignore_seadex_update_times or self._selection_stale or al_id in self._dirty_al_ids:
             return None
         entry = self.cache_store.get_entry(self._ctx.arr, al_id)
         if entry is None or entry.updated_at != sd_entry.updated_at.strftime(UPDATED_AT_STR_FORMAT):

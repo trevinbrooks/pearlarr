@@ -78,6 +78,10 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-01T00:00:00Z", 5))
     store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-02T00:00:00Z", 9))
 
+    # Selection digest: an initial vouch then an upsert (only the last survives).
+    store.vouch_selection(Arr.SONARR, "digest-old")
+    store.vouch_selection(Arr.SONARR, "digest-new")
+
 
 def _observe(store: AbstractCacheStore) -> dict[str, object]:
     """Every observable read the fake-trusting tests rely on, as one comparable snapshot."""
@@ -100,6 +104,9 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
         "pending_series7": store.get_pending_for_series(Arr.SONARR, 7),
         "checkpoint_sonarr": store.get_history_checkpoint(Arr.SONARR),
         "checkpoint_radarr": store.get_history_checkpoint(Arr.RADARR),
+        "selection_current": store.selection_stale(Arr.SONARR, "digest-new"),
+        "selection_moved": store.selection_stale(Arr.SONARR, "digest-old"),
+        "selection_unvouched": store.selection_stale(Arr.RADARR, "digest-new"),
         "own_ids_sonarr": store.own_download_ids(Arr.SONARR),
         "own_ids_radarr": store.own_download_ids(Arr.RADARR),
         "stats_no_size": stats._replace(size_bytes=0),

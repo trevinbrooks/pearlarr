@@ -161,13 +161,15 @@ The warning names the exact `chmod` command to run; `pearlarr config init` creat
 
 ```text
 history gap - rechecking all entries
+Matching settings changed - rechecking cached entries
 ```
 
-Three situations make a run noticeably slower, all expected:
+Four situations make a run noticeably slower, all expected:
 
 - **The first run** downloads and parses the ID-mapping sources and evaluates the whole library from scratch.
   On a large library this takes minutes; later runs reuse the parsed mappings and the cache, and typically finish in well under a minute when little changed.
 - **A long gap since the last run** (or a restored cache) exceeds the arr-activity lookback, so change detection cannot vouch for the interval and every cached title is re-checked once - that is the "history gap" note above.
+- **A changed matching preference** (anything in the `seadex` group, or `imports.languages_*`) makes the next full run re-check every cached title against the new rules once - the "Matching settings changed" note above; see [configuration.md](configuration.md#configuration-changes-and-the-cache).
 - **A SeaDex or mapping-source hiccup** makes affected titles count as unchecked; they are simply retried next run.
 
 Runs are also deliberately paced (`advanced.sleep_time`) to be a polite API citizen, so "slow" is partly by design.
@@ -177,7 +179,8 @@ Runs are also deliberately paced (`advanced.sleep_time`) to be a polite API citi
 `cache.db` is regenerable: deleting it loses no media, and the next run rebuilds it.
 But it holds the "already handled" memory, pending-import state, and grab history - so the next run re-evaluates the whole library, may re-notify about things it already told you about, and forgets in-flight imports.
 Prefer `pearlarr cache remove` over deleting the file (it takes the run lock and cleans up the WAL/SHM sidecars).
-Removing the cache is the documented reset after selection-affecting config edits - see [configuration.md](configuration.md#configuration-changes-and-the-cache).
+Config edits never require it: a changed matching preference is detected and re-checked automatically, keeping all of the state above - see [configuration.md](configuration.md#configuration-changes-and-the-cache).
+Removing the cache is a factory reset for when the database itself is suspect (a failed `pearlarr cache check`, a restore gone wrong), not routine maintenance.
 
 ## Where the logs live
 
