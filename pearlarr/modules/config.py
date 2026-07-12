@@ -31,6 +31,8 @@ from pydantic import (
     model_validator,
 )
 
+from .config_migrations import CONFIG_VERSION, MigrationOutcome, migrate_mapping
+from .json_narrow import is_json_obj
 from .manual_import import ImportWaitMode
 
 # Tracker name classification. The *_TRACKER_NAMES tuples keep SeaDex's exact casings
@@ -606,7 +608,19 @@ class MappingsSettings(_ConfigBase):
 
 
 class AppConfig(_ConfigBase):
-    """The full validated config: one submodel per settings group."""
+    """The full validated config: one submodel per settings group.
+
+    `config_version` is the one top-level scalar; `load` brings an older file's
+    mapping forward (in memory) before validation, so removed or renamed keys
+    from a previous schema never trip `extra="forbid"`.
+    """
+
+    config_version: int = Field(default=CONFIG_VERSION, ge=1)
+    """Schema version of the config file's keys and values.
+
+    Stamped by the starter template and `pearlarr config migrate`; a file from
+    an older Pearlarr is migrated automatically in memory at every load.
+    """
 
     sonarr: SonarrSettings = Field(default_factory=SonarrSettings)
     """Sonarr connection and behavior.
@@ -651,15 +665,30 @@ class AppConfig(_ConfigBase):
     # assignment); the file checksum is the cache descriptor, the path feeds error text.
     _path: str = PrivateAttr(default="")
     _checksum: str = PrivateAttr(default="")
+    _migration: MigrationOutcome | None = PrivateAttr(default=None)
+
+    @field_validator("config_version")
+    @classmethod
+    def _refuse_newer_schema(cls, value: int) -> int:
+        """Refuse a file stamped by a newer Pearlarr, naming both versions."""
+
+        if value > CONFIG_VERSION:
+            raise ValueError(
+                f"the file was written for a newer Pearlarr (schema version {value}; "
+                f"this version reads up to {CONFIG_VERSION}) - upgrade Pearlarr",
+            )
+        return value
 
     @classmethod
     def load(cls, path: str) -> "AppConfig":
         """Locate, load and validate the config file.
 
         Copies the bundled template to `path` and raises `FileNotFoundError` when
-        the file is missing (so a first run writes a starter config), then parses and
-        validates it. An invalid config raises `pydantic.ValidationError` (a
-        `ValueError` subclass) naming the offending keys.
+        the file is missing (so a first run writes a starter config), then parses,
+        migrates an older file's mapping to the current schema (in memory only -
+        see `migration`), and validates it. An invalid config raises
+        `pydantic.ValidationError` (a `ValueError` subclass) naming the offending
+        keys.
         """
 
         if not os.path.exists(path):
@@ -668,18 +697,33 @@ class AppConfig(_ConfigBase):
 
         with open(path, "rb") as f:
             raw = f.read()
-        config = cls.model_validate(yaml.safe_load(raw) or {})
+        parsed: object = yaml.safe_load(raw) or {}
+        # Migrate BEFORE validation: an older schema's removed keys/values would
+        # otherwise trip extra="forbid". A non-mapping document skips straight to
+        # validation, which rejects it.
+        migration = migrate_mapping(parsed) if is_json_obj(parsed) else None
+        config = cls.model_validate(parsed)
         # PrivateAttr writes on a frozen model: go through object.__setattr__ so the
         # type checkers don't read it as a frozen-field mutation (it isn't - these are
         # private attrs, set once here at load and never again).
         object.__setattr__(config, "_path", path)
         object.__setattr__(config, "_checksum", md5(raw, usedforsecurity=False).hexdigest())
+        object.__setattr__(config, "_migration", migration)
         return config
 
     def checksum(self) -> str:
         """MD5 hex digest of the config file's bytes at load time (cache descriptor)."""
 
         return self._checksum
+
+    def migration(self) -> MigrationOutcome | None:
+        """The in-memory schema migration `load` applied, or None for a current file.
+
+        Non-None means the file on disk still spells the old schema; the callers
+        that report suggest `pearlarr config migrate` to rewrite it.
+        """
+
+        return self._migration
 
     def for_arr(self, arr: Arr) -> ArrSettings:
         """The per-arr connection/behavior submodel (one load serves both arrs)."""

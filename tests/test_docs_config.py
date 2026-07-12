@@ -27,7 +27,8 @@ def _leaf_fields() -> list[tuple[str, FieldInfo]]:
     for group_key, group_field in AppConfig.model_fields.items():
         pairs.append((group_key, group_field))
         annotation = group_field.annotation
-        assert isinstance(annotation, type) and issubclass(annotation, BaseModel)
+        if not (isinstance(annotation, type) and issubclass(annotation, BaseModel)):
+            continue  # a top-level scalar (config_version) is itself a leaf
         pairs.extend((f"{group_key}.{key}", field) for key, field in annotation.model_fields.items())
     return pairs
 

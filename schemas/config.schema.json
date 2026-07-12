@@ -590,6 +590,13 @@
   "additionalProperties": false,
   "description": "The full validated config: one submodel per settings group.",
   "properties": {
+    "config_version": {
+      "default": 1,
+      "description": "Schema version of the config file's keys and values. Stamped by the starter template and `pearlarr config migrate`; a file from an older Pearlarr is migrated automatically in memory at every load.",
+      "minimum": 1,
+      "title": "Config Version",
+      "type": "integer"
+    },
     "sonarr": {
       "$ref": "#/$defs/SonarrSettings",
       "description": "Sonarr connection and behavior. `url` and `api_key` are required only when a Sonarr run actually executes; a Radarr-only config still loads."

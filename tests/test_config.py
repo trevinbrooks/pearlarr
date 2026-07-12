@@ -30,6 +30,7 @@ from pearlarr.modules.config import (
     config_permissions_loose,
     secret_value,
 )
+from pearlarr.modules.config_migrations import CONFIG_VERSION, MigrationOutcome
 from pearlarr.modules.manual_import import ImportWaitMode
 
 
@@ -115,6 +116,88 @@ class TestFileLifecycle:
         assert cfg.seadex.trackers == {"nyaa"}
         assert cfg.imports.wait_mode is ImportWaitMode.OFF
         assert cfg.imports.languages_dual == ["Japanese", "English"]
+
+
+class TestSchemaMigration:
+    """`load` brings an older file's mapping to the current schema, in memory only.
+
+    A file without `config_version` is pre-versioning (v0): its removed keys and
+    values are folded forward, the outcome is reported via `migration()`, and
+    the file on disk stays byte-identical. A current file migrates nothing; a
+    newer one is refused by name.
+    """
+
+    def _load(self, tmp_path: Path, text: str) -> AppConfig:
+        cfg_path = tmp_path / "config.yml"
+        cfg_path.write_text(text, encoding="utf-8")
+        return AppConfig.load(str(cfg_path))
+
+    def test_v0_file_with_every_delta_loads_and_reports_each(self, tmp_path: Path) -> None:
+        cfg = self._load(
+            tmp_path,
+            "seadex:\n  public_only: true\nadvanced:\n  log_level: trace\nimports:\n  mode: hardlink\n",
+        )
+        # Each fold lands on the removed key's old runtime behavior.
+        assert cfg.seadex.private_releases is PrivateReleaseAction.WARN
+        assert cfg.advanced.log_level == "INFO"
+        assert cfg.imports.mode == "auto"
+        assert cfg.config_version == CONFIG_VERSION
+        outcome = cfg.migration()
+        assert outcome is not None
+        assert outcome.from_version == 0
+        assert len(outcome.notes) == 3
+        assert any("public_only" in note for note in outcome.notes)
+
+    def test_removed_allow_value_folds_to_warn(self, tmp_path: Path) -> None:
+        cfg = self._load(tmp_path, "seadex:\n  private_releases: allow\n")
+        assert cfg.seadex.private_releases is PrivateReleaseAction.WARN
+        outcome = cfg.migration()
+        assert outcome is not None
+        assert any("'allow'" in note for note in outcome.notes)
+
+    def test_v0_file_without_deltas_is_stamped_silently(self, tmp_path: Path) -> None:
+        # Nothing to fold: the pass stamps the version and carries no notes.
+        cfg = self._load(tmp_path, "sonarr:\n  url: http://x\n")
+        assert cfg.sonarr.url == "http://x"
+        outcome = cfg.migration()
+        assert outcome is not None
+        assert outcome == MigrationOutcome(from_version=0, notes=())
+
+    def test_current_file_migrates_nothing(self, tmp_path: Path) -> None:
+        cfg = self._load(tmp_path, f"config_version: {CONFIG_VERSION}\nsonarr:\n  url: http://x\n")
+        assert cfg.migration() is None
+
+    def test_blank_version_counts_as_pre_versioning(self, tmp_path: Path) -> None:
+        # `config_version:` parses to None; the blank-drop would default it, but
+        # the loader must still treat the file as v0 and stamp it.
+        cfg = self._load(tmp_path, "config_version:\n")
+        outcome = cfg.migration()
+        assert outcome is not None
+        assert outcome.from_version == 0
+        assert cfg.config_version == CONFIG_VERSION
+
+    def test_newer_file_is_refused_naming_both_versions(self, tmp_path: Path) -> None:
+        with pytest.raises(ValidationError, match="newer Pearlarr"):
+            self._load(tmp_path, f"config_version: {CONFIG_VERSION + 1}\n")
+
+    def test_non_int_version_is_a_validation_error_not_a_migration(self, tmp_path: Path) -> None:
+        # Garbage must surface under its key, not be silently re-stamped.
+        with pytest.raises(ValidationError, match="config_version"):
+            self._load(tmp_path, "config_version: banana\n")
+
+    def test_migration_never_touches_the_file(self, tmp_path: Path) -> None:
+        cfg_path = tmp_path / "config.yml"
+        text = "seadex:\n  private_releases: allow\n"
+        cfg_path.write_text(text, encoding="utf-8")
+        cfg = AppConfig.load(str(cfg_path))
+        assert cfg_path.read_text(encoding="utf-8") == text
+        # The checksum (the cache descriptor) hashes the on-disk bytes, so an
+        # in-memory migration cannot shift it between runs.
+        assert cfg.checksum() == hashlib.md5(text.encode()).hexdigest()
+
+    def test_direct_validation_keeps_the_version_floor(self) -> None:
+        with pytest.raises(ValidationError, match="config_version"):
+            AppConfig.model_validate({"config_version": 0})
 
 
 class TestDefaults:

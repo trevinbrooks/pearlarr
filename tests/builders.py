@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Any, override
 
 import httpx
+from pydantic import BaseModel
 from seadex import EntryRecord, File, Tag, TorrentRecord, Tracker
 
 from pearlarr.modules.anilist_client import AniListClient
@@ -75,10 +76,11 @@ SEP = " · "
 # make_config/make_services default to - via the first-wins `setdefault` below.
 _FIELD_GROUP: dict[str, str] = {}
 for _group, _group_field in AppConfig.model_fields.items():
-    # `annotation` is the group's submodel class (typed Optional on FieldInfo, but
-    # every AppConfig group field is a concrete `_ConfigBase` subclass); read its
-    # own field names off it.
+    # `annotation` is the group's submodel class (typed Optional on FieldInfo);
+    # the isinstance guard skips the one top-level scalar (config_version).
     _submodel: Any = _group_field.annotation
+    if not (isinstance(_submodel, type) and issubclass(_submodel, BaseModel)):
+        continue
     for _field in _submodel.model_fields:
         _FIELD_GROUP.setdefault(_field, _group)
 
