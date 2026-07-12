@@ -1,0 +1,18 @@
+# Markdown lint gate (markdownlint-cli2; the docs job in build.yaml runs it).
+# Generated files are deliberately in scope - the generator must emit clean markdown.
+# Local run from the repo root: npx markdownlint-cli2
+globs:
+  - "*.md"
+  - "docs/**/*.md"
+  - ".github/**/*.md"
+config:
+  # Prose and generated tables are not width-capped.
+  MD013: false
+  # The README shows bare `$ ` command prompts without output on purpose.
+  MD014: false
+  # Keep a Changelog repeats "### Added"-style headings under every release.
+  MD024:
+    siblings_only: true
+  # One table style everywhere, including generator output.
+  MD060:
+    style: "padded"

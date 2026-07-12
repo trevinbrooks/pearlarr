@@ -1,0 +1,6 @@
+# Link checker (lychee). Per-PR CI runs offline (local file links and anchors
+# only, in build.yaml); the weekly links.yaml run checks external URLs too.
+exclude = [
+    # Placeholder instance URLs in config examples.
+    "^http://localhost",
+]

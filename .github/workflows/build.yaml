@@ -87,6 +87,27 @@ jobs:
       - name: Pytest
         run: uv run pytest tests/ -q
 
+  # Docs gate: spelling ([tool.codespell] in pyproject.toml), markdown lint
+  # (.markdownlint-cli2.yaml; generated files included on purpose), and local
+  # link/anchor integrity (lychee.toml). External URLs are checked weekly by
+  # links.yaml instead - a flaky remote host must not block a PR.
+  docs:
+    name: Docs (spelling, markdown, links)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+      - name: Codespell
+        run: uvx codespell@2.4.2 .
+      - name: Markdownlint
+        run: npx --yes markdownlint-cli2@0.23.0
+      - name: Lychee (offline - local file links and anchors)
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --offline --include-fragments --no-progress './**/*.md'
+          fail: true
+
   # The compose example is documentation that can rot; docker compose config
   # parses + interpolates it (services, PUID/PGID defaults) without running anything.
   compose_example:

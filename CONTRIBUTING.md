@@ -33,8 +33,12 @@ uv run pytest -q
 
 CI (`.github/workflows/build.yaml`) runs the same gates on Python 3.13 and 3.14,
 plus a total-coverage floor and a changed-line coverage gate (diff-cover, 90%).
-Dependabot watches the GitHub Actions and pip ecosystems weekly. Run one test
-file with `uv run pytest tests/test_planner.py -q`.
+Docs get their own CI job: codespell (`[tool.codespell]` in `pyproject.toml`),
+markdownlint (`.markdownlint-cli2.yaml` - generated files included on purpose),
+and offline lychee for local links and anchors (`lychee.toml`); external URLs
+are checked weekly by `links.yaml`. Dependabot watches the GitHub Actions and
+pip ecosystems weekly. Run one test file with
+`uv run pytest tests/test_planner.py -q`.
 
 ### Suppressions
 

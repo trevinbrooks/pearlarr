@@ -161,6 +161,14 @@ exclude_also = [
     "if __name__ == .__main__.:",
 ]
 
+# Spell check (the docs job in build.yaml runs it over the whole tree).
+# tests/fixtures holds captured arr payloads - real-world text stays byte-accurate.
+[tool.codespell]
+skip = "./.git,./.venv,./uv.lock,./tests/fixtures,./docs/assets,./htmlcov"
+# strat = the hypothesis-strategy naming convention; unparseable = the house
+# spelling (matches PARSEABLE_TRACKERS); disjointness = the set-theory term.
+ignore-words-list = "strat,unparseable,disjointness"
+
 [tool.ruff]
 line-length = 120
 

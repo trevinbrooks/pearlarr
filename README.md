@@ -1,7 +1,7 @@
 # Pearlarr
 
-[![](https://img.shields.io/pypi/v/pearlarr.svg?label=PyPI&style=flat-square)](https://pypi.org/pypi/pearlarr/)
-[![](https://img.shields.io/pypi/pyversions/pearlarr.svg?label=Python&color=yellow&style=flat-square)](https://pypi.org/pypi/pearlarr/)
+[![PyPI](https://img.shields.io/pypi/v/pearlarr.svg?label=PyPI&style=flat-square)](https://pypi.org/pypi/pearlarr/)
+[![Python](https://img.shields.io/pypi/pyversions/pearlarr.svg?label=Python&color=yellow&style=flat-square)](https://pypi.org/pypi/pearlarr/)
 [![Actions](https://img.shields.io/github/actions/workflow/status/trevinbrooks/pearlarr/build.yaml?branch=main&style=flat-square)](https://github.com/trevinbrooks/pearlarr/actions)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg?label=License&style=flat-square)](LICENSE)
 

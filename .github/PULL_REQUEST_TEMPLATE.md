@@ -1,3 +1,4 @@
+<!-- markdownlint-disable-file MD041 - a PR body fragment, not a standalone page -->
 <!-- What changes, and why. -->
 
 ## Checklist
