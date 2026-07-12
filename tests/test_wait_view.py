@@ -44,7 +44,11 @@ def _logger_with_console(*, force_terminal: bool, width: int = 100) -> logging.L
     logger.handlers.clear()
     logger.propagate = False
     logger.setLevel(logging.INFO)
-    logger.addHandler(RichConsoleHandler(Console(file=io.StringIO(), force_terminal=force_terminal, width=width)))
+    logger.addHandler(
+        RichConsoleHandler(
+            Console(file=io.StringIO(), force_terminal=force_terminal, legacy_windows=False, width=width)
+        )
+    )
     return logger
 
 

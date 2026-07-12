@@ -50,7 +50,7 @@ _ENTRY = ScopeId(ScopeKind.ENTRY, 3)
 
 def _renderer(width: int = 120) -> tuple[RichRenderer, io.StringIO]:
     stream = io.StringIO()
-    console = Console(file=stream, force_terminal=True, width=width)
+    console = Console(file=stream, force_terminal=True, legacy_windows=False, width=width)
     return RichRenderer(lambda: console), stream
 
 
@@ -343,7 +343,8 @@ class TestRendering:
         """The caps probe drives the badge: no unicode -> the legacy padded words."""
 
         stream = AsciiStringIO()
-        console = Console(file=stream, force_terminal=True, width=120)
+        # legacy_windows pinned so the ASCII encoding alone drives the fallback.
+        console = Console(file=stream, force_terminal=True, legacy_windows=False, width=120)
         renderer = RichRenderer(lambda: console)
 
         _feed(

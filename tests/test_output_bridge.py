@@ -483,6 +483,8 @@ def full_stack(
     del app_logger  # isolation + teardown ordering only
     stream = TtyStringIO()
     monkeypatch.setattr(sys, "stdout", stream)
+    # Windows CI has no VT console; the fake TTY plays a modern terminal.
+    monkeypatch.setattr("rich.console.detect_legacy_windows", lambda: False)
     hub = OutputHub([FileLogSink(str(tmp_path / "logs"))], console=RichRenderer())
     install_hub(hub)
     install_bridge()
@@ -590,6 +592,8 @@ class TestFullStackSeams:
         del app_logger
         stream_one = TtyStringIO()
         monkeypatch.setattr(sys, "stdout", stream_one)
+        # Windows CI has no VT console; the fake TTY plays a modern terminal.
+        monkeypatch.setattr("rich.console.detect_legacy_windows", lambda: False)
         hub = OutputHub([], console=RichRenderer())
         install_hub(hub)
         bridge = install_bridge()

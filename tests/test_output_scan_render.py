@@ -264,7 +264,7 @@ _WIDTH = 100
 
 def _renderer(width: int = _WIDTH) -> tuple[RichRenderer, io.StringIO]:
     stream = io.StringIO()
-    console = Console(file=stream, force_terminal=True, width=width)
+    console = Console(file=stream, force_terminal=True, legacy_windows=False, width=width)
     return RichRenderer(lambda: console), stream
 
 

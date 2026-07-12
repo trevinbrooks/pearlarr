@@ -161,7 +161,9 @@ class TestUpgradeConfigFile:
 
     def _write(self, tmp_path: Path, text: str) -> str:
         path = tmp_path / "config.yml"
-        path.write_text(text, encoding="utf-8")
+        # Bytes, not text: the backup assert compares LF bytes exactly, and
+        # write_text would land CRLF on Windows.
+        path.write_bytes(text.encode())
         return str(path)
 
     def test_old_file_is_rewritten_with_backup_and_equal_meaning(self, tmp_path: Path) -> None:

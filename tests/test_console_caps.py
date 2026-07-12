@@ -15,7 +15,7 @@ from pearlarr.modules.console_caps import CapsCache, detect_capabilities
 
 
 def _console(width: int = 100) -> Console:
-    return Console(file=io.StringIO(), force_terminal=True, width=width)
+    return Console(file=io.StringIO(), force_terminal=True, legacy_windows=False, width=width)
 
 
 def test_same_console_identity_returns_the_cached_probe() -> None:

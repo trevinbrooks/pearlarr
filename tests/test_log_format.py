@@ -166,7 +166,7 @@ def _rich_setup(name: str, stream: io.StringIO | None = None) -> tuple[logging.L
     """A DEBUG-level logger over a RichConsoleHandler writing to a buffer."""
 
     stream = stream if stream is not None else io.StringIO()
-    handler = RichConsoleHandler(Console(file=stream, width=200))
+    handler = RichConsoleHandler(Console(file=stream, legacy_windows=False, width=200))
     logger = logging.getLogger(name)
     logger.handlers.clear()
     logger.propagate = False
@@ -274,6 +274,8 @@ class TestInvalidLevelComplaint:
         del app_logger
         stream = TtyStringIO()
         monkeypatch.setattr(sys, "stdout", stream)
+        # Windows CI has no VT console; the fake TTY plays a modern terminal.
+        monkeypatch.setattr("rich.console.detect_legacy_windows", lambda: False)
 
         setup_logger(log_level="BOGUS", console_format="rich")
 

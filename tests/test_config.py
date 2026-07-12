@@ -151,7 +151,7 @@ class TestSchemaMigration:
         # reject by name even without a config_version key - a version-less
         # file may just as well be a new hand-written config.
         with pytest.raises(ValidationError, match="log_level"):
-            self._load(tmp_path, "advanced:\n  log_level: WARNIN\n")
+            self._load(tmp_path, "advanced:\n  log_level: WARNIN\n")  # codespell:ignore warnin
         with pytest.raises(ValidationError, match="mode"):
             self._load(tmp_path, "imports:\n  mode: hardlink\n")
 
@@ -196,7 +196,7 @@ class TestSchemaMigration:
     def test_migration_never_touches_the_file(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "config.yml"
         text = "seadex:\n  private_releases: allow\n"
-        cfg_path.write_text(text, encoding="utf-8")
+        cfg_path.write_bytes(text.encode())  # LF bytes exactly; the checksum assert hashes them
         cfg = AppConfig.load(str(cfg_path))
         assert cfg_path.read_text(encoding="utf-8") == text
         # The checksum (the cache descriptor) hashes the on-disk bytes, so an
