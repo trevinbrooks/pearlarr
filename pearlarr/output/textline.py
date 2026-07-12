@@ -129,10 +129,19 @@ class _Line:
     trace: str | None = None
 
 
-def _flat(text: str) -> str:
-    """Escape newlines so a message can never break the one-line grammar."""
+# Control characters (C0 except tab, DEL, C1) escape to \xNN so external text -
+# torrent titles, or a hostile capture replayed to a TTY - can neither break the
+# one-line grammar nor drive the terminal (cursor movement rewrites prior lines).
+_CTRL_TABLE: Final = str.maketrans(
+    {0x0A: "\\n", 0x0D: "\\r"}
+    | {code: f"\\x{code:02x}" for code in (*range(0x09), 0x0B, 0x0C, *range(0x0E, 0x20), 0x7F, *range(0x80, 0xA0))}
+)
 
-    return text.replace("\n", "\\n").replace("\r", "\\r")
+
+def _flat(text: str) -> str:
+    """Escape control characters so a message can never break or forge the one-line grammar."""
+
+    return text.translate(_CTRL_TABLE)
 
 
 def _needs_quote(text: str) -> bool:
@@ -151,9 +160,9 @@ def _field_text(value: FieldValue) -> str:
     # grammar-sink line); compact-encode them so the formatter stays total.
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
     if _needs_quote(text):
-        escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
+        escaped = text.replace("\\", "\\\\").replace('"', '\\"').translate(_CTRL_TABLE)
         return f'"{escaped}"'
-    return text
+    return text.translate(_CTRL_TABLE)
 
 
 def _logfmt(fields: tuple[Field, ...]) -> str:

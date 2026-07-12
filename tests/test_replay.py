@@ -254,6 +254,30 @@ def test_an_empty_capture_is_a_failure(tmp_path: Path, capsys: pytest.CaptureFix
     assert "No events found" in err
 
 
+def test_a_downstream_broken_pipe_ends_quietly(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # `pearlarr replay big.jsonl | head` closes stdout mid-stream; that is the
+    # consumer's choice, not a failure - exit 0, no error line.
+    envelope = _envelope(
+        schema_version=1, time=_FIXED_TIME, event="run_started", level="INFO", message="started", component="run"
+    )
+    path = tmp_path / "capture.jsonl"
+    path.write_text(envelope + "\n", encoding="utf-8")
+
+    def broken_echo(message: str) -> None:
+        raise BrokenPipeError(32, "Broken pipe")
+
+    monkeypatch.setattr("pearlarr.replay.typer.echo", broken_echo)
+
+    result = cli_replay(str(path))
+
+    assert result is True
+    assert "Cannot read" not in capsys.readouterr().err
+
+
 def test_a_missing_file_is_reported_not_raised(capsys: pytest.CaptureFixture[str]) -> None:
     result = cli_replay("/no/such/capture.jsonl")
     err = capsys.readouterr().err
@@ -274,13 +298,84 @@ def test_stdin_is_read_with_a_dash(
         message="from stdin",
         component="run",
     )
-    monkeypatch.setattr("sys.stdin", io.StringIO(envelope + "\n"))
+    stdin = io.TextIOWrapper(io.BytesIO((envelope + "\n").encode("utf-8")), encoding="utf-8")
+    monkeypatch.setattr("sys.stdin", stdin)
 
     result = cli_replay("-")
     captured = capsys.readouterr()
 
     assert result is True
     assert captured.out.splitlines() == [f"{_FIXED_TS} INFO [run] from stdin"]
+    assert not stdin.buffer.closed  # replay must never close the process's stdin
+
+
+def test_a_non_utf8_byte_never_aborts_the_capture(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Docker interleaves raw stderr; a binary fragment decodes to U+FFFD and is
+    # skipped as noise, and a bad byte INSIDE an envelope still renders - never a traceback.
+    envelope = _envelope(
+        schema_version=1, time=_FIXED_TIME, event="run_started", level="INFO", message="started", component="run"
+    )
+    corrupted = envelope.replace("started", "sta?ted").encode("utf-8").replace(b"?", b"\xff")
+    path = tmp_path / "capture.jsonl"
+    path.write_bytes(b"\xff\xfe binary stderr noise\n" + envelope.encode("utf-8") + b"\n" + corrupted + b"\n")
+
+    result = cli_replay(str(path))
+    captured = capsys.readouterr()
+
+    assert result is True
+    assert f"{_FIXED_TS} INFO [run] started" in captured.out
+    assert f"{_FIXED_TS} INFO [run] sta�ted" in captured.out
+    assert "Skipped 1 non-event line" in captured.err
+
+
+def test_a_unicode_line_separator_inside_a_message_stays_one_event(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # U+2028 is a str.splitlines boundary but not a stream line break; the event
+    # must render whole, not tear into two skipped fragments.
+    envelope = _envelope(
+        schema_version=1,
+        time=_FIXED_TIME,
+        event="run_started",
+        level="INFO",
+        message="line break",
+        component="run",
+    )
+    path = tmp_path / "capture.jsonl"
+    path.write_text(envelope + "\n", encoding="utf-8")
+
+    result = cli_replay(str(path))
+    captured = capsys.readouterr()
+
+    assert result is True
+    assert captured.err == ""
+    assert captured.out == f"{_FIXED_TS} INFO [run] line break\n"
+
+
+def test_terminal_control_sequences_are_neutralized(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A hostile capture must not drive the reader's terminal: cursor movement in a
+    # message and an OSC title-set in a field value both escape to \xNN text.
+    hostile = _envelope(
+        schema_version=1,
+        time=_FIXED_TIME,
+        event="run_started",
+        level="INFO",
+        message="\x1b[1A\x1b[2Kforged line",
+        component="run",
+        name="\x1b]0;evil\x07",
+    )
+
+    result, out, _err = _replay(tmp_path, hostile + "\n", capsys)
+
+    assert result is True
+    assert out == [f"{_FIXED_TS} INFO [run] \\x1b[1A\\x1b[2Kforged line name=\\x1b]0;evil\\x07"]
 
 
 class TestCliRunnerExitCodes:
