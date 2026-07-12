@@ -628,10 +628,10 @@ class DownloadPlanner:
                     self.logger.debug(f"Found SeaDex match to {self.arr.capitalize()} for {season_ep_str}.")
                     if not size_match:
                         self.logger.debug(
-                            f"-> Sizes are different: {sonarr_ep_size} (Sonarr), {seadex_ep_size} (SeaDex)",
+                            f"Sizes are different: {sonarr_ep_size} (Sonarr), {seadex_ep_size} (SeaDex)",
                         )
                     else:
-                        self.logger.debug(f"-> Sizes match: {sonarr_ep_size}")
+                        self.logger.debug(f"Sizes match: {sonarr_ep_size}")
 
                 rg_matches[seadex_idx] = True
 

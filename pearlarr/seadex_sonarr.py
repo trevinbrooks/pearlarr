@@ -9,7 +9,7 @@ from .arr_http import ArrHttp, make_httpx_client
 from .cache import CacheRecord
 from .config import Arr, secret_value
 from .grab_pipeline import GrabRequest
-from .log import EntryState
+from .log import EntryState, pluralize
 from .manual_import import (
     ImportProbe,
     ImportProgress,
@@ -420,7 +420,9 @@ class SonarrSync(ArrSync[SonarrItem]):
         sonarr_release_dict = self._episodes.get_sonarr_release_dict(ep_list=ep_list)
         sonarr_release_groups = list(sonarr_release_dict.keys())
 
-        self.logger.debug(f"Sonarr release group(s): {', '.join(rg or '(none)' for rg in sonarr_release_groups)}")
+        self.logger.debug(
+            f"Sonarr release {pluralize(len(sonarr_release_groups), 'group')}: {', '.join(rg or '(none)' for rg in sonarr_release_groups)}"
+        )
 
         # Produce a dictionary of info from the SeaDex request
         seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)

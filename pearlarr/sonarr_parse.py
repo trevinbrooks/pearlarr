@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import Any, NamedTuple, NotRequired, TypedDict, cast
 
 from .cache import UPDATED_AT_STR_FORMAT, record_is_fresh
+from .log import count_noun
 from .run_services import RunDeps
 from .seadex_types import EpisodeRecord, SeadexDict
 from .sonarr_client import AbstractSonarrClient
@@ -331,7 +332,7 @@ class SonarrParseCache:
         # rows, later calls evict nothing.
         evicted = self.cache_store.evict_sonarr_parse(window.cutoff)
         if evicted:
-            self.logger.debug(f"Evicted {evicted} stale Sonarr parse record(s)")
+            self.logger.debug(f"Evicted {count_noun(evicted, 'stale Sonarr parse record')}")
 
         # Concurrently warm the cache for any not-yet-cached files so the mapping
         # loop below reads them as hits (no-op when sequential or already warm).

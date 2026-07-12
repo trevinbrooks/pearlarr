@@ -187,6 +187,8 @@ class TestRichHandlerSeam:
         """Plain WARNING+ (incl. exc_info) never render here while a bridge is installed.
 
         The hub places the badge instead - rendering here too would double it.
+        Ownership is registration, not seat state: pre-`begin_cycle` or after a
+        strike-out, the hub's STDERR fallback is the single net.
         """
 
         logger, stream = _rich_setup("pearlarr-test-rich-seam-badge")
@@ -217,20 +219,6 @@ class TestRichHandlerSeam:
         logger.warning("watch out")
 
         assert "WARNING  watch out" in strip_ansi(stream.getvalue())
-
-    def test_plain_warning_skips_the_handler_even_with_the_hub_seat_inactive(self) -> None:
-        """Ownership is registration, not seat state.
-
-        Pre-`begin_cycle` or after a strike-out, the hub's STDERR fallback is the single net - the handler
-        rendering here too printed the same warning twice (once per net).
-        """
-
-        logger, stream = _rich_setup("pearlarr-test-rich-seam-struck-out")
-        mark_hub_console_owner()
-
-        logger.warning("watch out")
-
-        assert stream.getvalue() == ""
 
     def test_plain_info_still_renders_without_a_badge(self) -> None:
         logger, stream = _rich_setup("pearlarr-test-rich-seam-info")

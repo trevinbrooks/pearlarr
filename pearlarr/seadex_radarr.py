@@ -5,6 +5,7 @@ from typing import override
 from .cache import CacheRecord
 from .config import Arr
 from .grab_pipeline import GrabRequest
+from .log import pluralize
 from .manual_import import ImportProbe, ImportProgress, ImportReadiness, PendingImport
 from .mappings import ExternalIds, MappingEntry
 from .output import hub_warn
@@ -161,7 +162,9 @@ class RadarrSync(ArrSync[RadarrItem]):
         )
         radarr_release_groups = list(radarr_release_dict)
 
-        self.logger.debug(f"Radarr release group(s): {', '.join(rg or '(none)' for rg in radarr_release_groups)}")
+        self.logger.debug(
+            f"Radarr release {pluralize(len(radarr_release_groups), 'group')}: {', '.join(rg or '(none)' for rg in radarr_release_groups)}"
+        )
 
         # Produce a dictionary of info from the SeaDex request
         seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)

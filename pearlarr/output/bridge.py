@@ -138,8 +138,10 @@ class HubBridgeHandler(HubBridgeBase):
 def install_bridge() -> HubBridgeHandler:
     """Attach ONE bridge to the root and app loggers; flip warnings capture on.
 
-    The bridge feeds whatever hub the registry holds (`install_hub` pairs
-    freely). Idempotent by replacement: any prior bridge is removed first, so a
+    The bridge feeds whatever hub the registry holds, so a later `install_hub`
+    swap re-points it automatically - but install a real hub before (or with)
+    the bridge: under the renderer-less default hub, adopted records drop while
+    the rich handler stands down. Idempotent by replacement: any prior bridge is removed first, so a
     repeat install never doubles up — and `setup_logger`'s per-cycle handler
     rebuilds preserve the installed one (`HubBridgeBase`).
     """
