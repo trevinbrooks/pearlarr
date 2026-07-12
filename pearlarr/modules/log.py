@@ -164,6 +164,41 @@ def render_rule(char: str) -> Rule:
     return Rule(style="grey37", characters="─")
 
 
+@dataclass(frozen=True, slots=True)
+class Badge:
+    """One severity's console badge: the glyph, its padded-word ASCII fallback, and their style."""
+
+    glyph: str
+    word: str
+    style: str
+
+
+# Level -> badge. INFO/DEBUG are deliberately absent, so they print without a
+# prefix. The glyphs extend the cockpit ledgers' ✔/⚠/✖ language.
+LEVEL_BADGES = {
+    logging.WARNING: Badge("⚠", "WARNING", "yellow"),
+    logging.ERROR: Badge("✖", "ERROR", "bold red"),
+    logging.CRITICAL: Badge("‼", "CRITICAL", "bold white on red"),
+}
+
+
+def console_supports_unicode(console: Console) -> bool:
+    """Whether the console can encode the glyphs/blocks the styled surfaces draw.
+
+    Shared by the badge surfaces here and `console_caps.detect_capabilities`
+    (which imports this module), so every glyph choice degrades on one probe.
+    """
+
+    if getattr(console, "legacy_windows", False):
+        return False
+    encoding = console.encoding or "utf-8"
+    try:
+        "✔━▏░⚠✖‼".encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return False
+    return True
+
+
 class RichConsoleHandler(logging.Handler):
     """The rich-TTY surface for RAW first-party records only.
 
@@ -183,14 +218,6 @@ class RichConsoleHandler(logging.Handler):
     mistaken for a style tag.
     """
 
-    # Level -> (badge label, rich style). INFO/DEBUG are deliberately absent,
-    # so they print without a prefix.
-    LEVEL_BADGES = {
-        logging.WARNING: ("WARNING", "yellow"),
-        logging.ERROR: ("ERROR", "bold red"),
-        logging.CRITICAL: ("CRITICAL", "bold white on red"),
-    }
-
     # Cap how many stack frames a rendered traceback shows. An unexpected crash
     # is logged as a legible excerpt (rich keeps the outermost and innermost
     # frames and elides the middle when the stack is deeper than this) rather
@@ -200,6 +227,8 @@ class RichConsoleHandler(logging.Handler):
     def __init__(self, console: Console, level: int = logging.NOTSET) -> None:
         super().__init__(level=level)
         self.console = console
+        # Probed once; the console identity is fixed for this handler's lifetime.
+        self._use_unicode = console_supports_unicode(console)
 
     def _print_line(self, record: logging.LogRecord, message: str) -> None:
         """A plain message: level badge for WARNING+.
@@ -207,10 +236,10 @@ class RichConsoleHandler(logging.Handler):
         Emitted whole (soft_wrap) so the terminal handles any overflow, rather
         than rich re-wrapping with unindented continuation lines.
         """
-        if self.LEVEL_BADGES.get(record.levelno) is None:
+        if LEVEL_BADGES.get(record.levelno) is None:
             line = Text(message)
         else:
-            line = badge_line(record.levelno, message)
+            line = badge_line(record.levelno, message, use_unicode=self._use_unicode)
 
         print_literal(self.console, line)
 
@@ -234,7 +263,7 @@ class RichConsoleHandler(logging.Handler):
             # The bridge-adopted event still carries the full plain-text
             # traceback to the FileLogSink, so nothing is lost from the log file.
             if record.exc_info:
-                print_literal(self.console, badge_line(record.levelno, message))
+                print_literal(self.console, badge_line(record.levelno, message, use_unicode=self._use_unicode))
                 exc_type, exc_value, exc_tb = record.exc_info
                 if exc_type is not None and exc_value is not None:
                     self.console.print(
@@ -253,15 +282,18 @@ class RichConsoleHandler(logging.Handler):
             self.handleError(record)
 
 
-def badge_line(levelno: int, message: str) -> Text:
+def badge_line(levelno: int, message: str, *, use_unicode: bool) -> Text:
     """`message` behind its level badge — the ONE home of the badge column grammar.
 
-    Levels without a badge fall back to the ERROR one (only the exc_info arm,
-    which always badges, can reach that).
+    A unicode console gets the glyph badge ("⚠ ...", the cockpit ledgers'
+    look); ASCII falls back to the padded word ("WARNING  ..."). Levels
+    without a badge fall back to the ERROR one (only the exc_info arm, which
+    always badges, can reach that).
     """
 
-    label, style = RichConsoleHandler.LEVEL_BADGES.get(levelno, ("ERROR", "bold red"))
-    line = Text(f"{label:<8} ", style=style)
+    badge = LEVEL_BADGES.get(levelno, LEVEL_BADGES[logging.ERROR])
+    prefix = f"{badge.glyph} " if use_unicode else f"{badge.word:<8} "
+    line = Text(prefix, style=badge.style)
     line.append(message)
     return line
 

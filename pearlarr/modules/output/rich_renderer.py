@@ -71,7 +71,7 @@ from .scan_lines import LegacyLine, ScanEvent, render_legacy_lines, scan_event_l
 from .trace import CapturedTrace
 from .wait_region import WaitRegion
 from ..console_caps import CapsCache, console_of
-from ..log import INDENT, LOG_NAME, RichConsoleHandler, badge_line, console_level, print_literal
+from ..log import INDENT, LEVEL_BADGES, LOG_NAME, badge_line, console_level, print_literal
 
 
 def live_console() -> Console | None:
@@ -94,18 +94,19 @@ def diagnostic_threshold(level: int, *, first_party: bool) -> int:
     return max(base, logging.WARNING)
 
 
-def diagnostic_text(event: Diagnostic, *, indented: bool) -> Text:
+def diagnostic_text(event: Diagnostic, *, indented: bool, use_unicode: bool) -> Text:
     """The rendered console line for a diagnostic — pure, golden-testable.
 
-    WARNING+ get the legacy badge word/styles (one look, no drift); INFO/DEBUG
-    render dim, in-context (the unconfigured-arr note's eventual look).
+    WARNING+ get the badge (glyph, or the padded word when `use_unicode` is
+    off — one look, no drift); INFO/DEBUG render dim, in-context (the
+    unconfigured-arr note's eventual look).
     """
 
     indent = INDENT if indented else ""
     message = attributed_message(event)
-    if RichConsoleHandler.LEVEL_BADGES.get(int(event.severity)) is None:
+    if LEVEL_BADGES.get(int(event.severity)) is None:
         return Text(f"{indent}{message}", style="grey50")
-    return Text(indent).append_text(badge_line(int(event.severity), message))
+    return Text(indent).append_text(badge_line(int(event.severity), message, use_unicode=use_unicode))
 
 
 @final
@@ -121,14 +122,16 @@ class RichRenderer:
         time_source: Callable[[], float] = time.monotonic,
     ) -> None:
         # `caps_cache` is the process-shared instance in production (cli
-        # wiring, stable across seat swaps); None builds a private cache.
+        # wiring, stable across seat swaps); None builds one private cache
+        # shared by this seat's surfaces (diagnostics + both regions).
         self._console_source = console_source
+        self._caps = caps_cache if caps_cache is not None else CapsCache()
         self._crumbs = BreadcrumbFold()
         self._level = int(Severity.INFO)
-        self._boot = BootRegion(console_source, caps_cache, level_source=self._current_level)
+        self._boot = BootRegion(console_source, self._caps, level_source=self._current_level)
         self._wait = WaitRegion(
             console_source,
-            caps_cache,
+            self._caps,
             level_source=self._current_level,
             time_source=time_source,
         )
@@ -214,7 +217,8 @@ class RichRenderer:
         console = self._console_source()
         if console is None:
             return
-        print_literal(console, diagnostic_text(event, indented=self._cockpit_open()))
+        use_unicode = self._caps.for_console(console).unicode
+        print_literal(console, diagnostic_text(event, indented=self._cockpit_open(), use_unicode=use_unicode))
         if event.trace is not None:
             console.print(
                 Traceback(

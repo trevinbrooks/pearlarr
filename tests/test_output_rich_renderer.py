@@ -41,7 +41,7 @@ from pearlarr.modules.output import (
     diagnostic_threshold,
 )
 
-from .fakes import strip_ansi
+from .fakes import AsciiStringIO, strip_ansi
 
 _BOOT = ScopeId(ScopeKind.BOOT_SECTION, 1)
 _WAIT = ScopeId(ScopeKind.WAIT_REGION, 2)
@@ -75,21 +75,21 @@ class TestPlacement:
 
         _feed(renderer, ScopeOpened(scope=_BOOT, label="boot"), _warning("perms loose"))
 
-        assert _lines(stream) == [f"{INDENT}WARNING  perms loose"]
+        assert _lines(stream) == [f"{INDENT}⚠ perms loose"]
 
     def test_closed_boot_section_renders_at_column_zero(self) -> None:
         renderer, stream = _renderer()
 
         _feed(renderer, ScopeOpened(scope=_BOOT, label="boot"), ScopeClosed(scope=_BOOT), _warning("late"))
 
-        assert _lines(stream) == ["WARNING  late"]
+        assert _lines(stream) == ["⚠ late"]
 
     def test_open_wait_region_indents(self) -> None:
         renderer, stream = _renderer()
 
         _feed(renderer, ScopeOpened(scope=_WAIT, label="wait"), _warning("webhook flaked"))
 
-        assert _lines(stream) == [f"{INDENT}WARNING  webhook flaked"]
+        assert _lines(stream) == [f"{INDENT}⚠ webhook flaked"]
 
     def test_mid_scan_stays_at_column_zero_under_run_and_item_alone(self) -> None:
         """RUN/ITEM are structural, not indented contexts: between entries (the item's own rows), a diagnostic keeps column 0.
@@ -108,7 +108,7 @@ class TestPlacement:
 
         # The scan arm renders the banner/header lines; the diagnostic
         # itself lands un-indented at column 0.
-        assert _lines(stream)[-1] == "WARNING  mid-scan"
+        assert _lines(stream)[-1] == "⚠ mid-scan"
 
     def test_begin_cycle_resets_the_fold(self) -> None:
         renderer, stream = _renderer()
@@ -117,7 +117,7 @@ class TestPlacement:
         renderer.begin_cycle()
         _feed(renderer, _warning("fresh cycle"))
 
-        assert _lines(stream) == ["WARNING  fresh cycle"]
+        assert _lines(stream) == ["⚠ fresh cycle"]
 
 
 class TestUnwindPlacement:
@@ -142,7 +142,7 @@ class TestUnwindPlacement:
         )
 
         # RunFinished renders nothing itself; it just empties the frontier.
-        assert _lines(stream)[-1] == "WARNING  Sonarr run failed"
+        assert _lines(stream)[-1] == "⚠ Sonarr run failed"
 
     def test_without_the_unwind_emit_the_error_indents_under_the_entry(self) -> None:
         # The negative control - Band D review finding #7, the state Band E closes.
@@ -156,7 +156,7 @@ class TestUnwindPlacement:
             _warning("Sonarr run failed"),
         )
 
-        assert _lines(stream)[-1] == f"{INDENT}WARNING  Sonarr run failed"
+        assert _lines(stream)[-1] == f"{INDENT}⚠ Sonarr run failed"
 
     def test_run_finished_also_clears_an_open_boot_section(self) -> None:
         # A leg that dies inside RunDeps.build never opens a scan: the boot section
@@ -170,7 +170,7 @@ class TestUnwindPlacement:
             _warning("cache.db was written by a newer Pearlarr"),
         )
 
-        assert _lines(stream) == ["WARNING  cache.db was written by a newer Pearlarr"]
+        assert _lines(stream) == ["⚠ cache.db was written by a newer Pearlarr"]
 
     def test_a_repeat_run_finished_is_a_no_op(self) -> None:
         # A repeat close must not disturb an already-empty frontier (defense in
@@ -185,7 +185,7 @@ class TestUnwindPlacement:
             _warning("after the leg"),
         )
 
-        assert _lines(stream)[-1] == "WARNING  after the leg"
+        assert _lines(stream)[-1] == "⚠ after the leg"
 
 
 class TestFloors:
@@ -203,7 +203,7 @@ class TestFloors:
 
         _feed(renderer, _warning("flaky pool", origin="httpx"))
 
-        assert _lines(stream) == ["WARNING  httpx: flaky pool"]
+        assert _lines(stream) == ["⚠ httpx: flaky pool"]
 
     def test_debug_level_admits_third_party_chatter(self) -> None:
         renderer, stream = _renderer()
@@ -222,6 +222,7 @@ class TestFloors:
         text = diagnostic_text(
             Diagnostic(severity=Severity.INFO, message="Radarr not configured", origin=LOG_NAME),
             indented=False,
+            use_unicode=True,
         )
         assert str(text.style) == "grey50"
 
@@ -298,7 +299,7 @@ class TestDurableLoopLines:
 
 
 class TestRendering:
-    """Rendering pins: capped tracebacks never leak locals, messages render literally, and badge wording matches legacy."""
+    """Rendering pins: capped tracebacks never leak locals, messages render literally, and the badge glyphs/fallback."""
 
     def test_trace_renders_a_capped_traceback_but_never_locals(self) -> None:
         """The secrets pin, renderer-side: CapturedTrace was extracted with show_locals=False, so a frame local's VALUE can never render."""
@@ -314,7 +315,7 @@ class TestRendering:
         _feed(renderer, Diagnostic(severity=Severity.ERROR, message="sync failed", origin=LOG_NAME, trace=trace))
 
         out = strip_ansi(stream.getvalue())
-        assert out.splitlines()[0] == "ERROR    sync failed"
+        assert out.splitlines()[0] == "✖ sync failed"
         assert "Traceback" in out
         assert "ValueError" in out
         assert "qbit exploded" in out
@@ -325,9 +326,9 @@ class TestRendering:
 
         _feed(renderer, _warning("[1/182] Frieren [MARKED INCOMPLETE]"))
 
-        assert _lines(stream) == ["WARNING  [1/182] Frieren [MARKED INCOMPLETE]"]
+        assert _lines(stream) == ["⚠ [1/182] Frieren [MARKED INCOMPLETE]"]
 
-    def test_badge_words_match_the_legacy_look(self) -> None:
+    def test_badge_glyphs_per_severity(self) -> None:
         renderer, stream = _renderer()
 
         _feed(
@@ -336,4 +337,20 @@ class TestRendering:
             Diagnostic(severity=Severity.CRITICAL, message="dead", origin=LOG_NAME),
         )
 
-        assert _lines(stream) == ["ERROR    broke", "CRITICAL dead"]
+        assert _lines(stream) == ["✖ broke", "‼ dead"]
+
+    def test_an_ascii_console_falls_back_to_the_badge_words(self) -> None:
+        """The caps probe drives the badge: no unicode -> the legacy padded words."""
+
+        stream = AsciiStringIO()
+        console = Console(file=stream, force_terminal=True, width=120)
+        renderer = RichRenderer(lambda: console)
+
+        _feed(
+            renderer,
+            _warning("perms loose"),
+            Diagnostic(severity=Severity.ERROR, message="broke", origin=LOG_NAME),
+            Diagnostic(severity=Severity.CRITICAL, message="dead", origin=LOG_NAME),
+        )
+
+        assert _lines(stream) == ["WARNING  perms loose", "ERROR    broke", "CRITICAL dead"]

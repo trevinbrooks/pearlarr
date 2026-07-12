@@ -125,6 +125,12 @@ class TtyStringIO(io.StringIO):
         return True
 
 
+class AsciiStringIO(io.StringIO):
+    """An in-memory stream whose claimed encoding can't hold glyphs (drives the ASCII-fallback arms)."""
+
+    encoding = "ascii"
+
+
 class FakeClock:
     """A monotonic-ish clock the tests advance by hand, for stable durations."""
 

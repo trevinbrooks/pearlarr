@@ -364,14 +364,14 @@ class TestEntryIndentedDiagnostics:
         self._open_item(renderer)
         renderer.handle(ScopeOpened(scope=self._ENTRY, label="entry"), 0.0)
         renderer.handle(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME), 0.0)
-        assert "  WARNING  tracker down" in _plain_lines(stream)
+        assert "  ⚠ tracker down" in _plain_lines(stream)
 
     def test_diagnostic_stays_column_zero_under_run_and_item_alone(self) -> None:
         renderer, stream = _renderer()
         self._open_item(renderer)
         renderer.handle(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME), 0.0)
-        assert "WARNING  tracker down" in _plain_lines(stream)
-        assert "  WARNING  tracker down" not in _plain_lines(stream)
+        assert "⚠ tracker down" in _plain_lines(stream)
+        assert "  ⚠ tracker down" not in _plain_lines(stream)
 
     def test_closing_the_entry_scope_returns_diagnostics_to_column_zero(self) -> None:
         renderer, stream = _renderer()
@@ -379,5 +379,5 @@ class TestEntryIndentedDiagnostics:
         renderer.handle(ScopeOpened(scope=self._ENTRY, label="entry"), 0.0)
         renderer.handle(ScopeClosed(scope=self._ENTRY), 0.0)
         renderer.handle(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME), 0.0)
-        assert "WARNING  tracker down" in _plain_lines(stream)
-        assert "  WARNING  tracker down" not in _plain_lines(stream)
+        assert "⚠ tracker down" in _plain_lines(stream)
+        assert "  ⚠ tracker down" not in _plain_lines(stream)

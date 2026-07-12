@@ -504,7 +504,7 @@ class TestFullStackSeams:
 
         console = _console_text(stream)
         assert console.count("watch out") == 1
-        assert "WARNING  watch out" in console  # the hub renderer's badge line
+        assert "⚠ watch out" in console  # the hub renderer's badge line
         file_text = _file_text(log_file)
         assert file_text.count("watch out") == 1  # the FileLogSink's grammar line
         assert "WARNING [Pearlarr] watch out" in file_text
@@ -536,7 +536,7 @@ class TestFullStackSeams:
 
         console = _console_text(stream)
         assert console.count("flaky pool") == 1
-        assert "WARNING  bridge-test-pool: flaky pool" in console
+        assert "⚠ bridge-test-pool: flaky pool" in console
         # The FileLogSink is the file path, and the hub counts third-party
         # stragglers (N1, the deliberate tally fix).
         assert _file_text(log_file).count("flaky pool") == 1
@@ -573,8 +573,8 @@ class TestFullStackSeams:
         lines = _console_text(stream).splitlines()
         (mid_boot,) = [line for line in lines if "readable by other users" in line]
         (after,) = [line for line in lines if "after the cockpit" in line]
-        assert mid_boot.startswith("  WARNING  ")
-        assert after.startswith("WARNING  ")
+        assert mid_boot.startswith("  ⚠ ")
+        assert after.startswith("⚠ ")
 
     def test_dual_run_cycles_keep_one_bridge_and_the_fresh_console(
         self,
@@ -606,7 +606,7 @@ class TestFullStackSeams:
 
             assert [h for h in logger.handlers if isinstance(h, HubBridgeHandler)] == [bridge]
             assert "second cycle" not in _console_text(stream_one)
-            assert "WARNING  second cycle" in _console_text(stream_two)
+            assert "⚠ second cycle" in _console_text(stream_two)
         finally:
             uninstall_bridge()
             uninstall_hub()

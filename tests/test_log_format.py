@@ -50,7 +50,7 @@ from pearlarr.modules.output import (
 from pearlarr.modules.output.bridge import HubBridgeHandler
 from pearlarr.modules.output.recording import RecordingRenderer
 
-from .fakes import CaptureHandler, TtyStringIO, strip_ansi
+from .fakes import AsciiStringIO, CaptureHandler, TtyStringIO, strip_ansi
 
 
 @pytest.fixture
@@ -162,10 +162,10 @@ class TestApplyLogLevel:
         assert _non_bridge_handlers(logger) == []
 
 
-def _rich_setup(name: str) -> tuple[logging.Logger, io.StringIO]:
+def _rich_setup(name: str, stream: io.StringIO | None = None) -> tuple[logging.Logger, io.StringIO]:
     """A DEBUG-level logger over a RichConsoleHandler writing to a buffer."""
 
-    stream = io.StringIO()
+    stream = stream if stream is not None else io.StringIO()
     handler = RichConsoleHandler(Console(file=stream, width=200))
     logger = logging.getLogger(name)
     logger.handlers.clear()
@@ -203,6 +203,15 @@ class TestRichHandlerSeam:
         """No bridge installed (library use, the pre-install window): the fallback."""
 
         logger, stream = _rich_setup("pearlarr-test-rich-seam-no-owner")
+
+        logger.warning("watch out")
+
+        assert "⚠ watch out" in strip_ansi(stream.getvalue())
+
+    def test_an_ascii_console_badges_with_the_word(self) -> None:
+        """The handler probes its console once: no unicode -> the legacy padded word."""
+
+        logger, stream = _rich_setup("pearlarr-test-rich-seam-ascii", AsciiStringIO())
 
         logger.warning("watch out")
 
@@ -268,7 +277,7 @@ class TestInvalidLevelComplaint:
 
         setup_logger(log_level="BOGUS", console_format="rich")
 
-        assert "CRITICAL Invalid log level 'BOGUS'" in strip_ansi(stream.getvalue())
+        assert "‼ Invalid log level 'BOGUS'" in strip_ansi(stream.getvalue())
 
     def test_complaint_reaches_the_hub_under_plain_and_never_last_resort(
         self, app_logger: logging.Logger, monkeypatch: pytest.MonkeyPatch

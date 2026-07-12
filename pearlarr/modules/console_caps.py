@@ -5,8 +5,9 @@ The output package's live regions (`boot_region`,
 the SAME `Console` the logger already owns, and both must degrade to a calm
 log digest on a non-TTY (Docker / a pipe / a dumb or too-narrow terminal); the
 wait narrator's `wants_telemetry` probe branches on the same signals. The probe lives here once: `console_of` finds the logger's
-console and `detect_capabilities` folds rich's derived signals into the
-small `Capabilities` value the seats branch on.
+console and `detect_capabilities` folds rich's derived signals (plus
+`log.console_supports_unicode`) into the small `Capabilities` value the
+seats branch on.
 """
 
 import logging
@@ -17,7 +18,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.text import Text
 
-from .log import RichConsoleHandler
+from .log import RichConsoleHandler, console_supports_unicode
 
 # Below this console width a sticky live region can't be drawn legibly, so the
 # views fall back to the log digest (the same path a non-TTY / dumb terminal
@@ -73,7 +74,7 @@ def detect_capabilities(console: Console | None) -> Capabilities:
     return Capabilities(
         live=live,
         color=console.color_system is not None,
-        unicode=_supports_unicode(console),
+        unicode=console_supports_unicode(console),
         width=width,
         height=height,
     )
@@ -136,16 +137,3 @@ def make_live(console: Console) -> Live:
         redirect_stdout=False,
         redirect_stderr=False,
     )
-
-
-def _supports_unicode(console: Console) -> bool:
-    """Whether the console can encode the glyphs/blocks the live views draw."""
-
-    if getattr(console, "legacy_windows", False):
-        return False
-    encoding = console.encoding or "utf-8"
-    try:
-        "✔━▏░".encode(encoding)
-    except (UnicodeEncodeError, LookupError):
-        return False
-    return True
