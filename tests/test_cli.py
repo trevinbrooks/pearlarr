@@ -1228,7 +1228,8 @@ class TestHubSeats:
         hub.close()
 
         events = [cast("dict[str, object]", json.loads(line)) for line in stream.getvalue().splitlines()]
-        assert [list(obj)[:4] for obj in events] == [["time", "event", "level", "message"]] * len(events)
+        envelope = ["schema_version", "time", "event", "level", "message"]
+        assert [list(obj)[:5] for obj in events] == [envelope] * len(events)
         # One object per EVENT, in emit order; the file_only diagnostic stays out.
         assert [obj["event"] for obj in events] == [
             "run_started",

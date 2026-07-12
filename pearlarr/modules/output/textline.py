@@ -79,6 +79,11 @@ from ..manual_import import OutcomeCategory
 
 TS_FORMAT: Final = "%Y-%m-%d %H:%M:%S"
 
+# The JSON stream's envelope version. Changes within it are additive-only; a
+# removal, rename, or semantic change bumps it alongside a new major release
+# (docs/output.md states the policy; the event catalog there is generated).
+JSON_SCHEMA_VERSION: Final = 1
+
 type FieldValue = str | int | float | bool
 
 
@@ -462,6 +467,7 @@ def _json_of(event: Event, crumbs: BreadcrumbFold, iso: str, severity: Severity)
     if fact is None or type(event) in _JSON_SKIP:
         return None
     payload: dict[str, JsonValue] = {
+        "schema_version": JSON_SCHEMA_VERSION,
         "time": iso,
         "event": fact.name,
         "level": fact.severity.name,

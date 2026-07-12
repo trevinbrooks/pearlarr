@@ -3,8 +3,9 @@
 
 A config whose every secret field holds a unique canary string is pushed
 through `config show`, `config validate`, a full (network-blocked) run's
-console output and file log, validation-error text, and the notifier's
-failure warnings. No canary may appear in any of them, at any log level.
+console output (text and JSON) and file log, validation-error text, and the
+notifier's failure warnings. No canary may appear in any of them, at any
+log level.
 """
 
 import os
@@ -69,10 +70,10 @@ def _assert_clean(text: str) -> None:
         assert canary not in text, f"{field} leaked into output"
 
 
-def _write_canary_config() -> None:
+def _write_canary_config(*, log_format: str = "auto") -> None:
     paths = resolve_paths()
     os.makedirs(paths.data_dir, exist_ok=True)
-    Path(paths.config).write_text(CANARY_CONFIG, encoding="utf-8")
+    Path(paths.config).write_text(CANARY_CONFIG + f"  log_format: {log_format}\n", encoding="utf-8")
 
 
 def _data_dir_text() -> str:
@@ -124,6 +125,17 @@ class TestCliSurfaces:
         log_text = _data_dir_text()
         assert log_text  # the always-on file log was actually written and scanned
         _assert_clean(log_text)
+
+    def test_failed_run_json_stream_is_canary_free(self) -> None:
+        # The JSON event stream is a documented machine interface, so it gets
+        # its own leg of the same failed-run sweep.
+        _write_canary_config(log_format="json")
+        with respx.mock(assert_all_called=False) as router:
+            router.route().mock(side_effect=httpx.ConnectError("blocked by test"))
+            result = CliRunner().invoke(pearlarr_cli, ["run", "single"])
+        assert result.exit_code == 1
+        assert '"event":' in result.output  # the JSON surface actually rendered
+        _assert_clean(result.output)
 
 
 class TestArrClientMessages:

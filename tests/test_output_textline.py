@@ -756,7 +756,8 @@ def _json_lines(events: list[Event]) -> list[dict[str, Json]]:
 
 def test_json_emits_one_object_per_event_with_stable_key_order() -> None:
     (payload,) = _json_lines([RunStarted(version="v1.0.0", data_dir="/data")])
-    assert list(payload) == ["time", "event", "level", "message", "version", "data_dir"]
+    assert list(payload) == ["schema_version", "time", "event", "level", "message", "version", "data_dir"]
+    assert payload["schema_version"] == 1
     assert payload["event"] == "run_started"
     assert payload["level"] == "INFO"
     assert payload["message"] == "Pearlarr started"
@@ -782,7 +783,7 @@ def test_json_diagnostic_shape_with_placement_and_trace() -> None:
     ]
     payloads = _json_lines(events)
     diag = payloads[-1]
-    assert list(diag) == ["time", "event", "level", "message", "origin", "during", "placed", "exc"]
+    assert list(diag) == ["schema_version", "time", "event", "level", "message", "origin", "during", "placed", "exc"]
     assert diag["level"] == "WARNING"
     assert diag["origin"] == "anilist"
     assert diag["placed"] == "frontier"
@@ -898,7 +899,18 @@ def test_a_newline_in_a_breadcrumb_label_cannot_break_the_line_grammar() -> None
 
 
 _JSON_ENVELOPE_KEYS = frozenset(
-    {"time", "event", "level", "message", "origin", "path", "exc", "needs_action_records", "added_records"}
+    {
+        "schema_version",
+        "time",
+        "event",
+        "level",
+        "message",
+        "origin",
+        "path",
+        "exc",
+        "needs_action_records",
+        "added_records",
+    }
 )
 
 

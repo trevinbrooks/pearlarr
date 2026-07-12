@@ -15,7 +15,7 @@ Outbound connections go to your arr and qBittorrent instances plus a small set o
 
 ## The redaction guarantee
 
-Log files, `pearlarr config show` output, and error text never contain API keys, passwords, webhook URLs, or logins embedded in URLs - at any log level.
+Log files, `pearlarr config show` output, the JSON event stream, and error text never contain API keys, passwords, webhook URLs, or logins embedded in URLs - at any log level.
 This is a tested promise, so pasting logs or `config show` output into a bug report is safe by design.
 
 ## No telemetry
