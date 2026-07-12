@@ -42,6 +42,7 @@ import io
 import json
 import logging
 import os
+import re
 import signal
 import ssl
 import sys
@@ -1824,3 +1825,24 @@ class TestExitCodes:
         result = runner.invoke(pearlarr_cli, ["cache", "stats"])
         assert result.exit_code == 0
         assert "entries:" in result.stdout
+
+
+def test_cache_stats_pins_the_padded_human_format(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The renderer reproduces the pre-hub typer.echo block byte-for-byte:
+    # 17-column padded labels and a two-decimal MiB size.
+    monkeypatch.setenv("PEARLARR_DATA_DIR", str(tmp_path))
+    _build_cache(tmp_path)
+
+    result = CliRunner().invoke(pearlarr_cli, ["cache", "stats"])
+
+    assert result.exit_code == 0
+    lines = result.stdout.splitlines()
+    assert lines[:5] == [
+        "entries:         1",
+        "torrent_hashes:  0",
+        "anilist_meta:    0",
+        "sonarr_parse:    0",
+        "pending_imports: 0",
+    ]
+    assert re.fullmatch(r"size:            \d+\.\d\d MiB", lines[5])
+    assert len(lines) == 6
