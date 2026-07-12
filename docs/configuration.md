@@ -37,10 +37,12 @@ A file written by a newer Pearlarr (a downgraded install) refuses to load, namin
 
 Any config key can be set from the environment, which is handy for containers and secret managers that inject values rather than editing a file.
 The variable name is the key's dotted path with `PEARLARR_` in front and each dot written as a double underscore: `PEARLARR_SONARR__URL` sets `sonarr.url`, `PEARLARR_SEADEX__WANT_BEST` sets `seadex.want_best`, and a deeper path keeps nesting (`PEARLARR_QBITTORRENT__OPTIONS__VERIFY_WEBUI_CERTIFICATE`).
+Name segments fold to lowercase, except below a free-form table such as `qbittorrent.options`, where a segment keeps the exact case you write - so that example sets the uppercase `VERIFY_WEBUI_CERTIFICATE` option, just as the file would.
 An environment override beats the file, per key: setting `PEARLARR_SONARR__URL` leaves the file's `sonarr.api_key` untouched.
 
 The value is parsed as YAML, so it means exactly what the same text means in `config.yml`: `PEARLARR_ADVANCED__SLEEP_TIME=0` is the number zero, `PEARLARR_SONARR__VERIFY_SSL=false` is a boolean, and `PEARLARR_SEADEX__IGNORE_TAGS='[Dolby Vision, Deband Required]'` is a list.
 Quote to force a string, exactly as in the file: an API key that reads as a number or a keyword (`123`, `no`) needs quotes, as in `PEARLARR_SONARR__API_KEY='123'`.
+YAML comments apply too: a space followed by `#` starts one, so a password like `hunter2 #1` silently loses its tail unless the value carries its own quotes - `PEARLARR_QBITTORRENT__PASSWORD='"hunter2 #1"'`.
 A blank value (`PEARLARR_SONARR__URL=`) reads like a blank key in the file and falls back to the built-in default.
 
 A misspelled path fails loudly: `PEARLARR_SONAR__URL` (or any name that resolves to an unknown key) is rejected by the same validation that catches a typo'd file key, naming the offending key rather than being silently ignored.

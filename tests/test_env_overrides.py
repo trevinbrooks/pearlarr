@@ -23,7 +23,7 @@ from pearlarr.manual_import import ImportWaitMode
 
 
 class TestOverlayShape:
-    """`_env_overlay` maps a qualifying name to a lowercased key path with a YAML value."""
+    """`_env_overlay` maps a qualifying name to a key path with a YAML value."""
 
     def test_path_mapping_and_lowercasing(self) -> None:
         assert _env_overlay({"PEARLARR_SONARR__URL": "http://x"}) == {"sonarr": {"url": "http://x"}}
@@ -32,9 +32,16 @@ class TestOverlayShape:
         # A single underscore is part of the key; only `__` nests.
         assert _env_overlay({"PEARLARR_SEADEX__WANT_BEST": "false"}) == {"seadex": {"want_best": False}}
 
-    def test_deeper_paths_nest(self) -> None:
-        assert _env_overlay({"PEARLARR_QBITTORRENT__OPTIONS__PROXIES": "socks5://x"}) == {
-            "qbittorrent": {"options": {"proxies": "socks5://x"}},
+    def test_deeper_paths_nest_preserving_free_form_key_case(self) -> None:
+        # Keys below qbittorrent.options reach qbittorrentapi verbatim and
+        # case-sensitively; folding them would make VERIFY_WEBUI_CERTIFICATE unreachable.
+        assert _env_overlay({"PEARLARR_QBITTORRENT__OPTIONS__VERIFY_WEBUI_CERTIFICATE": "false"}) == {
+            "qbittorrent": {"options": {"VERIFY_WEBUI_CERTIFICATE": False}},
+        }
+
+    def test_segments_below_a_free_form_table_stay_verbatim_all_the_way_down(self) -> None:
+        assert _env_overlay({"PEARLARR_QBITTORRENT__OPTIONS__REQUESTS_ARGS__timeout": "5"}) == {
+            "qbittorrent": {"options": {"REQUESTS_ARGS": {"timeout": 5}}},
         }
 
     def test_two_vars_share_a_group(self) -> None:
@@ -108,6 +115,12 @@ class TestOverlayThroughLoad:
         loaded = AppConfig.load(path)
         assert loaded.imports.wait_mode is ImportWaitMode.HYBRID
         assert loaded.advanced.sleep_time == 0
+
+    def test_free_form_option_key_lands_case_intact(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The docs' canonical deeper-path example, end to end through validation.
+        path = self._write(tmp_path, "sonarr:\n  url: http://x\n  api_key: k\n")
+        monkeypatch.setenv("PEARLARR_QBITTORRENT__OPTIONS__VERIFY_WEBUI_CERTIFICATE", "false")
+        assert AppConfig.load(path).qbittorrent.options == {"VERIFY_WEBUI_CERTIFICATE": False}
 
     def test_blank_value_falls_back_to_the_default(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # An empty env value reads like a blank key in the file: None, then the

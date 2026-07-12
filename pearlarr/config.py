@@ -20,7 +20,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import md5, sha256
-from typing import Any, Literal, cast
+from types import UnionType
+from typing import Any, Literal, Union, cast, get_args, get_origin
 
 import yaml
 from pydantic import (
@@ -852,15 +853,54 @@ def _qualifying_env(environ: Mapping[str, str]) -> list[tuple[str, str]]:
     )
 
 
+def _mapping_annotation(annotation: object) -> bool:
+    """Whether the annotation is (or one union arm is) a free-form mapping."""
+
+    if get_origin(annotation) is dict:
+        return True
+    if get_origin(annotation) in (UnionType, Union):
+        return any(get_origin(arm) is dict for arm in get_args(annotation))
+    return False
+
+
+def _overlay_path(name: str) -> list[str]:
+    """The key path a qualifying variable's name addresses.
+
+    Model-addressed segments fold to lowercase (matching the file's key style);
+    once the path enters a free-form mapping field (e.g. `qbittorrent.options`,
+    whose keys reach qbittorrentapi verbatim and case-sensitively), the
+    remaining segments keep the variable's exact case.
+    """
+
+    model: type[BaseModel] | None = AppConfig
+    freeform = False
+    path: list[str] = []
+    for segment in name.removeprefix(ENV_CONFIG_PREFIX).split(ENV_CONFIG_DELIMITER):
+        if freeform:
+            path.append(segment)
+            continue
+        lowered = segment.lower()
+        path.append(lowered)
+        field = model.model_fields.get(lowered) if model is not None else None
+        annotation = field.annotation if field is not None else None
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            model = annotation
+        else:
+            model = None
+            freeform = _mapping_annotation(annotation)
+    return path
+
+
 def _env_overlay(environ: Mapping[str, str]) -> dict[str, object]:
     """The environment's config-key overrides as a nested mapping.
 
     Each qualifying variable's name (minus the prefix) splits on `__` into a
-    lowercased key path, and its value is parsed with `yaml.safe_load` so an env
-    value means exactly what the same text means in `config.yml` (an empty string
-    parses to None, which the blank-key handling then coalesces to the default).
-    A malformed value raises a `ValidationError` naming only the variable, so it
-    renders through the invalid-configuration arms like a bad file key.
+    key path (see `_overlay_path`), and its value is parsed with `yaml.safe_load`
+    so an env value means exactly what the same text means in `config.yml` (an
+    empty string parses to None, which the blank-key handling then coalesces to
+    the default). A malformed value raises a `ValidationError` naming only the
+    variable, so it renders through the invalid-configuration arms like a bad
+    file key.
     """
 
     overlay: dict[str, object] = {}
@@ -883,7 +923,7 @@ def _env_overlay(environ: Mapping[str, str]) -> dict[str, object]:
                 ],
                 hide_input=True,
             ) from None
-        path = [segment.lower() for segment in name.removeprefix(ENV_CONFIG_PREFIX).split(ENV_CONFIG_DELIMITER)]
+        path = _overlay_path(name)
         cursor = overlay
         for segment in path[:-1]:
             branch = cursor.get(segment)
