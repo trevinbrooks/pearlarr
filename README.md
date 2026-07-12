@@ -68,6 +68,8 @@ Plain `pip install pearlarr` works too, as does `pip install -e .` from a clone 
 
 ## First run
 
+The step-by-step version of this section, with expected output, is [docs/getting-started.md](docs/getting-started.md).
+
 ```console
 $ pearlarr config init
 $ pearlarr paths          # shows where config.yml landed
@@ -113,7 +115,7 @@ The config is validated on load: an unknown or misspelled key fails with an erro
   `seadex.private_releases` decides what happens when a title's preferred release is private-only.
 - **qBittorrent is the only download client**; Usenet is out of scope.
   More clients and trackers are on the roadmap.
-- **The supported interfaces** are the CLI, the config schema, and the notification payloads.
+- **The supported interfaces** are the CLI, the config schema, the JSON event stream, and the notification payloads.
   Every Python import path is internal and may change without notice.
 - **Support is best-effort by a single maintainer.**
   [SECURITY.md](SECURITY.md) states what is promised - notably that logs and `config show` output never contain secrets, so they are safe to paste.
@@ -130,8 +132,12 @@ The config is validated on load: an unknown or misspelled key fails with an erro
 
 ## Documentation
 
+- [docs/getting-started.md](docs/getting-started.md) - the first-sync walkthrough, install to verified grab.
 - [docs/configuration.md](docs/configuration.md) - every setting: defaults, allowed values, semantics.
+- [docs/cli.md](docs/cli.md) - every command and option, with the exit codes.
 - [docs/deployment.md](docs/deployment.md) - Docker in depth, scheduling, backups, upgrades, uninstalling.
+- [docs/output.md](docs/output.md) - console, logs, the JSON event stream, and webhook payloads.
+- [docs/troubleshooting.md](docs/troubleshooting.md) - symptoms, the messages behind them, and the fixes.
 - [docs/architecture.md](docs/architecture.md) - how Pearlarr is put together, and every external host it talks to.
 - [CHANGELOG.md](CHANGELOG.md) - user-observable changes, with upgrade notes.
 - [CONTRIBUTING.md](CONTRIBUTING.md) - dev setup, the quality gate, task playbooks.

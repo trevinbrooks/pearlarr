@@ -96,6 +96,8 @@ on drift):
 | `schemas/config.schema.json` | the same config models |
 | `docs/configuration.md` (islands between `gen:` markers) | config models + `pearlarr/modules/env_registry.py` |
 | `CONTRIBUTING.md` (the env-var island below) | `pearlarr/modules/env_registry.py` |
+| `docs/cli.md` | the typer app in `pearlarr/modules/cli.py` |
+| `docs/output.md` (the event-catalog island) | the output events run through the real JSON serializer |
 
 ### Drift map
 
@@ -107,9 +109,11 @@ can predict CI:
 | A config field, its docstring, default, or constraint | `uv run python scripts/gen_docs.py` |
 | An enum a config field references | Docstring every member, then regenerate |
 | An environment variable | Register it in `pearlarr/modules/env_registry.py`, then regenerate |
+| A CLI command, option, or help string | Regenerate (`docs/cli.md` is generated) |
+| An output event type or its JSON fields | Regenerate; a new event also needs a specimen + description in `scripts/gen_docs.py`, and an additive-only check against `docs/output.md`'s stability policy |
 | A config key or cache schema (breaking) | An "Upgrade notes" entry in `CHANGELOG.md` |
 | A user-visible behavior | A `CHANGELOG.md` entry |
-| A user-facing message | Update any docs that quote it |
+| A user-facing message | Update any docs that quote it (the `docs/troubleshooting.md` anchors fail the suite mechanically) |
 | Install or quickstart steps in the README | Re-run them verbatim, end to end |
 
 ### Writing rules
