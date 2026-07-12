@@ -25,6 +25,7 @@ the independently ticking file and plain sinks stay byte-identical.
 
 from __future__ import annotations
 
+import contextlib
 import glob
 import json
 import os
@@ -797,6 +798,14 @@ class LineRenderer(_GrammarSink):
         self._stream.flush()
 
 
+def _mtime_or_epoch(path: str) -> float:
+    # A backup vanishing between glob and stat must not abort the prune.
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
+
+
 @final
 class FileLogSink(_GrammarSink):
     """The traditional structured log file: dated per-run backups + age-based retention.
@@ -891,30 +900,34 @@ class FileLogSink(_GrammarSink):
         self._enforce_backstop()
 
     def _backup_paths(self) -> list[str]:
-        return glob.glob(os.path.join(self._dir, f"{LOG_NAME}.log.*"))
+        # glob.escape: a data dir containing [ ] * ? must not silently match nothing.
+        return glob.glob(os.path.join(glob.escape(self._dir), f"{LOG_NAME}.log.*"))
 
     def _enforce_backstop(self) -> None:
         # A crash-looping scheduler must not grow the log dir unboundedly before
         # config - and its configured retention - has ever loaded.
-        backups = sorted(self._backup_paths(), key=os.path.getmtime)
+        backups = sorted(self._backup_paths(), key=_mtime_or_epoch)
         excess = len(backups) - _BACKSTOP_MAX_BACKUPS
         for path in backups[: max(excess, 0)]:
-            os.remove(path)
+            with contextlib.suppress(OSError):
+                os.remove(path)
 
     def apply_retention_days(self, days: int) -> None:
-        """Delete dated backups older than `days` days.
+        """Delete dated backups older than `days` days, best-effort per file.
 
         Retention rides the config-application moment, never `_rotate`: the
         sink is built before config exists, and a one-shot `run single`
         rotates before config loads, so a rotation-time prune would either
         never fire or run with a default that could delete backups a longer
-        configured retention wanted kept.
+        configured retention wanted kept. This runs outside hub dispatch, so
+        one un-deletable backup must not take down the run.
         """
 
         cutoff = time.time() - days * 86400
         for path in self._backup_paths():
-            if os.path.getmtime(path) < cutoff:
-                os.remove(path)
+            with contextlib.suppress(OSError):
+                if os.path.getmtime(path) < cutoff:
+                    os.remove(path)
 
 
 @final

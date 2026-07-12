@@ -675,6 +675,61 @@ def test_apply_retention_days_before_any_rotation_is_a_no_op(tmp_path: Path) -> 
     assert list(tmp_path.iterdir()) == []
 
 
+def test_apply_retention_days_survives_an_undeletable_backup_and_prunes_the_rest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Retention runs outside hub dispatch; a read-only backup must not kill the run.
+    sink = FileLogSink(str(tmp_path))
+    stuck = _make_backup(tmp_path, "Pearlarr.log.2025-01-01_000000", age_days=30)
+    doomed = _make_backup(tmp_path, "Pearlarr.log.2025-02-01_000000", age_days=29)
+    real_remove = os.remove
+
+    def remove_unless_stuck(path: str) -> None:
+        if Path(path) == stuck:
+            raise PermissionError(13, "read-only backup", path)
+        real_remove(path)
+
+    monkeypatch.setattr(os, "remove", remove_unless_stuck)
+    sink.apply_retention_days(14)
+
+    assert stuck.exists()
+    assert not doomed.exists()
+
+
+def test_backstop_survives_an_undeletable_oldest_backup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(textline, "_BACKSTOP_MAX_BACKUPS", 1)
+    sink = FileLogSink(str(tmp_path))
+    log = tmp_path / "Pearlarr.log"
+    stuck = _make_backup(tmp_path, "Pearlarr.log.2025-01-01_000000", age_days=30)
+    real_remove = os.remove
+
+    def remove_unless_stuck(path: str) -> None:
+        if Path(path) == stuck:
+            raise PermissionError(13, "read-only backup", path)
+        real_remove(path)
+
+    monkeypatch.setattr(os, "remove", remove_unless_stuck)
+    sink.handle(RunStarted(version="one", data_dir="/d"), _EPOCH)
+    _pin_mtime(log, datetime(2026, 1, 1, 10, 0, 0))
+    sink.begin_cycle()
+    sink.handle(RunStarted(version="two", data_dir="/d"), _EPOCH)  # rotates past the cap
+    sink.close()
+
+    assert stuck.exists()  # left behind, but the write - and the cycle's log - survived
+    assert "two" in log.read_text(encoding="utf-8")
+
+
+def test_backups_are_found_when_the_log_dir_contains_glob_metacharacters(tmp_path: Path) -> None:
+    weird = tmp_path / "logs [seedbox]"
+    weird.mkdir()
+    sink = FileLogSink(str(weird))
+    old_backup = _make_backup(weird, "Pearlarr.log.2025-01-01_000000", age_days=30)
+
+    sink.apply_retention_days(14)
+
+    assert not old_backup.exists()
+
+
 def test_every_line_is_on_disk_immediately(tmp_path: Path) -> None:
     # Per-line flush (crash fidelity): the tail is on disk before close or any WARNING.
     sink = FileLogSink(str(tmp_path))

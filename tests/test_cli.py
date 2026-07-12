@@ -1573,6 +1573,37 @@ class TestScheduledLifecycle:
         assert "'allow'" in warning.message
         assert "pearlarr config migrate" in warning.message
 
+    def test_run_arrs_applies_the_configured_log_retention(
+        self,
+        logger: logging.Logger,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The knob must reach the sink with the CONFIGURED value, not a default;
+        # the resolver stub stops the run right after (no network).
+        install_recording_hub()
+        paths = resolve_paths()
+        os.makedirs(paths.data_dir)
+        Path(paths.config).write_text(
+            "sonarr:\n  url: http://s\n  api_key: k\nadvanced:\n  log_retention_days: 3\n",
+            encoding="utf-8",
+        )
+        applied: list[int] = []
+        original = FileLogSink.apply_retention_days
+
+        def record(self: FileLogSink, days: int) -> None:
+            applied.append(days)
+            original(self, days)
+
+        def refuse_resolver(*args: object, **kwargs: object) -> None:
+            return None
+
+        monkeypatch.setattr(FileLogSink, "apply_retention_days", record)
+        monkeypatch.setattr("pearlarr.bootstrap.build_resolver", refuse_resolver)
+
+        run_arrs([(Arr.SONARR, None)], paths=paths, logger=logger, file_sink=FileLogSink(paths.log_dir))
+
+        assert applied == [3]
+
     def test_sigterm_handler_emits_the_hub_notice_and_exits_zero(self) -> None:
         # Call the handler directly - never deliver a real signal in-process.
         recording = install_recording_hub()
