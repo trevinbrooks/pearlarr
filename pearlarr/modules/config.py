@@ -15,6 +15,7 @@ one arr still validates and runs.
 
 import contextlib
 import os
+from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import md5
 from typing import Any, Literal, cast
@@ -31,7 +32,12 @@ from pydantic import (
     model_validator,
 )
 
-from .config_migrations import CONFIG_VERSION, MigrationOutcome, migrate_mapping
+from .config_migrations import (
+    CONFIG_VERSION,
+    MigrationOutcome,
+    migrate_mapping,
+    render_migrated_config,
+)
 from .json_narrow import is_json_obj
 from .manual_import import ImportWaitMode
 
@@ -95,6 +101,13 @@ def template_path() -> str:
     return os.path.join(os.path.dirname(__file__), CONFIG_TEMPLATE_FILE)
 
 
+def starter_template_text() -> str:
+    """The bundled template minus its generated-file banner (the form users own)."""
+
+    with open(template_path(), encoding="utf-8") as f:
+        return "".join(line for line in f if not line.startswith("# GENERATED"))
+
+
 def write_starter_config(path: str) -> None:
     """Copy the bundled template to `path` as a user-owned starter config.
 
@@ -102,10 +115,8 @@ def write_starter_config(path: str) -> None:
     edit, not a generated artifact) and restricts the copy to owner-only.
     """
 
-    with open(template_path(), encoding="utf-8") as f:
-        lines = [line for line in f if not line.startswith("# GENERATED")]
     with open(path, "w", encoding="utf-8") as f:
-        f.writelines(lines)
+        f.write(starter_template_text())
     restrict_config_permissions(path)
 
 
@@ -764,3 +775,46 @@ class AppConfig(_ConfigBase):
         if not sub.api_key:
             raise ValueError(f"{arr.value}.api_key must be set in {self._path}")
         return sub.url, sub.api_key.get_secret_value()
+
+
+@dataclass(frozen=True)
+class ConfigUpgrade:
+    """What `upgrade_config_file` did: both fields are None for an already-current file."""
+
+    migration: MigrationOutcome | None
+    backup_path: str | None
+
+
+def upgrade_config_file(path: str) -> ConfigUpgrade:
+    """Rewrite an older config file at the current schema, keeping a backup.
+
+    The rewrite is the current annotated template with this file's values (and
+    the schema fixes a load applies in memory) spliced in; the previous bytes
+    land beside it first, as `<path>.bak`. Both new files are owner-only (they
+    carry API keys) and the swap goes through a temp file + `os.replace`, so a
+    failed write can never leave a truncated config. A file already at the
+    current version is not touched at all. Raises like `AppConfig.load`
+    (`OSError` / `yaml.YAMLError` / `ValidationError`): a file this version
+    cannot fully read is never rewritten.
+    """
+
+    with open(path, "rb") as f:
+        raw = f.read()
+    parsed: object = yaml.safe_load(raw) or {}
+    migration = migrate_mapping(parsed) if is_json_obj(parsed) else None
+    AppConfig.model_validate(parsed)
+    # The narrowing re-check is for the types: a non-mapping document cannot
+    # have validated above.
+    if migration is None or not is_json_obj(parsed):
+        return ConfigUpgrade(migration=None, backup_path=None)
+
+    backup = path + ".bak"
+    with open(backup, "wb") as f:
+        f.write(raw)
+    restrict_config_permissions(backup)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(render_migrated_config(starter_template_text(), parsed))
+    restrict_config_permissions(tmp)
+    os.replace(tmp, path)
+    return ConfigUpgrade(migration=migration, backup_path=backup)

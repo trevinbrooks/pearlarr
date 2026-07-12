@@ -79,6 +79,7 @@ Initialize, validate, or inspect the config file.
 | --- | --- |
 | `pearlarr config init` | Write a starter config.yml to the data directory. |
 | `pearlarr config validate` | Check config.yml parses and validates, and report what a run would use. |
+| `pearlarr config migrate` | Rewrite config.yml at the current config schema version, keeping a backup. |
 | `pearlarr config show` | Print the effective config (defaults applied) with secrets redacted. |
 
 ### `pearlarr config init`
@@ -96,6 +97,12 @@ The file lands in the resolved data directory (see the paths command); override 
 Check config.yml parses and validates, and report what a run would use.
 
 The status lines call out the settings that silently change a run's shape: an unconfigured arr is skipped, and unconfigured qBittorrent credentials mean preview mode (nothing is grabbed).
+
+### `pearlarr config migrate`
+
+Rewrite config.yml at the current config schema version, keeping a backup.
+
+Runs never require this - an older file is migrated in memory at every load - but the file itself keeps the old spelling until rewritten. The rewrite is the current annotated template with this file's values (and any schema fixes) filled in; the previous file is saved beside it as config.yml.bak first. A file already at the current version is left untouched.
 
 ### `pearlarr config show`
 

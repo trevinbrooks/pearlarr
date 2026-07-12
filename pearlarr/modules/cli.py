@@ -25,6 +25,7 @@ from .config import (
     Arr,
     LogFormat,
     strip_userinfo,
+    upgrade_config_file,
     write_starter_config,
 )
 from .console_caps import CapsCache
@@ -50,7 +51,7 @@ from .paths import PROJECT_URL, AppPaths, ensure_data_dir, resolve_paths
 from .runlock import single_instance_lock
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
     from types import FrameType
 
     # Imported only for annotations - the runtime import lives in the function
@@ -599,19 +600,20 @@ def config_init(
     return True
 
 
-def _load_config_reporting(path: str) -> AppConfig | None:
-    """Load + validate the config for an inspection command, echoing why on failure.
+def _run_config_action[T](path: str, action: Callable[[str], T]) -> T | None:
+    """Run a config-file action for a config command, echoing why on failure.
 
     Unlike the run path (where `AppConfig.load` copies the starter template on
-    a missing file), inspecting must not create files, so existence is checked
-    first. Every failure mode is a clean echo to stderr, never a traceback.
+    a missing file), these commands must not create a config, so existence is
+    checked first. Every failure mode is a clean echo to stderr, never a
+    traceback; the action must fail like `AppConfig.load` does.
     """
 
     if not os.path.exists(path):
         typer.echo(f"No config file at {path} - run pearlarr config init to write a starter template", err=True)
         return None
     try:
-        return AppConfig.load(path)
+        return action(path)
     except ValidationError as e:
         typer.echo(f"Invalid configuration in {path}:\n{bootstrap.format_validation_errors(e)}", err=True)
         return None
@@ -619,7 +621,7 @@ def _load_config_reporting(path: str) -> AppConfig | None:
         typer.echo(f"Unreadable YAML in {path} ({bootstrap.format_yaml_error(e)})", err=True)
         return None
     except OSError as e:
-        typer.echo(f"Could not read {path} ({e}) - check its permissions", err=True)
+        typer.echo(f"Could not access {path} ({e}) - check its permissions", err=True)
         return None
 
 
@@ -633,11 +635,21 @@ def config_validate() -> bool:
     """
 
     paths = resolve_paths()
-    app_config = _load_config_reporting(paths.config)
+    app_config = _run_config_action(paths.config, AppConfig.load)
     if app_config is None:
         return False
 
     typer.echo(f"OK: {paths.config} is valid")
+    outcome = app_config.migration()
+    if outcome is not None:
+        # Valid but old-schema: the file loads through the in-memory migration;
+        # say so here, where the user is actively checking.
+        typer.echo(
+            f"  {'schema:':<13}older config schema (runs migrate it in memory) - "
+            f"run pearlarr config migrate to update the file",
+        )
+        for note in outcome.notes:
+            typer.echo(f"  {'':<13}- {note}")
     for arr in (Arr.SONARR, Arr.RADARR):
         keys = app_config.missing_arr_keys(arr)
         if not keys:
@@ -653,6 +665,31 @@ def config_validate() -> bool:
         "configured" if app_config.qbittorrent.credentials() else "not configured (preview mode - nothing is grabbed)"
     )
     typer.echo(f"  {'qbittorrent:':<13}{qbit_status}")
+    return True
+
+
+@pearlarr_config.command("migrate")
+def config_migrate() -> bool:
+    """Rewrite config.yml at the current config schema version, keeping a backup.
+
+    Runs never require this - an older file is migrated in memory at every load -
+    but the file itself keeps the old spelling until rewritten. The rewrite is
+    the current annotated template with this file's values (and any schema fixes)
+    filled in; the previous file is saved beside it as config.yml.bak first. A
+    file already at the current version is left untouched.
+    """
+
+    paths = resolve_paths()
+    upgrade = _run_config_action(paths.config, upgrade_config_file)
+    if upgrade is None:
+        return False
+    if upgrade.migration is None:
+        typer.echo(f"{paths.config} is already at the current config schema - nothing to do")
+        return True
+
+    typer.echo(f"Migrated {paths.config} to the current config schema - previous file saved as {upgrade.backup_path}")
+    for note in upgrade.migration.notes:
+        typer.echo(f"  - {note}")
     return True
 
 
@@ -705,7 +742,7 @@ def config_show() -> bool:
     """
 
     paths = resolve_paths()
-    app_config = _load_config_reporting(paths.config)
+    app_config = _run_config_action(paths.config, AppConfig.load)
     if app_config is None:
         return False
 

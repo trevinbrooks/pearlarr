@@ -99,6 +99,15 @@ def load_shared_config(
                 f"{', '.join(unknown_trackers)} (known, case-insensitive: "
                 f"{', '.join(sorted(KNOWN_TRACKERS))})"
             )
+        # An old-schema file keeps working via the in-memory migration; the warn
+        # names what was folded and the command that updates the file itself.
+        outcome = loaded.migration()
+        if outcome is not None:
+            applied = f" ({'; '.join(outcome.notes)})" if outcome.notes else ""
+            hub_warn(
+                f"Config file {config} uses an older config schema - migrated in memory{applied} - "
+                f"run pearlarr config migrate to update the file (a backup is kept)"
+            )
         return loaded
     except FileNotFoundError:
         hub_error(f"No config file at {config} - a starter template was written - fill it in and re-run")

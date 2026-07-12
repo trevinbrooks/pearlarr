@@ -11,8 +11,11 @@ literals - never live enums or constants, which move on with the schema - and
 each step brings a mapping exactly one version forward.
 """
 
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+
+import yaml
 
 from .json_narrow import is_json_obj
 from .seadex_types import Json
@@ -121,3 +124,51 @@ def migrate_mapping(config: dict[str, Json]) -> MigrationOutcome | None:
             notes.extend(migration.apply(config))
     config["config_version"] = CONFIG_VERSION
     return MigrationOutcome(from_version=version, notes=tuple(notes))
+
+
+# The template's two key shapes: a top-level key (group header or scalar) and a
+# group field at the generator's fixed two-space indent. Comment and blank lines
+# match neither and pass through untouched.
+_TOP_KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):")
+_FIELD_KEY = re.compile(r"^  ([A-Za-z_][A-Za-z0-9_]*):")
+
+
+def _value_lines(indent: str, key: str, value: Json) -> list[str]:
+    """`key: value` at `indent`; a filled container goes block-style below the key."""
+
+    if value is None:
+        return [f"{indent}{key}:"]
+    if isinstance(value, (dict, list)) and value:
+        dumped = yaml.safe_dump(value, default_flow_style=False, sort_keys=False).rstrip("\n")
+        return [f"{indent}{key}:", *(f"{indent}  {line}" for line in dumped.splitlines())]
+    scalar = yaml.safe_dump(value, default_flow_style=True, sort_keys=False).partition("\n")[0]
+    return [f"{indent}{key}: {scalar}"]
+
+
+def render_migrated_config(template: str, config: Mapping[str, Json]) -> str:
+    """The current annotated template with a migrated mapping's values spliced in.
+
+    Comments, docs and key order come from the template (what `config init`
+    ships); a key the mapping sets explicitly takes the mapping's value, every
+    other line keeps the template's, so blank-means-default stays blank. The
+    mapping must already be migrated and validated: every key it carries exists
+    in the template, so nothing can be dropped.
+    """
+
+    out: list[str] = []
+    group: dict[str, Json] | None = None
+    for line in template.splitlines():
+        if top := _TOP_KEY.match(line):
+            key = top.group(1)
+            value = config.get(key)
+            if is_json_obj(value):
+                group = value
+                out.append(line)
+            else:
+                group = None
+                out.extend(_value_lines("", key, value) if key in config else [line])
+        elif (field := _FIELD_KEY.match(line)) and group is not None and field.group(1) in group:
+            out.extend(_value_lines("  ", field.group(1), group[field.group(1)]))
+        else:
+            out.append(line)
+    return "\n".join(out) + "\n"

@@ -71,6 +71,7 @@ from pearlarr.modules.cli import (
     cache_restore,
     cache_stats,
     config_init,
+    config_migrate,
     config_show,
     config_validate,
     pearlarr_cli,
@@ -78,6 +79,7 @@ from pearlarr.modules.cli import (
     run_single,
 )
 from pearlarr.modules.config import AppConfig, Arr, LogFormat, template_path
+from pearlarr.modules.config_migrations import CONFIG_VERSION
 from pearlarr.modules.console_caps import CapsCache
 from pearlarr.modules.log import (
     LOG_NAME,
@@ -852,6 +854,19 @@ class TestConfigInspection:
         # The unset radarr key stays null: "is it even set?" must stay answerable.
         assert "api_key: null" in out
 
+    def test_validate_reports_an_old_schema_with_its_folds(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # Valid-but-old is a status fact, not a failure: the run migrates it in
+        # memory, and validate names the command that updates the file itself.
+        paths = resolve_paths()
+        os.makedirs(paths.data_dir)
+        Path(paths.config).write_text("seadex:\n  private_releases: allow\n", encoding="utf-8")
+        assert config_validate() is True
+        out = capsys.readouterr().out
+        assert "OK" in out
+        assert "older config schema" in out
+        assert "config migrate" in out
+        assert "'allow'" in out
+
     def test_validate_names_the_missing_half_of_a_connection_pair(
         self,
         capsys: pytest.CaptureFixture[str],
@@ -899,6 +914,69 @@ class TestConfigInspection:
         captured = capsys.readouterr()
         assert "config init" in captured.err
         assert captured.out == ""
+
+
+class TestConfigMigrate:
+    """`config migrate`: rewrites an old-schema file behind a backup; current files untouched."""
+
+    def test_migrates_an_old_file_keeping_values_and_a_backup(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        paths = resolve_paths()
+        os.makedirs(paths.data_dir)
+        text = "seadex:\n  public_only: true\nsonarr:\n  url: http://s\n  api_key: hunter2\n"
+        Path(paths.config).write_text(text, encoding="utf-8")
+
+        assert config_migrate() is True
+
+        out = capsys.readouterr().out
+        assert "previous file saved as" in out
+        assert "public_only" in out
+        # The command echoes paths and notes, never config values.
+        assert "hunter2" not in out
+        assert Path(paths.config + ".bak").read_text(encoding="utf-8") == text
+        migrated = Path(paths.config).read_text(encoding="utf-8")
+        assert "api_key: hunter2" in migrated
+        assert "public_only" not in migrated
+        assert f"config_version: {CONFIG_VERSION}" in migrated
+
+    def test_a_current_file_is_nothing_to_do(self, capsys: pytest.CaptureFixture[str]) -> None:
+        paths = resolve_paths()
+        os.makedirs(paths.data_dir)
+        text = f"config_version: {CONFIG_VERSION}\nsonarr:\n  url: http://s\n"
+        Path(paths.config).write_text(text, encoding="utf-8")
+
+        assert config_migrate() is True
+
+        assert "nothing to do" in capsys.readouterr().out
+        assert Path(paths.config).read_text(encoding="utf-8") == text
+        assert not os.path.exists(paths.config + ".bak")
+
+    def test_missing_file_points_at_init_and_writes_nothing(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        assert config_migrate() is False
+        assert "config init" in capsys.readouterr().err
+        assert not os.path.exists(resolve_paths().config)
+
+    def test_an_invalid_file_reports_and_stays_untouched(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        paths = resolve_paths()
+        os.makedirs(paths.data_dir)
+        text = "seadex:\n  public_only: true\ntypo_key: 1\n"
+        Path(paths.config).write_text(text, encoding="utf-8")
+
+        assert config_migrate() is False
+
+        err = capsys.readouterr().err
+        assert "Invalid configuration" in err
+        assert "typo_key" in err
+        assert Path(paths.config).read_text(encoding="utf-8") == text
+        assert not os.path.exists(paths.config + ".bak")
 
 
 class TestVersionAndHelp:
@@ -1271,8 +1349,10 @@ class TestUnknownTrackerWarning:
     @staticmethod
     def _load(tmp_path: Path, body: str) -> AppConfig | None:
         config = tmp_path / "config.yml"
-        config.write_text(body, encoding="utf-8")
-        config.chmod(0o600)  # keep the loose-permissions warning out of the recorded stream
+        # Current-schema stamp + 0600: keep the old-schema and loose-permissions
+        # warnings out of the recorded stream (this class is about trackers).
+        config.write_text(f"config_version: {CONFIG_VERSION}\n{body}", encoding="utf-8")
+        config.chmod(0o600)
         return load_shared_config(str(config), BootFlow(), "")
 
     def test_unknown_value_warns_naming_it_and_the_vocabulary(self, tmp_path: Path) -> None:
@@ -1462,6 +1542,34 @@ class TestScheduledLifecycle:
         assert result is False
         error = next(d for d in recording.of_type(Diagnostic) if d.severity is Severity.ERROR)
         assert "will retry in 6h" in error.message
+
+    def test_an_old_schema_config_warns_and_still_loads(
+        self,
+        logger: logging.Logger,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The in-memory migration keeps an old file running; the warn names what
+        # was folded and the command that updates the file. The resolver stub
+        # stops the run right after the config load (no network).
+        recording = install_recording_hub()
+        paths = resolve_paths()
+        os.makedirs(paths.data_dir)
+        Path(paths.config).write_text(
+            "seadex:\n  private_releases: allow\nsonarr:\n  url: http://s\n  api_key: k\n",
+            encoding="utf-8",
+        )
+        def refuse_resolver(*args: object, **kwargs: object) -> None:
+            return None
+
+        monkeypatch.setattr("pearlarr.modules.bootstrap.build_resolver", refuse_resolver)
+
+        assert run_arrs([(Arr.SONARR, None)], paths=paths, logger=logger) is False
+
+        # Selected by content: the 0644 write also draws the loose-permissions warn.
+        warning = next(d for d in recording.of_type(Diagnostic) if "older config schema" in d.message)
+        assert warning.severity is Severity.WARNING
+        assert "'allow'" in warning.message
+        assert "pearlarr config migrate" in warning.message
 
     def test_sigterm_handler_emits_the_hub_notice_and_exits_zero(self) -> None:
         # Call the handler directly - never deliver a real signal in-process.
