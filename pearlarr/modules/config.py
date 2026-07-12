@@ -27,6 +27,7 @@ from pydantic import (
     Field,
     PrivateAttr,
     SecretStr,
+    ValidationError,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -708,11 +709,7 @@ class AppConfig(_ConfigBase):
 
         with open(path, "rb") as f:
             raw = f.read()
-        parsed: object = yaml.safe_load(raw) or {}
-        # Migrate BEFORE validation: an older schema's removed keys/values would
-        # otherwise trip extra="forbid". A non-mapping document skips straight to
-        # validation, which rejects it.
-        migration = migrate_mapping(parsed) if is_json_obj(parsed) else None
+        parsed, migration = _parse_and_migrate(raw)
         config = cls.model_validate(parsed)
         # PrivateAttr writes on a frozen model: go through object.__setattr__ so the
         # type checkers don't read it as a frozen-field mutation (it isn't - these are
@@ -777,6 +774,25 @@ class AppConfig(_ConfigBase):
         return sub.url, sub.api_key.get_secret_value()
 
 
+def _parse_and_migrate(raw: bytes) -> tuple[object, MigrationOutcome | None]:
+    """Parse config bytes and bring an old-schema mapping forward, in place.
+
+    The one parse pipeline `load` and `upgrade_config_file` share, so the run
+    path and the file rewrite can never read the same bytes differently.
+    Migration runs BEFORE validation: an older schema's removed keys/values
+    would otherwise trip `extra="forbid"`. A non-mapping document passes
+    through unmigrated for validation to reject.
+    """
+
+    parsed: object = yaml.safe_load(raw) or {}
+    migration = migrate_mapping(parsed) if is_json_obj(parsed) else None
+    return parsed, migration
+
+
+class ConfigRewriteError(Exception):
+    """`upgrade_config_file`'s render did not round-trip; nothing was written."""
+
+
 @dataclass(frozen=True)
 class ConfigUpgrade:
     """What `upgrade_config_file` did: both fields are None for an already-current file."""
@@ -785,36 +801,68 @@ class ConfigUpgrade:
     backup_path: str | None
 
 
+def _write_owner_only(path: str, data: bytes) -> None:
+    """Write a secret-bearing file created 0600, never briefly looser.
+
+    `O_CREAT` with mode 0600 closes the umask window an open-then-chmod
+    creation would leave; the follow-up chmod covers the pre-existing-file
+    case, where `O_TRUNC` keeps the old mode.
+    """
+
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    restrict_config_permissions(path)
+
+
 def upgrade_config_file(path: str) -> ConfigUpgrade:
     """Rewrite an older config file at the current schema, keeping a backup.
 
     The rewrite is the current annotated template with this file's values (and
     the schema fixes a load applies in memory) spliced in; the previous bytes
-    land beside it first, as `<path>.bak`. Both new files are owner-only (they
-    carry API keys) and the swap goes through a temp file + `os.replace`, so a
-    failed write can never leave a truncated config. A file already at the
-    current version is not touched at all. Raises like `AppConfig.load`
-    (`OSError` / `yaml.YAMLError` / `ValidationError`): a file this version
-    cannot fully read is never rewritten.
+    land beside it first, as `<path>.bak`. Both new files are created
+    owner-only (they carry API keys) and the swap goes through a temp file +
+    `os.replace`, so a failed write can never leave a truncated config. A file
+    already at the current version is not touched at all.
+
+    Nothing is written unless the rendered text parses back to the exact
+    settings that were validated - a splice defect refuses cleanly
+    (`ConfigRewriteError`) instead of corrupting the file. Raises like
+    `AppConfig.load` (`OSError` / `yaml.YAMLError` / `ValidationError`): a
+    file this version cannot fully read is never rewritten.
     """
 
     with open(path, "rb") as f:
         raw = f.read()
-    parsed: object = yaml.safe_load(raw) or {}
-    migration = migrate_mapping(parsed) if is_json_obj(parsed) else None
-    AppConfig.model_validate(parsed)
+    parsed, migration = _parse_and_migrate(raw)
+    validated = AppConfig.model_validate(parsed)
     # The narrowing re-check is for the types: a non-mapping document cannot
     # have validated above.
     if migration is None or not is_json_obj(parsed):
         return ConfigUpgrade(migration=None, backup_path=None)
 
+    rendered = render_migrated_config(starter_template_text(), parsed)
+    try:
+        reparsed: object = yaml.safe_load(rendered)
+        drifted = AppConfig.model_validate(reparsed).model_dump() != validated.model_dump()
+    except (yaml.YAMLError, ValidationError):
+        drifted = True
+    if drifted:
+        raise ConfigRewriteError(
+            f"Rewriting {path} would have changed its settings - left untouched "
+            f"(this is a Pearlarr bug; please report it)",
+        )
+
     backup = path + ".bak"
-    with open(backup, "wb") as f:
-        f.write(raw)
-    restrict_config_permissions(backup)
+    _write_owner_only(backup, raw)
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(render_migrated_config(starter_template_text(), parsed))
-    restrict_config_permissions(tmp)
-    os.replace(tmp, path)
+    try:
+        _write_owner_only(tmp, rendered.encode("utf-8"))
+        os.replace(tmp, path)
+    except OSError:
+        # Never leave a torn, secret-bearing temp file behind; the config
+        # itself is untouched and the backup is a faithful copy of it.
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
     return ConfigUpgrade(migration=migration, backup_path=backup)

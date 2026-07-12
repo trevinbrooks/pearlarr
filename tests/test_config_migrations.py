@@ -1,4 +1,6 @@
-# pyright: strict
+# pyright: strict, reportPrivateUsage=false
+# reportPrivateUsage: the chain-shape and template-grammar pins are white-box
+# by design - they guard private wiring no behavior can observe until v2 exists.
 """The config schema-migration chain, the template splice, and the file rewrite.
 
 `tests/test_config.py::TestSchemaMigration` pins the load-path integration
@@ -14,8 +16,11 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from pearlarr.modules import config as config_mod
+from pearlarr.modules import config_migrations
 from pearlarr.modules.config import (
     AppConfig,
+    ConfigRewriteError,
     ConfigUpgrade,
     starter_template_text,
     upgrade_config_file,
@@ -31,15 +36,18 @@ from pearlarr.modules.seadex_types import Json
 
 
 class TestDeclaredVersion:
-    """Absent/blank means pre-versioning (0); non-int garbage is not a version at all."""
+    """Only an absent key means pre-versioning; anything not a non-negative int is left to validation."""
 
     def test_version_shapes(self) -> None:
         assert declared_version({}) == 0
-        assert declared_version({"config_version": None}) == 0
         assert declared_version({"config_version": 3}) == 3
-        # bools are ints to Python but not versions; strings are validation's problem.
+        assert declared_version({"config_version": 0}) == 0
+        # Blank means default (like every blank key), bools are ints to Python
+        # but not versions, strings and negatives are validation's problem.
+        assert declared_version({"config_version": None}) is None
         assert declared_version({"config_version": True}) is None
         assert declared_version({"config_version": "1"}) is None
+        assert declared_version({"config_version": -3}) is None
 
 
 class TestMigrateMapping:
@@ -51,20 +59,19 @@ class TestMigrateMapping:
             assert migrate_mapping(mapping) is None
             assert mapping == {"config_version": version, "seadex": {"private_releases": "allow"}}
 
-    def test_v0_folds_only_what_it_recognizes(self) -> None:
+    def test_v0_folds_removed_schema_and_nothing_else(self) -> None:
+        # Only removed keys/values fold; a never-valid value (the typo'd mode)
+        # passes through untouched for validation to reject by name.
         mapping: dict[str, Json] = {
             "seadex": {"public_only": False, "want_best": False},
-            "advanced": {"log_level": "warning", "sleep_time": 0},
-            "imports": {"mode": "move"},
+            "imports": {"mode": "hardlink"},
         }
         outcome = migrate_mapping(mapping)
         assert outcome is not None
-        # Valid values survive: `warning` is a level (case-insensitively), `move` a mode.
         assert mapping == {
             "config_version": CONFIG_VERSION,
             "seadex": {"want_best": False},
-            "advanced": {"log_level": "warning", "sleep_time": 0},
-            "imports": {"mode": "move"},
+            "imports": {"mode": "hardlink"},
         }
         assert len(outcome.notes) == 1
 
@@ -75,6 +82,13 @@ class TestMigrateMapping:
         assert outcome is not None
         assert mapping["seadex"] == 5
         assert mapping["config_version"] == CONFIG_VERSION
+
+    def test_the_chain_is_contiguous_and_ends_at_the_current_version(self) -> None:
+        # Declaration order IS application order: pin that the steps run 1..N
+        # with no gap, and that bumping CONFIG_VERSION without its step (or
+        # reordering the tuple) fails here instead of mis-migrating in the field.
+        versions = tuple(step.to_version for step in config_migrations._MIGRATIONS)
+        assert versions == tuple(range(1, CONFIG_VERSION + 1))
 
 
 class TestRenderMigratedConfig:
@@ -112,6 +126,34 @@ class TestRenderMigratedConfig:
         # An explicit empty list and an explicit blank both survive as themselves.
         assert imports["languages_dual"] == []
         assert imports["default_quality"] is None
+
+    def test_long_and_multiline_scalars_survive_the_splice(self) -> None:
+        # yaml.safe_dump folds plain scalars at ~80 columns; a single-line
+        # splice must never truncate (a password!) or emit an unparseable
+        # fragment. Line breaks force the escaped double-quoted style.
+        long_value = "word " * 30 + "end"
+        mapping: dict[str, Json] = {
+            "qbittorrent": {"password": long_value, "username": "line one\nline two"},
+        }
+        parsed: object = yaml.safe_load(render_migrated_config(starter_template_text(), mapping))
+        assert is_json_obj(parsed)
+        qbit = parsed["qbittorrent"]
+        assert is_json_obj(qbit)
+        assert qbit["password"] == long_value
+        assert qbit["username"] == "line one\nline two"
+
+    def test_every_template_line_matches_a_splice_shape(self) -> None:
+        # The splice regexes encode the generator's line grammar (top-level
+        # keys, two-space fields, comments, blanks). A generator format change
+        # (wider indent, block defaults, new line shapes) must fail HERE, not
+        # silently stop matching and revert user values to template defaults.
+        for line in starter_template_text().splitlines():
+            assert (
+                not line.strip()
+                or line.lstrip().startswith("#")
+                or config_migrations._TOP_KEY.match(line)
+                or config_migrations._FIELD_KEY.match(line)
+            ), f"template line matches no splice shape: {line!r}"
 
 
 class TestUpgradeConfigFile:
@@ -169,3 +211,55 @@ class TestUpgradeConfigFile:
                 upgrade_config_file(path)
             assert Path(path).read_text(encoding="utf-8") == text
             assert not os.path.exists(path + ".bak")
+
+    def test_a_long_secret_survives_the_rewrite_end_to_end(self, tmp_path: Path) -> None:
+        # Regression: yaml's default scalar folding once truncated any spaced
+        # value past ~80 columns during the splice - for a password, silent
+        # corruption the success message would have papered over.
+        password = "correct horse battery staple " * 5 + "end"
+        path = self._write(tmp_path, f"seadex:\n  public_only: true\nqbittorrent:\n  password: '{password}'\n")
+        upgrade = upgrade_config_file(path)
+        assert upgrade.migration is not None
+        loaded = AppConfig.load(path)
+        assert loaded.qbittorrent.password is not None
+        assert loaded.qbittorrent.password.get_secret_value() == password
+
+    def test_a_render_that_does_not_round_trip_is_refused_before_any_write(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The pre-replace re-parse is the last line of defense against a splice
+        # defect: refuse cleanly, write nothing (not even the backup).
+        text = "seadex:\n  public_only: true\n"
+        path = self._write(tmp_path, text)
+
+        def corrupt_render(template: str, config: object) -> str:
+            return "seadex:\n  want_best: false\n"
+
+        monkeypatch.setattr(config_mod, "render_migrated_config", corrupt_render)
+        with pytest.raises(ConfigRewriteError, match="left untouched"):
+            upgrade_config_file(path)
+        assert Path(path).read_text(encoding="utf-8") == text
+        assert not os.path.exists(path + ".bak")
+        assert not os.path.exists(path + ".tmp")
+
+    def test_a_failed_swap_leaves_no_secret_bearing_temp_file(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # ENOSPC/permission failure mid-swap: the config survives untouched and
+        # the torn .tmp (it carries API keys) is removed; the backup - a
+        # faithful copy of the still-intact config - may remain.
+        text = "seadex:\n  private_releases: allow\n"
+        path = self._write(tmp_path, text)
+
+        def refuse_replace(src: str, dst: str) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(config_mod.os, "replace", refuse_replace)
+        with pytest.raises(OSError, match="disk full"):
+            upgrade_config_file(path)
+        assert Path(path).read_text(encoding="utf-8") == text
+        assert not os.path.exists(path + ".tmp")

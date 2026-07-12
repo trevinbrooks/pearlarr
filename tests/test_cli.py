@@ -1558,6 +1558,7 @@ class TestScheduledLifecycle:
             "seadex:\n  private_releases: allow\nsonarr:\n  url: http://s\n  api_key: k\n",
             encoding="utf-8",
         )
+
         def refuse_resolver(*args: object, **kwargs: object) -> None:
             return None
 

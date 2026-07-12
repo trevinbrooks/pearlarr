@@ -23,11 +23,13 @@ from . import bootstrap
 from .config import (
     AppConfig,
     Arr,
+    ConfigRewriteError,
     LogFormat,
     strip_userinfo,
     upgrade_config_file,
     write_starter_config,
 )
+from .config_migrations import MIGRATE_HINT
 from .console_caps import CapsCache
 from .json_narrow import is_json_list, is_json_obj
 from .log import LogLevel, resolve_console_format, setup_logger
@@ -620,8 +622,13 @@ def _run_config_action[T](path: str, action: Callable[[str], T]) -> T | None:
     except yaml.YAMLError as e:
         typer.echo(f"Unreadable YAML in {path} ({bootstrap.format_yaml_error(e)})", err=True)
         return None
+    except ConfigRewriteError as e:
+        typer.echo(str(e), err=True)
+        return None
     except OSError as e:
-        typer.echo(f"Could not access {path} ({e}) - check its permissions", err=True)
+        # The error text names the exact file (possibly a .bak/.tmp sibling the
+        # migrate action writes), so the advice covers the directory too.
+        typer.echo(f"Could not access {path} ({e}) - check permissions on it and the data directory", err=True)
         return None
 
 
@@ -644,10 +651,7 @@ def config_validate() -> bool:
     if outcome is not None:
         # Valid but old-schema: the file loads through the in-memory migration;
         # say so here, where the user is actively checking.
-        typer.echo(
-            f"  {'schema:':<13}older config schema (runs migrate it in memory) - "
-            f"run pearlarr config migrate to update the file",
-        )
+        typer.echo(f"  {'schema:':<13}older config schema, migrated in memory at load - {MIGRATE_HINT}")
         for note in outcome.notes:
             typer.echo(f"  {'':<13}- {note}")
     for arr in (Arr.SONARR, Arr.RADARR):

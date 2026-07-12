@@ -22,9 +22,9 @@ from .seadex_types import Json
 
 CONFIG_VERSION = 1
 
-# The v0-era coalesce targets, spelled as the historical literals.
-_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
-_IMPORT_MODES = ("auto", "move", "copy")
+# The one remediation sentence, shared by every surface that reports an
+# old-schema file (and quoted by docs/troubleshooting.md's anchor grep).
+MIGRATE_HINT = "run pearlarr config migrate to update the file (a backup is kept)"
 
 
 @dataclass(frozen=True)
@@ -42,14 +42,16 @@ class MigrationOutcome:
 def declared_version(config: Mapping[str, Json]) -> int | None:
     """The `config_version` a raw mapping declares.
 
-    Absent or blank counts as 0 (a pre-versioning file); a non-int value is
-    None, so the chain stays away and validation reports the bad key itself.
+    An absent key counts as 0 (a pre-versioning file). Everything else that is
+    not a non-negative int - a blank key (which takes the field default, like
+    every blank key), a bool, a string, a negative - is None: the chain stays
+    away, and validation speaks for the key itself.
     """
 
-    value = config.get("config_version")
-    if value is None:
+    if "config_version" not in config:
         return 0
-    if isinstance(value, int) and not isinstance(value, bool):
+    value = config["config_version"]
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
         return value
     return None
 
@@ -62,7 +64,14 @@ def _group(config: dict[str, Json], key: str) -> dict[str, Json] | None:
 
 
 def _to_v1(config: dict[str, Json]) -> list[str]:
-    """v0 -> v1: fold the pre-versioning keys and values that 1.0.0 removed or narrowed."""
+    """v0 -> v1: fold the pre-versioning schema that 1.0.0 removed.
+
+    Only removed KEYS and removed ENUM VALUES fold - spellings that were once
+    part of the schema and cannot be a typo against the current one. A value
+    that was never valid (a misspelled log level, an unknown import mode) is
+    left for validation to reject by name: a version-less file may just as
+    well be a new hand-written config, and typos must stay loud.
+    """
 
     notes: list[str] = []
     if (seadex := _group(config, "seadex")) is not None:
@@ -79,20 +88,6 @@ def _to_v1(config: dict[str, Json]) -> list[str]:
             notes.append(
                 "seadex.private_releases 'allow' was removed - folded to 'warn' (private releases were never grabbed)",
             )
-    if (advanced := _group(config, "advanced")) is not None:
-        level = advanced.get("log_level")
-        if isinstance(level, str) and level.upper() not in _LOG_LEVELS:
-            # Free-form once: an unknown level warned and ran at INFO; keep that
-            # instead of newly rejecting the file.
-            advanced.pop("log_level")
-            notes.append(f"advanced.log_level {level!r} is not a log level - dropped (runs at INFO)")
-    if (imports := _group(config, "imports")) is not None:
-        mode = imports.get("mode")
-        if isinstance(mode, str) and mode not in _IMPORT_MODES:
-            # Free-form once (forwarded verbatim to Sonarr, which refused it at
-            # import time); auto is the closest working reading.
-            imports.pop("mode")
-            notes.append(f"imports.mode {mode!r} is not auto/move/copy - dropped (auto)")
     return notes
 
 
@@ -128,9 +123,27 @@ def migrate_mapping(config: dict[str, Json]) -> MigrationOutcome | None:
 
 # The template's two key shapes: a top-level key (group header or scalar) and a
 # group field at the generator's fixed two-space indent. Comment and blank lines
-# match neither and pass through untouched.
+# match neither and pass through untouched. A pin test asserts every template
+# line is one of those four shapes, so a generator format change fails CI
+# instead of silently un-matching the splice.
 _TOP_KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):")
 _FIELD_KEY = re.compile(r"^  ([A-Za-z_][A-Za-z0-9_]*):")
+
+# yaml's line-folding knob: without this, safe_dump wraps a long plain scalar
+# onto continuation lines and a single-line splice would truncate the value.
+_NO_WRAP = 2**20
+
+
+def _scalar_token(value: Json) -> str:
+    """One YAML token that round-trips `value` on a single physical line.
+
+    Plain style for readability; a string carrying line breaks or tabs is
+    forced into double-quoted style, whose escapes keep it on one line.
+    """
+
+    style = '"' if isinstance(value, str) and any(ch in value for ch in "\n\r\t\x85") else None
+    dumped = yaml.safe_dump(value, default_flow_style=True, width=_NO_WRAP, default_style=style)
+    return dumped.partition("\n")[0]
 
 
 def _value_lines(indent: str, key: str, value: Json) -> list[str]:
@@ -139,10 +152,9 @@ def _value_lines(indent: str, key: str, value: Json) -> list[str]:
     if value is None:
         return [f"{indent}{key}:"]
     if isinstance(value, (dict, list)) and value:
-        dumped = yaml.safe_dump(value, default_flow_style=False, sort_keys=False).rstrip("\n")
+        dumped = yaml.safe_dump(value, default_flow_style=False, sort_keys=False, width=_NO_WRAP).rstrip("\n")
         return [f"{indent}{key}:", *(f"{indent}  {line}" for line in dumped.splitlines())]
-    scalar = yaml.safe_dump(value, default_flow_style=True, sort_keys=False).partition("\n")[0]
-    return [f"{indent}{key}: {scalar}"]
+    return [f"{indent}{key}: {_scalar_token(value)}"]
 
 
 def render_migrated_config(template: str, config: Mapping[str, Json]) -> str:

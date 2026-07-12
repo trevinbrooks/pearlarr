@@ -135,18 +135,25 @@ class TestSchemaMigration:
     def test_v0_file_with_every_delta_loads_and_reports_each(self, tmp_path: Path) -> None:
         cfg = self._load(
             tmp_path,
-            "seadex:\n  public_only: true\nadvanced:\n  log_level: trace\nimports:\n  mode: hardlink\n",
+            "seadex:\n  public_only: true\n  private_releases: allow\n",
         )
-        # Each fold lands on the removed key's old runtime behavior.
+        # Each fold lands on the removed schema's old runtime behavior.
         assert cfg.seadex.private_releases is PrivateReleaseAction.WARN
-        assert cfg.advanced.log_level == "INFO"
-        assert cfg.imports.mode == "auto"
         assert cfg.config_version == CONFIG_VERSION
         outcome = cfg.migration()
         assert outcome is not None
         assert outcome.from_version == 0
-        assert len(outcome.notes) == 3
+        assert len(outcome.notes) == 2
         assert any("public_only" in note for note in outcome.notes)
+
+    def test_typos_stay_loud_in_a_version_less_file(self, tmp_path: Path) -> None:
+        # Only removed schema folds; a never-valid value is a typo and must
+        # reject by name even without a config_version key - a version-less
+        # file may just as well be a new hand-written config.
+        with pytest.raises(ValidationError, match="log_level"):
+            self._load(tmp_path, "advanced:\n  log_level: WARNIN\n")
+        with pytest.raises(ValidationError, match="mode"):
+            self._load(tmp_path, "imports:\n  mode: hardlink\n")
 
     def test_removed_allow_value_folds_to_warn(self, tmp_path: Path) -> None:
         cfg = self._load(tmp_path, "seadex:\n  private_releases: allow\n")
@@ -167,23 +174,24 @@ class TestSchemaMigration:
         cfg = self._load(tmp_path, f"config_version: {CONFIG_VERSION}\nsonarr:\n  url: http://x\n")
         assert cfg.migration() is None
 
-    def test_blank_version_counts_as_pre_versioning(self, tmp_path: Path) -> None:
-        # `config_version:` parses to None; the blank-drop would default it, but
-        # the loader must still treat the file as v0 and stamp it.
+    def test_blank_version_takes_the_default_like_any_blank_key(self, tmp_path: Path) -> None:
+        # `config_version:` parses to None and the blank-drop applies the field
+        # default (the current version) - blank means default everywhere, so a
+        # blank version must NOT count as pre-versioning and re-open the folds.
         cfg = self._load(tmp_path, "config_version:\n")
-        outcome = cfg.migration()
-        assert outcome is not None
-        assert outcome.from_version == 0
+        assert cfg.migration() is None
         assert cfg.config_version == CONFIG_VERSION
 
     def test_newer_file_is_refused_naming_both_versions(self, tmp_path: Path) -> None:
         with pytest.raises(ValidationError, match="newer Pearlarr"):
             self._load(tmp_path, f"config_version: {CONFIG_VERSION + 1}\n")
 
-    def test_non_int_version_is_a_validation_error_not_a_migration(self, tmp_path: Path) -> None:
-        # Garbage must surface under its key, not be silently re-stamped.
-        with pytest.raises(ValidationError, match="config_version"):
-            self._load(tmp_path, "config_version: banana\n")
+    def test_garbage_versions_are_validation_errors_not_migrations(self, tmp_path: Path) -> None:
+        # Unparseable or nonsense (negative) versions must surface under their
+        # key, not be silently re-stamped to current.
+        for bad in ("banana", "-3"):
+            with pytest.raises(ValidationError, match="config_version"):
+                self._load(tmp_path, f"config_version: {bad}\n")
 
     def test_migration_never_touches_the_file(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "config.yml"

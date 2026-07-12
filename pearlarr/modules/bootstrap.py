@@ -22,6 +22,7 @@ from pydantic import ValidationError
 
 from .boot_flow import BootFlow
 from .config import KNOWN_TRACKERS, AppConfig, Arr, config_permissions_loose
+from .config_migrations import MIGRATE_HINT
 from .log import apply_log_level
 from .output import RunFinished, emit_to_hub, hub_error, hub_note, hub_warn
 from .runlock import single_instance_lock
@@ -104,10 +105,7 @@ def load_shared_config(
         outcome = loaded.migration()
         if outcome is not None:
             applied = f" ({'; '.join(outcome.notes)})" if outcome.notes else ""
-            hub_warn(
-                f"Config file {config} uses an older config schema - migrated in memory{applied} - "
-                f"run pearlarr config migrate to update the file (a backup is kept)"
-            )
+            hub_warn(f"Config file {config} uses an older config schema - migrated in memory{applied} - {MIGRATE_HINT}")
         return loaded
     except FileNotFoundError:
         hub_error(f"No config file at {config} - a starter template was written - fill it in and re-run")
