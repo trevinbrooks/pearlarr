@@ -65,6 +65,13 @@
           "$ref": "#/$defs/LogFormat",
           "default": "auto",
           "description": "Console output format. `auto` resolves to `rich` on a terminal and `plain` when piped or under Docker; `plain` and `json` also disable the live progress views."
+        },
+        "log_retention_days": {
+          "default": 14,
+          "description": "How many days of dated log backups to keep. Each run rotates the previous run's log to a dated backup; backups older than this many days are deleted once the run's configuration loads.",
+          "minimum": 1,
+          "title": "Log Retention Days",
+          "type": "integer"
         }
       },
       "title": "AdvancedSettings",

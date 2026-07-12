@@ -38,6 +38,7 @@ Coming from upstream 0.9.x:
 - Discord notifications are rich embeds with colors, links, and a version footer.
 - The console shows a live cockpit during startup and the import-wait pass (spinners, ticking timers, files-imported progress).
 - `advanced.log_format` picks the console surface (`auto`/`rich`/`plain`/`json`); `json` writes one JSON object per event to stdout - a versioned machine interface with a generated event catalog ([docs/output.md](docs/output.md)).
+- Rotated logs are dated per-run backups, kept for `advanced.log_retention_days` days, replacing the fixed ten-file cascade.
 - New CLI surface:
   - `run single --dry-run` (simulate without grabbing, caching, or notifying), `--movie-id`/`--series-id` (single-title runs by TMDB/TVDB ID), and `--import-wait-mode`/`--log-level` per-run overrides.
   - `config validate` and `config show` (effective config with secrets redacted, safe to paste into a bug report).

@@ -26,8 +26,8 @@ Each line is `<timestamp> LEVEL [breadcrumb] message key=value ...`, one line pe
 The grammar is stable enough to read and grep, but it is **not a parsing API**: wording, breadcrumbs, and `key=value` tails may change in any release.
 Automation belongs on the JSON stream or the webhooks.
 
-At the start of each run (or scheduled cycle), the previous file rotates: `Pearlarr.log` becomes `Pearlarr.log.1`, which becomes `Pearlarr.log.2`, and so on up to `Pearlarr.log.9`, whose previous occupant is dropped.
-Log growth is therefore bounded to the ten most recent runs.
+At the start of each run (or scheduled cycle), the previous file rotates to a dated backup, `Pearlarr.log.<run's timestamp>`.
+Backups older than `advanced.log_retention_days` are deleted once the run's configuration loads.
 
 ## Levels
 

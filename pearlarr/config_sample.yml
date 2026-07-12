@@ -215,6 +215,10 @@ advanced:
   # Values: auto / rich / plain / json
   log_format: auto
 
+  # How many days of dated log backups to keep. Each run rotates the previous run's log to a dated
+  # backup; backups older than this many days are deleted once the run's configuration loads.
+  log_retention_days: 14
+
 # ID and episode mapping sources. anibridge_mappings is the primary; the others fill anything it
 # misses.
 mappings:

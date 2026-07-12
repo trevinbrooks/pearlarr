@@ -1062,7 +1062,7 @@ def test_a_failing_console_factory_keeps_the_old_seat_and_notes_file_only() -> N
 def test_cli_hub_seats_the_file_sink_first() -> None:
     # The file-before-console dispatch pin: _subs[0] is the first-declared sink
     # (the reader convention above), and cli declares FileLogSink first.
-    hub = _install_output_hub(resolve_paths())
+    hub, _ = _install_output_hub(resolve_paths())
     try:
         assert isinstance(hub._subs[0].renderer, FileLogSink)
     finally:

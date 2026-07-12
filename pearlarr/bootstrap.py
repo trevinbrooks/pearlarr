@@ -24,7 +24,7 @@ from .boot_flow import BootFlow
 from .config import KNOWN_TRACKERS, AppConfig, Arr, config_permissions_loose
 from .config_migrations import MIGRATE_HINT
 from .log import apply_log_level
-from .output import RunFinished, emit_to_hub, hub_error, hub_note, hub_warn
+from .output import FileLogSink, RunFinished, emit_to_hub, hub_error, hub_note, hub_warn
 from .runlock import single_instance_lock
 
 if TYPE_CHECKING:
@@ -262,6 +262,7 @@ def run_arrs(
     *,
     paths: AppPaths,
     logger: logging.Logger,
+    file_sink: FileLogSink,
     explicit_selection: bool = False,
     dry_run: bool = False,
     import_wait_mode: ImportWaitMode | None = None,
@@ -285,10 +286,14 @@ def run_arrs(
     return at all: `load_shared_config` writes the starter template and
     raises `typer.Exit(1)` (see its docstring). An empty `arrs` is a
     defensive no-op returning True (both callers guard against it).
-    `import_wait_mode` is the resolved CLI override threaded into each arr
-    (None in scheduled mode); `log_level` is the CLI log-level override,
-    applied as soon as the config is readable (cli > config > INFO);
-    `retry_note` is the scheduled-mode retry message (None otherwise).
+    `file_sink` is the installed hub's FileLogSink (`cli._install_output_hub`
+    returns it alongside the hub) - its retention window is only knowable once
+    `app_config` is read, so it rides in as its own dep rather than through the
+    hub's global registry. `import_wait_mode` is the resolved CLI override
+    threaded into each arr (None in scheduled mode); `log_level` is the CLI
+    log-level override, applied as soon as the config is readable
+    (cli > config > INFO); `retry_note` is the scheduled-mode retry message
+    (None otherwise).
     """
 
     if not arrs:
@@ -330,6 +335,7 @@ def run_arrs(
             if app_config is None:
                 return False
             apply_log_level(logger, log_level or app_config.advanced.log_level)
+            file_sink.apply_retention_days(app_config.advanced.log_retention_days)
 
             # Selection is settled before the mapping fetch, so a refused or
             # empty selection fails fast instead of downloading sources first.

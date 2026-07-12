@@ -179,6 +179,7 @@ The console format and level apply to terminal output; a plain-text file log is 
 | `detect_arr_activity` | `true` |  | Re-check titles whose files Sonarr or Radarr changed since the last run. Polls each arr's history at run start. Turn off if a release you replaced arr-side keeps being re-grabbed. |
 | `log_level` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` | Minimum level written to the console and the file log, case-insensitive. |
 | `log_format` | `auto` | `auto` / `rich` / `plain` / `json` | Console output format. `auto` resolves to `rich` on a terminal and `plain` when piped or under Docker; `plain` and `json` also disable the live progress views. |
+| `log_retention_days` | `14` |  | How many days of dated log backups to keep. Each run rotates the previous run's log to a dated backup; backups older than this many days are deleted once the run's configuration loads. |
 <!-- /gen:group-advanced -->
 
 ## mappings

@@ -1,19 +1,21 @@
 # pyright: strict, reportPrivateUsage=false
 # reportPrivateUsage is off for the skip-set pins alone: _TEXT_SKIP/_JSON_SKIP are
-# deliberately private tables, imported to pin their exact membership.
+# deliberately private tables, imported to pin their exact membership (as is the
+# rotation stamp format, _BACKUP_STAMP_FORMAT).
 """Tests for the shared text grammar + text sinks (`output.textline`).
 
 Golden-pin the `ts LEVEL [path] message k=v` grammar (the file-log contract),
 the quoting/escape rules, breadcrumb labels + the advisory during=/placed=frontier
 tail, line/file byte-parity (with the file_only carve-out), per-line admission,
-the throttled "still waiting" pulse, the rotation cascade + append-after-close,
-fold-in-finally, and the one-object-per-event json shape (stable key order,
-offset-bearing time).
+the throttled "still waiting" pulse, dated-backup rotation + retention pruning +
+append-after-close, fold-in-finally, and the one-object-per-event json shape
+(stable key order, offset-bearing time).
 """
 
 import io
 import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import get_args, override
@@ -71,8 +73,9 @@ from pearlarr.output import (
     WaitProgress,
     WaitSnapshot,
     WaitStarted,
+    textline,
 )
-from pearlarr.output.textline import _JSON_SKIP, _TEXT_SKIP
+from pearlarr.output.textline import _BACKUP_STAMP_FORMAT, _JSON_SKIP, _TEXT_SKIP
 from pearlarr.output.trace import CapturedTrace
 from pearlarr.reporter import GrabRecord, NeedsActionKind, NeedsActionRecord, RunStats
 from pearlarr.seadex_types import Json
@@ -498,22 +501,65 @@ def test_line_and_file_parity_holds_at_a_warning_level(tmp_path: Path) -> None:
     assert stream.getvalue() != ""
 
 
-def test_file_rotation_mirrors_the_log_cascade(tmp_path: Path) -> None:
+def _pin_mtime(path: Path, when: datetime) -> None:
+    """Set `path`'s mtime (and atime) to `when`, so its rotation stamp is deterministic."""
+
+    stamp = when.timestamp()
+    os.utime(path, (stamp, stamp))
+
+
+def _make_backup(tmp_path: Path, name: str, age_days: float) -> Path:
+    """A backup file under `tmp_path` named `name`, mtime `age_days` in the past."""
+
+    path = tmp_path / name
+    path.write_text("x\n", encoding="utf-8")
+    _pin_mtime(path, datetime.now() - timedelta(days=age_days))
+    return path
+
+
+def test_file_rotation_names_the_backup_after_the_run_s_mtime(tmp_path: Path) -> None:
     sink = FileLogSink(str(tmp_path))
+    log = tmp_path / "Pearlarr.log"
 
     sink.handle(RunStarted(version="one", data_dir="/d"), _EPOCH)
+    first_run = datetime(2026, 1, 1, 10, 0, 0)
+    _pin_mtime(log, first_run)
     sink.begin_cycle()
-    sink.handle(RunStarted(version="two", data_dir="/d"), _EPOCH)
+    sink.handle(RunStarted(version="two", data_dir="/d"), _EPOCH)  # rotates "one"
+    second_run = datetime(2026, 1, 2, 11, 30, 15)
+    _pin_mtime(log, second_run)
     sink.begin_cycle()
-    sink.handle(RunStarted(version="three", data_dir="/d"), _EPOCH)
+    sink.handle(RunStarted(version="three", data_dir="/d"), _EPOCH)  # rotates "two"
     sink.close()
 
-    assert "three" in (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
-    assert "two" in (tmp_path / "Pearlarr.log.1").read_text(encoding="utf-8")
-    assert "one" in (tmp_path / "Pearlarr.log.2").read_text(encoding="utf-8")
+    assert "three" in log.read_text(encoding="utf-8")
+    one = tmp_path / f"Pearlarr.log.{first_run.strftime(_BACKUP_STAMP_FORMAT)}"
+    two = tmp_path / f"Pearlarr.log.{second_run.strftime(_BACKUP_STAMP_FORMAT)}"
+    assert "one" in one.read_text(encoding="utf-8")
+    assert "two" in two.read_text(encoding="utf-8")
 
 
-def test_an_idle_cycle_never_churns_the_cascade(tmp_path: Path) -> None:
+def test_rotate_same_second_collision_gets_a_numeric_suffix(tmp_path: Path) -> None:
+    sink = FileLogSink(str(tmp_path))
+    log = tmp_path / "Pearlarr.log"
+    when = datetime(2026, 1, 1, 10, 0, 0)
+
+    sink.handle(RunStarted(version="one", data_dir="/d"), _EPOCH)
+    _pin_mtime(log, when)
+    sink.begin_cycle()
+    sink.handle(RunStarted(version="two", data_dir="/d"), _EPOCH)  # rotates "one" to the bare stamp
+    _pin_mtime(log, when)  # same second as "one"
+    sink.begin_cycle()
+    sink.handle(RunStarted(version="three", data_dir="/d"), _EPOCH)  # collides, falls to ".1"
+    sink.close()
+
+    stamp = when.strftime(_BACKUP_STAMP_FORMAT)
+    assert "one" in (tmp_path / f"Pearlarr.log.{stamp}").read_text(encoding="utf-8")
+    assert "two" in (tmp_path / f"Pearlarr.log.{stamp}.1").read_text(encoding="utf-8")
+    assert "three" in log.read_text(encoding="utf-8")
+
+
+def test_an_idle_cycle_never_churns_a_backup(tmp_path: Path) -> None:
     sink = FileLogSink(str(tmp_path))
     sink.begin_cycle()
     sink.begin_cycle()  # no writes in between: nothing to rotate
@@ -521,28 +567,33 @@ def test_an_idle_cycle_never_churns_the_cascade(tmp_path: Path) -> None:
     sink.close()
 
     assert (tmp_path / "Pearlarr.log").exists()
-    assert not (tmp_path / "Pearlarr.log.1").exists()
+    assert list(tmp_path.glob("Pearlarr.log.*")) == []
 
 
 def test_pre_cycle_writes_append_and_rotation_fires_once_per_begin_cycle(tmp_path: Path) -> None:
     # Only begin_cycle arms rotation — construction must not, or a record in the
-    # install→begin_cycle window would rotate twice and strand a one-line .log.1.
-    (tmp_path / "Pearlarr.log").write_text("previous run\n", encoding="utf-8")
+    # install→begin_cycle window would rotate twice and strand a one-line backup.
+    log = tmp_path / "Pearlarr.log"
+    log.write_text("previous run\n", encoding="utf-8")
+    when = datetime(2026, 1, 1, 10, 0, 0)
+    _pin_mtime(log, when)
     sink = FileLogSink(str(tmp_path))
 
     sink.handle(RunStarted(version="pre-cycle", data_dir="/d"), _EPOCH)
-    assert not (tmp_path / "Pearlarr.log.1").exists()  # appended, no rotation
-    log_text = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
+    assert list(tmp_path.glob("Pearlarr.log.*")) == []  # appended, no rotation
+    log_text = log.read_text(encoding="utf-8")
     assert log_text.startswith("previous run\n") and "pre-cycle" in log_text
+    _pin_mtime(log, when)  # the append above bumped mtime; re-pin for a deterministic stamp
 
     sink.begin_cycle()
     sink.handle(RunStarted(version="cycle-one", data_dir="/d"), _EPOCH)
     sink.close()
 
-    rotated = (tmp_path / "Pearlarr.log.1").read_text(encoding="utf-8")
+    backups = list(tmp_path.glob("Pearlarr.log.*"))
+    assert len(backups) == 1  # exactly one rotation
+    rotated = backups[0].read_text(encoding="utf-8")
     assert "previous run" in rotated and "pre-cycle" in rotated  # rotated as ONE file
-    assert not (tmp_path / "Pearlarr.log.2").exists()  # exactly one rotation
-    assert "cycle-one" in (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
+    assert "cycle-one" in log.read_text(encoding="utf-8")
 
 
 def test_a_reopened_file_sink_appends_after_close(tmp_path: Path) -> None:
@@ -556,7 +607,61 @@ def test_a_reopened_file_sink_appends_after_close(tmp_path: Path) -> None:
     content = (tmp_path / "Pearlarr.log").read_text(encoding="utf-8")
     assert "one" in content
     assert "two" in content
-    assert not (tmp_path / "Pearlarr.log.1").exists()
+    assert list(tmp_path.glob("Pearlarr.log.*")) == []
+
+
+def test_backstop_deletes_oldest_backups_beyond_the_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(textline, "_BACKSTOP_MAX_BACKUPS", 2)
+    sink = FileLogSink(str(tmp_path))
+    log = tmp_path / "Pearlarr.log"
+    stamps = [datetime(2026, 1, day, 0, 0, 0) for day in (1, 2, 3, 4)]
+
+    sink.handle(RunStarted(version="seed", data_dir="/d"), _EPOCH)
+    for i, when in enumerate(stamps):
+        _pin_mtime(log, when)
+        sink.begin_cycle()
+        sink.handle(RunStarted(version=f"run-{i}", data_dir="/d"), _EPOCH)
+    sink.close()
+
+    backups = list(tmp_path.glob("Pearlarr.log.*"))
+    assert len(backups) == 2  # capped by the monkeypatched backstop
+    kept_stamps = {p.name.removeprefix("Pearlarr.log.") for p in backups}
+    assert kept_stamps == {stamps[2].strftime(_BACKUP_STAMP_FORMAT), stamps[3].strftime(_BACKUP_STAMP_FORMAT)}
+
+
+def test_apply_retention_days_prunes_older_backups_keeps_younger_never_the_live_file(tmp_path: Path) -> None:
+    sink = FileLogSink(str(tmp_path))
+    live = tmp_path / "Pearlarr.log"
+    live.write_text("live\n", encoding="utf-8")
+    _pin_mtime(live, datetime.now() - timedelta(days=999))  # an ancient mtime must never matter for the live file
+
+    old_backup = _make_backup(tmp_path, "Pearlarr.log.2025-01-01_000000", age_days=30)
+    young_backup = _make_backup(tmp_path, "Pearlarr.log.2026-01-01_000000", age_days=1)
+
+    sink.apply_retention_days(14)
+
+    assert not old_backup.exists()
+    assert young_backup.exists()
+    assert live.exists()
+
+
+def test_apply_retention_days_prunes_legacy_numbered_backups_by_age_too(tmp_path: Path) -> None:
+    sink = FileLogSink(str(tmp_path))
+    legacy_old = _make_backup(tmp_path, "Pearlarr.log.9", age_days=30)
+    legacy_young = _make_backup(tmp_path, "Pearlarr.log.1", age_days=1)
+
+    sink.apply_retention_days(14)
+
+    assert not legacy_old.exists()
+    assert legacy_young.exists()
+
+
+def test_apply_retention_days_before_any_rotation_is_a_no_op(tmp_path: Path) -> None:
+    sink = FileLogSink(str(tmp_path))
+
+    sink.apply_retention_days(14)  # nothing exists yet - must not raise or create anything
+
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_every_line_is_on_disk_immediately(tmp_path: Path) -> None:

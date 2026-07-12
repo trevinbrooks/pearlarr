@@ -367,10 +367,8 @@ def apply_log_level(logger: logging.Logger, log_level: str) -> None:
     current_hub().set_level(level)
 
 
-# Logger name; MAX_LOG_FILES caps the FileLogSink's rotation cascade
-# (.log -> .log.1 ... .log.9 in output/textline.py).
+# The app logger's name, and the FileLogSink's log file stem (output/textline.py).
 LOG_NAME = "Pearlarr"
-MAX_LOG_FILES = 9
 
 
 def setup_logger(

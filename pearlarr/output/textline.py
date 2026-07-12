@@ -25,8 +25,10 @@ the independently ticking file and plain sinks stay byte-identical.
 
 from __future__ import annotations
 
+import glob
 import json
 import os
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -74,10 +76,17 @@ from .events import (
     severity_of,
 )
 from .wait_lines import PulseThrottle
-from ..log import LOG_NAME, MAX_LOG_FILES
+from ..log import LOG_NAME
 from ..manual_import import OutcomeCategory
 
 TS_FORMAT: Final = "%Y-%m-%d %H:%M:%S"
+
+# A rotated backup is named after the run that wrote it (the file's own mtime).
+_BACKUP_STAMP_FORMAT: Final = "%Y-%m-%d_%H%M%S"
+
+# The rotation backstop (module attribute so tests can monkeypatch it): caps
+# backups before config - and its retention days - has ever been read.
+_BACKSTOP_MAX_BACKUPS = 500
 
 # The JSON stream's envelope version. Changes within it are additive-only; a
 # removal, rename, or semantic change bumps it alongside a new major release
@@ -624,14 +633,20 @@ class LineRenderer(_GrammarSink):
 
 @final
 class FileLogSink(_GrammarSink):
-    """The traditional structured log file; rotation mirrors setup_logger's cascade.
+    """The traditional structured log file: dated per-run backups + age-based retention.
 
     Rotation is armed ONLY by begin_cycle and runs on the first write after it, so
-    an idle cycle never churns the cascade and a pre-cycle record appends to the
-    PREVIOUS cycle's file (never a second rotation burning a cascade slot). Every
-    line flushes as written (crash fidelity: the tail is on disk when the process
-    dies — the old FileHandler's behavior). A reopen after close appends (never a
-    silent truncate without a pending rotation).
+    an idle cycle never churns a backup and a pre-cycle record appends to the
+    PREVIOUS cycle's file (never a second rotation burning a backup slot). A
+    rotation renames the current file to a `.log.<run's mtime stamp>` backup
+    (collisions get a `.1`, `.2`, ... suffix); a config-free count backstop then
+    caps the backup count, so a crash-looping scheduler can't grow the log dir
+    unboundedly before config has ever loaded. Age-based retention is a separate
+    step (`set_retention_days`), applied once per cycle as soon as the run's
+    `advanced.log_retention_days` is known. Every line flushes as written (crash
+    fidelity: the tail is on disk when the process dies — the old FileHandler's
+    behavior). A reopen after close appends (never a silent truncate without a
+    pending rotation).
     """
 
     writes_file_only: ClassVar[bool] = True
@@ -696,15 +711,44 @@ class FileLogSink(_GrammarSink):
             self._file = None
 
     def _rotate(self) -> None:
-        # .log -> .log.1 -> ... -> .log.9; os.replace overwrites the oldest atomically.
+        # Named after the run that wrote it (the file's own mtime), not a cascade
+        # slot; a same-second collision falls through to a numeric suffix.
         if not os.path.isfile(self.path):
             return
-        for i in range(MAX_LOG_FILES - 1, 0, -1):
-            old_log = os.path.join(self._dir, f"{LOG_NAME}.log.{i}")
-            new_log = os.path.join(self._dir, f"{LOG_NAME}.log.{i + 1}")
-            if os.path.exists(old_log):
-                os.replace(old_log, new_log)
-        os.replace(self.path, os.path.join(self._dir, f"{LOG_NAME}.log.1"))
+        stamp = datetime.fromtimestamp(os.path.getmtime(self.path)).strftime(_BACKUP_STAMP_FORMAT)
+        target = os.path.join(self._dir, f"{LOG_NAME}.log.{stamp}")
+        suffix = 0
+        while os.path.exists(target):
+            suffix += 1
+            target = os.path.join(self._dir, f"{LOG_NAME}.log.{stamp}.{suffix}")
+        os.replace(self.path, target)
+        self._enforce_backstop()
+
+    def _backup_paths(self) -> list[str]:
+        return glob.glob(os.path.join(self._dir, f"{LOG_NAME}.log.*"))
+
+    def _enforce_backstop(self) -> None:
+        # A crash-looping scheduler must not grow the log dir unboundedly before
+        # config - and its configured retention - has ever loaded.
+        backups = sorted(self._backup_paths(), key=os.path.getmtime)
+        excess = len(backups) - _BACKSTOP_MAX_BACKUPS
+        for path in backups[: max(excess, 0)]:
+            os.remove(path)
+
+    def apply_retention_days(self, days: int) -> None:
+        """Delete dated backups older than `days` days.
+
+        Retention rides the config-application moment, never `_rotate`: the
+        sink is built before config exists, and a one-shot `run single`
+        rotates before config loads, so a rotation-time prune would either
+        never fire or run with a default that could delete backups a longer
+        configured retention wanted kept.
+        """
+
+        cutoff = time.time() - days * 86400
+        for path in self._backup_paths():
+            if os.path.getmtime(path) < cutoff:
+                os.remove(path)
 
 
 @final

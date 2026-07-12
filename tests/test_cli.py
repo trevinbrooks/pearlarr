@@ -435,6 +435,7 @@ class _RunArrsRecorder:
         *,
         paths: AppPaths,
         logger: logging.Logger,
+        file_sink: FileLogSink,
         explicit_selection: bool = False,
         dry_run: bool = False,
         import_wait_mode: ImportWaitMode | None = None,
@@ -1139,11 +1140,10 @@ def _install_cycle_recorder(monkeypatch: pytest.MonkeyPatch) -> _CycleStampingRe
 
     renderer = _CycleStampingRenderer()
 
-    def install(paths: AppPaths) -> OutputHub:
-        del paths
+    def install(paths: AppPaths) -> tuple[OutputHub, FileLogSink]:
         hub = OutputHub([renderer])
         install_hub(hub)  # emit_to_hub resolves this hub; conftest restores
-        return hub
+        return hub, FileLogSink(paths.log_dir)
 
     monkeypatch.setattr("pearlarr.cli._install_output_hub", install)
     return renderer
@@ -1536,6 +1536,7 @@ class TestScheduledLifecycle:
             [(Arr.SONARR, None)],
             paths=paths,
             logger=logger,
+            file_sink=FileLogSink(paths.log_dir),
             retry_note="will retry in 6h (Ctrl-C to stop)",
         )
 
@@ -1564,7 +1565,7 @@ class TestScheduledLifecycle:
 
         monkeypatch.setattr("pearlarr.bootstrap.build_resolver", refuse_resolver)
 
-        assert run_arrs([(Arr.SONARR, None)], paths=paths, logger=logger) is False
+        assert run_arrs([(Arr.SONARR, None)], paths=paths, logger=logger, file_sink=FileLogSink(paths.log_dir)) is False
 
         # Selected by content: the 0644 write also draws the loose-permissions warn.
         warning = next(d for d in recording.of_type(Diagnostic) if "older config schema" in d.message)
@@ -1651,7 +1652,7 @@ class TestRunLockContention:
         # the guard would raise the missing-config typer.Exit).
         with single_instance_lock(paths.data_dir) as held:
             assert held
-            result = run_arrs([(Arr.SONARR, None)], paths=paths, logger=logger)
+            result = run_arrs([(Arr.SONARR, None)], paths=paths, logger=logger, file_sink=FileLogSink(paths.log_dir))
 
         assert result is False
         assert diagnostic_messages(recording, Severity.WARNING) == [

@@ -343,7 +343,7 @@ def _console_seat(console_format: LogFormat, caps_cache: CapsCache) -> Renderer:
     return LineRenderer(sys.stdout)
 
 
-def _install_output_hub(paths: AppPaths) -> OutputHub:
+def _install_output_hub(paths: AppPaths) -> tuple[OutputHub, FileLogSink]:
     """Build + install the per-process OutputHub; its sinks own file/plain/json.
 
     The FileLogSink is deliberately the first stable sink (`_subs[0]`):
@@ -355,6 +355,10 @@ def _install_output_hub(paths: AppPaths) -> OutputHub:
     The probe is the pre-run writability check: it must reach the log FILE
     itself (a root-owned Pearlarr.log fails open, not makedirs), so an
     unwritable file aborts here like pre-flip instead of striking the sink.
+    The FileLogSink is also returned directly (alongside the hub) so a caller
+    can drive `apply_retention_days` once the config that names the retention
+    window is read - `run_arrs` is the sole reader, config-load being the
+    only moment retention is known.
     """
 
     file_sink = FileLogSink(paths.log_dir)
@@ -371,7 +375,7 @@ def _install_output_hub(paths: AppPaths) -> OutputHub:
     )
     install_hub(hub)
     install_bridge()
-    return hub
+    return hub, file_sink
 
 
 def _schedule_hours(config_path: str) -> float:
@@ -436,7 +440,7 @@ def run_scheduled(
 
     # The hub is per-process: installed once, BEFORE the loop — required,
     # so a record fired from inside setup_logger reaches the hub, never lastResort.
-    hub = _install_output_hub(paths)
+    hub, file_sink = _install_output_hub(paths)
 
     for cycle in itertools.count(1):
         # The config's console format is re-resolved each cycle (like the
@@ -464,6 +468,7 @@ def run_scheduled(
             [(Arr.RADARR, None), (Arr.SONARR, None)],
             paths=paths,
             logger=logger,
+            file_sink=file_sink,
             log_level=log_level,
             retry_note=f"will retry in {schedule_time:g}h (Ctrl-C to stop)",
         )
@@ -549,7 +554,7 @@ def run_single(
     # from inside setup_logger (the invalid-level complaint) reaches the hub
     # instead of logging.lastResort.
     console_format = _resolved_format(paths.config)
-    hub = _install_output_hub(paths)
+    hub, file_sink = _install_output_hub(paths)
     logger = setup_logger(log_level=log_level or "INFO", console_format=console_format)
     hub.begin_cycle(console_format=console_format, level=logger.level)
 
@@ -561,6 +566,7 @@ def run_single(
         arrs,
         paths=paths,
         logger=logger,
+        file_sink=file_sink,
         explicit_selection=explicit_selection,
         dry_run=dry_run,
         import_wait_mode=import_wait_mode,

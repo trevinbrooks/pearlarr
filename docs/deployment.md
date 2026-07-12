@@ -111,7 +111,7 @@ What is in it, and what deleting each piece costs:
 | `cache.db` | Run state: which entries were processed, grab history and torrent hashes, pending imports awaiting a wait pass, the arr-activity checkpoint. | Safe but costly: the next run re-evaluates the whole library, pending imports are forgotten (Sonarr still imports what it can on its own), and with `seadex.use_torrent_hash_to_filter: true` everything looks un-grabbed and gets re-downloaded. |
 | `cache.backup.db` | The snapshot written by `pearlarr cache backup`. | You lose the rollback point; take a new backup. |
 | `mappings.db` | The parsed ID-mapping sources. | Cheap: rebuilt from the mapping downloads on the next run. |
-| `logs/` | `Pearlarr.log` plus rotated `.log.1` through `.log.9`. | Disposable. |
+| `logs/` | `Pearlarr.log` plus dated `Pearlarr.log.<timestamp>` backups, kept for `advanced.log_retention_days` days. | Disposable. |
 | `.pearlarr.lock` | The single-instance run lock. | Leave it alone - it is an empty coordination file, recreated as needed. |
 
 ## Backup and restore

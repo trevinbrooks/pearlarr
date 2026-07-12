@@ -36,7 +36,7 @@ from pearlarr.cache import CacheSchemaError
 from pearlarr.config import AppConfig, Arr
 from pearlarr.manual_import import ImportWaitMode
 from pearlarr.mappings import MappingResolver, MappingSources
-from pearlarr.output import Diagnostic, RunFinished, Severity, install_bridge, install_hub
+from pearlarr.output import Diagnostic, FileLogSink, RunFinished, Severity, install_bridge, install_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.paths import resolve_paths
 from pearlarr.run_services import RunDeps
@@ -125,7 +125,8 @@ def _run_failing_leg(
     install_hub(recording.hub)
     install_bridge()
 
-    completed = run_arrs([(Arr.SONARR, None)], paths=resolve_paths(), logger=app_logger)
+    paths = resolve_paths()
+    completed = run_arrs([(Arr.SONARR, None)], paths=paths, logger=app_logger, file_sink=FileLogSink(paths.log_dir))
     return completed, recording
 
 
@@ -258,7 +259,8 @@ def _run_completing_leg(
     install_hub(recording.hub)
     install_bridge()
 
-    completed = run_arrs([(Arr.SONARR, None)], paths=resolve_paths(), logger=app_logger)
+    paths = resolve_paths()
+    completed = run_arrs([(Arr.SONARR, None)], paths=paths, logger=app_logger, file_sink=FileLogSink(paths.log_dir))
     return completed, recording
 
 

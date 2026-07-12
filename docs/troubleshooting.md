@@ -185,5 +185,5 @@ Removing the cache is a factory reset for when the database itself is suspect (a
 ## Where the logs live
 
 Every run writes `Pearlarr.log` under the data directory's `logs/` folder; `pearlarr paths` prints the exact location, and the per-OS defaults are listed in [deployment.md](deployment.md#the-data-directory).
-The nine previous runs are kept as `Pearlarr.log.1` through `.9` - see [output.md](output.md#the-log-file).
+Previous runs are kept as dated `Pearlarr.log.<timestamp>` backups for `advanced.log_retention_days` days - see [output.md](output.md#the-log-file).
 Logs are safe to paste into an issue: they never contain API keys, passwords, or webhook URLs ([SECURITY.md](../SECURITY.md#the-redaction-guarantee)).

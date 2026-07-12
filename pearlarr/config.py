@@ -578,6 +578,13 @@ class AdvancedSettings(_ConfigBase):
     Docker; `plain` and `json` also disable the live progress views.
     """
 
+    log_retention_days: int = Field(default=14, ge=1)
+    """How many days of dated log backups to keep.
+
+    Each run rotates the previous run's log to a dated backup; backups older
+    than this many days are deleted once the run's configuration loads.
+    """
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _uppercase_log_level(cls, value: Any) -> Any:
