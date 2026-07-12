@@ -635,8 +635,8 @@ def make_run_deps(
     config = config or make_config(url="http://sonarr", api_key="key")
     cache_store = cache_store or FakeCacheStore()
     logger = logger or make_logger()
-    # The one deliberately-leaked httpx client backs BOTH deps.http and
-    # deps.web (never used for real traffic here; httpx clients don't warn on GC).
+    # One shared client backs BOTH deps.http and deps.web (never used for real
+    # traffic here); conftest's close_leaked_handles closes it at teardown.
     http = httpx.Client()
     return RunDeps(
         config=config,

@@ -9,7 +9,9 @@ isolated logger that replaces the single process-global `builders.make_logger`.
 import logging
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
+import httpx
 import pytest
 
 from pearlarr.log import LOG_NAME
@@ -22,7 +24,7 @@ from .builders import make_logger
 
 @pytest.fixture(autouse=True)
 def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Close the sqlite stores + file log handlers a test leaves open.
+    """Close the sqlite stores, httpx clients, and file log handlers a test leaves open.
 
     Two GC-timed `ResourceWarning` sources that `filterwarnings=["error"]`
     would otherwise turn into failures at a nondeterministic later moment (whoever
@@ -36,6 +38,13 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     * The file handler `setup_logger` attaches to the `"Pearlarr"`
       logger (only the e2e smoke drives the real logging path); left open, its
       file handle leaks.
+
+    `httpx.Client` is the same leak class minus the warning (httpx doesn't warn
+    on GC): builders and test bodies construct ad-hoc clients (respx-mocked or
+    never driven) with no owner to close them. Wrapping `__init__` registers
+    every client a test constructs. Module-lifetime clients predate the
+    function-scoped wrap and are left alone; `close()` is idempotent, so clients
+    a test already context-manages are unaffected.
 
     The process-global `"Pearlarr"` logger is also fully reset (all handlers
     removed, level back to NOTSET): a test that ran `setup_logger` /
@@ -56,8 +65,18 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         opened.append(store)
         return store
 
+    clients: list[httpx.Client] = []
+    real_client_init = httpx.Client.__init__
+
+    def tracking_client_init(self: httpx.Client, *args: Any, **kwargs: Any) -> None:
+        real_client_init(self, *args, **kwargs)
+        clients.append(self)
+
     monkeypatch.setattr(MappingStore, "open", tracking_open)
+    monkeypatch.setattr(httpx.Client, "__init__", tracking_client_init)
     yield
+    for client in clients:
+        client.close()
     for store in opened:
         store.close()
     uninstall_bridge()
