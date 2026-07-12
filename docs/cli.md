@@ -30,6 +30,7 @@ Without a subcommand, runs in scheduled mode (every configured arr, every few ho
 | Command | Description |
 | --- | --- |
 | `pearlarr paths` | Print the resolved data directory and the files within it. |
+| `pearlarr replay` | Re-render a captured JSON event stream as the human text log grammar. |
 | `pearlarr run` | Run Pearlarr: a scheduled loop or a one-off single run. |
 | `pearlarr config` | Initialize, validate, or inspect the config file. |
 | `pearlarr cache` | Back up, restore, remove, or inspect the cache database. |
@@ -41,6 +42,12 @@ Print the resolved data directory and the files within it.
 | Option | Value | Description |
 | --- | --- | --- |
 | `--json` |  | Emit machine-readable JSON events, one object per line |
+
+## `pearlarr replay`
+
+Re-render a captured JSON event stream as the human text log grammar.
+
+Reads FILE (or stdin with -), a capture of the machine-readable JSON stream written by advanced.log_format: json or a subcommand's --json, and prints each event back as one `ts LEVEL [breadcrumb] message key=value` line - the same grammar as the log file - for reading a docker-captured log after the fact. Non-event lines (docker interleaves stderr text) are skipped with a count, and unknown newer events render best-effort. Unlike the other subcommands, replay has no --json flag: its output is the rendered text.
 
 ## `pearlarr run`
 

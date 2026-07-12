@@ -570,6 +570,10 @@ def _json_of(event: Event, crumbs: BreadcrumbFold, iso: str, severity: Severity)
         "level": fact.severity.name,
         "message": fact.message,
     }
+    # The text grammar's bracket seed (subsystem/origin word); always present, so
+    # a `replay` of the stream can reconstruct the [bracket] without per-event
+    # knowledge. For a Diagnostic it equals `origin`, which stays its own key.
+    payload["component"] = fact.component
     if isinstance(event, Diagnostic):
         payload["origin"] = event.origin
     if fact.scope is not None:
@@ -587,6 +591,80 @@ def _json_of(event: Event, crumbs: BreadcrumbFold, iso: str, severity: Severity)
     if isinstance(event, Diagnostic) and event.trace is not None:
         payload["exc"] = event.trace.plain
     return payload
+
+
+# The envelope + decoration keys a JSON line carries: `render_envelope_line`
+# turns them into the ts/level/[bracket]/message/trace shape, and everything
+# else in the object becomes the k=v tail.
+_ENVELOPE_KEYS: Final = frozenset(
+    {"schema_version", "time", "event", "level", "message", "component", "origin", "path", "exc"},
+)
+
+
+def _reformat_iso(iso: str) -> str | None:
+    """The grammar's `ts` for an ISO-8601 `time` value, or None when it can't be parsed.
+
+    The stored value is local wall time with its offset; strftime prints exactly
+    the components the grammar sinks printed, so no timezone conversion is needed.
+    """
+
+    try:
+        parsed = datetime.fromisoformat(iso)
+    except ValueError:
+        return None
+    return parsed.strftime(TS_FORMAT)
+
+
+def _envelope_bracket(payload: dict[str, JsonValue], event: str) -> str:
+    """The bracket seed: `path`, else `component`, else `origin`, else the event name."""
+
+    for key in ("path", "component", "origin"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return event
+
+
+def render_envelope_line(payload: dict[str, JsonValue]) -> str | None:
+    """Render one JSON envelope back to a `ts LEVEL [bracket] message k=v` text line.
+
+    The inverse of `_json_of` for post-mortem reading (`pearlarr replay`): a
+    generic envelope formatter carrying NO per-event knowledge, so an unknown
+    future event still renders. `time`, `level`, `message`, and `event` are
+    required - a missing or non-string one (or an unparseable `time`) returns
+    None, a malformed line the caller counts. The bracket is `path`, else
+    `component`, else `origin`, else the event name (captures predating
+    `component` fall through to origin/event); every remaining key becomes the
+    k=v tail in insertion order, and an `exc` string appends the traceback
+    exactly as the file sink does.
+    """
+
+    time_value = payload.get("time")
+    level = payload.get("level")
+    message = payload.get("message")
+    event = payload.get("event")
+    if not (
+        isinstance(time_value, str) and isinstance(level, str) and isinstance(message, str) and isinstance(event, str)
+    ):
+        return None
+    ts = _reformat_iso(time_value)
+    if ts is None:
+        return None
+
+    parts = [ts, level]
+    bracket = _envelope_bracket(payload, event)
+    if bracket:
+        parts.append(f"[{_flat(bracket)}]")
+    parts.append(_flat(message))
+    fields = tuple(Field(key, value) for key, value in payload.items() if key not in _ENVELOPE_KEYS)
+    if fields:
+        parts.append(_logfmt(fields))
+    text = " ".join(parts)
+    exc = payload.get("exc")
+    if isinstance(exc, str):
+        # The traceback is the sole multi-line form, appended like `_render_line`.
+        text += "\n" + exc.rstrip("\n")
+    return text
 
 
 # --- the sinks ------------------------------------------------------------------------

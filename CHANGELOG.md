@@ -44,6 +44,7 @@ Coming from upstream 0.9.x:
   - `config validate` and `config show` (effective config with secrets redacted, safe to paste into a bug report).
   - `cache stats` and `cache check`.
   - `pearlarr --version`, `-h` everywhere; a bare group command prints its help.
+  - `replay FILE` (or `-` for stdin) re-renders a captured `log_format: json` / `--json` stream back into the readable text log grammar, for reading a docker-captured log after the fact.
 - `--json` on every subcommand (`paths`, `config init`/`validate`/`migrate`/`show`, `cache backup`/`restore`/`remove`/`stats`/`check`) emitting the same `schema_version` 1 envelope as run logs.
 - Every config key can be set by environment variable as `PEARLARR_<GROUP>__<KEY>` (for example `PEARLARR_SONARR__URL`); values are parsed as YAML and an environment override beats the file.
 - The scheduled-run cadence is a config field, `schedule.interval_hours` (default 6), re-read each cycle so an edit takes effect without a restart.

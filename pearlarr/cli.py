@@ -277,6 +277,36 @@ def show_paths(json_output: Annotated[bool, typer.Option("--json", help=_JSON_HE
         return True
 
 
+@pearlarr_cli.command("replay")
+def replay(
+    capture: Annotated[
+        str,
+        typer.Argument(
+            metavar="FILE",
+            help="The JSON capture to render (a run's log_format: json output, or a subcommand's --json); "
+            "- reads stdin",
+        ),
+    ],
+) -> bool:
+    """Re-render a captured JSON event stream as the human text log grammar.
+
+    Reads FILE (or stdin with -), a capture of the machine-readable JSON stream
+    written by advanced.log_format: json or a subcommand's --json, and prints
+    each event back as one `ts LEVEL [breadcrumb] message key=value` line - the
+    same grammar as the log file - for reading a docker-captured log after the
+    fact. Non-event lines (docker interleaves stderr text) are skipped with a
+    count, and unknown newer events render best-effort. Unlike the other
+    subcommands, replay has no --json flag: its output is the rendered text.
+    """
+
+    # Lazy like the heavy clients (see the module comment above): replay is off
+    # the hot --help / config / cache paths.
+    from .replay import replay as run_replay
+
+    with cli_surface(False):
+        return run_replay(capture)
+
+
 _DEFAULT_SCHEDULE_HOURS = 6.0
 
 

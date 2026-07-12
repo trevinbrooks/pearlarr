@@ -872,11 +872,12 @@ def _json_lines(events: list[Event]) -> list[dict[str, Json]]:
 
 def test_json_emits_one_object_per_event_with_stable_key_order() -> None:
     (payload,) = _json_lines([RunStarted(version="v1.0.0", data_dir="/data")])
-    assert list(payload) == ["schema_version", "time", "event", "level", "message", "version", "data_dir"]
+    assert list(payload) == ["schema_version", "time", "event", "level", "message", "component", "version", "data_dir"]
     assert payload["schema_version"] == 1
     assert payload["event"] == "run_started"
     assert payload["level"] == "INFO"
     assert payload["message"] == "Pearlarr started"
+    assert payload["component"] == "run"
 
 
 def test_json_time_carries_a_utc_offset() -> None:
@@ -899,9 +900,21 @@ def test_json_diagnostic_shape_with_placement_and_trace() -> None:
     ]
     payloads = _json_lines(events)
     diag = payloads[-1]
-    assert list(diag) == ["schema_version", "time", "event", "level", "message", "origin", "during", "placed", "exc"]
+    assert list(diag) == [
+        "schema_version",
+        "time",
+        "event",
+        "level",
+        "message",
+        "component",
+        "origin",
+        "during",
+        "placed",
+        "exc",
+    ]
     assert diag["level"] == "WARNING"
     assert diag["origin"] == "anilist"
+    assert diag["component"] == "anilist"  # a Diagnostic's component equals its origin
     assert diag["placed"] == "frontier"
     exc_text = diag["exc"]
     assert isinstance(exc_text, str)
@@ -1047,6 +1060,7 @@ _JSON_ENVELOPE_KEYS = frozenset(
         "event",
         "level",
         "message",
+        "component",
         "origin",
         "path",
         "exc",

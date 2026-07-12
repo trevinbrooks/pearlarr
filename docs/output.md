@@ -54,6 +54,7 @@ Every object carries the envelope keys, in stable order:
 | `event` | The event name - the catalog below enumerates them |
 | `level` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
 | `message` | The human-readable line (informational; not an interface) |
+| `component` | The subsystem it came from - the `[bracket]` word the text log prints (`run`, `scan`, `entry`, `cli`, ...); always present |
 
 Per-event fields follow the envelope.
 Three additions appear where they apply: a `diagnostic` carries `origin` (and sometimes `during`, `placed`, and `exc`), events inside a nested scope carry a `path` breadcrumb, and `run_summary` carries the `needs_action_records` and `added_records` arrays.
@@ -68,6 +69,12 @@ The `paths_shown`, `config_*`, and `cache_*` command events at the end of the ca
 `schema_version` is currently `1`.
 Within a major release, changes are additive only: new event names and new fields may appear, and consumers should ignore what they do not recognize.
 Removing or renaming an event or field, or changing a field's meaning, only happens with a new major release, an "Upgrade notes" entry in the [CHANGELOG](../CHANGELOG.md), and a `schema_version` bump.
+
+### Replaying a capture
+
+`pearlarr replay` turns a captured JSON stream back into the readable text grammar, for reading a docker-captured or archived log after the fact: `pearlarr replay events.jsonl`, or `docker logs pearlarr | pearlarr replay -` (`-` reads stdin).
+Each envelope prints as one `<timestamp> LEVEL [breadcrumb] message key=value` line, the same shape the log file uses.
+Because the renderer knows only the envelope, not each event, lines from a newer Pearlarr still render best-effort, and non-JSON lines (docker interleaves stderr) are skipped with a count on stderr.
 
 ## Event catalog
 
@@ -88,6 +95,7 @@ The process banner: the installed version and the resolved data directory. The f
   "event": "run_started",
   "level": "INFO",
   "message": "Pearlarr started",
+  "component": "run",
   "version": "v1.0.0",
   "data_dir": "/home/user/.local/share/pearlarr"
 }
@@ -104,6 +112,7 @@ Scheduled mode only: a new cycle begins (`number` counts from 1).
   "event": "cycle_started",
   "level": "INFO",
   "message": "cycle started",
+  "component": "run",
   "number": 1
 }
 ```
@@ -119,6 +128,7 @@ One preflight step finished; `outcome` is `ok`, `warned`, or `failed`, with an o
   "event": "boot_step_finished",
   "level": "INFO",
   "message": "done",
+  "component": "boot",
   "path": "Connecting to Sonarr",
   "outcome": "ok",
   "detail": "42 series",
@@ -137,6 +147,7 @@ Preflight finished; the scan begins.
   "event": "boot_ready",
   "level": "INFO",
   "message": "ready",
+  "component": "boot",
   "elapsed_s": 3.5
 }
 ```
@@ -152,6 +163,7 @@ The per-arr scan opened: which arr, and how many library titles it will walk.
   "event": "scan_started",
   "level": "INFO",
   "message": "starting",
+  "component": "scan",
   "arr": "sonarr",
   "total": 42
 }
@@ -168,6 +180,7 @@ The scan moved to the next library title (`index` of `total`).
   "event": "item_started",
   "level": "INFO",
   "message": "item",
+  "component": "scan",
   "arr": "sonarr",
   "index": 3,
   "total": 42,
@@ -186,6 +199,7 @@ A problem or notice at any level; `origin` names the subsystem. A position-free 
   "event": "diagnostic",
   "level": "WARNING",
   "message": "AniList rate limited - waiting 30s before retrying",
+  "component": "anilist",
   "origin": "anilist",
   "during": "[3/42] Sousou no Frieren",
   "placed": "frontier"
@@ -203,6 +217,7 @@ A nested scope opened (`kind` + `serial` identify it); events inside carry a hum
   "event": "scope_opened",
   "level": "INFO",
   "message": "scope opened",
+  "component": "scope",
   "kind": "entry",
   "serial": 2,
   "label": "Sousou no Frieren"
@@ -220,6 +235,7 @@ A SeaDex entry block opened for the current title; `message` is the entry state 
   "event": "entry_header",
   "level": "INFO",
   "message": "checking",
+  "component": "entry",
   "path": "sonarr › [3/42] Sousou no Frieren › entry",
   "title": "Sousou no Frieren",
   "al_id": 154587,
@@ -239,6 +255,7 @@ A labeled line inside an entry block; `message` is `label: value`.
   "event": "entry_detail",
   "level": "INFO",
   "message": "status: missing episodes",
+  "component": "entry",
   "path": "sonarr › [3/42] Sousou no Frieren › entry",
   "note": "S01E27-E28"
 }
@@ -255,6 +272,7 @@ A self-contained one-line result for a title: `message` is the state word, `titl
   "event": "ledger_row",
   "level": "INFO",
   "message": "unchanged",
+  "component": "entry",
   "path": "sonarr › [3/42] Sousou no Frieren › entry",
   "title": "Sousou no Frieren"
 }
@@ -271,6 +289,7 @@ A release was skipped at add time; `reason` is `private_only`, `unsupported_trac
   "event": "release_skipped",
   "level": "WARNING",
   "message": "release skipped",
+  "component": "entry",
   "path": "sonarr › [3/42] Sousou no Frieren › entry",
   "group": "Vodes",
   "tracker": "AnimeBytes",
@@ -290,6 +309,7 @@ Adding a release to qBittorrent failed; the title is retried next run.
   "event": "grab_failed",
   "level": "WARNING",
   "message": "grab failed",
+  "component": "entry",
   "path": "sonarr › [3/42] Sousou no Frieren › entry",
   "group": "SubsPlease",
   "link": "https://nyaa.si/view/1734567",
@@ -308,6 +328,7 @@ The grab decision for a title; `message` distinguishes a real add, a dry-run wou
   "event": "grab_action",
   "level": "INFO",
   "message": "adding recommended release",
+  "component": "entry",
   "path": "sonarr › [3/42] Sousou no Frieren › entry",
   "waiting_to_import": true,
   "groups": "SubsPlease [best]",
@@ -326,6 +347,7 @@ The matching close of a `scope_opened` (anything nested deeper closes with it).
   "event": "scope_closed",
   "level": "INFO",
   "message": "scope closed",
+  "component": "scope",
   "kind": "entry",
   "serial": 2
 }
@@ -342,6 +364,7 @@ The `advanced.max_torrents_to_add` cap was reached; the run adds nothing further
   "event": "cap_reached",
   "level": "INFO",
   "message": "torrent cap reached",
+  "component": "run",
   "cap": 25
 }
 ```
@@ -357,6 +380,7 @@ The per-arr scan closed (a boundary event; the summary carries the facts).
   "event": "scan_finished",
   "level": "INFO",
   "message": "scan finished",
+  "component": "scan",
   "arr": "sonarr"
 }
 ```
@@ -372,6 +396,7 @@ The end-of-run scoreboard: the tally counters, plus `needs_action_records` and `
   "event": "run_summary",
   "level": "INFO",
   "message": "run complete",
+  "component": "summary",
   "arr": "sonarr",
   "checked": 42,
   "needs_action": 1,
@@ -419,6 +444,7 @@ The wait-for-completion pass opened, watching `total` torrents.
   "event": "wait_started",
   "level": "INFO",
   "message": "waiting",
+  "component": "wait",
   "path": "sonarr › wait",
   "total": 1
 }
@@ -435,6 +461,7 @@ One watched torrent reached a terminal outcome; `message` is the outcome word.
   "event": "torrent_graduated",
   "level": "INFO",
   "message": "imported",
+  "component": "wait",
   "path": "sonarr › wait",
   "title": "[SubsPlease] Sousou no Frieren",
   "files": 28,
@@ -453,6 +480,7 @@ The wait pass closed, with its imported/deferred/failed tally.
   "event": "wait_finished",
   "level": "INFO",
   "message": "complete",
+  "component": "wait",
   "path": "sonarr › wait",
   "imported": 1,
   "deferred": 0,
@@ -472,6 +500,7 @@ The per-arr run closed (a boundary event).
   "event": "run_finished",
   "level": "INFO",
   "message": "run finished",
+  "component": "run",
   "arr": "sonarr"
 }
 ```
@@ -487,6 +516,7 @@ Scheduled mode only: when the next cycle fires.
   "event": "next_run_scheduled",
   "level": "INFO",
   "message": "next run scheduled",
+  "component": "run",
   "at": "2026-01-02T00:00:00+00:00"
 }
 ```
@@ -502,6 +532,7 @@ The `paths` command: the resolved data directory and the files within it.
   "event": "paths_shown",
   "level": "INFO",
   "message": "resolved paths",
+  "component": "cli",
   "data_dir": "/home/user/.local/share/pearlarr",
   "config": "/home/user/.local/share/pearlarr/config.yml",
   "cache": "/home/user/.local/share/pearlarr/cache.db",
@@ -521,6 +552,7 @@ The `paths` command: the resolved data directory and the files within it.
   "event": "starter_config_written",
   "level": "INFO",
   "message": "starter config written",
+  "component": "cli",
   "config_path": "/home/user/.local/share/pearlarr/config.yml"
 }
 ```
@@ -536,6 +568,7 @@ The `paths` command: the resolved data directory and the files within it.
   "event": "config_validated",
   "level": "INFO",
   "message": "config valid",
+  "component": "cli",
   "config_path": "/home/user/.local/share/pearlarr/config.yml",
   "migrated": false,
   "sonarr_missing_keys": [],
@@ -557,6 +590,7 @@ The `paths` command: the resolved data directory and the files within it.
   "event": "config_up_to_date",
   "level": "INFO",
   "message": "config up to date",
+  "component": "cli",
   "config_path": "/home/user/.local/share/pearlarr/config.yml"
 }
 ```
@@ -572,6 +606,7 @@ The `paths` command: the resolved data directory and the files within it.
   "event": "config_migrated",
   "level": "INFO",
   "message": "config migrated",
+  "component": "cli",
   "config_path": "/home/user/.local/share/pearlarr/config.yml",
   "backup_path": "/home/user/.local/share/pearlarr/config.yml.bak",
   "notes": [
@@ -591,6 +626,7 @@ The `paths` command: the resolved data directory and the files within it.
   "event": "effective_config_shown",
   "level": "INFO",
   "message": "effective config",
+  "component": "cli",
   "config_path": "/home/user/.local/share/pearlarr/config.yml",
   "config": {
     "sonarr": {
@@ -612,6 +648,7 @@ The `paths` command: the resolved data directory and the files within it.
   "event": "cache_backed_up",
   "level": "INFO",
   "message": "cache backed up",
+  "component": "cli",
   "backup_path": "/home/user/.local/share/pearlarr/cache.backup.db"
 }
 ```
@@ -627,6 +664,7 @@ The `paths` command: the resolved data directory and the files within it.
   "event": "cache_restored",
   "level": "INFO",
   "message": "cache restored",
+  "component": "cli",
   "backup_path": "/home/user/.local/share/pearlarr/cache.backup.db"
 }
 ```
@@ -642,6 +680,7 @@ The `paths` command: the resolved data directory and the files within it.
   "event": "cache_removed",
   "level": "INFO",
   "message": "cache removed",
+  "component": "cli",
   "cache_path": "/home/user/.local/share/pearlarr/cache.db"
 }
 ```
@@ -657,6 +696,7 @@ The `paths` command: the resolved data directory and the files within it.
   "event": "cache_stats_reported",
   "level": "INFO",
   "message": "cache stats",
+  "component": "cli",
   "entries": 128,
   "torrent_hashes": 141,
   "anilist_meta": 96,
@@ -677,6 +717,7 @@ The `paths` command: the resolved data directory and the files within it.
   "event": "cache_integrity_reported",
   "level": "INFO",
   "message": "cache integrity",
+  "component": "cli",
   "result": "ok"
 }
 ```
