@@ -1,9 +1,10 @@
 # pyright: strict
 """Tests for the logging bridge (`output.bridge`) + the real-seat wiring.
 
-Pin the adoption table (WARNING+ visible; first-party sub-WARNING file_only at
-INFO+ config or under a rich seat, visible at DEBUG config on plain/json;
-third-party sub-WARNING gated by the hub level, then file_only unless
+Pin the adoption table (WARNING+ visible; first-party sub-WARNING visible at
+or above the configured level and file_only below it, on every seat — the
+rich handler stands down while a bridge is installed; third-party sub-WARNING
+gated by the hub level, then file_only unless
 configured DEBUG), the root-logger gate `setup_logger` opens for the bridge,
 construct-never-mutate (caplog safety), warnings capture,
 idempotent install surviving `setup_logger` rebuilds, the per-thread
@@ -81,12 +82,13 @@ class TestAdoption:
         (diagnostic,) = recorder.of_type(Diagnostic)
         assert diagnostic == Diagnostic(severity=Severity.WARNING, message="watch out", origin=LOG_NAME)
 
-    def test_first_party_sub_warning_adopts_file_only_at_info_config(
+    def test_first_party_sub_warning_below_the_configured_level_adopts_file_only(
         self, bridged: tuple[RecordingRenderer, logging.Logger]
     ) -> None:
-        """P3: at INFO+ config (the bridged hub's default), DEBUG and unmigrated INFO stragglers stay in the FILE.
+        """P3: at INFO config (the bridged hub's default), DEBUG chatter stays in the FILE.
 
-        stdout omits them.
+        An INFO straggler is at the level, so it adopts visible (the bridge is
+        its only console route); stdout omits only the sub-level forensics.
         """
 
         recorder, logger = bridged
@@ -95,15 +97,12 @@ class TestAdoption:
         logger.debug("cache hit")
 
         assert [(d.severity, d.file_only) for d in recorder.of_type(Diagnostic)] == [
-            (Severity.INFO, True),
+            (Severity.INFO, False),
             (Severity.DEBUG, True),
         ]
 
     def test_first_party_sub_warning_visible_at_debug_config_on_a_plain_seat(self, app_logger: logging.Logger) -> None:
-        """At DEBUG config with a plain/json seat, the bridge is a first-party record's ONLY console route.
-
-        So DEBUG/INFO adopt visible.
-        """
+        """At DEBUG config the bridge is a first-party record's ONLY console route, so DEBUG/INFO adopt visible."""
 
         recorder = RecordingRenderer()
         hub = OutputHub([recorder], console_factory=lambda console_format: NullRenderer())
@@ -122,12 +121,11 @@ class TestAdoption:
             (Severity.INFO, False),
         ]
 
-    def test_first_party_sub_warning_stays_file_only_at_debug_config_under_rich(
-        self, app_logger: logging.Logger
-    ) -> None:
-        """Under a rich seat, `RichConsoleHandler` already prints the raw record.
+    def test_first_party_sub_warning_visible_at_debug_config_under_rich(self, app_logger: logging.Logger) -> None:
+        """A rich seat is no exception: `RichConsoleHandler` stands down while a bridge is installed.
 
-        Visible adoption would double it, so `file_only` stands even at DEBUG.
+        The bridge-adopted Diagnostic is the record's only console route, and
+        the renderer's frontier owns its placement (no producer-baked indent).
         """
 
         recorder = RecordingRenderer()
@@ -142,7 +140,7 @@ class TestAdoption:
             uninstall_bridge()
 
         (diagnostic,) = recorder.of_type(Diagnostic)
-        assert diagnostic.file_only
+        assert not diagnostic.file_only
 
     def test_third_party_adopts_all_levels_visible_at_configured_debug(self, app_logger: logging.Logger) -> None:
         """At a configured DEBUG, the early-out never fires and nothing is demoted to `file_only`.
@@ -511,13 +509,13 @@ class TestFullStackSeams:
         assert file_text.count("watch out") == 1  # the FileLogSink's grammar line
         assert "WARNING [Pearlarr] watch out" in file_text
 
-    def test_first_party_info_reaches_the_file_and_the_raw_tty_once_each(
+    def test_first_party_info_reaches_the_file_and_the_console_once_each(
         self, full_stack: tuple[logging.Logger, TtyStringIO, Path]
     ) -> None:
-        """P3: an unmigrated INFO one-liner adopts file_only.
+        """An unmigrated INFO one-liner renders once per surface, both via the hub.
 
-        The `FileLogSink` keeps it while the rich TTY shows the RAW record
-        (no double render).
+        The raw handler stands down (no double render); the hub renderer places
+        the line and the `FileLogSink` keeps it.
         """
 
         logger, stream, log_file = full_stack

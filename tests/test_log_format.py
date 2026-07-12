@@ -14,10 +14,10 @@ Pins the contract:
   designed, not a bug (the hub seats LineRenderer/JsonRenderer instead).
 * `apply_log_level` re-points the rich console handler's threshold
   (`console_level` semantics) and forwards the raw level to the hub.
-* The badge seam: the rich handler badge-renders plain WARNING+
-  records UNLESS the registered console owner answers True (the bridge adopts
-  them; the hub's renderer places them) — no owner or a struck-out seat keeps
-  the legacy badge, so warnings can never vanish.
+* The stand-down seam: the rich handler renders raw records (badges for
+  WARNING+, plain text below) UNLESS the registered console owner answers True
+  (the bridge adopts every record; the hub's renderer places it) — no owner
+  keeps the legacy arms, so records can never vanish.
 * The invalid-level complaint fires AFTER handler attach: on a rich console
   with no owner the legacy badge renders it; under plain/json it arrives as a
   hub Diagnostic through the bridge (advisor #17's early-record path).
@@ -176,10 +176,11 @@ def _rich_setup(name: str, stream: io.StringIO | None = None) -> tuple[logging.L
 
 
 class TestRichHandlerSeam:
-    """The badge seam: while a bridge is installed, the hub owns the badge class outright.
+    """The stand-down seam: while a bridge is installed, the hub owns the raw-record stream outright.
 
-    An armed seat renders in-context, else the stderr fallback fires - either way the handler stands down; with
-    no bridge installed the legacy badge renders instead (the standalone fallback).
+    WARNING+ render in-context on an armed seat (stderr fallback otherwise), DEBUG chatter at the renderer's
+    frontier indent - either way the handler stands down; with no bridge installed the legacy arms render
+    instead (the standalone fallback).
     """
 
     def test_plain_warning_and_error_records_skip_the_handler_when_the_hub_owns_the_console(self) -> None:
@@ -237,6 +238,21 @@ class TestRichHandlerSeam:
         logger.info("checking Frieren")
 
         assert stream.getvalue() == "checking Frieren\n"
+
+    def test_sub_warning_records_skip_the_handler_when_the_hub_owns_the_console(self) -> None:
+        """DEBUG chatter stands down too: the bridge-adopted Diagnostic is its only console route.
+
+        Rendering here as well would double the line - and at a producer-baked
+        indent instead of the renderer's frontier placement.
+        """
+
+        logger, stream = _rich_setup("pearlarr-test-rich-seam-chatter")
+        mark_hub_console_owner()  # conftest's uninstall_bridge clears it
+
+        logger.debug("cache hit")
+        logger.info("checking Frieren")
+
+        assert stream.getvalue() == ""
 
     def test_debug_exc_info_renders_the_traceback_but_never_frame_locals(self) -> None:
         """The handler-side secrets pin: exc_info tracebacks render with show_locals=False.

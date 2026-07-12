@@ -70,27 +70,27 @@ shared payload renderers below (`render_kv` / `render_rule` /
 `print_titled_rule`). Lives here beside those renderers.
 """
 
-# True while the output bridge is installed: the hub owns the plain WARNING+
-# badge class outright — in-context placement while its console seat is armed,
-# its stderr fallback otherwise — so the rich handler stands down entirely, or
-# the same record renders twice (once per safety net). With no bridge
-# (standalone setup_logger) the legacy badge below still renders, so a warning
-# can never vanish.
-_hub_owns_badges = False
+# True while the output bridge is installed: the hub owns every raw record —
+# WARNING+ in-context on the armed console seat (stderr fallback otherwise),
+# DEBUG chatter at the renderer's frontier indent — so the rich handler stands
+# down entirely, or the same record renders twice (once per safety net). With
+# no bridge (standalone setup_logger) the legacy arms still render, so a
+# record can never vanish.
+_hub_owns_console = False
 
 
 def mark_hub_console_owner() -> None:
-    """The output bridge is installed: the hub owns the badge class (`install_bridge`)."""
+    """The output bridge is installed: the hub owns the raw-record stream (`install_bridge`)."""
 
-    global _hub_owns_badges
-    _hub_owns_badges = True
+    global _hub_owns_console
+    _hub_owns_console = True
 
 
 def clear_console_owner() -> None:
-    """Release badge ownership (`uninstall_bridge`, tests)."""
+    """Release console ownership (`uninstall_bridge`, tests)."""
 
-    global _hub_owns_badges
-    _hub_owns_badges = False
+    global _hub_owns_console
+    _hub_owns_console = False
 
 
 class HubBridgeBase(logging.Handler):
@@ -200,18 +200,16 @@ def console_supports_unicode(console: Console) -> bool:
 
 
 class RichConsoleHandler(logging.Handler):
-    """The rich-TTY surface for RAW first-party records only.
+    """The rich-TTY fallback surface for RAW first-party records — and the shared Console's home.
 
-    Post-flip the hub's seats own every structured surface; what still arrives
-    here is DEBUG chatter, unmigrated INFO one-liners, the WARNING+ fallback,
-    and exc_info tracebacks. Routine INFO/DEBUG lines print with no level
-    prefix, so the output reads as clean text. PLAIN records at WARNING+ (the
-    badge class, including exc_info records) are NOT rendered here while a
-    bridge is installed (`_hub_owns_badges`): the logging bridge
-    (output/bridge.py) adopts them and the hub places them - the armed console
-    seat in-context (S5 pin 2), its stderr fallback otherwise - so rendering
-    here too would double them. With no bridge, the legacy badge renders so a
-    warning can never vanish.
+    While a bridge is installed (`_hub_owns_console`) this handler renders
+    NOTHING: the logging bridge (output/bridge.py) adopts every record and the
+    hub places it — WARNING+ on the armed console seat in-context (S5 pin 2)
+    or its stderr fallback, DEBUG chatter at the renderer's frontier indent —
+    so rendering here too would double them. With no bridge (library use, the
+    pre-install window), everything below renders so a record can never
+    vanish. Either way the handler stays attached: `console_of` resolves the
+    cycle's shared Console from it (the hub seats print through it).
 
     Messages are rendered as literal text rather than `rich` markup, so
     bracketed content such as "[1/1]" or "[MARKED INCOMPLETE]" is never
@@ -246,12 +244,12 @@ class RichConsoleHandler(logging.Handler):
     @override
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            # The badge class moved to hub placement (S5 pin 2): the bridge
-            # adopts WARNING+ records and the hub places them — the armed console
-            # seat in-context, its stderr fallback otherwise — so this handler
-            # stands down whenever a bridge is installed (rendering here too
-            # doubled the record). No bridge: the legacy badge below renders.
-            if record.levelno >= logging.WARNING and _hub_owns_badges:
+            # Every record moved to hub placement: the bridge adopts it and the
+            # hub renders it (badges in-context, DEBUG at the frontier indent),
+            # so this handler stands down whenever a bridge is installed
+            # (rendering here too doubled the record). No bridge: the legacy
+            # arms below render.
+            if _hub_owns_console:
                 return
 
             message = record.getMessage()

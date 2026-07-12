@@ -555,7 +555,7 @@ class MappingResolver:
                                         if total
                                         else f"{got >> 20} MB"
                                     )
-                                    self.logger.debug(f"  ...downloading {label}: {suffix}")
+                                    self.logger.debug(f"Downloading {label}: {suffix}")
                                 next_mark = got + (1 << 20)
             except httpx.HTTPStatusError as e:
                 # Callers contain OSError (urllib's URLError was one); translate at this

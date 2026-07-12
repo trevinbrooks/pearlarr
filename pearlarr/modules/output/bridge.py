@@ -8,10 +8,11 @@ Adoption rules:
   arm, since first-party WARNING+ emits hub Diagnostics directly
   (tests/test_logging_ban.py enforces it; log.py's invalid-level critical is
   the one sanctioned raw site). Sub-WARNING (DEBUG chatter, which stays raw
-  forever) adopts `file_only` at INFO+ config and under a rich seat
-  (RichConsoleHandler already prints the raw record). At a configured DEBUG
-  with a plain/json seat it adopts visible — the bridge is the only console
-  route there.
+  forever) adopts visible at or above the configured level and `file_only`
+  below it — the bridge is a raw record's ONLY console route on every seat
+  (RichConsoleHandler stands down whenever a bridge is installed), so the
+  renderer's frontier owns the line's placement instead of a producer-baked
+  indent.
 * Root records (third-party: httpx, urllib3, pydantic, py.warnings, ...):
   WARNING+ adopt visible with `origin = record.name`; sub-WARNING records below
   the hub's level are never constructed, at-or-above it they adopt `file_only`
@@ -111,10 +112,11 @@ class HubBridgeHandler(HubBridgeBase):
         if record.levelno >= logging.WARNING:
             file_only = False
         elif is_first_party(record.name):
-            # Visible only at DEBUG config on a plain/json seat (the only console
-            # route there); a rich seat already prints the raw record, so visible
-            # adoption would double it.
-            file_only = hub.level > logging.DEBUG or hub.console_format == "rich"
+            # Visible at or above the configured level: the bridge is the raw
+            # record's only console route (the rich handler stands down while a
+            # bridge is installed), and the hub's placement owns the indent.
+            # Below the level (a mis-leveled logger) the file keeps forensics.
+            file_only = record.levelno < hub.level
         elif record.levelno < hub.level:
             # Sub-threshold third-party records aren't constructed/counted.
             return None

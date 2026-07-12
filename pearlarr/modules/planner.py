@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from itertools import compress
 
 from .config import Arr
-from .log import indent_string
 from .manual_import import normalize_group
 from .output import Severity
 from .seadex_types import (
@@ -339,11 +338,7 @@ class DownloadPlanner:
         torrent_hashes: list[str | None] = []
 
         for seadex_rg, seadex_rg_item in seadex_dict.items():
-            self.logger.debug(
-                indent_string(
-                    f"Filtering for release group {seadex_rg}",
-                ),
-            )
+            self.logger.debug(f"Filtering for release group {seadex_rg}")
 
             seadex_urls = seadex_rg_item.urls
             for url_item in seadex_urls.values():
@@ -355,28 +350,18 @@ class DownloadPlanner:
                 # and is skipped (the first run still grabs all hashless releases present).
                 torrent_hashes.append(infohash)
                 if infohash not in cached_hashes:
-                    self.logger.debug(
-                        indent_string(
-                            f"Torrent hash {infohash} not found in cache. Will add to downloads",
-                        ),
-                    )
+                    self.logger.debug(f"Torrent hash {infohash} not found in cache. Will add to downloads")
 
                     url_item.download = True
 
                 elif infohash is None:
                     self.logger.debug(
-                        indent_string(
-                            "Hashless release already represented by the cache's None marker; "
-                            "skipping (hashless releases can't be told apart)",
-                        ),
+                        "Hashless release already represented by the cache's None marker; "
+                        "skipping (hashless releases can't be told apart)",
                     )
 
                 else:
-                    self.logger.debug(
-                        indent_string(
-                            f"Torrent hash {infohash} in cache. Will skip download",
-                        ),
-                    )
+                    self.logger.debug(f"Torrent hash {infohash} in cache. Will skip download")
 
         # Where multiple preferred release groups cover the same files and the
         # Arr has none of them, only grab one (preferring a public group)
@@ -457,11 +442,7 @@ class DownloadPlanner:
         )
 
         for seadex_rg, seadex_rg_item in seadex_dict.items():
-            self.logger.debug(
-                indent_string(
-                    f"Filtering for release group {seadex_rg}",
-                ),
-            )
+            self.logger.debug(f"Filtering for release group {seadex_rg}")
 
             for url_item in seadex_rg_item.urls.values():
                 # Simple case, we have no episode mappings, so
@@ -524,10 +505,8 @@ class DownloadPlanner:
             # If we have no overlaps at all, then add
             if set(seadex_file_sizes).isdisjoint(arr_file_sizes):
                 self.logger.debug(
-                    indent_string(
-                        f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
-                        f"{_render_groups(arr_release_groups)}, but file sizes do not match - will download {url}",
-                    ),
+                    f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
+                    f"{_render_groups(arr_release_groups)}, but file sizes do not match - will download {url}",
                 )
 
                 url_item.download = True
@@ -535,17 +514,13 @@ class DownloadPlanner:
 
             else:
                 self.logger.debug(
-                    indent_string(
-                        f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
-                        f"{_render_groups(arr_release_groups)}, and file sizes match",
-                    ),
+                    f"SeaDex release group {seadex_rg} in {self.arr.capitalize()} releases: "
+                    f"{_render_groups(arr_release_groups)}, and file sizes match",
                 )
         elif not ctx.overlapping_results:
             self.logger.debug(
-                indent_string(
-                    f"SeaDex release group {seadex_rg} not in {self.arr.capitalize()} releases: "
-                    f"{_render_groups(arr_release_groups)} - will download {url}",
-                ),
+                f"SeaDex release group {seadex_rg} not in {self.arr.capitalize()} releases: "
+                f"{_render_groups(arr_release_groups)} - will download {url}",
             )
 
             url_item.download = True
@@ -553,10 +528,8 @@ class DownloadPlanner:
             # Group absent, but the Arr already holds another SeaDex-preferred
             # group's release covering these files - nothing to flag.
             self.logger.debug(
-                indent_string(
-                    f"SeaDex release group {seadex_rg} not in {self.arr.capitalize()} releases, but another "
-                    f"SeaDex group already overlaps them - not flagging {url}",
-                ),
+                f"SeaDex release group {seadex_rg} not in {self.arr.capitalize()} releases, but another "
+                f"SeaDex group already overlaps them - not flagging {url}",
             )
 
     def _match_url_episodes(
@@ -642,35 +615,23 @@ class DownloadPlanner:
                 if sonarr_rg_normalized not in all_seadex_rg:
                     if ctx.debug_on:
                         self.logger.debug(
-                            indent_string(
-                                f"SeaDex release group {seadex_rg} differs from "
-                                f"{self.arr.capitalize()} release for "
-                                f"{season_ep_str} ({sonarr_rg or 'no group'}) and no other "
-                                f"recommended release covers it - will download {url}",
-                            ),
+                            f"SeaDex release group {seadex_rg} differs from "
+                            f"{self.arr.capitalize()} release for "
+                            f"{season_ep_str} ({sonarr_rg or 'no group'}) and no other "
+                            f"recommended release covers it - will download {url}",
                         )
 
                     url_item.download = True
 
             else:
                 if ctx.debug_on:
-                    self.logger.debug(
-                        indent_string(
-                            f"Found SeaDex match to {self.arr.capitalize()} for {season_ep_str}.",
-                        ),
-                    )
+                    self.logger.debug(f"Found SeaDex match to {self.arr.capitalize()} for {season_ep_str}.")
                     if not size_match:
                         self.logger.debug(
-                            indent_string(
-                                f"-> Sizes are different: {sonarr_ep_size} (Sonarr), {seadex_ep_size} (SeaDex)",
-                            ),
+                            f"-> Sizes are different: {sonarr_ep_size} (Sonarr), {seadex_ep_size} (SeaDex)",
                         )
                     else:
-                        self.logger.debug(
-                            indent_string(
-                                f"-> Sizes match: {sonarr_ep_size}",
-                            ),
-                        )
+                        self.logger.debug(f"-> Sizes match: {sonarr_ep_size}")
 
                 rg_matches[seadex_idx] = True
 
@@ -682,11 +643,7 @@ class DownloadPlanner:
         # here and mark for download
         size_matches = list(compress(size_matches, rg_matches))
         if size_matches and not any(size_matches):
-            self.logger.debug(
-                indent_string(
-                    f"File sizes all differ for release group {seadex_rg} - will download {url}",
-                ),
-            )
+            self.logger.debug(f"File sizes all differ for release group {seadex_rg} - will download {url}")
             url_item.download = True
             url_item.size_mismatch = True
 
@@ -890,9 +847,7 @@ class DownloadPlanner:
                 continue
 
             self.logger.debug(
-                indent_string(
-                    f"Not downloading release group {rg}: release group {keeper} already covers the same files",
-                ),
+                f"Not downloading release group {rg}: release group {keeper} already covers the same files",
             )
             _unflag(seadex_dict[rg], dropped)
 
@@ -979,11 +934,7 @@ class DownloadPlanner:
             url_keys = get_episode_keys(u.episodes)
             if url_keys <= survivor_keys:
                 continue
-            self.logger.debug(
-                indent_string(
-                    f"Re-flagging {u.url}: no surviving release covers its episodes",
-                ),
-            )
+            self.logger.debug(f"Re-flagging {u.url}: no surviving release covers its episodes")
             u.download = True
             survivor_keys |= url_keys
 

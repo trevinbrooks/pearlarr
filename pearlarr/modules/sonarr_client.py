@@ -11,7 +11,6 @@ from typing import cast, override
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .arr_http import ArrHttp
-from .log import indent_string
 from .manual_import import PendingImport
 from .output import hub_warn
 from .seadex_types import (
@@ -231,17 +230,11 @@ class SonarrClient(AbstractSonarrClient):
                 record = _ParsedEpisode.model_validate(ep)
             except ValidationError:
                 # A junk-typed entry skips like a missing-number one below.
-                self._logger.debug(
-                    indent_string(f"Sonarr's parse returned a malformed episode entry for {filename}; skipping it"),
-                )
+                self._logger.debug(f"Sonarr's parse returned a malformed episode entry for {filename}; skipping it")
                 continue
 
             if record.seasonNumber is None or record.episodeNumber is None:
-                self._logger.debug(
-                    indent_string(
-                        f"Sonarr's parse returned no season/episode number for {filename}; skipping it",
-                    ),
-                )
+                self._logger.debug(f"Sonarr's parse returned no season/episode number for {filename}; skipping it")
                 continue
 
             parsed.append({"season": record.seasonNumber, "episode": record.episodeNumber})

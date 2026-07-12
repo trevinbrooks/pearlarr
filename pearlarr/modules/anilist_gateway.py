@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 
 from .anilist_client import ANILIST_BATCH_SIZE, AniListCache, AniListClient, extract_path, media_from, media_node_from
 from .cache import UPDATED_AT_STR_FORMAT, AbstractCacheStore, record_is_fresh
-from .log import count_noun, indent_string
+from .log import count_noun
 from .seadex_types import AniListMediaNode, ProgressSink
 
 # How long a persisted AniList response stays usable before it's re-fetched.
@@ -76,9 +76,7 @@ class AniListGateway:
             loaded += 1
 
         if loaded:
-            self.logger.debug(
-                indent_string(f"Loaded {count_noun(loaded, 'AniList entry', 'AniList entries')} from cache"),
-            )
+            self.logger.debug(f"Loaded {count_noun(loaded, 'AniList entry', 'AniList entries')} from cache")
 
     def save_cache(self, *, preview: bool) -> None:
         """Persist any newly seen AniList responses back to the on-disk cache.
@@ -116,9 +114,7 @@ class AniListGateway:
         if written or evicted:
             self._cache.save(preview=preview)
         if evicted:
-            self.logger.debug(
-                indent_string(f"Evicted {count_noun(evicted, 'stale AniList meta record')}"),
-            )
+            self.logger.debug(f"Evicted {count_noun(evicted, 'stale AniList meta record')}")
 
     def prefetch(
         self,

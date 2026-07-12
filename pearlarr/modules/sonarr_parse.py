@@ -15,7 +15,6 @@ from datetime import datetime, timedelta
 from typing import Any, NamedTuple, NotRequired, TypedDict, cast
 
 from .cache import UPDATED_AT_STR_FORMAT, record_is_fresh
-from .log import indent_string
 from .run_services import RunDeps
 from .seadex_types import EpisodeRecord, SeadexDict
 from .sonarr_client import AbstractSonarrClient
@@ -239,7 +238,7 @@ class SonarrParseCache:
         # re-parsed every run) before acting on it.
         self._write_parse_record(f, result, window=window)
         if not result:
-            self.logger.debug(indent_string(f"Sonarr could not parse episode for {f}"))
+            self.logger.debug(f"Sonarr could not parse episode for {f}")
         return result
 
     def _warm_parse_cache(
@@ -332,9 +331,7 @@ class SonarrParseCache:
         # rows, later calls evict nothing.
         evicted = self.cache_store.evict_sonarr_parse(window.cutoff)
         if evicted:
-            self.logger.debug(
-                indent_string(f"Evicted {evicted} stale Sonarr parse record(s)"),
-            )
+            self.logger.debug(f"Evicted {evicted} stale Sonarr parse record(s)")
 
         # Concurrently warm the cache for any not-yet-cached files so the mapping
         # loop below reads them as hits (no-op when sequential or already warm).
@@ -366,11 +363,7 @@ class SonarrParseCache:
                         season = ep["season"]
                         episode = ep["episode"]
 
-                        self.logger.debug(
-                            indent_string(
-                                f"{f} mapped to: S{season:02d}E{episode:02d}",
-                            ),
-                        )
+                        self.logger.debug(f"{f} mapped to: S{season:02d}E{episode:02d}")
 
                         # EpisodeRecord is immutable, so the per-url and the
                         # release-group-wide lists can share one instance.

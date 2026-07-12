@@ -11,7 +11,6 @@ import pynyaa
 import qbittorrentapi
 from seadex import Tracker
 
-from .log import indent_string
 from .seadex_types import SeadexUrlItem
 from .torrent import (
     TorrentParseError,
@@ -205,9 +204,7 @@ class TorrentService:
             torr_hashes = [i.hash for i in torr_info]
 
             if infohash in torr_hashes:
-                self.logger.debug(
-                    indent_string(f"Torrent {item.url} already in qBittorrent"),
-                )
+                self.logger.debug(f"Torrent {item.url} already in qBittorrent")
                 return AddResult(AddOutcome.ALREADY_ADDED, torr_info[0].name)
 
         # Preview (dry run or no client): report it as added without touching the

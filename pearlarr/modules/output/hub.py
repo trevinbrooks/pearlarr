@@ -227,15 +227,6 @@ class OutputHub:
 
         return self._level
 
-    @property
-    def console_format(self) -> LogFormat | None:
-        """The seated console format (None before any begin_cycle) — a lock-free read for the bridge.
-
-        A one-record stale read at a begin_cycle boundary is acceptable.
-        """
-
-        return self._console_format
-
     def console_render_active(self) -> bool:
         """True when the console seat exists and is armed (not struck out).
 

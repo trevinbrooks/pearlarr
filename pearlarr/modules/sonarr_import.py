@@ -22,7 +22,7 @@ from typing import Any, NamedTuple
 
 from .cache import UPDATED_AT_STR_FORMAT
 from .config import Arr
-from .log import count_noun, indent_string, pluralize
+from .log import count_noun, pluralize
 from .manual_import import (
     ImportProbe,
     ImportProgress,
@@ -158,7 +158,7 @@ class ImportExecutor:
         cmd_id = self.sonarr.refresh_monitored_downloads()
         if cmd_id is None:
             return
-        self.logger.debug(indent_string("Asked Sonarr to rescan its downloads"))
+        self.logger.debug("Asked Sonarr to rescan its downloads")
 
         for _ in range(_REFRESH_COMMAND_MAX_POLLS):
             command = self.sonarr.command_status(cmd_id)
@@ -251,18 +251,14 @@ class ImportExecutor:
             self._warn_unplaceable_files(pending, unplaceable)
 
         if not authoritative_map:
-            self.logger.debug(
-                indent_string(f"{content_path}: no mappable files for {pending.display_label} yet"),
-            )
+            self.logger.debug(f"{content_path}: no mappable files for {pending.display_label} yet")
             return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         # Done-check against the COMPLETE (repaired) intended set, from the files.
         target_ids = sorted({i for ids in authoritative_map.values() for i in ids})
         statuses = episode_file_statuses(target_ids, snapshot)
         if all_targets_done(statuses):
-            self.logger.debug(
-                indent_string(f"{content_path}: already imported (recommended files present)"),
-            )
+            self.logger.debug(f"{content_path}: already imported (recommended files present)")
             return ImportProbe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
 
         needing = targets_needing_import(statuses)
@@ -279,9 +275,7 @@ class ImportExecutor:
                 case _:
                     # SAMPLE / ALREADY / SKIP_DONE -> nothing to import for this
                     # file; surface the distinct vocabulary at debug.
-                    self.logger.debug(
-                        indent_string(f"{decision.action.name}: {decision.basename}"),
-                    )
+                    self.logger.debug(f"{decision.action.name}: {decision.basename}")
 
         if missing:
             # Intended files our map covers but Sonarr can't see yet. An early poll
@@ -310,18 +304,14 @@ class ImportExecutor:
             import_mode=self._config.imports.mode,
         )
         if cmd_id is None:
-            self.logger.debug(
-                indent_string(f"{content_path}: Sonarr rejected the import command; will retry"),
-            )
+            self.logger.debug(f"{content_path}: Sonarr rejected the import command; will retry")
             return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         # The command was accepted, but its copy is async - the episode files may
         # not have landed yet (a remote-mount copy isn't instant). Do NOT declare
         # the files imported on command acceptance: report RETRY + command_issued,
         # so the next monitor cycle flips to files_present once they appear.
-        self.logger.debug(
-            indent_string(f"{content_path}: queued {count_noun(len(files), 'file')} for import (command {cmd_id})"),
-        )
+        self.logger.debug(f"{content_path}: queued {count_noun(len(files), 'file')} for import (command {cmd_id})")
         return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=True)
 
     def _warn_unplaceable_files(
@@ -622,17 +612,15 @@ class ImportReconciler:
         # falls through to the manual import, which repairs it from the on-disk
         # files and re-checks against the complete set.
         if seed_complete and all_targets_done(seed.statuses):
-            self.logger.debug(
-                indent_string(f"{label}: already imported (recommended files present)"),
-            )
+            self.logger.debug(f"{label}: already imported (recommended files present)")
             return probe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
 
         verdict = classify_queue(self._executor.queue_states(pending.infohash))
         if verdict is QueueVerdict.WAIT:
-            self.logger.debug(indent_string(f"{label}: Sonarr is importing; waiting"))
+            self.logger.debug(f"{label}: Sonarr is importing; waiting")
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
         if verdict is QueueVerdict.PENDING_CLEAN and not force:
-            self.logger.debug(indent_string(f"{label}: Sonarr has it pending; waiting"))
+            self.logger.debug(f"{label}: Sonarr has it pending; waiting")
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         # A ManualImport we (or a prior run) already POSTed may still be running
@@ -648,9 +636,7 @@ class ImportReconciler:
             content_path,
             set(seeded_targets),
         ):
-            self.logger.debug(
-                indent_string(f"{label}: a ManualImport is already in flight; waiting"),
-            )
+            self.logger.debug(f"{label}: a ManualImport is already in flight; waiting")
             return probe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         # STEP_IN, an empty queue, or a forced clean-pending: drive our import.

@@ -9,7 +9,7 @@ from .arr_http import ArrHttp, make_httpx_client
 from .cache import CacheRecord
 from .config import Arr, secret_value
 from .grab_pipeline import GrabRequest
-from .log import EntryState, indent_string
+from .log import EntryState
 from .manual_import import (
     ImportProbe,
     ImportProgress,
@@ -412,11 +412,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         sonarr_release_dict = self._episodes.get_sonarr_release_dict(ep_list=ep_list)
         sonarr_release_groups = list(sonarr_release_dict.keys())
 
-        self.logger.debug(
-            indent_string(
-                f"Sonarr release group(s): {', '.join(rg or '(none)' for rg in sonarr_release_groups)}",
-            ),
-        )
+        self.logger.debug(f"Sonarr release group(s): {', '.join(rg or '(none)' for rg in sonarr_release_groups)}")
 
         # Produce a dictionary of info from the SeaDex request
         seadex_dict = run.get_seadex_dict(sd_entry=sd_entry)
@@ -424,11 +420,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         if len(seadex_dict) == 0:
             return run.no_releases_skip(al_id, cache_details)
 
-        self.logger.debug(
-            indent_string(
-                f"SeaDex: {', '.join(seadex_dict)}",
-            ),
-        )
+        self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
 
         # Parse out filenames and check for overlaps
         seadex_dict = self._parse.parse_episodes_from_seadex(seadex_dict, series_fp=self._episodes.series_fp)
