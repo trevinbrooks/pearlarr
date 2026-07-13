@@ -16,3 +16,6 @@ config:
   # One table style everywhere, including generator output.
   MD060:
     style: "padded"
+  # The README sizes tall screenshots with an img tag (width has no markdown form).
+  MD033:
+    allowed_elements: ["img"]

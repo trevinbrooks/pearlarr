@@ -10,7 +10,7 @@ Pearlarr automatically grabs the releases [SeaDex](https://releases.moe) recomme
 SeaDex is an index of the highest quality releases for a given anime.
 On a schedule, Pearlarr maps your library to SeaDex's entries, compares each recommendation against what you already have, grabs anything missing or outdated through qBittorrent, and can shepherd the download into Sonarr and notify you on Discord:
 
-![A Pearlarr grab notification in Discord: the release, its tracker, size, and audio, the episodes covered, the group being replaced, and SeaDex's notes](https://raw.githubusercontent.com/trevinbrooks/pearlarr/main/docs/assets/example_post.png)
+<img src="https://raw.githubusercontent.com/trevinbrooks/pearlarr/main/docs/assets/example_post.png" width="430" alt="A Pearlarr grab notification in Discord: the release, its tracker, size, and audio, the episodes covered, the group being replaced, and SeaDex's notes">
 
 ## How it works
 
@@ -23,9 +23,9 @@ Each run walks your library title by title:
 5. **Grab** - the release is added to qBittorrent with your category and tags, a Discord notification goes out, and the result is cached.
 6. **Import** (optional, Sonarr) - Pearlarr waits for the downloads to finish and shepherds them into Sonarr, stepping in with a manual import when Sonarr can't place the files itself.
 
-Here is that walk as a preview run - the mode every new setup starts in, with qBittorrent left unconfigured:
+Here is that walk on a three-title library - one title already has SeaDex's pick, two get grabbed, and the wait pass drives both imports home:
 
-![A Pearlarr preview run: the boot steps connect to Sonarr and fetch SeaDex entries, three series are checked against their SeaDex recommendations, and the run summary reports two would-be grabs and one title already up to date](https://raw.githubusercontent.com/trevinbrooks/pearlarr/main/docs/assets/preview_run.gif)
+![A Pearlarr run: the boot steps connect to Sonarr and qBittorrent, three series are checked - Cowboy Bebop already has SeaDex's pick, while Frieren and Fullmetal Alchemist: Brotherhood are grabbed - and the wait pass shows live download progress until both imports land in Sonarr](https://raw.githubusercontent.com/trevinbrooks/pearlarr/main/docs/assets/demo_run.gif)
 
 Runs are incremental and safe to repeat: results live in a SQLite cache, a title is re-checked only when SeaDex or your arr changed something, and an interrupted run never corrupts state.
 
