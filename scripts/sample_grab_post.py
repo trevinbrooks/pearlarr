@@ -136,6 +136,10 @@ def _capture(notice: GrabNotice) -> int:
             device_scale_factor=2,  # the README displays at half size - keep it crisp
         )
         page.goto(url, wait_until="networkidle")
+        # Discohook caps embeds at 520px, but the real Discord client wraps at
+        # ~430 - pin that so the shot wraps like the post it stands in for and
+        # displays 1:1 under the README's width="430".
+        page.add_style_tag(content='div[style*="border-left-color"] { max-width: 430px !important; }')
         page.wait_for_function("() => [...document.images].every((img) => img.complete && img.naturalWidth > 0)")
         page.locator('div[style*="border-left-color"]').screenshot(path=str(_PNG))
         browser.close()
