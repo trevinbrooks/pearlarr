@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr); everything up to and including 0.9.0 is inherited upstream history.
 
-## [1.0.0] - Unreleased
+## [1.0.0] - 2026-07-12
 
 The first release of the fork.
 
@@ -57,6 +57,8 @@ Coming from upstream 0.9.x:
   `seadex.private_releases` decides what happens when a title's preferred release is private-only: `warn` (default) warns and leaves the title uncached so it is re-checked every run; `fallback` grabs the entry's best public alternative, warning only when none exists.
   Titles satisfied by a fallback are remembered; switching back to `warn` re-checks them and resurfaces the warning.
 - Where multiple preferred release groups cover exactly the same files, only one is downloaded (preferring a public release) instead of all of them.
+- `advanced.max_torrents_to_add` defaults to `10` instead of unlimited, so a first run against a large library doesn't flood qBittorrent - later runs pick up where the cap stopped.
+  Preview runs ignore the cap and always report the whole library; set the key to `0` to remove the cap.
 - Only configured arrs run: a Sonarr-only (or Radarr-only) config skips the other arr with a ledger note instead of failing every cycle; explicitly selecting an unconfigured arr fails with a one-line error naming the missing keys; a half-configured arr (URL without API key, or the reverse) is warned about by name.
 - `run single` with no selection flags runs every configured arr, mirroring scheduled mode (previously it printed a usage hint and failed).
 - Failed CLI commands exit non-zero (previously always 0); a malformed config, missing backup, unreachable arr, or rejected API key is reported as a clean one-line error naming the config keys to check, instead of a traceback.
