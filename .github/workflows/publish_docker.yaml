@@ -1,8 +1,10 @@
 name: Publish Docker
 
-# Automatic builds are paused for now; run manually from the Actions tab.
+# Tag-driven like publish_pypi; the manual dispatch stays for rebuilds.
 on:
   workflow_dispatch:
+  push:
+    tags: ["v*"]
 
 env:
   REGISTRY: ghcr.io
