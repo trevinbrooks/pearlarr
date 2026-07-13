@@ -7,11 +7,11 @@ overlapping work - so we take a coarse advisory lock on the data dir and skip a 
 that finds another already active there.
 
 Scope is deliberately one host / one local filesystem, via `filelock`
-(`fcntl.flock` on POSIX, `msvcrt` on Windows - a real lock everywhere, not the
-former no-op Windows fallback). Running multiple instances *intentionally* means
-giving each its own data directory (its own lock file), which is allowed. There is
-no cross-host story here by design - that would need a real network lock, which
-this project doesn't want.
+(`fcntl.flock` on POSIX, `msvcrt` on Windows - a real lock on every platform).
+Running multiple instances *intentionally* means giving each its own data
+directory (its own lock file), which is allowed. There is no cross-host story
+here by design - that would need a real network lock, which this project
+doesn't want.
 """
 
 import contextlib

@@ -105,10 +105,10 @@ class WaitView(ABC):
     or the end-of-run cache save.
     """
 
-    # Whether this pass's render surfaces show per-row download telemetry between
-    # heavy polls; the engine skips the fast-lane qBittorrent read when it can't
-    # be seen. Per-instance (one narrator class serves both seats).
     wants_telemetry: bool = True
+    """Whether this pass's render surfaces show per-row download telemetry between heavy polls;
+    the engine skips the fast-lane qBittorrent read when it can't be seen. Per-instance (one
+    narrator class serves both seats)."""
 
     @abstractmethod
     def update(self, snapshot: WaitSnapshot) -> None:
@@ -132,8 +132,7 @@ class HubWaitView(WaitView):
         self._logger = logger
         self._pulse_s = pulse_s
         self.wants_telemetry = wants_telemetry
-        # Process-global ids through the late-resolving hub seam (the same path
-        # the old views' ScopeMark graft used).
+        # Process-global ids through the late-resolving hub seam.
         self._factory = ScopeFactory(emit_to_hub)
         self._scope: WaitScope | None = None
         self._seen: set[str] = set()
@@ -149,8 +148,7 @@ class HubWaitView(WaitView):
             # Stamped first, so an interrupted narration still reports fresh elapsed.
             self._last_elapsed = snapshot.elapsed_s
             if self._scope is None:
-                # Deliberate order flip vs the old views: WaitStarted now precedes
-                # any first-snapshot graduations (they logged graduations first).
+                # WaitStarted precedes any first-snapshot graduations.
                 self._scope = self._factory.wait(total=snapshot.total(), pulse_s=self._pulse_s)
             scope = self._scope
             for torrent in graduations(self._seen, snapshot):
@@ -184,7 +182,7 @@ class HubWaitView(WaitView):
             return
         try:
             # A zero-tally pass still finishes: the builders render [] for the
-            # empty tally, so the file stays silent (parity with the old views).
+            # empty tally, so the file stays silent.
             scope.finish(
                 WaitFinished(
                     imported=self._tally[OutcomeCategory.SUCCESS],
@@ -196,9 +194,9 @@ class HubWaitView(WaitView):
         except Exception:
             self._logger.debug("wait view close failed", exc_info=True)
         finally:
-            # The placement scope must still close (the old unconditional close),
-            # even when an interrupt aborts finish mid-dispatch; a no-op after a
-            # clean finish, and suppress keeps a propagating interrupt intact.
+            # The placement scope must still close even when an interrupt aborts
+            # finish mid-dispatch; a no-op after a clean finish, and suppress
+            # keeps a propagating interrupt intact.
             with contextlib.suppress(BaseException):
                 scope.close()
 

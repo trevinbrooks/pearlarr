@@ -85,9 +85,8 @@ for _group, _group_field in AppConfig.model_fields.items():
     for _field in _submodel.model_fields:
         _FIELD_GROUP.setdefault(_field, _group)
 
-# Pre-nesting flat names -> (group, field). The historical builder interface used
-# the old flat config keys (`import_*`, `{arr}_*`, etc.); map them here so the
-# existing call sites keep passing flat kwargs without each one being rewritten.
+# Flat (group-local) override names (`import_*`, `{arr}_*`, etc.) map to their nested
+# (group, field) so call sites can pass flat kwargs without each one being rewritten.
 _FLAT_ALIASES: dict[str, tuple[str, str]] = {
     "import_wait_mode": ("imports", "wait_mode"),
     "import_wait_timeout": ("imports", "wait_timeout"),
@@ -395,13 +394,10 @@ class FakeCacheStore(AbstractCacheStore):
 class FakeSeaDexSource(SeaDexSource):
     """In-memory `SeaDexSource` stand-in: serves preset entries, no network.
 
-    Retires `make_run_deps`'s `make_bare_instance(SeaDexGateway)` landmine - a
-    zero-attribute bare instance laundered to `Any`, every access an
-    `AttributeError` waiting to happen. Backed by a plain `{al_id: EntryRecord}`
-    map: `entry` serves from it (a miss is NO_ENTRY, or OUTAGE when constructed
-    with `outage=True`, mirroring the real gateway's short-circuit); `prefetch`
-    is a no-op that records the ids and reports their count (mirroring the real
-    "how many needed fetching" return).
+    Backed by a plain `{al_id: EntryRecord}` map: `entry` serves from it (a miss is
+    NO_ENTRY, or OUTAGE when constructed with `outage=True`, mirroring the real
+    gateway's short-circuit); `prefetch` is a no-op that records the ids and reports
+    their count (mirroring the real "how many needed fetching" return).
     """
 
     def __init__(self, entries: dict[int, EntryRecord] | None = None, *, outage: bool = False) -> None:
@@ -450,11 +446,10 @@ def make_config(**overrides: Any) -> AppConfig:
     """An in-memory `AppConfig` carrying the decision-test defaults.
 
     The config flags are read through `self._config` (the single source of truth),
-    so a bare instance needs a real `AppConfig`. These defaults mirror the historical
-    `make_arr` flags and leave `trackers` unset so it defaults to PUBLIC | PRIVATE.
-    Each flat override is routed to its config group (`_FIELD_GROUP`) and the
-    nested mapping is validated through the models, so the before-validators run exactly
-    as on a real load.
+    so a bare instance needs a real `AppConfig`. These defaults leave `trackers` unset
+    so it defaults to PUBLIC | PRIVATE. Each flat override is routed to its config
+    group (`_FIELD_GROUP`) and the nested mapping is validated through the models, so
+    the before-validators run exactly as on a real load.
     """
 
     nested: dict[str, dict[str, Any]] = {
@@ -488,7 +483,7 @@ def make_entry_record(
     The library type is a frozen `msgspec.Struct`, so it can't be duck-typed
     under strict; this builds the real value with sane defaults and exposes the
     handful of fields tests vary (`url`/`is_incomplete`/`updated_at`/
-    `torrents`). Replaces the old per-file `_FakeEntry` stand-ins.
+    `torrents`).
     """
 
     stamp = updated_at if updated_at is not None else datetime(2026, 1, 1)
@@ -653,8 +648,7 @@ def make_run_deps(
             sources=MappingSources(anime={}, anidb=False, anibridge=False),
         ),
         logger=logger,
-        # A typed, network-free SeaDex stand-in (the wiring tests never look one up);
-        # retires the old make_bare_instance(SeaDexGateway) Any-launder.
+        # A typed, network-free SeaDex stand-in (the wiring tests never look one up).
         seadex=seadex or FakeSeaDexSource(),
         cache_store=cache_store,
         anilist=AniListGateway(cache_store=cache_store, logger=logger, client=AniListClient(client=http)),
@@ -672,7 +666,7 @@ def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
     an in-memory `AppConfig`; `cache_store`/`planner` override the deps
     fields the real ctor unpacks and `ctx` the run context. Mirrors
     `make_services`'s override routing so the `build` characterization tests
-    read the same as the old `get_seadex_dict` ones.
+    read consistently.
     """
 
     config = _split_config(overrides)
@@ -681,7 +675,7 @@ def make_release_filter(**overrides: Any) -> SeadexReleaseFilter:
     if "planner" in overrides:
         deps = dataclasses.replace(deps, planner=overrides.pop("planner"))
     if overrides:
-        # Preserve the old **kwargs ctor's fail-loud contract for unknown keys.
+        # Fail loud on unknown override keys.
         msg = f"unknown make_release_filter overrides: {sorted(overrides)}"
         raise TypeError(msg)
     return SeadexReleaseFilter(deps=deps, ctx=ctx)
@@ -954,7 +948,7 @@ def manual_candidate(
     (basename drives the episode-id lookup), the in-context `quality` fallback
     (the RAW wire dict, validated exactly as at the client boundary), and
     `rejections` (sample / already-imported skips). Built through
-    `ManualImportCandidate.from_api` so the raw rejection shapes (a bare string
+    `ManualImportCandidate.model_validate` so the raw rejection shapes (a bare string
     or an `{"reason": ...}` dict) are folded exactly as in production.
     """
 
@@ -985,10 +979,9 @@ def make_sonarr_sync(
 ) -> SonarrSync:
     """Build a `SonarrSync` through its REAL `__init__`, injecting a typed client.
 
-    Shrunk from the old hand-rebuilt collaborator graph (~12 private field names,
-    zero type-checking): builds a real `RunDeps` + services hub and calls the real
-    constructor, passing the scripted client through the typed `sonarr_client`
-    seam (default a blank `FakeSonarrClient`). So the real two-phase wiring runs -
+    Builds a real `RunDeps` + services hub and calls the real constructor, passing
+    the scripted client through the typed `sonarr_client` seam (default a blank
+    `FakeSonarrClient`). So the real two-phase wiring runs -
     the collaborators all share the injected client + the strat's `cache_store` by
     identity, exactly as production builds them - and a wrong/incomplete fake is a
     pyright error AND un-instantiable, not a silently-set dead attribute.

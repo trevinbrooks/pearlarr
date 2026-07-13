@@ -6,10 +6,8 @@ RunDeps -> RunServices -> RunLoop stack and drives it inside an independent
 try block, so one arr crashing doesn't ruin the other. `cli.py` (the
 presentation layer) calls in; this module never imports it back.
 
-Boot weight: every runtime import below was already an eager import of the CLI
-module before this split (cli imports this module eagerly), so the extraction
-adds nothing to startup. The heavy run machinery stays lazily imported inside
-the functions that use it (the boot-cockpit invariant: instant title first).
+Boot weight: the heavy run machinery stays lazily imported inside the
+functions that use it (the boot-cockpit invariant: instant title first).
 """
 
 from __future__ import annotations
@@ -100,8 +98,8 @@ def load_shared_config(
                 f"{', '.join(unknown_trackers)} (known, case-insensitive: "
                 f"{', '.join(sorted(KNOWN_TRACKERS))})"
             )
-        # An old-schema file keeps working via the in-memory migration; the warn
-        # names what was folded and the command that updates the file itself.
+        # An old-schema file loads via the in-memory migration; the warn names
+        # what was folded and the command that updates the file itself.
         outcome = loaded.migration()
         if outcome is not None:
             applied = f" ({'; '.join(outcome.notes)})" if outcome.notes else ""

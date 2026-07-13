@@ -1,12 +1,11 @@
 """The completion-wait "consume" side: poll, reconcile, and the blocking monitor.
 
-Extracted from `RunLoop`. `ImportWaitManager` owns the
-wait-for-completion machinery: one-shot qBittorrent polls, the carried-over
-pending-record reconciliation (the per-series inline snapshot + the deferred
-reconcile + the pre-summary tally), the durable-store TTL prune, and the
-interleaved end-of-run blocking monitor that drives + verifies each import. The
-engine keeps `_finalize_run` / `run_sync` as the orchestrator, calling the
-manager's passes in order.
+`ImportWaitManager` owns the wait-for-completion machinery: one-shot
+qBittorrent polls, the carried-over pending-record reconciliation (the
+per-series inline snapshot + the deferred reconcile + the pre-summary tally),
+the durable-store TTL prune, and the interleaved end-of-run blocking monitor
+that drives + verifies each import; the engine calls the manager's passes in
+order.
 
 Binds the run `RunContext` AND the active strategy via `begin_run`
 (the same objects the engine holds): the strategy's `import_completed` is the
@@ -272,15 +271,8 @@ class ImportWaitManager:
 
         For each durable record for `series_id` that is NOT a this-run grab (its
         infohash is absent from `_ctx.pending_imports` - those are already shown
-        as `added`, so including them here would double-report), do one
-        non-blocking `poll_torrent`; on COMPLETE drive one forced (CDH-off
-        safe) import attempt with `at_deadline=False` (so a still-missing file
-        never warns). The poll's outcome + the probe's verified-files flag fold
-        through `classify_pending` into one `PendingState`, which is
-        rendered inline (`log_pending_snapshot`) and stashed per infohash for the
-        pre-summary tally. On IMPORTED the record is dropped and `stats.imported`
-        bumped (the inline-reconciled case); other states are left pending and
-        counted by the tally.
+        as `added`, so including them here would double-report), reconciles via
+        `_reconcile_one` and renders the result inline (`log_pending_snapshot`).
         """
 
         if self._active_strategy is None:
@@ -303,14 +295,10 @@ class ImportWaitManager:
     def reconcile_remaining(self) -> None:
         """Non-blocking force-poll of carried-over records NOT snapshotted this run.
 
-        The deferred-mode pre-summary step (relocated from the old startup
-        reconcile): one non-blocking poll per durable record whose infohash wasn't
-        already touched by the per-series inline snapshot and isn't a this-run grab
-        (those stay `added`). COMPLETE drives one forced, non-deadline import
-        attempt - the download finished a prior cycle, so a still-absent target
-        means Sonarr won't import on its own (CDH off) and we step in. The ready
-        ones are dropped + counted; the rest record their status for the tally.
-        Quiet (no live region; deferred never blocks).
+        The deferred-mode pre-summary step: reconciles, via `_reconcile_one`,
+        every durable record whose infohash wasn't already touched by the
+        per-series inline snapshot and isn't a this-run grab (those stay
+        `added`). Quiet (no live region; deferred never blocks).
         """
 
         if self._active_strategy is None:
@@ -555,15 +543,23 @@ class MonitorPass:
     """One blocking-monitor invocation's mutable state + per-cycle advance logic.
 
     Built fresh at the top of `ImportWaitManager.run_monitor` from the
-    manager, the working-set records, the clock, and the two per-torrent timeouts.
-    It owns the five accumulators the loop used to thread - `views` (the frame
-    the manager snapshots), `results` (terminal rows), `active` (still-running
-    infohashes), `dl_start` / `import_start` (per-phase clocks) - as fields,
+    manager, the working-set records, the clock, and the two per-torrent timeouts,
     so `advance` takes only the record and there is nothing to reset between
     runs (the object IS the per-invocation scope). It calls back to the manager's
     `poll_torrent` / `try_import_completed` / `drop_pending` (those are
     shared with the reconcile passes, so they stay on the manager).
     """
+
+    views: dict[str, TorrentView]
+    """The current frame the manager snapshots: each infohash's `TorrentView`."""
+    results: list[WaitOutcomeRow]
+    """Terminal rows, one per torrent that reached a terminal outcome."""
+    active: set[str]
+    """Infohashes still running (not yet terminal)."""
+    dl_start: dict[str, float]
+    """Per-torrent download-phase clock, stamped at construction."""
+    import_start: dict[str, float]
+    """Per-torrent import-phase clock, stamped on the first COMPLETE poll."""
 
     def __init__(
         self,
@@ -579,13 +575,13 @@ class MonitorPass:
         self.now = now
         self.dl_timeout = dl_timeout
         self.import_timeout = import_timeout
-        # Sampled once here (was `start = clock()` atop run_monitor); the download
-        # clock for every record starts now and `elapsed` measures from it.
+        # Sampled once here; the download clock for every record starts now and
+        # `elapsed` measures from it.
         self.start = now()
-        self.dl_start: dict[str, float] = {r.infohash: self.start for r in records}
-        self.import_start: dict[str, float] = {}
-        self.active: set[str] = {r.infohash for r in records}
-        self.views: dict[str, TorrentView] = {
+        self.dl_start = {r.infohash: self.start for r in records}
+        self.import_start = {}
+        self.active = {r.infohash for r in records}
+        self.views = {
             r.infohash: TorrentView(
                 key=r.infohash,
                 label=r.display_label,
@@ -593,7 +589,7 @@ class MonitorPass:
             )
             for r in records
         }
-        self.results: list[WaitOutcomeRow] = []
+        self.results = []
 
     def elapsed(self) -> float:
         """Seconds since the pass started (off the injected clock)."""

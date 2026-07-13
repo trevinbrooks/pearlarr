@@ -96,7 +96,7 @@ def ready_line(elapsed_s: float) -> str:
 
 @final
 class BootRegion(LiveRegion):
-    """One live slot + durable prints over the shared Console.
+    """The boot cockpit: the live spinner plus its durable step ledger.
 
     Durable lines (banner, graduations, heads-up, capstone) print the moment
     their event arrives — they reflow ABOVE the transient spinner via the shared
@@ -140,7 +140,7 @@ class BootRegion(LiveRegion):
                     style = event.outcome.style if caps.color else ""
                     self._print(console, Text(graduation_line(event, caps), style=style))
             case BootReady(elapsed_s=elapsed_s):
-                # Old-view order: the spinner is torn down BEFORE the capstone
+                # Teardown order: the spinner is torn down before the capstone
                 # prints (section_left stays the teardown for capstone-less ends).
                 self._stop_live()
                 if self._admits_durable():

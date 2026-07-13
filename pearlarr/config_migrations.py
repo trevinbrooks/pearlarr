@@ -29,14 +29,13 @@ MIGRATE_HINT = "run pearlarr config migrate to update the file (a backup is kept
 
 @dataclass(frozen=True)
 class MigrationOutcome:
-    """What one migration pass did: the version it found and the functional changes.
-
-    `notes` is empty when the pass only stamped `config_version` (the mapping's
-    keys and values were already readable as-is).
-    """
+    """What one migration pass did: the version it found and the functional changes."""
 
     from_version: int
+    """The schema version the mapping declared before this pass ran."""
+
     notes: tuple[str, ...]
+    """Human-readable functional changes; empty when the pass only stamped config_version."""
 
 
 def declared_version(config: Mapping[str, Json]) -> int | None:

@@ -114,8 +114,7 @@ class MappingEntry:
 
         ANIBRIDGE iff `tvdb_mappings` was attached. Tested with `is not
         None` (not truthiness) on purpose: an *empty* `tvdb_mappings` dict is
-        still ANIBRIDGE, exactly as the former `"tvdb_mappings" in mapping`
-        key-presence check was.
+        still ANIBRIDGE.
         """
 
         # Invariant: an empty tvdb_mappings dict is still ANIBRIDGE - a truthiness
@@ -128,9 +127,8 @@ def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> Ma
 
     The one place a loosely-typed producer dict (an AniBridge `_consumer_entry`
     dict) becomes a typed record. Only the enumerated keys of `raw` are read;
-    defaults mirror the former `.get(..., default)` reads exactly, so an
-    AniBridge entry (which carries no `tvdb_season` / `tvdb_epoffset`) lands
-    on `-1` / `0`.
+    defaults are `-1` / `0` for an AniBridge entry (which carries no
+    `tvdb_season` / `tvdb_epoffset`).
     """
 
     # Coalesce a present-but-null season/epoffset to the sentinel, matching
@@ -216,7 +214,7 @@ ANIBRIDGE_MAPPINGS_FILE = f"anibridge_mappings_{ANIBRIDGE_RELEASE}.json"
 
 # Per-read socket timeout for a source download. A stalled connection raises after
 # this many seconds (reported, then the run skips and retries) instead of hanging
-# forever, which is the behavior the previous timeout-less urlretrieve had.
+# forever.
 DOWNLOAD_TIMEOUT_S = 30
 
 # Hard cap on one source download: ~6x the largest real mapping file, so a
@@ -245,11 +243,10 @@ def _parse_anime_mappings(path: str) -> AnimeIdsMap:
 def _anime_ids_rows(anime_mappings: AnimeIdsMap) -> list[AnimeIdRow]:
     """Flatten the Kometa map into anime_ids store rows (first-seen order).
 
-    Every record yields a row (a NULL `anilist_id` is kept, so the library-filter
-    candidate sets match the former full-map scan; id->entry lookups filter those
-    out, as the former reverse index did). Each field uses the same
-    `.get(..., default)` reads `_entry_from_raw` used, so the SQL-served
-    entry is identical.
+    Every record yields a row (a NULL `anilist_id` is kept so it feeds the
+    library-filter candidate sets, but is excluded from id->entry lookups). Each
+    field uses the same `.get(..., default)` reads `_entry_from_raw` used, so the
+    SQL-served entry is identical.
     """
 
     rows: list[AnimeIdRow] = []
@@ -286,34 +283,30 @@ def _parse_anidb_mappings(path: str) -> ElementTree.Element:
 
 
 class _AnidbParse(NamedTuple):
-    """The flattened AniDB parse plus the two skip tallies.
-
-    `malformed` counts `<anime>` elements dropped whole (missing/non-int
-    anidbid - 0 on healthy upstream data); `unsupported` counts `<mapping>`
-    forms this parser deliberately doesn't consume (the offset form's empty text,
-    multi-episode spans - present in the hundreds on a healthy file).
-    """
+    """The flattened AniDB parse plus the two skip tallies."""
 
     rows: list[AnidbMappingRow]
     ambiguous: list[int]
     malformed: int
+    """Counts `<anime>` elements dropped whole (missing/non-int anidbid - 0 on
+    healthy upstream data)."""
     unsupported: int
+    """Counts `<mapping>` forms this parser deliberately doesn't consume (the
+    offset form's empty text, multi-episode spans - present in the hundreds on a
+    healthy file)."""
 
 
 def _anidb_rows(root: ElementTree.Element) -> _AnidbParse:
     """Flatten the AniDB XML into `anidb_mapping` rows + the ambiguous-id set.
 
-    Reproduces the former `anidb_anime_by_id` + `_parse_anidb_mapping_dict`
-    behavior exactly, but once at populate time:
+    Runs once at populate time:
 
-    * An anidb id appearing in more than one `<anime>` element is *ambiguous*
-      (the former `len(...) > 1` -> raise case); it is recorded and stored with
-      no mapping rows, and `MappingResolver.anidb_mapping_dict` raises on it.
+    * An anidb id appearing in more than one `<anime>` element is *ambiguous*;
+      it is recorded and stored with no mapping rows, and
+      `MappingResolver.anidb_mapping_dict` raises on it.
     * For an unambiguous id, each `<mapping-list>/<mapping>` with text is parsed
       to `{tvdb_ep: anidb_ep}` keyed by `tvdbseason`; a repeated season is
-      last-wins, matching the former dict assignment. Malformed/unsupported
-      mappings are skipped but tallied (the old code only crashed if such an anime
-      was looked up; populating every anime must tolerate what it never reached).
+      last-wins. Malformed/unsupported mappings are skipped but tallied.
     """
 
     counts: dict[int, int] = {}
@@ -443,7 +436,7 @@ class MappingResolver:
         # Close the store on ANY construction failure: the resolver is never
         # returned on a raise, so nobody else can call close() - a leak that would
         # accumulate a SQLite fd/WAL handle every scheduled cycle on a persistent
-        # download/parse failure (the old resolver held no resources).
+        # download/parse failure.
         try:
             try:
                 self._build(sources)
@@ -558,8 +551,8 @@ class MappingResolver:
                                     self.logger.debug(f"Download progress for {label}: {suffix}")
                                 next_mark = got + (1 << 20)
             except httpx.HTTPStatusError as e:
-                # Callers contain OSError (urllib's URLError was one); translate at this
-                # boundary keeping the status but never the message (it embeds the URL).
+                # Callers contain OSError; translate at this boundary keeping the
+                # status but never the message (it embeds the URL).
                 raise OSError(f"download failed: HTTP {e.response.status_code}") from e
             except httpx.HTTPError as e:
                 raise OSError(f"download failed: {type(e).__name__}") from e
@@ -677,8 +670,9 @@ class MappingResolver:
         """DISTINCT external ids the Anime-IDs source carries for `column`.
 
         Backs the library-filter candidate sets (symmetric with AniBridge's
-        `all_*` sets), so `collect_anime_items` no longer scans the full map.
-        Returns an empty set when the source is disabled. The covariant
+        `all_*` sets), so `collect_anime_items` queries these instead of
+        scanning the full map. Returns an empty set when the source is
+        disabled. The covariant
         `AbstractSet` return absorbs the store's per-column `set[int]` /
         `set[str]` overloads.
         """
@@ -689,7 +683,7 @@ class MappingResolver:
 
     @property
     def has_anidb(self) -> bool:
-        """True when the AniDB source is enabled (the former `anidb_mappings is not None`)."""
+        """True when the AniDB source is enabled."""
 
         return self._anidb_enabled
 
@@ -698,11 +692,10 @@ class MappingResolver:
     def anidb_mapping_dict(self, anidb_id: int, tvdb_season: int) -> dict[int, dict[int, int]]:
         """Return `{tvdb_season: {tvdb_ep: anidb_ep}}` for an AniDB id + season.
 
-        Replaces the former `anidb_anime_by_id` + `_parse_anidb_mapping_dict`
-        pair: `{}` when the source is disabled, the id is unknown, or it has no
-        mapping for the season; raises the same `ValueError` when the id was
-        ambiguous (appeared in more than one `<anime>` element). `tvdb_season`
-        is the season AniList resolved to.
+        `{}` when the source is disabled, the id is unknown, or it has no
+        mapping for the season; raises `ValueError` when the id is ambiguous
+        (appeared in more than one `<anime>` element). `tvdb_season` is the
+        season AniList resolved to.
         """
 
         if not self._anidb_enabled:
@@ -795,8 +788,7 @@ class MappingResolver:
             return anilist_mappings
 
         # Add the first row seen for each AniList id (rows come back in first-seen
-        # order), matching the previous "don't clobber an id another query already
-        # produced" behavior.
+        # order).
         def merge(column: AnimeIdColumn, value: object) -> None:
             for row in self._store.anime_ids_lookup(column, value):
                 if row.anilist_id not in anilist_mappings:

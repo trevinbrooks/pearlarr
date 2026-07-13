@@ -306,9 +306,6 @@ class SonarrClient(AbstractSonarrClient):
         `ManualImportCandidate` (`path` / `quality` /
         `rejections`) at this client boundary, so the decision path never
         touches the raw DTO.
-
-        Returns:
-            The parsed candidates; `None` on a transient failure.
         """
 
         raw = self._http.get_json_list(
@@ -426,9 +423,6 @@ class SonarrClient(AbstractSonarrClient):
 
         Returns an empty list (with a warning) on a non-200, so the caller treats
         "couldn't read the queue" as "not tracked" and falls back to its own scan.
-
-        Returns:
-            The parsed queue records; empty on failure.
         """
         records: list[QueueRecord] = []
         page = 1
@@ -464,14 +458,12 @@ class SonarrClient(AbstractSonarrClient):
         """All Sonarr quality definitions (`/api/v3/qualitydefinition`).
 
         Used to resolve a quality NAME (e.g. `Bluray-2160p`) to a Sonarr
-        QualityModel for the manual-import payload.
+        QualityModel for the manual-import payload. Each parsed
+        `QualityDefinitionResource` wraps a nested `quality` object the resolver
+        re-emits verbatim.
 
         Returns an empty list (with a warning) on a non-200, so the caller can
         fall back to other quality sources.
-
-        Returns:
-            The parsed `QualityDefinitionResource` records (each wraps a nested
-            `quality` object the resolver re-emits verbatim); empty on failure.
         """
 
         raw = self._http.get_json_list(
@@ -490,14 +482,11 @@ class SonarrClient(AbstractSonarrClient):
         """All Sonarr languages (`/api/v3/language`).
 
         Used to resolve language names to `{id, name}` objects for the
-        manual-import payload.
+        manual-import payload. Each parsed `LanguageResource`'s `{id, name}` is
+        what the resolver matches by name and re-emits verbatim.
 
         Returns an empty list (with a warning) on a non-200, so the caller can
         fall back to the candidate's languages.
-
-        Returns:
-            The parsed `LanguageResource` records (the `{id, name}` the
-            resolver matches by name and re-emits verbatim); empty on failure.
         """
 
         raw = self._http.get_json_list(
@@ -516,15 +505,12 @@ class SonarrClient(AbstractSonarrClient):
         """Current state of a Sonarr command (`/api/v3/command/{id}`).
 
         Used by `ImportExecutor.refresh_downloads` to poll a
-        queued `RefreshMonitoredDownloads` command until it finishes.
+        queued `RefreshMonitoredDownloads` command until it finishes, reading its
+        parsed `status` / `result` fields.
 
-        Returns a default `CommandResource` (with a warning)
-        on a non-200, so the caller can treat the import as unverified and leave it
+        Returns a default `CommandResource` (`status` None) with a warning on a
+        non-200, so the caller can treat the import as unverified and leave it
         pending.
-
-        Returns:
-            The command's parsed state (`status` / `result`); a default
-            (`status` None) on failure.
         """
 
         payload = self._http.get_json_dict(
@@ -561,9 +547,6 @@ class SonarrClient(AbstractSonarrClient):
         "couldn't read the commands" as "nothing in flight" and proceeds (a false
         step-in is bounded by the import deadline, a missed read just re-checks
         next poll).
-
-        Returns:
-            The parsed commands; empty on failure.
         """
 
         raw = self._http.get_json_list(

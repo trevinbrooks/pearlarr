@@ -80,35 +80,36 @@ class ImportWaitMode(StrEnum):
 
 
 class WaitOutcome(Enum):
-    """The result of waiting on a torrent's completion in qBittorrent.
-
-    `COMPLETE` -> import now; `ERRORED` -> leave the record pending for a
-    later retry (TTL eventually drops it); `MISSING` -> the torrent is gone
-    from qBittorrent, so the record should be dropped.
-    """
+    """The result of waiting on a torrent's completion in qBittorrent."""
 
     COMPLETE = auto()
+    """Import now."""
+
     ERRORED = auto()
+    """Leave the record pending for a later retry (TTL eventually drops it)."""
+
     MISSING = auto()
+    """The torrent is gone from qBittorrent, so the record should be dropped."""
 
 
 class ImportReadiness(Enum):
     """The result of one Sonarr import attempt, telling the engine what to do.
 
     The strategy's `import_completed` returns this each poll so the engine's
-    blocking wait loop knows whether to stop or keep polling:
-
-    `IMPORTED` -> the files are imported (we queued a ManualImport, or Sonarr
-    already handled them); drop the durable record.
-    `RETRY` -> not ready yet (Sonarr hasn't seen/parsed the files, is mid-import,
-    or a call failed transiently); poll again until the readiness deadline.
-    `LEAVE` -> nothing we can import right now (no candidate maps to one of our
-    episodes, or the attempt raised); leave the record pending for a later run.
+    blocking wait loop knows whether to stop or keep polling.
     """
 
     IMPORTED = auto()
+    """The files are imported (we queued a ManualImport, or Sonarr already handled them); drop the durable
+    record."""
+
     RETRY = auto()
+    """Not ready yet (Sonarr hasn't seen/parsed the files, is mid-import, or a call failed transiently); poll
+    again until the readiness deadline."""
+
     LEAVE = auto()
+    """Nothing we can import right now (no candidate maps to one of our episodes, or the attempt raised); leave
+    the record pending for a later run."""
 
 
 class PendingState(StrEnum):
@@ -116,22 +117,24 @@ class PendingState(StrEnum):
 
     A `StrEnum` (so each member IS its rendered word) shared by the inline
     snapshot ledger row, the WaitView live region, and the end-of-run scoreboard
-    counters, so one vocabulary describes a carried-over record everywhere:
-
-    `QUEUED` -> still downloading (or never reached completion this poll); it
-    waits.
-    `IMPORTING` -> the download finished and an import command was accepted, but
-    the episode files haven't landed yet (a remote-mount copy is in flight).
-    `IMPORTED` -> the episode files are verified present; the record is dropped.
-    `ERRORED` -> the download errored in qBittorrent; left for a later run.
-    `MISSING` -> the torrent is gone from qBittorrent; the record is dropped.
+    counters, so one vocabulary describes a carried-over record everywhere.
     """
 
     QUEUED = "queued"
+    """Still downloading (or never reached completion this poll); it waits."""
+
     IMPORTING = "importing"
+    """The download finished and an import command was accepted, but the episode files haven't landed yet (a
+    remote-mount copy is in flight)."""
+
     IMPORTED = "imported"
+    """The episode files are verified present; the record is dropped."""
+
     ERRORED = "errored"
+    """The download errored in qBittorrent; left for a later run."""
+
     MISSING = "missing"
+    """The torrent is gone from qBittorrent; the record is dropped."""
 
 
 def classify_pending(
@@ -176,27 +179,26 @@ class ImportProbe:
     Lets the engine tell `imported` (every intended episode file is verified
     present) from `importing` (an import command was accepted but the copy is
     still running) - a distinction the bare `ImportReadiness` collapses.
-
-    Args:
-        readiness: What the engine should do (drop / retry /
-            leave), as before.
-        files_present: Whether every intended episode file is verified
-            present in Sonarr. Only this promotes a record to `imported`.
-        command_issued: Whether a manual-import command was accepted this
-            poll (its copy may still be in flight - so not yet `files_present`).
-        imported_count: How many of the intended episodes already hold the
-            recommended file - the "files inserted" bar numerator. Meaningful only
-            with `target_count` > 0 (a complete seed map); 0 otherwise.
-        target_count: The intended-episode denominator for the bar, fixed to
-            the persisted seed set so the bar can't rescale mid-import. 0 means the
-            seed map is incomplete, so the importing row stays indeterminate.
     """
 
     readiness: ImportReadiness
+    """What the engine should do (drop / retry / leave)."""
+
     files_present: bool
+    """Whether every intended episode file is verified present in Sonarr. Only this promotes a record to
+    `imported`."""
+
     command_issued: bool
+    """Whether a manual-import command was accepted this poll (its copy may still be in flight - so not yet
+    `files_present`)."""
+
     imported_count: int = 0
+    """How many of the intended episodes already hold the recommended file - the "files inserted" bar
+    numerator. Meaningful only with `target_count` > 0 (a complete seed map); 0 otherwise."""
+
     target_count: int = 0
+    """The intended-episode denominator for the bar, fixed to the persisted seed set so the bar can't rescale
+    mid-import. 0 means the seed map is incomplete, so the importing row stays indeterminate."""
 
 
 class ImportProgress(NamedTuple):
@@ -204,38 +206,40 @@ class ImportProgress(NamedTuple):
 
     Returned by the strategy's `import_progress` (the Tier-2 poll): no refresh,
     no queue, no command - just the fresh episode files counted against the seed
-    set. `determinate` is True only when the persisted seed map covers every
-    intended file, so `done`/`total` are the true full set; when False the
-    importing row stays indeterminate (spinner only) and must NOT promote.
+    set.
     """
 
     done: int
     total: int
     determinate: bool
+    """True only when the persisted seed map covers every intended file, so `done`/`total` are the true full
+    set; when False the importing row stays indeterminate (spinner only) and must NOT promote."""
 
 
 class OutcomeCategory(Enum):
     """The visual class of a terminal wait outcome - how it reads at a glance.
 
-    Drives the wait view's ledger glyph + color and the end-of-wait tally:
-
-    `SUCCESS` -> the torrent imported.
-    `DEFERRED` -> left pending for a later run (a download timeout, or an
-    import that hasn't landed yet); not a failure, just unfinished.
-    `FAILED` -> the download errored or vanished from qBittorrent.
-
-    Each member carries the unicode glyph, an ASCII fallback (dumb terminals /
-    legacy Windows, where `✔` can't be encoded), and the rich style its ledger
-    row is colored with - so one place owns the look of each outcome class.
+    Drives the wait view's ledger glyph + color and the end-of-wait tally.
     """
 
     SUCCESS = ("✔", "ok", "green")
+    """The torrent imported."""
+
     DEFERRED = ("⚠", "~", "yellow")
+    """Left pending for a later run (a download timeout, or an import that hasn't landed yet); not a failure,
+    just unfinished."""
+
     FAILED = ("✖", "x", "bold red")
+    """The download errored or vanished from qBittorrent."""
 
     glyph: str
+    """The unicode glyph (`✔`/`⚠`/`✖`)."""
+
     ascii_glyph: str
+    """The ASCII fallback, for dumb terminals / legacy Windows, where `✔` can't be encoded."""
+
     style: str
+    """The rich style its ledger row is colored with."""
 
     def __init__(self, glyph: str, ascii_glyph: str, style: str) -> None:
         self.glyph = glyph
@@ -251,17 +255,8 @@ class OutcomeCategory(Enum):
 class Outcome(Enum):
     """A torrent's terminal result in the wait pass, with its rendering vocab.
 
-    Replaces the free-form outcome strings the engine used to hand the WaitView,
-    so success and failure read distinctly AND the displayed word can't drift
-    from the durable-store decision. Each member carries:
-
-    `word` -> the short ledger token (every one fits `STATE_WIDTH` = 11).
-    `detail` -> the longer human phrase the run report / notification use.
-    `category` -> the `OutcomeCategory` driving glyph + color + tally.
-    `dropped` -> whether the engine removes the record from the durable store
-    on this outcome. True for EXACTLY `IMPORTED` (files verified present) and
-    `MISSING` (gone from qBittorrent) - the two records that must never be
-    retried; a test pins this set so the word and the drop can't diverge.
+    Gives each terminal wait result a distinct word and rendering vocab, so the
+    displayed word can't drift from the durable-store decision.
     """
 
     IMPORTED = ("imported", "imported", OutcomeCategory.SUCCESS, True)
@@ -279,9 +274,18 @@ class Outcome(Enum):
     NOTHING_TO_IMPORT = ("no files", "nothing to import; left pending", OutcomeCategory.DEFERRED, False)
 
     word: str
+    """The short ledger token (every one fits `STATE_WIDTH` = 11)."""
+
     detail: str
+    """The longer human phrase the run report / notification use."""
+
     category: OutcomeCategory
+    """The `OutcomeCategory` driving glyph + color + tally."""
+
     dropped: bool
+    """Whether the engine removes the record from the durable store on this outcome. True for EXACTLY
+    `IMPORTED` (files verified present) and `MISSING` (gone from qBittorrent) - the two records that must never
+    be retried; a test pins this set so the word and the drop can't diverge."""
 
     def __init__(
         self,
@@ -317,37 +321,40 @@ _QBIT_ETA_INFINITE = 8_640_000
 class TorrentProbe:
     """One qBittorrent completion poll, with live download telemetry.
 
-    Widens the old `(outcome, content_path, progress)` tuple so the wait view
-    can show real speed / ETA / bytes. `ImportWaitManager.poll_torrent`
-    is the one place that builds this and the one place that SANITIZES qBittorrent's junk
-    (via `sanitize_torrent_telemetry`), so nothing downstream ever sees a
-    sentinel: `eta_s` drops the 8_640_000 "∞" value to None, `speed_bps` drops
-    a 0/idle speed to None (the view renders that as "stalled"), bytes are
-    clamped, and a NaN/blank progress folds to 0.0.
-
-    Args:
-        outcome: The terminal outcome this poll, or None
-            while still downloading (or on a transient qB error -> keep waiting).
-        content_path: The completed download's path (COMPLETE only).
-        progress: 0.0-1.0 download fraction (0.0 when unknown).
-        speed_bps: Download speed in bytes/s, None when idle/unknown.
-        eta_s: qBittorrent's ETA in seconds, None when unknown/∞.
-        bytes_done: Bytes downloaded so far, None when unknown.
-        bytes_total: Total size in bytes, None when unknown.
-        observed: False when qBittorrent could not actually be read (no
-            client / a transient error), so the zeroed telemetry is a placeholder
-            - the monitor keeps the row's last real bar/speed instead of painting
-            a fake 0% + stall sample.
+    Carries live speed / ETA / bytes telemetry alongside the terminal outcome.
+    `ImportWaitManager.poll_torrent` is the one place that builds this and the
+    one place that SANITIZES qBittorrent's junk (via `sanitize_torrent_telemetry`),
+    so nothing downstream ever sees a sentinel: `eta_s` drops the 8_640_000 "∞"
+    value to None, `speed_bps` drops a 0/idle speed to None (the view renders
+    that as "stalled"), bytes are clamped, and a NaN/blank progress folds to 0.0.
     """
 
     outcome: "WaitOutcome | None"
+    """The terminal outcome this poll, or None while still downloading (or on a transient qB error - keep
+    waiting)."""
+
     content_path: str | None
+    """The completed download's path (COMPLETE only)."""
+
     progress: float
+    """0.0-1.0 download fraction (0.0 when unknown)."""
+
     speed_bps: int | None = None
+    """Download speed in bytes/s, None when idle/unknown."""
+
     eta_s: int | None = None
+    """qBittorrent's ETA in seconds, None when unknown/∞."""
+
     bytes_done: int | None = None
+    """Bytes downloaded so far, None when unknown."""
+
     bytes_total: int | None = None
+    """Total size in bytes, None when unknown."""
+
     observed: bool = True
+    """False when qBittorrent could not actually be read (no client / a transient error), so the zeroed
+    telemetry is a placeholder - the monitor keeps the row's last real bar/speed instead of painting a fake 0%
+    + stall sample."""
 
 
 class TorrentTelemetry(NamedTuple):
@@ -420,52 +427,51 @@ class PendingImport:
     Sonarr `series_id`, our own `(basename -> episode ids)` mapping, the
     SeaDex release group, dual-audio flag and coverage - so the import never has
     to trust Sonarr's blind title parse.
-
-    Args:
-        infohash: The qBittorrent tracking key (never None). Also the
-            dedup `downloadId` sent to Sonarr.
-        series_id: The Sonarr series id the files belong to.
-        file_episode_map: Basename -> authoritative
-            Sonarr episode ids; the primary file->episode mapping. Repaired and
-            extended in place at import time when a grabbed file wasn't parseable
-            at grab time, so the map self-heals.
-        episode_ids: Legacy read-only fallback: new seeds always
-            write `[]` (a value could only duplicate `file_episode_map`);
-            readers still fold it in so an old persisted record rehydrates.
-        ordered_episode_ids: The resolved episode ids for this entry,
-            in season order - the authoritative set the import assigns into. Lifted
-            straight from the add-flow `ep_list` (which already applied the
-            specials/offset mapping), so import-time assignment never has to trust
-            Sonarr's title parse: a file's parsed `(season, episode)` is honored
-            only when it lands in this set, and an absolute-numbered pack is mapped
-            positionally onto it. Empty for records written before this field
-            existed (such a record falls back to the seeded `file_episode_map`).
-        release_group: The SeaDex release group (authoritative).
-        is_dual_audio: Whether the SeaDex release is dual-audio; selects
-            the dual vs. single language list.
-        seadex_files: SeaDex filenames, for our regex quality parse.
-        title: Display title (logging only).
-        added_at: When the record was written, in
-            `UPDATED_AT_STR_FORMAT`, used for the TTL drop.
-        coverage: The entry's season/episode coverage at grab time
-            (e.g. `"S01 E01-E13"`), so a carried-over record can render its
-            `files` line inline next run without re-deriving it. Logging only.
-        url: The SeaDex entry URL at grab time, for the carried-over
-            record's inline `link` line. Logging only.
     """
 
     infohash: str
+    """The qBittorrent tracking key (never None). Also the dedup `downloadId` sent to Sonarr."""
+
     series_id: int
+    """The Sonarr series id the files belong to."""
+
     file_episode_map: dict[str, list[int]]
+    """Basename -> authoritative Sonarr episode ids; the primary file->episode mapping. Repaired and extended
+    in place at import time when a grabbed file wasn't parseable at grab time, so the map self-heals."""
+
     episode_ids: list[int]
+    """Legacy read-only fallback: new seeds always write `[]` (a value could only duplicate
+    `file_episode_map`); readers still fold it in so an old persisted record rehydrates."""
+
     release_group: str
+    """The SeaDex release group (authoritative)."""
+
     is_dual_audio: bool
+    """Whether the SeaDex release is dual-audio; selects the dual vs. single language list."""
+
     seadex_files: list[str]
+    """SeaDex filenames, for our regex quality parse."""
+
     title: str | None
+    """Display title (logging only)."""
+
     added_at: str
+    """When the record was written, in `UPDATED_AT_STR_FORMAT`, used for the TTL drop."""
+
     coverage: str | None = None
+    """The entry's season/episode coverage at grab time (e.g. `"S01 E01-E13"`), so a carried-over record can
+    render its `files` line inline next run without re-deriving it. Logging only."""
+
     url: str | None = None
+    """The SeaDex entry URL at grab time, for the carried-over record's inline `link` line. Logging only."""
+
     ordered_episode_ids: list[int] = field(default_factory=list[int])
+    """The resolved episode ids for this entry, in season order - the authoritative set the import assigns
+    into. Lifted straight from the add-flow `ep_list` (which already applied the specials/offset mapping), so
+    import-time assignment never has to trust Sonarr's title parse: a file's parsed `(season, episode)` is
+    honored only when it lands in this set, and an absolute-numbered pack is mapped positionally onto it. Empty
+    for records written before this field existed (such a record falls back to the seeded
+    `file_episode_map`)."""
 
     @property
     def display_label(self) -> str:
@@ -523,9 +529,6 @@ def resolve_wait_mode(
     Args:
         cli_mode: The `--import-wait-mode` CLI value.
         config_mode: The configured `imports.wait_mode`.
-
-    Returns:
-        `cli_mode` if set, else `config_mode` if set, else `ImportWaitMode.OFF`.
     """
 
     if cli_mode is not None:

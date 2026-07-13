@@ -13,11 +13,11 @@ from .env_registry import DATA_DIR_ENV
 # CLI's --data-dir flag folds into it (see cli.main).
 APP_NAME = "pearlarr"
 
-# The single in-code source for the project's repository URL (the CLI epilog and
-# Discord embeds read it). pyproject.toml's [project.urls] can't import it, so
-# change the two together. NOTE for any future APP_NAME rename: APP_NAME is also
-# the platformdirs directory, so a rename must ship a data-dir migration.
+# pyproject.toml's [project.urls] can't import it, so change the two together.
+# NOTE for any future APP_NAME rename: APP_NAME is also the platformdirs
+# directory, so a rename must ship a data-dir migration.
 PROJECT_URL = "https://github.com/trevinbrooks/pearlarr"
+"""The single in-code source for the project's repository URL; the CLI epilog and Discord embeds read it."""
 
 
 @dataclass(frozen=True, slots=True)

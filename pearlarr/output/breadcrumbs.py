@@ -86,11 +86,12 @@ PATH_SEP: Final = " › "
 
 @dataclass(frozen=True, slots=True)
 class OpenNode:
-    """One open frontier node; `scope` is None for boundary-opened RUN/ITEM nodes."""
+    """One open frontier node."""
 
     kind: ScopeKind
     label: str
     scope: ScopeId | None
+    """`None` for boundary-opened RUN/ITEM nodes."""
 
 
 def _segment(node: OpenNode) -> str:

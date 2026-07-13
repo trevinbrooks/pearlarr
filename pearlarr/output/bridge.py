@@ -18,7 +18,8 @@ Adoption rules:
 * Root records (third-party: httpx, urllib3, pydantic, py.warnings, ...):
   WARNING+ adopt visible with `origin = record.name`; at-level sub-WARNING
   adopts `file_only` unless the configured level is DEBUG (at DEBUG the hub is
-  a library record's only console route, so today's visibility is preserved;
+  a library record's only console route, so the record keeps its console
+  visibility;
   at INFO+ the file keeps the forensics and stdout loses library chatter).
 
 The bridge CONSTRUCTS new events and never mutates the LogRecord (caplog
@@ -113,17 +114,13 @@ class HubBridgeHandler(HubBridgeBase):
         if record.levelno >= logging.WARNING:
             file_only = False
         elif record.levelno < hub.level:
-            # Sub-threshold records aren't constructed/counted, either party:
-            # no surface would keep them (the file thresholds at this level).
+            # sub-threshold: dropped
             return None
         elif is_first_party(record.name):
-            # Visible: the bridge is the raw record's only console route (the
-            # rich handler stands down while a bridge is installed), and the
-            # hub's placement owns the indent.
+            # first-party: visible
             file_only = False
         else:
-            # At a configured DEBUG the hub is a library record's only console
-            # route, so it stays visible; at INFO+ the file alone keeps it.
+            # third-party: file-only unless DEBUG
             file_only = hub.level > logging.DEBUG
         exc = record.exc_info[1] if record.exc_info is not None else None
         return Diagnostic(

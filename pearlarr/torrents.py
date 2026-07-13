@@ -69,33 +69,26 @@ PARSEABLE_TRACKERS: frozenset[Tracker] = frozenset(_PARSERS)
 class AddOutcome(Enum):
     """The result of handing a release to the torrent client.
 
-    Replaces the `"torrent_added"` / `"torrent_already_added"` status strings:
-    a closed two-member vocabulary, so the dispatch on it is exhaustive (no dead
+    A closed two-member vocabulary, so the dispatch on it is exhaustive (no dead
     `else: raise` fallthrough).
     """
 
-    ADDED = auto()  # was "torrent_added"
-    ALREADY_ADDED = auto()  # was "torrent_already_added" / "already have"
+    ADDED = auto()
+    ALREADY_ADDED = auto()
 
 
 class AddResult(NamedTuple):
-    """One add's result: the outcome plus the best display name available.
-
-    `name` is the qBittorrent-reported name, falling back to the release title
-    scraped from the source page (None only when neither exists).
-    """
+    """One add's result: the outcome plus the best display name available."""
 
     outcome: AddOutcome
     name: str | None
+    """The qBittorrent-reported name, falling back to the release title scraped
+    from the source page (None only when neither exists)."""
 
 
 @dataclass(frozen=True)
 class ReleaseOutcome:
-    """One release's add result, as the engine records it for the reporter.
-
-    Replaces the `{"outcome", "name", "group"}` dict the engine built and
-    `RunReporter.log_seadex_action` re-read.
-    """
+    """One release's add result, as the engine records it for the reporter."""
 
     outcome: AddOutcome
     name: str | None
@@ -149,9 +142,6 @@ class TorrentService:
                 `infohash` dedups / reads the name back (None for a private
                 torrent with no hash).
             preview: When True, simulate the add without touching the client.
-
-        Returns:
-            The outcome plus the best display name available.
         """
 
         parser = _PARSERS.get(item.tracker)

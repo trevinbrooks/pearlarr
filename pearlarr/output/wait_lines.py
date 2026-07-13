@@ -192,26 +192,27 @@ class RowModel:
     """One rendered in-flight row, as plain strings - the pure-render unit.
 
     `live_model` formats every value here (no rich), so the row layout is
-    unit-testable; the view turns these into styled cells. Every column keeps ONE
-    meaning across all row kinds: `count` is progress ("61%" / "8/12" files),
-    `speed` is the download rate (sparkline + rate, or "stalled"), `time` is
-    the ETA for a download or the elapsed clock for an import, `size` is the
-    total download size. A row without a bar shows its `status` word instead.
+    unit-testable; the view turns these into styled cells. Every column keeps
+    ONE meaning across all row kinds.
     """
 
     label: str
     phase: Phase
     fraction: float
-    # The status word drawn in the bar column when there is no bar: "queued",
-    # "importing", or "copying" (an accepted import command's copy in flight).
     status: str = ""
+    """The status word drawn in the bar column when there is no bar: "queued",
+    "importing", or "copying" (an accepted import command's copy in flight)."""
     count: str = ""
+    """Progress, e.g. "61%" or "8/12" files."""
     speed: str = ""
+    """The download rate: sparkline + rate, or "stalled"."""
     time: str = ""
+    """The ETA for a download, or the elapsed clock for an import."""
     size: str = ""
-    # Draw a determinate block bar for `fraction` (downloads always; an importing
-    # row only when its files-inserted count is known). Else the status word.
+    """The total download size."""
     show_bar: bool = False
+    """Draw a determinate block bar for `fraction` (downloads always; an importing
+    row only when its files-inserted count is known); else the status word."""
 
 
 @dataclass(frozen=True, slots=True)

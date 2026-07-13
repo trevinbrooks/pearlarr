@@ -33,9 +33,8 @@ class SkipNotice:
     """A release dropped for being private, for the caller to log.
 
     Rendered by the orchestrator as `"<groups> <reason>"` on a `skipped`
-    detail line, replacing the inline detail call this used to make from
-    deep inside the decision engine. A warn-and-hold skip logs at WARNING; a
-    drop covered by a public fallback logs at INFO.
+    detail line. A warn-and-hold skip logs at WARNING; a drop covered by a
+    public fallback logs at INFO.
     """
 
     groups: list[str]
@@ -45,49 +44,43 @@ class SkipNotice:
 
 @dataclass
 class PrivateOnlySkips:
-    """The private-only skip outcome of `reduce_overlapping_downloads`.
-
-    `skipped` is True when at least one set of same-files release groups was
-    dropped because none were available publicly and no public fallback
-    covered the same files; `groups` names them (for the run summary) and
-    `notices` is what to log. `stale_held` marks a hold where the Arr owns
-    the preferred private release at a stale size and only a fallback could
-    stand in (a fallback never replaces an owned copy). `fallback_covered`
-    marks the owned-fallback soft-skip (the Arr genuinely owns a public
-    fallback's files), which drives the cache's fallback-satisfied marker.
-    """
+    """The private-only skip outcome of `reduce_overlapping_downloads`."""
 
     skipped: bool = False
+    """True when at least one set of same-files release groups was dropped because none were available
+    publicly and no public fallback covered the same files."""
     groups: list[str] = field(default_factory=list[str])
+    """The dropped groups' names, for the run summary."""
     notices: list[SkipNotice] = field(default_factory=list[SkipNotice])
+    """What to log for the drop."""
     stale_held: bool = False
+    """A hold where the Arr owns the preferred private release at a stale size and only a fallback could
+    stand in; a fallback never replaces an owned copy."""
     fallback_covered: bool = False
+    """The owned-fallback soft-skip: the Arr genuinely owns a public fallback's files. Drives the cache's
+    fallback-satisfied marker."""
 
 
 @dataclass
 class PlanResult:
     """The download-decision engine's output.
 
-    `seadex_dict` is the same dict passed in, annotated in place with per-url
-    `download` flags. `torrent_hashes` is the unique set to remember in the
-    cache record. The remaining fields surface the private-only skip outcome so
-    the orchestrator can log it, name it in the summary, and decide whether to
-    cache the title as done.
+    The remaining fields surface the private-only skip outcome so the orchestrator can log it, name it in
+    the summary, and decide whether to cache the title as done.
     """
 
     seadex_dict: SeadexDict
-    # The hash-filter path appends every url's hash unconditionally, and a
-    # private torrent has no infohash, so this can hold None entries (the
-    # release-group path filters those out, but the type must cover both).
+    """The same dict passed in, annotated in place with per-url `download` flags."""
     torrent_hashes: list[str | None]
+    """The unique torrent infohashes to remember; None for a hashless private torrent."""
     private_only_skipped: bool = False
     private_only_groups: list[str] = field(default_factory=list[str])
     skip_notices: list[SkipNotice] = field(default_factory=list[SkipNotice])
-    # The stale-owned hold (see PrivateOnlySkips.stale_held), for the summary row.
     private_only_stale_held: bool = False
-    # The owned-fallback soft-skip (see PrivateOnlySkips.fallback_covered), for
-    # the cache's fallback-satisfied marker.
+    """The stale-owned hold (see `PrivateOnlySkips.stale_held`), for the summary row."""
     fallback_covered: bool = False
+    """The owned-fallback soft-skip (see `PrivateOnlySkips.fallback_covered`), for the cache's
+    fallback-satisfied marker."""
 
 
 def normalize_rg(name: str | None) -> str | None:
@@ -252,9 +245,8 @@ class _MatchContext:
     """
 
     arr_release_dict: ArrReleaseDict
-    # The Arr's file sizes merged under normalized group names (loop-invariant,
-    # so it's built once per entry rather than per URL).
     arr_sizes_by_norm: Mapping[str | None, list[int]]
+    """The Arr's file sizes merged under normalized group names; built once per entry rather than per URL."""
     overlapping_results: bool
     sonarr_by_key: dict[tuple[int, int], SonarrEpisode]
     all_seadex_rgs_per_episode: dict[str, set[str | None]]

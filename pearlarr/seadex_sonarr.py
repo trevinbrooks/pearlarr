@@ -99,11 +99,7 @@ def radarr_movies_matching(
 class SonarrSync(ArrSync[SonarrItem]):
     """Sonarr sync strategy: owns the Sonarr REST client + episode domain logic.
 
-    Implements the `ArrSync` hooks the run machinery drives.
-    The composition root injects the shared `RunDeps` (used
-    to stand up the client and the episode domain logic) and the
-    `RunServices` hub (held as `self._services`);
-    the per-id hooks call the shared pipeline through it.
+    See `ArrSync` for the shared DI/hook-wiring regime.
     """
 
     def __init__(
@@ -122,11 +118,9 @@ class SonarrSync(ArrSync[SonarrItem]):
                 to the Sonarr collaborators for the cache/AniList gateway/log
                 formatter they read.
             services: The services hub the per-id hooks call into.
-            sonarr_client: A pre-built client to use
-                instead of constructing the real `SonarrClient` (which
-                needs the connection keys); None builds the real one. Tests
-                inject a scripted fake through this typed seam, so the real
-                `__init__` + collaborator wiring runs without keys.
+            sonarr_client: A pre-built client to use instead of constructing
+                the real `SonarrClient` (which needs the connection keys);
+                None builds the real one.
             radarr_client: Same seam for the
                 movies-in-Radarr cross-check client, whose library is fetched
                 eagerly below (only consulted when

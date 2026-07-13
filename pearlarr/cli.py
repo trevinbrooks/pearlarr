@@ -401,7 +401,8 @@ def _install_output_hub(paths: AppPaths) -> tuple[OutputHub, FileLogSink]:
     (a repeat `run single` in-process must not leak an open FileLogSink).
     The probe is the pre-run writability check: it must reach the log FILE
     itself (a root-owned Pearlarr.log fails open, not makedirs), so an
-    unwritable file aborts here like pre-flip instead of striking the sink.
+    unwritable file aborts here at startup instead of silently failing open
+    at the sink.
     The FileLogSink is also returned directly (alongside the hub) so a caller
     can drive `apply_retention_days` once the config that names the retention
     window is read - `run_arrs` is the sole reader, config-load being the
@@ -485,8 +486,8 @@ def run_scheduled(
     # die mid-sleep with SIGTERM's default nonzero status.
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
-    # The hub is per-process: installed once, BEFORE the loop — required,
-    # so a record fired from inside setup_logger reaches the hub, never lastResort.
+    # The hub is per-process: installed once, BEFORE the loop - install the hub
+    # before the logger, see _install_output_hub.
     hub, file_sink = _install_output_hub(paths)
 
     for cycle in itertools.count(1):
@@ -597,9 +598,7 @@ def run_single(
     paths = resolve_paths()
     _prepare_data_dir(paths)
 
-    # Hub + bridge install BEFORE the logger build — required, so a record fired
-    # from inside setup_logger (the invalid-level complaint) reaches the hub
-    # instead of logging.lastResort.
+    # Install the hub before the logger - see _install_output_hub.
     console_format = _resolved_format(paths.config)
     hub, file_sink = _install_output_hub(paths)
     logger = setup_logger(log_level=log_level or "INFO", console_format=console_format)

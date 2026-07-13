@@ -2,9 +2,8 @@
 
 Every scan line is a `LegacyLine`: a level, a plain message, and a typed
 `ConsoleRender` payload (how the rich console draws it). The pure builders
-here map each scan event to the exact lines the pre-hub reporter rendered —
-pinned by the goldens in `tests/test_scan_parity.py`, captured against the
-live reporter FIRST.
+here map each scan event to its console lines, pinned by the goldens in
+`tests/test_scan_parity.py`.
 
 Two consumers: the `rich_renderer.RichRenderer`'s scan arm renders the
 payloads via `render_legacy_lines` (through the shared payload renderers
@@ -92,8 +91,8 @@ class LegacyLine:
 
 _BLANK = LegacyLine(logging.INFO, "")
 
-# The summary scoreboard's key column (narrower than the entry-detail column;
-# see log_run_summary) and its per-entry block column.
+# The summary scoreboard's key column (narrower than the entry-detail column)
+# and its per-entry block column.
 _SUMMARY_KEY_WIDTH: Final = 12
 _BLOCK_KEY_WIDTH: Final = 7
 
@@ -175,7 +174,7 @@ def _detail_kv(
 
 
 def _ledger_line(state: EntryState, label: str, style: str) -> LegacyLine:
-    """A fixed-column ledger row, indent baked into the message like log_entry_status."""
+    """A fixed-column ledger row, indent baked into the message."""
 
     return _info(indent_string(entry_string(state, label), level=1), StyledLine(style=style))
 
@@ -202,7 +201,7 @@ def entry_header_lines(event: EntryHeader) -> tuple[LegacyLine, ...]:
 
     The focal "checking" row stays unstyled; "imported" reads green; every other
     state dims. Absent coverage/url rows drop, and the incomplete note rides the
-    LAST rendered detail line, console-side only — exactly log_entry_coverage.
+    LAST rendered detail line, console-side only.
     """
 
     if event.state is EntryState.CHECKING:
@@ -226,7 +225,7 @@ def ledger_row_lines(event: LedgerRow) -> tuple[LegacyLine, ...]:
 
 
 def entry_detail_lines(event: EntryDetail) -> tuple[LegacyLine, ...]:
-    """One labeled detail line under an entry; PLAIN keeps today's style-less kv."""
+    """One labeled detail line under an entry; PLAIN renders a style-less kv."""
 
     return (
         _detail_kv(
@@ -307,7 +306,7 @@ def grab_action_lines(event: GrabAction) -> tuple[LegacyLine, ...]:
 
 
 def cap_reached_lines(event: CapReached) -> tuple[LegacyLine, ...]:
-    """Today's cap line names the setting, not the cap value."""
+    """The cap line names the setting, not the cap value."""
 
     del event
     return (_info(_CAP_MESSAGE, StyledLine(style="yellow")),)
@@ -344,7 +343,7 @@ def _needs_block(item: NeedsActionFact) -> Iterator[LegacyLine]:
 def _added_block(item: GrabFact, *, dry_run: bool) -> Iterator[LegacyLine]:
     # A dry run dims the whole block (group accent included) so the would-be
     # grabs don't read as real; kv_string interpolates the Text to plain text
-    # for the message, exactly as today.
+    # for the message.
     torrent_value = group_highlight(
         item.name,
         item.group,
@@ -360,7 +359,7 @@ def _added_block(item: GrabFact, *, dry_run: bool) -> Iterator[LegacyLine]:
 
 
 def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
-    """The end-of-run scoreboard, ported line-for-line from log_run_summary."""
+    """The end-of-run scoreboard: checked / needs-action / added tallies plus the closing section rule."""
 
     summary = event.summary
     tally = summary.tally

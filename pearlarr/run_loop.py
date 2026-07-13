@@ -62,13 +62,11 @@ class RunLoop:
         # the placeholder None here is replaced before any import hook is invoked.
         self._active_strategy: ImportCompleter | None = None
 
-        # All per-run state (stats tally, running torrent count, the active
-        # title/url/coverage, the run clock, the private-only skip flags, plus the
-        # run's dry_run + resolved wait-mode flags) lives on this context, replaced
-        # fresh at the start of each run by reset_run_stats. ADOPT the services
-        # hub's placeholder (one placeholder, never a second mint) - its
-        # dry_run=False + OFF wait mode keep every preview / pending-import path a
-        # safe no-op - so the object is usable before run_sync.
+        # Per-run state lives on this context (see RunServices.__init__ for the
+        # full enumeration). ADOPT the services hub's placeholder (one placeholder,
+        # never a second mint) - its dry_run=False + OFF wait mode keep every
+        # preview / pending-import path a safe no-op - so the object is usable
+        # before run_sync.
         self._ctx = services.ctx
 
         # Loop-side per-run collaborator, built from the deps hub + the adopted
@@ -147,10 +145,10 @@ class RunLoop:
 
         Generic in `ItemT` (the strategy's item protocol), so the body sees a
         precise `list[ItemT]` / `item: ItemT` - the same concrete type the
-        strategy's hooks consume and produce - rather than the loose `Any` the
-        run machinery used to carry. `ArrSync` is invariant in its item type, so
-        a concrete (non-union) strategy must reach this call: the composition root
-        (`bootstrap.py`) branches per Arr so each call binds one `ItemT` cleanly.
+        strategy's hooks consume and produce. `ArrSync` is invariant in its
+        item type, so a concrete (non-union) strategy must reach this call:
+        the composition root (`bootstrap.py`) branches per Arr so each call
+        binds one `ItemT` cleanly.
 
         Args:
             strategy: The Arr-specific strategy to drive (injected
@@ -317,10 +315,10 @@ class RunLoop:
                     # process_al_id returns True only when max_torrents_to_add was
                     # reached - stop the whole run. The post-loop _finalize_run (the
                     # single finalize site) still runs, so the blocking/hybrid pass
-                    # imports this run's records before the save + summary. The
-                    # original per-item post-loop max check is redundant with this
-                    # (the in-block check fires after every add, so torrents_added
-                    # can't reach the cap without process_al_id stopping first).
+                    # imports this run's records before the save + summary. A separate
+                    # post-loop max check would be redundant with this: the in-block
+                    # check fires after every add, so torrents_added can't reach the
+                    # cap without process_al_id stopping first.
                     try:
                         if strategy.process_al_id(
                             item=item,
@@ -393,8 +391,7 @@ class RunLoop:
         """Shared run tail: reconcile + tally, print the summary, THEN block.
 
         Bracketed by the two run-lifecycle close boundaries (the scan closes at
-        the top, the run at the very end). The ordering corrects the old "exited
-        right away" + detached-tally behavior. In order:
+        the top, the run at the very end). In order:
 
           1. deferred-mode pre-summary reconcile of any carried-over records not
              already snapshotted inline (non-blocking; feeds the counters);

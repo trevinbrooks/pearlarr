@@ -1,11 +1,11 @@
 """Sonarr `/parse` cache collaborator: SeaDex filenames -> season/episode.
 
-Extracted from `SonarrSync`. `SonarrParseCache` owns the grab-time
-`/parse` of a release's filenames plus the durable, freshness-checked
-parse cache (read-through `cache_store`): cold-cache warm, per-file freshness,
-negative-record self-heal, and TTL eviction. The series-id fingerprint that pins
-negative records is threaded in per call (`series_fp`) so this stays decoupled
-from the episode collaborator that computes it.
+`SonarrParseCache` owns the grab-time `/parse` of a release's filenames plus
+the durable, freshness-checked parse cache (read-through `cache_store`):
+cold-cache warm, per-file freshness, negative-record self-heal, and TTL
+eviction. The series-id fingerprint that pins negative records is threaded in
+per call (`series_fp`) so this stays decoupled from the episode collaborator
+that computes it.
 """
 
 import concurrent.futures
@@ -127,31 +127,35 @@ class ParseWindow(NamedTuple):
     """The freshness window for one parse pass, computed once per call.
 
     Bundles the values the parse-cache freshness check and writes thread
-    together: `now_str` stamps new records, `cutoff` bounds a positive
-    record's TTL, `neg_cutoff` the short negative-record backstop, and
-    `series_fp` pins negative records to the current series-id set (so a
-    newly-added series self-heals). One window is built in
-    `parse_episodes_from_seadex` and passed down to the fresh-check / writer.
+    together. One window is built in `parse_episodes_from_seadex` and passed
+    down to the fresh-check / writer.
     """
 
     now_str: str
+    """Stamps new records."""
+
     cutoff: datetime
+    """Bounds a positive record's TTL."""
+
     neg_cutoff: datetime
+    """The short negative-record backstop."""
+
     series_fp: str
+    """Pins negative records to the current series-id set (so a newly-added series self-heals)."""
 
 
 class SonarrParseRecord(TypedDict):
-    """One persisted Sonarr `/parse` cache record, keyed by filename.
-
-    `fetched_at` stamps the record for TTL eviction; `episodes` is the parsed
-    season/episode list (empty for a negative record). `series_fp` is
-    `NotRequired` because only a negative record carries it (pinning it to the
-    series-id set) - the freshness reader dispatches on exactly that presence.
-    """
+    """One persisted Sonarr `/parse` cache record, keyed by filename."""
 
     fetched_at: str
+    """Stamps the record for TTL eviction."""
+
     episodes: list[dict[str, int]]
+    """The parsed season/episode list (empty for a negative record)."""
+
     series_fp: NotRequired[str]
+    """`NotRequired` because only a negative record carries it (pinning it to the series-id set) - the
+    freshness reader dispatches on exactly that presence."""
 
 
 class SonarrParseCache:

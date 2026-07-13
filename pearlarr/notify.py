@@ -94,26 +94,23 @@ def _wait_color(result: WaitResult) -> int:
 
 @dataclass(frozen=True, slots=True)
 class GrabNotice:
-    """Everything one grab notification renders, resolved by the grab pipeline.
-
-    `entry` is the SeaDex entry whole (url / notes / comparisons / incomplete
-    flag). `results` are the torrent-client add outcomes, so the embed can
-    label a group whose releases were already in the client accordingly rather
-    than claiming a fresh grab.
-    """
+    """Everything one grab notification renders, resolved by the grab pipeline."""
 
     arr: Arr
     arr_title: str
     al_title: str
     entry: EntryRecord
+    """The SeaDex entry whole (url / notes / comparisons / incomplete flag)."""
     thumb_url: str | None
     banner_url: str | None
     release_group: list[str | None] | None
     seadex_dict: SeadexDict
     results: Sequence[ReleaseOutcome]
-    # Groups whose add failed at the client (contained; retried next run) - a
-    # failed add produces no outcome, so the label needs the explicit note.
+    """The torrent-client add outcomes, so the embed can label a group whose releases
+    were already in the client accordingly rather than claiming a fresh grab."""
     failed_groups: frozenset[str]
+    """Groups whose add failed at the client (contained; retried next run) - a
+    failed add produces no outcome, so the label needs the explicit note."""
     coverage: str
 
 

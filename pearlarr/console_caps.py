@@ -32,19 +32,18 @@ LIVE_REFRESH_PER_SECOND = 12.5
 
 @dataclass(frozen=True, slots=True)
 class Capabilities:
-    """What the output stream can do, probed once - drives mode + glyph choices.
-
-    `live` -> may we drive a sticky live region (a real, non-dumb, wide-enough
-    TTY)? `color` -> may we emit ANSI color? `unicode` -> may we use `✔`/box
-    glyphs, or must we fall back to ASCII? `width`/`height` -> the clamped
-    render size.
-    """
+    """What the output stream can do, probed once - drives mode + glyph choices."""
 
     live: bool
+    """Whether we may drive a sticky live region (a real, non-dumb, wide-enough TTY)."""
     color: bool
+    """Whether we may emit ANSI color."""
     unicode: bool
+    """Whether we may use `✔`/box glyphs, or must fall back to ASCII."""
     width: int
+    """The clamped render width."""
     height: int
+    """The clamped render height."""
 
 
 def console_of(logger: logging.Logger) -> Console | None:

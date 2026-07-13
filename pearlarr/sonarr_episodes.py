@@ -1,11 +1,10 @@
 """Sonarr episode-domain collaborator: series enumeration + episode resolution.
 
-Extracted from `SonarrSync` so the strategy keeps only the
-`ArrSync` hooks. `SonarrEpisodes` owns the per-run episode cache (and the
-series-id fingerprint that pins negative `/parse` records) and the logic that
-turns a (series, AniList id, mapping) into the relevant episode list: season /
-AniBridge filtering, AniDB remaps, offset slicing, the existing-file release dict,
-and the concurrent prefetch warm.
+`SonarrEpisodes` owns the per-run episode cache (and the series-id fingerprint
+that pins negative `/parse` records) and the logic that turns a (series,
+AniList id, mapping) into the relevant episode list: season / AniBridge
+filtering, AniDB remaps, offset slicing, the existing-file release dict, and
+the concurrent prefetch warm.
 """
 
 import concurrent.futures
@@ -347,9 +346,9 @@ class SonarrEpisodes:
 
         # Potentially pull out a bunch of mappings from AniDB. These should
         # be for anything not marked as TV, and specials as marked by
-        # being in Season 0. The resolver owns the AniDB parse now: it returns the
-        # season's {tvdb_ep: anidb_ep} map ({} when none) and raises on an ambiguous
-        # id (the former "multiple AniDB mappings found" case).
+        # being in Season 0. The resolver owns the AniDB parse: it returns the
+        # season's {tvdb_ep: anidb_ep} map ({} when none) and raises on an
+        # ambiguous id.
         anidb_mapping_dict: dict[int, dict[int, int]] = {}
         if self._mappings.has_anidb and anidb_id is not None and (al_format not in ["TV"] or tvdb_season == 0):
             anidb_mapping_dict = self._mappings.anidb_mapping_dict(anidb_id, tvdb_season)

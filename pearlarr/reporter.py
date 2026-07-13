@@ -50,10 +50,7 @@ from .torrents import AddOutcome, ReleaseOutcome
 
 @dataclass(frozen=True, slots=True)
 class GrabRecord:
-    """One grab, recorded for the end-of-run summary's "added" detail block.
-
-    Replaces the `{"title", "coverage", "url", "name", "group"}` item dict.
-    """
+    """One grab, recorded for the end-of-run summary's "added" detail block."""
 
     title: str | None
     coverage: str | None
@@ -66,47 +63,44 @@ class NeedsActionKind(Enum):
     """Why a title landed in the "needs action" block - the machine-readable gate.
 
     The summary's guidance tips key off this, never off the display `reason`
-    text (which can be reworded freely). PRIVATE_ONLY is the warn-mode skip;
-    PRIVATE_ONLY_NO_FALLBACK is fallback mode that couldn't (no public
-    alternative covers the held files) or wouldn't (an interactive private
-    pick) fall back, so its tip must not suggest turning fallback on.
-    PRIVATE_ONLY_STALE is fallback mode refusing to replace an owned stale
-    copy of the preferred private release (an alternative exists; the
-    fallback-never-supersedes rule holds it). GRAB_FAILED is a contained
-    transient failure (tracker/qBittorrent down); the title stays uncached and
-    retries next run, so it gets no tip.
+    text (which can be reworded freely).
     """
 
     PRIVATE_ONLY = auto()
+    """The warn-mode skip: a private-only recommended release with no fallback attempted."""
     PRIVATE_ONLY_NO_FALLBACK = auto()
+    """Fallback mode that couldn't (no public alternative covers the held files) or wouldn't
+    (an interactive private pick) fall back, so its tip must not suggest turning fallback on."""
     PRIVATE_ONLY_STALE = auto()
+    """Fallback mode refusing to replace an owned stale copy of the preferred private release
+    (an alternative exists; the fallback-never-supersedes rule holds it)."""
     UNSUPPORTED_TRACKER = auto()
+    """A recommended release is on a tracker we have no parser for."""
     GRAB_FAILED = auto()
+    """A contained transient failure (tracker/qBittorrent down); the title stays uncached and
+    retries next run, so it gets no tip."""
 
 
 @dataclass(frozen=True, slots=True)
 class NeedsActionRecord:
-    """One skip needing the user, recorded for the summary's "needs action" block.
-
-    `reason` is the human display text; `kind` is the closed classification
-    the reporter's guidance gates on.
-    """
+    """One skip needing the user, recorded for the summary's "needs action" block."""
 
     title: str | None
     coverage: str | None
     group: str
     url: str | None
     reason: str
+    """The human display text."""
     kind: NeedsActionKind
+    """The closed classification the reporter's guidance gates on."""
 
 
 @dataclass
 class RunStats:
     """The per-run tally rendered by the end-of-run summary.
 
-    Replaces the 10-key `fresh_stats()` dict: field names equal the old keys, so
-    counter bumps and list appends produce identical tallies - but a typo now
-    fails to compile instead of silently birthing a key.
+    Field names are the tally counters, so a typo fails to compile instead of
+    silently birthing a key.
     """
 
     checked: int = 0
@@ -114,82 +108,88 @@ class RunStats:
     up_to_date: int = 0
     cached: int = 0
     no_seadex_entry: int = 0
-    # Lookups skipped because SeaDex was unreachable this run - counted apart
-    # from no_seadex_entry so an outage never reads as "SeaDex has no data".
     seadex_unreachable: int = 0
+    """Lookups skipped because SeaDex was unreachable this run, counted apart from
+    `no_seadex_entry` so an outage never reads as "SeaDex has no data"."""
     no_releases: int = 0
     no_mappings: int = 0
     needs_action: list[NeedsActionRecord] = field(
         default_factory=list[NeedsActionRecord],
     )
     unmonitored: int = 0
-    # Carried-over pending-import counts by current status (NEVER this-run grabs -
-    # those stay `added`). Distinct int fields so a typo fails to compile instead
-    # of silently birthing a key, and so the summary can render each on its own row.
     queued: int = 0
+    """Carried-over pending-import count in the `QUEUED` state (never a this-run grab; those
+    stay `added`)."""
     importing: int = 0
+    """Carried-over pending-import count in the `IMPORTING` state (never a this-run grab; those
+    stay `added`)."""
     imported: int = 0
+    """Carried-over pending-import count in the `IMPORTED` state (never a this-run grab; those
+    stay `added`)."""
 
 
 @dataclass
 class RunContext:
     """Per-run state, created fresh at the top of each run.
 
-    Replaces the run-scoped mutable `self.*` fields of the old god class so the
-    decision engine, the torrent service, and the reporter can read and return
-    data instead of mutating shared orchestrator state.
+    The decision engine, the torrent service, and the reporter read and return
+    it instead of mutating shared state.
     """
 
     arr: Arr
     dry_run: bool = False
-    # The run's resolved wait-for-completion mode (cli > config > default), stamped
-    # in reset_run_stats; OFF makes every pending-import path a no-op.
     import_wait_mode: ImportWaitMode = ImportWaitMode.OFF
+    """The run's resolved wait-for-completion mode (cli > config > default), stamped
+    in `reset_run_stats`; `OFF` makes every pending-import path a no-op."""
     stats: RunStats = field(default_factory=RunStats)
     torrents_added: int = 0
-    # Title, SeaDex URL, and coverage of the entry currently being processed, so
-    # grabs and the summary can attribute and link what they grab.
     current_title: str | None = None
+    """Title of the entry currently being processed, so grabs and the summary can attribute
+    what they grab."""
     current_url: str | None = None
+    """SeaDex URL of the entry currently being processed, so grabs and the summary can link
+    what they grab."""
     current_coverage: str | None = None
-    # Set per-title when a private-only release forces a skip, so
-    # the caller knows not to cache the title as done; the group names ride along
-    # for the run summary's "needs action" list.
+    """Coverage of the entry currently being processed, so grabs and the summary can attribute
+    what they grab."""
     private_only_skipped: bool = False
+    """Set per-title when a private-only release forces a skip, so the caller knows not to
+    cache the title as done."""
     private_only_groups: list[str] = field(default_factory=list[str])
-    # Set per-title when an owned-at-stale-size private pick is held because only
-    # a fallback covers it (never a replacement): picks the summary row's kind.
+    """Group names of the private-only skip, riding along for the run summary's "needs action"
+    list."""
     private_only_stale_held: bool = False
-    # Set per-title when the Arr already owns a public fallback's files (the
-    # owned-fallback soft-skip): drives the cache's fallback-satisfied marker.
+    """Set per-title when an owned-at-stale-size private pick is held because only a fallback
+    covers it (never a replacement); picks the summary row's kind."""
     fallback_covered: bool = False
-    # Set per-title when a recommended release is on a tracker we have no parser for
-    # (so we can't grab it, but the user didn't deselect it): keeps the title from
-    # being cached as done, and the group names ride along for the summary. The
-    # skipped hashes are excluded from the cached hash set on a mixed (something
-    # else grabbed) title, so the release is re-considered once a parser lands.
+    """Set per-title when the Arr already owns a public fallback's files (the owned-fallback
+    soft-skip); drives the cache's fallback-satisfied marker."""
     unsupported_tracker_skipped: bool = False
+    """Set per-title when a recommended release is on a tracker we have no parser for (so we
+    can't grab it, but the user didn't deselect it); keeps the title from being cached as done."""
     unsupported_tracker_groups: list[str] = field(default_factory=list[str])
+    """Group names of the unsupported-tracker skip, riding along for the summary."""
     unsupported_tracker_hashes: list[str] = field(default_factory=list[str])
-    # Run clock (monotonic, so an NTP/DST step can't yield negative elapsed) and
-    # the counts mark stamped at run start, diffed for the summary's issues row.
-    # Default: a throwaway zero counter, so an unstamped ctx diffs to zero.
+    """Hashes excluded from the cached hash set on a mixed (something else grabbed) title, so
+    the release is re-considered once a parser lands."""
     started_monotonic: float | None = None
+    """Run clock (monotonic, so an NTP/DST step can't yield negative elapsed)."""
     counts_mark: CountsMark = field(default_factory=lambda: SeverityCounts().bound_mark())
-    # PendingImport records written THIS run (on a successful add), for the
-    # end-of-run blocking pass; the durable copies live in cache_store under
-    # `pending_imports`, so this is just the fast in-memory list to wait on.
+    """The counts mark stamped at run start, diffed for the summary's issues row; defaults to
+    a throwaway zero counter, so an unstamped ctx diffs to zero."""
     pending_imports: list[PendingImport] = field(
         default_factory=list[PendingImport],
     )
-    # The classified status of each CARRIED-OVER record touched this run (by the
-    # per-series inline snapshot or the deferred reconcile), keyed by infohash.
-    # Read by the pre-summary tally so each carried-over record is counted exactly
-    # once by its known status (un-touched store records default to QUEUED). Never
-    # holds a this-run grab (those stay `added`).
+    """`PendingImport` records written THIS run (on a successful add), for the end-of-run
+    blocking pass; the durable copies live in `cache_store` under `pending_imports`, so this
+    is just the fast in-memory list to wait on."""
     pending_states: dict[str, PendingState] = field(
         default_factory=dict[str, PendingState],
     )
+    """The classified status of each CARRIED-OVER record touched this run (by the per-series
+    inline snapshot or the deferred reconcile), keyed by infohash. Read by the pre-summary tally
+    so each carried-over record is counted exactly once by its known status (un-touched store
+    records default to `QUEUED`). Never holds a this-run grab (those stay `added`)."""
 
 
 def is_preview(ctx: RunContext, qbit: qbittorrentapi.Client | None) -> bool:
@@ -326,7 +326,7 @@ class RunReporter:
         The bare titled rows (unmonitored / no-mapping / ignored / no-entry /
         skipped / IN_RADARR / NO_EPISODES) are self-contained: they close the
         prior entry and never open one, so the row - and any diagnostic beside it -
-        keeps today's col-0 punch-through.
+        keeps the col-0 punch-through.
         """
 
         self._close_entry()
@@ -481,7 +481,7 @@ class RunReporter:
         al_id: int,
         # Only the two dim-rendered cached states are admissible: the builder keys
         # row style on state, so a wider type would let a caller render a "cached"
-        # row green/undimmed (the old always-grey50 invariant, now type-pinned).
+        # row green/undimmed (the always-grey50 invariant, type-pinned).
         state: Literal[EntryState.UNCHANGED, EntryState.IN_RADARR] = EntryState.UNCHANGED,
     ) -> None:
         """Emit a cached entry's self-contained block: a dim header plus its coverage/URL line.

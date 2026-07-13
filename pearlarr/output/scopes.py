@@ -316,7 +316,7 @@ class ScopeFactory:
     """Bind-once producer bundle: one emitter, one id minter, one clock.
 
     Defaults to `PROCESS_SCOPE_IDS` so two factories can never mint
-    colliding serials; tests inject a fresh `ScopeIds` for determinism.
+    colliding serials.
     """
 
     def __init__(

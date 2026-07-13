@@ -28,23 +28,18 @@ if TYPE_CHECKING:
 class FilterResult(NamedTuple):
     """The applied download plan, as the strategies consume it.
 
-    The strategy-facing slice of the planner's `PlanResult`:
-    the unique hashes to remember in the cache record (None for a hash-less
-    private torrent) plus the same `seadex_dict` annotated in place with
-    per-url `download` flags. The plan's skip outcome is not carried - it is
-    folded onto the run context here, in `filter_downloads`.
+    The strategy-facing slice of `PlanResult`; the skip outcome is folded onto
+    the run context in `filter_downloads`.
     """
 
     torrent_hashes: list[str | None]
+    """The unique hashes to remember in the cache record; None for a hashless private torrent."""
     seadex_dict: SeadexDict
+    """The same `seadex_dict` annotated in place with per-url `download` flags."""
 
 
 def _is_public_torrent(torrent: TorrentRecord) -> bool:
-    """Whether a torrent is on a public tracker (the run's is_public computation).
-
-    `PRIVATE_TRACKERS` is read at call time, so the characterization tests can
-    pin it on this module.
-    """
+    """Whether a torrent is on a public tracker (the run's is_public computation)."""
 
     return torrent.tracker.is_public() and torrent.tracker.casefold() not in PRIVATE_TRACKERS
 

@@ -7,8 +7,7 @@ Every value is a map "{target_descriptor: {source_range: target_range}}".
 
 Every AniList id present in the dataset also appears as its own source key, so
 this module parses the "anilist:*" entries once into a per-AniList record plus
-a set of reverse indexes (tvdb/tmdb/imdb -> AniList), giving O(1) lookups instead
-of the linear scans the old per-id mapping format required.
+a set of reverse indexes (tvdb/tmdb/imdb -> AniList), giving O(1) lookups.
 
 Episode ranges are kept in TVDB/TMDB numbering: for "anilist:269" ->
 "tvdb_show:74796:s2" with value "{"21-41": "1-21"}" the *target* side
@@ -52,13 +51,12 @@ class AniBridgeRecord:
     `AniBridge._add_target` (appending to the list/dict fields as targets
     are folded in), so the collection fields default-construct empty rather than
     being passed at once; `_consumer_entry` then reads attributes off it.
-
-    `tvdb_shows` is keyed by external id and holds a `TvdbMappings`
-    (season -> inclusive `(start, end)` ranges) per id.
     """
 
     anidb_id: int | None = None
     tvdb_shows: dict[int, TvdbMappings] = field(default_factory=dict[int, TvdbMappings])
+    """Keyed by external id and holds a `TvdbMappings` (season -> inclusive
+    `(start, end)` ranges) per id."""
     tmdb_movie_ids: list[int] = field(default_factory=list[int])
     imdb_ids: list[str] = field(default_factory=list[str])
 
@@ -244,9 +242,8 @@ class AniBridge:
             for tvdb_id, seasons in record.tvdb_shows.items():
                 for season, range_list in seasons.items():
                     if not range_list:
-                        # Present-but-empty season: a NULL-start marker so it
-                        # round-trips as `{season: []}` ("whole season covered")
-                        # rather than collapsing to a missing season.
+                        # Present-but-empty season: see the NULL start_ep marker
+                        # note on anibridge_tvdb_range in mapping_store.py.
                         ranges.append(AniBridgeRangeRow(anilist_id, tvdb_id, season, None, None))
                         continue
                     for start, end in range_list:
@@ -419,12 +416,12 @@ class AniBridge:
 
         One xref->entry JOIN fetches every entry mapped to `ext_id` on `axis`;
         for a tvdb-scoped lookup a second xref->range JOIN fetches all their range
-        rows at once (grouped here by AniList id), so resolving k ids costs 2 queries
-        rather than the former 1 + 2k point queries. Reproduces `_consumer_entry`
-        exactly: `tvdb_mappings` is attached whenever `tvdb_id` is supplied - the
-        only such caller (`lookup_by_tvdb`) iterates the tvdb xref, so every
-        resolved id is guaranteed to carry that tvdb (matching the in-memory
-        `tvdb_id in record.tvdb_shows` guard).
+        rows at once (grouped here by AniList id), so resolving k ids costs 2
+        queries rather than the 1 + 2k point queries a per-id approach needs.
+        Reproduces `_consumer_entry` exactly: `tvdb_mappings` is attached
+        whenever `tvdb_id` is supplied - the only such caller (`lookup_by_tvdb`)
+        iterates the tvdb xref, so every resolved id is guaranteed to carry that
+        tvdb (matching the in-memory `tvdb_id in record.tvdb_shows` guard).
         """
 
         store = self._store

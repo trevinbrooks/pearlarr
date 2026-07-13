@@ -704,9 +704,8 @@ class _TextLineSink:
     rendering — in a `finally`, so a render/write bug can never desync the path.
     """
 
-    # The single file_only routing rule: console-ish surfaces skip, the file keeps.
-    # Public: the hub reads it to decide whether a containment note still has a home.
     writes_file_only: ClassVar[bool] = False
+    """The single file_only routing rule: console-ish surfaces skip, the file keeps."""
 
     def __init__(self) -> None:
         self._crumbs = BreadcrumbFold()
@@ -828,9 +827,8 @@ class FileLogSink(_GrammarSink):
     unboundedly before config has ever loaded. Age-based retention is a separate
     step (`set_retention_days`), applied once per cycle as soon as the run's
     `advanced.log_retention_days` is known. Every line flushes as written (crash
-    fidelity: the tail is on disk when the process dies — the old FileHandler's
-    behavior). A reopen after close appends (never a silent truncate without a
-    pending rotation).
+    fidelity: the tail is on disk when the process dies). A reopen after close
+    appends (never a silent truncate without a pending rotation).
     """
 
     writes_file_only: ClassVar[bool] = True

@@ -1,11 +1,11 @@
 """Import-time file -> episode mapping: the gnarliest Sonarr logic.
 
-Extracted from `SonarrSync`. `FileEpisodeMapper` turns the
-on-disk manual-import candidates for a completed download into the authoritative
-`basename -> episode ids` map, honoring OUR resolved set (never Sonarr's
-series-matched title parse): the grab-time map is taken as-is, every other on-disk
-leaf is parsed series-agnostically and placed into our resolved set via the pure
-`assign_episode_ids`. Owns the per-run on-disk parse cache.
+`FileEpisodeMapper` turns the on-disk manual-import candidates for a completed
+download into the authoritative `basename -> episode ids` map, honoring OUR
+resolved set (never Sonarr's series-matched title parse): the grab-time map is
+taken as-is, every other on-disk leaf is parsed series-agnostically and placed
+into our resolved set via the pure `assign_episode_ids`. Owns the per-run
+on-disk parse cache.
 """
 
 import os

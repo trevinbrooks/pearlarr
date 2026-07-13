@@ -3,10 +3,10 @@
 The `config`/`cache`/`paths` subcommands emit the same typed events run commands
 do, through a minimal hub carrying ONE console seat and no file sink (subcommands
 must work with an unwritable log dir). `cli_surface` installs that hub for a
-command body; `--json` picks the JSON seat, otherwise `CliTextRenderer`
-reproduces today's `typer.echo` output byte-for-byte (so the docs and tests that
-pin it verbatim keep passing). The seat is built INSIDE the contextmanager so
-`sys.stdout` resolves after any pytest/CliRunner stream swap.
+command body; `--json` picks the JSON seat, otherwise `CliTextRenderer` renders
+the `typer.echo` output the docs and pinned tests expect. The seat is built
+INSIDE the contextmanager so `sys.stdout` resolves after any pytest/CliRunner
+stream swap.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ if TYPE_CHECKING:
 
 @final
 class CliTextRenderer:
-    """The subcommands' human seat: reproduces today's `typer.echo` output verbatim.
+    """The subcommands' human seat: reproduces the `typer.echo` output verbatim.
 
     A WARNING+ diagnostic goes to stderr (so `config show > cfg.yml` stays
     clean); everything else prints to stdout via `typer.echo` (keeping click's

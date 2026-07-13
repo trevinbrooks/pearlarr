@@ -19,11 +19,11 @@ class CapturedTrace:
     """
 
     rich_trace: Trace
-    # The full plain-text traceback for the file sink (stdlib format, no locals).
     plain: str
+    """The full plain-text traceback for the file sink (stdlib format, no locals)."""
 
-    # Frames kept per stack at capture (outermost + innermost halves, rich-style elide).
     MAX_FRAMES: ClassVar[int] = 10
+    """Frames kept per stack at capture (outermost + innermost halves, rich-style elide)."""
 
     @classmethod
     def from_exception(cls, exc: BaseException) -> CapturedTrace:

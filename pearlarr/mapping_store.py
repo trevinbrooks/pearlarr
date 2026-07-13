@@ -72,9 +72,8 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 
 -- anilist_id is nullable on purpose: a Kometa record with an external id but no
--- anilist_id contributes to the library-filter candidate sets (anime_ids_distinct)
--- exactly as the former full-map scan did, but is excluded from the id->entry
--- lookups (which the former reverse index also skipped). See anime_ids_lookup.
+-- anilist_id feeds the library-filter candidate sets (anime_ids_distinct) but is
+-- excluded from the id->entry lookups. See anime_ids_lookup.
 CREATE TABLE IF NOT EXISTS anime_ids (
     anilist_id    INTEGER,
     tvdb_id       INTEGER,
@@ -409,9 +408,9 @@ class MappingStore:
         """`AnimeIdRow`s matching `column == value`, in first-seen (rowid) order.
 
         Returns the full row so the caller can build a `MappingEntry`. Rows with no
-        `anilist_id` are excluded (the former reverse index skipped them); `column`
-        must be one of `_ANIME_ID_COLUMNS` (it is interpolated, so it is
-        allowlisted). The SELECT column order matches `AnimeIdRow`'s fields.
+        `anilist_id` are excluded; `column` must be one of `_ANIME_ID_COLUMNS`
+        (it is interpolated, so it is allowlisted). The SELECT column order
+        matches `AnimeIdRow`'s fields.
         """
 
         if column not in _ANIME_ID_COLUMNS:
@@ -473,12 +472,12 @@ class MappingStore:
     ) -> list[AniBridgeRangeHit]:
         """The `tvdb_id`-scoped `AniBridgeRangeHit` rows for an (axis, ext_id) lookup.
 
-        Ordered by `(anilist_id, populate)`. The batched twin of the former
-        per-id range lookup: one xref->range JOIN fetches the ranges for every
-        AniList id a tvdb lookup resolves, so the caller groups them by
-        `anilist_id` and rebuilds each season's list in insertion order
-        (`ORDER BY x.anilist_id, r.rowid` -> parity with the in-memory build).
-        A NULL `start_ep` row is the present-but-empty-season marker.
+        Ordered by `(anilist_id, populate)`. Batched: one xref->range JOIN
+        fetches the ranges for every AniList id a tvdb lookup resolves, so the
+        caller groups them by `anilist_id` and rebuilds each season's list in
+        insertion order (`ORDER BY x.anilist_id, r.rowid` -> parity with the
+        in-memory build). A NULL `start_ep` row is the present-but-empty-season
+        marker.
         """
 
         rows = self._conn.execute(

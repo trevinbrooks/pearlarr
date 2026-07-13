@@ -2,9 +2,9 @@
 
 `ArrHttp` is the httpx-native transport every raw arr endpoint rides:
 one bound helper per client holding the request/retry/parse/fail-open
-boilerplate that used to be copied per endpoint (plus the strict, fail-closed
-library fetch and its typed errors, and the shared history read both arr
-clients delegate to).
+boilerplate each raw arr endpoint would otherwise repeat (plus the strict,
+fail-closed library fetch and its typed errors, and the shared history read
+both arr clients delegate to).
 """
 
 import random
@@ -40,8 +40,8 @@ class ArrConnectionError(Exception):
 class ArrAuthError(Exception):
     """An arr rejected the API key (401/403) on the load-bearing library fetch.
 
-    Split from `ArrConnectionError` so the CLI containment arm can point
-    the user at `<arr>.api_key` specifically instead of the url.
+    A distinct error from `ArrConnectionError` so the CLI containment arm can
+    point the user at `<arr>.api_key` specifically.
     """
 
 
@@ -71,7 +71,7 @@ def make_httpx_client(*, verify: bool = True) -> httpx.Client:
 class ArrHttp:
     """One arr's bound HTTP surface: base url + auth header + fail-open policy.
 
-    Owns the boilerplate every raw endpoint used to copy: the auth header rides
+    Owns the boilerplate every raw endpoint would otherwise repeat: the auth header rides
     each request (the client is shared across arrs, so never on the client),
     transient GET failures retry with jittered backoff (a POST is not
     idempotent, so `post_json` never retries), EVERY body is parsed
@@ -83,10 +83,12 @@ class ArrHttp:
     """
 
     client: httpx.Client
-    base_url: str  # no trailing slash (a "//api" join redirects to the login page)
-    label: str  # "Sonarr" / "Radarr", for warnings
+    base_url: str
+    """The arr base URL, no trailing slash (a "//api" join redirects to the login page)."""
+    label: str
+    """The arr's name ("Sonarr" / "Radarr"), for warning messages."""
     headers: Mapping[str, str]
-    sleep: Callable[[float], None] = time.sleep  # injectable so tests don't wait out backoffs
+    sleep: Callable[[float], None] = time.sleep  # injectable backoff sleep (bypassed in tests)
 
     @property
     def display_url(self) -> str:

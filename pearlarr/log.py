@@ -16,20 +16,19 @@ from .config import Arr, LogFormat
 
 @dataclass(frozen=True, slots=True)
 class TitledRule:
-    """A titled section header: a full-width rule, then the bold title line.
-
-    `heavy=True` draws a heavy rule ("━", run boundaries); otherwise a light
-    rule ("─", per-title headers). Both the rule and the title take `style`.
-    """
+    """The payload for a titled section header; see `print_titled_rule` for the console look."""
 
     title: str
     style: str = "bold cyan"
+    """Rich style applied to both the rule and the title."""
     heavy: bool = False
+    """`True` draws a heavy rule ("━", run boundaries); `False` draws a light rule ("─",
+    per-title headers)."""
 
 
 @dataclass(frozen=True, slots=True)
 class SectionRule:
-    """A full-width separator rule: heavy cyan for "=", light gray for "-"."""
+    """The payload for a full-width separator rule; see `render_rule` for the "=" / "-" weight mapping."""
 
     char: str = "-"
 
@@ -39,13 +38,12 @@ class KvLine:
     """An aligned "key : value" (or gutter "key value") detail line.
 
     Locks the producer (the `output.scan_lines` builders) and consumer
-    (`render_kv`) to the same fields, so the two sides
-    can't silently drift. `value` is a plain string or a pre-styled `Text`
-    (the only non-str path, from `group_highlight`).
+    (`render_kv`) to the same fields, so the two sides can't silently drift.
     """
 
     key: str
     value: str | Text
+    """A plain string or a pre-styled `Text` (the only non-str path, from `group_highlight`)."""
     key_width: int
     value_style: str | None = None
     indent: int = 1
@@ -585,13 +583,7 @@ def group_highlight(
     still shows, just without color).
 
     With no group (or no name), the plain name is returned unchanged, so the
-    caller's own `value_style` applies as before.
-
-    Args:
-        name: The torrent name as reported by the client / scraped from source
-        group: The recommended SeaDex release group
-        group_style: Rich style for the group span/prefix
-        base_style: Rich style for the rest of the name
+    caller's own `value_style` applies untouched.
     """
 
     name = name or ""

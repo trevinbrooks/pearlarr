@@ -1,10 +1,9 @@
 """The grab "produce" side: add torrents, register pending records, write cache.
 
-Extracted from the old `RunLoop` god class. `GrabPipeline` owns the per-id
-grab tail both strategies funnel into - add the recommended release(s) to
-qBittorrent, persist the durable `PendingImport` records the end-of-run
-monitor waits on, notify, and write the cache outcome. It returns a pure bool
-(cap-reached) and never calls back into the run loop;
+`GrabPipeline` owns the per-id grab tail both strategies funnel into - add the
+recommended release(s) to qBittorrent, persist the durable `PendingImport`
+records the end-of-run monitor waits on, notify, and write the cache outcome.
+It returns a pure bool (cap-reached) and never calls back into the run loop;
 `RunServices` keeps a thin `grab_and_cache` delegator so
 the strategy<->services contract is unchanged.
 
@@ -41,25 +40,22 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class GrabRequest:
-    """The resolved per-id payload for the shared grab tail.
-
-    `cache_details` is the run's mutable `CacheRecord` accumulator: the
-    frozen field pins the reference, not the dict's contents (`grab_and_cache`
-    still writes `torrent_hashes` into it before saving).
-    """
+    """The resolved per-id payload for the shared grab tail."""
 
     al_id: int
     item_title: str
     anilist_title: str
-    # The SeaDex entry whole: the notification renders its url / notes /
-    # comparison links / incomplete flag.
     entry: EntryRecord
+    """The SeaDex entry whole: the notification renders its url / notes / comparison links / incomplete
+    flag."""
     seadex_dict: SeadexDict
     torrent_hashes: list[str | None]
     cache_details: CacheRecord
+    """The run's mutable `CacheRecord` accumulator: the frozen field pins the reference, not the dict's
+    contents (`grab_and_cache` still writes `torrent_hashes` into it before saving)."""
     release_group: list[str | None] | None
-    # Sonarr's episode coverage string ("" for Radarr - movies have none).
     coverage: str = ""
+    """Sonarr's episode coverage string ("" for Radarr - movies have none)."""
     pending_seeds: dict[str, PendingImport] | None = None
 
 
@@ -259,16 +255,11 @@ class GrabPipeline:
         """Finalize the durable `PendingImport` for a grabbed/present release.
 
         Only on a real (non-preview) add of a release we hold a seed for, keyed by
-        infohash so a re-add overwrites and a verified import deletes. The in-memory
-        copy rides the run context for the fast end-of-run blocking pass and marks
-        the infohash a this-run grab (excluded from the carried-over snapshot /
-        reconcile / tally).
-
-        Args:
-            url_item: The release just handed to the client; its
-                `infohash` keys the seed and the durable store.
-            pending_seeds: The Sonarr strategy's
-                `infohash -> PendingImport` seeds for this id (None for Radarr).
+        infohash so a re-add overwrites and a verified import deletes. `pending_seeds`
+        is the Sonarr strategy's `infohash -> PendingImport` seeds for this id (None
+        for Radarr). The in-memory copy rides the run context for the fast
+        end-of-run blocking pass and marks the infohash a this-run grab (excluded
+        from the carried-over snapshot / reconcile / tally).
         """
 
         if (

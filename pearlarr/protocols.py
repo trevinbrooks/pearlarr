@@ -35,16 +35,17 @@ class ArrSync[ItemT: ArrItem](ABC):
 
     Owns the Arr REST client and the Arr's domain logic (episode mapping,
     release-group resolution). Provides the items to process and the per-id
-    body. The strategy is injected with the `run_services.RunServices`
-    hub and holds it, so the run loop calls these hooks without passing the
-    services (and the strategy never sees the loop type). Subclasses
-    (`SonarrSync` / `RadarrSync`) must implement every hook; the ABC
-    enforces that at instantiation.
+    body. The composition root injects the shared `RunDeps` (used to stand
+    up the client) and the `RunServices` hub (held as `self._services`);
+    the per-id hooks call the shared pipeline through it, so the run loop
+    calls these hooks without passing the services (and the strategy never
+    sees the loop type). Subclasses (`SonarrSync` / `RadarrSync`) must
+    implement every hook; the ABC enforces that at instantiation.
 
     Generic in `ItemT` (the Arr's item protocol — `seadex_types.SonarrItem`
-    or `seadex_types.RadarrItem`) so each subclass binds its own item
-    type without the loose `list`/`Any` the base used to carry. `ArrSync` is
-    invariant in `ItemT` (it appears in both inputs and outputs), so a concrete
+    or `seadex_types.RadarrItem`) so each subclass binds its own item type
+    rather than a loose `list`/`Any`. `ArrSync` is invariant in `ItemT` (it
+    appears in both inputs and outputs), so a concrete
     strategy must reach the generic `run_sync[ItemT]`: the composition root
     branches per Arr to bind one item type per call, and the run loop only ever
     touches the shared `ArrItem` surface (`.monitored`/`.title`) off items.

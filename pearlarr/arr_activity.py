@@ -37,16 +37,14 @@ _HISTORY_DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 @dataclass(frozen=True, slots=True)
 class ActivityScan:
-    """One scan's outcome: the touched item ids, or a re-scan-everything signal.
-
-    `rescan_all` is set when history coverage is broken - a checkpoint older
-    than the lookback window, or an unreadable stored date - so the id cursor
-    may have skipped file changes; the caller must treat every entry as dirty
-    once (`touched` is empty then).
-    """
+    """One scan's outcome: the touched item ids, or a re-scan-everything signal."""
 
     touched: frozenset[int]
     rescan_all: bool
+    """Set when history coverage is broken - a checkpoint older than the lookback
+    window, or an unreadable stored date - so the id cursor may have skipped file
+    changes; the caller must treat every entry as dirty once (`touched` is empty
+    then)."""
 
 
 def parse_history_date(value: str) -> datetime | None:
@@ -103,7 +101,7 @@ class ArrActivityMonitor:
 
         Args:
             fetch: The strategy's `history_since` (takes the ISO8601 query date).
-            now: Injectable clock for tests (aware UTC).
+            now: Clock override (aware UTC); defaults to `datetime.now(UTC)`.
         """
 
         now = now if now is not None else datetime.now(UTC)

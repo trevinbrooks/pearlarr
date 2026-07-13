@@ -140,9 +140,7 @@ class IdField:
 class IdFilter(NamedTuple):
     """One id space with its two candidate sets, aligned by construction.
 
-    Replaces the former fields/anime-sets/anibridge-sets parallel tuples (which
-    could only be kept aligned by position): each filter carries the id space
-    AND the candidate sets built for it.
+    Each filter carries the id space AND the candidate sets built for it.
     """
 
     field: IdField
@@ -167,9 +165,8 @@ def collect_anime_items[ItemT: ArrItem](
     """Arr library items that have an AniList mapping, sorted by title.
 
     Per filter, unions the precomputed Anime-IDs and AniBridge candidate sets
-    (the Anime-IDs sets come from `MappingResolver.anime_id_set`, no longer a
-    scan of the full map), then keeps each item that matches at least one id
-    space.
+    (the Anime-IDs sets come from `MappingResolver.anime_id_set`), then keeps
+    each item that matches at least one id space.
 
     Generic in `ItemT` (a `seadex_types.SonarrItem` /
     `seadex_types.RadarrItem`), so the filtered list returns the same

@@ -60,9 +60,9 @@ class Renderer(Protocol):
     pass-through renderers (Null/Recording) are exempt by nature.
     """
 
-    # True only for the surface that renders file_only diagnostics (the file sink);
-    # the hub reads it to decide whether a containment note still has a home.
     writes_file_only: ClassVar[bool]
+    """True only for the surface that renders file_only diagnostics (the file sink); the
+    hub reads it to decide whether a containment note still has a home."""
 
     def handle(self, event: Event, when: float) -> None: ...
 

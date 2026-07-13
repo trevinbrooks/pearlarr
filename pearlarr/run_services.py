@@ -1,12 +1,11 @@
 """The per-run dependency bundle and the per-AniList-id services hub.
 
-Split out of `run_loop.py`: `RunDeps` is the shared leaf-collaborator
-bundle the composition root builds once per arr run, and `RunServices` is
-the services hub the Arr strategies hold as `self._services` and call the
-shared per-id pipeline through. The run loop itself stays in
-`RunLoop`, which adopts the hub's placeholder context and
-pushes each run's fresh context down via `RunServices.begin_run` - so the
-strategies depend on this module only and never see the loop type.
+`RunDeps` is the shared leaf-collaborator bundle the composition root builds
+once per arr run; `RunServices` is the services hub the Arr strategies hold
+as `self._services` and call the shared per-id pipeline through. The run
+loop (`RunLoop`) adopts the hub's placeholder context and pushes each run's
+fresh context down via `RunServices.begin_run`, so the strategies depend on
+this module only and never see the loop type.
 """
 
 import logging
@@ -63,12 +62,15 @@ class RunDeps:
     and injection at the root means none of them constructs another's
     dependencies - each receives the subset it needs. `anime_mappings` /
     `anidb_mappings` / `anibridge` are read off `mappings` by consumers, not
-    stored separately. `arr_config` is the per-arr connection/behavior submodel
-    (`config.for_arr(arr)`); `config` is the shared root reused by both arrs.
+    stored separately.
     """
 
     config: AppConfig
+    """The shared root config reused by both arrs."""
+
     arr_config: ArrSettings
+    """This arr's connection/behavior submodel, `config.for_arr(arr)`."""
+
     web: httpx.Client
     http: httpx.Client
     qbit: qbittorrentapi.Client | None
@@ -236,8 +238,8 @@ class RunDeps:
         self.cache_store.close()
 
 
-# Deliberately NOT @final (the old engine was): the strategy-seam tests subclass
-# this with a scripted fake (_FakeRunServices), so the seam stays overridable.
+# Deliberately NOT @final: the strategy-seam tests subclass this with a
+# scripted fake (_FakeRunServices), so the seam stays overridable.
 class RunServices:
     """The per-AniList-id services hub the strategies call.
 
@@ -585,7 +587,7 @@ class RunServices:
         """
 
         # The shared skip decision; its one row read also serves the url-backfill
-        # check below (was a SELECT updated_at + a SELECT url).
+        # check below.
         entry = self._skippable_entry(al_id, sd_entry)
         if entry is None:
             return False

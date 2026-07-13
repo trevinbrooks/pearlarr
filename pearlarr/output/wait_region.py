@@ -130,7 +130,7 @@ class _LiveFrame:
 
 @final
 class WaitRegion(LiveRegion):
-    """One live slot + durable prints over the shared Console.
+    """The wait cockpit: the animated in-flight table plus its durable scrollback lines.
 
     Durable lines (start, pulses, graduations, tally) print the moment their
     event arrives - they reflow ABOVE the transient cockpit via the shared
@@ -190,7 +190,7 @@ class WaitRegion(LiveRegion):
             case TorrentGraduated():
                 self._durable(console, [wait_graduation_line(event, caps)])
             case WaitFinished():
-                # Old teardown-then-summary order: stop the Live FIRST, then the
+                # Teardown-then-summary order: stop the Live first, then the
                 # tally prints to clean scrollback (empty list -> nothing).
                 self._stop_live()
                 self._durable(console, wait_tally_lines(event))

@@ -39,15 +39,14 @@ _MAX_TOTAL_LEN = 6000
 
 
 class EmbedField(NamedTuple):
-    """One Discord embed field (name/value), typed until the payload boundary.
-
-    `inline` fields render side by side (up to three per row); the grab
-    embed pairs its short metadata fields, everything else stays full-width.
-    """
+    """One Discord embed field (name/value), typed until the payload boundary."""
 
     name: str
     value: str
     inline: bool = False
+    """When True, the field renders side by side with others (up to three per
+    row); the grab embed pairs its short metadata fields, everything else stays
+    full-width."""
 
 
 def _clamp(text: str, limit: int) -> str:
@@ -60,20 +59,21 @@ def _clamp(text: str, limit: int) -> str:
 class DiscordEmbed:
     """One webhook embed, held as typed data until `to_payload`.
 
-    `url` makes the title a link (the SeaDex entry page for a grab),
-    `thumb_url` is the AniList cover and `image_url` the wide AniList
-    banner; each is omitted from the payload when unset rather than sent as a
-    null.
+    Each of `url`, `thumb_url`, and `image_url` is omitted from the payload
+    when unset rather than sent as a null.
     """
 
     author_name: str
     title: str
     color: int
     url: str | None = None
+    """Makes the title a link (the SeaDex entry page for a grab)."""
     description: str = ""
     fields: tuple[EmbedField, ...] = ()
     thumb_url: str | None = None
+    """The AniList cover."""
     image_url: str | None = None
+    """The wide AniList banner."""
     author_icon_url: str | None = None
 
     def to_payload(self) -> dict[str, Json]:

@@ -1,10 +1,10 @@
 """The shared spine of the renderer's live-slot regions (boot + wait).
 
-`LiveRegion` owns what `boot_region.BootRegion` and
-`wait_region.WaitRegion` had duplicated: the console/caps/level
-wiring, the single `rich.Live` + spinner slot, and the teardown routes
-(frontier departure, cycle boundary, close). Subclasses own their event
-handling and extend `_reset` with per-cycle frame state of their own.
+`LiveRegion` owns the console/caps/level wiring, the single `rich.Live` +
+spinner slot, and the teardown routes (frontier departure, cycle boundary,
+close) shared by `boot_region.BootRegion` and `wait_region.WaitRegion`.
+Subclasses own their event handling and extend `_reset` with per-cycle frame
+state of their own.
 """
 
 from __future__ import annotations
@@ -74,9 +74,9 @@ class LiveRegion:
     def _report_contained(self, message: str, exc: Exception) -> None:
         """A contained-failure note: a file-only WARNING Diagnostic, main-thread only.
 
-        Straight to the hub, never stdlib logging: the old `logger.debug` died
-        at the logger's level gate on any config above DEBUG, so a persistently
-        broken cockpit left zero forensics on every sink. `file_only` keeps it
+        Straight to the hub, never stdlib logging: a stdlib DEBUG log would die
+        at the logger's level gate on any config above DEBUG, leaving a
+        persistently broken cockpit with zero forensics. `file_only` keeps it
         off the console and out of the counts (forensic, like the hub's own
         containment notes); emitting from inside dispatch is the documented
         re-entrant path (it enqueues under the baton). The refresh thread must

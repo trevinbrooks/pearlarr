@@ -7,10 +7,8 @@ checks, the file -> episode assignment (`assign_episode_ids`), the
 per-file import plan (`plan_import_files`), and the layered
 quality/language resolution.
 
-Everything here is deliberately side-effect free - no network, no disk, no
-qBittorrent - so every rule can be unit-tested without I/O. This module imports
-from `manual_import` (the wait/outcome vocabulary and the normalizers);
-the dependency is strictly one-way.
+Side-effect free like `manual_import`, from which it imports the wait/outcome
+vocabulary and the normalizers.
 """
 
 import re
@@ -41,22 +39,18 @@ class QueueVerdict(Enum):
     has one record per episode), reading only `trackedDownloadState`. "Already
     imported" is NOT decided here (a successful import is removed from the queue);
     the caller reads the episode files.
-
-    `WAIT` -> something is genuinely in motion (downloading / importing); let
-    Sonarr finish so we never race an in-flight import.
-    `PENDING_CLEAN` -> any `importPending` record, regardless of its status or
-    status messages: Sonarr parsed it and is waiting to import. With Completed
-    Download Handling on it will import shortly; with CDH off it sits here forever -
-    so the caller waits a grace, then forces our import. Stepping in on a still-
-    pending record would race Sonarr's own import and double-import.
-    `STEP_IN` -> Sonarr can't / won't progress it (`importBlocked` / `failed` /
-    `failedPending` / `ignored`), or it isn't tracking the download at all
-    (empty); drive our authoritative manual import.
     """
 
     WAIT = auto()
+    """Something is genuinely in motion (downloading / importing); let Sonarr finish so we never race an
+    in-flight import."""
+
     PENDING_CLEAN = auto()
+    """An `importPending` record: Sonarr parsed it and is waiting to import; see `classify_queue` rule 3."""
+
     STEP_IN = auto()
+    """Sonarr can't / won't progress it (`importBlocked` / `failed` / `failedPending` / `ignored`), or it isn't
+    tracking the download at all (empty); drive our authoritative manual import."""
 
 
 # trackedDownloadState values (camelCase from Sonarr, compared case-folded) that
@@ -227,34 +221,35 @@ class EpisodeFileStatus(Enum):
     """How an intended target episode's CURRENT Sonarr file relates to ours.
 
     One read of the episode list drives both invariants - never overwrite a
-    recommended file, never skip an episode we intended to import:
-
-    `ABSENT` -> no file yet; import ours.
-    `RECOMMENDED` -> already holds a file from a recommended group (ours, or
-    another preferred torrent we grabbed for this series); it is done - do NOT
-    overwrite it.
-    `OTHER_GROUP` -> holds a file from a non-recommended group; import ours over
-    it (the user's intended replacement).
-    `UNKNOWN_GROUP` -> holds a file whose group Sonarr couldn't parse; import
-    ours rather than trust an unidentifiable file as recommended.
+    recommended file, never skip an episode we intended to import.
     """
 
     ABSENT = auto()
+    """No file yet; import ours."""
+
     RECOMMENDED = auto()
+    """Already holds a file from a recommended group (ours, or another preferred torrent we grabbed for this
+    series); it is done - do NOT overwrite it."""
+
     OTHER_GROUP = auto()
+    """Holds a file from a non-recommended group; import ours over it (the user's intended replacement)."""
+
     UNKNOWN_GROUP = auto()
+    """Holds a file whose group Sonarr couldn't parse; import ours rather than trust an unidentifiable file as
+    recommended."""
 
 
 class EpisodeSnapshot(NamedTuple):
     """One poll's coherent view of a series: the fresh episode index plus the recommended-group set.
 
-    The groups arrive normalized (the overwrite-guard set) and are fetched
-    together with the index, so consumers never mix state from two different
-    polls.
+    The two fields are fetched together, so consumers never mix state from two different polls.
     """
 
     episodes_by_id: dict[int, SonarrEpisode]
+    """The fresh episode index."""
+
     recommended_groups: set[str]
+    """The normalized (overwrite-guard) recommended-group set."""
 
 
 def episode_file_statuses(
@@ -363,16 +358,15 @@ def parse_se_from_filename(name: str) -> ParsedFileInfo | None:
 
 @dataclass(frozen=True)
 class EpisodeAssignment:
-    """The outcome of assigning a torrent's on-disk files to resolved episode ids.
-
-    `assigned` is `normalized basename -> [episode id]` for every file we could
-    place with confidence (each id is in the resolved set and used exactly once).
-    `skipped` lists the files we could NOT place - the caller warns on these and
-    leaves them, rather than risk a wrong assignment (the chosen safe posture).
-    """
+    """The outcome of assigning a torrent's on-disk files to resolved episode ids."""
 
     assigned: dict[str, list[int]]
+    """Normalized basename -> `[episode id]` for every file we could place with confidence (each id is in the
+    resolved set and used exactly once)."""
+
     skipped: list[str]
+    """The files we could NOT place - the caller warns on these and leaves them, rather than risk a wrong
+    assignment (the chosen safe posture)."""
 
 
 def _exact_episode_ids(
@@ -534,17 +528,23 @@ def assign_episode_ids(
 class CandidateFile:
     """An on-disk manual-import candidate, reduced to what planning needs.
 
-    Built by the strategy from one raw ManualImportResource. The normalized
-    `basename` is the match key against our authoritative map; `path` is what
-    we POST; `quality` is reused if our own quality parse comes up empty; the
-    two rejection flags fold Sonarr's per-file rejections into the plan.
+    Built by the strategy from one raw ManualImportResource.
     """
 
     basename: str
+    """The normalized match key against our authoritative map."""
+
     path: str
+    """What we POST."""
+
     quality: QualityModel | None
+    """Reused if our own quality parse comes up empty."""
+
     is_sample: bool
+    """Folds Sonarr's per-file sample rejection into the plan."""
+
     is_already_imported: bool
+    """Folds Sonarr's per-file already-imported rejection into the plan."""
 
 
 class ImportAction(StrEnum):
@@ -554,38 +554,40 @@ class ImportAction(StrEnum):
     `PendingState` / `QueueVerdict` / `EpisodeFileStatus`
     style) - the consumer branches on a typed value instead of a magic string.
     Only `IMPORT` and `MISSING` drive behavior; the three "nothing to import
-    for this file" members are kept distinct purely for reporting:
-
-    `IMPORT` -> POST a manual import for this file.
-    `MISSING` -> our map intends this file but it isn't on disk (surfaced, never
-    silently skipped).
-    `SAMPLE` -> a sample (never our intended file).
-    `ALREADY` -> not needed, and Sonarr flagged an already-imported rejection.
-    `SKIP_DONE` -> not needed (every target already holds a recommended file),
-    with no Sonarr rejection.
+    for this file" members are kept distinct purely for reporting.
     """
 
     IMPORT = "import"
+    """POST a manual import for this file."""
+
     SKIP_DONE = "skip_done"
+    """Not needed (every target already holds a recommended file), with no Sonarr rejection."""
+
     SAMPLE = "sample"
+    """A sample (never our intended file)."""
+
     ALREADY = "already"
+    """Not needed, and Sonarr flagged an already-imported rejection."""
+
     MISSING = "missing"
+    """Our map intends this file but it isn't on disk (surfaced, never silently skipped)."""
 
 
 @dataclass(frozen=True)
 class ImportDecision:
     """One decision per entry in OUR authoritative map (the source of truth).
 
-    Candidates only supply the on-disk `path` + rejection flags; the episode
-    assignment is strictly `episode_ids` from our map. `action` is an
-    `ImportAction`.
+    Candidates only supply the on-disk `path` and rejection flags (folded into `action`).
     """
 
     basename: str
     action: ImportAction
     path: str | None
+    """The on-disk path, supplied by the matched candidate."""
+
     quality: QualityModel | None
     episode_ids: list[int]
+    """The episode assignment, strictly from our map, never the candidate's own parse."""
 
 
 def plan_import_files(
@@ -876,7 +878,7 @@ def resolve_quality(
     # No confident match: re-emit Sonarr's own candidate (valid by construction)
     # rather than omit the quality, else synthesize an explicit Unknown. An
     # EMPTY candidate quality already folded to None at the parse boundary, so
-    # this None test is the historical dict-falsiness check.
+    # this None test guards the already-folded empty quality.
     if candidate_model is not None and candidate_model.quality is not None:
         return candidate_model
     unknown = Quality(id=0, name="Unknown", source="unknown", resolution=0)

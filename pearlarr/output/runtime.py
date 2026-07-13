@@ -34,11 +34,9 @@ def emit_to_hub(event: Event) -> None:
 
 
 def hub_note(message: str, *, severity: Severity = Severity.INFO, exc: BaseException | None = None) -> None:
-    """A first-party one-liner through the process hub - THE raw-logging replacement.
+    """A first-party one-liner emitted through the process hub at any severity.
 
-    Replaces direct `logger.<level>` calls at any severity (not just the old
-    logger.info one-liners); `exc` captures the traceback onto the Diagnostic
-    (the `exc_info=True` replacement).
+    `exc` captures the traceback onto the Diagnostic.
     """
 
     trace = CapturedTrace.from_exception(exc) if exc is not None else None
@@ -46,13 +44,13 @@ def hub_note(message: str, *, severity: Severity = Severity.INFO, exc: BaseExcep
 
 
 def hub_warn(message: str, *, exc: BaseException | None = None) -> None:
-    """`hub_note` at WARNING - the `logger.warning` replacement."""
+    """`hub_note` at WARNING."""
 
     hub_note(message, severity=Severity.WARNING, exc=exc)
 
 
 def hub_error(message: str, *, exc: BaseException | None = None) -> None:
-    """`hub_note` at ERROR - the `logger.error` replacement."""
+    """`hub_note` at ERROR."""
 
     hub_note(message, severity=Severity.ERROR, exc=exc)
 

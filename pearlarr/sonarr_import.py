@@ -1,6 +1,6 @@
 """Import-time subsystem: decide a download's state, then build/POST the import.
 
-Extracted from `SonarrSync`. Two collaborators:
+Two collaborators:
 
 * `ImportExecutor` owns the mechanical "consume" side: throttled download
   rescan, queue/command reads, and - the heart of it - turning OUR resolved

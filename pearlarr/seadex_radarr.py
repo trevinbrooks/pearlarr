@@ -18,11 +18,7 @@ from .seadex_types import ArrReleaseDict, HistoryRecord, ProgressSink, RadarrIte
 class RadarrSync(ArrSync[RadarrItem]):
     """Radarr sync strategy: owns the Radarr REST client + movie domain logic.
 
-    Implements the `ArrSync` hooks the run machinery drives.
-    The composition root injects the shared `RunDeps` (used
-    to stand up the client) and the `RunServices` hub
-    (held as `self._services`); the per-id hooks call the shared pipeline
-    through it.
+    See `ArrSync` for the shared DI/hook-wiring regime.
     """
 
     def __init__(
@@ -37,10 +33,9 @@ class RadarrSync(ArrSync[RadarrItem]):
             deps: The shared collaborators; the config/mappings
                 this strategy needs are read off it.
             services: The services hub the per-id hooks call into.
-            radarr_client: Injectable replacement for the real `RadarrClient`,
-                which needs the connection keys; None builds the real one.
-                Tests inject a scripted fake through this typed seam, so the
-                real `__init__` runs without keys.
+            radarr_client: A pre-built client to use instead of constructing
+                the real `RadarrClient` (which needs the connection keys);
+                None builds the real one.
         """
 
         self._services = services
@@ -268,9 +263,8 @@ class RadarrSync(ArrSync[RadarrItem]):
 
         # Accumulate sizes per release group (a movie can carry several files - an
         # upgrade or a multi-edition); the user has all of them, so the planner dedups
-        # against each. Mirrors Sonarr's per-episode accumulation rather than collapsing
-        # to one file (which dropped the other sizes) or hard-erroring on >1 group
-        # (which skipped the movie every run).
+        # against each. Mirrors Sonarr's per-episode accumulation rather than
+        # collapsing to one file or hard-erroring on >1 group.
         radarr_release_dict: ArrReleaseDict = {}
         for mf in self.radarr.movie_files(radarr_movie_id):
             radarr_release_dict.setdefault(mf.release_group, []).append(mf.size)

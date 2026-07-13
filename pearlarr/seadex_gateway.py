@@ -5,12 +5,11 @@ orchestrator relies on: a missing entry and a SeaDex outage both degrade to a
 typed `SeaDexMiss` rather than raising, and the two are distinguishable
 so an outage skip is never reported as "no entry".
 
-The hot path used to be one `from_id` round-trip per library id - hundreds per
-run, just to read each entry's `updated_at` and usually skip. `prefetch`
-collapses that into `ceil(N / SEADEX_BATCH_SIZE)` batched `from_filter` queries
-(OR-ed `alID` clauses), mirroring the AniList prefetch, and `entry` then
-serves from the warmed per-run cache. The gateway is rebuilt per arr run, so the
-cache never crosses runs (entries are stable within a run, may change between).
+`prefetch` batches ids into `ceil(N / SEADEX_BATCH_SIZE)` batched `from_filter`
+queries (OR-ed `alID` clauses), mirroring the AniList prefetch, to warm a
+per-run cache, and `entry` serves from it. The gateway is rebuilt per arr
+run, so the cache never crosses runs (entries are stable within a run, may
+change between).
 """
 
 from abc import ABC, abstractmethod
@@ -35,13 +34,14 @@ SEADEX_BATCH_SIZE = 50
 class SeaDexMiss(Enum):
     """Why `SeaDexSource.entry` has no record for an id.
 
-    NO_ENTRY is SeaDex's answer (the id genuinely has no entry); OUTAGE means the
-    lookup was skipped because SeaDex is unreachable this run - the caller must
-    report those distinctly (an outage skip is not a missing entry).
+    The caller must report the two members distinctly: an outage skip is not a
+    missing entry.
     """
 
     NO_ENTRY = auto()
+    """SeaDex's answer: the id genuinely has no entry."""
     OUTAGE = auto()
+    """The lookup was skipped because SeaDex is unreachable this run."""
 
 
 class SeaDexSource(ABC):
@@ -50,9 +50,8 @@ class SeaDexSource(ABC):
     A nominal seam over what the engine reads off `deps.seadex`
     (`prefetch` to warm the per-run cache, `entry` to serve a lookup,
     `outage` for the run's SeaDex-unreachable state). The real
-    `SeaDexGateway` subclasses it, so a test can inject a typed,
-    network-free stand-in via `RunDeps.seadex` that's checked against this
-    surface instead of laundered through a bare `object.__new__` instance.
+    `SeaDexGateway` subclasses it, giving `RunDeps.seadex` a checked seam
+    rather than a bare `object.__new__` instance.
     """
 
     @abstractmethod
@@ -67,11 +66,10 @@ class SeaDexSource(ABC):
 
 
 class SeaDexEntryApi(Protocol):
-    """The slice of the `seadex` lib's `SeaDexEntry` client the gateway consumes.
+    """The structural subset of the `seadex` lib's `SeaDexEntry` client the gateway consumes.
 
-    Structural, so tests inject a network-free stand-in through the real
-    constructor instead of bypassing it. Positional-only params mirror the lib's
-    actual signatures (its `from_id` accepts `int | str`, wider is fine).
+    Positional-only params mirror the lib's actual signatures (its `from_id`
+    accepts `int | str`, wider is fine).
     """
 
     def from_filter(self, filter_str: str, /) -> Iterable[EntryRecord]: ...

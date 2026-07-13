@@ -32,7 +32,7 @@ def format_episode_ranges(episode_numbers: Iterable[int]) -> str:
 
 
 def format_episode_coverage(episodes: list[EpisodeRecord]) -> list[tuple[str, str]] | None:
-    """Summarize the Sonarr season/episode coverage of a torrent, per season.
+    """Summarize the Sonarr season/episode coverage parsed onto a torrent's `url_item`, per season.
 
     Returns a list of (season_label, episode_ranges) tuples, one per season
     the torrent covers, ordered by season. The season label is e.g. "S01"
@@ -41,9 +41,6 @@ def format_episode_coverage(episodes: list[EpisodeRecord]) -> list[tuple[str, st
 
     Returns None when there is no parsed episode info (e.g., Radarr movies,
     or a Sonarr parse failure).
-
-    Args:
-        episodes: The coverage records parsed onto each torrent's url_item
     """
 
     if not episodes:

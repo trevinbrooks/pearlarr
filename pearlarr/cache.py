@@ -5,18 +5,16 @@ every read/write against its five logical blocks: the descriptor `kv` (package
 version + config checksum), the per-arr `entries` plus their `torrent_hashes`
 child rows, the `anilist_meta` and `sonarr_parse` JSONB caches, and
 `pending_imports`. It also owns the freshness check that decides whether a
-title needs re-processing. Folding all five blocks here (they used to be poked
-into a shared dict by three different modules) gives the cache file a single
-owner.
+title needs re-processing. Folding all five blocks here gives the cache file a
+single owner.
 
-Write model (preserves the pre-SQLite semantics exactly):
+Write model:
 
 * Writes are *staged* in one deferred transaction and only persisted when a run
   reaches a save point and calls `save(preview=False)` -> `COMMIT`.
 * A preview run calls `save(preview=True)` -> no commit, so it never persists.
   Reads within the run still see the staged-but-uncommitted writes (same
-  connection), exactly as the old in-memory dict did. `close()` rolls back
-  anything still uncommitted.
+  connection). `close()` rolls back anything still uncommitted.
 * A hard kill mid-run loses at most the titles finished since the last save
   point; they're simply re-checked next run, never silently skipped - the safe
   direction.
@@ -249,13 +247,13 @@ class CacheRecord(TypedDict, total=False):
     url: str
     coverage: str
     updated_at: "str | datetime"
-    # Whether a public fallback satisfied the title (a fallback grab, or the Arr
-    # already owning the fallback's files); warn mode re-checks marked entries.
     fallback_satisfied: bool
-    # A SeaDex url's infohash is `str | None` and is appended unconditionally
-    # (planner.filter_by_torrent_hash), so a remembered list can carry `None`; the
-    # store preserves those Nones because the planner dedups on None membership.
+    """Whether a public fallback satisfied the title (a fallback grab, or the Arr
+    already owning the fallback's files); warn mode re-checks marked entries."""
     torrent_hashes: list[str | None]
+    """A SeaDex url's infohash is `str | None` and is appended unconditionally
+    (planner.filter_by_torrent_hash), so a remembered list can carry `None`; the
+    store preserves those Nones because the planner dedups on None membership."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,20 +275,17 @@ class CachedEntry:
 
 @dataclass(frozen=True, slots=True)
 class HistoryCheckpoint:
-    """One arr's history cursor: the last-seen record's date + monotone id.
-
-    `since_date` is the raw ISO8601 stamp of the newest seen record (arr-clock
-    domain); `last_id` its per-arr autoincrement id, used for strict
-    `record.id > last_id` dedup across the overlapped re-query window.
-    """
+    """One arr's history cursor: the last-seen record's date + monotone id."""
 
     since_date: str
+    """The raw ISO8601 stamp of the newest seen record (arr-clock domain)."""
     last_id: int
+    """The per-arr autoincrement id, used for strict `record.id > last_id` dedup
+    across the overlapped re-query window."""
 
 
 # The scalar columns of `entries` that `update_cache` may merge. A closed
-# tuple so the partial-update path only touches columns actually supplied (the old
-# dict `.update` left absent fields untouched - this preserves that).
+# tuple so the partial-update path only touches columns actually supplied.
 _ENTRY_SCALAR_COLUMNS = ("name", "url", "coverage", "updated_at", "fallback_satisfied")
 
 # Sentinel stored in `torrent_hashes.infohash` (a NOT NULL column) for a remembered
@@ -496,8 +491,8 @@ class CacheStore(AbstractCacheStore):
         """Persist staged writes - unless this is a preview run.
 
         The single commit chokepoint. A preview never commits (so it never
-        persists, mirroring the old in-memory-only mutation); the first non-preview
-        save on a still-in-memory db promotes it to the real file.
+        persists); the first non-preview save on a still-in-memory db promotes it
+        to the real file.
 
         Args:
             preview: When True, leave writes staged/uncommitted (discarded on
@@ -617,10 +612,10 @@ class CacheStore(AbstractCacheStore):
     def get_entry(self, arr: Arr, al_id: int) -> CachedEntry | None:
         """The scalar columns of an entry's row in one query, or None.
 
-        Folds what used to be a point `SELECT` per field into a single read for
-        callers that need several columns of the same `(arr, al_id)` row (the
-        cached-skip short-circuit and the cached-entry log line). Does NOT include
-        the `torrent_hashes` child set - use `torrent_hashes` for that.
+        Reads several columns of one `(arr, al_id)` row in a single query instead
+        of a point `SELECT` per field, for callers such as the cached-skip
+        short-circuit and the cached-entry log line. Does NOT include the
+        `torrent_hashes` child set - use `torrent_hashes` for that.
         """
 
         row = self._conn.execute(
@@ -654,11 +649,10 @@ class CacheStore(AbstractCacheStore):
     ) -> None:
         """Merge fields into an entry's record (staged; persisted at a save point).
 
-        Mirrors the old dict `.update`: only the supplied scalar fields are
-        written (absent ones are left untouched), and a supplied `torrent_hashes`
-        replaces the entry's whole hash set. `updated_at` given as a `datetime`
-        is strftime'd in place. With no `cache_details`, the entry row is just
-        ensured to exist.
+        Only the supplied scalar fields are written (absent ones are left
+        untouched), and a supplied `torrent_hashes` replaces the entry's whole
+        hash set. `updated_at` given as a `datetime` is strftime'd in place. With
+        no `cache_details`, the entry row is just ensured to exist.
         """
 
         details: dict[str, Any] = dict(cache_details or {})
@@ -814,11 +808,10 @@ class CacheStore(AbstractCacheStore):
 
         Same fresh-per-call snapshot as `get_pending` (a record dropped earlier
         this run is already absent), but the `series_id` filter is pushed into SQL
-        via `record ->> 'series_id'` so only this series' records are deserialized -
-        the per-series reconcile no longer re-parses every pending record once per
-        series. `series_id` is stored as a JSON int (`PendingImport.series_id`),
-        so the bound int compares directly; a record with no `series_id` yields NULL
-        and is excluded, matching the old `record.get("series_id") != series_id` skip.
+        via `record ->> 'series_id'` so only this series' records are deserialized.
+        `series_id` is stored as a JSON int (`PendingImport.series_id`), so the
+        bound int compares directly; a record with no `series_id` yields NULL and
+        is excluded.
         """
 
         out: dict[str, dict[str, Any]] = {}

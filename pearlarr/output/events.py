@@ -90,9 +90,10 @@ class PlacedBy(Enum):
 
 @dataclass(frozen=True, slots=True)
 class RunStarted:
-    """The process banner facts (version may be "")."""
+    """The process banner facts."""
 
     version: str
+    """May be an empty string."""
     data_dir: str
 
 
@@ -439,12 +440,12 @@ class RunTally:
 class RunSummary:
     """The whole end-of-run scoreboard as one value; the tally rides embedded whole.
 
-    `dry_run_note` is the dry-run marker AND its human note in one field
-    (None = a real run), so a noteless "DRY RUN" title is unrepresentable.
+    A noteless "DRY RUN" title is unrepresentable.
     """
 
     arr: Arr
     dry_run_note: str | None
+    """The dry-run marker AND its human note in one field (None = a real run)."""
     added_count: int
     tally: RunTally
     wait_mode_on: bool
@@ -475,18 +476,16 @@ def clamp01(value: float) -> float:
 
 
 class Phase(Enum):
-    """The lifecycle phase of one torrent in the wait pass.
-
-    `QUEUED` -> still downloading (or not yet polled). `DOWNLOADING` ->
-    downloading with live telemetry. `IMPORTING` -> the download finished and an
-    import is in flight (indeterminate). `TERMINAL` -> a terminal `Outcome`
-    was reached; these GRADUATE to scrollback and leave the live region.
-    """
+    """The lifecycle phase of one torrent in the wait pass."""
 
     QUEUED = auto()
+    """Still downloading (or not yet polled)."""
     DOWNLOADING = auto()
+    """Downloading with live telemetry."""
     IMPORTING = auto()
+    """The download finished and an import is in flight (indeterminate)."""
     TERMINAL = auto()
+    """A terminal `Outcome` was reached; these GRADUATE to scrollback and leave the live region."""
 
 
 # Speed samples a downloading row keeps for its sparkline (one per heavy poll,
@@ -515,17 +514,17 @@ class TorrentView:
     bytes_total: int | None = None
     phase_elapsed_s: float = 0.0
     command_issued: bool = False
-    # "Files inserted" bar for an IMPORTING row: both set -> a determinate
-    # done/total bar; both None -> indeterminate (just the "importing" word).
-    # On a TERMINAL imported row they carry the final files count for the ledger,
-    # and phase_elapsed_s freezes as the ledger's wait clock (the wait region's
-    # between-poll ticking skips TERMINAL rows, so it can't drift).
     import_done: int | None = None
+    """"Files inserted" bar for an IMPORTING row: both set -> a determinate done/total bar; both
+    `None` -> indeterminate (just the "importing" word)."""
     import_total: int | None = None
-    # Speed samples (bytes/s, stalled -> 0), one per heavy poll, newest last -
-    # the sparkline showing slow-but-moving vs wedged. Bounded by the producer
-    # to the sparkline window (SPARK_SAMPLES above).
+    """On a TERMINAL imported row, `import_done`/`import_total` carry the final files count for
+    the ledger, and `phase_elapsed_s` freezes as the ledger's wait clock (the wait region's
+    between-poll ticking skips TERMINAL rows, so it can't drift)."""
     speed_history: tuple[int, ...] = ()
+    """Speed samples (bytes/s, stalled -> 0), one per heavy poll, newest last - the sparkline
+    showing slow-but-moving vs wedged. Bounded by the producer to the sparkline window
+    (`SPARK_SAMPLES` above)."""
     outcome: Outcome | None = None
 
 
@@ -534,8 +533,8 @@ class WaitSnapshot:
     """An immutable description of the whole wait pass at one poll cycle.
 
     The single value the engine pushes per poll cycle; the wait views/renderers
-    are pure functions of it. Derived aggregates are computed here so they can
-    be unit-tested without any rendering.
+    are pure functions of it. Derived aggregates are pure functions of the
+    snapshot, independent of rendering.
     """
 
     torrents: tuple[TorrentView, ...]
@@ -582,9 +581,9 @@ class WaitStarted:
     """The wait pass opened: how many torrents it watches, and the pulse cadence."""
 
     total: int
-    # The renderer's pulse throttle interval (max(poll_s, digest_interval)); the
-    # producer computes it. No default: the producer must supply it.
     pulse_s: float
+    """The renderer's pulse throttle interval (max(poll_s, digest_interval)); the producer
+    computes it. No default: the producer must supply it."""
     scope: ScopeId | None = None
 
 
@@ -640,11 +639,7 @@ class RunFinished:
 
 @dataclass(frozen=True, slots=True)
 class Diagnostic:
-    """A position-free problem/notice: our one-liners (hub_note) + adopted stdlib records.
-
-    `file_only` routes hub-containment notes (and, later, bridge-adopted
-    third-party DEBUG/INFO) past the console surfaces to the file sink alone.
-    """
+    """A position-free problem/notice: our one-liners (hub_note) + adopted stdlib records."""
 
     severity: Severity
     message: str
@@ -653,6 +648,7 @@ class Diagnostic:
     trace: CapturedTrace | None = None
     placed_by: PlacedBy = PlacedBy.AMBIENT
     file_only: bool = False
+    """Routes hub-containment notes past the console surfaces to the file sink alone."""
 
 
 # --- json value model (the wire types the json surface and cli facts share) --------

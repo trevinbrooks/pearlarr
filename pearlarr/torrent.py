@@ -37,14 +37,7 @@ _NYAA_SESSION = pynyaa.Nyaa(
 
 
 def get_nyaa_torrent(url: str) -> tuple[str, str]:
-    """Get the Nyaa download link and release title from a Nyaa URL.
-
-    Args:
-        url: URL of the Nyaa release page
-
-    Returns:
-        The .torrent download link and the human-readable release title.
-    """
+    """Get the Nyaa download link and release title from a Nyaa URL."""
 
     release = _NYAA_SESSION.get(url)
 
