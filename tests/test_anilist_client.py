@@ -198,10 +198,10 @@ def test_media_from_none_body_is_all_none() -> None:
 # --- constants sanity -------------------------------------------------------
 
 
-def test_media_fields_fragment_covers_from_api_reads() -> None:
-    """Every field `AniListMediaNode.from_api` reads is selected by the fragment.
+def test_media_fields_fragment_covers_model_reads() -> None:
+    """Every field `AniListMediaNode` reads is selected by the fragment.
 
-    The read set below is derived from `from_api`'s body: the top-level
+    The read set below is derived from the model's fields: the top-level
     `id`/`title`/`coverImage`/`episodes`/`format` keys plus the nested
     `title.english`/`title.romaji`/`coverImage.large` selections. A field
     dropped from `_MEDIA_FIELDS` would silently parse to `None` downstream,

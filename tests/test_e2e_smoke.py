@@ -190,7 +190,7 @@ _RADARR_ANILIST_BODY: dict[str, object] = {
 
 # A minimal `/api/v3/movie` record: the item fields the run reads
 # (id/title/tmdbId/imdbId/monitored) plus a couple of extras proving
-# `RadarrMovie.from_api` ignores unknown keys.
+# `RadarrMovie` ignores unknown keys.
 _MOVIE_BODY: dict[str, object] = {
     "id": 42,
     "title": "Your Name.",

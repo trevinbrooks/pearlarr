@@ -31,7 +31,7 @@ def _strat(parse_cache: ParseCache) -> SonarrSync:
 
 
 def _ep(ep_id: int, season: int, episode: int) -> SonarrEpisode:
-    return SonarrEpisode.from_api(
+    return SonarrEpisode.model_validate(
         {"id": ep_id, "seasonNumber": season, "episodeNumber": episode},
     )
 

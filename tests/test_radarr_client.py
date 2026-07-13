@@ -190,7 +190,7 @@ def test_trailing_slash_url_is_normalized() -> None:
 
 
 # A minimal `/api/v3/movie` record: the consumed item fields plus a couple of
-# extras proving unknown keys are ignored by `RadarrMovie.from_api`.
+# extras proving unknown keys are ignored by `RadarrMovie`.
 _MOVIE_BODY: dict[str, object] = {
     "id": 9,
     "title": "Your Name.",
@@ -268,9 +268,9 @@ def test_collect_anime_movies_wires_id_spaces() -> None:
     assert [m.id for m in kept] == [1]
 
 
-def test_movie_file_from_api_nullability() -> None:
+def test_movie_file_nullability() -> None:
     """Missing releaseGroup/size parse to None; unknown keys are ignored."""
 
-    assert MovieFile.from_api({}) == MovieFile(release_group=None, size=None)
-    parsed = MovieFile.from_api({"releaseGroup": "SubsPlease", "size": 123, "id": 9, "unknown": True})
+    assert MovieFile.model_validate({}) == MovieFile(release_group=None, size=None)
+    parsed = MovieFile.model_validate({"releaseGroup": "SubsPlease", "size": 123, "id": 9, "unknown": True})
     assert parsed == MovieFile(release_group="SubsPlease", size=123)

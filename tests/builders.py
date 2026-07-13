@@ -876,7 +876,7 @@ def sonarr_ep(
 ) -> SonarrEpisode:
     """One `SonarrEpisode`, parsed from the raw fields the engine reads."""
 
-    return SonarrEpisode.from_api(
+    return SonarrEpisode.model_validate(
         {
             "seasonNumber": season,
             "episodeNumber": episode,
@@ -952,7 +952,7 @@ def manual_candidate(
     or an `{"reason": ...}` dict) are folded exactly as in production.
     """
 
-    return ManualImportCandidate.from_api(
+    return ManualImportCandidate.model_validate(
         {"path": path, "quality": quality, "rejections": rejections or []},
     )
 

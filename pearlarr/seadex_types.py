@@ -30,7 +30,6 @@ from typing import (
     Annotated,
     Any,
     Protocol,
-    Self,
     cast,
     runtime_checkable,
 )
@@ -415,12 +414,6 @@ class SonarrEpisode(_ApiModel):
     )
     """An empty/null `episodeFile` folds to `None`."""
 
-    @classmethod
-    def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Thin shim over `model_validate` (the historical parse entrypoint)."""
-
-        return cls.model_validate(raw)
-
 
 type ArrReleaseDict = dict[str | None, list[int | None]]
 """Release group (`None` when unknown) -> its existing-file sizes.
@@ -633,12 +626,6 @@ class ManualImportCandidate(_ApiModel):
                 folded.append(rejection)  # field-name construction passes models
         return folded
 
-    @classmethod
-    def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Thin shim over `model_validate` (the historical parse entrypoint)."""
-
-        return cls.model_validate(raw)
-
 
 class ManualImportFile(_WireModel):
     """One outgoing `ManualImport` command file entry (the POST payload).
@@ -683,12 +670,6 @@ class QueueRecord(_ApiModel):
     status: _LenientStr = Field(default=None, validation_alias="trackedDownloadStatus")
     """`trackedDownloadStatus` (`ok` / `warning` / `error`): the
     `string | null` rendering of its schema enum."""
-
-    @classmethod
-    def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Thin shim over `model_validate` (the historical parse entrypoint)."""
-
-        return cls.model_validate(raw)
 
 
 # --- Arr history (`/api/v3/history/since` records) -------------------------
@@ -847,12 +828,6 @@ class CommandResource(_ApiModel):
                 continue
         return kept
 
-    @classmethod
-    def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Thin shim over `model_validate` (the historical parse entrypoint)."""
-
-        return cls.model_validate(raw)
-
 
 # --- Radarr movie files (`/api/v3/moviefile` records) ----------------------
 #
@@ -873,12 +848,6 @@ class MovieFile(_ApiModel):
 
     release_group: str | None = Field(default=None, validation_alias="releaseGroup")
     size: int | None = None
-
-    @classmethod
-    def from_api(cls, raw: dict[str, Any]) -> Self:
-        """Thin shim over `model_validate` (the historical parse entrypoint)."""
-
-        return cls.model_validate(raw)
 
 
 # --- Sonarr parse (`/api/v3/parse` `parsedEpisodeInfo`) -------------------
@@ -923,9 +892,3 @@ class ParsedFileInfo(_ApiModel):
         default=False,
         validation_alias=AliasPath("parsedEpisodeInfo", "special"),
     )
-
-    @classmethod
-    def from_parse_resource(cls, body: dict[str, Any]) -> Self:
-        """Thin shim over `model_validate` (the historical parse entrypoint)."""
-
-        return cls.model_validate(body)

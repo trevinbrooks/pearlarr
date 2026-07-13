@@ -3,7 +3,7 @@
 
 Each test builds a REAL `SonarrClient` (construction is network-free), then
 drives one method and asserts the request URL / body it builds AND the decoded
-return view its `from_api` parsers produce. Every endpoint rides the
+return view its boundary models produce. Every endpoint rides the
 httpx-based `ArrHttp`, mocked via `respx`. Bodies come from the
 captured `tests/fixtures/sonarr` JSON where one exists (queue /
 manual-import / command-list / quality-definitions), otherwise a minimal
@@ -83,7 +83,7 @@ def _make_pending(*, infohash: str, title: str) -> PendingImport:
 # --- all_series() -------------------------------------------------------------
 
 # A minimal `/api/v3/series` record: the consumed item fields plus a couple of
-# extras proving unknown keys are ignored by `SonarrSeries.from_api`.
+# extras proving unknown keys are ignored by `SonarrSeries`.
 _SERIES_BODY: dict[str, object] = {
     "id": 228,
     "title": "Undefeated Bahamut Chronicle",

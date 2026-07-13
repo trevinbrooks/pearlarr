@@ -63,7 +63,7 @@ def load_fixture[T](name: str, _shape: type[T] | None = None) -> T:
 
     `_shape` is unused at runtime; it gives `T` a second occurrence so pyright
     does not flag the otherwise return-only TypeVar (reportInvalidTypeVarUse). The
-    raw JSON shape (`Any`) is narrowed by the consuming `from_api` decoders.
+    raw JSON shape (`Any`) is narrowed by the consuming boundary models.
     """
 
     data: T = json.loads((_FIXTURES / name).read_text())
@@ -144,7 +144,7 @@ class TestQualityResolution:
         # captured verbatim from a live Sonarr - proving the read works on real
         # output, not just hand-written dicts.
         raw: list[dict[str, object]] = load_fixture("manualimport_yamada.json")
-        candidates = [ManualImportCandidate.from_api(c) for c in raw]
+        candidates = [ManualImportCandidate.model_validate(c) for c in raw]
         dvd = next(
             c
             for c in candidates
@@ -157,7 +157,7 @@ class TestQualityResolution:
 
 
 # --------------------------------------------------------------------------- #
-# ParsedFileInfo.from_parse_resource - the series-agnostic field, on real bodies
+# ParsedFileInfo - the series-agnostic field, on real bodies
 # --------------------------------------------------------------------------- #
 class TestParsedFileInfoFromRealBodies:
     """The load-bearing claim: `parsedEpisodeInfo` populates even when `episodes` (series-matched) is empty."""
@@ -167,19 +167,19 @@ class TestParsedFileInfoFromRealBodies:
         # The OLD code read this (series-matched) array and got nothing:
         assert body["episodes"] == []
 
-        info = ParsedFileInfo.from_parse_resource(body)
+        info = ParsedFileInfo.model_validate(body)
         assert info.season_number == 0
         assert info.episode_numbers == (1,)
         assert info.absolute_episode_numbers == ()
 
     def test_absolute_numbered_file_reports_absolute_not_season_episode(self) -> None:
         body: dict[str, object] = load_fixture("parse_toloveru_abs14.json")
-        info = ParsedFileInfo.from_parse_resource(body)
+        info = ParsedFileInfo.model_validate(body)
         assert info.episode_numbers == ()
         assert info.absolute_episode_numbers == (14,)
 
     def test_missing_parsed_info_is_all_empty(self) -> None:
-        info = ParsedFileInfo.from_parse_resource({})
+        info = ParsedFileInfo.model_validate({})
         assert info == ParsedFileInfo()
 
 
@@ -490,7 +490,7 @@ class TestPendingImportOrderedIds:
 
 
 # --------------------------------------------------------------------------- #
-# CommandResource.from_api on the real captured /api/v3/command list
+# CommandResource.model_validate on the real captured /api/v3/command list
 # --------------------------------------------------------------------------- #
 # The capture is the bug-2 evidence: stacked ManualImport commands sharing one
 # downloadId (a duplicate-import loop), plus a folder import with no downloadId
@@ -500,12 +500,12 @@ _SAO_DOWNLOAD_ID = "3333333333333333333333333333333333333333"
 
 
 class TestCommandResourceFixture:
-    """CommandResource.from_api parses name / status / message / body.files."""
+    """CommandResource.model_validate parses name / status / message / body.files."""
 
     @staticmethod
     def _commands() -> list[CommandResource]:
         raw: list[dict[str, object]] = load_fixture("command_list.json")
-        return [CommandResource.from_api(c) for c in raw]
+        return [CommandResource.model_validate(c) for c in raw]
 
     def test_started_manual_import_parses_message_and_files(self) -> None:
         started = next(c for c in self._commands() if c.name == "ManualImport" and c.status == "started")
@@ -540,7 +540,7 @@ class TestManualImportInFlightFixture:
     @staticmethod
     def _commands() -> list[CommandResource]:
         raw: list[dict[str, object]] = load_fixture("command_list.json")
-        return [CommandResource.from_api(c) for c in raw]
+        return [CommandResource.model_validate(c) for c in raw]
 
     def test_matching_download_id_is_in_flight(self) -> None:
         # The SAO download has a started + queued ManualImport sharing its
@@ -579,10 +579,10 @@ def _yamada_parse_side_effect(raw_base: str) -> ParsedFileInfo | None:
 
     if "S00E01" in raw_base:
         body: dict[str, object] = load_fixture("parse_yamada_s00e01.json")
-        return ParsedFileInfo.from_parse_resource(body)
+        return ParsedFileInfo.model_validate(body)
     if "S00E02" in raw_base:
         body = load_fixture("parse_yamada_s00e02.json")
-        return ParsedFileInfo.from_parse_resource(body)
+        return ParsedFileInfo.model_validate(body)
     return None
 
 
@@ -595,9 +595,9 @@ def _yamada_strat(config: AppConfig | None = None) -> tuple[SonarrSync, FakeSona
     """
 
     episodes_raw: list[dict[str, object]] = load_fixture("episodes_213_yamada.json")
-    episodes = [SonarrEpisode.from_api(e) for e in episodes_raw]
+    episodes = [SonarrEpisode.model_validate(e) for e in episodes_raw]
     candidates_raw: list[dict[str, object]] = load_fixture("manualimport_yamada.json")
-    candidates = [ManualImportCandidate.from_api(c) for c in candidates_raw]
+    candidates = [ManualImportCandidate.model_validate(c) for c in candidates_raw]
     seadex_files = [c.path.rsplit("/", 1)[-1] for c in candidates if c.path]
 
     sonarr = FakeSonarrClient(

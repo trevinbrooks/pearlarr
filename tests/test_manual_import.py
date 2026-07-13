@@ -9,7 +9,7 @@ map, the authoritative file->episode mapping and import planning (strict-honor
 + never-overwrite + never-skip), the queue classifier and episode-file status,
 the filename quality parse, and the layered quality/language selection). All
 pure, no network or disk; `SonarrEpisode` is built directly via
-`SonarrEpisode.from_api`.
+`SonarrEpisode.model_validate`.
 """
 
 import pytest
@@ -77,7 +77,7 @@ def _ep(
     if file_id:
         raw["episodeFileId"] = file_id
         raw["episodeFile"] = {"releaseGroup": group}
-    return SonarrEpisode.from_api(raw)
+    return SonarrEpisode.model_validate(raw)
 
 
 class TestBuildEpisodeIdMap:
@@ -296,7 +296,7 @@ def _command(
 ) -> CommandResource:
     """A `CommandResource` from the raw command fields the guard reads."""
 
-    return CommandResource.from_api(
+    return CommandResource.model_validate(
         {"name": name, "status": status, "body": {"files": files or []}},
     )
 

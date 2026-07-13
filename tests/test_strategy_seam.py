@@ -578,7 +578,7 @@ class TestProcessAlIdThreadsServices:
 def _ep_with_file(ep_id: int, *, group: str | None) -> SonarrEpisode:
     """A current Sonarr episode that already holds a file from `group`."""
 
-    return SonarrEpisode.from_api(
+    return SonarrEpisode.model_validate(
         {"id": ep_id, "episodeFileId": ep_id * 10, "episodeFile": {"releaseGroup": group}},
     )
 
@@ -629,11 +629,11 @@ def _make_sonarr_for_import(
 def _queue_record(infohash: str, state: str, *, status: str = "ok") -> QueueRecord:
     """One Sonarr queue record matching a download by infohash + tracked state.
 
-    Built through `QueueRecord.from_api` from the raw API field names so the
+    Built through `QueueRecord.model_validate` from the raw API field names so the
     record mirrors exactly what `SonarrClient.queue` parses at the boundary.
     """
 
-    return QueueRecord.from_api(
+    return QueueRecord.model_validate(
         {
             "downloadId": infohash,
             "trackedDownloadState": state,
@@ -815,7 +815,7 @@ class TestImportCompletedQueueState:
 def _inflight_manual_import(infohash: str, *, status: str = "started") -> CommandResource:
     """A ManualImport command whose one file carries `infohash` as downloadId."""
 
-    return CommandResource.from_api(
+    return CommandResource.model_validate(
         {
             "name": "ManualImport",
             "status": status,
