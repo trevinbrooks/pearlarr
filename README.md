@@ -23,6 +23,10 @@ Each run walks your library title by title:
 5. **Grab** - the release is added to qBittorrent with your category and tags, a Discord notification goes out, and the result is cached.
 6. **Import** (optional, Sonarr) - Pearlarr waits for the downloads to finish and shepherds them into Sonarr, stepping in with a manual import when Sonarr can't place the files itself.
 
+Here is that walk as a preview run - the mode every new setup starts in, with qBittorrent left unconfigured:
+
+![A Pearlarr preview run: the boot steps connect to Sonarr and fetch SeaDex entries, three series are checked against their SeaDex recommendations, and the run summary reports two would-be grabs and one title already up to date](https://raw.githubusercontent.com/trevinbrooks/pearlarr/main/docs/assets/preview_run.gif)
+
 Runs are incremental and safe to repeat: results live in a SQLite cache, a title is re-checked only when SeaDex or your arr changed something, and an interrupted run never corrupts state.
 
 ## Install
