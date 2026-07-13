@@ -40,19 +40,19 @@ jobs:
       - name: Sync dependencies
         run: uv sync --group dev --python ${{ matrix.python-version }}
       - name: Ruff (lint)
-        run: uv run ruff check pearlarr/ tests/
+        run: uv run ruff check pearlarr/ tests/ scripts/
       - name: Ruff (format)
-        run: uv run ruff format --check pearlarr/ tests/
-      - name: Basedpyright (src + tests, strict)
-        run: uv run basedpyright pearlarr tests
+        run: uv run ruff format --check pearlarr/ tests/ scripts/
+      - name: Basedpyright (src + tests + scripts, strict)
+        run: uv run basedpyright pearlarr tests scripts
       # The type gate is vanilla pyright (pinned for reproducible CI). It reads
-      # [tool.pyright] in pyproject.toml (typeCheckingMode = strict for BOTH the
-      # package and tests/) and resolves imports against the .venv that `uv sync`
-      # just created.
+      # [tool.pyright] in pyproject.toml (typeCheckingMode = strict for the
+      # package, tests/, AND scripts/) and resolves imports against the .venv
+      # that `uv sync` just created.
       - name: Pyright (type check, strict)
-        run: uvx pyright@1.1.411 pearlarr tests
+        run: uvx pyright@1.1.411 pearlarr tests scripts
       - name: Pyrefly (type check)
-        run: uv run pyrefly check pearlarr tests --preset strict
+        run: uv run pyrefly check pearlarr tests scripts --preset strict
       # Branch coverage with the fail_under floor from [tool.coverage.report].
       - name: Pytest (with coverage gate)
         run: uv run pytest tests/ --cov=pearlarr --cov-report=term-missing --cov-report=xml
