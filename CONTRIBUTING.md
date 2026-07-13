@@ -123,6 +123,14 @@ can predict CI:
 - Modules, packages, and classes always carry a docstring. Functions and
   methods are documented unless the full contract is legible from name +
   signature; when in doubt, one line.
+- A documented field gets a per-field attribute docstring on the field itself —
+  never an `Attributes:` section, a field-enumerating paragraph in the class
+  docstring, or a `#` comment carrying the field's contract. The class
+  docstring keeps only class-level posture (what the class is, how it reads or
+  fails as a whole).
+- A docstring states the current contract. How the code came to be this way —
+  ports, replaced designs, fixed bugs — belongs in the changelog or the
+  architecture design notes, not in code.
 - Config-model attribute docstrings are a compiled dialect — plain text plus
   single backticks only — because they render into YAML comments, markdown
   tables, and JSON Schema descriptions. State meaning, interactions, and
