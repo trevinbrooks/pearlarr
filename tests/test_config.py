@@ -232,7 +232,7 @@ class TestDefaults:
         assert cfg.advanced.sleep_time == 2
         assert cfg.advanced.cache_time == 1
         assert cfg.advanced.log_level == "INFO"
-        assert cfg.advanced.max_torrents_to_add is None
+        assert cfg.advanced.max_torrents_to_add == 10
         assert cfg.advanced.detect_arr_activity is True
         assert cfg.schedule.interval_hours == 6.0
         assert cfg.notifications.discord_url is None
@@ -298,11 +298,13 @@ class TestDefaults:
             AdvancedSettings.model_validate({"cache_time": -1})
 
     def test_max_torrents_to_add_bounds(self) -> None:
-        # A cap of 0 would silently grab nothing; None stays the unlimited default.
+        # 0 removes the cap (the download-tool convention); blank falls back to
+        # the default like any blank key; a negative is nonsense and rejected.
         assert AdvancedSettings.model_validate({"max_torrents_to_add": 1}).max_torrents_to_add == 1
-        assert AdvancedSettings.model_validate({"max_torrents_to_add": None}).max_torrents_to_add is None
+        assert AdvancedSettings.model_validate({"max_torrents_to_add": 0}).max_torrents_to_add == 0
+        assert AdvancedSettings.model_validate({"max_torrents_to_add": None}).max_torrents_to_add == 10
         with pytest.raises(ValidationError):
-            AdvancedSettings.model_validate({"max_torrents_to_add": 0})
+            AdvancedSettings.model_validate({"max_torrents_to_add": -1})
 
     def test_import_defaults_when_absent(self) -> None:
         imp = ImportsSettings()

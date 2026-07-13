@@ -559,9 +559,14 @@ class AdvancedSettings(_ConfigBase):
     interactive: bool = False
     """Prompt for a choice when several torrents match, instead of taking the best automatically."""
 
-    # ge=1 when set: a cap of 0 would silently grab nothing (None = unlimited).
-    max_torrents_to_add: int | None = Field(default=None, ge=1)
-    """Cap on torrents added per run. Blank means unlimited."""
+    # ge=0: 0 disables the cap (the download-tool convention, per qBittorrent/Sonarr).
+    max_torrents_to_add: int = Field(default=10, ge=0)
+    """Cap on torrents added per run; `0` removes the cap.
+
+    Keeps a first run on a large library from flooding qBittorrent; later runs
+    pick up where the cap stopped. Preview runs ignore the cap, so a preview
+    always reports the whole library.
+    """
 
     detect_arr_activity: bool = True
     """Re-check titles whose files Sonarr or Radarr changed since the last run.

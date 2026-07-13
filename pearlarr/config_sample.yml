@@ -199,8 +199,10 @@ advanced:
   # Prompt for a choice when several torrents match, instead of taking the best automatically.
   interactive: false
 
-  # Cap on torrents added per run. Blank means unlimited.
-  max_torrents_to_add:
+  # Cap on torrents added per run; 0 removes the cap. Keeps a first run on a large library from
+  # flooding qBittorrent; later runs pick up where the cap stopped. Preview runs ignore the cap, so
+  # a preview always reports the whole library.
+  max_torrents_to_add: 10
 
   # Re-check titles whose files Sonarr or Radarr changed since the last run. Polls each arr's
   # history at run start. Turn off if a release you replaced arr-side keeps being re-grabbed.

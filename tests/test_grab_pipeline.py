@@ -93,8 +93,8 @@ class TestGrabReturnsPureBool:
     """
 
     def test_grab_at_cap_returns_true(self) -> None:
+        # A real (non-preview) run: the cap only binds when grabs are real.
         pipeline = make_grab_pipeline(
-            qbit=None,
             max_torrents_to_add=1,
             add_torrent=_stub_add_torrent,
         )
@@ -114,6 +114,30 @@ class TestGrabReturnsPureBool:
         )
 
         assert pipeline._grab(req) is True
+
+    def test_grab_at_cap_in_preview_returns_false(self) -> None:
+        # MUTATION PIN: reading the raw config cap instead of _effective_cap would
+        # stop a preview scan at the cap, truncating the whole-library report.
+        pipeline = make_grab_pipeline(
+            qbit=None,
+            max_torrents_to_add=1,
+            add_torrent=_stub_add_torrent,
+        )
+        pipeline._ctx.torrents_added = 1  # at the cap, but this run is a preview
+        pipeline._anilist.al_cache.update({1: {}})
+
+        req = GrabRequest(
+            al_id=1,
+            item_title="Show",
+            anilist_title="Show",
+            entry=make_entry_record(url="https://seadex.example/1"),
+            seadex_dict={},
+            torrent_hashes=[],
+            cache_details={},
+            release_group=None,
+        )
+
+        assert pipeline._grab(req) is False
 
 
 class TestGrabPushesNotice:
@@ -336,6 +360,47 @@ class TestAddTorrentCap:
         assert n_added == 2
         assert pipeline._ctx.torrents_added == 2
         assert [r.outcome for r in results] == [AddOutcome.ADDED, AddOutcome.ADDED]
+
+    def test_zero_removes_the_cap(self) -> None:
+        # MUTATION PIN: without the `cap == 0` branch, 0 would flow into `>= cap`
+        # and stop the run after the FIRST add instead of never.
+        u1 = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
+        u2 = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
+        seadex_dict: SeadexDict = {"RG": rg_group({u1.url: u1, u2.url: u2})}
+        torrents = FakeTorrents(
+            {
+                "h1": (AddOutcome.ADDED, "one"),
+                "h2": (AddOutcome.ADDED, "two"),
+            }
+        )
+        pipeline = _pipeline(torrents=torrents, max_torrents_to_add=0)
+
+        n_added, _results = pipeline.add_torrent(seadex_dict, pending_seeds=None)
+
+        assert torrents.calls == ["h1", "h2"]
+        assert n_added == 2
+
+    def test_preview_ignores_the_cap(self) -> None:
+        # A preview must walk the whole library so its report stays complete:
+        # three would-be adds under a cap of 2 all go through, and no stop fires.
+        u1 = _nyaa_release(url="https://nyaa.si/view/1", infohash="h1")
+        u2 = _nyaa_release(url="https://nyaa.si/view/2", infohash="h2")
+        u3 = _nyaa_release(url="https://nyaa.si/view/3", infohash="h3")
+        seadex_dict: SeadexDict = {"RG": rg_group({u1.url: u1, u2.url: u2, u3.url: u3})}
+        torrents = FakeTorrents(
+            {
+                "h1": (AddOutcome.ADDED, "one"),
+                "h2": (AddOutcome.ADDED, "two"),
+                "h3": (AddOutcome.ADDED, "three"),
+            }
+        )
+        pipeline = _pipeline(torrents=torrents, qbit=None, max_torrents_to_add=2)
+
+        n_added, results = pipeline.add_torrent(seadex_dict, pending_seeds=None)
+
+        assert torrents.calls == ["h1", "h2", "h3"]
+        assert n_added == 3
+        assert [r.outcome for r in results] == [AddOutcome.ADDED] * 3
 
     def test_non_added_url_does_not_stop_the_loop(self) -> None:
         # MUTATION PIN: the non-ADDED `continue` flipped to `break` would abandon

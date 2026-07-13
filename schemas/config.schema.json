@@ -29,18 +29,11 @@
           "type": "boolean"
         },
         "max_torrents_to_add": {
-          "anyOf": [
-            {
-              "minimum": 1,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Cap on torrents added per run. Blank means unlimited.",
-          "title": "Max Torrents To Add"
+          "default": 10,
+          "description": "Cap on torrents added per run; `0` removes the cap. Keeps a first run on a large library from flooding qBittorrent; later runs pick up where the cap stopped. Preview runs ignore the cap, so a preview always reports the whole library.",
+          "minimum": 0,
+          "title": "Max Torrents To Add",
+          "type": "integer"
         },
         "detect_arr_activity": {
           "default": true,

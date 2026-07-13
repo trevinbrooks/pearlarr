@@ -99,6 +99,12 @@ class GrabPipeline:
         """A run is a no-op preview (nothing can be grabbed): explicit dry run, or qBittorrent not configured."""
         return is_preview(self._ctx, self.qbit)
 
+    @property
+    def _effective_cap(self) -> int | None:
+        """The run-wide add cap, or None when uncapped: `0` disables it, and a preview is exempt so its report covers the whole library."""
+        cap = self._config.advanced.max_torrents_to_add
+        return None if cap == 0 or self._is_preview() else cap
+
     def add_torrent(
         self,
         torrent_dict: SeadexDict,
@@ -124,7 +130,7 @@ class GrabPipeline:
 
         n_torrents_added = 0
         results: list[ReleaseOutcome] = []
-        cap = self._config.advanced.max_torrents_to_add
+        cap = self._effective_cap
 
         for srg, srg_item in torrent_dict.items():
             for url_item in srg_item.urls.values():
@@ -513,7 +519,7 @@ class GrabPipeline:
                 ),
             )
 
-        cap = self._config.advanced.max_torrents_to_add
+        cap = self._effective_cap
         if cap is not None and self._ctx.torrents_added >= cap:
             self._reporter.log_max_torrents_added(cap)
             # Cap reached: signal the run to stop with a pure bool. run_sync breaks

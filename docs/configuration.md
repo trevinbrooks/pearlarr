@@ -191,7 +191,7 @@ The console format and level apply to terminal output; a plain-text file log is 
 | `sleep_time` | `2` |  | Seconds slept between API queries, as rate limiting. `0` disables the sleep. |
 | `cache_time` | `1` |  | Days downloaded mapping sources are kept before re-downloading. `0` re-downloads every run. |
 | `interactive` | `false` |  | Prompt for a choice when several torrents match, instead of taking the best automatically. |
-| `max_torrents_to_add` | *(blank)* |  | Cap on torrents added per run. Blank means unlimited. |
+| `max_torrents_to_add` | `10` |  | Cap on torrents added per run; `0` removes the cap. Keeps a first run on a large library from flooding qBittorrent; later runs pick up where the cap stopped. Preview runs ignore the cap, so a preview always reports the whole library. |
 | `detect_arr_activity` | `true` |  | Re-check titles whose files Sonarr or Radarr changed since the last run. Polls each arr's history at run start. Turn off if a release you replaced arr-side keeps being re-grabbed. |
 | `log_level` | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` | Minimum level written to the console and the file log, case-insensitive. |
 | `log_format` | `auto` | `auto` / `rich` / `plain` / `json` | Console output format. `auto` resolves to `rich` on a terminal and `plain` when piped or under Docker; `plain` and `json` also disable the live progress views. |
