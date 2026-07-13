@@ -229,7 +229,7 @@ class TestDefaults:
         assert cfg.seadex.ignore_seadex_update_times is False
         assert cfg.seadex.use_torrent_hash_to_filter is False
         assert cfg.advanced.interactive is False
-        assert cfg.advanced.sleep_time == 2
+        assert cfg.advanced.sleep_time == 0
         assert cfg.advanced.cache_time == 1
         assert cfg.advanced.log_level == "INFO"
         assert cfg.advanced.max_torrents_to_add == 10

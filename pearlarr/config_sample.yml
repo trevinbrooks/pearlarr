@@ -191,7 +191,7 @@ schedule:
 # Rate limiting, caching, run caps, and logging.
 advanced:
   # Seconds slept between API queries, as rate limiting. 0 disables the sleep.
-  sleep_time: 2
+  sleep_time: 0
 
   # Days downloaded mapping sources are kept before re-downloading. 0 re-downloads every run.
   cache_time: 1

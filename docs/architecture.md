@@ -113,7 +113,7 @@ Every host Pearlarr talks to, and why:
 | Tracker sites (Nyaa, AnimeTosho, AniDex, RuTracker) | Resolving a release's actual torrent download. |
 | `discord.com` / your webhook host | The notifications you configure. |
 
-API citizenship: `advanced.sleep_time` paces successive API queries (default two seconds); mapping sources are cached for `advanced.cache_time` days; SeaDex entries are re-checked only when SeaDex updated them.
+API citizenship: `advanced.sleep_time` paces successive API queries (off by default; set a positive value to throttle); mapping sources are cached for `advanced.cache_time` days; SeaDex entries are re-checked only when SeaDex updated them.
 Scheduling below one hour buys nothing - SeaDex and the mapping sources change slowly.
 
 No telemetry: Pearlarr is outbound-only, listens on no ports, and sends nothing anywhere except the services above.

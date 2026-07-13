@@ -549,7 +549,7 @@ class AdvancedSettings(_ConfigBase):
 
     # ge=0: 0 disables the rate-limit sleep (load-bearing for the concurrent
     # episode fetch); a negative value would crash time.sleep mid-run.
-    sleep_time: int = Field(default=2, ge=0)
+    sleep_time: int = Field(default=0, ge=0)
     """Seconds slept between API queries, as rate limiting. `0` disables the sleep."""
 
     # ge=0: 0 = always re-download the mapping sources (a valid dev choice).
