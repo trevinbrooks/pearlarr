@@ -95,8 +95,16 @@ test = [
     "pytest-randomly>=4.1.0",
     "respx>=0.23.1",
 ]
+# Maintainer asset tooling (scripts/sample_grab_post.py renders the README
+# screenshot headlessly); the browser itself is a one-time
+# `uv run playwright install chromium`. In dev so the type gates over scripts/
+# resolve the import.
+assets = [
+    "playwright>=1.61.0",
+]
 dev = [
     "pre-commit",
+    {include-group = "assets"},
     {include-group = "static-analysis"},
     {include-group = "test"},
 ]

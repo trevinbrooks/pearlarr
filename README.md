@@ -10,7 +10,7 @@ Pearlarr automatically grabs the releases [SeaDex](https://releases.moe) recomme
 SeaDex is an index of the highest quality releases for a given anime.
 On a schedule, Pearlarr maps your library to SeaDex's entries, compares each recommendation against what you already have, grabs anything missing or outdated through qBittorrent, and can shepherd the download into Sonarr and notify you on Discord:
 
-<img src="https://raw.githubusercontent.com/trevinbrooks/pearlarr/main/docs/assets/example_post.png" width="430" alt="A Pearlarr grab notification in Discord: the release, its tracker, size, and audio, the episodes covered, the group being replaced, and SeaDex's notes">
+<img src="https://raw.githubusercontent.com/trevinbrooks/pearlarr/main/docs/assets/example_post.png" width="520" alt="A Pearlarr grab notification in Discord: the release, its tracker, size, and audio, the episodes covered, the group being replaced, and SeaDex's notes">
 
 ## How it works
 
