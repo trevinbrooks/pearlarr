@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pearlarr"
-version = "1.0.0"
+version = "1.0.1"
 description = "Automatically grab the releases SeaDex recommends for the anime in your Sonarr and Radarr libraries"
 readme = "README.md"
 requires-python = ">=3.13"
