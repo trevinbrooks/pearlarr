@@ -2,9 +2,9 @@ name: Build
 
 on:
   push:
-    branches:
-      # '**' matches slash-named branches (feature/foo); a bare '*' does not.
-      - '**'
+    branches-ignore:
+      # Dependabot branches already build through their PR; a push run doubles it.
+      - 'dependabot/**'
   pull_request:
     branches:
       - main
