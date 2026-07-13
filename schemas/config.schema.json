@@ -9,7 +9,7 @@
       "description": "Rate limiting, caching, run caps, and logging.",
       "properties": {
         "sleep_time": {
-          "default": 2,
+          "default": 0,
           "description": "Seconds slept between API queries, as rate limiting. `0` disables the sleep.",
           "minimum": 0,
           "title": "Sleep Time",

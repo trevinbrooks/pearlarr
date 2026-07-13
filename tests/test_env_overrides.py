@@ -127,7 +127,7 @@ class TestOverlayThroughLoad:
         # blank-handling coalesces it to the built-in default.
         path = self._write(tmp_path, "advanced:\n  sleep_time: 9\n")
         monkeypatch.setenv("PEARLARR_ADVANCED__SLEEP_TIME", "")
-        assert AppConfig.load(path).advanced.sleep_time == 2
+        assert AppConfig.load(path).advanced.sleep_time == 0
 
     def test_unknown_path_fails_validation_naming_the_key(
         self,
