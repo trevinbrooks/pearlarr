@@ -1,0 +1,3202 @@
+[
+ {
+  "seriesId": 303,
+  "tvdbId": 3030001,
+  "episodeFileId": 30300001,
+  "seasonNumber": 1,
+  "episodeNumber": 1,
+  "title": "Episode 1",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303001,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 01 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 01 [720p].mkv",
+   "size": 350000001,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300001
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030002,
+  "episodeFileId": 30300002,
+  "seasonNumber": 1,
+  "episodeNumber": 2,
+  "title": "Episode 2",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303002,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 02 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 02 [720p].mkv",
+   "size": 350000002,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300002
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030003,
+  "episodeFileId": 30300003,
+  "seasonNumber": 1,
+  "episodeNumber": 3,
+  "title": "Episode 3",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303003,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 03 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 03 [720p].mkv",
+   "size": 350000003,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300003
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030004,
+  "episodeFileId": 30300004,
+  "seasonNumber": 1,
+  "episodeNumber": 4,
+  "title": "Episode 4",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303004,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 04 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 04 [720p].mkv",
+   "size": 350000004,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300004
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030005,
+  "episodeFileId": 30300005,
+  "seasonNumber": 1,
+  "episodeNumber": 5,
+  "title": "Episode 5",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303005,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 05 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 05 [720p].mkv",
+   "size": 350000005,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300005
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030006,
+  "episodeFileId": 30300006,
+  "seasonNumber": 1,
+  "episodeNumber": 6,
+  "title": "Episode 6",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303006,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 06 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 06 [720p].mkv",
+   "size": 350000006,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300006
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030007,
+  "episodeFileId": 30300007,
+  "seasonNumber": 1,
+  "episodeNumber": 7,
+  "title": "Episode 7",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303007,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 07 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 07 [720p].mkv",
+   "size": 350000007,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300007
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030008,
+  "episodeFileId": 30300008,
+  "seasonNumber": 1,
+  "episodeNumber": 8,
+  "title": "Episode 8",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303008,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 08 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 08 [720p].mkv",
+   "size": 350000008,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300008
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030009,
+  "episodeFileId": 30300009,
+  "seasonNumber": 1,
+  "episodeNumber": 9,
+  "title": "Episode 9",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303009,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 09 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 09 [720p].mkv",
+   "size": 350000009,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300009
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030010,
+  "episodeFileId": 30300010,
+  "seasonNumber": 1,
+  "episodeNumber": 10,
+  "title": "Episode 10",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303010,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 10 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 10 [720p].mkv",
+   "size": 350000010,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300010
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030011,
+  "episodeFileId": 30300011,
+  "seasonNumber": 1,
+  "episodeNumber": 11,
+  "title": "Episode 11",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303011,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 11 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 11 [720p].mkv",
+   "size": 350000011,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300011
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030012,
+  "episodeFileId": 30300012,
+  "seasonNumber": 1,
+  "episodeNumber": 12,
+  "title": "Episode 12",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303012,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 12 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 12 [720p].mkv",
+   "size": 350000012,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300012
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030013,
+  "episodeFileId": 30300013,
+  "seasonNumber": 1,
+  "episodeNumber": 13,
+  "title": "Episode 13",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303013,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 13 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 13 [720p].mkv",
+   "size": 350000013,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300013
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030014,
+  "episodeFileId": 30300014,
+  "seasonNumber": 1,
+  "episodeNumber": 14,
+  "title": "Episode 14",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303014,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 14 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 14 [720p].mkv",
+   "size": 350000014,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300014
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030015,
+  "episodeFileId": 30300015,
+  "seasonNumber": 1,
+  "episodeNumber": 15,
+  "title": "Episode 15",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303015,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 15 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 15 [720p].mkv",
+   "size": 350000015,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300015
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030016,
+  "episodeFileId": 30300016,
+  "seasonNumber": 1,
+  "episodeNumber": 16,
+  "title": "Episode 16",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303016,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 16 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 16 [720p].mkv",
+   "size": 350000016,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300016
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030017,
+  "episodeFileId": 30300017,
+  "seasonNumber": 1,
+  "episodeNumber": 17,
+  "title": "Episode 17",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303017,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 17 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 17 [720p].mkv",
+   "size": 350000017,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300017
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030018,
+  "episodeFileId": 30300018,
+  "seasonNumber": 1,
+  "episodeNumber": 18,
+  "title": "Episode 18",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303018,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 18 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 18 [720p].mkv",
+   "size": 350000018,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300018
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030019,
+  "episodeFileId": 30300019,
+  "seasonNumber": 1,
+  "episodeNumber": 19,
+  "title": "Episode 19",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303019,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 19 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 19 [720p].mkv",
+   "size": 350000019,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300019
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030020,
+  "episodeFileId": 30300020,
+  "seasonNumber": 1,
+  "episodeNumber": 20,
+  "title": "Episode 20",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303020,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 20 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 20 [720p].mkv",
+   "size": 350000020,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300020
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030021,
+  "episodeFileId": 30300021,
+  "seasonNumber": 1,
+  "episodeNumber": 21,
+  "title": "Episode 21",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303021,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 21 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 21 [720p].mkv",
+   "size": 350000021,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300021
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030022,
+  "episodeFileId": 30300022,
+  "seasonNumber": 1,
+  "episodeNumber": 22,
+  "title": "Episode 22",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303022,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 22 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 22 [720p].mkv",
+   "size": 350000022,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300022
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030023,
+  "episodeFileId": 30300023,
+  "seasonNumber": 1,
+  "episodeNumber": 23,
+  "title": "Episode 23",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303023,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 23 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 23 [720p].mkv",
+   "size": 350000023,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300023
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030024,
+  "episodeFileId": 30300024,
+  "seasonNumber": 1,
+  "episodeNumber": 24,
+  "title": "Episode 24",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303024,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 24 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 24 [720p].mkv",
+   "size": 350000024,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300024
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030025,
+  "episodeFileId": 30300025,
+  "seasonNumber": 1,
+  "episodeNumber": 25,
+  "title": "Episode 25",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303025,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 25 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 25 [720p].mkv",
+   "size": 350000025,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300025
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030026,
+  "episodeFileId": 30300026,
+  "seasonNumber": 1,
+  "episodeNumber": 26,
+  "title": "Episode 26",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303026,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 26 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 26 [720p].mkv",
+   "size": 350000026,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300026
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030027,
+  "episodeFileId": 30300027,
+  "seasonNumber": 1,
+  "episodeNumber": 27,
+  "title": "Episode 27",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303027,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 27 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 27 [720p].mkv",
+   "size": 350000027,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300027
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030028,
+  "episodeFileId": 30300028,
+  "seasonNumber": 1,
+  "episodeNumber": 28,
+  "title": "Episode 28",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303028,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 28 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 28 [720p].mkv",
+   "size": 350000028,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300028
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030029,
+  "episodeFileId": 30300029,
+  "seasonNumber": 1,
+  "episodeNumber": 29,
+  "title": "Episode 29",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303029,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 29 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 29 [720p].mkv",
+   "size": 350000029,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300029
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030030,
+  "episodeFileId": 30300030,
+  "seasonNumber": 1,
+  "episodeNumber": 30,
+  "title": "Episode 30",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303030,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 30 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 30 [720p].mkv",
+   "size": 350000030,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300030
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030031,
+  "episodeFileId": 30300031,
+  "seasonNumber": 1,
+  "episodeNumber": 31,
+  "title": "Episode 31",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303031,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 31 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 31 [720p].mkv",
+   "size": 350000031,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300031
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030032,
+  "episodeFileId": 30300032,
+  "seasonNumber": 1,
+  "episodeNumber": 32,
+  "title": "Episode 32",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303032,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 32 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 32 [720p].mkv",
+   "size": 350000032,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300032
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030033,
+  "episodeFileId": 30300033,
+  "seasonNumber": 1,
+  "episodeNumber": 33,
+  "title": "Episode 33",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303033,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 33 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 33 [720p].mkv",
+   "size": 350000033,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300033
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030034,
+  "episodeFileId": 30300034,
+  "seasonNumber": 1,
+  "episodeNumber": 34,
+  "title": "Episode 34",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303034,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 34 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 34 [720p].mkv",
+   "size": 350000034,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300034
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030035,
+  "episodeFileId": 30300035,
+  "seasonNumber": 1,
+  "episodeNumber": 35,
+  "title": "Episode 35",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303035,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 35 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 35 [720p].mkv",
+   "size": 350000035,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300035
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030036,
+  "episodeFileId": 30300036,
+  "seasonNumber": 1,
+  "episodeNumber": 36,
+  "title": "Episode 36",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303036,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 36 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 36 [720p].mkv",
+   "size": 350000036,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300036
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030037,
+  "episodeFileId": 30300037,
+  "seasonNumber": 1,
+  "episodeNumber": 37,
+  "title": "Episode 37",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303037,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 37 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 37 [720p].mkv",
+   "size": 350000037,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300037
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030038,
+  "episodeFileId": 30300038,
+  "seasonNumber": 1,
+  "episodeNumber": 38,
+  "title": "Episode 38",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303038,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 38 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 38 [720p].mkv",
+   "size": 350000038,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300038
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030039,
+  "episodeFileId": 30300039,
+  "seasonNumber": 1,
+  "episodeNumber": 39,
+  "title": "Episode 39",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303039,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 39 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 39 [720p].mkv",
+   "size": 350000039,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300039
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030040,
+  "episodeFileId": 30300040,
+  "seasonNumber": 1,
+  "episodeNumber": 40,
+  "title": "Episode 40",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303040,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 40 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 40 [720p].mkv",
+   "size": 350000040,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300040
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030041,
+  "episodeFileId": 30300041,
+  "seasonNumber": 1,
+  "episodeNumber": 41,
+  "title": "Episode 41",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303041,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 41 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 41 [720p].mkv",
+   "size": 350000041,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300041
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030042,
+  "episodeFileId": 30300042,
+  "seasonNumber": 1,
+  "episodeNumber": 42,
+  "title": "Episode 42",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303042,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 42 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 42 [720p].mkv",
+   "size": 350000042,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300042
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030043,
+  "episodeFileId": 30300043,
+  "seasonNumber": 1,
+  "episodeNumber": 43,
+  "title": "Episode 43",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303043,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 43 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 43 [720p].mkv",
+   "size": 350000043,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300043
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030044,
+  "episodeFileId": 30300044,
+  "seasonNumber": 1,
+  "episodeNumber": 44,
+  "title": "Episode 44",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303044,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 44 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 44 [720p].mkv",
+   "size": 350000044,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300044
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030045,
+  "episodeFileId": 30300045,
+  "seasonNumber": 1,
+  "episodeNumber": 45,
+  "title": "Episode 45",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303045,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 45 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 45 [720p].mkv",
+   "size": 350000045,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300045
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030046,
+  "episodeFileId": 30300046,
+  "seasonNumber": 1,
+  "episodeNumber": 46,
+  "title": "Episode 46",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303046,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 46 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 46 [720p].mkv",
+   "size": 350000046,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300046
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030047,
+  "episodeFileId": 30300047,
+  "seasonNumber": 1,
+  "episodeNumber": 47,
+  "title": "Episode 47",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303047,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 47 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 47 [720p].mkv",
+   "size": 350000047,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300047
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030048,
+  "episodeFileId": 30300048,
+  "seasonNumber": 1,
+  "episodeNumber": 48,
+  "title": "Episode 48",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303048,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 48 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 48 [720p].mkv",
+   "size": 350000048,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300048
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030049,
+  "episodeFileId": 30300049,
+  "seasonNumber": 1,
+  "episodeNumber": 49,
+  "title": "Episode 49",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303049,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 49 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 49 [720p].mkv",
+   "size": 350000049,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300049
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030050,
+  "episodeFileId": 30300050,
+  "seasonNumber": 1,
+  "episodeNumber": 50,
+  "title": "Episode 50",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303050,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 50 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 50 [720p].mkv",
+   "size": 350000050,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300050
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030051,
+  "episodeFileId": 30300051,
+  "seasonNumber": 1,
+  "episodeNumber": 51,
+  "title": "Episode 51",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303051,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 51 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 51 [720p].mkv",
+   "size": 350000051,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300051
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030052,
+  "episodeFileId": 30300052,
+  "seasonNumber": 1,
+  "episodeNumber": 52,
+  "title": "Episode 52",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303052,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 52 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 52 [720p].mkv",
+   "size": 350000052,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300052
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030053,
+  "episodeFileId": 30300053,
+  "seasonNumber": 1,
+  "episodeNumber": 53,
+  "title": "Episode 53",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303053,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 53 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 53 [720p].mkv",
+   "size": 350000053,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300053
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030054,
+  "episodeFileId": 30300054,
+  "seasonNumber": 1,
+  "episodeNumber": 54,
+  "title": "Episode 54",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303054,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 54 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 54 [720p].mkv",
+   "size": 350000054,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300054
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030055,
+  "episodeFileId": 30300055,
+  "seasonNumber": 1,
+  "episodeNumber": 55,
+  "title": "Episode 55",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303055,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 55 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 55 [720p].mkv",
+   "size": 350000055,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300055
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030056,
+  "episodeFileId": 30300056,
+  "seasonNumber": 1,
+  "episodeNumber": 56,
+  "title": "Episode 56",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303056,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 56 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 56 [720p].mkv",
+   "size": 350000056,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300056
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030057,
+  "episodeFileId": 30300057,
+  "seasonNumber": 1,
+  "episodeNumber": 57,
+  "title": "Episode 57",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303057,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 57 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 57 [720p].mkv",
+   "size": 350000057,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300057
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030058,
+  "episodeFileId": 30300058,
+  "seasonNumber": 1,
+  "episodeNumber": 58,
+  "title": "Episode 58",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303058,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 58 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 58 [720p].mkv",
+   "size": 350000058,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300058
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030059,
+  "episodeFileId": 30300059,
+  "seasonNumber": 1,
+  "episodeNumber": 59,
+  "title": "Episode 59",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303059,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 59 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 59 [720p].mkv",
+   "size": 350000059,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300059
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030060,
+  "episodeFileId": 30300060,
+  "seasonNumber": 1,
+  "episodeNumber": 60,
+  "title": "Episode 60",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303060,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 60 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 60 [720p].mkv",
+   "size": 350000060,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300060
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030061,
+  "episodeFileId": 30300061,
+  "seasonNumber": 1,
+  "episodeNumber": 61,
+  "title": "Episode 61",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303061,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 61 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 61 [720p].mkv",
+   "size": 350000061,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300061
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030062,
+  "episodeFileId": 30300062,
+  "seasonNumber": 1,
+  "episodeNumber": 62,
+  "title": "Episode 62",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303062,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 62 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 62 [720p].mkv",
+   "size": 350000062,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300062
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030063,
+  "episodeFileId": 30300063,
+  "seasonNumber": 1,
+  "episodeNumber": 63,
+  "title": "Episode 63",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303063,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 63 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 63 [720p].mkv",
+   "size": 350000063,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300063
+  }
+ },
+ {
+  "seriesId": 303,
+  "tvdbId": 3030064,
+  "episodeFileId": 30300064,
+  "seasonNumber": 1,
+  "episodeNumber": 64,
+  "title": "Episode 64",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 303064,
+  "episodeFile": {
+   "seriesId": 303,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 64 [720p].mkv",
+   "path": "/tv/Fullmetal Alchemist - Brotherhood/Season 01/[Erai-raws] Fullmetal Alchemist Brotherhood - 64 [720p].mkv",
+   "size": 350000064,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "Erai-raws",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 5,
+     "name": "WEBDL-720p",
+     "source": "web",
+     "resolution": 720
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30300064
+  }
+ }
+]

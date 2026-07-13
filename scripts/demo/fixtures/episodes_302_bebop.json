@@ -1,0 +1,1302 @@
+[
+ {
+  "seriesId": 302,
+  "tvdbId": 3020001,
+  "episodeFileId": 30200001,
+  "seasonNumber": 1,
+  "episodeNumber": 1,
+  "title": "Episode 1",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302001,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 01 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 01 [v3].mkv",
+   "size": 8456109152,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200001
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020002,
+  "episodeFileId": 30200002,
+  "seasonNumber": 1,
+  "episodeNumber": 2,
+  "title": "Episode 2",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302002,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 02 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 02 [v3].mkv",
+   "size": 7463624269,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200002
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020003,
+  "episodeFileId": 30200003,
+  "seasonNumber": 1,
+  "episodeNumber": 3,
+  "title": "Episode 3",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302003,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 03 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 03 [v3].mkv",
+   "size": 6463952852,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200003
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020004,
+  "episodeFileId": 30200004,
+  "seasonNumber": 1,
+  "episodeNumber": 4,
+  "title": "Episode 4",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302004,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 04 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 04 [v3].mkv",
+   "size": 6950692365,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200004
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020005,
+  "episodeFileId": 30200005,
+  "seasonNumber": 1,
+  "episodeNumber": 5,
+  "title": "Episode 5",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302005,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 05 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 05 [v3].mkv",
+   "size": 7462445572,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200005
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020006,
+  "episodeFileId": 30200006,
+  "seasonNumber": 1,
+  "episodeNumber": 6,
+  "title": "Episode 6",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302006,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 06 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 06 [v3].mkv",
+   "size": 7387554187,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200006
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020007,
+  "episodeFileId": 30200007,
+  "seasonNumber": 1,
+  "episodeNumber": 7,
+  "title": "Episode 7",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302007,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 07 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 07 [v3].mkv",
+   "size": 7465207072,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200007
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020008,
+  "episodeFileId": 30200008,
+  "seasonNumber": 1,
+  "episodeNumber": 8,
+  "title": "Episode 8",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302008,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 08 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 08 [v3].mkv",
+   "size": 7396399066,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200008
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020009,
+  "episodeFileId": 30200009,
+  "seasonNumber": 1,
+  "episodeNumber": 9,
+  "title": "Episode 9",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302009,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 09 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 09 [v3].mkv",
+   "size": 7636918424,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200009
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020010,
+  "episodeFileId": 30200010,
+  "seasonNumber": 1,
+  "episodeNumber": 10,
+  "title": "Episode 10",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302010,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 10 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 10 [v3].mkv",
+   "size": 8068169213,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200010
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020011,
+  "episodeFileId": 30200011,
+  "seasonNumber": 1,
+  "episodeNumber": 11,
+  "title": "Episode 11",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302011,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 11 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 11 [v3].mkv",
+   "size": 7146152290,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200011
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020012,
+  "episodeFileId": 30200012,
+  "seasonNumber": 1,
+  "episodeNumber": 12,
+  "title": "Episode 12",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302012,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 12 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 12 [v3].mkv",
+   "size": 7080749102,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200012
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020013,
+  "episodeFileId": 30200013,
+  "seasonNumber": 1,
+  "episodeNumber": 13,
+  "title": "Episode 13",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302013,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 13 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 13 [v3].mkv",
+   "size": 8835273490,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200013
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020014,
+  "episodeFileId": 30200014,
+  "seasonNumber": 1,
+  "episodeNumber": 14,
+  "title": "Episode 14",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302014,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 14 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 14 [v3].mkv",
+   "size": 7101824874,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200014
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020015,
+  "episodeFileId": 30200015,
+  "seasonNumber": 1,
+  "episodeNumber": 15,
+  "title": "Episode 15",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302015,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 15 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 15 [v3].mkv",
+   "size": 7532059994,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200015
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020016,
+  "episodeFileId": 30200016,
+  "seasonNumber": 1,
+  "episodeNumber": 16,
+  "title": "Episode 16",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302016,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 16 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 16 [v3].mkv",
+   "size": 6533272241,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200016
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020017,
+  "episodeFileId": 30200017,
+  "seasonNumber": 1,
+  "episodeNumber": 17,
+  "title": "Episode 17",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302017,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 17 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 17 [v3].mkv",
+   "size": 7529846417,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200017
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020018,
+  "episodeFileId": 30200018,
+  "seasonNumber": 1,
+  "episodeNumber": 18,
+  "title": "Episode 18",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302018,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 18 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 18 [v3].mkv",
+   "size": 7467827389,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200018
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020019,
+  "episodeFileId": 30200019,
+  "seasonNumber": 1,
+  "episodeNumber": 19,
+  "title": "Episode 19",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302019,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 19 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 19 [v3].mkv",
+   "size": 7705242945,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200019
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020020,
+  "episodeFileId": 30200020,
+  "seasonNumber": 1,
+  "episodeNumber": 20,
+  "title": "Episode 20",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302020,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 20 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 20 [v3].mkv",
+   "size": 4742624762,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200020
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020021,
+  "episodeFileId": 30200021,
+  "seasonNumber": 1,
+  "episodeNumber": 21,
+  "title": "Episode 21",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302021,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 21 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 21 [v3].mkv",
+   "size": 8221709036,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200021
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020022,
+  "episodeFileId": 30200022,
+  "seasonNumber": 1,
+  "episodeNumber": 22,
+  "title": "Episode 22",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302022,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 22 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 22 [v3].mkv",
+   "size": 9048000193,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200022
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020023,
+  "episodeFileId": 30200023,
+  "seasonNumber": 1,
+  "episodeNumber": 23,
+  "title": "Episode 23",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302023,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 23 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 23 [v3].mkv",
+   "size": 5489122055,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200023
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020024,
+  "episodeFileId": 30200024,
+  "seasonNumber": 1,
+  "episodeNumber": 24,
+  "title": "Episode 24",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302024,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 24 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 24 [v3].mkv",
+   "size": 8590334537,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200024
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020025,
+  "episodeFileId": 30200025,
+  "seasonNumber": 1,
+  "episodeNumber": 25,
+  "title": "Episode 25",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302025,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 25 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 25 [v3].mkv",
+   "size": 7341812927,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200025
+  }
+ },
+ {
+  "seriesId": 302,
+  "tvdbId": 3020026,
+  "episodeFileId": 30200026,
+  "seasonNumber": 1,
+  "episodeNumber": 26,
+  "title": "Episode 26",
+  "airDate": "2020-01-01",
+  "airDateUtc": "2020-01-01T15:00:00Z",
+  "runtime": 24,
+  "overview": "",
+  "hasFile": true,
+  "monitored": true,
+  "unverifiedSceneNumbering": false,
+  "id": 302026,
+  "episodeFile": {
+   "seriesId": 302,
+   "seasonNumber": 1,
+   "relativePath": "Season 01/[JySzE] Cowboy Bebop - 26 [v3].mkv",
+   "path": "/tv/Cowboy Bebop/Season 01/[JySzE] Cowboy Bebop - 26 [v3].mkv",
+   "size": 8111259168,
+   "dateAdded": "2024-01-01T00:00:00Z",
+   "releaseGroup": "JySzE",
+   "languages": [
+    {
+     "id": 8,
+     "name": "Japanese"
+    },
+    {
+     "id": 1,
+     "name": "English"
+    }
+   ],
+   "quality": {
+    "quality": {
+     "id": 7,
+     "name": "Bluray-1080p",
+     "source": "bluray",
+     "resolution": 1080
+    },
+    "revision": {
+     "version": 1,
+     "real": 0,
+     "isRepack": false
+    }
+   },
+   "customFormats": [],
+   "id": 30200026
+  }
+ }
+]

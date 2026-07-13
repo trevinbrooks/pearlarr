@@ -1,0 +1,31 @@
+config_version: 1
+
+sonarr:
+  url: http://127.0.0.1:8989
+  api_key: demo1234567890abcdef1234567890ab
+  torrent_category: anime
+
+qbittorrent:
+  host: http://127.0.0.1:8080
+  username: demo
+  password: demo-password
+
+imports:
+  wait_mode: hybrid
+  poll_interval: 5
+  progress_poll_interval: 1
+  ready_timeout: 120
+
+mappings:
+  anime_mappings:
+    Frieren - Beyond Journey's End:
+      anilist_id: 154587
+      tvdb_id: 424536
+    Cowboy Bebop:
+      anilist_id: 1
+      tvdb_id: 76885
+    Fullmetal Alchemist - Brotherhood:
+      anilist_id: 5114
+      tvdb_id: 116391
+  anidb_mappings: false
+  anibridge_mappings: false
