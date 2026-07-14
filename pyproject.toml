@@ -113,13 +113,17 @@ dev = [
     {include-group = "test"},
 ]
 
-# The PyPI readme is the README with its media URLs rewritten from the assets
-# repository's main branch (always the newest release's media) to its
-# immutable `vX.Y.Z` tag, so every PyPI version's page keeps its own
-# release's media forever. The GitHub-rendered README is untouched - only
-# distribution metadata changes. Preview: `uvx hatch-fancy-pypi-readme
-# pyproject.toml` (interpolates a dummy version); release.yaml's build job
-# asserts the real pin landed.
+# The PyPI readme is the README with two rewrites baked into the distribution
+# metadata only (the GitHub-rendered README is untouched):
+#   1. Media URLs move from the assets repository's main branch (always the
+#      newest release's media) to its immutable `vX.Y.Z` tag, so every PyPI
+#      version's page keeps its own release's media forever.
+#   2. Repo-relative links (docs/*.md, LICENSE, CHANGELOG.md, ...) become
+#      absolute github.com/blob URLs pinned to the same tag. GitHub resolves
+#      them relative to the repo root; PyPI has no such root, so unrewritten
+#      they are dead links on the project page.
+# Preview: `uvx hatch-fancy-pypi-readme pyproject.toml` (interpolates a dummy
+# version); release.yaml's build job asserts both pins landed.
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
 content-type = "text/markdown"
 
@@ -129,6 +133,13 @@ path = "README.md"
 [[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
 pattern = 'raw\.githubusercontent\.com/trevinbrooks/pearlarr-assets/main/'
 replacement = 'raw.githubusercontent.com/trevinbrooks/pearlarr-assets/v$HFPR_VERSION/'
+
+# Rewrite repo-relative markdown link targets - anything not already absolute
+# (http(s)://), an in-page anchor (#...), or a mailto: - to the version tag's
+# blob/ URL. The capture keeps the path and any #anchor intact.
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '\]\((?!https?://|#|mailto:)([^)]+)\)'
+replacement = '](https://github.com/trevinbrooks/pearlarr/blob/v$HFPR_VERSION/\1)'
 
 # hatchling discovers config_sample.yml (and any other package data) under the
 # package automatically, so no package-data wiring is needed.
