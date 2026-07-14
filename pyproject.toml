@@ -1,12 +1,15 @@
 [build-system]
-requires = ["hatchling>=1.27.0"]
+requires = ["hatchling>=1.27.0", "hatch-fancy-pypi-readme>=25.1.0"]
 build-backend = "hatchling.build"
 
 [project]
 name = "pearlarr"
 version = "1.0.3"
 description = "Automatically grab the releases SeaDex recommends for the anime in your Sonarr and Radarr libraries"
-readme = "README.md"
+# The readme is dynamic: the fancy-pypi-readme hook below pins the media URLs
+# per version in the PyPI metadata. A static `readme` key here would make
+# hatchling silently discard the hook's output - never restore it.
+dynamic = ["readme"]
 requires-python = ">=3.13"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
@@ -80,6 +83,7 @@ Changelog = "https://github.com/trevinbrooks/pearlarr/blob/main/CHANGELOG.md"
 [dependency-groups]
 build = [
     "build",
+    "hatch-fancy-pypi-readme>=25.1.0",
     "hatchling>=1.27.0",
 ]
 static-analysis = [
@@ -108,6 +112,22 @@ dev = [
     {include-group = "static-analysis"},
     {include-group = "test"},
 ]
+
+# The PyPI readme is the README with its media URLs rewritten from the
+# floating `assets` branch to the immutable per-release `assets-vX.Y.Z` tag,
+# so every PyPI version's page keeps its own release's media forever. The
+# GitHub-rendered README is untouched - only distribution metadata changes.
+# Preview: `uvx hatch-fancy-pypi-readme pyproject.toml` (interpolates a dummy
+# version); release.yaml's build job asserts the real pin landed.
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = 'raw\.githubusercontent\.com/trevinbrooks/pearlarr/assets/'
+replacement = 'raw.githubusercontent.com/trevinbrooks/pearlarr/assets-v$HFPR_VERSION/'
 
 # hatchling discovers config_sample.yml (and any other package data) under the
 # package automatically, so no package-data wiring is needed.
