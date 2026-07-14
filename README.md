@@ -7,8 +7,9 @@
 
 Pearlarr automatically grabs the releases [SeaDex](https://releases.moe) recommends for the anime in your [Sonarr](https://sonarr.tv) and [Radarr](https://radarr.video) libraries.
 
-SeaDex is an index of the highest quality releases for a given anime.
-On a schedule, Pearlarr maps your library to SeaDex's entries, compares each recommendation against what you already have, grabs anything missing or outdated through qBittorrent, and can shepherd the download into Sonarr and notify you on Discord:
+SeaDex is a community index of the best available release for each anime.
+On a schedule, Pearlarr maps your library to SeaDex's entries and grabs anything missing or outdated through qBittorrent.
+Each download can then flow into Sonarr and arrive as a notification on Discord:
 
 <img src="https://raw.githubusercontent.com/trevinbrooks/pearlarr-assets/main/example_post.png" width="520" alt="A Pearlarr grab notification in Discord: the release, its tracker, size, and audio, the episodes covered, the group being replaced, and SeaDex's notes">
 
@@ -149,7 +150,8 @@ The config is validated on load: an unknown or misspelled key fails with an erro
 
 ## Acknowledgements
 
-Pearlarr is a fork of [SeaDexArr](https://github.com/bbtufty/seadexarr), originally created by [bbtufty](https://github.com/bbtufty).
-Release data comes from the [SeaDex](https://releases.moe) project, which Pearlarr is not affiliated with; ID mappings come from [AniBridge Mappings](https://github.com/anibridge/anibridge-mappings), [Kometa Anime-IDs](https://github.com/Kometa-Team/Anime-IDs), and [Anime-Lists](https://github.com/Anime-Lists/anime-lists).
+Pearlarr began as a fork of [SeaDexArr](https://github.com/bbtufty/seadexarr) by [bbtufty](https://github.com/bbtufty).
+Release data comes from the [SeaDex](https://releases.moe) project, which Pearlarr is not affiliated with.
+ID mappings come from [AniBridge Mappings](https://github.com/anibridge/anibridge-mappings), [Kometa Anime-IDs](https://github.com/Kometa-Team/Anime-IDs), and [Anime-Lists](https://github.com/Anime-Lists/anime-lists).
 
-Pearlarr is licensed under the [GPL-3.0-or-later](LICENSE).
+Pearlarr is licensed under [GPL-3.0-or-later](LICENSE).

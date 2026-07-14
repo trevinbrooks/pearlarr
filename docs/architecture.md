@@ -1,11 +1,12 @@
 # Architecture
 
-How Pearlarr is put together: the run lifecycle, the subsystems, the decisions behind the complex ones, and the invariants the code enforces.
+This page explains how Pearlarr is put together.
+It covers the run lifecycle, the subsystems, the decisions behind the complex ones, and the invariants the code enforces.
 
 ## The run, end to end
 
 A run is one sweep over every configured arr: a single `pearlarr run single`, or one cycle of the scheduled loop.
-`cli.py` is the command surface - it resolves the data directory, installs the output hub, and hands off to `bootstrap.run_arrs`, the composition root, which reads and validates the config once, refreshes the ID-mapping sources, and runs each configured arr in turn through its Sonarr/Radarr strategy (`SonarrSync`/`RadarrSync`).
+`cli.py` is the command surface. It resolves the data directory, installs the output hub, and hands off to `bootstrap.run_arrs`, the composition root, which reads and validates the config once, refreshes the ID-mapping sources, and runs each configured arr in turn through its Sonarr/Radarr strategy (`SonarrSync`/`RadarrSync`).
 
 For one arr:
 
@@ -60,7 +61,7 @@ Notes are appended, not rewritten, so the reasoning trail survives.
 ### Planner: flag mutation over same-files groups
 
 The planner mutates download flags on the SeaDex release dictionary in place, resolving conflicts per *same-files group* (release groups covering identical files).
-Private-only sets are resolved by promotion: when the arr's copy is stale (a size mismatch shows an upgrade is pending), the best public alternative covering the same files is promoted; when the arr genuinely owns the files, nothing is grabbed; when only a fallback could replace an *owned* copy of the preferred private release, the title holds and warns instead - re-downloading owned content is never correct.
+Private-only sets are resolved by promotion: when the arr's copy is stale (a size mismatch shows an upgrade is pending), the best public alternative covering the same files is promoted; when the arr genuinely owns the files, nothing is grabbed; when only a fallback could replace an *owned* copy of the preferred private release, the title holds and warns instead: re-downloading owned content is never correct.
 Dropped groups re-flag any public URL whose episode coverage no survivor carries (group-atomic drops must not lose episodes).
 A full per-URL planner redesign was prototyped and rejected: it re-derives the same same-files groups with more state and no behavioral win.
 
@@ -73,7 +74,7 @@ Rejected alternatives, after a five-proposal design debate: pure logging with fo
 
 ### Cache: SQLite with staged writes and a preview gate
 
-Decisions persist in `cache.db` behind a `CacheStore` with one commit chokepoint: writes stage in a transaction and `save(preview=...)` commits only for real runs - preview mode discards everything.
+Decisions persist in `cache.db` behind a `CacheStore` with one commit chokepoint: writes stage in a transaction and `save(preview=...)` commits only for real runs. Preview mode discards everything.
 A fresh store starts in memory and is promoted to disk via the SQLite backup API plus an atomic rename, so a half-written `cache.db` cannot exist.
 Reads fail open (a corrupt cache re-evaluates titles instead of aborting), and a file lock keeps concurrent runs from interleaving.
 The predecessor `cache.json` was rejected for having no atomicity, no partial-failure story, and no queryable schema.
@@ -82,7 +83,7 @@ The predecessor `cache.json` was rejected for having no atomicity, no partial-fa
 
 The wait pass treats Sonarr's *episode files and queue* as ground truth for what landed, but never trusts Sonarr's candidate parse for what a file *is*: the AniList-derived episode mapping assigns files to episodes (`ordered_episode_ids`), because SeaDex releases routinely carry specials and orderings Sonarr misparses.
 Sonarr is always given the chance to import first; the manual import only steps in for blocked or untracked downloads, and a clean `importPending` row always waits (see the invariants below).
-Rejected: reusing Sonarr's manual-import candidates as the mapping source - the exact misparse the feature exists to correct.
+Rejected: reusing Sonarr's manual-import candidates as the mapping source, the exact misparse the feature exists to correct.
 
 ## Glossary
 
@@ -92,7 +93,7 @@ Rejected: reusing Sonarr's manual-import candidates as the mapping source - the 
 | release / release group | A torrent listed on an entry / the group that made it. |
 | grab | Adding a torrent to qBittorrent. |
 | import | The arr (or Pearlarr's manual import) moving finished files into the library. |
-| run | One sweep over every configured arr - a single `pearlarr run single`, or one scheduled cycle. |
+| run | One sweep over every configured arr: a single `pearlarr run single`, or one scheduled cycle. |
 | cycle | One scheduled-loop iteration (every configured arr, once). |
 | wait pass | The post-grab phase that waits for downloads and drives imports. |
 | preview mode | qBittorrent credentials absent: everything is evaluated and reported, nothing is grabbed or cached. |
@@ -115,13 +116,13 @@ Every host Pearlarr talks to, and why:
 | `discord.com` / your webhook host | The notifications you configure. |
 
 API citizenship: `advanced.sleep_time` paces successive API queries (off by default; set a positive value to throttle); mapping sources are cached for `advanced.cache_time` days; SeaDex entries are re-checked only when SeaDex updated them.
-Scheduling below one hour buys nothing - SeaDex and the mapping sources change slowly.
+Scheduling below one hour buys nothing, since SeaDex and the mapping sources change slowly.
 
 No telemetry: Pearlarr is outbound-only, listens on no ports, and sends nothing anywhere except the services above.
 
 ## Invariants
 
-Load-bearing invariants, indexed from their `# Invariant:` enforcement-site comments in the source - each entry names the module that enforces it.
+Load-bearing invariants, indexed from their `# Invariant:` enforcement-site comments in the source. Each entry names the module that enforces it.
 
 <!-- gen:invariants - GENERATED by scripts/gen_docs.py from the # Invariant: comments in pearlarr/; do not edit between the markers; regenerate: uv run python scripts/gen_docs.py -->
 - `pearlarr/cache.py` - a preview run never commits - every staged write is discarded on close, so preview mode can never mark a title as handled.

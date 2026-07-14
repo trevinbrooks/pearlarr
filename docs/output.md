@@ -1,6 +1,7 @@
 # Output
 
-Everything Pearlarr writes: the console, the always-on log file, the JSON event stream, and the notification webhooks - what each surface is for, and which of them are interfaces you can build on.
+Pearlarr writes to four surfaces: the console, an always-on log file, a JSON event stream, and the notification webhooks.
+This page explains what each is for and which ones are stable interfaces you can build on.
 
 The machine-readable contract is the **JSON event stream** and the **webhook payloads**.
 The rich and plain console output and the text log grammar are for humans: their wording and layout change without notice.
@@ -10,10 +11,10 @@ Do not parse them.
 
 `advanced.log_format` picks the console surface (see [configuration.md](configuration.md#advanced)):
 
-- `auto` (the default) resolves to `rich` on a terminal and to `plain` when stdout is piped or redirected - which is what `docker logs` sees.
+- `auto` (the default) resolves to `rich` on a terminal and to `plain` when stdout is piped or redirected, which is what `docker logs` sees.
 - `rich` is the live cockpit: a boot ledger, per-title scan blocks, and a live wait region, with color and progress bars.
 - `plain` writes one line per event in the same grammar as the log file.
-- `json` writes one JSON object per event to stdout - the [event catalog](#event-catalog) below.
+- `json` writes one JSON object per event to stdout, the [event catalog](#event-catalog) below.
 
 The choice only affects stdout.
 The log file is always written, and always in the text grammar, whatever the console shows.
@@ -39,11 +40,11 @@ Backups older than `advanced.log_retention_days` are deleted once the run's conf
 | `INFO` | The facts and outcomes of the run |
 | `WARNING` | Something degraded but the run continues; the message names the fix |
 | `ERROR` | The run, or one title, failed; the message names the fix |
-| `CRITICAL` | Accepted as a threshold, but Pearlarr itself never logs above ERROR - only a dependency's adopted log records carry it |
+| `CRITICAL` | Accepted as a threshold, but Pearlarr itself never logs above ERROR. Only a dependency's adopted log records carry it |
 
 ## The JSON event stream
 
-With `advanced.log_format: json`, Pearlarr writes one JSON object per line to stdout - a machine-readable twin of the run's output, meant for log shippers and scripts.
+With `advanced.log_format: json`, Pearlarr writes one JSON object per line to stdout, a machine-readable twin of the run's output, meant for log shippers and scripts.
 The log file stays in the text grammar.
 
 Every object carries the envelope keys, in stable order:
@@ -52,10 +53,10 @@ Every object carries the envelope keys, in stable order:
 | --- | --- |
 | `schema_version` | The stream's schema version (see the stability policy below) |
 | `time` | Local time with its UTC offset, ISO 8601, seconds precision |
-| `event` | The event name - the catalog below enumerates them |
+| `event` | The event name. The catalog below enumerates them |
 | `level` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
 | `message` | The human-readable line (informational; not an interface) |
-| `component` | The subsystem it came from (`run`, `scan`, `entry`, `cli`, ...); always present. It seeds the text log's `[bracket]` - an event carrying a `path` breadcrumb prints that as the bracket instead |
+| `component` | The subsystem it came from (`run`, `scan`, `entry`, `cli`, ...); always present. It seeds the text log's `[bracket]`. An event carrying a `path` breadcrumb prints that as the bracket instead |
 
 Per-event fields follow the envelope.
 Three additions appear where they apply: a `diagnostic` carries `origin` (and sometimes `during`, `placed`, and `exc`), events inside a nested scope carry a `path` breadcrumb, and `run_summary` carries the `needs_action_records` and `added_records` arrays.
@@ -63,7 +64,7 @@ Absent facts are omitted, never `null`.
 
 The stream honors `advanced.log_level`, with one carve-out: a `run_summary` carrying needs-action records or errors is admitted at `WARNING`, so a warnings-only stream still ends each run with its scoreboard.
 
-The command events at the end of the catalog - `paths_shown`, `starter_config_written`, `effective_config_shown`, and the `config_*` and `cache_*` events - appear only in a subcommand's own `--json` stream (`pearlarr cache stats --json`, `pearlarr config show --json`, ...), never in a run's stream; `advanced.log_format` does not affect them, only the per-command `--json` flag does.
+The command events at the end of the catalog (`paths_shown`, `starter_config_written`, `effective_config_shown`, and the `config_*` and `cache_*` events) appear only in a subcommand's own `--json` stream (`pearlarr cache stats --json`, `pearlarr config show --json`, ...), never in a run's stream; `advanced.log_format` does not affect them, only the per-command `--json` flag does.
 
 ### Stability policy
 
@@ -737,7 +738,7 @@ Both webhook URLs are secrets under the [redaction guarantee](../SECURITY.md#the
 
 ### Discord grab notifications
 
-With `notifications.discord_url` set, every title that adds at least one torrent posts one message - never in preview or `--dry-run` mode.
+With `notifications.discord_url` set, every title that adds at least one torrent posts one message, never in preview or `--dry-run` mode.
 The payload is Discord's standard webhook format: username `Pearlarr`, one embed carrying the release, its tracker, size, and audio, the episodes covered, the group being replaced, and SeaDex's notes (the README shows one rendered).
 When `notifications.wait_notify` is on, the wait pass posts a completion digest the same way.
 
@@ -745,7 +746,7 @@ Delivery semantics: posts are paced at least one second apart; a `429` is retrie
 
 ### The wait-summary webhook
 
-With `notifications.wait_webhook_url` set, the end of each wait pass POSTs one JSON summary - a generic payload for ntfy, gotify, Home Assistant, and similar receivers.
+With `notifications.wait_webhook_url` set, the end of each wait pass POSTs one JSON summary, a generic payload for ntfy, gotify, Home Assistant, and similar receivers.
 (Setting the URL turns `notifications.wait_notify` on; an explicit `wait_notify: false` wins and silences it.)
 
 ```json
@@ -766,5 +767,5 @@ With `notifications.wait_webhook_url` set, the end of each wait pass POSTs one J
 ```
 
 `rows` has one entry per watched torrent; `outcome` is the terminal outcome's identifier and `word` its short display form.
-Delivery semantics: one POST per wait pass (none when nothing was waited on), a ten-second timeout, no retry, and the response status is not checked - fire and forget.
+Delivery semantics: one POST per wait pass (none when nothing was waited on), a ten-second timeout, no retry, and the response status is not checked: fire and forget.
 The payload follows the same stability policy as the JSON event stream.

@@ -1,11 +1,12 @@
 # Configuration
 
-Every setting Pearlarr reads, group by group: the prose explains how the settings interact; the tables are generated from the config models and are always current.
-
-Pearlarr reads one file, `config.yml`, from its data directory.
+Pearlarr reads its entire configuration from a single file, `config.yml`, in its data directory.
+This page documents every setting it holds, group by group.[^generated]
 `pearlarr paths` prints where that is, `pearlarr config init` writes a starter copy, `pearlarr config validate` checks a filled-in file, and `pearlarr config show` prints the effective configuration with every secret redacted.
 
 The file holds credentials in plain text: it is created owner-only (`0600`), and a warning fires at load when an existing file is readable by group or other.
+
+[^generated]: The setting tables in this reference are generated from Pearlarr's config models, so they always match your installed version.
 
 ## How settings resolve
 
@@ -17,7 +18,7 @@ The file holds credentials in plain text: it is created owner-only (`0600`), and
 
 The file opens with `config_version`, the version of the key/value schema it is written against.
 A file from an older Pearlarr keeps working: every load migrates it in memory, and each run warns once, naming exactly what was folded.
-`pearlarr config migrate` rewrites the file itself when you want the warning gone: the result is the current annotated starter template with your values filled in - the key docs refresh, but comments of your own are not carried over - and the previous file is kept beside it as `config.yml.bak`.
+`pearlarr config migrate` rewrites the file itself when you want the warning gone: the result is the current annotated starter template with your values filled in (the key docs refresh, but comments of your own are not carried over), and the previous file is kept beside it as `config.yml.bak`.
 A file written by a newer Pearlarr (a downgraded install) refuses to load, naming both versions.
 
 ## Environment variables
@@ -37,12 +38,12 @@ A file written by a newer Pearlarr (a downgraded install) refuses to load, namin
 
 Any config key can be set from the environment, which is handy for containers and secret managers that inject values rather than editing a file.
 The variable name is the key's dotted path with `PEARLARR_` in front and each dot written as a double underscore: `PEARLARR_SONARR__URL` sets `sonarr.url`, `PEARLARR_SEADEX__WANT_BEST` sets `seadex.want_best`, and a deeper path keeps nesting (`PEARLARR_QBITTORRENT__OPTIONS__VERIFY_WEBUI_CERTIFICATE`).
-Name segments fold to lowercase, except below a free-form table such as `qbittorrent.options`, where a segment keeps the exact case you write - so that example sets the uppercase `VERIFY_WEBUI_CERTIFICATE` option, just as the file would.
+Name segments fold to lowercase, except below a free-form table such as `qbittorrent.options`, where a segment keeps the exact case you write: that example sets the uppercase `VERIFY_WEBUI_CERTIFICATE` option, just as the file would.
 An environment override beats the file, per key: setting `PEARLARR_SONARR__URL` leaves the file's `sonarr.api_key` untouched.
 
 The value is parsed as YAML, so it means exactly what the same text means in `config.yml`: `PEARLARR_ADVANCED__SLEEP_TIME=0` is the number zero, `PEARLARR_SONARR__VERIFY_SSL=false` is a boolean, and `PEARLARR_SEADEX__IGNORE_TAGS='[Dolby Vision, Deband Required]'` is a list.
 Quote to force a string, exactly as in the file: an API key that reads as a number or a keyword (`123`, `no`) needs quotes, as in `PEARLARR_SONARR__API_KEY='123'`.
-YAML comments apply too: a space followed by `#` starts one, so a password like `hunter2 #1` silently loses its tail unless the value carries its own quotes - `PEARLARR_QBITTORRENT__PASSWORD='"hunter2 #1"'`.
+YAML comments apply too: a space followed by `#` starts one, so a password like `hunter2 #1` silently loses its tail unless the value carries its own quotes: `PEARLARR_QBITTORRENT__PASSWORD='"hunter2 #1"'`.
 A blank value (`PEARLARR_SONARR__URL=`) reads like a blank key in the file and falls back to the built-in default.
 
 A misspelled path fails loudly: `PEARLARR_SONAR__URL` (or any name that resolves to an unknown key) is rejected by the same validation that catches a typo'd file key, naming the offending key rather than being silently ignored.
@@ -110,7 +111,7 @@ Preview mode is the safe way to try a config against live Sonarr/Radarr instance
 ## seadex
 
 How a release is chosen for each title.
-Pearlarr takes the SeaDex entry for a title, prefers releases marked best (`want_best`) and dual-audio (`prefer_dual_audio`), then filters by `ignore_tags` and `trackers`, and finally compares the survivors against what the arr already has - by release group name, or by torrent hash when `use_torrent_hash_to_filter` is on.
+Pearlarr takes the SeaDex entry for a title, prefers releases marked best (`want_best`) and dual-audio (`prefer_dual_audio`), then filters by `ignore_tags` and `trackers`, and finally compares the survivors against what the arr already has: by release group name, or by torrent hash when `use_torrent_hash_to_filter` is on.
 
 Private releases are never grabbed (SeaDex carries no download link for them, and no private-tracker auth is supported).
 `private_releases` decides what happens when a title's preferred release is private-only: `warn` keeps the title uncached so every run re-checks it; `fallback` takes the best public alternative and remembers that the title was satisfied by a fallback.
@@ -132,10 +133,10 @@ Switching from `fallback` back to `warn` re-checks those remembered titles and r
 ## imports
 
 What happens after a torrent is grabbed, on Sonarr runs only (a Radarr run ignores the whole group).
-With a `wait_mode` other than `off`, Pearlarr drives grabbed downloads through to import - `blocking` and `hybrid` wait for qBittorrent to finish at the end of the run, `deferred` never waits and picks up already-finished downloads on a later run.
+With a `wait_mode` other than `off`, Pearlarr drives grabbed downloads through to import: `blocking` and `hybrid` wait for qBittorrent to finish at the end of the run, and `deferred` never waits and picks up already-finished downloads on a later run.
 Sonarr imports the files itself where it can.
 When it cannot (a blocked import, or a download Sonarr is not tracking), Pearlarr steps in with a manual import, pinned to the correct series and episodes by its own mapping.
-A download that outlasts the run - including one a `blocking` wait times out on - is carried as a pending import and picked up by a later run, up to `pending_max_age_days`.
+A download that outlasts the run (including one a `blocking` wait times out on) is carried as a pending import and picked up by a later run, up to `pending_max_age_days`.
 
 <!-- gen:group-imports - GENERATED by scripts/gen_docs.py from pearlarr/config.py; do not edit between the markers; regenerate: uv run python scripts/gen_docs.py -->
 | Key | Default | Values | Description |
