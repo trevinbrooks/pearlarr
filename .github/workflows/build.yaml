@@ -1,15 +1,15 @@
 name: Build
 
+# Branches build through their PR only; a push run on the branch would double it.
 on:
   push:
-    branches-ignore:
-      # Dependabot branches already build through their PR; a push run doubles it.
-      - 'dependabot/**'
+    branches:
+      - main
   pull_request:
     branches:
       - main
 
-# A newer push to the same branch supersedes the in-flight run; main is exempt
+# A newer push to the same PR supersedes the in-flight run; main is exempt
 # so every merge keeps its full record.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -56,14 +56,13 @@ jobs:
       # Branch coverage with the fail_under floor from [tool.coverage.report].
       - name: Pytest (with coverage gate)
         run: uv run pytest tests/ --cov=pearlarr --cov-report=term-missing --cov-report=xml
-      # Changed-line coverage gate: diff against the PR base (base_ref on PRs,
-      # main on branch pushes); skipped on main itself, which has no base to diff.
+      # Changed-line coverage gate: diff against the PR base; skipped on main
+      # pushes, which have no base to diff.
       - name: Diff coverage (changed lines, 90% floor)
-        if: github.ref != 'refs/heads/main'
+        if: github.event_name == 'pull_request'
         run: |
-          base="${{ github.base_ref || 'main' }}"
-          git fetch origin "$base"
-          uv run diff-cover coverage.xml --compare-branch "origin/$base" --fail-under=90
+          git fetch origin "${{ github.base_ref }}"
+          uv run diff-cover coverage.xml --compare-branch "origin/${{ github.base_ref }}" --fail-under=90
 
   # Reduced subset on purpose: the lint/type gates are platform-independent and
   # already run (on both Python versions) in the ubuntu matrix above; this leg
