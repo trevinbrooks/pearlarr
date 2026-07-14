@@ -213,7 +213,8 @@ jobs:
           fi
 
   tag:
-    name: Tag ${{ needs.version.outputs.tag }}
+    # A static name: the needs context doesn't interpolate in job names.
+    name: Tag the release
     needs: [version, wait_checks]
     if: inputs.dry_run != true
     runs-on: ubuntu-latest
