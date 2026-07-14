@@ -54,7 +54,7 @@ cmd_prepare() {
   git fetch --quiet origin main
   [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || die "main is behind origin/main; pull first"
   git rev-parse -q --verify "refs/tags/v$version" >/dev/null 2>&1 && die "tag v$version already exists"
-  changelog_section Unreleased | grep -q '[^[:space:]]' \
+  changelog_section Unreleased | grep '[^[:space:]]' >/dev/null \
     || die "CHANGELOG '## [Unreleased]' is empty; add release notes there first"
 
   date=$(date +%Y-%m-%d)
@@ -73,23 +73,34 @@ cmd_prepare() {
 }
 
 cmd_publish() {
-  local version=$1 tag="v$1" notes
+  local version=$1 tag="v$1" notes draft
   [ "$(git branch --show-current)" = "main" ] || die "switch to main first"
   git fetch --quiet origin main
   [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || die "main is not level with origin/main; pull first"
   [ "$(uv version --short)" = "$version" ] \
     || die "pyproject version is $(uv version --short), not $version; is the release PR merged and pulled?"
-  git rev-parse -q --verify "refs/tags/$tag" >/dev/null 2>&1 && die "tag $tag already exists"
-  changelog_section "$version" | grep -q '[^[:space:]]' || die "CHANGELOG has no '## [$version]' section"
+  changelog_section "$version" | grep '[^[:space:]]' >/dev/null || die "CHANGELOG has no '## [$version]' section"
+  draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null || echo absent)
+  [ "$draft" = "false" ] && die "release $tag is already published"
 
   ensure_assets
   notes=$(mktemp)
   changelog_section "$version" | sed '/./,$!d' > "$notes"   # drop leading blank lines
 
-  git tag -a "$tag" -m "Pearlarr $version"
+  # Tag, then assemble the release as a draft and publish only once the assets are
+  # attached, so `releases/latest` never points at a release without them. Each
+  # step tolerates its own leftovers, so an interrupted publish is safe to rerun.
+  if git rev-parse -q --verify "refs/tags/$tag" >/dev/null 2>&1; then
+    echo "release: tag $tag already exists; resuming"
+  else
+    git tag -a "$tag" -m "Pearlarr $version"
+  fi
   git push origin "refs/tags/$tag"
-  gh release create "$tag" --title "Pearlarr $version" --notes-file "$notes"
+  if [ "$draft" = "absent" ]; then
+    gh release create "$tag" --draft --title "Pearlarr $version" --notes-file "$notes"
+  fi
   gh release upload "$tag" docs/assets/demo_run.gif docs/assets/example_post.png --clobber
+  gh release edit "$tag" --draft=false
   rm -f "$notes"
   echo "Published $tag: PyPI + GHCR workflows are running; GitHub release created; README assets uploaded."
 }

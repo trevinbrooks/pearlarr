@@ -40,8 +40,10 @@ git switch main && git pull
 scripts/release.sh publish 1.2.3
 ```
 
-That tags `v1.2.3` (which triggers the PyPI and GHCR publish workflows), creates the GitHub
-release from the CHANGELOG section, and uploads the README assets to it.
+That tags `v1.2.3` (which triggers the PyPI and GHCR publish workflows), builds the GitHub
+release from the CHANGELOG section as a draft, attaches the README assets, and publishes it -
+drafted so `releases/latest` never points at a release without its assets. A publish
+interrupted partway is safe to rerun.
 
 ## Assets
 
