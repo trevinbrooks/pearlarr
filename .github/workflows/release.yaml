@@ -147,14 +147,21 @@ jobs:
         uses: astral-sh/setup-uv@v8.3.2
       - name: Build
         run: uv build --no-sources
-      - name: Assert the PyPI readme pins the media to v${{ needs.version.outputs.version }}/
+      - name: Assert the PyPI readme pins media and links to v${{ needs.version.outputs.version }}/
         # Guards the silent hatchling failure mode: with a static `readme`
         # field the hook runs but its output is discarded without a warning.
+        # Both substitutions are asserted - a broken link regex would still
+        # leave the media pin (and vice versa), so one check cannot cover both.
         run: |
-          unzip -p "dist/pearlarr-$VERSION-py3-none-any.whl" "pearlarr-$VERSION.dist-info/METADATA" \
-            | grep -qF "${GITHUB_REPOSITORY}-assets/v$VERSION/" || { echo "wheel METADATA is missing the pinned media URLs" >&2; exit 1; }
-          tar -xzOf "dist/pearlarr-$VERSION.tar.gz" "pearlarr-$VERSION/PKG-INFO" \
-            | grep -qF "${GITHUB_REPOSITORY}-assets/v$VERSION/" || { echo "sdist PKG-INFO is missing the pinned media URLs" >&2; exit 1; }
+          assert_pins() {
+            local label="$1" file="$2"
+            grep -qF "${GITHUB_REPOSITORY}-assets/v$VERSION/" "$file" || { echo "$label is missing the pinned media URLs" >&2; exit 1; }
+            grep -qF "github.com/${GITHUB_REPOSITORY}/blob/v$VERSION/" "$file" || { echo "$label is missing the pinned doc links" >&2; exit 1; }
+          }
+          unzip -p "dist/pearlarr-$VERSION-py3-none-any.whl" "pearlarr-$VERSION.dist-info/METADATA" > /tmp/wheel-metadata
+          tar -xzOf "dist/pearlarr-$VERSION.tar.gz" "pearlarr-$VERSION/PKG-INFO" > /tmp/sdist-pkginfo
+          assert_pins "wheel METADATA" /tmp/wheel-metadata
+          assert_pins "sdist PKG-INFO" /tmp/sdist-pkginfo
       - name: Twine check
         run: uvx twine check dist/*
       - uses: actions/upload-artifact@v7
