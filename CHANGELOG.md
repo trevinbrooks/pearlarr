@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr);
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-07-13
+
 ### Changed
 
 - The README's screenshot and demo GIF are served as GitHub release assets instead of repository files, so the images always show the latest release.
