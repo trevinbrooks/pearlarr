@@ -4,8 +4,8 @@
 #
 #   scripts/release.sh prepare X.Y.Z   # bump + re-lock + regen docs + roll the
 #                                        CHANGELOG, then open the release PR to review
-#   scripts/release.sh publish X.Y.Z   # after the PR merges: tag vX.Y.Z, create the
-#                                        GitHub release, and upload the README assets
+#   scripts/release.sh publish X.Y.Z   # after the PR merges: re-record the README
+#                                        assets, tag vX.Y.Z, create the GitHub release
 #
 # X.Y.Z is the bare version (no leading v). Both publish workflows fire on the tag.
 set -euo pipefail
@@ -34,17 +34,28 @@ roll_changelog() {
   ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
 }
 
-# README assets live only as release assets; stage the previous release's copies
-# if this checkout has none, so `latest/download` never 404s on the next release.
-ensure_assets() {
-  local a
+# Fallback when a re-record can't run: keep/fetch the previous release's copy so
+# `latest/download` never 404s; its baked version lags until a real re-record.
+carry_forward() {
+  echo "release: WARNING - $2; docs/assets/$1 will show the previous release's baked version" >&2
+  [ -f "docs/assets/$1" ] && return 0
+  gh release download --pattern "$1" --dir docs/assets --clobber \
+    || die "no docs/assets/$1 and none on the latest release; record one first (see CONTRIBUTING.md \"Releasing\")"
+}
+
+# The README assets bake the installed version into their pixels (the GIF's boot
+# title, the embed's footer), so publish re-records both at the release version.
+regen_assets() {
   mkdir -p docs/assets   # gitignored + untracked, so absent on a fresh clone
-  for a in demo_run.gif example_post.png; do
-    [ -f "docs/assets/$a" ] && continue
-    echo "release: docs/assets/$a not staged; carrying it forward from the latest release"
-    gh release download --pattern "$a" --dir docs/assets --clobber \
-      || die "no local docs/assets/$a and none on the latest release; record it first (scripts/demo/record.sh; scripts/sample_grab_post.py)"
-  done
+  uv sync --group dev --quiet   # a stale venv would bake the previous version
+  if scripts/demo/record.sh; then
+    cp scripts/demo/demo_run.gif docs/assets/demo_run.gif
+  else
+    carry_forward demo_run.gif "demo re-record failed (vhs + ffmpeg + network?)"
+  fi
+  if ! uv run python scripts/sample_grab_post.py; then
+    carry_forward example_post.png "screenshot capture failed (playwright chromium + network?)"
+  fi
 }
 
 cmd_prepare() {
@@ -83,7 +94,7 @@ cmd_publish() {
   draft=$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null || echo absent)
   [ "$draft" = "false" ] && die "release $tag is already published"
 
-  ensure_assets
+  regen_assets
   notes=$(mktemp)
   changelog_section "$version" | sed '/./,$!d' > "$notes"   # drop leading blank lines
 
