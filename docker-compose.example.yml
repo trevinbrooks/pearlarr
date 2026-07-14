@@ -5,7 +5,7 @@
 services:
 
   pearlarr:
-    image: ghcr.io/trevinbrooks/pearlarr:latest  # or :main for the cutting edge
+    image: ghcr.io/trevinbrooks/pearlarr:latest  # pin :vX.Y.Z for production; :main for the cutting edge
     container_name: pearlarr
     # PUID/PGID are compose interpolation vars (.env file or shell) consumed
     # HERE - not environment: keys. Match them to the ./config owner.

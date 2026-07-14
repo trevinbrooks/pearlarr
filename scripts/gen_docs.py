@@ -233,7 +233,7 @@ def build_leaf(group_key: str, key: str, field: FieldInfo) -> LeafDoc:
         # display-cased tracker tuples are the source (KNOWN_TRACKERS is their
         # casefolded shadow).
         known = KNOWN_TRACKER_DISPLAY
-        table_default = "all supported trackers"
+        table_default = "all but Other/OtherPrivate"
     elif isinstance(default, (list, tuple)):
         listed = [str(item) for item in cast("list[object] | tuple[object, ...]", default)]
         if listed:

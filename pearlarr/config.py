@@ -341,9 +341,10 @@ class SeadexSettings(_ConfigBase):
     trackers: set[str] = Field(default_factory=lambda: PUBLIC_TRACKERS | PRIVATE_TRACKERS)
     """Tracker names considered during release selection, case-insensitive.
 
-    Empty or absent considers every supported tracker. A listed tracker is not
-    necessarily grabbable: private releases are never downloaded, and grabs come
-    only from the public trackers Pearlarr can parse.
+    Empty or absent considers every named tracker except the `Other` and
+    `OtherPrivate` catch-alls. A listed tracker is not necessarily grabbable:
+    private releases are never downloaded, and grabs come only from the public
+    trackers Pearlarr can parse.
     """
 
     ignore_anilist_ids: set[int] = Field(default_factory=set[int])
