@@ -113,12 +113,13 @@ dev = [
     {include-group = "test"},
 ]
 
-# The PyPI readme is the README with its media URLs rewritten from the
-# floating `assets` branch to the immutable per-release `assets-vX.Y.Z` tag,
-# so every PyPI version's page keeps its own release's media forever. The
-# GitHub-rendered README is untouched - only distribution metadata changes.
-# Preview: `uvx hatch-fancy-pypi-readme pyproject.toml` (interpolates a dummy
-# version); release.yaml's build job asserts the real pin landed.
+# The PyPI readme is the README with its media URLs rewritten from the assets
+# repository's main branch (always the newest release's media) to its
+# immutable `vX.Y.Z` tag, so every PyPI version's page keeps its own
+# release's media forever. The GitHub-rendered README is untouched - only
+# distribution metadata changes. Preview: `uvx hatch-fancy-pypi-readme
+# pyproject.toml` (interpolates a dummy version); release.yaml's build job
+# asserts the real pin landed.
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
 content-type = "text/markdown"
 
@@ -126,8 +127,8 @@ content-type = "text/markdown"
 path = "README.md"
 
 [[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
-pattern = 'raw\.githubusercontent\.com/trevinbrooks/pearlarr/assets/'
-replacement = 'raw.githubusercontent.com/trevinbrooks/pearlarr/assets-v$HFPR_VERSION/'
+pattern = 'raw\.githubusercontent\.com/trevinbrooks/pearlarr-assets/main/'
+replacement = 'raw.githubusercontent.com/trevinbrooks/pearlarr-assets/v$HFPR_VERSION/'
 
 # hatchling discovers config_sample.yml (and any other package data) under the
 # package automatically, so no package-data wiring is needed.

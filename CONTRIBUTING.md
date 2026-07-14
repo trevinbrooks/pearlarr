@@ -197,8 +197,8 @@ that section into the new version's notes.
 3. Merging is the release: the **Release** workflow re-records the README
    media at the release version, waits for Build to go green on the merge
    commit, tags `vX.Y.Z`, publishes to PyPI and GHCR, pushes the media to the
-   assets refs, assembles the GitHub release from the CHANGELOG section (last,
-   so `releases/latest` never points at a half-published version), and
+   assets repository, assembles the GitHub release from the CHANGELOG section
+   (last, so `releases/latest` never points at a half-published version), and
    smoke-tests the published package, image, and media URLs.
 4. A partial failure is repaired by re-running the Release workflow from the
    Actions tab: completed steps skip their leftovers (existing tag, uploaded
@@ -207,13 +207,18 @@ that section into the new version's notes.
    packaging changes before a real release.
 
 The README's screenshot and demo GIF are not tracked files: gitignored under
-`docs/assets/` and served via `raw.githubusercontent.com` (GitHub's
-release-asset CDN forces `application/octet-stream`, which PyPI's image proxy
-refuses to render). The floating `assets` branch serves the GitHub README, so
-it always shows the latest release; the immutable `assets-vX.Y.Z` tag serves
-that version's PyPI page forever - `hatch-fancy-pypi-readme` rewrites the
-package readme to it at build time (see `pyproject.toml`), and each GitHub
-release also attaches both files as a browsable per-version copy. Both bake
+`docs/assets/` and served from the separate
+[`pearlarr-assets`](https://github.com/trevinbrooks/pearlarr-assets)
+repository via `raw.githubusercontent.com`, so cloning Pearlarr never
+downloads a media byte (GitHub's release-asset CDN forces
+`application/octet-stream`, which PyPI's image proxy refuses to render). Its
+`main` branch always holds the newest release's media and serves the GitHub
+README; the immutable `vX.Y.Z` tag serves that version's PyPI page forever -
+`hatch-fancy-pypi-readme` rewrites the package readme to it at build time
+(see `pyproject.toml`), and each GitHub release also attaches both files as a
+browsable per-version copy. Rulesets on the assets repository block force
+pushes, tag rewrites, and deletions, so published URLs never break. Both
+files bake
 the installed version into their pixels (the GIF's boot title, the embed's
 footer), which is why every release re-records them in CI; a failed re-record
 fails the release rather than shipping stale pixels. To iterate on the demo or
@@ -226,14 +231,17 @@ uv run python scripts/sample_grab_post.py    # writes docs/assets/example_post.p
 ```
 
 Two pieces of repository configuration back the automation. The `RELEASE_PAT`
-secret (a fine-grained PAT with contents + pull-requests write) lets the
-prepare workflow push a branch whose PR actually gets check runs - a branch
+secret (a fine-grained PAT with contents write on this repository and
+`pearlarr-assets`, plus pull-requests write here) serves two purposes: the
+prepare workflow pushes a branch whose PR actually gets check runs - a branch
 pushed with the default `GITHUB_TOKEN` never triggers them, and the no-bypass
-ruleset would leave the PR unmergeable. And PyPI's Trusted Publishing (OIDC,
-the `pypi` environment) must name `release.yaml` as the publishing workflow.
-Publishing itself stays tokenless toward both registries: PyPI trusts the
-workflow identity, and GHCR is pushed with the workflow's own `GITHUB_TOKEN` -
-no long-lived registry secrets to rotate.
+ruleset would leave the PR unmergeable - and the Release workflow pushes the
+recorded media to `pearlarr-assets`, which the repo-scoped `GITHUB_TOKEN`
+cannot reach. And PyPI's Trusted Publishing (OIDC, the `pypi` environment)
+must name `release.yaml` as the publishing workflow. Publishing itself stays
+tokenless toward both registries: PyPI trusts the workflow identity, and GHCR
+is pushed with the workflow's own `GITHUB_TOKEN` - no long-lived registry
+secrets to rotate.
 
 ## Environment variables
 

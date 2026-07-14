@@ -132,7 +132,7 @@ jobs:
           if-no-files-found: error
 
   # Build sdist + wheel; hatch-fancy-pypi-readme rewrites the README's media
-  # URLs to the version-pinned assets ref in the PyPI metadata only.
+  # URLs to the version-pinned assets directory in the PyPI metadata only.
   build:
     name: Build distributions
     needs: [version]
@@ -147,14 +147,14 @@ jobs:
         uses: astral-sh/setup-uv@v8.3.2
       - name: Build
         run: uv build --no-sources
-      - name: Assert the PyPI readme pins the media to assets-v${{ needs.version.outputs.version }}
+      - name: Assert the PyPI readme pins the media to v${{ needs.version.outputs.version }}/
         # Guards the silent hatchling failure mode: with a static `readme`
         # field the hook runs but its output is discarded without a warning.
         run: |
           unzip -p "dist/pearlarr-$VERSION-py3-none-any.whl" "pearlarr-$VERSION.dist-info/METADATA" \
-            | grep -qF "/assets-v$VERSION/" || { echo "wheel METADATA is missing the pinned media URLs" >&2; exit 1; }
+            | grep -qF "${GITHUB_REPOSITORY}-assets/v$VERSION/" || { echo "wheel METADATA is missing the pinned media URLs" >&2; exit 1; }
           tar -xzOf "dist/pearlarr-$VERSION.tar.gz" "pearlarr-$VERSION/PKG-INFO" \
-            | grep -qF "/assets-v$VERSION/" || { echo "sdist PKG-INFO is missing the pinned media URLs" >&2; exit 1; }
+            | grep -qF "${GITHUB_REPOSITORY}-assets/v$VERSION/" || { echo "sdist PKG-INFO is missing the pinned media URLs" >&2; exit 1; }
       - name: Twine check
         run: uvx twine check dist/*
       - uses: actions/upload-artifact@v7
@@ -163,54 +163,50 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  # The README hot-links media from the orphan `assets` branch (GitHub's
-  # release-asset CDN forces application/octet-stream, which PyPI's image
-  # proxy refuses; raw.githubusercontent.com serves real image types, for
-  # files under its 5 MB cliff). The floating branch serves the GitHub README;
-  # the immutable assets-vX.Y.Z tag serves that version's PyPI page forever.
+  # The README hot-links media from the separate pearlarr-assets repository
+  # (GitHub's release-asset CDN forces application/octet-stream, which PyPI's
+  # image proxy refuses; raw.githubusercontent.com serves real image types,
+  # for files under its 5 MB cliff). A separate repository keeps media bytes
+  # out of pearlarr clones entirely: its main branch serves the GitHub
+  # README, its immutable vX.Y.Z tag serves that version's PyPI page forever.
   assets:
-    name: Push the assets refs
+    name: Push the media to the assets repository
     needs: [version, record]
     if: inputs.dry_run != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: write
     env:
-      TAG: ${{ needs.version.outputs.tag }}
+      VERSION: ${{ needs.version.outputs.version }}
+      ASSETS_REPO: ${{ github.repository }}-assets
     steps:
-      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: readme-media
-          path: docs/assets
-      - name: Build the orphan media commit and push both refs
-        # Plumbing (no checkout switch) and a force-push of the floating
-        # branch, so git keeps one live copy plus one pinned tag per release.
+          path: media
+      - name: Commit the media and pin the version tag
+        # RELEASE_PAT because the repo-scoped GITHUB_TOKEN cannot push to
+        # another repository. A re-run that finds the tag skips everything -
+        # the pinned pixels stay frozen (a ruleset there blocks tag rewrites).
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          blob_gif=$(git hash-object -w docs/assets/demo_run.gif)
-          blob_png=$(git hash-object -w docs/assets/example_post.png)
-          blob_readme=$(git hash-object -w --stdin <<'EOF'
-          # Pearlarr README media
-
-          Binary assets the main README hot-links via `raw.githubusercontent.com`
-          (GitHub's release-asset CDN forces `application/octet-stream`, which PyPI's
-          image proxy refuses to render). Pushed by the Release workflow on every
-          release - the floating `assets` branch serves the GitHub README, the
-          `assets-vX.Y.Z` tags pin each version's PyPI page. Do not edit by hand.
-          EOF
-          )
-          tree=$(printf '100644 blob %s\tREADME.md\n100644 blob %s\tdemo_run.gif\n100644 blob %s\texample_post.png\n' \
-            "$blob_readme" "$blob_gif" "$blob_png" | git mktree)
-          commit=$(git commit-tree "$tree" -m "chore(release): README media for $TAG")
-          git push --force origin "${commit}:refs/heads/assets"
-          if git ls-remote --exit-code --tags origin "assets-$TAG" >/dev/null; then
-            echo "assets-$TAG already exists; leaving it pinned"
-          else
-            git push origin "${commit}:refs/tags/assets-$TAG"
+          [ -n "$GH_TOKEN" ] || { echo "the RELEASE_PAT secret is not set - the media push needs it" >&2; exit 1; }
+          git clone --quiet --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${ASSETS_REPO}.git" assets
+          cd assets
+          if git ls-remote --exit-code --tags origin "v$VERSION" >/dev/null; then
+            echo "v$VERSION already pinned; leaving it frozen"
+            exit 0
           fi
+          cp ../media/demo_run.gif ../media/example_post.png .
+          git add -A
+          if ! git diff --cached --quiet; then
+            git -c user.name="github-actions[bot]" \
+                -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                commit --quiet -m "chore: publish media for v$VERSION"
+            git push --quiet origin HEAD:main
+          fi
+          git tag "v$VERSION"
+          git push --quiet origin "refs/tags/v$VERSION"
 
   tag:
     # A static name: the needs context doesn't interpolate in job names.
@@ -374,10 +370,10 @@ jobs:
           exit 1
       - name: Assert the README media serve image/* (floating and pinned)
         run: |
-          for ref in assets "assets-$TAG"; do
+          for ref in main "v$VERSION"; do
             for f in demo_run.gif example_post.png; do
               ct=$(curl -fsSL -o /dev/null -w '%{content_type}' \
-                "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${ref}/${f}")
+                "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}-assets/${ref}/${f}")
               case "$ct" in
                 image/*) echo "OK  $ref/$f  $ct" ;;
                 *) echo "FAIL $ref/$f served as '$ct' - PyPI's image proxy will refuse it" >&2; exit 1 ;;
