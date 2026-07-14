@@ -1,0 +1,64 @@
+name: Release prepare
+
+# Opens the release PR: version bump + re-lock, regenerated version-pinned
+# schema URLs, and the CHANGELOG roll. Merging that PR is the human release
+# gate; release.yaml then publishes automatically off the merge.
+#
+# Pushes with RELEASE_PAT (a fine-grained PAT: contents + pull-requests write)
+# because a branch pushed with the default GITHUB_TOKEN would never get check
+# runs, and the no-bypass ruleset would leave the PR unmergeable.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, bare semver (e.g. 1.0.4)"
+        required: true
+        type: string
+
+concurrency:
+  group: release-prepare
+  cancel-in-progress: false
+
+jobs:
+  open_release_pr:
+    name: Open the release PR
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0 # guards need the tag list
+          token: ${{ secrets.RELEASE_PAT }}
+      - name: Guards (semver, tag free, CHANGELOG has content)
+        run: |
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must be bare semver X.Y.Z (no leading v)" >&2; exit 1; }
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "tag v$VERSION already exists" >&2; exit 1
+          fi
+          scripts/changelog.sh section Unreleased | grep -q '[^[:space:]]' \
+            || { echo "CHANGELOG '## [Unreleased]' is empty; land release notes first" >&2; exit 1; }
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+      - name: Bump, re-lock, regenerate docs, roll the CHANGELOG
+        run: |
+          uv version "$VERSION"
+          uv run python scripts/gen_docs.py
+          scripts/changelog.sh roll "$VERSION" "$(date +%Y-%m-%d)"
+      - name: Commit and push the release branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "release-$VERSION"
+          git add -A
+          git commit -m "chore(release): $VERSION"
+          git push -u origin "release-$VERSION"
+      - name: Open the PR
+        run: |
+          gh pr create --base main --head "release-$VERSION" \
+            --title "chore(release): $VERSION" \
+            --body "Release $VERSION. Bumps the version, re-locks, regenerates the schema URLs, and rolls the CHANGELOG. Merging this PR publishes the release: release.yaml records the README media, tags v$VERSION, publishes to PyPI and GHCR, and assembles the GitHub release."

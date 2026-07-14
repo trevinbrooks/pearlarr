@@ -77,5 +77,5 @@ if [ "$frames" -gt "$MAX_FRAMES" ]; then
   exit 1
 fi
 echo "== done: $FINAL ($frames frames, $(du -h "$FINAL" | cut -f1 | tr -d ' '))"
-# The GIF is a GitHub release asset (gitignored, never committed); `scripts/release.sh
-# publish` runs this script itself and uploads the result - run by hand only to iterate.
+# The GIF is never committed to main (gitignored); the Release workflow runs this
+# script itself and publishes the result - run by hand only to iterate.

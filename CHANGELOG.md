@@ -7,6 +7,11 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr);
 
 ## [Unreleased]
 
+### Changed
+
+- Releases are now cut end to end by CI: merging the release PR records the README media, tags the version, publishes to PyPI and GHCR, and assembles the GitHub release. `scripts/release.sh` is gone - maintainers run the "Release prepare" workflow instead (see CONTRIBUTING "Releasing").
+- Each PyPI version's page now keeps its own release's media forever: the package readme pins its images to an immutable per-release `assets-vX.Y.Z` tag at build time, instead of the floating `assets` branch.
+
 ## [1.0.3] - 2026-07-13
 
 ### Fixed

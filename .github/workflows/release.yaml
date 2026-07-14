@@ -1,0 +1,385 @@
+name: Release
+
+# The whole publish pipeline, driven by merging the release PR: when main's
+# pyproject version has no tag yet, this records the README media, tags
+# vX.Y.Z, publishes to PyPI (trusted publishing) and GHCR, assembles the
+# GitHub release (last, so `releases/latest` never points at a half-published
+# version), and smoke-tests the published artifacts.
+#
+# Everything lives in ONE workflow on purpose: a tag created with the default
+# GITHUB_TOKEN never triggers other workflows (GitHub's anti-recursion rule),
+# so tag-triggered publish workflows would sit dead. Every job is idempotent -
+# a partial failure is repaired by re-running via workflow_dispatch, which
+# skips the leftovers (existing tag, uploaded files) instead of choking.
+on:
+  push:
+    branches: [main]
+    paths: [pyproject.toml] # a release always bumps the version here
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Record media + build dists only; publish nothing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One release at a time; never cancel a publish mid-flight.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Version gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.gate.outputs.version }}
+      tag: ${{ steps.gate.outputs.tag }}
+      proceed: ${{ steps.gate.outputs.proceed }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the gate needs the tag list
+      - name: Decide whether this push is a release
+        id: gate
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          # A push releases only an untagged version; a dispatch always
+          # proceeds - it is the re-run and dry-run path.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || ! git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            scripts/changelog.sh section "$version" | grep -q '[^[:space:]]' \
+              || { echo "CHANGELOG has no '## [$version]' section" >&2; exit 1; }
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "Releasing $version"
+          else
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "v$version already tagged; not a release push"
+          fi
+
+  # The v* tag ruleset requires the Build checks on the tagged commit, and the
+  # publishes must never outrun the gate either - so wait for Build to go green
+  # on this exact SHA before anything irreversible.
+  wait_checks:
+    name: Wait for Build on this commit
+    needs: [version]
+    if: needs.version.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Poll the Build workflow run
+        run: |
+          for _ in $(seq 1 70); do
+            conclusion=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow=build.yaml \
+              --commit "$GITHUB_SHA" --json status,conclusion \
+              --jq '.[0] | select(.status == "completed") | .conclusion')
+            if [ "$conclusion" = "success" ]; then exit 0; fi
+            if [ -n "$conclusion" ]; then echo "Build concluded: $conclusion" >&2; exit 1; fi
+            sleep 30
+          done
+          echo "timed out waiting for the Build workflow on $GITHUB_SHA" >&2
+          exit 1
+
+  # Re-record the README media at the release version (both bake it into their
+  # pixels). Failure fails the release - re-run once the flake clears; nothing
+  # ships with the previous version baked in.
+  record:
+    name: Record README media
+    needs: [version]
+    if: needs.version.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+      - name: Sync dependencies
+        run: uv sync --group dev
+      - name: Install recorders (vhs, ttyd, ffmpeg, playwright chromium)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ffmpeg fonts-jetbrains-mono
+          curl -fsSLo /tmp/ttyd https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64
+          sudo install -m 755 /tmp/ttyd /usr/local/bin/ttyd
+          curl -fsSLo /tmp/vhs.deb https://github.com/charmbracelet/vhs/releases/download/v0.11.0/vhs_0.11.0_amd64.deb
+          sudo apt-get install -y -q /tmp/vhs.deb
+          uv run playwright install --with-deps chromium
+      - name: Record the demo GIF
+        env:
+          VHS_NO_SANDBOX: "true" # vhs drives headless Chromium; runners have no sandbox
+        run: |
+          scripts/demo/record.sh
+          mkdir -p docs/assets
+          cp scripts/demo/demo_run.gif docs/assets/demo_run.gif
+      - name: Render the grab-notification screenshot
+        run: uv run python scripts/sample_grab_post.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: readme-media
+          path: |
+            docs/assets/demo_run.gif
+            docs/assets/example_post.png
+          if-no-files-found: error
+
+  # Build sdist + wheel; hatch-fancy-pypi-readme rewrites the README's media
+  # URLs to the version-pinned assets ref in the PyPI metadata only.
+  build:
+    name: Build distributions
+    needs: [version]
+    if: needs.version.outputs.proceed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+      - name: Build
+        run: uv build --no-sources
+      - name: Assert the PyPI readme pins the media to assets-v${{ needs.version.outputs.version }}
+        # Guards the silent hatchling failure mode: with a static `readme`
+        # field the hook runs but its output is discarded without a warning.
+        run: |
+          unzip -p "dist/pearlarr-$VERSION-py3-none-any.whl" "pearlarr-$VERSION.dist-info/METADATA" \
+            | grep -qF "/assets-v$VERSION/" || { echo "wheel METADATA is missing the pinned media URLs" >&2; exit 1; }
+          tar -xzOf "dist/pearlarr-$VERSION.tar.gz" "pearlarr-$VERSION/PKG-INFO" \
+            | grep -qF "/assets-v$VERSION/" || { echo "sdist PKG-INFO is missing the pinned media URLs" >&2; exit 1; }
+      - name: Twine check
+        run: uvx twine check dist/*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/*
+          if-no-files-found: error
+
+  # The README hot-links media from the orphan `assets` branch (GitHub's
+  # release-asset CDN forces application/octet-stream, which PyPI's image
+  # proxy refuses; raw.githubusercontent.com serves real image types, for
+  # files under its 5 MB cliff). The floating branch serves the GitHub README;
+  # the immutable assets-vX.Y.Z tag serves that version's PyPI page forever.
+  assets:
+    name: Push the assets refs
+    needs: [version, record]
+    if: inputs.dry_run != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: readme-media
+          path: docs/assets
+      - name: Build the orphan media commit and push both refs
+        # Plumbing (no checkout switch) and a force-push of the floating
+        # branch, so git keeps one live copy plus one pinned tag per release.
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          blob_gif=$(git hash-object -w docs/assets/demo_run.gif)
+          blob_png=$(git hash-object -w docs/assets/example_post.png)
+          blob_readme=$(git hash-object -w --stdin <<'EOF'
+          # Pearlarr README media
+
+          Binary assets the main README hot-links via `raw.githubusercontent.com`
+          (GitHub's release-asset CDN forces `application/octet-stream`, which PyPI's
+          image proxy refuses to render). Pushed by the Release workflow on every
+          release - the floating `assets` branch serves the GitHub README, the
+          `assets-vX.Y.Z` tags pin each version's PyPI page. Do not edit by hand.
+          EOF
+          )
+          tree=$(printf '100644 blob %s\tREADME.md\n100644 blob %s\tdemo_run.gif\n100644 blob %s\texample_post.png\n' \
+            "$blob_readme" "$blob_gif" "$blob_png" | git mktree)
+          commit=$(git commit-tree "$tree" -m "chore(release): README media for $TAG")
+          git push --force origin "${commit}:refs/heads/assets"
+          if git ls-remote --exit-code --tags origin "assets-$TAG" >/dev/null; then
+            echo "assets-$TAG already exists; leaving it pinned"
+          else
+            git push origin "${commit}:refs/tags/assets-$TAG"
+          fi
+
+  tag:
+    name: Tag ${{ needs.version.outputs.tag }}
+    needs: [version, wait_checks]
+    if: inputs.dry_run != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # locating the bump commit needs history
+      - name: Create and push the tag (skip if present)
+        # Tag the commit that set this version, not HEAD - a dispatch re-run
+        # may happen after unrelated work has landed on main.
+        run: |
+          if git ls-remote --exit-code --tags origin "$TAG" >/dev/null; then
+            echo "$TAG already exists; resuming"
+            exit 0
+          fi
+          bump=$(git log --format=%H -S "version = \"$VERSION\"" -- pyproject.toml | head -1)
+          [ -n "$bump" ] || { echo "no commit sets version $VERSION in pyproject.toml" >&2; exit 1; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Pearlarr $VERSION" "$bump"
+          git push origin "refs/tags/$TAG"
+
+  publish_pypi:
+    name: Publish to PyPI
+    needs: [version, build, assets, tag]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Trusted Publishing (OIDC): PyPI trusts this exact repo + workflow +
+    # environment instead of a long-lived API token.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true # re-runs must not choke on already-uploaded files
+
+  publish_docker:
+    name: Publish to GHCR
+    needs: [version, tag]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      packages: write
+      contents: read
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      # Emulation + a container-driver builder, so one manifest carries both
+      # self-hosting architectures (amd64 servers, arm64 SBCs/Apple silicon).
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      # GHCR authenticates with the workflow's own identity + GITHUB_TOKEN;
+      # no registry secret to configure (or to be undefined on a fresh fork).
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # The workflow runs off the main push, not the tag ref, so the
+          # version tag is spelled out instead of derived from the event.
+          tags: |
+            type=raw,value=${{ needs.version.outputs.tag }}
+            type=raw,value=latest
+      - name: Build and push Docker image
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  # Last on purpose: `releases/latest` flips to the new version only after
+  # PyPI and GHCR both landed. Re-runs update the same release in place.
+  gh_release:
+    name: GitHub release
+    needs: [version, record, publish_pypi, publish_docker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: readme-media
+          path: docs/assets
+      - name: Extract this version's CHANGELOG section
+        run: scripts/changelog.sh section "${{ needs.version.outputs.version }}" > /tmp/notes.md
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: Pearlarr ${{ needs.version.outputs.version }}
+          body_path: /tmp/notes.md
+          files: |
+            docs/assets/demo_run.gif
+            docs/assets/example_post.png
+          fail_on_unmatched_files: true
+          make_latest: "true"
+
+  # Exercise what users actually touch: the PyPI package, the GHCR image, and
+  # the media URLs PyPI's camo proxy will fetch (content type must be image/*).
+  smoke:
+    name: Smoke the published release
+    needs: [version, gh_release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - name: Install from PyPI and run the CLI
+        run: |
+          python3 -m venv /tmp/smoke
+          # shellcheck disable=SC1091
+          . /tmp/smoke/bin/activate
+          for _ in $(seq 1 20); do
+            pip install --quiet "pearlarr==$VERSION" && break
+            echo "not yet on the index; retrying"; sleep 15
+          done
+          python3 -c "from importlib.metadata import version; v = version('pearlarr'); assert v == '$VERSION', v"
+          pearlarr --help >/dev/null
+      - name: Pull the GHCR image
+        run: |
+          for _ in $(seq 1 10); do
+            docker pull -q "ghcr.io/${GITHUB_REPOSITORY}:${TAG}" && exit 0
+            echo "image not visible yet; retrying"; sleep 15
+          done
+          exit 1
+      - name: Assert the README media serve image/* (floating and pinned)
+        run: |
+          for ref in assets "assets-$TAG"; do
+            for f in demo_run.gif example_post.png; do
+              ct=$(curl -fsSL -o /dev/null -w '%{content_type}' \
+                "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${ref}/${f}")
+              case "$ct" in
+                image/*) echo "OK  $ref/$f  $ct" ;;
+                *) echo "FAIL $ref/$f served as '$ct' - PyPI's image proxy will refuse it" >&2; exit 1 ;;
+              esac
+            done
+          done
