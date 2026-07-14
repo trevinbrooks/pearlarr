@@ -180,51 +180,60 @@ private context — no session or chat references.
 
 ## Releasing
 
-Releases are cut locally with [`scripts/release.sh`](scripts/release.sh): it
-runs under your own GitHub identity, so branch protection's required checks
-fire normally - a bot token would not trigger them. Versions follow
-[Semantic Versioning](https://semver.org); every user-observable change lands
-with a `CHANGELOG.md` entry under `## [Unreleased]` (see the drift map above),
-and the release script promotes that section into the new version's notes.
+Releases are cut end to end by two workflows; the only human act is merging
+the release PR. Versions follow [Semantic Versioning](https://semver.org);
+every user-observable change lands with a `CHANGELOG.md` entry under
+`## [Unreleased]` (see the drift map above), and the prepare workflow promotes
+that section into the new version's notes.
 
 1. Land everything the release should carry on `main`; verify "Upgrade notes"
    covers every config/cache change.
-2. From an up-to-date `main`, `scripts/release.sh prepare X.Y.Z` bumps the
+2. Run the **Release prepare** workflow (Actions tab, or
+   `gh workflow run release_prepare.yaml -f version=X.Y.Z`). It bumps the
    version (`uv version`, which also re-locks `uv.lock`), regenerates the
    version-pinned schema URLs (`scripts/gen_docs.py`), dates the CHANGELOG
    section, and opens the release PR. Review it, let the required checks
    pass, and merge.
-3. Pull the merged `main`, then `scripts/release.sh publish X.Y.Z` re-records
-   the README assets at the release version, tags `vX.Y.Z` (which triggers
-   the PyPI and GHCR publish workflows), builds the GitHub release from the
-   CHANGELOG section as a draft, attaches the assets, publishes it - drafted
-   so `releases/latest` never points at a release without its assets - and
-   force-pushes the media to the orphan `assets` branch the README serves
-   from. A publish interrupted partway is safe to rerun.
-4. Verify the PyPI package and `ghcr.io` image land; smoke the Docker quick
-   start from the README on a clean host, verbatim.
+3. Merging is the release: the **Release** workflow re-records the README
+   media at the release version, waits for Build to go green on the merge
+   commit, tags `vX.Y.Z`, publishes to PyPI and GHCR, pushes the media to the
+   assets refs, assembles the GitHub release from the CHANGELOG section (last,
+   so `releases/latest` never points at a half-published version), and
+   smoke-tests the published package, image, and media URLs.
+4. A partial failure is repaired by re-running the Release workflow from the
+   Actions tab: completed steps skip their leftovers (existing tag, uploaded
+   files) instead of choking. Its `dry_run` input records the media and builds
+   the distributions without publishing anything - use it to vet recorder or
+   packaging changes before a real release.
 
 The README's screenshot and demo GIF are not tracked files: gitignored under
-`docs/assets/`, served from the single-commit orphan `assets` branch via
-`raw.githubusercontent.com` (GitHub's release-asset CDN forces
-`application/octet-stream`, which PyPI's image proxy refuses to render), and
-attached to each GitHub release as the per-version archive. The README always
-shows the latest release's images and `main` carries no binaries. Both bake the
-installed version into their pixels (the GIF's boot title, the embed's
-footer), which is why every publish re-records them; the recorders need
-`vhs`, `ffmpeg`, playwright's chromium (`uv run playwright install
-chromium`), and network. If a re-record can't run, publish falls back to the
-previous release's copy with a warning - the image stays alive but its baked
-version lags. To iterate on the demo or the embed layout by hand:
+`docs/assets/` and served via `raw.githubusercontent.com` (GitHub's
+release-asset CDN forces `application/octet-stream`, which PyPI's image proxy
+refuses to render). The floating `assets` branch serves the GitHub README, so
+it always shows the latest release; the immutable `assets-vX.Y.Z` tag serves
+that version's PyPI page forever - `hatch-fancy-pypi-readme` rewrites the
+package readme to it at build time (see `pyproject.toml`), and each GitHub
+release also attaches both files as a browsable per-version copy. Both bake
+the installed version into their pixels (the GIF's boot title, the embed's
+footer), which is why every release re-records them in CI; a failed re-record
+fails the release rather than shipping stale pixels. To iterate on the demo or
+the embed layout by hand (needs `vhs`, `ffmpeg`, and playwright's chromium via
+`uv run playwright install chromium`):
 
 ```console
 scripts/demo/record.sh                       # writes scripts/demo/demo_run.gif
 uv run python scripts/sample_grab_post.py    # writes docs/assets/example_post.png
 ```
 
-Publishing is tokenless: `publish_pypi.yaml` authenticates to PyPI via Trusted
-Publishing (OIDC, the `pypi` environment), and the Docker workflow pushes to
-GHCR with the workflow's own identity - no long-lived secrets to rotate.
+Two pieces of repository configuration back the automation. The `RELEASE_PAT`
+secret (a fine-grained PAT with contents + pull-requests write) lets the
+prepare workflow push a branch whose PR actually gets check runs - a branch
+pushed with the default `GITHUB_TOKEN` never triggers them, and the no-bypass
+ruleset would leave the PR unmergeable. And PyPI's Trusted Publishing (OIDC,
+the `pypi` environment) must name `release.yaml` as the publishing workflow.
+Publishing itself stays tokenless toward both registries: PyPI trusts the
+workflow identity, and GHCR is pushed with the workflow's own `GITHUB_TOKEN` -
+no long-lived registry secrets to rotate.
 
 ## Environment variables
 

@@ -134,7 +134,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: true
-      # Pure-Python build - one version suffices; matches publish_pypi.yaml.
+      # Pure-Python build - one version suffices; release.yaml builds the real one.
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
