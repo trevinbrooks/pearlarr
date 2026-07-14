@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr);
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-07-14
+
 ### Changed
 
 - Releases are now cut end to end by CI: merging the release PR records the README media, tags the version, publishes to PyPI and GHCR, and assembles the GitHub release. `scripts/release.sh` is gone - maintainers run the "Release prepare" workflow instead (see CONTRIBUTING "Releasing").
