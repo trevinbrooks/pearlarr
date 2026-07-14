@@ -33,7 +33,17 @@ Runs are incremental and safe to repeat: results live in a SQLite cache, a title
 
 > Coming from upstream SeaDexArr? The config format and data locations changed - see [migrating from upstream](docs/deployment.md#migrating-from-upstream-seadexarr) first.
 
-### Docker Compose (recommended)
+### uv / pipx / pip
+
+Pearlarr needs Python 3.13 or newer; [uv](https://docs.astral.sh/uv/) or pipx give it its own environment (and uv fetches a matching Python if your system's is too old):
+
+```console
+$ uv tool install pearlarr    # or: pipx install pearlarr
+```
+
+Plain `pip install pearlarr` works too, as does `pip install -e .` from a clone for the cutting edge.
+
+### Docker Compose
 
 Copy [docker-compose.example.yml](docker-compose.example.yml) to `docker-compose.yml` (or fold the `pearlarr` service into an existing stack), create the config directory yourself, and bring it up:
 
@@ -59,16 +69,6 @@ $ docker compose run --rm pearlarr cache stats
 ```
 
 Everything operational lives in [docs/deployment.md](docs/deployment.md): permissions and PUID/PGID, timezones, custom CAs, image tags, stopping safely, backups, upgrades.
-
-### uv / pipx / pip
-
-Pearlarr needs Python 3.13 or newer; [uv](https://docs.astral.sh/uv/) or pipx give it its own environment (and uv fetches a matching Python if your system's is too old):
-
-```console
-$ uv tool install pearlarr    # or: pipx install pearlarr
-```
-
-Plain `pip install pearlarr` works too, as does `pip install -e .` from a clone for the cutting edge.
 
 ## First run
 
