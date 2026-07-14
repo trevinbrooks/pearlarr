@@ -197,16 +197,19 @@ and the release script promotes that section into the new version's notes.
 3. Pull the merged `main`, then `scripts/release.sh publish X.Y.Z` re-records
    the README assets at the release version, tags `vX.Y.Z` (which triggers
    the PyPI and GHCR publish workflows), builds the GitHub release from the
-   CHANGELOG section as a draft, attaches the assets, and publishes it -
-   drafted so `releases/latest` never points at a release without its
-   assets. A publish interrupted partway is safe to rerun.
+   CHANGELOG section as a draft, attaches the assets, publishes it - drafted
+   so `releases/latest` never points at a release without its assets - and
+   force-pushes the media to the orphan `assets` branch the README serves
+   from. A publish interrupted partway is safe to rerun.
 4. Verify the PyPI package and `ghcr.io` image land; smoke the Docker quick
    start from the README on a clean host, verbatim.
 
-The README's screenshot and demo GIF are GitHub release assets, not tracked
-files: gitignored under `docs/assets/` and served from
-`releases/latest/download/<name>`, so the README always shows the latest
-release's images and the repository carries no binaries. Both bake the
+The README's screenshot and demo GIF are not tracked files: gitignored under
+`docs/assets/`, served from the single-commit orphan `assets` branch via
+`raw.githubusercontent.com` (GitHub's release-asset CDN forces
+`application/octet-stream`, which PyPI's image proxy refuses to render), and
+attached to each GitHub release as the per-version archive. The README always
+shows the latest release's images and `main` carries no binaries. Both bake the
 installed version into their pixels (the GIF's boot title, the embed's
 footer), which is why every publish re-records them; the recorders need
 `vhs`, `ffmpeg`, playwright's chromium (`uv run playwright install

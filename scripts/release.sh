@@ -35,7 +35,8 @@ roll_changelog() {
 }
 
 # Fallback when a re-record can't run: keep/fetch the previous release's copy so
-# `latest/download` never 404s; its baked version lags until a real re-record.
+# the release and the assets branch still get media; its baked version lags until
+# a real re-record.
 carry_forward() {
   echo "release: WARNING - $2; docs/assets/$1 will show the previous release's baked version" >&2
   [ -f "docs/assets/$1" ] && return 0
@@ -56,6 +57,29 @@ regen_assets() {
   if ! uv run python scripts/sample_grab_post.py; then
     carry_forward example_post.png "screenshot capture failed (playwright chromium + network?)"
   fi
+}
+
+# The README hot-links the media from the orphan `assets` branch: GitHub's
+# release-asset CDN forces application/octet-stream, which PyPI's image proxy
+# refuses to render, while raw.githubusercontent.com serves real image types.
+# Built with plumbing (no checkout) and force-pushed, so git keeps one copy.
+push_assets_branch() {
+  local tag=$1 blob_gif blob_png blob_readme tree commit
+  blob_gif=$(git hash-object -w docs/assets/demo_run.gif)
+  blob_png=$(git hash-object -w docs/assets/example_post.png)
+  blob_readme=$(git hash-object -w --stdin <<'EOF'
+# Pearlarr README media
+
+Binary assets the main README hot-links via `raw.githubusercontent.com`
+(GitHub's release-asset CDN forces `application/octet-stream`, which PyPI's
+image proxy refuses to render). Force-pushed as a fresh orphan commit by
+`scripts/release.sh publish` on every release - do not edit by hand.
+EOF
+  )
+  tree=$(printf '100644 blob %s\tREADME.md\n100644 blob %s\tdemo_run.gif\n100644 blob %s\texample_post.png\n' \
+    "$blob_readme" "$blob_gif" "$blob_png" | git mktree)
+  commit=$(git commit-tree "$tree" -m "chore(release): README media for $tag")
+  git push --force origin "${commit}:refs/heads/assets"
 }
 
 cmd_prepare() {
@@ -112,8 +136,9 @@ cmd_publish() {
   fi
   gh release upload "$tag" docs/assets/demo_run.gif docs/assets/example_post.png --clobber
   gh release edit "$tag" --draft=false
+  push_assets_branch "$tag"
   rm -f "$notes"
-  echo "Published $tag: PyPI + GHCR workflows are running; GitHub release created; README assets uploaded."
+  echo "Published $tag: PyPI + GHCR workflows are running; GitHub release created; README media refreshed on the assets branch."
 }
 
 main() {
