@@ -40,9 +40,10 @@ jobs:
       tag: ${{ steps.gate.outputs.tag }}
       proceed: ${{ steps.gate.outputs.proceed }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0 # the gate needs the tag list
+          persist-credentials: false
       - name: Decide whether this push is a release
         id: gate
         run: |
@@ -98,9 +99,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: true
       - name: Sync dependencies
@@ -123,7 +126,7 @@ jobs:
           cp scripts/demo/demo_run.gif docs/assets/demo_run.gif
       - name: Render the grab-notification screenshot
         run: uv run python scripts/sample_grab_post.py
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: readme-media
           path: |
@@ -142,9 +145,11 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
       - name: Build
         run: uv build --no-sources
       - name: Assert the PyPI readme pins media and links to v${{ needs.version.outputs.version }}/
@@ -164,7 +169,7 @@ jobs:
           assert_pins "sdist PKG-INFO" /tmp/sdist-pkginfo
       - name: Twine check
         run: uvx twine check dist/*
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dist
           path: dist/*
@@ -186,7 +191,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       ASSETS_REPO: ${{ github.repository }}-assets
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: readme-media
           path: media
@@ -194,7 +199,7 @@ jobs:
         # An app token because the repo-scoped GITHUB_TOKEN cannot push to
         # another repository (the pearlarr-release app; see CONTRIBUTING).
         id: app
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
@@ -237,9 +242,11 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       TAG: ${{ needs.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0 # locating the bump commit needs history
+          # This job pushes the tag below, so the checkout token must persist.
+          persist-credentials: true
       - name: Create and push the tag (skip if present)
         # Tag the commit that set this version, not HEAD - a dispatch re-run
         # may happen after unrelated work has landed on main.
@@ -266,11 +273,11 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: dist
           path: dist
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
         with:
           skip-existing: true # re-runs must not choke on already-uploaded files
 
@@ -285,24 +292,26 @@ jobs:
       attestations: write
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       # Emulation + a container-driver builder, so one manifest carries both
       # self-hosting architectures (amd64 servers, arm64 SBCs/Apple silicon).
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
       # GHCR authenticates with the workflow's own identity + GITHUB_TOKEN;
       # no registry secret to configure (or to be undefined on a fresh fork).
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/${{ github.repository }}
           # The workflow runs off the main push, not the tag ref, so the
@@ -312,7 +321,7 @@ jobs:
             type=raw,value=latest
       - name: Build and push Docker image
         id: push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: ./Dockerfile
@@ -321,7 +330,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
       - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
@@ -337,14 +346,28 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0 # the full-changelog compare link needs the tag list
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: readme-media
           path: docs/assets
-      - name: Extract this version's CHANGELOG section
-        run: scripts/changelog.sh section "${{ needs.version.outputs.version }}" > /tmp/notes.md
-      - uses: softprops/action-gh-release@v3
+      - name: Assemble the release notes (CHANGELOG section + full-diff link)
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          scripts/changelog.sh section "$VERSION" > /tmp/notes.md
+          # Append a compare-to-previous-release link, like GitHub's own notes.
+          # -vxF drops the current tag exactly, so a re-run still finds the prior one.
+          prev=$(git tag --list 'v*' --sort=-version:refname | grep -vxF "$TAG" | head -1)
+          if [ -n "$prev" ]; then
+            printf '\n**Full Changelog**: %s/%s/compare/%s...%s\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$prev" "$TAG" >> /tmp/notes.md
+          fi
+      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           tag_name: ${{ needs.version.outputs.tag }}
           name: Pearlarr ${{ needs.version.outputs.version }}
@@ -368,7 +391,7 @@ jobs:
     steps:
       # The runner's default python3 is below our >=3.13 floor, so pip refuses
       # the wheel; install on the floor itself - the likeliest to break.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
       - name: Install from PyPI and run the CLI
