@@ -153,7 +153,7 @@ class _LockProbeRenderer:
 
         helper = threading.Thread(target=probe)
         helper.start()
-        helper.join(timeout=5.0)
+        helper.join(timeout=30.0)
         self.lock_was_free.extend(acquired)
 
     def begin_cycle(self) -> None:
@@ -188,7 +188,9 @@ class _GatedRenderer:
         if not self._blocked_once:
             self._blocked_once = True
             self.entered.set()
-            assert self.release.wait(timeout=5.0), "gate never released"
+            # The backstop must outlast any CI scheduling stall (5.0s once expired
+            # mid-test on a loaded Windows runner and read as a hub bug).
+            assert self.release.wait(timeout=30.0), "gate never released"
         self.log.append(f"handled:{name}")
 
     def begin_cycle(self) -> None:
@@ -247,7 +249,7 @@ class _ReArmableGate:
         if self._armed:
             self._armed = False
             self.entered.set()
-            assert self.release.wait(timeout=5.0), "gate never released"
+            assert self.release.wait(timeout=30.0), "gate never released"
 
     def begin_cycle(self) -> None:
         pass
@@ -586,14 +588,14 @@ def test_a_concurrent_emit_hands_off_to_the_active_drainer() -> None:
 
     drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
     drainer.start()
-    assert gated.entered.wait(timeout=5.0)
+    assert gated.entered.wait(timeout=30.0)
 
     # B's emit returns immediately without dispatching: A still owns the baton.
     hub.emit(Diagnostic(severity=Severity.INFO, message="from B"))
     assert [name for name, _ in gated.handled] == ["RunStarted"]
 
     gated.release.set()
-    drainer.join(timeout=5.0)
+    drainer.join(timeout=30.0)
     assert not drainer.is_alive()
     assert [name for name, _ in gated.handled] == ["RunStarted", "Diagnostic"]
     assert gated.handled[1][1] is drainer  # A's drain loop delivered B's event
@@ -681,7 +683,7 @@ def test_lifecycle_waits_for_the_active_drain_to_finish() -> None:
 
     drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
     drainer.start()
-    assert gated.entered.wait(timeout=5.0)
+    assert gated.entered.wait(timeout=30.0)
 
     lifecycle = threading.Thread(target=lambda: hub.begin_cycle(console_format="plain", level=logging.INFO))
     lifecycle.start()
@@ -691,8 +693,8 @@ def test_lifecycle_waits_for_the_active_drain_to_finish() -> None:
     assert "cycle" not in gated.log
 
     gated.release.set()
-    drainer.join(timeout=5.0)
-    lifecycle.join(timeout=5.0)
+    drainer.join(timeout=30.0)
+    lifecycle.join(timeout=30.0)
     assert gated.log == ["handled:RunStarted", "cycle"]
 
 
@@ -703,7 +705,7 @@ def test_overflow_sheds_newest_with_one_note_per_episode() -> None:
 
     drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
     drainer.start()
-    assert gated.entered.wait(timeout=5.0)
+    assert gated.entered.wait(timeout=30.0)
 
     # Fill the stalled queue to the cap, then two more that must be shed.
     for i in range(QUEUE_CAP):
@@ -738,7 +740,7 @@ def test_overflow_never_sheds_a_structural_event(monkeypatch: pytest.MonkeyPatch
 
     drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
     drainer.start()
-    assert gated.entered.wait(timeout=5.0)
+    assert gated.entered.wait(timeout=30.0)
 
     # _EVENT is blocked mid-handle (already popped); fill the pending queue to the cap.
     for i in range(cap):
@@ -773,7 +775,7 @@ def test_overflow_sheds_diagnostics_and_re_arms_the_note_per_episode(
         gate.arm()
         drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
         drainer.start()
-        assert gate.entered.wait(timeout=5.0)
+        assert gate.entered.wait(timeout=30.0)
         for i in range(cap):  # fill to the cap
             hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
         hub.emit(Diagnostic(severity=Severity.INFO, message="dropped-1"))
@@ -1139,7 +1141,7 @@ def test_a_once_key_shed_by_overflow_is_shed_whole_and_lands_on_re_emit() -> Non
 
     drainer = threading.Thread(target=lambda: hub.emit(_EVENT))
     drainer.start()
-    assert gated.entered.wait(timeout=5.0)
+    assert gated.entered.wait(timeout=30.0)
     for i in range(QUEUE_CAP):
         hub.emit(Diagnostic(severity=Severity.INFO, message=f"q{i}"))
     hub.emit(keyed)  # at the cap: shed whole — key unregistered, uncounted
