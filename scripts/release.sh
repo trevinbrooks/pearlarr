@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Cut a Pearlarr release. Runs under your own identity (so branch protection's
-# required checks fire normally) - see RELEASING.md for the full runbook.
+# required checks fire normally) - CONTRIBUTING.md "Releasing" is the full runbook.
 #
 #   scripts/release.sh prepare X.Y.Z   # bump + re-lock + regen docs + roll the
 #                                        CHANGELOG, then open the release PR to review
