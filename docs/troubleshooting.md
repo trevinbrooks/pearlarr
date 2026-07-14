@@ -11,9 +11,11 @@ A test greps every quoted fragment against the source tree, so the quotes cannot
 | The config file fails to load | [The config is missing or invalid](#the-config-is-missing-or-invalid) |
 | Every run warns about an older config schema | [Old config schema](#old-config-schema) |
 | The config refuses to load after a downgrade | [Config from a newer Pearlarr](#config-from-a-newer-pearlarr) |
+| The cache refuses to load after a downgrade | [Cache from a newer Pearlarr](#cache-from-a-newer-pearlarr) |
 | Every run skips both arrs | [No arr is configured](#no-arr-is-configured) |
 | Sonarr or Radarr is unreachable or rejects the key | [The arr connection fails](#the-arr-connection-fails) |
 | qBittorrent is unreachable | [The qBittorrent connection fails](#the-qbittorrent-connection-fails) |
+| The whole run aborts before scanning any title | [The ID-mapping sources cannot be downloaded](#the-id-mapping-sources-cannot-be-downloaded) |
 | Titles keep showing up as needing action | [Private-only releases](#private-only-releases) |
 | Releases are skipped over their tracker | [Tracker skips](#tracker-skips) |
 | A tracker filter seems ignored | [Unknown tracker names](#unknown-tracker-names) |
@@ -29,8 +31,8 @@ not configured (preview mode - nothing is grabbed)
 qBittorrent not configured; nothing grabbed
 ```
 
-Without qBittorrent credentials every run is a preview: the whole library is evaluated and reported - the summary carries a `DRY RUN` marker with the note above - but nothing is downloaded and nothing is recorded.
-This is a feature while you tune the config - see [getting-started.md](getting-started.md#5-preview-run) - and the fix is filling in `qbittorrent.host`, `qbittorrent.username`, and `qbittorrent.password`.
+Without qBittorrent credentials every run is a preview: the whole library is evaluated and reported - the run summary is marked `DRY RUN` - but nothing is downloaded and nothing is recorded.
+This is a feature while you tune the config - see [getting-started.md](getting-started.md#5-run-a-preview) - and the fix is filling in `qbittorrent.host`, `qbittorrent.username`, and `qbittorrent.password`.
 `pearlarr config validate` shows which mode you are in.
 
 ## Another run is active
@@ -57,7 +59,7 @@ Under Docker this is almost always a PUID/PGID mismatch with the mounted `./conf
 ## The config is missing or invalid
 
 ```text
-No config file at ...; a starter template was written - fill it in and re-run
+No config file at ... - a starter template was written - fill it in and re-run
 Invalid configuration in ...
 Unreadable YAML in ...
 ```
@@ -85,6 +87,15 @@ the file was written for a newer Pearlarr (schema version ... - upgrade Pearlarr
 
 The `config_version` in the file is higher than this Pearlarr understands - almost always a downgraded install reading a config a newer version wrote (or migrated).
 Upgrade Pearlarr back, restore the pre-migration `config.yml.bak` if you have one, or lower `config_version` by hand and fix whatever the load then rejects.
+
+## Cache from a newer Pearlarr
+
+```text
+Cache database at ... uses schema v..., newer than this pearlarr understands ... - it was written by a newer release - upgrade pearlarr
+```
+
+The cache's schema version is higher than this Pearlarr understands - almost always a downgraded install reading a `cache.db` a newer version wrote.
+Upgrade Pearlarr back, restore a cache backup taken with the older version (`pearlarr cache restore`), or move `cache.db` aside to start a fresh cache - the next run rebuilds it (see [Deleting the cache](#deleting-the-cache) for what that costs).
 
 ## No arr is configured
 
@@ -115,6 +126,17 @@ qBittorrent connection failed - check qbittorrent.host, qbittorrent.username, an
 
 Pearlarr talks to qBittorrent's WebUI: it must be enabled (qBittorrent → Options → Web UI), reachable at `qbittorrent.host` (include the port), and the credentials must match.
 If the WebUI has "Bypass authentication for clients on localhost" enabled, username and password can be anything non-blank.
+
+## The ID-mapping sources cannot be downloaded
+
+```text
+Could not download the id-mapping sources (...) - check your network connection
+Could not fetch/parse the id-mapping sources - skipping this run
+```
+
+Pearlarr downloads the ID-mapping sources at the start of a run and cannot resolve any title without them, so a fetch or parse failure skips the whole run rather than one title.
+It is almost always a first run with no network, or a proxy or firewall between Pearlarr and GitHub - the sources live on `github.com`/`objects.githubusercontent.com` and `raw.githubusercontent.com` (see [architecture.md](architecture.md#external-hosts)).
+Fix the connection or allowlist those hosts and the run succeeds; a scheduled cycle retries on its own, and once a source is cached (`advanced.cache_time` days) a later network blip falls back to the cached copy instead of skipping.
 
 ## Private-only releases
 

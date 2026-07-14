@@ -136,12 +136,13 @@ The cache schema is versioned and migrates itself at load; no manual step.
 
 Downgrading is not supported: an older Pearlarr may not open a newer cache schema.
 To roll back anyway, reinstall the older version and restore the cache backup taken with it (`pearlarr cache restore`), along with the matching `config.yml`.
+`pearlarr cache backup` keeps a single snapshot (`cache.backup.db`), so once you have upgraded, do not run it again until you are sure you are keeping the new version - a fresh backup overwrites the pre-upgrade rollback point.
 
 ## Interruption semantics
 
 Pearlarr is safe to interrupt - Ctrl-C, `docker stop`, a crash, a power cut:
 
-- **Decisions commit once per arr, at the end of its run.**
+- **Decisions commit once per arr, when that arr finishes.**
   A kill mid-run rolls the staged writes back, so nothing is half-recorded; the next run re-evaluates that arr from the last completed state.
 - **Torrents already handed to qBittorrent stay there.**
   The next run recognizes them by hash ("already in qBittorrent") and does not add duplicates.

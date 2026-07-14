@@ -237,7 +237,7 @@ def main(
         ),
     ] = False,
 ) -> None:
-    """Pearlarr: sync the best SeaDex-tagged anime releases into Sonarr and Radarr.
+    """Pearlarr: sync the anime releases SeaDex recommends into Sonarr and Radarr.
 
     Without a subcommand, runs in scheduled mode (every configured arr, every
     few hours).
@@ -473,8 +473,8 @@ def run_scheduled(
 ) -> None:
     """Run every configured arr module on a loop (each schedule.interval_hours).
 
-    This is the bare-metal fallback scheduler; containers should use the
-    image's built-in scheduler instead.
+    This is the bare-metal fallback scheduler; the container image runs
+    supercronic instead.
     """
 
     # Resolve the data directory once and make sure it exists (config-template copy
@@ -785,9 +785,9 @@ def config_show(json_output: Annotated[bool, typer.Option("--json", help=_JSON_H
     """Print the effective config (defaults applied) with secrets redacted.
 
     Safe to paste into a bug report: values under secret-named keys (api keys,
-    passwords, usernames, webhook URLs) are masked, every value in the
-    free-form `qbittorrent.options` block is masked, a `user:pass@` login
-    embedded in a URL/host is masked, and unset secrets still show as `null`.
+    passwords, usernames, webhook URLs) are redacted, every value in the
+    free-form `qbittorrent.options` block is redacted, a `user:pass@` login
+    embedded in a URL/host is redacted, and unset secrets still show as `null`.
     """
 
     with cli_surface(json_output):

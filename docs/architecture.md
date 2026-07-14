@@ -4,10 +4,10 @@ How Pearlarr is put together: the run lifecycle, the subsystems, the decisions b
 
 ## The run, end to end
 
-A run is one pass over one arr's library.
-The CLI (`cli.py`) is the composition root: it resolves the data directory, loads and validates the config, installs the output hub, and hands off to `bootstrap.run_arrs`, which refreshes the ID-mapping sources once and then runs each configured arr in turn.
+A run is one sweep over every configured arr: a single `pearlarr run single`, or one cycle of the scheduled loop.
+`cli.py` is the command surface - it resolves the data directory, installs the output hub, and hands off to `bootstrap.run_arrs`, the composition root, which reads and validates the config once, refreshes the ID-mapping sources, and runs each configured arr in turn through its Sonarr/Radarr strategy (`SonarrSync`/`RadarrSync`).
 
-For one arr, the run:
+For one arr:
 
 1. builds the runtime dependencies (`RunDeps`): the arr client, the shared HTTP clients, qBittorrent (or preview mode when credentials are absent), the SQLite cache;
 2. scans the arr's library and resolves each series/movie to an AniList ID through the mapping graph;
@@ -41,7 +41,7 @@ flowchart LR
 
 | Subsystem | Modules | Role |
 | --- | --- | --- |
-| Composition | `cli`, `bootstrap`, `run_loop`, `run_services` | CLI commands, dependency wiring, the per-arr run loop, the per-ID service hub |
+| Composition | `cli`, `bootstrap`, `run_loop`, `run_services`, `seadex_sonarr`, `seadex_radarr` | CLI commands, dependency wiring, the per-arr run loop and its Sonarr/Radarr strategies, the per-ID service hub |
 | Configuration | `config`, `paths`, `env_registry` | validated settings, the data directory, env inventory |
 | Mapping graph | `mappings`, `mapping_store`, `anibridge`, `anilist_client`, `anilist_gateway` | AniList/TVDB/TMDB/IMDb ID resolution and per-season episode maps, parsed once into `mappings.db` |
 | Selection | `seadex_gateway`, `seadex_filter`, `planner`, `coverage` | fetch SeaDex entries, filter releases, decide what to grab |
@@ -92,7 +92,7 @@ Rejected: reusing Sonarr's manual-import candidates as the mapping source - the 
 | release / release group | A torrent listed on an entry / the group that made it. |
 | grab | Adding a torrent to qBittorrent. |
 | import | The arr (or Pearlarr's manual import) moving finished files into the library. |
-| run | One arr module execution. |
+| run | One sweep over every configured arr - a single `pearlarr run single`, or one scheduled cycle. |
 | cycle | One scheduled-loop iteration (every configured arr, once). |
 | wait pass | The post-grab phase that waits for downloads and drives imports. |
 | preview mode | qBittorrent credentials absent: everything is evaluated and reported, nothing is grabbed or cached. |
@@ -107,10 +107,11 @@ Every host Pearlarr talks to, and why:
 | --- | --- |
 | `releases.moe` (SeaDex) | Entry lookups: which releases are tagged for each AniList ID. |
 | `graphql.anilist.co` | AniList titles. |
-| `raw.githubusercontent.com` | The three ID-mapping sources (anibridge-mappings, Kometa Anime-IDs, anime-lists XML). |
+| `github.com` -> `objects.githubusercontent.com` | The primary ID-mapping source (`anibridge-mappings`, a GitHub release asset that 302-redirects to the asset CDN). |
+| `raw.githubusercontent.com` | The two fallback ID-mapping sources (Kometa `Anime-IDs`, anime-lists XML). |
 | Your Sonarr / Radarr | Library, history, parse, and import APIs. |
 | Your qBittorrent WebUI | Adding and monitoring torrents. |
-| Tracker sites (Nyaa, AnimeTosho, AniDex, RuTracker) | Resolving a release's actual torrent download. |
+| Tracker sites (Nyaa, AnimeTosho, RuTracker) | Resolving a release's actual torrent download. |
 | `discord.com` / your webhook host | The notifications you configure. |
 
 API citizenship: `advanced.sleep_time` paces successive API queries (off by default; set a positive value to throttle); mapping sources are cached for `advanced.cache_time` days; SeaDex entries are re-checked only when SeaDex updated them.

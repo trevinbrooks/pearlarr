@@ -16,7 +16,7 @@ Exit codes, for scripts and schedulers:
 
 ## `pearlarr`
 
-Pearlarr: sync the best SeaDex-tagged anime releases into Sonarr and Radarr.
+Pearlarr: sync the anime releases SeaDex recommends into Sonarr and Radarr.
 
 Without a subcommand, runs in scheduled mode (every configured arr, every few hours).
 
@@ -62,7 +62,7 @@ Run Pearlarr: a scheduled loop or a one-off single run.
 
 Run every configured arr module on a loop (each schedule.interval_hours).
 
-This is the bare-metal fallback scheduler; containers should use the image's built-in scheduler instead.
+This is the bare-metal fallback scheduler; the container image runs supercronic instead.
 
 | Option | Value | Description |
 | --- | --- | --- |
@@ -128,7 +128,7 @@ Runs never require this - an older file is migrated in memory at every load - bu
 
 Print the effective config (defaults applied) with secrets redacted.
 
-Safe to paste into a bug report: values under secret-named keys (api keys, passwords, usernames, webhook URLs) are masked, every value in the free-form `qbittorrent.options` block is masked, a `user:pass@` login embedded in a URL/host is masked, and unset secrets still show as `null`.
+Safe to paste into a bug report: values under secret-named keys (api keys, passwords, usernames, webhook URLs) are redacted, every value in the free-form `qbittorrent.options` block is redacted, a `user:pass@` login embedded in a URL/host is redacted, and unset secrets still show as `null`.
 
 | Option | Value | Description |
 | --- | --- | --- |

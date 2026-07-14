@@ -39,6 +39,7 @@ Backups older than `advanced.log_retention_days` are deleted once the run's conf
 | `INFO` | The facts and outcomes of the run |
 | `WARNING` | Something degraded but the run continues; the message names the fix |
 | `ERROR` | The run, or one title, failed; the message names the fix |
+| `CRITICAL` | Accepted as a threshold, but Pearlarr itself never logs above ERROR - only a dependency's adopted log records carry it |
 
 ## The JSON event stream
 
@@ -54,7 +55,7 @@ Every object carries the envelope keys, in stable order:
 | `event` | The event name - the catalog below enumerates them |
 | `level` | `DEBUG` / `INFO` / `WARNING` / `ERROR` / `CRITICAL` |
 | `message` | The human-readable line (informational; not an interface) |
-| `component` | The subsystem it came from - the `[bracket]` word the text log prints (`run`, `scan`, `entry`, `cli`, ...); always present |
+| `component` | The subsystem it came from (`run`, `scan`, `entry`, `cli`, ...); always present. It seeds the text log's `[bracket]` - an event carrying a `path` breadcrumb prints that as the bracket instead |
 
 Per-event fields follow the envelope.
 Three additions appear where they apply: a `diagnostic` carries `origin` (and sometimes `during`, `placed`, and `exc`), events inside a nested scope carry a `path` breadcrumb, and `run_summary` carries the `needs_action_records` and `added_records` arrays.
@@ -62,7 +63,7 @@ Absent facts are omitted, never `null`.
 
 The stream honors `advanced.log_level`, with one carve-out: a `run_summary` carrying needs-action records or errors is admitted at `WARNING`, so a warnings-only stream still ends each run with its scoreboard.
 
-The `paths_shown`, `config_*`, and `cache_*` command events at the end of the catalog appear only in a subcommand's own `--json` stream (`pearlarr cache stats --json`, `pearlarr config show --json`, ...), never in a run's stream; `advanced.log_format` does not affect them, only the per-command `--json` flag does.
+The command events at the end of the catalog - `paths_shown`, `starter_config_written`, `effective_config_shown`, and the `config_*` and `cache_*` events - appear only in a subcommand's own `--json` stream (`pearlarr cache stats --json`, `pearlarr config show --json`, ...), never in a run's stream; `advanced.log_format` does not affect them, only the per-command `--json` flag does.
 
 ### Stability policy
 
