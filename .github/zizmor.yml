@@ -6,4 +6,4 @@ rules:
       # cache-to/cache-from, so there is no cross-run build cache to poison.
       # The image is built only on the release push, itself gated on a green
       # Build for the exact commit SHA. Revisit if GHA build caching is added.
-      - release.yaml:324
+      - release.yaml:332

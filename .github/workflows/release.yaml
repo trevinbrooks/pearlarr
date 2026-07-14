@@ -38,6 +38,8 @@ jobs:
     outputs:
       version: ${{ steps.gate.outputs.version }}
       tag: ${{ steps.gate.outputs.tag }}
+      major: ${{ steps.gate.outputs.major }}
+      majorminor: ${{ steps.gate.outputs.majorminor }}
       proceed: ${{ steps.gate.outputs.proceed }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -50,6 +52,9 @@ jobs:
           version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          # Moving major (v1) and major.minor (v1.0) tags for the image ladder.
+          echo "major=v${version%%.*}" >> "$GITHUB_OUTPUT"
+          echo "majorminor=v${version%.*}" >> "$GITHUB_OUTPUT"
           # A push releases only an untagged version; a dispatch always
           # proceeds - it is the re-run and dry-run path.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] || ! git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
@@ -168,7 +173,7 @@ jobs:
           assert_pins "wheel METADATA" /tmp/wheel-metadata
           assert_pins "sdist PKG-INFO" /tmp/sdist-pkginfo
       - name: Twine check
-        run: uvx twine check dist/*
+        run: uvx twine check --strict dist/*
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: dist
@@ -315,9 +320,12 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           # The workflow runs off the main push, not the tag ref, so the
-          # version tag is spelled out instead of derived from the event.
+          # version tags are spelled out instead of derived from the event.
+          # Moving major/major.minor tags let users pin vX or vX.Y for patches.
           tags: |
             type=raw,value=${{ needs.version.outputs.tag }}
+            type=raw,value=${{ needs.version.outputs.majorminor }}
+            type=raw,value=${{ needs.version.outputs.major }}
             type=raw,value=latest
       - name: Build and push Docker image
         id: push
@@ -329,6 +337,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # No inline buildx provenance: the attest-build-provenance step below
+          # publishes the SLSA attestation, so buildx's would only add duplicate
+          # unknown/unknown manifest entries to the image index.
+          provenance: false
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
