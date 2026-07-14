@@ -189,31 +189,35 @@ and the release script promotes that section into the new version's notes.
 
 1. Land everything the release should carry on `main`; verify "Upgrade notes"
    covers every config/cache change.
-2. If the demo behavior changed, re-record the README assets - otherwise the
-   previous release's are carried forward automatically:
-
-   ```console
-   scripts/demo/record.sh                       # prints the cp that stages its GIF
-   uv run python scripts/sample_grab_post.py    # writes docs/assets/example_post.png
-   ```
-
-3. From an up-to-date `main`, `scripts/release.sh prepare X.Y.Z` bumps the
+2. From an up-to-date `main`, `scripts/release.sh prepare X.Y.Z` bumps the
    version (`uv version`, which also re-locks `uv.lock`), regenerates the
    version-pinned schema URLs (`scripts/gen_docs.py`), dates the CHANGELOG
    section, and opens the release PR. Review it, let the required checks
    pass, and merge.
-4. Pull the merged `main`, then `scripts/release.sh publish X.Y.Z` tags
-   `vX.Y.Z` (which triggers the PyPI and GHCR publish workflows), builds the
-   GitHub release from the CHANGELOG section as a draft, attaches the README
-   assets, and publishes it - drafted so `releases/latest` never points at a
-   release without its assets. A publish interrupted partway is safe to rerun.
-5. Verify the PyPI package and `ghcr.io` image land; smoke the Docker quick
+3. Pull the merged `main`, then `scripts/release.sh publish X.Y.Z` re-records
+   the README assets at the release version, tags `vX.Y.Z` (which triggers
+   the PyPI and GHCR publish workflows), builds the GitHub release from the
+   CHANGELOG section as a draft, attaches the assets, and publishes it -
+   drafted so `releases/latest` never points at a release without its
+   assets. A publish interrupted partway is safe to rerun.
+4. Verify the PyPI package and `ghcr.io` image land; smoke the Docker quick
    start from the README on a clean host, verbatim.
 
 The README's screenshot and demo GIF are GitHub release assets, not tracked
 files: gitignored under `docs/assets/` and served from
 `releases/latest/download/<name>`, so the README always shows the latest
-release's images and the repository carries no binaries.
+release's images and the repository carries no binaries. Both bake the
+installed version into their pixels (the GIF's boot title, the embed's
+footer), which is why every publish re-records them; the recorders need
+`vhs`, `ffmpeg`, playwright's chromium (`uv run playwright install
+chromium`), and network. If a re-record can't run, publish falls back to the
+previous release's copy with a warning - the image stays alive but its baked
+version lags. To iterate on the demo or the embed layout by hand:
+
+```console
+scripts/demo/record.sh                       # writes scripts/demo/demo_run.gif
+uv run python scripts/sample_grab_post.py    # writes docs/assets/example_post.png
+```
 
 Publishing is tokenless: `publish_pypi.yaml` authenticates to PyPI via Trusted
 Publishing (OIDC, the `pypi` environment), and the Docker workflow pushes to
