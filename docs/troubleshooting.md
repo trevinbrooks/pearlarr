@@ -1,7 +1,8 @@
 # Troubleshooting
 
-Each section opens with the message it is about, quoted from the running code (`...` stands for the changing parts); find yours with your pager's search.
-A test greps every quoted fragment against the source tree, so the quotes cannot silently go stale.
+Each entry below is an error or warning Pearlarr can print, with what it means and how to fix it.[^verified]
+Find yours in the table, or search your pager for the message text.
+In the section headings, `...` stands for the parts of a message that change between runs.
 
 | Symptom | Section |
 | --- | --- |
@@ -31,8 +32,8 @@ not configured (preview mode - nothing is grabbed)
 qBittorrent not configured; nothing grabbed
 ```
 
-Without qBittorrent credentials every run is a preview: the whole library is evaluated and reported - the run summary is marked `DRY RUN` - but nothing is downloaded and nothing is recorded.
-This is a feature while you tune the config - see [getting-started.md](getting-started.md#5-run-a-preview) - and the fix is filling in `qbittorrent.host`, `qbittorrent.username`, and `qbittorrent.password`.
+Without qBittorrent credentials every run is a preview: the whole library is evaluated and reported, the run summary is marked `DRY RUN`, and nothing is downloaded or recorded.
+This is a feature while you tune the config (see [getting-started.md](getting-started.md#5-run-a-preview)), and the fix is filling in `qbittorrent.host`, `qbittorrent.username`, and `qbittorrent.password`.
 `pearlarr config validate` shows which mode you are in.
 
 ## Another run is active
@@ -54,7 +55,7 @@ Cannot write to the data directory ... - fix its permissions, or point
 
 The data directory (config, caches, and logs) must be writable by the user running Pearlarr.
 Fix the directory's ownership or permissions, or point `--data-dir` / `PEARLARR_DATA_DIR` somewhere writable.
-Under Docker this is almost always a PUID/PGID mismatch with the mounted `./config` directory - see [deployment.md](deployment.md#permissions).
+Under Docker this is almost always a PUID/PGID mismatch with the mounted `./config` directory (see [deployment.md](deployment.md#permissions)).
 
 ## The config is missing or invalid
 
@@ -65,7 +66,7 @@ Unreadable YAML in ...
 ```
 
 A run with no config writes the starter template and stops; fill it in and run again.
-A validation failure lists each offending key with what is wrong - unknown or misspelled keys fail loudly rather than being silently ignored.
+A validation failure lists each offending key with what is wrong: unknown or misspelled keys fail loudly rather than being silently ignored.
 `pearlarr config validate` runs the same checks without starting a run, and [configuration.md](configuration.md) documents every key.
 
 ## Old config schema
@@ -85,7 +86,7 @@ See [configuration.md](configuration.md#the-config-schema-version) for what the 
 the file was written for a newer Pearlarr (schema version ... - upgrade Pearlarr
 ```
 
-The `config_version` in the file is higher than this Pearlarr understands - almost always a downgraded install reading a config a newer version wrote (or migrated).
+The `config_version` in the file is higher than this Pearlarr understands, almost always a downgraded install reading a config a newer version wrote (or migrated).
 Upgrade Pearlarr back, restore the pre-migration `config.yml.bak` if you have one, or lower `config_version` by hand and fix whatever the load then rejects.
 
 ## Cache from a newer Pearlarr
@@ -94,8 +95,8 @@ Upgrade Pearlarr back, restore the pre-migration `config.yml.bak` if you have on
 Cache database at ... uses schema v..., newer than this pearlarr understands ... - it was written by a newer release - upgrade pearlarr
 ```
 
-The cache's schema version is higher than this Pearlarr understands - almost always a downgraded install reading a `cache.db` a newer version wrote.
-Upgrade Pearlarr back, restore a cache backup taken with the older version (`pearlarr cache restore`), or move `cache.db` aside to start a fresh cache - the next run rebuilds it (see [Deleting the cache](#deleting-the-cache) for what that costs).
+The cache's schema version is higher than this Pearlarr understands, almost always a downgraded install reading a `cache.db` a newer version wrote.
+Upgrade Pearlarr back, restore a cache backup taken with the older version (`pearlarr cache restore`), or move `cache.db` aside to start a fresh cache, which the next run rebuilds (see [Deleting the cache](#deleting-the-cache) for what that costs).
 
 ## No arr is configured
 
@@ -135,7 +136,8 @@ Could not fetch/parse the id-mapping sources - skipping this run
 ```
 
 Pearlarr downloads the ID-mapping sources at the start of a run and cannot resolve any title without them, so a fetch or parse failure skips the whole run rather than one title.
-It is almost always a first run with no network, or a proxy or firewall between Pearlarr and GitHub - the sources live on `github.com`/`objects.githubusercontent.com` and `raw.githubusercontent.com` (see [architecture.md](architecture.md#external-hosts)).
+It is almost always a first run with no network, or a proxy or firewall between Pearlarr and GitHub.
+The sources live on `github.com`/`objects.githubusercontent.com` and `raw.githubusercontent.com` (see [architecture.md](architecture.md#external-hosts)).
 Fix the connection or allowlist those hosts and the run succeeds; a scheduled cycle retries on its own, and once a source is cached (`advanced.cache_time` days) a later network blip falls back to the cached copy instead of skipping.
 
 ## Private-only releases
@@ -146,7 +148,7 @@ private-only release; no public alternative covers these files
 Tip: manually grab private releases or set private_releases: fallback to
 ```
 
-SeaDex's preferred release for these titles exists only on a private tracker, and Pearlarr never grabs private releases - SeaDex carries no download link for them, and no private-tracker auth is supported.
+SeaDex's preferred release for these titles exists only on a private tracker, and Pearlarr never grabs private releases: SeaDex carries no download link for them, and no private-tracker auth is supported.
 Your choices, via `seadex.private_releases` ([configuration.md](configuration.md#seadex)): grab the release yourself from the private tracker (the summary links the SeaDex entry), or set the policy to `fallback` so a public alternative is grabbed instead where one exists.
 Titles with no public alternative stay in the summary's "needs action" list and are re-checked every run until one appears.
 
@@ -159,7 +161,7 @@ tracker not yet supported; grab manually
 ```
 
 "Not yet supported" means the winning release lives on a public tracker Pearlarr cannot parse download links from yet (currently supported: Nyaa, AnimeTosho, and RuTracker); the title is re-considered once support lands, or grab it manually meanwhile.
-"Not in your selected list" is your own `seadex.trackers` filter doing its job - add the tracker to the list if you want releases from it.
+"Not in your selected list" is your own `seadex.trackers` filter doing its job: add the tracker to the list if you want releases from it.
 
 ## Unknown tracker names
 
@@ -167,7 +169,7 @@ tracker not yet supported; grab manually
 Unknown seadex.trackers value(s) ignored by matching:
 ```
 
-A name in `seadex.trackers` matched no tracker SeaDex uses, so it filters nothing - usually a typo.
+A name in `seadex.trackers` matched no tracker SeaDex uses, so it filters nothing, usually a typo.
 The warning lists the known names (matching is case-insensitive); the generated table in [configuration.md](configuration.md#seadex) has them too.
 
 ## The config file is world-readable
@@ -190,8 +192,8 @@ Four situations make a run noticeably slower, all expected:
 
 - **The first run** downloads and parses the ID-mapping sources and evaluates the whole library from scratch.
   On a large library this takes minutes; later runs reuse the parsed mappings and the cache, and typically finish in well under a minute when little changed.
-- **A long gap since the last run** (or a restored cache) exceeds the arr-activity lookback, so change detection cannot vouch for the interval and every cached title is re-checked once - that is the "history gap" note above.
-- **A changed matching preference** (anything in the `seadex` group, or `imports.languages_*`) makes the next full run re-check every cached title against the new rules once - the "Matching settings changed" note above; see [configuration.md](configuration.md#configuration-changes-and-the-cache).
+- **A long gap since the last run** (or a restored cache) exceeds the arr-activity lookback, so change detection cannot vouch for the interval and every cached title is re-checked once (the "history gap" note above).
+- **A changed matching preference** (anything in the `seadex` group, or `imports.languages_*`) makes the next full run re-check every cached title against the new rules once (the "Matching settings changed" note above); see [configuration.md](configuration.md#configuration-changes-and-the-cache).
 - **A SeaDex or mapping-source hiccup** makes affected titles count as unchecked; they are simply retried next run.
 
 Runs are also deliberately paced (`advanced.sleep_time`) to be a polite API citizen, so "slow" is partly by design.
@@ -199,13 +201,15 @@ Runs are also deliberately paced (`advanced.sleep_time`) to be a polite API citi
 ## Deleting the cache
 
 `cache.db` is regenerable: deleting it loses no media, and the next run rebuilds it.
-But it holds the "already handled" memory, pending-import state, and grab history - so the next run re-evaluates the whole library, may re-notify about things it already told you about, and forgets in-flight imports.
+But it holds the "already handled" memory, pending-import state, and grab history, so the next run re-evaluates the whole library, may re-notify about things it already told you about, and forgets in-flight imports.
 Prefer `pearlarr cache remove` over deleting the file (it takes the run lock and cleans up the WAL/SHM sidecars).
-Config edits never require it: a changed matching preference is detected and re-checked automatically, keeping all of the state above - see [configuration.md](configuration.md#configuration-changes-and-the-cache).
+Config edits never require it: a changed matching preference is detected and re-checked automatically, keeping all of the state above (see [configuration.md](configuration.md#configuration-changes-and-the-cache)).
 Removing the cache is a factory reset for when the database itself is suspect (a failed `pearlarr cache check`, a restore gone wrong), not routine maintenance.
 
 ## Where the logs live
 
 Every run writes `Pearlarr.log` under the data directory's `logs/` folder; `pearlarr paths` prints the exact location, and the per-OS defaults are listed in [deployment.md](deployment.md#the-data-directory).
-Previous runs are kept as dated `Pearlarr.log.<timestamp>` backups for `advanced.log_retention_days` days - see [output.md](output.md#the-log-file).
+Previous runs are kept as dated `Pearlarr.log.<timestamp>` backups for `advanced.log_retention_days` days (see [output.md](output.md#the-log-file)).
 Logs are safe to paste into an issue: they never contain API keys, passwords, or webhook URLs ([SECURITY.md](../SECURITY.md#the-redaction-guarantee)).
+
+[^verified]: Every quoted message is checked against Pearlarr's source by a test, so this page can't silently fall out of date.

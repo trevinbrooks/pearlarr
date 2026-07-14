@@ -2,8 +2,8 @@
 
 # Command-line reference
 
-Every Pearlarr command, generated from the CLI definition. `pearlarr <command> --help`
-shows the same text for the version you actually have; every command accepts `-h`/`--help`.
+This reference lists every Pearlarr command and option.
+`pearlarr <command> --help` prints the same text for the version you have, and every command accepts `-h`/`--help`.
 
 Exit codes, for scripts and schedulers:
 

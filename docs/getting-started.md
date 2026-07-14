@@ -1,14 +1,14 @@
 # Getting started
 
-By the end of this page Pearlarr will have grabbed its first release for real, and you will have watched it land in qBittorrent.
-Everything before that is a preview you can rerun freely - nothing is grabbed until qBittorrent joins in step 6.
-Budget ten minutes, plus however long the first download takes.
+This guide takes you from a fresh install to grabbing your first release.
+Pearlarr only downloads once qBittorrent is connected in the final step, so every run before then is a read-only preview.
+It shows exactly what would be grabbed without touching anything, letting you rerun and refine your setup as often as you like.
 
 You will need:
 
 - A running [Sonarr](https://sonarr.tv) 4.x or [Radarr](https://radarr.video) 5.x with some anime in its library, and its API key (in the arr's UI: Settings → General → Security).
-- qBittorrent with the WebUI enabled - not needed until step 6; everything before that runs without it.
-- Python 3.13 or newer (or Docker - see below).
+- qBittorrent with the WebUI enabled (not needed until step 6).
+- Python 3.13 or newer (or Docker, see below).
 
 The steps use Sonarr; Radarr works the same with `radarr.*` keys.
 
@@ -45,7 +45,7 @@ logs:        /home/you/.local/share/pearlarr/logs
 Open `config.yml` in your editor.
 Every key is documented in place, and the `$schema` line at the top gives most editors completion and validation as you type.
 
-Fill in just the connection for now - two keys:
+For now, fill in just the two connection keys:
 
 ```yaml
 sonarr:
@@ -66,7 +66,8 @@ OK: /home/you/.local/share/pearlarr/config.yml is valid
 ```
 
 That last line is the point of the next step: with no qBittorrent credentials, runs are previews.
-A typo'd or unknown key fails here with an error naming it, so a clean `OK` means the file itself is sound - but validation never touches the network, so a wrong key or dead URL passes here and surfaces only on the first run.
+A typo'd or unknown key fails here with an error naming it, so a clean `OK` means the file itself is sound.
+Validation never touches the network, though, so a wrong API key or dead URL passes here and surfaces only on the first run.
 
 ## 5. Run a preview
 
@@ -79,11 +80,12 @@ Watch it work, top to bottom:
 - A **boot ledger** first: one line per startup step (reading the config, refreshing the ID mappings, fetching your library, fetching the SeaDex entries).
   The first run downloads and parses the mapping sources, so it is the slowest; later runs reuse them.
 - Then a **block per library title**: the SeaDex entry it resolved to, what your library already has, and what Pearlarr would do about it.
-- Finally a **summary scoreboard**: how many titles were checked, what it *would grab*, what is already up to date, and what needs your attention - each "added" line names its release; each "needs action" line names the title and why Pearlarr stopped.
+- Finally a **summary scoreboard**: how many titles were checked, what it *would grab*, what is already up to date, and what needs your attention.
+  Each "added" line names its release, and each "needs action" line names the title and why Pearlarr stopped.
   The summary is marked `DRY RUN - qBittorrent not configured; nothing grabbed`.
 
 Nothing was grabbed and nothing was recorded, so you can run this as often as you like.
-This is the tuning loop: read the preview, adjust the release choices in the `seadex` group (tracker and tag filters, audio preference - see [configuration.md](configuration.md#seadex)), and run it again until the picks are what you would pick.
+This is the tuning loop: read the preview, adjust the release choices in the `seadex` group (tracker and tag filters, audio preference, all in [configuration.md](configuration.md#seadex)), and run it again until the picks are what you would pick.
 
 ## 6. Add qBittorrent and grab for real
 
@@ -102,8 +104,8 @@ Then the same command grabs for real:
 $ pearlarr run single
 ```
 
-The blocks now read "adding SeaDex's recommended release" instead of "would add", and the results are cached - handled titles are skipped on later runs until SeaDex or your library changes.
-A real run adds at most `advanced.max_torrents_to_add` torrents (default 10) - the preview ignored that cap, so on a large library later runs pick up where the first stopped.
+The blocks now read "adding SeaDex's recommended release" instead of "would add", and the results are cached, so handled titles are skipped on later runs until SeaDex or your library changes.
+A real run adds at most `advanced.max_torrents_to_add` torrents (default 10). The preview ignored that cap, so on a large library later runs pick up where the first stopped.
 (`pearlarr run single --dry-run` still simulates with credentials set, if you want one more rehearsal.)
 
 ## 7. Confirm the grab
