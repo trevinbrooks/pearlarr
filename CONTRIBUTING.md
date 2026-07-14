@@ -178,14 +178,42 @@ can predict CI:
 `fix(cache): …`); the body says why. Summaries must be meaningful without
 private context — no session or chat references.
 
-## Release checklist
+## Releasing
 
-1. Roll `Unreleased` in `CHANGELOG.md` into the new version heading with the
-   date; verify "Upgrade notes" covers every config/cache change.
-2. Bump `version` in `pyproject.toml`; run the full gate.
-3. Tag `vX.Y.Z` and push the tag; verify the PyPI package and `ghcr.io` image
-   land.
-4. Smoke the Docker quick start from the README on a clean host, verbatim.
+Releases are cut locally with [`scripts/release.sh`](scripts/release.sh): it
+runs under your own GitHub identity, so branch protection's required checks
+fire normally - a bot token would not trigger them. Versions follow
+[Semantic Versioning](https://semver.org); every user-observable change lands
+with a `CHANGELOG.md` entry under `## [Unreleased]` (see the drift map above),
+and the release script promotes that section into the new version's notes.
+
+1. Land everything the release should carry on `main`; verify "Upgrade notes"
+   covers every config/cache change.
+2. If the demo behavior changed, re-record the README assets - otherwise the
+   previous release's are carried forward automatically:
+
+   ```console
+   scripts/demo/record.sh                       # prints the cp that stages its GIF
+   uv run python scripts/sample_grab_post.py    # writes docs/assets/example_post.png
+   ```
+
+3. From an up-to-date `main`, `scripts/release.sh prepare X.Y.Z` bumps the
+   version (`uv version`, which also re-locks `uv.lock`), regenerates the
+   version-pinned schema URLs (`scripts/gen_docs.py`), dates the CHANGELOG
+   section, and opens the release PR. Review it, let the required checks
+   pass, and merge.
+4. Pull the merged `main`, then `scripts/release.sh publish X.Y.Z` tags
+   `vX.Y.Z` (which triggers the PyPI and GHCR publish workflows), builds the
+   GitHub release from the CHANGELOG section as a draft, attaches the README
+   assets, and publishes it - drafted so `releases/latest` never points at a
+   release without its assets. A publish interrupted partway is safe to rerun.
+5. Verify the PyPI package and `ghcr.io` image land; smoke the Docker quick
+   start from the README on a clean host, verbatim.
+
+The README's screenshot and demo GIF are GitHub release assets, not tracked
+files: gitignored under `docs/assets/` and served from
+`releases/latest/download/<name>`, so the README always shows the latest
+release's images and the repository carries no binaries.
 
 Publishing is tokenless: `publish_pypi.yaml` authenticates to PyPI via Trusted
 Publishing (OIDC, the `pypi` environment), and the Docker workflow pushes to

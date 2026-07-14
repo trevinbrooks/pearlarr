@@ -5,6 +5,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr); everything up to and including 0.9.0 is inherited upstream history.
 
+## [Unreleased]
+
+### Changed
+
+- The README's screenshot and demo GIF are served as GitHub release assets instead of repository files, so the images always show the latest release.
+
 ## [1.0.1] - 2026-07-13
 
 ### Changed

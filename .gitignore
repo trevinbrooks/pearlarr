@@ -241,3 +241,8 @@ anibridge_mappings_v3.json
 # Demo-recording byproducts (scripts/demo/record.sh)
 /scripts/demo/demo.gif
 /scripts/demo/demo_run.gif
+
+# Rendered README assets: hosted as GitHub release assets, not tracked in-repo
+# (regenerated locally, uploaded per release; see CONTRIBUTING.md "Releasing").
+/docs/assets/demo_run.gif
+/docs/assets/example_post.png
