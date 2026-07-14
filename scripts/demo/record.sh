@@ -77,4 +77,6 @@ if [ "$frames" -gt "$MAX_FRAMES" ]; then
   exit 1
 fi
 echo "== done: $FINAL ($frames frames, $(du -h "$FINAL" | cut -f1 | tr -d ' '))"
-echo "ship it with: cp $FINAL $REPO/docs/assets/demo_run.gif"
+# demo_run.gif is a GitHub release asset (gitignored under docs/assets/), not committed;
+# stage it there and the next `scripts/release.sh publish` uploads it (see RELEASING.md).
+echo "stage it with: cp $FINAL $REPO/docs/assets/demo_run.gif"
