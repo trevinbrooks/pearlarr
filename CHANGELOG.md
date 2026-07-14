@@ -7,6 +7,8 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr);
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-07-13
+
 ### Fixed
 
 - The README's screenshot and demo GIF now render on the PyPI project page: they are served from the repository's `assets` branch instead of release-asset downloads, whose forced `application/octet-stream` content type PyPI's image proxy refuses.
