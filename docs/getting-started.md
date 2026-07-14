@@ -18,7 +18,7 @@ $ uv tool install pearlarr    # or: pipx install pearlarr
 ```
 
 Running under Docker instead?
-Follow the compose setup in the [README](../README.md#docker-compose-recommended) first; every command below then runs as `docker compose run --rm pearlarr <command>`, and the container writes the starter config for you (skip step 2).
+Follow the compose setup in the [README](../README.md#docker-compose) first; every command below then runs as `docker compose run --rm pearlarr <command>`, and the container writes the starter config for you (skip step 2).
 
 ## 2. Create the config
 
