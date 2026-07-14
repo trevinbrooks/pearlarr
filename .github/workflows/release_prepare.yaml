@@ -4,7 +4,7 @@ name: Release prepare
 # schema URLs, and the CHANGELOG roll. Merging that PR is the human release
 # gate; release.yaml then publishes automatically off the merge.
 #
-# Pushes with RELEASE_PAT (a fine-grained PAT: contents + pull-requests write)
+# Pushes as the pearlarr-release GitHub App (see CONTRIBUTING "Releasing")
 # because a branch pushed with the default GITHUB_TOKEN would never get check
 # runs, and the no-bypass ruleset would leave the PR unmergeable.
 on:
@@ -25,13 +25,18 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ inputs.version }}
-      GH_TOKEN: ${{ secrets.RELEASE_PAT }}
     steps:
+      - name: Mint the app token
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
       - uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0 # guards need the tag list
-          token: ${{ secrets.RELEASE_PAT }}
+          token: ${{ steps.app.outputs.token }}
       - name: Guards (semver, tag free, CHANGELOG has content)
         run: |
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must be bare semver X.Y.Z (no leading v)" >&2; exit 1; }
@@ -50,14 +55,20 @@ jobs:
           uv run python scripts/gen_docs.py
           scripts/changelog.sh roll "$VERSION" "$(date +%Y-%m-%d)"
       - name: Commit and push the release branch
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SLUG: ${{ steps.app.outputs.app-slug }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bot_id=$(gh api "/users/${SLUG}[bot]" --jq .id)
+          git config user.name "${SLUG}[bot]"
+          git config user.email "${bot_id}+${SLUG}[bot]@users.noreply.github.com"
           git switch -c "release-$VERSION"
           git add -A
           git commit -m "chore(release): $VERSION"
           git push -u origin "release-$VERSION"
       - name: Open the PR
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           gh pr create --base main --head "release-$VERSION" \
             --title "chore(release): $VERSION" \

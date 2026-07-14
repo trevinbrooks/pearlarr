@@ -230,18 +230,23 @@ scripts/demo/record.sh                       # writes scripts/demo/demo_run.gif
 uv run python scripts/sample_grab_post.py    # writes docs/assets/example_post.png
 ```
 
-Two pieces of repository configuration back the automation. The `RELEASE_PAT`
-secret (a fine-grained PAT with contents write on this repository and
-`pearlarr-assets`, plus pull-requests write here) serves two purposes: the
-prepare workflow pushes a branch whose PR actually gets check runs - a branch
-pushed with the default `GITHUB_TOKEN` never triggers them, and the no-bypass
-ruleset would leave the PR unmergeable - and the Release workflow pushes the
-recorded media to `pearlarr-assets`, which the repo-scoped `GITHUB_TOKEN`
-cannot reach. And PyPI's Trusted Publishing (OIDC, the `pypi` environment)
-must name `release.yaml` as the publishing workflow. Publishing itself stays
-tokenless toward both registries: PyPI trusts the workflow identity, and GHCR
-is pushed with the workflow's own `GITHUB_TOKEN` - no long-lived registry
-secrets to rotate.
+Two pieces of repository configuration back the automation. The
+`pearlarr-release` GitHub App (repository permissions: contents and pull
+requests, both read and write; installed on this repository and
+`pearlarr-assets`, with its client ID and private key in the
+`RELEASE_APP_CLIENT_ID` and `RELEASE_APP_PRIVATE_KEY` secrets) covers the two
+pushes the default token cannot make: the prepare workflow pushes a branch
+whose PR actually gets check runs - a branch pushed with the default
+`GITHUB_TOKEN` never triggers them, and the no-bypass ruleset would leave the
+PR unmergeable - and the Release workflow pushes the recorded media to
+`pearlarr-assets`, which the repo-scoped `GITHUB_TOKEN` cannot reach. Each
+run mints a short-lived installation token from those secrets
+(`actions/create-github-app-token`), and the pushes are attributed to the
+app's bot identity rather than a personal account. And PyPI's Trusted
+Publishing (OIDC, the `pypi` environment) must name `release.yaml` as the
+publishing workflow. Publishing itself stays tokenless toward both
+registries: PyPI trusts the workflow identity, and GHCR is pushed with the
+workflow's own `GITHUB_TOKEN` - no long-lived registry secrets to rotate.
 
 ## Environment variables
 

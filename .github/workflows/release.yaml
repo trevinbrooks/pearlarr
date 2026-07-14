@@ -183,14 +183,22 @@ jobs:
         with:
           name: readme-media
           path: media
+      - name: Mint an app token for the assets repository
+        # An app token because the repo-scoped GITHUB_TOKEN cannot push to
+        # another repository (the pearlarr-release app; see CONTRIBUTING).
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}-assets
       - name: Commit the media and pin the version tag
-        # RELEASE_PAT because the repo-scoped GITHUB_TOKEN cannot push to
-        # another repository. A re-run that finds the tag skips everything -
-        # the pinned pixels stay frozen (a ruleset there blocks tag rewrites).
+        # A re-run that finds the tag skips everything - the pinned pixels
+        # stay frozen (a ruleset there blocks tag rewrites and deletions).
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SLUG: ${{ steps.app.outputs.app-slug }}
         run: |
-          [ -n "$GH_TOKEN" ] || { echo "the RELEASE_PAT secret is not set - the media push needs it" >&2; exit 1; }
           git clone --quiet --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${ASSETS_REPO}.git" assets
           cd assets
           if git ls-remote --exit-code --tags origin "v$VERSION" >/dev/null; then
@@ -200,8 +208,9 @@ jobs:
           cp ../media/demo_run.gif ../media/example_post.png .
           git add -A
           if ! git diff --cached --quiet; then
-            git -c user.name="github-actions[bot]" \
-                -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            bot_id=$(gh api "/users/${SLUG}[bot]" --jq .id)
+            git -c user.name="${SLUG}[bot]" \
+                -c user.email="${bot_id}+${SLUG}[bot]@users.noreply.github.com" \
                 commit --quiet -m "chore: publish media for v$VERSION"
             git push --quiet origin HEAD:main
           fi
