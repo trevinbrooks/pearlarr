@@ -366,6 +366,11 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       TAG: ${{ needs.version.outputs.tag }}
     steps:
+      # The runner's default python3 is below our >=3.13 floor, so pip refuses
+      # the wheel; install on the floor itself - the likeliest to break.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
       - name: Install from PyPI and run the CLI
         run: |
           python3 -m venv /tmp/smoke
