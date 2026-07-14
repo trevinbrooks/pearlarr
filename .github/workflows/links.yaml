@@ -9,14 +9,19 @@ on:
     - cron: "37 4 * * 1"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   links:
     name: Check external links
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       - name: Lychee (full, external URLs included)
-        uses: lycheeverse/lychee-action@v2
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         env:
           # Authenticates github.com link checks - avoids anonymous rate limits.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

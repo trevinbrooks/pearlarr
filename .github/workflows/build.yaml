@@ -9,6 +9,10 @@ on:
     branches:
       - main
 
+# Read-only by default; publishing lives in release.yaml.
+permissions:
+  contents: read
+
 # A newer push to the same PR supersedes the in-flight run; main is exempt
 # so every merge keeps its full record.
 concurrency:
@@ -28,13 +32,15 @@ jobs:
           "3.14",
         ]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: true
           # Full history so diff-cover can diff against the PR base branch.
           fetch-depth: 0
+          # diff-cover git-fetches the base branch below, so the token must persist.
+          persist-credentials: true
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: true
       - name: Sync dependencies
@@ -60,9 +66,11 @@ jobs:
       # pushes, which have no base to diff.
       - name: Diff coverage (changed lines, 90% floor)
         if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          git fetch origin "${{ github.base_ref }}"
-          uv run diff-cover coverage.xml --compare-branch "origin/${{ github.base_ref }}" --fail-under=90
+          git fetch origin "$BASE_REF"
+          uv run diff-cover coverage.xml --compare-branch "origin/$BASE_REF" --fail-under=90
 
   # Reduced subset on purpose: the lint/type gates are platform-independent and
   # already run (on both Python versions) in the ubuntu matrix above; this leg
@@ -78,11 +86,12 @@ jobs:
       # the next step. The job-level env holds every uv step on the floor.
       UV_PYTHON: "3.13"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: true
+          persist-credentials: false
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: true
       - name: Sync dependencies
@@ -100,18 +109,37 @@ jobs:
     name: Docs (spelling, markdown, links)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
       - name: Codespell
         run: uvx codespell@2.4.2 .
       - name: Markdownlint
         run: npx --yes markdownlint-cli2@0.23.0
       - name: Lychee (offline - local file links and anchors)
-        uses: lycheeverse/lychee-action@v2
+        uses: lycheeverse/lychee-action@e7477775783ea5526144ba13e8db5eec57747ce8 # v2
         with:
           args: --offline --include-fragments --no-progress './**/*.md'
           fail: true
+
+  # Static analysis of the workflow files themselves: SHA-pinned actions, least
+  # privilege, no template injection, no credential persistence. Config and any
+  # documented exceptions live in .github/zizmor.yml.
+  zizmor:
+    name: Zizmor (workflow static analysis)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      - name: Zizmor
+        env:
+          GH_TOKEN: ${{ github.token }} # authenticates zizmor's online audits
+        run: uvx zizmor@1.0.0 .github/workflows/
 
   # The compose example is documentation that can rot; docker compose config
   # parses + interpolates it (services, PUID/PGID defaults) without running anything.
@@ -119,7 +147,9 @@ jobs:
     name: Validate docker-compose.example.yml
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
       - name: docker compose config
         run: |
           docker compose -f docker-compose.example.yml config >/dev/null 2>stderr.log || { cat stderr.log >&2; exit 1; }
@@ -131,12 +161,13 @@ jobs:
     name: Build source distribution
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           submodules: true
+          persist-credentials: false
       # Pure-Python build - one version suffices; release.yaml builds the real one.
       - name: Setup Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
       - name: Install dependencies

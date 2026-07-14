@@ -15,6 +15,9 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+
 concurrency:
   group: release-prepare
   cancel-in-progress: false
@@ -28,15 +31,17 @@ jobs:
     steps:
       - name: Mint the app token
         id: app
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: main
           fetch-depth: 0 # guards need the tag list
           token: ${{ steps.app.outputs.token }}
+          # Pushes the release branch below, so the token must persist.
+          persist-credentials: true
       - name: Guards (semver, tag free, CHANGELOG has content)
         run: |
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "version must be bare semver X.Y.Z (no leading v)" >&2; exit 1; }
@@ -46,7 +51,7 @@ jobs:
           scripts/changelog.sh section Unreleased | grep -q '[^[:space:]]' \
             || { echo "CHANGELOG '## [Unreleased]' is empty; land release notes first" >&2; exit 1; }
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: true
       - name: Bump, re-lock, regenerate docs, roll the CHANGELOG
