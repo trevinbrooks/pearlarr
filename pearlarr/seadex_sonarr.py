@@ -8,7 +8,7 @@ from . import coverage as _coverage
 from .arr_http import ArrHttp, make_httpx_client
 from .cache import CacheRecord
 from .config import Arr, secret_value
-from .grab_pipeline import GrabRequest
+from .grab_pipeline import GrabRequest, clean_replaced_groups
 from .log import EntryState, pluralize
 from .manual_import import (
     ImportProbe,
@@ -482,9 +482,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                 seadex_dict=seadex_dict,
                 torrent_hashes=torrent_hashes,
                 cache_details=cache_details,
-                # get_sonarr_release_dict already drops null/empty group keys; the
-                # filter keeps replaced_groups a clean tuple[str, ...] for the type.
-                replaced_groups=tuple(rg for rg in sonarr_release_groups if rg),
+                replaced_groups=clean_replaced_groups(sonarr_release_groups),
                 coverage=coverage,
                 pending_seeds=pending_seeds,
             ),

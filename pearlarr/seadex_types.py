@@ -85,6 +85,12 @@ class SeadexUrlItem:
     different size (an upgrade), not because it lacks it."""
     episodes: list[EpisodeRecord] = field(default_factory=list[EpisodeRecord])
 
+    def __post_init__(self) -> None:
+        # Normalize "" / blank to None: an empty `hashes` filter matches every
+        # torrent in the qbit dedup, and "" collides with the cache's _NO_HASH.
+        if self.infohash is not None:
+            self.infohash = self.infohash.strip() or None
+
 
 @dataclass
 class SeadexReleaseGroupItem:

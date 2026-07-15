@@ -12,10 +12,10 @@ import hashlib
 from collections.abc import Iterable
 
 from . import coverage as _coverage
+from .anime_filter import IdField, build_id_filters, collect_anime_items
 from .config import AppConfig
 from .mappings import ExternalIds, MappingEntry, MappingMode, MappingSource
 from .output import Accent, StyledValue
-from .radarr_client import IdField, build_id_filters, collect_anime_items
 from .run_services import RunDeps, RunServices
 from .seadex_types import (
     ArrReleaseDict,

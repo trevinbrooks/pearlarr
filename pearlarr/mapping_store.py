@@ -246,17 +246,6 @@ class AnidbMappingRow(NamedTuple):
     anidb_ep: int
 
 
-class AnidbEpPair(NamedTuple):
-    """One `anidb_rows` result: a season-scoped tvdb episode -> anidb episode pair.
-
-    A typed record (not a positional `tuple[int, int]`) so the two ordered ints
-    can't silently transpose; the caller builds `dict(rows)` off the field order.
-    """
-
-    tvdb_ep: int
-    anidb_ep: int
-
-
 def _ext_id_as[T: (int, str)](value: object, kind: type[T], axis: str) -> T:
     """Pin a stored anibridge ext id to the type its axis owns.
 
@@ -536,14 +525,11 @@ class MappingStore:
         ).fetchone()
         return row is not None
 
-    def anidb_rows(self, anidb_id: int, tvdb_season: int) -> list[AnidbEpPair]:
-        """`AnidbEpPair` rows for `anidb_id` scoped to `tvdb_season`.
-
-        The SELECT column order matches `AnidbEpPair`'s fields.
-        """
+    def anidb_rows(self, anidb_id: int, tvdb_season: int) -> list[tuple[int, int]]:
+        """`(tvdb_ep, anidb_ep)` rows for `anidb_id` scoped to `tvdb_season`."""
 
         rows = self._conn.execute(
             "SELECT tvdb_ep, anidb_ep FROM anidb_mapping WHERE anidb_id = ? AND tvdb_season = ?",
             (anidb_id, tvdb_season),
         ).fetchall()
-        return [AnidbEpPair(*row) for row in rows]
+        return [(int(tvdb_ep), int(anidb_ep)) for tvdb_ep, anidb_ep in rows]

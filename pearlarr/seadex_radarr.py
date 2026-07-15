@@ -4,7 +4,7 @@ from typing import override
 
 from .cache import CacheRecord
 from .config import Arr
-from .grab_pipeline import GrabRequest
+from .grab_pipeline import GrabRequest, clean_replaced_groups
 from .log import pluralize
 from .manual_import import ImportProbe, ImportProgress, ImportReadiness, PendingImport
 from .mappings import ExternalIds, MappingEntry
@@ -196,10 +196,9 @@ class RadarrSync(ArrSync[RadarrItem]):
                 seadex_dict=seadex_dict,
                 torrent_hashes=torrent_hashes,
                 cache_details=cache_details,
-                # The replaced groups the notifier renders (every edition's group,
-                # not just the first file's); the {None:[None]} placeholder and any
-                # real-file null group drop, so replaced_groups is a clean tuple.
-                replaced_groups=tuple(rg for rg in radarr_release_dict if rg),
+                # Every edition's group (not just the first file's); the helper drops
+                # the {None:[None]} placeholder and any real-file null key.
+                replaced_groups=clean_replaced_groups(radarr_release_dict),
             ),
         )
 

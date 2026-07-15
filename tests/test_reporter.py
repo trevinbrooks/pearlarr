@@ -219,9 +219,9 @@ class TestActiveTitle:
         ctx = RunContext(arr=Arr.SONARR)
         entry = make_entry_record(url="https://releases.moe/9")
         _make_reporter().log_al_title(ctx, "Steins;Gate", entry, coverage="S01 E01-E24")
-        assert ctx.current_title == "Steins;Gate"
-        assert ctx.current_url == "https://releases.moe/9"
-        assert ctx.current_coverage == "S01 E01-E24"
+        assert ctx.per_title.current_title == "Steins;Gate"
+        assert ctx.per_title.current_url == "https://releases.moe/9"
+        assert ctx.per_title.current_coverage == "S01 E01-E24"
 
 
 class TestEntryHeaderAlId:
