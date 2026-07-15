@@ -302,7 +302,7 @@ class TestSeaDexBootNote:
 
         step = self._seadex_step(self._run(logger, seadex=seadex))
 
-        assert step.detail == "SeaDex unreachable - unfetched titles will be skipped"
+        assert step.detail == "unreachable"
         assert step.outcome is OutcomeCategory.DEFERRED  # graduates as a warning
 
     def test_healthy_prefetch_keeps_the_count_note(self, logger: logging.Logger) -> None:

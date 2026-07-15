@@ -267,7 +267,9 @@ class RunLoop:
         with boot.step("Fetching SeaDex entries") as step:
             fetched = self._seadex.prefetch(prefetch_ids, progress=step)
             if self._seadex.outage:
-                step.warn("SeaDex unreachable - unfetched titles will be skipped")
+                # Terse ledger annotation only; the gateway already warned once with
+                # the failure detail, so don't repeat the whole sentence here.
+                step.warn("unreachable")
             else:
                 step.note("cached" if fetched == 0 else count_noun(fetched, "entry", "entries"))
 
