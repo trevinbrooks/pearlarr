@@ -130,6 +130,6 @@ Load-bearing invariants, indexed from their `# Invariant:` enforcement-site comm
 - `pearlarr/mappings.py` - an empty tvdb_mappings dict is still ANIBRIDGE - a truthiness check would fall back to Anime-IDs season heuristics and over-grab.
 - `pearlarr/planner.py` - a fallback substitute never replaces an owned copy of the preferred private release - those sets hold and warn every run.
 - `pearlarr/seadex_sonarr.py` - this dedup names Arr.RADARR explicitly while running Sonarr - folding the arr param into the run's bound arr breaks the cross-arr read.
-- `pearlarr/sonarr_import_plan.py` - every importPending queue row buckets as wait, never STEP_IN - stepping in races Sonarr's own import and double-imports the files.
+- `pearlarr/sonarr_import_plan.py` - importPending always buckets as PENDING_CLEAN, never STEP_IN - stepping in races Sonarr's own import and double-imports the files.
 - `pearlarr/sonarr_import_plan.py` - the import payload always carries a quality key - omitting it crashes Sonarr in FileNameBuilder.AddQualityTokens (observed on Sonarr 4.x).
 <!-- /gen:invariants -->

@@ -10,14 +10,14 @@ that computes it.
 
 import concurrent.futures
 import os
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Any, NamedTuple, NotRequired, TypedDict, cast
 
 from .cache import UPDATED_AT_STR_FORMAT, record_is_fresh
 from .log import count_noun
 from .run_services import RunDeps
-from .seadex_types import EpisodeRecord, SeadexDict
+from .seadex_types import EpisodeRecord, ParsedEpisode, SeadexDict
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import fetch_workers
 
@@ -158,6 +158,38 @@ class SonarrParseRecord(TypedDict):
     freshness reader dispatches on exactly that presence."""
 
 
+def parsed_episodes(record: Mapping[str, object]) -> list[ParsedEpisode]:
+    """Deserialize a parse record's `episodes` JSON into `ParsedEpisode`s.
+
+    The sole reader of the persisted `{"season", "episode"}` objects (paired
+    with `_serialize_episodes`), so those magic keys live at this one cache
+    seam. A malformed entry is skipped, never crashed on.
+    """
+
+    raw = record.get("episodes")
+    if not isinstance(raw, list):
+        return []
+    episodes: list[ParsedEpisode] = []
+    for entry in cast("list[object]", raw):
+        if not isinstance(entry, dict):
+            continue
+        season = cast("dict[str, object]", entry).get("season")
+        episode = cast("dict[str, object]", entry).get("episode")
+        if isinstance(season, int) and isinstance(episode, int):
+            episodes.append(ParsedEpisode(season=season, episode=episode))
+    return episodes
+
+
+def _serialize_episodes(episodes: list[ParsedEpisode]) -> list[dict[str, int]]:
+    """Serialize `ParsedEpisode`s to the persisted `{"season", "episode"}` objects.
+
+    The inverse of `parsed_episodes`: the cache.db entries stay JSON objects, so
+    existing records read back unchanged (migration-free).
+    """
+
+    return [{"season": ep.season, "episode": ep.episode} for ep in episodes]
+
+
 class SonarrParseCache:
     """Owns the grab-time `/parse` + the durable, freshness-checked parse cache.
 
@@ -209,20 +241,21 @@ class SonarrParseCache:
         except (TypeError, ValueError):
             return False
 
-    def _write_parse_record(self, filename: str, episodes: list[dict[str, int]], *, window: ParseWindow) -> None:
+    def _write_parse_record(self, filename: str, episodes: list[ParsedEpisode], *, window: ParseWindow) -> None:
         """Upsert a Sonarr parse-cache record (one builder for both shapes).
 
         A NEGATIVE record (empty `episodes`) carries the series fingerprint so
         it self-heals when the library changes; a POSITIVE one never does - the
-        freshness reader dispatches on exactly that presence.
+        freshness reader dispatches on exactly that presence. The episodes are
+        serialized to `{"season", "episode"}` JSON objects at this seam.
         """
 
-        record: SonarrParseRecord = {"fetched_at": window.now_str, "episodes": episodes}
+        record: SonarrParseRecord = {"fetched_at": window.now_str, "episodes": _serialize_episodes(episodes)}
         if not episodes:
             record["series_fp"] = window.series_fp
         self.cache_store.put_sonarr_parse(filename, cast("dict[str, Any]", record))
 
-    def _episodes_for(self, f: str, *, window: ParseWindow) -> list[dict[str, int]]:
+    def _episodes_for(self, f: str, *, window: ParseWindow) -> list[ParsedEpisode]:
         """One file's season/episode records, read-through the parse cache.
 
         Empty means skip: a fresh negative record, a transient parse failure
@@ -232,9 +265,7 @@ class SonarrParseCache:
 
         record = self.cache_store.get_sonarr_parse(f)
         if record is not None and self._sonarr_parse_is_fresh(record, window=window):
-            # `episodes` is untyped JSON; pin the element type back on.
-            episodes: list[dict[str, int]] = record["episodes"]
-            return episodes
+            return parsed_episodes(record)
         result = self.sonarr.parse(f)
         # None = request failed: skip without caching a transient miss.
         if result is None:
@@ -281,7 +312,7 @@ class SonarrParseCache:
         if len(pending) <= 1:
             return
 
-        def fetch(name: str) -> tuple[str, list[dict[str, int]] | None]:
+        def fetch(name: str) -> tuple[str, list[ParsedEpisode] | None]:
             # A RAISE degrades to a transient miss (None: not cached, re-parsed on
             # demand) so one bad file can't abort the concurrent warm sweep.
             try:
@@ -322,11 +353,12 @@ class SonarrParseCache:
                 records (from the episode collaborator).
         """
 
-        # Cutoffs computed once per call (not per file).
+        # Cutoffs computed once per call (not per file), all anchored to one instant.
+        now = datetime.now()
         window = ParseWindow(
-            now_str=datetime.now().strftime(UPDATED_AT_STR_FORMAT),
-            cutoff=datetime.now() - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS),
-            neg_cutoff=datetime.now() - timedelta(days=SONARR_PARSE_NEG_CACHE_TTL_DAYS),
+            now_str=now.strftime(UPDATED_AT_STR_FORMAT),
+            cutoff=now - timedelta(days=SONARR_PARSE_CACHE_TTL_DAYS),
+            neg_cutoff=now - timedelta(days=SONARR_PARSE_NEG_CACHE_TTL_DAYS),
             series_fp=series_fp,
         )
 
@@ -365,8 +397,8 @@ class SonarrParseCache:
 
                     size = sizes[sd_file_idx]
                     for ep in parsed:
-                        season = ep["season"]
-                        episode = ep["episode"]
+                        season = ep.season
+                        episode = ep.episode
 
                         self.logger.debug(f"{f} mapped to: S{season:02d}E{episode:02d}")
 

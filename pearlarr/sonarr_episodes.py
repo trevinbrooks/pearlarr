@@ -15,7 +15,7 @@ from . import coverage as _coverage
 from .config import AppConfig
 from .mappings import ExternalIds, MappingEntry, MappingMode, MappingSource
 from .output import Accent, StyledValue
-from .radarr_client import IdField, IdFilter, collect_anime_items
+from .radarr_client import IdField, build_id_filters, collect_anime_items
 from .run_services import RunDeps, RunServices
 from .seadex_types import (
     ArrReleaseDict,
@@ -179,14 +179,7 @@ class SonarrEpisodes:
         fields = (IdField("tvdb_id", "tvdbId"), IdField("imdb_id", "imdbId"))
         return collect_anime_items(
             self.sonarr.all_series,
-            tuple(
-                IdFilter(
-                    field,
-                    anime_ids=self._mappings.anime_id_set(field.mapping_key),
-                    anibridge_ids=self.anibridge.id_set(field.mapping_key) if self.anibridge else set(),
-                )
-                for field in fields
-            ),
+            build_id_filters(fields, self._mappings, self.anibridge),
         )
 
     def prefetch(self, items: list[SonarrItem], *, progress: ProgressSink | None = None) -> int:
@@ -297,18 +290,13 @@ class SonarrEpisodes:
     ) -> list[SonarrEpisode] | None:
         """Get a list of relevant episodes for an AniList mapping."""
 
-        # If we have any season info, pull that out now
         tvdb_season = mapping.tvdb_season
 
-        # Check we have a sensible AL ID
         if al_id == -1:
             raise ValueError("AniList ID not defined!")
 
-        # Get the AniDB ID
         anidb_id = mapping.anidb_id
 
-        # Check what kind of mode we're in here,
-        # it's either AniBridge or Anime IDs
         mode = mapping.mode
 
         # Get all the episodes for the whole series. The fetch is per-series (not
@@ -350,7 +338,7 @@ class SonarrEpisodes:
         # season's {tvdb_ep: anidb_ep} map ({} when none) and raises on an
         # ambiguous id.
         anidb_mapping_dict: dict[int, dict[int, int]] = {}
-        if self._mappings.has_anidb and anidb_id is not None and (al_format not in ["TV"] or tvdb_season == 0):
+        if self._mappings.has_anidb and anidb_id is not None and (al_format != "TV" or tvdb_season == 0):
             anidb_mapping_dict = self._mappings.anidb_mapping_dict(anidb_id, tvdb_season)
 
         # Prefer the AniDB mapping dict over any offsets
@@ -383,7 +371,6 @@ class SonarrEpisodes:
                 final_ep_list=final_ep_list,
                 al_id=al_id,
                 mapping=mapping,
-                tvdb_season=tvdb_season,
             )
 
         return final_ep_list
@@ -393,15 +380,14 @@ class SonarrEpisodes:
         final_ep_list: list[SonarrEpisode],
         al_id: int,
         mapping: MappingEntry,
-        tvdb_season: int,
     ) -> list[SonarrEpisode]:
         """Slice an anime-id episode list down by its TVDB offset / AniList count.
 
         Args:
             final_ep_list: Season-filtered episodes to slice.
             al_id: AniList ID, used to resolve the expected episode count.
-            mapping: SeaDex mapping (read for `tvdb_epoffset`).
-            tvdb_season: TVDB season (-1 means single-season offset slice).
+            mapping: SeaDex mapping (read for `tvdb_epoffset` and `tvdb_season`;
+                a `tvdb_season` of -1 means single-season offset slice).
         """
 
         # Slice the list to get the correct episodes, so any potential offsets
@@ -414,7 +400,7 @@ class SonarrEpisodes:
 
         # Check that we're including this by the episode number. This only
         # works for single-seasons, so be careful!
-        if tvdb_season != -1:
+        if mapping.tvdb_season != -1:
             return [ep for ep in final_ep_list if 1 <= (ep.episode_number or 0) - ep_offset <= n_eps]
 
         return final_ep_list[ep_offset : n_eps + ep_offset]

@@ -12,6 +12,7 @@ functions that use it (the boot-cockpit invariant: instant title first).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import typer
@@ -19,7 +20,7 @@ import yaml
 from pydantic import ValidationError
 
 from .boot_flow import BootFlow
-from .config import KNOWN_TRACKERS, AppConfig, Arr, config_permissions_loose
+from .config import KNOWN_TRACKERS, AppConfig, Arr, ArrTarget, config_permissions_loose
 from .config_migrations import MIGRATE_HINT
 from .log import apply_log_level
 from .output import FileLogSink, RunFinished, emit_to_hub, hub_error, hub_note, hub_warn
@@ -194,12 +195,12 @@ def build_resolver(
 
 
 def configured_arrs(
-    arrs: list[tuple[Arr, int | None]],
+    arrs: list[ArrTarget],
     app_config: AppConfig,
     *,
     explicit: bool,
     config_path: str,
-) -> list[tuple[Arr, int | None]] | None:
+) -> list[ArrTarget] | None:
     """Drop unconfigured arrs, or refuse when one was explicitly requested.
 
     A Sonarr-only (or Radarr-only) config is a normal setup: an implicit
@@ -209,11 +210,11 @@ def configured_arrs(
     A half-configured arr (url without api_key, or vice versa) is almost
     certainly a mistake, so its skip is a WARNING naming the missing key. An
     explicit `--radarr`/`--movie-id` against an unconfigured radarr is a
-    config mistake: report it and run nothing. Returns the runnable pairs, or
+    config mistake: report it and run nothing. Returns the runnable targets, or
     None - after logging why - when nothing can run.
     """
 
-    missing = {arr: keys for arr, _ in arrs if (keys := app_config.missing_arr_keys(arr))}
+    missing = {target.arr: keys for target in arrs if (keys := app_config.missing_arr_keys(target.arr))}
     if explicit and missing:
         for arr, keys in missing.items():
             hub_error(
@@ -230,7 +231,7 @@ def configured_arrs(
             # boot section); the file/plain surfaces take a structured line.
             hub_note(f"{arr.capitalize()} not configured - skipped")
 
-    kept = [(arr, item_id) for arr, item_id in arrs if arr not in missing]
+    kept = [target for target in arrs if target.arr not in missing]
     if not kept:
         hub_error(
             f"Neither sonarr nor radarr is configured - set sonarr.url and sonarr.api_key, or radarr.url and "
@@ -255,8 +256,135 @@ def implicated_arrs(arr: Arr, app_config: AppConfig) -> list[Arr]:
     return implicated
 
 
+@dataclass(frozen=True)
+class LegContext:
+    """The run-invariant collaborators every arr leg shares (built once per run).
+
+    Bundles the cross-leg scaffolding so `_run_leg` takes one context plus the
+    per-leg `ArrTarget`, instead of a wide positional signature.
+    """
+
+    cache: str
+    logger: logging.Logger
+    mappings: MappingResolver
+    app_config: AppConfig
+    web: httpx.Client
+    boot: BootFlow
+    dry_run: bool
+    import_wait_mode: ImportWaitMode | None
+
+
+def _run_leg(target: ArrTarget, ctx: LegContext) -> bool:
+    """Run one arr leg end to end: True on a clean completion, False for each caught arm.
+
+    Re-does its own lazy imports of the heavy run machinery (the boot-cockpit
+    invariant: nothing heavy at module load). A `BaseException` that matches no
+    arm still propagates - the `finally` runs first - so `run_arrs`'s outer
+    try/finally chain unwinds exactly as before.
+    """
+
+    from .arr_http import ArrAuthError, ArrConnectionError
+    from .cache import CacheSchemaError
+    from .protocols import ArrSync
+    from .run_loop import RunLoop
+    from .run_services import QbitConnectionError, RunDeps, RunServices
+    from .seadex_radarr import RadarrSync
+    from .seadex_sonarr import SonarrSync
+    from .seadex_types import ArrItem, BoundaryContractError
+
+    arr_name = target.arr
+    item_id = target.item_id
+    # Bound before the try so a RunDeps.build failure can't hit an
+    # UnboundLocalError in the finally's close.
+    deps: RunDeps | None = None
+    try:
+        # An inner handler so a dying leg's open output frames close
+        # BEFORE the except arms below log: a leg-fatal error is a
+        # cycle-level fact, not a detail of the entry / item / boot step
+        # it died in; a completed leg's single close comes from the run tail.
+        try:
+            deps = RunDeps.build(
+                arr_name,
+                ctx.cache,
+                logger=ctx.logger,
+                mappings=ctx.mappings,
+                app_config=ctx.app_config,
+                web=ctx.web,
+                boot=ctx.boot,
+            )
+            services = RunServices(deps, arr_name)
+            runner = RunLoop(deps, services)
+
+            # The concrete strategy differs per arr, but the run_sync kwargs don't -
+            # capture them once so a signature change edits a single place.
+            def drive[ItemT: ArrItem](strategy: ArrSync[ItemT]) -> None:
+                runner.run_sync(
+                    strategy,
+                    item_id=item_id,
+                    dry_run=ctx.dry_run,
+                    import_wait_mode=ctx.import_wait_mode,
+                    boot=ctx.boot,
+                )
+
+            match arr_name:
+                case Arr.SONARR:
+                    drive(SonarrSync(deps, services))
+                case Arr.RADARR:
+                    drive(RadarrSync(deps, services))
+        except BaseException:
+            # Through the hub seam, not the reporter (deps is None when
+            # RunDeps.build itself failed); hub.emit contains renderer errors,
+            # so the emit cannot mask the in-flight leg-fatal Exception.
+            emit_to_hub(RunFinished(arr=arr_name))
+            raise
+    except (QbitConnectionError, CacheSchemaError) as e:
+        # A user-facing environment problem (wrong host/credentials, a
+        # cache.db from a newer release): a clean one-line message, not
+        # a stack trace under "unexpected error". The two arr-client
+        # arms below get the same treatment.
+        hub_error(str(e))
+        return False
+    except ArrConnectionError as e:
+        # The error's message names the URL it couldn't reach, which
+        # disambiguates when this leg contacted more than one arr.
+        keys = " / ".join(f"{a}.url" for a in implicated_arrs(arr_name, ctx.app_config))
+        hub_error(f"{arr_name.capitalize()} run failed - {e} - check {keys} in your config")
+        return False
+    except BoundaryContractError as e:
+        # The arr answered but its library payload validated to
+        # nothing: a one-line contract error, never a traceback.
+        hub_error(f"{arr_name.capitalize()} run failed - {e}")
+        return False
+    except ArrAuthError:
+        implicated = implicated_arrs(arr_name, ctx.app_config)
+        if len(implicated) == 1:
+            hub_error(f"{arr_name.capitalize()} rejected the API key - check {arr_name}.api_key in your config")
+        else:
+            # This leg presented more than one key - name every
+            # candidate (the config keys are what the user edits).
+            keys = " / ".join(f"{a}.api_key" for a in implicated)
+            hub_error(
+                f"An arr rejected the API key during the {arr_name.capitalize()} run - check {keys} in your config"
+            )
+        return False
+    except Exception as e:
+        hub_error(
+            f"Unexpected error during {arr_name.capitalize()} run - skipping the rest of this arr's run",
+            exc=e,
+        )
+        return False
+    finally:
+        # Cap this arr's boot section so the next arr opens a fresh
+        # one; a no-op on the happy path (run_sync already ended it
+        # before scanning), the safety net when a step failed.
+        ctx.boot.end_section()
+        if deps is not None:
+            deps.close()
+    return True
+
+
 def run_arrs(
-    arrs: list[tuple[Arr, int | None]],
+    arrs: list[ArrTarget],
     *,
     paths: AppPaths,
     logger: logging.Logger,
@@ -269,13 +397,13 @@ def run_arrs(
 ) -> bool:
     """Build the shared config + mappings once, then run each requested arr.
 
-    `arrs` is a list of `(arr_name, item_id)` pairs; unconfigured arrs are
-    dropped (or, when `explicit_selection` says the user asked for them by
-    flag, refused) via `configured_arrs`, and each survivor is run in its own
-    try block (which logs and closes independently, so one crashing doesn't ruin
-    the other). The shared config read and mapping download/parse happen a single
-    time, in that order with the selection check in between, so a run with
-    nothing to do fails fast instead of fetching the mapping sources first.
+    Unconfigured arrs are dropped (or, when `explicit_selection` says the user
+    asked for them by flag, refused) via `configured_arrs`, and each survivor is
+    run in its own `_run_leg` (which logs and closes independently, so one
+    crashing doesn't ruin the other). The shared config read and mapping
+    download/parse happen a single time, in that order with the selection check
+    in between, so a run with nothing to do fails fast instead of fetching the
+    mapping sources first.
     Returns True when the run proceeded and every arr completed; False - after
     the cause is logged - when the shared deps couldn't be built, nothing
     runnable was selected, or an arr run failed (unreachable/unauthorized arr,
@@ -310,16 +438,9 @@ def run_arrs(
         # log per cycle, and "which data dir is this?" is the first support question.
         boot = BootFlow(paths.data_dir)
         boot.banner()
-        # Pull the heavy run machinery now - after the instant title, before the
-        # cockpit's first step - so this one-time import cost lands in the gap
-        # between the banner and the spinner rather than stalling a live step.
-        from .arr_http import ArrAuthError, ArrConnectionError
-        from .cache import CacheSchemaError
-        from .run_loop import RunLoop
-        from .run_services import QbitConnectionError, RunDeps, RunServices
-        from .seadex_radarr import RadarrSync
-        from .seadex_sonarr import SonarrSync
-        from .seadex_types import BoundaryContractError
+        # The heavy run machinery is imported inside `_run_leg` (the boot-cockpit
+        # invariant: nothing heavy at module load); only the shared web client is
+        # needed out here.
         from .web_client import make_web_client
 
         # One shared client for all non-arr web traffic this cycle (tracker
@@ -351,98 +472,22 @@ def run_arrs(
             if mappings is None:
                 return False
             all_arrs_completed = True
+            ctx = LegContext(
+                cache=paths.cache,
+                logger=logger,
+                mappings=mappings,
+                app_config=app_config,
+                web=web,
+                boot=boot,
+                dry_run=dry_run,
+                import_wait_mode=import_wait_mode,
+            )
             try:
-                for arr_name, item_id in runnable:
-                    # Bound before the try so a RunDeps.build failure can't hit an
-                    # UnboundLocalError in the finally's close.
-                    deps: RunDeps | None = None
-                    try:
-                        # An inner handler so a dying leg's open output frames close
-                        # BEFORE the except arms below log: a leg-fatal error is a
-                        # cycle-level fact, not a detail of the entry / item / boot step
-                        # it died in; a completed leg's single close comes from the run tail.
-                        try:
-                            deps = RunDeps.build(
-                                arr_name,
-                                paths.cache,
-                                logger=logger,
-                                mappings=mappings,
-                                app_config=app_config,
-                                web=web,
-                                boot=boot,
-                            )
-                            services = RunServices(deps, arr_name)
-                            runner = RunLoop(deps, services)
-                            match arr_name:
-                                case Arr.SONARR:
-                                    runner.run_sync(
-                                        SonarrSync(deps, services),
-                                        item_id=item_id,
-                                        dry_run=dry_run,
-                                        import_wait_mode=import_wait_mode,
-                                        boot=boot,
-                                    )
-                                case Arr.RADARR:
-                                    runner.run_sync(
-                                        RadarrSync(deps, services),
-                                        item_id=item_id,
-                                        dry_run=dry_run,
-                                        import_wait_mode=import_wait_mode,
-                                        boot=boot,
-                                    )
-                        except BaseException:
-                            # Through the hub seam, not the reporter (deps is None when
-                            # RunDeps.build itself failed); hub.emit contains renderer errors,
-                            # so the emit cannot mask the in-flight leg-fatal Exception.
-                            emit_to_hub(RunFinished(arr=arr_name))
-                            raise
-                    except (QbitConnectionError, CacheSchemaError) as e:
-                        # A user-facing environment problem (wrong host/credentials, a
-                        # cache.db from a newer release): a clean one-line message, not
-                        # a stack trace under "unexpected error". The two arr-client
-                        # arms below get the same treatment.
+                for target in runnable:
+                    # Each leg logs + closes independently (a False return = a caught
+                    # arm), so one crashing doesn't drop the other.
+                    if not _run_leg(target, ctx):
                         all_arrs_completed = False
-                        hub_error(str(e))
-                    except ArrConnectionError as e:
-                        # The error's message names the URL it couldn't reach, which
-                        # disambiguates when this leg contacted more than one arr.
-                        all_arrs_completed = False
-                        keys = " / ".join(f"{a}.url" for a in implicated_arrs(arr_name, app_config))
-                        hub_error(f"{arr_name.capitalize()} run failed - {e} - check {keys} in your config")
-                    except BoundaryContractError as e:
-                        # The arr answered but its library payload validated to
-                        # nothing: a one-line contract error, never a traceback.
-                        all_arrs_completed = False
-                        hub_error(f"{arr_name.capitalize()} run failed - {e}")
-                    except ArrAuthError:
-                        all_arrs_completed = False
-                        implicated = implicated_arrs(arr_name, app_config)
-                        if len(implicated) == 1:
-                            hub_error(
-                                f"{arr_name.capitalize()} rejected the API key - check {arr_name}.api_key in your config"
-                            )
-                        else:
-                            # This leg presented more than one key - name every
-                            # candidate (the config keys are what the user edits).
-                            keys = " / ".join(f"{a}.api_key" for a in implicated)
-                            hub_error(
-                                f"An arr rejected the API key during the {arr_name.capitalize()} run - "
-                                f"check {keys} in your config"
-                            )
-                    except Exception as e:
-                        all_arrs_completed = False
-                        hub_error(
-                            f"Unexpected error during {arr_name.capitalize()} run - "
-                            f"skipping the rest of this arr's run",
-                            exc=e,
-                        )
-                    finally:
-                        # Cap this arr's boot section so the next arr opens a fresh
-                        # one; a no-op on the happy path (run_sync already ended it
-                        # before scanning), the safety net when a step failed.
-                        boot.end_section()
-                        if deps is not None:
-                            deps.close()
             finally:
                 # The resolver owns mappings.db (shared across both arrs); close it once
                 # the cycle is done so the connection / WAL handles are released.

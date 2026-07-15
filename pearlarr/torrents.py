@@ -13,6 +13,7 @@ from seadex import Tracker
 
 from .seadex_types import SeadexUrlItem
 from .torrent import (
+    ParsedTorrent,
     TorrentParseError,
     get_animetosho_torrent,
     get_nyaa_torrent,
@@ -36,22 +37,23 @@ GRAB_FAILURES: tuple[type[Exception], ...] = (
 )
 
 
-# Uniform parser signature: (url, infohash, client) -> (download/magnet link,
-# release title scraped from the source page). Wrappers adapt the per-tracker args.
-type _Parser = Callable[[str, str | None, httpx.Client], tuple[str | None, str]]
+# Uniform parser signature: (url, infohash, client) -> ParsedTorrent (download/
+# magnet link + release title scraped from the source page). Wrappers adapt the
+# per-tracker args.
+type _Parser = Callable[[str, str | None, httpx.Client], ParsedTorrent]
 
 
-def _parse_nyaa(url: str, infohash: str | None, client: httpx.Client) -> tuple[str | None, str]:
+def _parse_nyaa(url: str, infohash: str | None, client: httpx.Client) -> ParsedTorrent:
     del infohash, client
     return get_nyaa_torrent(url=url)
 
 
-def _parse_animetosho(url: str, infohash: str | None, client: httpx.Client) -> tuple[str | None, str]:
+def _parse_animetosho(url: str, infohash: str | None, client: httpx.Client) -> ParsedTorrent:
     del infohash
     return get_animetosho_torrent(url=url, client=client)
 
 
-def _parse_rutracker(url: str, infohash: str | None, client: httpx.Client) -> tuple[str | None, str]:
+def _parse_rutracker(url: str, infohash: str | None, client: httpx.Client) -> ParsedTorrent:
     return get_rutracker_torrent(url=url, infohash=infohash, client=client)
 
 
@@ -191,9 +193,7 @@ class TorrentService:
         # internally. With a hash, skip the adding if it's already present
         if infohash is not None and self.qbit is not None:
             torr_info = self.qbit.torrents_info(torrent_hashes=infohash)
-            torr_hashes = [i.hash for i in torr_info]
-
-            if infohash in torr_hashes:
+            if torr_info:
                 self.logger.debug(f"Torrent {item.url} already in qBittorrent")
                 return AddResult(AddOutcome.ALREADY_ADDED, torr_info[0].name)
 

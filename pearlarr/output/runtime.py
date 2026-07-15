@@ -40,7 +40,7 @@ def hub_note(message: str, *, severity: Severity = Severity.INFO, exc: BaseExcep
     """
 
     trace = CapturedTrace.from_exception(exc) if exc is not None else None
-    current_hub().emit(Diagnostic(severity=severity, message=message, origin=LOG_NAME, trace=trace))
+    emit_to_hub(Diagnostic(severity=severity, message=message, origin=LOG_NAME, trace=trace))
 
 
 def hub_warn(message: str, *, exc: BaseException | None = None) -> None:

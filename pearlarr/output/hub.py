@@ -32,10 +32,11 @@ import contextlib
 import sys
 import threading
 import time
+from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass
-from typing import ClassVar, Final, Protocol, final
+from typing import ClassVar, Final, final, override
 
 from .events import Diagnostic, Event, Severity, severity_of
 from .trace import CapturedTrace
@@ -50,7 +51,7 @@ STRIKE_LIMIT: Final = 3
 QUEUE_CAP: Final = 10_000
 
 
-class Renderer(Protocol):
+class Renderer(ABC):
     """One output surface subscribed to the hub.
 
     `handle` receives the hub-stamped emit instant (epoch seconds) so all
@@ -60,34 +61,40 @@ class Renderer(Protocol):
     pass-through renderers (Null/Recording) are exempt by nature.
     """
 
-    writes_file_only: ClassVar[bool]
+    writes_file_only: ClassVar[bool] = False
     """True only for the surface that renders file_only diagnostics (the file sink); the
     hub reads it to decide whether a containment note still has a home."""
 
+    @abstractmethod
     def handle(self, event: Event, when: float) -> None: ...
 
+    @abstractmethod
     def begin_cycle(self) -> None: ...
 
+    @abstractmethod
     def set_level(self, level: int) -> None: ...
 
+    @abstractmethod
     def close(self) -> None: ...
 
 
 @final
-class NullRenderer:
+class NullRenderer(Renderer):
     """A no-op surface (tests / headless runs)."""
 
-    writes_file_only: ClassVar[bool] = False
-
+    @override
     def handle(self, event: Event, when: float) -> None:
         pass
 
+    @override
     def begin_cycle(self) -> None:
         pass
 
+    @override
     def set_level(self, level: int) -> None:
         pass
 
+    @override
     def close(self) -> None:
         pass
 
@@ -458,6 +465,8 @@ class OutputHub:
 
         with self._lock:
             self._await_no_drainer()
+            if self._closed:
+                return
             with self._baton_held():
                 self._set_level_locked(level)
         self._drain()

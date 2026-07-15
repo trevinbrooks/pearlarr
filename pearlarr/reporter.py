@@ -129,6 +129,37 @@ class RunStats:
 
 
 @dataclass
+class PerTitleState:
+    """The per-title scratch flags, reset by reassignment at the top of each title.
+
+    Kept off `RunContext` so a fresh `PerTitleState()` per title auto-resets every
+    field: a new flag added here can never leak from title N into title N+1, and no
+    hand-written reset can drift out of sync (the drift hazard the flat fields had).
+    """
+
+    private_only_skipped: bool = False
+    """Set per-title when a private-only release forces a skip, so the caller knows not to
+    cache the title as done."""
+    private_only_groups: list[str] = field(default_factory=list[str])
+    """Group names of the private-only skip, riding along for the run summary's "needs action"
+    list."""
+    private_only_stale_held: bool = False
+    """Set per-title when an owned-at-stale-size private pick is held because only a fallback
+    covers it (never a replacement); picks the summary row's kind."""
+    fallback_covered: bool = False
+    """Set per-title when the Arr already owns a public fallback's files (the owned-fallback
+    soft-skip); drives the cache's fallback-satisfied marker."""
+    unsupported_tracker_skipped: bool = False
+    """Set per-title when a recommended release is on a tracker we have no parser for (so we
+    can't grab it, but the user didn't deselect it); keeps the title from being cached as done."""
+    unsupported_tracker_groups: list[str] = field(default_factory=list[str])
+    """Group names of the unsupported-tracker skip, riding along for the summary."""
+    unsupported_tracker_hashes: list[str] = field(default_factory=list[str])
+    """Hashes excluded from the cached hash set on a mixed (something else grabbed) title, so
+    the release is re-considered once a parser lands."""
+
+
+@dataclass
 class RunContext:
     """Per-run state, created fresh at the top of each run.
 
@@ -152,26 +183,9 @@ class RunContext:
     current_coverage: str | None = None
     """Coverage of the entry currently being processed, so grabs and the summary can attribute
     what they grab."""
-    private_only_skipped: bool = False
-    """Set per-title when a private-only release forces a skip, so the caller knows not to
-    cache the title as done."""
-    private_only_groups: list[str] = field(default_factory=list[str])
-    """Group names of the private-only skip, riding along for the run summary's "needs action"
-    list."""
-    private_only_stale_held: bool = False
-    """Set per-title when an owned-at-stale-size private pick is held because only a fallback
-    covers it (never a replacement); picks the summary row's kind."""
-    fallback_covered: bool = False
-    """Set per-title when the Arr already owns a public fallback's files (the owned-fallback
-    soft-skip); drives the cache's fallback-satisfied marker."""
-    unsupported_tracker_skipped: bool = False
-    """Set per-title when a recommended release is on a tracker we have no parser for (so we
-    can't grab it, but the user didn't deselect it); keeps the title from being cached as done."""
-    unsupported_tracker_groups: list[str] = field(default_factory=list[str])
-    """Group names of the unsupported-tracker skip, riding along for the summary."""
-    unsupported_tracker_hashes: list[str] = field(default_factory=list[str])
-    """Hashes excluded from the cached hash set on a mixed (something else grabbed) title, so
-    the release is re-considered once a parser lands."""
+    per_title: PerTitleState = field(default_factory=PerTitleState)
+    """The per-title scratch flags, reset by reassignment (`per_title = PerTitleState()`) at
+    the top of each title, so a leftover skip/coverage flag can never leak between titles."""
     started_monotonic: float | None = None
     """Run clock (monotonic, so an NTP/DST step can't yield negative elapsed)."""
     counts_mark: CountsMark = field(default_factory=lambda: SeverityCounts().bound_mark())

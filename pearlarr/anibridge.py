@@ -360,6 +360,31 @@ class AniBridge:
                 record.imdb_ids.append(pid)
                 self.imdb_index[pid].add(anilist_id)
 
+    @staticmethod
+    def _entry_dict(
+        *,
+        anidb_id: int | None,
+        imdb_id: str | None,
+        tmdb_movie_id: int | None,
+        tvdb_mappings: TvdbMappings | None = None,
+    ) -> AniBridgeEntry:
+        """The consumer-facing mapping dict - the single shape both backings build.
+
+        "tvdb_mappings" attaches ONLY on `is not None` (never truthiness): an
+        empty {} still attaches, doubling as the "this is an anibridge series"
+        marker. Stays a loose dict - the raw->typed boundary, not the typed domain.
+        """
+
+        entry: dict[str, Any] = {
+            "anidb_id": anidb_id,
+            "imdb_id": imdb_id,
+            "tmdb_movie_id": tmdb_movie_id,
+            "source": "anibridge",
+        }
+        if tvdb_mappings is not None:
+            entry["tvdb_mappings"] = tvdb_mappings
+        return entry
+
     def _consumer_entry(
         self,
         anilist_id: int,
@@ -374,18 +399,13 @@ class AniBridge:
         """
 
         record = self.by_anilist[anilist_id]
-
-        entry: dict[str, Any] = {
-            "anidb_id": record.anidb_id,
-            "imdb_id": _first(record.imdb_ids),
-            "tmdb_movie_id": _first(record.tmdb_movie_ids),
-            "source": "anibridge",
-        }
-
-        if tvdb_id is not None and tvdb_id in record.tvdb_shows:
-            entry["tvdb_mappings"] = record.tvdb_shows[tvdb_id]
-
-        return entry
+        tvdb_mappings = record.tvdb_shows[tvdb_id] if (tvdb_id is not None and tvdb_id in record.tvdb_shows) else None
+        return self._entry_dict(
+            anidb_id=record.anidb_id,
+            imdb_id=_first(record.imdb_ids),
+            tmdb_movie_id=_first(record.tmdb_movie_ids),
+            tvdb_mappings=tvdb_mappings,
+        )
 
     @staticmethod
     def _ranges_to_mappings(rows: list[tuple[int, int | None, int | None]]) -> TvdbMappings:
@@ -408,7 +428,7 @@ class AniBridge:
     def _sql_lookup(
         self,
         axis: str,
-        ext_id: object,
+        ext_id: int | str,
         *,
         tvdb_id: int | None = None,
     ) -> AniBridgeLookup:
@@ -434,15 +454,15 @@ class AniBridge:
 
         result: AniBridgeLookup = {}
         for row in store.anibridge_entries_for(axis, ext_id):
-            entry: dict[str, Any] = {
-                "anidb_id": row.anidb_id,
-                "imdb_id": row.imdb_id,
-                "tmdb_movie_id": row.tmdb_movie_id,
-                "source": "anibridge",
-            }
-            if tvdb_id is not None:
-                entry["tvdb_mappings"] = self._ranges_to_mappings(ranges_by_anilist.get(row.anilist_id, []))
-            result[row.anilist_id] = entry
+            tvdb_mappings = (
+                self._ranges_to_mappings(ranges_by_anilist.get(row.anilist_id, [])) if tvdb_id is not None else None
+            )
+            result[row.anilist_id] = self._entry_dict(
+                anidb_id=row.anidb_id,
+                imdb_id=row.imdb_id,
+                tmdb_movie_id=row.tmdb_movie_id,
+                tvdb_mappings=tvdb_mappings,
+            )
         return result
 
     def lookup_by_tvdb(self, tvdb_id: int) -> AniBridgeLookup:

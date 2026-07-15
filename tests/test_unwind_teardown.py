@@ -33,7 +33,7 @@ import pearlarr.bootstrap as bootstrap
 from pearlarr.boot_flow import BootFlow
 from pearlarr.bootstrap import run_arrs
 from pearlarr.cache import CacheSchemaError
-from pearlarr.config import AppConfig, Arr
+from pearlarr.config import AppConfig, Arr, ArrTarget
 from pearlarr.manual_import import ImportWaitMode
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.output import Diagnostic, FileLogSink, RunFinished, Severity, install_bridge, install_hub
@@ -126,7 +126,7 @@ def _run_failing_leg(
     install_bridge()
 
     paths = resolve_paths()
-    completed = run_arrs([(Arr.SONARR, None)], paths=paths, logger=app_logger, file_sink=FileLogSink(paths.log_dir))
+    completed = run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=app_logger, file_sink=FileLogSink(paths.log_dir))
     return completed, recording
 
 
@@ -260,7 +260,7 @@ def _run_completing_leg(
     install_bridge()
 
     paths = resolve_paths()
-    completed = run_arrs([(Arr.SONARR, None)], paths=paths, logger=app_logger, file_sink=FileLogSink(paths.log_dir))
+    completed = run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=app_logger, file_sink=FileLogSink(paths.log_dir))
     return completed, recording
 
 

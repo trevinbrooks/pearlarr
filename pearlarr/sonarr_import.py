@@ -67,7 +67,7 @@ from .sonarr_import_plan import (
     targets_needing_import,
 )
 from .sonarr_mapper import FileEpisodeMapper
-from .sonarr_parse import video_file_entries
+from .sonarr_parse import parsed_episodes, video_file_entries
 
 # RefreshMonitoredDownloads is quick (Sonarr re-scans its clients); poll its
 # command status up to this many times, sleeping this long between, before
@@ -526,8 +526,7 @@ class ImportReconciler:
                     record = self.cache_store.get_sonarr_parse(base)
                     if not record:
                         continue
-                    parsed: list[dict[str, Any]] = record.get("episodes", [])
-                    file_ids = episode_ids_for_parsed(parsed, ep_id_map)
+                    file_ids = episode_ids_for_parsed(parsed_episodes(record), ep_id_map)
                     if file_ids:
                         file_episode_map[normalize_basename(base)] = file_ids
 

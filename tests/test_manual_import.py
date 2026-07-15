@@ -32,6 +32,7 @@ from pearlarr.planner import normalize_rg
 from pearlarr.seadex_types import (
     SONARR_MISSING_KEY,
     CommandResource,
+    ParsedEpisode,
     Quality,
     QualityDefinition,
     QualityModel,
@@ -151,15 +152,14 @@ class TestEpisodeIdsForParsed:
 
     def test_maps_via_index(self) -> None:
         idx = {(1, 1): 11, (1, 2): 12}
-        parsed = [{"season": 1, "episode": 1}, {"season": 1, "episode": 2}]
+        parsed = [ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=2)]
         assert episode_ids_for_parsed(parsed, idx) == [11, 12]
 
-    def test_drops_unknown_and_none(self) -> None:
+    def test_drops_unknown(self) -> None:
         idx = {(1, 1): 11}
         parsed = [
-            {"season": 1, "episode": 1},
-            {"season": 9, "episode": 9},
-            {"season": None, "episode": 1},
+            ParsedEpisode(season=1, episode=1),
+            ParsedEpisode(season=9, episode=9),
         ]
         assert episode_ids_for_parsed(parsed, idx) == [11]
 

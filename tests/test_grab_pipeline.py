@@ -110,10 +110,10 @@ class TestGrabReturnsPureBool:
             seadex_dict={},
             torrent_hashes=[],
             cache_details={},
-            release_group=None,
+            replaced_groups=(),
         )
 
-        assert pipeline._grab(req) is True
+        assert pipeline._grab(req).cap_reached is True
 
     def test_grab_at_cap_in_preview_returns_false(self) -> None:
         # MUTATION PIN: reading the raw config cap instead of _effective_cap would
@@ -134,10 +134,10 @@ class TestGrabReturnsPureBool:
             seadex_dict={},
             torrent_hashes=[],
             cache_details={},
-            release_group=None,
+            replaced_groups=(),
         )
 
-        assert pipeline._grab(req) is False
+        assert pipeline._grab(req).cap_reached is False
 
 
 class TestGrabPushesNotice:
@@ -191,7 +191,7 @@ class TestGrabPushesNotice:
                 seadex_dict=one_release_dict(srg="PMR", infohash="h1"),
                 torrent_hashes=["h1"],
                 cache_details={},
-                release_group=["OldGroup"],
+                replaced_groups=("OldGroup",),
                 coverage="S01 E01-E12",
             ),
         )
@@ -444,7 +444,7 @@ class TestGrabAndCacheCapStop:
             seadex_dict=one_release_dict(srg="RG", infohash="h1"),
             torrent_hashes=["h1"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
-            release_group=None,
+            replaced_groups=(),
         )
 
         stop = pipeline.grab_and_cache(req)
@@ -474,7 +474,7 @@ class TestUpToDateTally:
                 seadex_dict={},
                 torrent_hashes=[],
                 cache_details={},
-                release_group=None,
+                replaced_groups=(),
             )
             assert pipeline.grab_and_cache(req) is False
 
@@ -518,8 +518,8 @@ class TestUnsupportedTrackerSkip:
         assert n_added == 1
         assert pipeline._ctx.torrents_added == 1
         assert [r.outcome for r in results] == [AddOutcome.ADDED]
-        assert pipeline._ctx.unsupported_tracker_skipped is True
-        assert pipeline._ctx.unsupported_tracker_groups == ["NAN0"]
+        assert pipeline._ctx.per_title.unsupported_tracker_skipped is True
+        assert pipeline._ctx.per_title.unsupported_tracker_groups == ["NAN0"]
 
     def test_unsupported_only_title_left_uncached_and_flagged(self) -> None:
         # The title's only release is on AniDex: nothing grabbable, so the title must
@@ -540,7 +540,7 @@ class TestUnsupportedTrackerSkip:
             seadex_dict=seadex_dict,
             torrent_hashes=["hA"],
             cache_details={},
-            release_group=None,
+            replaced_groups=(),
         )
 
         stop = pipeline.grab_and_cache(req)
@@ -572,14 +572,14 @@ class TestUnsupportedTrackerSkip:
             seadex_dict=seadex_dict,
             torrent_hashes=["hP", "hA"],
             cache_details={},
-            release_group=None,
+            replaced_groups=(),
         )
 
         pipeline.grab_and_cache(req)
 
         # Both skips happened...
-        assert pipeline._ctx.private_only_skipped is True
-        assert pipeline._ctx.unsupported_tracker_skipped is True
+        assert pipeline._ctx.per_title.private_only_skipped is True
+        assert pipeline._ctx.per_title.unsupported_tracker_skipped is True
         # ...but only the private-only reason is surfaced, and the title stays uncached.
         assert [r.reason for r in pipeline._ctx.stats.needs_action] == [
             "private-only release; private releases not supported"
@@ -608,12 +608,12 @@ class TestUnsupportedTrackerSkip:
             seadex_dict=seadex_dict,
             torrent_hashes=["hP"],
             cache_details={},
-            release_group=None,
+            replaced_groups=(),
         )
 
         pipeline.grab_and_cache(req)
 
-        assert pipeline._ctx.private_only_skipped is True
+        assert pipeline._ctx.per_title.private_only_skipped is True
         assert [r.reason for r in pipeline._ctx.stats.needs_action] == [
             "private-only release; no public alternative covers these files"
         ]
@@ -631,7 +631,7 @@ class TestUnsupportedTrackerSkip:
         pipeline = _pipeline(torrents=FakeTorrents({}), private_releases="fallback", sleep_time=0)
         pipeline._anilist.al_cache.update({7: {}})
         pipeline._ctx.current_title = "Show S1"
-        pipeline._ctx.private_only_stale_held = True
+        pipeline._ctx.per_title.private_only_stale_held = True
 
         req = GrabRequest(
             al_id=7,
@@ -641,12 +641,12 @@ class TestUnsupportedTrackerSkip:
             seadex_dict=seadex_dict,
             torrent_hashes=["hP"],
             cache_details={},
-            release_group=None,
+            replaced_groups=(),
         )
 
         pipeline.grab_and_cache(req)
 
-        assert pipeline._ctx.private_only_skipped is True
+        assert pipeline._ctx.per_title.private_only_skipped is True
         assert [r.reason for r in pipeline._ctx.stats.needs_action] == [
             "private-only release; your copy is outdated (its file size no longer matches) "
             "and only a fallback covers it"
@@ -674,7 +674,7 @@ class TestUnsupportedTrackerSkip:
             seadex_dict=seadex_dict,
             torrent_hashes=["hP"],
             cache_details={},
-            release_group=None,
+            replaced_groups=(),
         )
 
         pipeline.grab_and_cache(req)
@@ -710,14 +710,14 @@ class TestUnsupportedTrackerSkip:
             seadex_dict=seadex_dict,
             torrent_hashes=["hF"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
-            release_group=None,
+            replaced_groups=(),
         )
 
         stop = pipeline.grab_and_cache(req)
 
         assert stop is False
         assert pipeline._ctx.torrents_added == 1
-        assert pipeline._ctx.private_only_skipped is False
+        assert pipeline._ctx.per_title.private_only_skipped is False
         cached = pipeline.cache_store.get_entry(Arr.SONARR, 42)
         assert cached is not None
         # A fallback grab marks the entry, so a switch to warn mode re-checks it.
@@ -748,7 +748,7 @@ class TestUnsupportedTrackerSkip:
             seadex_dict=seadex_dict,
             torrent_hashes=["hN", "hA"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
-            release_group=None,
+            replaced_groups=(),
         )
 
         stop = pipeline.grab_and_cache(req)
@@ -784,7 +784,7 @@ class TestUnsupportedTrackerSkip:
             seadex_dict=seadex_dict,
             torrent_hashes=["hN"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
-            release_group=None,
+            replaced_groups=(),
         )
 
         pipeline.grab_and_cache(req)
@@ -816,12 +816,12 @@ class TestUnsupportedTrackerSkip:
             seadex_dict=seadex_dict,
             torrent_hashes=["hN", "hP"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
-            release_group=None,
+            replaced_groups=(),
         )
 
         pipeline.grab_and_cache(req)
 
-        assert pipeline._ctx.private_only_skipped is True
+        assert pipeline._ctx.per_title.private_only_skipped is True
         assert set(pipeline.cache_store.torrent_hashes(Arr.SONARR, 7)) == {"hN", "hP"}
 
 
@@ -842,7 +842,7 @@ class TestGrabFailureContainment:
             seadex_dict=seadex_dict,
             torrent_hashes=hashes,
             cache_details={"updated_at": "2026-01-01 00:00:00"},
-            release_group=None,
+            replaced_groups=(),
         )
 
     @pytest.mark.parametrize(
@@ -1004,7 +1004,7 @@ class TestFallbackHoldNeverCaches:
             seadex_dict=self._mixed_seadex_dict(),
             torrent_hashes=["hN"],
             cache_details={"updated_at": "2026-01-01 00:00:00"},
-            release_group=None,
+            replaced_groups=(),
         )
 
     def test_partial_grab_under_a_hold_stays_uncached_and_surfaces(self) -> None:
@@ -1020,7 +1020,7 @@ class TestFallbackHoldNeverCaches:
 
         assert stop is False
         assert pipeline._ctx.torrents_added == 1
-        assert pipeline._ctx.private_only_skipped is True
+        assert pipeline._ctx.per_title.private_only_skipped is True
         assert pipeline.cache_store.get_entry(Arr.SONARR, 42) is None
         rows = pipeline._ctx.stats.needs_action
         assert [r.kind for r in rows] == [NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK]
@@ -1037,7 +1037,7 @@ class TestFallbackHoldNeverCaches:
 
         pipeline.grab_and_cache(self._request(43))
 
-        assert pipeline._ctx.private_only_skipped is True
+        assert pipeline._ctx.per_title.private_only_skipped is True
         assert pipeline.cache_store.get_entry(Arr.SONARR, 43) is not None
         assert pipeline._ctx.stats.needs_action == []
 
@@ -1064,8 +1064,8 @@ class TestShouldCacheAsDone:
         """One truth-table row; every keyword is one axis of the predicate."""
 
         pipeline = make_grab_pipeline(private_releases=private_releases, interactive=interactive)
-        pipeline._ctx.private_only_skipped = private_only_skipped
-        pipeline._ctx.unsupported_tracker_skipped = unsupported_tracker_skipped
+        pipeline._ctx.per_title.private_only_skipped = private_only_skipped
+        pipeline._ctx.per_title.unsupported_tracker_skipped = unsupported_tracker_skipped
         return pipeline._should_cache_as_done(
             cap_reached=cap_reached,
             added_this_title=added_this_title,

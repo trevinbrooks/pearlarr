@@ -47,6 +47,7 @@ from pearlarr.seadex_types import (
     ManualImportCandidate,
     ManualImportFile,
     MovieFile,
+    ParsedEpisode,
     ParsedFileInfo,
     ProgressSink,
     QualityDefinition,
@@ -263,7 +264,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         candidates: list[ManualImportCandidate] | None = None,
         quality_defs: list[QualityDefinition] | None = None,
         languages: list[Language] | None = None,
-        parse: list[dict[str, int]] | None = None,
+        parse: list[ParsedEpisode] | None = None,
         parse_episode_info_fn: Callable[[str], ParsedFileInfo | None] | None = None,
         execute_command_id: int | None = None,
         command_status: CommandResource | None = None,
@@ -277,7 +278,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.candidates_return: list[ManualImportCandidate] | None = candidates
         self.quality_defs_return: list[QualityDefinition] = quality_defs or []
         self.languages_return: list[Language] = languages or []
-        self.parse_return: list[dict[str, int]] | None = parse
+        self.parse_return: list[ParsedEpisode] | None = parse
         self.parse_episode_info_fn: Callable[[str], ParsedFileInfo | None] = parse_episode_info_fn or (lambda _f: None)
         self.execute_command_id = execute_command_id
         self.command_status_return = (
@@ -316,7 +317,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         return self.episodes_return
 
     @override
-    def parse(self, filename: str) -> list[dict[str, int]] | None:
+    def parse(self, filename: str) -> list[ParsedEpisode] | None:
         del filename
         return self.parse_return
 

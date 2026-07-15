@@ -20,7 +20,7 @@ from pearlarr.config import Arr
 from pearlarr.mappings import ExternalIds, MappingEntry
 from pearlarr.run_services import RunServices
 from pearlarr.seadex_gateway import SeaDexMiss
-from pearlarr.seadex_types import SeadexDict, SonarrEpisode
+from pearlarr.seadex_types import ParsedEpisode, SeadexDict, SonarrEpisode
 from pearlarr.sonarr_episodes import (
     SONARR_FETCH_WORKERS,
     SonarrEpisodes,
@@ -466,11 +466,11 @@ class _ParseSonarr:
     state.
     """
 
-    def __init__(self, result: list[dict[str, int]] | None) -> None:
+    def __init__(self, result: list[ParsedEpisode] | None) -> None:
         self._result = result
         self.calls: list[str] = []
 
-    def parse(self, filename: str) -> list[dict[str, int]] | None:
+    def parse(self, filename: str) -> list[ParsedEpisode] | None:
         self.calls.append(filename)
         return self._result
 
@@ -485,7 +485,7 @@ class TestParseEpisodesNegativeCache:
     def _parse(
         self,
         *,
-        parse_result: list[dict[str, int]] | None,
+        parse_result: list[ParsedEpisode] | None,
         sleep_time: int = 0,
         sonarr_parse: dict[str, dict[str, object]] | None = None,
     ) -> tuple[SonarrParseCache, _ParseSonarr]:

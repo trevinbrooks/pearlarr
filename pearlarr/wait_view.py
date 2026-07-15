@@ -19,7 +19,7 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
-from typing import final, override
+from typing import NamedTuple, final, override
 
 from .console_caps import console_of, detect_capabilities
 from .manual_import import Outcome, OutcomeCategory
@@ -83,7 +83,14 @@ class WaitResult:
         return sum(1 for row in self.rows if row.outcome.category is category)
 
 
-def graduations(seen: AbstractSet[str], snapshot: WaitSnapshot) -> list[TorrentView]:
+class Graduation(NamedTuple):
+    """A newly-terminal torrent paired with its (guaranteed non-None) outcome."""
+
+    view: TorrentView
+    outcome: Outcome
+
+
+def graduations(seen: AbstractSet[str], snapshot: WaitSnapshot) -> list[Graduation]:
     """The terminal torrents not yet emitted - pure, deterministic.
 
     A torrent graduates exactly once: the narrator tracks the keys it has already
@@ -91,7 +98,7 @@ def graduations(seen: AbstractSet[str], snapshot: WaitSnapshot) -> list[TorrentV
     """
 
     return [
-        torrent
+        Graduation(torrent, torrent.outcome)
         for torrent in snapshot.torrents
         if torrent.phase is Phase.TERMINAL and torrent.outcome is not None and torrent.key not in seen
     ]
@@ -151,18 +158,15 @@ class HubWaitView(WaitView):
                 # WaitStarted precedes any first-snapshot graduations.
                 self._scope = self._factory.wait(total=snapshot.total(), pulse_s=self._pulse_s)
             scope = self._scope
-            for torrent in graduations(self._seen, snapshot):
-                outcome = torrent.outcome
-                if outcome is None:  # pragma: no cover - graduations() guarantees this
-                    continue
-                self._seen.add(torrent.key)
+            for view, outcome in graduations(self._seen, snapshot):
+                self._seen.add(view.key)
                 self._tally[outcome.category] += 1
                 scope.graduated(
                     TorrentGraduated(
-                        label=torrent.label,
+                        label=view.label,
                         outcome=outcome,
-                        files=torrent.import_total,
-                        waited_s=torrent.phase_elapsed_s,
+                        files=view.import_total,
+                        waited_s=view.phase_elapsed_s,
                     ),
                 )
             scope.progress(snapshot)

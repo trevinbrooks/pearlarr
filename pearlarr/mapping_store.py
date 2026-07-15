@@ -246,6 +246,17 @@ class AnidbMappingRow(NamedTuple):
     anidb_ep: int
 
 
+class AnidbEpPair(NamedTuple):
+    """One `anidb_rows` result: a season-scoped tvdb episode -> anidb episode pair.
+
+    A typed record (not a positional `tuple[int, int]`) so the two ordered ints
+    can't silently transpose; the caller builds `dict(rows)` off the field order.
+    """
+
+    tvdb_ep: int
+    anidb_ep: int
+
+
 def _ext_id_as[T: (int, str)](value: object, kind: type[T], axis: str) -> T:
     """Pin a stored anibridge ext id to the type its axis owns.
 
@@ -447,7 +458,7 @@ class MappingStore:
 
     # -- anibridge queries ---------------------------------------------------
 
-    def anibridge_entries_for(self, axis: str, ext_id: object) -> list[AniBridgeEntryRow]:
+    def anibridge_entries_for(self, axis: str, ext_id: int | str) -> list[AniBridgeEntryRow]:
         """Every `AniBridgeEntryRow` mapped to `ext_id` on `axis`.
 
         One xref->entry JOIN so a lookup that resolves k AniList ids costs a single
@@ -467,12 +478,12 @@ class MappingStore:
     def anibridge_ranges_for(
         self,
         axis: str,
-        ext_id: object,
+        ext_id: int | str,
         tvdb_id: int,
     ) -> list[AniBridgeRangeHit]:
         """The `tvdb_id`-scoped `AniBridgeRangeHit` rows for an (axis, ext_id) lookup.
 
-        Ordered by `(anilist_id, populate)`. Batched: one xref->range JOIN
+        Ordered by `(anilist_id, rowid)`. Batched: one xref->range JOIN
         fetches the ranges for every AniList id a tvdb lookup resolves, so the
         caller groups them by `anilist_id` and rebuilds each season's list in
         insertion order (`ORDER BY x.anilist_id, r.rowid` -> parity with the
@@ -525,10 +536,14 @@ class MappingStore:
         ).fetchone()
         return row is not None
 
-    def anidb_rows(self, anidb_id: int, tvdb_season: int) -> list[tuple[int, int]]:
-        """`(tvdb_ep, anidb_ep)` rows for `anidb_id` scoped to `tvdb_season`."""
+    def anidb_rows(self, anidb_id: int, tvdb_season: int) -> list[AnidbEpPair]:
+        """`AnidbEpPair` rows for `anidb_id` scoped to `tvdb_season`.
 
-        return self._conn.execute(
+        The SELECT column order matches `AnidbEpPair`'s fields.
+        """
+
+        rows = self._conn.execute(
             "SELECT tvdb_ep, anidb_ep FROM anidb_mapping WHERE anidb_id = ? AND tvdb_season = ?",
             (anidb_id, tvdb_season),
         ).fetchall()
+        return [AnidbEpPair(*row) for row in rows]

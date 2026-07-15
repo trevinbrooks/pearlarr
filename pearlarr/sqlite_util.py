@@ -20,6 +20,7 @@ import os
 import sqlite3
 from collections.abc import Callable
 from datetime import datetime
+from typing import NamedTuple
 
 from .output import hub_warn
 
@@ -73,6 +74,21 @@ def connect(path: str, *, ensure_wal: bool = True, foreign_keys: bool = False) -
     return conn
 
 
+def _close_quietly(conn: sqlite3.Connection | None) -> None:
+    """Close `conn` if open, swallowing sqlite teardown errors. No-op on None."""
+
+    if conn is not None:
+        with contextlib.suppress(sqlite3.Error):
+            conn.close()
+
+
+class OpenResult(NamedTuple):
+    """An opened store connection plus whether it fell back to `:memory:`."""
+
+    conn: sqlite3.Connection
+    fell_back: bool
+
+
 def open_or_quarantine(
     path: str,
     *,
@@ -80,7 +96,7 @@ def open_or_quarantine(
     ensure: Callable[[sqlite3.Connection], object],
     what: str,
     recovery: str,
-) -> tuple[sqlite3.Connection, bool]:
+) -> OpenResult:
     """Open `path` and ensure its schema, quarantining a corrupt file.
 
     The shared recovery policy for both stores. A transient/operational
@@ -108,9 +124,7 @@ def open_or_quarantine(
         conn = connect_fn(path)
         ensure(conn)
     except sqlite3.DatabaseError as exc:
-        if conn is not None:
-            with contextlib.suppress(sqlite3.Error):
-                conn.close()
+        _close_quietly(conn)
         if not is_corruption(exc):
             raise
         quarantine_corrupt(path, what=what, recovery=recovery)
@@ -118,18 +132,15 @@ def open_or_quarantine(
         try:
             ensure(conn)
         except BaseException:
-            with contextlib.suppress(sqlite3.Error):
-                conn.close()
+            _close_quietly(conn)
             raise
-        return conn, True
+        return OpenResult(conn, True)
     except BaseException:
         # A non-sqlite failure from ensure (e.g. a schema-version refusal) still
         # owns an open handle - close it on the way out so it can't leak.
-        if conn is not None:
-            with contextlib.suppress(sqlite3.Error):
-                conn.close()
+        _close_quietly(conn)
         raise
-    return conn, False
+    return OpenResult(conn, False)
 
 
 def rollback_and_close(conn: sqlite3.Connection) -> None:
@@ -141,8 +152,7 @@ def rollback_and_close(conn: sqlite3.Connection) -> None:
 
     with contextlib.suppress(sqlite3.Error):
         conn.rollback()
-    with contextlib.suppress(sqlite3.Error):
-        conn.close()
+    _close_quietly(conn)
 
 
 def is_corruption(exc: sqlite3.DatabaseError) -> bool:

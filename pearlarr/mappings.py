@@ -21,11 +21,12 @@ import logging
 import os
 import sqlite3
 import time
+from abc import ABC, abstractmethod
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, NamedTuple, cast
+from typing import Any, NamedTuple, cast, override
 from xml.etree import ElementTree
 
 import httpx
@@ -122,6 +123,21 @@ class MappingEntry:
         return MappingMode.ANIBRIDGE if self.tvdb_mappings is not None else MappingMode.ANIME_IDS
 
 
+def _coalesce_season_epoffset(raw: dict[str, Any]) -> tuple[int, int]:
+    """Absent or explicit-null tvdb_season/tvdb_epoffset -> the -1/0 sentinels.
+
+    Shared verbatim by `_entry_from_raw` and `_anime_ids_rows` so the two
+    derivations can't drift; `.get(key, default)` only fills an ABSENT key, so a
+    present-but-null JSON value (`"tvdb_season": null`) is folded here rather than
+    reaching the NOT NULL columns. Season 0 is a meaningful special (never
+    `or`-collapsed).
+    """
+
+    season = raw.get("tvdb_season", -1)
+    epoffset = raw.get("tvdb_epoffset", 0)
+    return (-1 if season is None else season, 0 if epoffset is None else epoffset)
+
+
 def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> MappingEntry:
     """Build a `MappingEntry` from a producer's raw dict.
 
@@ -131,17 +147,14 @@ def _entry_from_raw(anilist_id: int, raw: AnimeIdsRecord | AniBridgeEntry) -> Ma
     `tvdb_season` / `tvdb_epoffset`).
     """
 
-    # Coalesce a present-but-null season/epoffset to the sentinel, matching
-    # _anime_ids_rows (a JSON null would otherwise violate the int fields).
-    season = raw.get("tvdb_season", -1)
-    epoffset = raw.get("tvdb_epoffset", 0)
+    season, epoffset = _coalesce_season_epoffset(raw)
     # Both AniBridge backings tag their entries source="anibridge"; a Kometa-style
     # raw dict (no key) is ANIME_IDS, so this derives provenance for either producer.
     source = MappingSource.ANIBRIDGE if raw.get("source") == "anibridge" else MappingSource.ANIME_IDS
     return MappingEntry(
         anilist_id=anilist_id,
-        tvdb_season=-1 if season is None else season,
-        tvdb_epoffset=0 if epoffset is None else epoffset,
+        tvdb_season=season,
+        tvdb_epoffset=epoffset,
         tvdb_mappings=raw.get("tvdb_mappings"),
         tmdb_movie_id=raw.get("tmdb_movie_id"),
         imdb_id=raw.get("imdb_id"),
@@ -198,6 +211,18 @@ class ExternalIds(NamedTuple):
             )
 
 
+class ResolvedMappings(NamedTuple):
+    """One `get_anilist_ids` result: the resolved mappings plus the ignored ids.
+
+    A named record (not a bare positional pair) so the two halves - the AniList
+    id -> mapping dict and the ignored AniList ids removed from it - can't
+    silently transpose, and the memo field reads as a domain type.
+    """
+
+    mappings: dict[int, MappingEntry]
+    ignored: list[int]
+
+
 ANIME_IDS_URL = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/refs/heads/master/anime_ids.json"
 ANIME_IDS_FILE = "anime_ids.json"
 ANIDB_MAPPINGS_URL = "https://raw.githubusercontent.com/Anime-Lists/anime-lists/refs/heads/master/anime-list-master.xml"
@@ -251,14 +276,12 @@ def _anime_ids_rows(anime_mappings: AnimeIdsMap) -> list[AnimeIdRow]:
 
     rows: list[AnimeIdRow] = []
     for record in anime_mappings.values():
-        # `.get(key, default)` only substitutes the default for an ABSENT key; a
-        # present-but-null JSON value (`"tvdb_season": null`) returns None, which
-        # the NOT NULL `tvdb_season` / `tvdb_epoffset` columns reject - and that
-        # IntegrityError aborts the whole populate (then the :memory: fail-open
-        # re-parses the same data and re-raises, taking down the entire run).
-        # Coalesce an explicit null to the same sentinel an absent key gets.
-        season = record.get("tvdb_season", -1)
-        epoffset = record.get("tvdb_epoffset", 0)
+        # A present-but-null JSON value (`"tvdb_season": null`) would reach the
+        # NOT NULL `tvdb_season` / `tvdb_epoffset` columns and raise an
+        # IntegrityError that aborts the whole populate (then the :memory:
+        # fail-open re-parses the same data and re-raises, taking down the entire
+        # run); the shared helper folds it to the same sentinel an absent key gets.
+        season, epoffset = _coalesce_season_epoffset(record)
         rows.append(
             AnimeIdRow(
                 # NULL anilist_id is kept here but filtered out at query time; the
@@ -266,8 +289,8 @@ def _anime_ids_rows(anime_mappings: AnimeIdsMap) -> list[AnimeIdRow]:
                 # producer's nullable value (it rides through as a stored NULL).
                 anilist_id=cast("int", record.get("anilist_id")),
                 tvdb_id=record.get("tvdb_id"),
-                tvdb_season=-1 if season is None else season,
-                tvdb_epoffset=0 if epoffset is None else epoffset,
+                tvdb_season=season,
+                tvdb_epoffset=epoffset,
                 tmdb_movie_id=record.get("tmdb_movie_id"),
                 imdb_id=record.get("imdb_id"),
                 anidb_id=record.get("anidb_id"),
@@ -367,7 +390,20 @@ class MappingSources:
     anibridge: AniBridgeGraph | bool | None
 
 
-class MappingResolver:
+class AnimeIdSets(ABC):
+    """The slice of `MappingResolver` the Radarr library filter consumes.
+
+    A nominal seam homed here (not in `radarr_client`) so `MappingResolver` can
+    subclass it without a cycle - `radarr_client` imports `mappings`, never the
+    reverse. Supplies the DISTINCT Anime-IDs id set for a given column.
+    """
+
+    @abstractmethod
+    def anime_id_set(self, column: AnimeIdColumn) -> AbstractSet[int | str]:
+        """DISTINCT external ids the Anime-IDs source carries for `column`."""
+
+
+class MappingResolver(AnimeIdSets):
     """Resolve external Arr ids to AniList ids via three SQL-backed sources.
 
     Downloads-if-stale, then - only when a source's content digest changed -
@@ -422,10 +458,7 @@ class MappingResolver:
 
         # Memoize get_anilist_ids per identifying key, so the prefetch pass and the
         # main loop don't recompute (and re-query) it twice per item.
-        self._anilist_ids_cache: dict[
-            ExternalIds,
-            tuple[dict[int, MappingEntry], list[int]],
-        ] = {}
+        self._anilist_ids_cache: dict[ExternalIds, ResolvedMappings] = {}
 
         # Set by _build; the AniBridge facade is SQL-backed (None when disabled).
         self.anibridge: AniBridge | None = None
@@ -666,6 +699,7 @@ class MappingResolver:
 
     # -- library-filter id sets ---------------------------------------------
 
+    @override
     def anime_id_set(self, column: AnimeIdColumn) -> AbstractSet[int | str]:
         """DISTINCT external ids the Anime-IDs source carries for `column`.
 
@@ -714,24 +748,25 @@ class MappingResolver:
     def get_anilist_ids(
         self,
         ids: ExternalIds,
-    ) -> tuple[dict[int, MappingEntry], list[int]]:
+    ) -> ResolvedMappings:
         """Resolve external ids to a sorted {AniList id -> mapping} dict.
 
         Args:
             ids: The external Arr ids to resolve (at least one).
 
         Returns:
-            A fresh copy of the resolved mappings (so a caller mutating it
-            can't corrupt the memo), plus the ignored AniList ids removed
-            from the result, for the caller to log.
+            A `ResolvedMappings`: a fresh copy of the resolved mappings (so a
+            caller mutating it can't corrupt the memo), plus the ignored AniList
+            ids removed from the result, for the caller to log.
         """
 
         ids.require_any()
 
         # The mapping computation is deterministic for a given set of identifying
         # args, so memoize it and only redo the per-call logging.
-        if ids in self._anilist_ids_cache:
-            anilist_mappings, ids_to_drop = self._anilist_ids_cache[ids]
+        cached = self._anilist_ids_cache.get(ids)
+        if cached is not None:
+            anilist_mappings, ids_to_drop = cached
         else:
             anilist_mappings: dict[int, MappingEntry] = {}
 
@@ -761,11 +796,11 @@ class MappingResolver:
             # Sort by AniList ID.
             anilist_mappings = dict(sorted(anilist_mappings.items()))
 
-            self._anilist_ids_cache[ids] = (anilist_mappings, ids_to_drop)
+            self._anilist_ids_cache[ids] = ResolvedMappings(anilist_mappings, ids_to_drop)
 
         # Return fresh copies of BOTH so a caller mutating either can't corrupt the
         # memo (the entries are frozen, so a shallow dict/list copy is enough).
-        return dict(anilist_mappings), list(ids_to_drop)
+        return ResolvedMappings(dict(anilist_mappings), list(ids_to_drop))
 
     def get_mappings_from_anime_mappings(
         self,

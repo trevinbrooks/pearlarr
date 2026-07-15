@@ -196,9 +196,10 @@ class RadarrSync(ArrSync[RadarrItem]):
                 seadex_dict=seadex_dict,
                 torrent_hashes=torrent_hashes,
                 cache_details=cache_details,
-                # The full ordered group list, mirroring Sonarr - the notifier
-                # renders every edition's group, not just the first file's.
-                release_group=radarr_release_groups,
+                # The replaced groups the notifier renders (every edition's group,
+                # not just the first file's); the {None:[None]} placeholder and any
+                # real-file null group drop, so replaced_groups is a clean tuple.
+                replaced_groups=tuple(rg for rg in radarr_release_dict if rg),
             ),
         )
 

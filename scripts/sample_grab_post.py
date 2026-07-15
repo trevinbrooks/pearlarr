@@ -87,7 +87,7 @@ def _notice(groups: Sequence[str]) -> GrabNotice:
         # AniList cover + banner for 154587, verified live.
         thumb_url="https://s4.anilist.co/file/anilistcdn/media/anime/cover/medium/bx154587-qQTzQnEJJ3oB.jpg",
         banner_url="https://s4.anilist.co/file/anilistcdn/media/anime/banner/154587-ivXNJ23SM1xB.jpg",
-        release_group=["Erai-raws"],
+        replaced_groups=("Erai-raws",),
         seadex_dict=seadex_dict,
         results=[ReleaseOutcome(AddOutcome.ADDED, None, group) for group in groups],
         failed_groups=frozenset(),

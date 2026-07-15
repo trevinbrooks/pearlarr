@@ -1,6 +1,5 @@
 """The SeaDex release filter: builds the per-entry `seadex_dict` and applies the selection rules."""
 
-import copy
 import sys
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -28,8 +27,8 @@ if TYPE_CHECKING:
 class FilterResult(NamedTuple):
     """The applied download plan, as the strategies consume it.
 
-    The strategy-facing slice of `PlanResult`; the skip outcome is folded onto
-    the run context in `filter_downloads`.
+    The strategy-facing slice of `PlanResult` (its hashes + dict); the `skips`
+    outcome is folded onto the run context in `filter_downloads`.
     """
 
     torrent_hashes: list[str | None]
@@ -94,45 +93,9 @@ class SeadexReleaseFilter:
         # The preferred picks: the want_best -> audio-preference cascade
         candidates = self._narrow_candidates(final_torrent_list)
 
-        # If any preferred private pick isn't covered by the public picks' files
-        # (per-group when its files are unknown) and the user chose fallback over
-        # warn-and-wait, also offer the best PUBLIC alternatives (same cascade
-        # over the public torrents not already picked). The private picks stay
-        # in, both so the planner can see the Arr already has one, and so it can
-        # warn when nothing public covers the same files.
-        fallback_urls: set[str] = set()
-        if self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK:
-            group_has_public: dict[str, bool] = {}
-            group_has_blind_public: dict[str, bool] = {}
-            for t in candidates:
-                rg, is_pub = t.release_group, _is_public_torrent(t)
-                group_has_public[rg] = group_has_public.get(rg, False) or is_pub
-                # A public candidate with an UNKNOWN fileset: treated per-group as
-                # covering (the cross-seed case), mirroring the private side.
-                group_has_blind_public[rg] = group_has_blind_public.get(rg, False) or (is_pub and not t.files)
-            public_file_names = {f.name for t in candidates if _is_public_torrent(t) for f in t.files}
-
-            def needs_fallback(t: TorrentRecord) -> bool:
-                """A private candidate needs a public alternative unless the public candidates cover its files.
-
-                An unknown fileset on either side degrades to the per-group gate.
-                """
-
-                if _is_public_torrent(t):
-                    return False
-                if not t.files:
-                    return not group_has_public[t.release_group]
-                if group_has_blind_public[t.release_group]:
-                    return False
-                return not {f.name for f in t.files} <= public_file_names
-
-            if any(needs_fallback(t) for t in candidates):
-                preferred_urls = {t.url for t in candidates}
-                fallbacks = self._narrow_candidates(
-                    [t for t in final_torrent_list if _is_public_torrent(t) and t.url not in preferred_urls],
-                )
-                fallback_urls = {t.url for t in fallbacks}
-                candidates = candidates + fallbacks
+        # If a preferred private pick isn't covered by the public picks, offer the
+        # best public alternatives too (private_releases: fallback).
+        candidates, fallback_urls = self._augment_with_public_fallbacks(final_torrent_list, candidates)
 
         # Pull out release groups, URLs, and various other useful info as a
         # dictionary
@@ -153,12 +116,76 @@ class SeadexReleaseFilter:
                 is_fallback=t.url in fallback_urls,
             )
 
-        # Private releases are never grabbed, so within each release group drop
-        # any private URL whose files the group's public URLs cover (an unknown
-        # fileset counts as covered - the plain cross-seed case). We deliberately
-        # do this per-group rather than across the whole list: a private URL with
-        # uncovered files is kept for now and only filtered out later if the Arr
-        # doesn't already have a matching download (see reduce_overlapping_downloads)
+        self._prune_covered_private(seadex_release_groups)
+
+        return seadex_release_groups
+
+    def _augment_with_public_fallbacks(
+        self,
+        final_torrent_list: list[TorrentRecord],
+        candidates: list[TorrentRecord],
+    ) -> tuple[list[TorrentRecord], set[str]]:
+        """Offer the best public alternatives for uncovered private picks (fallback mode).
+
+        Returns the (maybe augmented) candidates and the set of fallback urls;
+        outside `private_releases: fallback` the candidates come back unchanged
+        with an empty set, so the caller stays branch-free.
+        """
+
+        if self._config.seadex.private_releases is not PrivateReleaseAction.FALLBACK:
+            return candidates, set()
+
+        # If any preferred private pick isn't covered by the public picks' files
+        # (per-group when its files are unknown) and the user chose fallback over
+        # warn-and-wait, also offer the best PUBLIC alternatives (same cascade
+        # over the public torrents not already picked). The private picks stay
+        # in, both so the planner can see the Arr already has one, and so it can
+        # warn when nothing public covers the same files.
+        group_has_public: dict[str, bool] = {}
+        group_has_blind_public: dict[str, bool] = {}
+        for t in candidates:
+            rg, is_pub = t.release_group, _is_public_torrent(t)
+            group_has_public[rg] = group_has_public.get(rg, False) or is_pub
+            # A public candidate with an UNKNOWN fileset: treated per-group as
+            # covering (the cross-seed case), mirroring the private side.
+            group_has_blind_public[rg] = group_has_blind_public.get(rg, False) or (is_pub and not t.files)
+        public_file_names = {f.name for t in candidates if _is_public_torrent(t) for f in t.files}
+
+        def needs_fallback(t: TorrentRecord) -> bool:
+            """A private candidate needs a public alternative unless the public candidates cover its files.
+
+            An unknown fileset on either side degrades to the per-group gate.
+            """
+
+            if _is_public_torrent(t):
+                return False
+            if not t.files:
+                return not group_has_public[t.release_group]
+            if group_has_blind_public[t.release_group]:
+                return False
+            return not {f.name for f in t.files} <= public_file_names
+
+        if not any(needs_fallback(t) for t in candidates):
+            return candidates, set()
+
+        preferred_urls = {t.url for t in candidates}
+        fallbacks = self._narrow_candidates(
+            [t for t in final_torrent_list if _is_public_torrent(t) and t.url not in preferred_urls],
+        )
+        fallback_urls = {t.url for t in fallbacks}
+        return candidates + fallbacks, fallback_urls
+
+    def _prune_covered_private(self, seadex_release_groups: SeadexDict) -> None:
+        """Drop each group's private URLs whose files its public URLs already cover.
+
+        Private releases are never grabbed, so within each release group drop
+        any private URL whose files the group's public URLs cover (an unknown
+        fileset counts as covered - the plain cross-seed case). We deliberately
+        do this per-group rather than across the whole list: a private URL with
+        uncovered files is kept for now and only filtered out later if the Arr
+        doesn't already have a matching download (see reduce_overlapping_downloads)
+        """
+
         for release_group_item in seadex_release_groups.values():
             urls = release_group_item.urls
             group_public_files = {f for u in urls.values() if u.is_public for f in u.files}
@@ -166,8 +193,6 @@ class SeadexReleaseFilter:
                 release_group_item.urls = {
                     url: u for url, u in urls.items() if u.is_public or not set(u.files) <= group_public_files
                 }
-
-        return seadex_release_groups
 
     def _narrow_candidates(self, torrents: list[TorrentRecord]) -> list[TorrentRecord]:
         """Narrow one candidate pool via the want_best -> audio-preference cascade.
@@ -220,20 +245,15 @@ class SeadexReleaseFilter:
             fallback_tag = " (public fallback)" if any(u.is_fallback for u in seadex_dict[s].urls.values()) else ""
             say(indent_string(f"[{s_i}]: {s}{fallback_tag}"))
 
-        srgs_to_grab = input(
+        raw = input(
             "Which release group(s)? Enter one number, a comma-separated list, or leave blank for all: ",
         )
-
-        srgs_to_grab = srgs_to_grab.split(",")
-
-        # Remove any blank entries
-        while "" in srgs_to_grab:
-            srgs_to_grab.remove("")
+        selections = [tok for tok in raw.split(",") if tok]
 
         # If we have some selections, parse down
-        if len(srgs_to_grab) > 0:
-            seadex_dict_filtered = {}
-            for srg_idx in srgs_to_grab:
+        if selections:
+            seadex_dict_filtered: SeadexDict = {}
+            for srg_idx in selections:
                 try:
                     srg = all_srgs[int(srg_idx)]
                 except (ValueError, IndexError):
@@ -241,7 +261,8 @@ class SeadexReleaseFilter:
                     # range. Skip the bad token instead of abandoning the whole entry.
                     hub_warn(f"Skipping invalid selection {srg_idx!r}")
                     continue
-                seadex_dict_filtered[srg] = copy.deepcopy(seadex_dict[srg])
+                # The caller discards the original dict, so hand the item over by reference.
+                seadex_dict_filtered[srg] = seadex_dict[srg]
 
             # Every token was invalid (blank input means "all" and never gets
             # here), so the title proceeds with zero releases - say so.
@@ -276,7 +297,7 @@ class SeadexReleaseFilter:
 
         # The planner reports what to log rather than logging it; post each
         # private-only skip exactly as the inline call used to.
-        for notice in result.skip_notices:
+        for notice in result.skips.notices:
             self._reporter.detail(
                 "skipped",
                 StyledValue(f"{', '.join(notice.groups)} {notice.reason}", Accent.CAUTION),
@@ -285,12 +306,12 @@ class SeadexReleaseFilter:
 
         # Carry the skip flag/groups onto the run context (reset per title in the
         # prologue; add_torrent may append more before grab_and_cache reads them).
-        if result.private_only_skipped:
-            self._ctx.private_only_skipped = True
-            self._ctx.private_only_groups.extend(result.private_only_groups)
-        if result.private_only_stale_held:
-            self._ctx.private_only_stale_held = True
-        if result.fallback_covered:
-            self._ctx.fallback_covered = True
+        if result.skips.skipped:
+            self._ctx.per_title.private_only_skipped = True
+            self._ctx.per_title.private_only_groups.extend(result.skips.groups)
+        if result.skips.stale_held:
+            self._ctx.per_title.private_only_stale_held = True
+        if result.skips.fallback_covered:
+            self._ctx.per_title.fallback_covered = True
 
         return FilterResult(result.torrent_hashes, result.seadex_dict)

@@ -103,7 +103,9 @@ class GrabNotice:
     """The SeaDex entry whole (url / notes / comparisons / incomplete flag)."""
     thumb_url: str | None
     banner_url: str | None
-    release_group: list[str | None] | None
+    replaced_groups: tuple[str, ...]
+    """The existing arr release groups this grab is replacing (the "Replacing" field);
+    the caller passes them clean, so the notifier renders them verbatim."""
     seadex_dict: SeadexDict
     results: Sequence[ReleaseOutcome]
     """The torrent-client add outcomes, so the embed can label a group whose releases
@@ -247,8 +249,8 @@ def _meta_fields(notice: GrabNotice) -> list[EmbedField]:
     fields: list[EmbedField] = []
     if notice.coverage:
         fields.append(EmbedField(name="Episodes", value=notice.coverage, inline=True))
-    if current := [group for group in (notice.release_group or []) if group]:
-        replaced = current[:_MAX_REPLACING]
+    if current := notice.replaced_groups:
+        replaced = list(current[:_MAX_REPLACING])
         if len(current) > _MAX_REPLACING:
             replaced.append(f"… +{len(current) - _MAX_REPLACING} more")
         fields.append(EmbedField(name="Replacing", value=", ".join(replaced), inline=True))

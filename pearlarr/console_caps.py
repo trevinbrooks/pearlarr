@@ -41,9 +41,9 @@ class Capabilities:
     unicode: bool
     """Whether we may use `✔`/box glyphs, or must fall back to ASCII."""
     width: int
-    """The clamped render width."""
+    """The console width (80 when rich reports 0)."""
     height: int
-    """The clamped render height."""
+    """The console height (24 when rich reports 0)."""
 
 
 def console_of(logger: logging.Logger) -> Console | None:

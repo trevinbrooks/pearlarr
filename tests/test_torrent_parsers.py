@@ -224,6 +224,8 @@ def test_get_rutracker_torrent_builds_magnet() -> None:
     magnet, title = get_rutracker_torrent(url, infohash, client=httpx.Client())
 
     assert title == _RUTRACKER_TITLE
+    # RuTracker always builds a magnet (never a None link); narrow for the checks below.
+    assert magnet is not None
     assert magnet.startswith(f"magnet:?xt=urn%3Abtih%3A{infohash}")
     assert "tr=http" in magnet
     assert "dn=" in magnet

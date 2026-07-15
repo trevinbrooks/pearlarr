@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-from typing import ClassVar, final
+from typing import final, override
 
 from .events import Event
-from .hub import OutputHub
+from .hub import OutputHub, Renderer
 
 
 @final
-class RecordingRenderer:
+class RecordingRenderer(Renderer):
     """A renderer that records everything it is handed (events + lifecycle calls)."""
-
-    writes_file_only: ClassVar[bool] = False
 
     def __init__(self) -> None:
         self.events: list[Event] = []
@@ -21,16 +19,20 @@ class RecordingRenderer:
         self.levels: list[int] = []
         self.closed = False
 
+    @override
     def handle(self, event: Event, when: float) -> None:
         self.events.append(event)
         self.whens.append(when)
 
+    @override
     def begin_cycle(self) -> None:
         self.cycles += 1
 
+    @override
     def set_level(self, level: int) -> None:
         self.levels.append(level)
 
+    @override
     def close(self) -> None:
         self.closed = True
 

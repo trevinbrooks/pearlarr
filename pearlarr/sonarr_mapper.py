@@ -58,10 +58,11 @@ class FileEpisodeMapper:
         self.sonarr = sonarr
 
         # Per-run, in-memory cache of the series-agnostic `/parse` of an on-disk
-        # leaf (raw basename -> ParsedFileInfo | None), so the import poll loop sends
-        # a given filename to Sonarr's parser at most once a run rather than every
-        # poll. A None value caches a confirmed "Sonarr can't parse this" miss.
-        self._parse_info_cache: dict[str, ParsedFileInfo | None] = {}
+        # leaf (raw basename -> ParsedFileInfo), so the import poll loop sends a
+        # given filename to Sonarr's parser at most once a run rather than every
+        # poll. A /parse miss (None) is treated as transient and deliberately NOT
+        # cached, so a hiccup doesn't strand a correctly-named file for the run.
+        self._parse_info_cache: dict[str, ParsedFileInfo] = {}
 
     def reset(self) -> None:
         """Drop the per-run on-disk parse cache (run-start, via get_items)."""

@@ -15,12 +15,13 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum, StrEnum, auto
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 from .manual_import import normalize_group
 from .seadex_types import (
     CommandResource,
     Language,
+    ParsedEpisode,
     ParsedFileInfo,
     Quality,
     QualityDefinition,
@@ -96,12 +97,12 @@ def classify_queue(states: list[str]) -> QueueVerdict:
     clean_pending = False
     for raw_state in states:
         state = raw_state.casefold()
-        # Invariant: every importPending queue row buckets as wait, never STEP_IN -
-        # stepping in races Sonarr's own import and double-imports the files.
         if state in _QUEUE_IN_MOTION_STATES:
             in_motion = True
         elif state in _QUEUE_STEP_IN_STATES:
             troubled = True
+        # Invariant: importPending always buckets as PENDING_CLEAN, never STEP_IN -
+        # stepping in races Sonarr's own import and double-imports the files.
         elif state == "importpending":
             clean_pending = True
 
@@ -312,10 +313,10 @@ def targets_needing_import(statuses: dict[int, EpisodeFileStatus]) -> set[int]:
 
 
 def episode_ids_for_parsed(
-    parsed: list[dict[str, Any]],
+    parsed: list[ParsedEpisode],
     ep_id_map: dict[tuple[int, int], int],
 ) -> list[int]:
-    """Map Sonarr `/parse` `(season, episode)` dicts to OUR episode ids.
+    """Map Sonarr `/parse` `(season, episode)` pairs to OUR episode ids.
 
     The season/episode numbers come from Sonarr `/parse` (an internal tool of
     our pipeline), but the assignment stays ours: the `(season, episode) -> id`
@@ -325,11 +326,7 @@ def episode_ids_for_parsed(
 
     ids: list[int] = []
     for ep in parsed:
-        season = ep.get("season")
-        episode = ep.get("episode")
-        if season is None or episode is None:
-            continue
-        ep_id = ep_id_map.get((season, episode))
+        ep_id = ep_id_map.get((ep.season, ep.episode))
         if ep_id:
             ids.append(ep_id)
     return ids
@@ -816,6 +813,14 @@ def _find_definition(
     return None
 
 
+# A RAW source degrades to its base when no remux/raw definition exists at that
+# resolution (try the raw definition first, then this base).
+_RAW_DOWNGRADE: dict[QualitySource, QualitySource] = {
+    QualitySource.BLURAY_RAW: QualitySource.BLURAY,
+    QualitySource.TELEVISION_RAW: QualitySource.TELEVISION,
+}
+
+
 def _candidate_revision(candidate_model: QualityModel | None) -> Revision:
     """The candidate's revision (proper/repack), or a fresh `version 1` default."""
 
@@ -868,10 +873,9 @@ def resolve_quality(
 
     if source is not None and resolution is not None:
         quality = _find_definition(source, resolution, quality_defs)
-        if quality is None and source is QualitySource.BLURAY_RAW:
-            quality = _find_definition(QualitySource.BLURAY, resolution, quality_defs)
-        if quality is None and source is QualitySource.TELEVISION_RAW:
-            quality = _find_definition(QualitySource.TELEVISION, resolution, quality_defs)
+        base = _RAW_DOWNGRADE.get(source)
+        if quality is None and base is not None:
+            quality = _find_definition(base, resolution, quality_defs)
         if quality is not None:
             return QualityModel(quality=quality, revision=revision)
 

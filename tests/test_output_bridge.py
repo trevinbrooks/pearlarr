@@ -20,7 +20,7 @@ import warnings
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, override
 
 import pytest
 
@@ -33,6 +33,7 @@ from pearlarr.output import (
     HubBridgeHandler,
     NullRenderer,
     OutputHub,
+    Renderer,
     RichRenderer,
     Severity,
     attributed_message,
@@ -330,7 +331,7 @@ class TestAdoption:
         assert diagnostic.message == "flaky pool"
 
 
-class _MidDispatchLogger:
+class _MidDispatchLogger(Renderer):
     """A renderer that logs a third-party record from inside handle (once)."""
 
     writes_file_only: ClassVar[bool] = False
@@ -339,18 +340,22 @@ class _MidDispatchLogger:
         self._name = logger_name
         self._fired = False
 
+    @override
     def handle(self, event: Event, when: float) -> None:
         del when
         if isinstance(event, Diagnostic) and not event.file_only and not self._fired:
             self._fired = True
             logging.getLogger(self._name).warning("from inside dispatch")
 
+    @override
     def begin_cycle(self) -> None:
         pass
 
+    @override
     def set_level(self, level: int) -> None:
         pass
 
+    @override
     def close(self) -> None:
         pass
 

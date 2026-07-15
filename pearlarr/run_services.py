@@ -31,7 +31,7 @@ from .mappings import ExternalIds, MappingEntry, MappingResolver
 from .notify import Notifier
 from .output import emit_to_hub, hub_counts
 from .planner import DownloadPlanner
-from .reporter import RunContext, RunReporter, is_preview
+from .reporter import PerTitleState, RunContext, RunReporter, is_preview
 from .seadex_filter import FilterResult, SeadexReleaseFilter
 from .seadex_gateway import SeaDexGateway, SeaDexMiss, SeaDexSource
 from .seadex_types import (
@@ -548,14 +548,9 @@ class RunServices:
         """
 
         # Reset the per-title skip flags (and the skipped group names) before we
-        # make any download decisions for this title
-        self._ctx.private_only_skipped = False
-        self._ctx.private_only_groups = []
-        self._ctx.private_only_stale_held = False
-        self._ctx.fallback_covered = False
-        self._ctx.unsupported_tracker_skipped = False
-        self._ctx.unsupported_tracker_groups = []
-        self._ctx.unsupported_tracker_hashes = []
+        # make any download decisions for this title: a fresh PerTitleState clears
+        # every field at once, so a new flag can never leak from the prior title.
+        self._ctx.per_title = PerTitleState()
         self._ctx.stats.checked += 1
 
         # Get the SeaDex entry if it exists

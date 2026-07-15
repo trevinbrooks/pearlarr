@@ -31,6 +31,12 @@ RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 MAX_RETRIES = 3
 MAX_BACKOFF = 60
 
+
+def _exp_backoff(attempt: int) -> float:
+    # Exponential, jittered so concurrent clients hitting the same limit window don't retry in lockstep.
+    return min(2**attempt + random.uniform(0, 1), MAX_BACKOFF)
+
+
 # AniList also soft-throttles by returning HTTP 200 with a GraphQL error payload
 # (`{"data": null, "errors": [{"message": "Too Many Requests", "status": 429}]}`)
 # instead of a 429 status. These substrings flag a throttle/rate-limit error so it
@@ -280,7 +286,7 @@ class AniListClient:
                 if attempt >= MAX_RETRIES:
                     self._retry_log.gave_up()
                     return {}
-                wait = min(2**attempt + random.uniform(0, 1), MAX_BACKOFF)
+                wait = _exp_backoff(attempt)
                 self._retry_log.waiting(
                     f"request failed ({type(e).__name__})",
                     wait,
@@ -308,10 +314,9 @@ class AniListClient:
 
             if retryable and attempt < MAX_RETRIES:
                 # Prefer the server's Retry-After (seconds, honored exactly);
-                # otherwise exponential, jittered so concurrent clients that hit
-                # the same limit window don't retry in lockstep.
+                # otherwise fall back to the shared exponential backoff.
                 retry_after = resp.headers.get("Retry-After")
-                wait = 2**attempt + random.uniform(0, 1)
+                wait = _exp_backoff(attempt)
                 if retry_after is not None:
                     with contextlib.suppress(TypeError, ValueError):
                         wait = float(retry_after)

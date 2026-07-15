@@ -10,7 +10,7 @@ order.
 Binds the run `RunContext` AND the active strategy via `begin_run`
 (the same objects the engine holds): the strategy's `import_completed` is the
 only thing the engine drives off the strategy, so the manager holds it under the
-narrow `ImportCompleter` protocol.
+narrow `ImportCompleter` ABC.
 """
 
 import time
@@ -325,7 +325,10 @@ class ImportWaitManager:
         """
 
         run_grabs = self._this_run_infohashes()
-        for infohash in self._pending_records():
+        # Iterate the raw stored keys, not `_pending_records()`: the loop reads only
+        # the infohash + `pending_states`, so rehydrating each record via
+        # `PendingImport.from_json` would build a full map only to discard it.
+        for infohash in self.cache_store.get_pending(self._ctx.arr):
             if infohash in run_grabs:
                 continue
             state = self._ctx.pending_states.get(infohash, PendingState.QUEUED)

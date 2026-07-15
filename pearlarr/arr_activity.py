@@ -65,6 +65,14 @@ def format_history_date(value: datetime) -> str:
     return value.astimezone(UTC).strftime(_HISTORY_DATE_FORMAT)
 
 
+@dataclass(frozen=True, slots=True)
+class _QueryWindow:
+    """The derived query cursor: where to fetch from, and whether coverage is broken."""
+
+    query_date: datetime
+    rescan_all: bool
+
+
 @final
 class ArrActivityMonitor:
     """One arr's per-run history scan + checkpoint advance.
@@ -105,28 +113,10 @@ class ArrActivityMonitor:
         """
 
         now = now if now is not None else datetime.now(UTC)
-        floor = now - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS)
         checkpoint = self._cache_store.get_history_checkpoint(self._arr)
-        rescan_all = False
-        if checkpoint is None:
-            # Bootstrap: no cursor at all, so cover the full lookback once.
-            query_date = floor
-        else:
-            parsed = parse_history_date(checkpoint.since_date)
-            if parsed is None:
-                # Unreadable cursor date: coverage unknown - replay the full
-                # lookback and re-check everything once.
-                query_date = floor
-                rescan_all = True
-            else:
-                query_date = min(parsed, now) - timedelta(hours=HISTORY_QUERY_OVERLAP_HOURS)
-                if query_date < floor:
-                    # The clamp truncates the window: events between the true
-                    # cursor and the floor are unreachable, so re-check everything.
-                    query_date = floor
-                    rescan_all = True
+        window = self._resolve_window(checkpoint, now)
 
-        records = fetch(format_history_date(query_date))
+        records = fetch(format_history_date(window.query_date))
         if records is None:
             # The fetch helper already warned (with the HTTP-level reason and the
             # same consequence), so this stays a debug breadcrumb, not a second
@@ -144,8 +134,8 @@ class ArrActivityMonitor:
             # the old cursor and let the id dedup absorb the re-delivery.
             if newest.date:
                 self._pending_checkpoint = HistoryCheckpoint(since_date=newest.date, last_id=newest.id)
-        if rescan_all or not fresh:
-            return ActivityScan(touched=frozenset(), rescan_all=rescan_all)
+        if window.rescan_all or not fresh:
+            return ActivityScan(touched=frozenset(), rescan_all=window.rescan_all)
 
         own = self._cache_store.own_download_ids(self._arr)
         touched: set[int] = set()
@@ -158,6 +148,25 @@ class ArrActivityMonitor:
                 continue
             touched.add(record.item_id)
         return ActivityScan(touched=frozenset(touched), rescan_all=False)
+
+    def _resolve_window(self, checkpoint: HistoryCheckpoint | None, now: datetime) -> _QueryWindow:
+        """Derive the history query cursor from the stored checkpoint."""
+
+        floor = now - timedelta(days=HISTORY_MAX_LOOKBACK_DAYS)
+        if checkpoint is None:
+            # Bootstrap: no cursor at all, so cover the full lookback once.
+            return _QueryWindow(floor, False)
+        parsed = parse_history_date(checkpoint.since_date)
+        if parsed is None:
+            # Unreadable cursor date: coverage unknown - replay the full
+            # lookback and re-check everything once.
+            return _QueryWindow(floor, True)
+        query_date = min(parsed, now) - timedelta(hours=HISTORY_QUERY_OVERLAP_HOURS)
+        if query_date < floor:
+            # The clamp truncates the window: events between the true
+            # cursor and the floor are unreachable, so re-check everything.
+            return _QueryWindow(floor, True)
+        return _QueryWindow(query_date, False)
 
     def commit_checkpoint(self) -> None:
         """Stage the advanced checkpoint, if the scan produced one."""

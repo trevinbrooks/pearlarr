@@ -20,6 +20,7 @@ from .seadex_types import (
     Language,
     ManualImportCandidate,
     ManualImportFile,
+    ParsedEpisode,
     ParsedFileInfo,
     QualityDefinition,
     QueueRecord,
@@ -30,10 +31,11 @@ from .seadex_types import (
     validation_summary,
 )
 
-# Per-request timeout (seconds) for the manual-import folder scan. Sonarr walks
-# and parses every file under the folder, which is slow - and can hang - over a
-# remote mount; bounding it lets a hung scan surface as a transient miss (retry)
-# instead of blocking the whole run. Generous so a legitimately slow first scan
+# Per-request timeout (seconds) bounding the manual-import flow's slow-remote-mount
+# reads: BOTH the folder scan (manual_import_candidates, where Sonarr walks and
+# parses every file) and the single-file parse during the import wait
+# (parse_episode_info). Bounding them lets a hung read surface as a transient miss
+# (retry) instead of blocking the run. Generous so a legitimately slow first read
 # (uncached remote files) still completes.
 MANUAL_IMPORT_TIMEOUT_S = 120
 
@@ -70,7 +72,7 @@ class AbstractSonarrClient(ABC):
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None: ...
 
     @abstractmethod
-    def parse(self, filename: str) -> list[dict[str, int]] | None: ...
+    def parse(self, filename: str) -> list[ParsedEpisode] | None: ...
 
     @abstractmethod
     def parse_episode_info(self, filename: str) -> ParsedFileInfo | None: ...
@@ -187,7 +189,7 @@ class SonarrClient(AbstractSonarrClient):
         return episodes
 
     @override
-    def parse(self, filename: str) -> list[dict[str, int]] | None:
+    def parse(self, filename: str) -> list[ParsedEpisode] | None:
         """Ask Sonarr to parse a single filename into season/episode numbers.
 
         Only the season/episode mapping is returned - the file size is filled in
@@ -204,8 +206,8 @@ class SonarrClient(AbstractSonarrClient):
             filename: Filename to parse (basename, not full path).
 
         Returns:
-            {"season", "episode"} dicts on a clean 200 (empty when Sonarr
-            genuinely matched nothing), or None when the request failed.
+            `ParsedEpisode` records on a clean 200 (empty when Sonarr genuinely
+            matched nothing), or None when the request failed.
         """
 
         payload = self._http.get_json_dict(
@@ -224,7 +226,7 @@ class SonarrClient(AbstractSonarrClient):
         if not isinstance(raw_eps, list):
             return None
 
-        parsed: list[dict[str, int]] = []
+        parsed: list[ParsedEpisode] = []
         for ep in cast("list[object]", raw_eps):
             try:
                 record = _ParsedEpisode.model_validate(ep)
@@ -237,7 +239,7 @@ class SonarrClient(AbstractSonarrClient):
                 self._logger.debug(f"Sonarr's parse returned no season/episode number for {filename}; skipping it")
                 continue
 
-            parsed.append({"season": record.seasonNumber, "episode": record.episodeNumber})
+            parsed.append(ParsedEpisode(season=record.seasonNumber, episode=record.episodeNumber))
 
         return parsed
 
@@ -260,6 +262,8 @@ class SonarrClient(AbstractSonarrClient):
             filename: Filename to parse (basename, not full path).
         """
 
+        # Borrows the generous manual-import bound: it runs in the import wait over
+        # the same slow mount, unlike the sweep's plain parse() (no such timeout).
         payload = self._http.get_json_dict(
             "/api/v3/parse",
             params={"title": filename},

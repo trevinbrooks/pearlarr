@@ -102,8 +102,7 @@ class HubBridgeHandler(HubBridgeBase):
             if hub.dispatch_active():
                 # Fired mid-dispatch on this thread (a renderer or lifecycle body
                 # logging): file-only adoption.
-                hub.emit(replace(diagnostic, file_only=True))
-                return
+                diagnostic = replace(diagnostic, file_only=True)
             hub.emit(diagnostic)
         except Exception:
             self.handleError(record)

@@ -23,9 +23,9 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import datetime
-from typing import ClassVar, assert_never, final
+from typing import assert_never, final, override
 
 from rich.console import Console
 from rich.text import Text
@@ -77,6 +77,7 @@ from .events import (
     WaitProgress,
     WaitStarted,
 )
+from .hub import Renderer
 from .live_region import LiveRegion
 from .scan_lines import LegacyLine, ScanEvent, render_legacy_lines, scan_event_lines
 from .trace import CapturedTrace
@@ -121,10 +122,8 @@ def diagnostic_text(event: Diagnostic, *, indented: bool, use_unicode: bool) -> 
 
 
 @final
-class RichRenderer:
+class RichRenderer(Renderer):
     """The hub's console seat (diagnostics + the boot/scan/wait cockpit arms)."""
-
-    writes_file_only: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -153,6 +152,7 @@ class RichRenderer:
             (ScopeKind.WAIT_REGION, self._wait),
         )
 
+    @override
     def handle(self, event: Event, when: float) -> None:
         del when
         # Placement must be settled BEFORE rendering (fold-first also keeps the
@@ -218,14 +218,17 @@ class RichRenderer:
             case _:
                 assert_never(event)
 
+    @override
     def begin_cycle(self) -> None:
         self._crumbs.reset()
         self._boot.begin_cycle()
         self._wait.begin_cycle()
 
+    @override
     def set_level(self, level: int) -> None:
         self._level = level
 
+    @override
     def close(self) -> None:
         self._boot.close()
         self._wait.close()
@@ -254,6 +257,14 @@ class RichRenderer:
                 ),
             )
 
+    def _render_legacy(self, lines: Iterable[LegacyLine]) -> None:
+        """Shared legacy lines over the live Console at LOGGER-parity gating."""
+
+        console = self._console_source()
+        if console is None:
+            return
+        render_legacy_lines(console, lines, self._level)
+
     def _next_run(self, at: datetime) -> None:
         """The scheduled-mode footer, through the shared durable-line route.
 
@@ -261,11 +272,8 @@ class RichRenderer:
         ambiguous about which day it means.
         """
 
-        console = self._console_source()
-        if console is None:
-            return
         line = LegacyLine(logging.INFO, f"Next scheduled run at {at:%a %H:%M}", None)
-        render_legacy_lines(console, (line,), self._level)
+        self._render_legacy((line,))
 
     def _scan(self, event: ScanEvent) -> None:
         """The scan console arm: the shared legacy lines over the shared Console.
@@ -275,10 +283,7 @@ class RichRenderer:
         vanish from the file — deliberately NOT the diagnostics' console floor.
         """
 
-        console = self._console_source()
-        if console is None:
-            return
-        render_legacy_lines(console, scan_event_lines(event), self._level)
+        self._render_legacy(scan_event_lines(event))
 
     def _frontier_has(self, *kinds: ScopeKind) -> bool:
         """True when any open node (the whole stack, not just the top) is one of `kinds`."""

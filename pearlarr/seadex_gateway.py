@@ -70,6 +70,10 @@ class SeaDexEntryApi(Protocol):
 
     Positional-only params mirror the lib's actual signatures (its `from_id`
     accepts `int | str`, wider is fine).
+
+    Sanctioned Protocol exception to the ABC house rule: the real satisfier is the
+    third-party `seadex.SeaDexEntry` (plus test doubles), which can't be made to
+    subclass a local ABC without a wrapper, so structural typing is the seam here.
     """
 
     def from_filter(self, filter_str: str, /) -> Iterable[EntryRecord]: ...

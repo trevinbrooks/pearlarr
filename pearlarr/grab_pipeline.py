@@ -13,7 +13,7 @@ run loop holds), so the grab bookkeeping the run summary reads stays in sync.
 
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from seadex import EntryRecord
 
@@ -38,6 +38,13 @@ if TYPE_CHECKING:
     from .run_services import RunDeps
 
 
+class GrabResult(NamedTuple):
+    """`_grab`'s outcome: whether the run-wide cap was hit, and how many torrents this title added."""
+
+    cap_reached: bool
+    added: int
+
+
 @dataclass(frozen=True)
 class GrabRequest:
     """The resolved per-id payload for the shared grab tail."""
@@ -53,7 +60,8 @@ class GrabRequest:
     cache_details: CacheRecord
     """The run's mutable `CacheRecord` accumulator: the frozen field pins the reference, not the dict's
     contents (`grab_and_cache` still writes `torrent_hashes` into it before saving)."""
-    release_group: list[str | None] | None
+    replaced_groups: tuple[str, ...]
+    """The existing arr release groups this grab is replacing (the notifier's "Replacing" field)."""
     coverage: str = ""
     """Sonarr's episode coverage string ("" for Radarr - movies have none)."""
     pending_seeds: dict[str, PendingImport] | None = None
@@ -65,8 +73,8 @@ class GrabPipeline:
     Constructed once per run in `RunServices` from the
     deps hub + the placeholder ctx (unpacked to private attrs here);
     `begin_run` rebinds the ctx each run. The hub's `grab_and_cache`
-    delegates here; `_grab` returns a pure bool (cap-reached) so the run loop
-    owns the single finalize site.
+    delegates here; `_grab` returns a `GrabResult` (cap-reached + added count) that
+    `grab_and_cache` collapses to the cap-reached bool the run loop finalizes on.
     """
 
     def __init__(
@@ -182,8 +190,8 @@ class GrabPipeline:
 
         if not url_item.is_public:
             self._reporter.post(ReleaseSkipped(group=srg, tracker=tracker, reason=SkipReason.PRIVATE_ONLY, url=url))
-            self._ctx.private_only_skipped = True
-            self._ctx.private_only_groups.append(srg)
+            self._ctx.per_title.private_only_skipped = True
+            self._ctx.per_title.private_only_groups.append(srg)
             return None
 
         # Skip trackers not in the user's selected list
@@ -202,10 +210,10 @@ class GrabPipeline:
             self._reporter.post(
                 ReleaseSkipped(group=srg, tracker=tracker, reason=SkipReason.UNSUPPORTED_TRACKER, url=url),
             )
-            self._ctx.unsupported_tracker_skipped = True
-            self._ctx.unsupported_tracker_groups.append(srg)
+            self._ctx.per_title.unsupported_tracker_skipped = True
+            self._ctx.per_title.unsupported_tracker_groups.append(srg)
             if url_item.infohash is not None:
-                self._ctx.unsupported_tracker_hashes.append(url_item.infohash)
+                self._ctx.per_title.unsupported_tracker_hashes.append(url_item.infohash)
             return None
 
         # The service parses the release URL by tracker and adds it to
@@ -316,7 +324,7 @@ class GrabPipeline:
         # cover these files: never cache the title so every run re-checks and
         # resurfaces it. Warn mode and interactive picks keep the plain gate.
         fallback_hold = (
-            self._ctx.private_only_skipped
+            self._ctx.per_title.private_only_skipped
             and self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK
             and not self._config.advanced.interactive
         )
@@ -324,7 +332,69 @@ class GrabPipeline:
             not cap_reached
             and not fallback_hold
             and not grab_failed
-            and (added_this_title > 0 or not (self._ctx.private_only_skipped or self._ctx.unsupported_tracker_skipped))
+            and (
+                added_this_title > 0
+                or not (self._ctx.per_title.private_only_skipped or self._ctx.per_title.unsupported_tracker_skipped)
+            )
+        )
+
+    def _classify_needs_action(self, *, grab_failed: bool) -> NeedsActionRecord | None:
+        """The single needs-action row for a title NOT cached as done, or None.
+
+        Flat guard-returns preserve the precedence private-only > unsupported-tracker
+        > grab-failed; each reason / kind feeds the run summary's guidance.
+        """
+
+        if self._ctx.per_title.private_only_skipped:
+            reason, kind = self._private_only_reason()
+            return self._needs_action(self._ctx.per_title.private_only_groups, reason, kind)
+
+        if self._ctx.per_title.unsupported_tracker_skipped:
+            return self._needs_action(
+                self._ctx.per_title.unsupported_tracker_groups,
+                "tracker not yet supported; grab manually",
+                NeedsActionKind.UNSUPPORTED_TRACKER,
+            )
+
+        if grab_failed:
+            # No user action needed - the warning named the failure and the
+            # uncached title retries next run - but the summary must say why the
+            # title is neither added nor up to date.
+            return self._needs_action(
+                self._grab_failed_groups,
+                "grab failed; will retry next run",
+                NeedsActionKind.GRAB_FAILED,
+            )
+
+        return None
+
+    def _private_only_reason(self) -> tuple[str, NeedsActionKind]:
+        """The (reason, kind) for a private-only hold, resolving the fallback-mode arms.
+
+        Warn mode is the plain PRIVATE_ONLY skip. In fallback mode the hold is a
+        fallback that couldn't (no public alternative covered the missing files) or
+        wouldn't (the user's own interactive private pick, or an owned-at-stale-size
+        pick a fallback must not replace) fall back - either way the tip must not
+        suggest the fallback already on. The stale bit wins over a coexisting plain
+        hold (one row per title; self-correcting across runs, never cached).
+        """
+
+        if self._config.seadex.private_releases is not PrivateReleaseAction.FALLBACK:
+            return "private-only release; private releases not supported", NeedsActionKind.PRIVATE_ONLY
+        if self._config.advanced.interactive:
+            return (
+                "hand-picked private release; private releases not supported",
+                NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK,
+            )
+        if self._ctx.per_title.private_only_stale_held:
+            return (
+                "private-only release; your copy is outdated (its file size no longer matches) "
+                "and only a fallback covers it",
+                NeedsActionKind.PRIVATE_ONLY_STALE,
+            )
+        return (
+            "private-only release; no public alternative covers these files",
+            NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK,
         )
 
     def grab_and_cache(self, req: GrabRequest) -> bool:
@@ -344,29 +414,25 @@ class GrabPipeline:
         # Check the release groups are matching, and get a bespoke list of torrents
         any_to_download = self._planner.get_any_to_download(req.seadex_dict)
 
-        # Capture the running total before the add block so we can tell whether
-        # THIS title actually grabbed anything
-        torrents_before = self._ctx.torrents_added
-
         # Set when _grab hits max_torrents_to_add: the needs-action tail below
         # still runs (a contained grab failure on this title must land its summary
         # row even at the cap), but the per-title cache update is skipped - the cap
         # can stop the url loop mid-title - and True stops the run (the engine's
         # single finalize site does the actual cache save).
         cap_reached = False
+        # How many torrents THIS title grabbed (0 when there was nothing to add):
+        # _grab returns it directly, so no before/after snapshot of the run total.
+        added_this_title = 0
 
         if not any_to_download:
-            if not self._ctx.private_only_skipped:
+            if not self._ctx.per_title.private_only_skipped:
                 self._ctx.stats.up_to_date += 1
                 self._reporter.detail(
                     "status",
                     StyledValue("already have the recommended release", Accent.NOTE),
                 )
         else:
-            cap_reached = self._grab(req)
-
-        # Work out whether THIS title actually grabbed anything
-        added_this_title = self._ctx.torrents_added - torrents_before
+            cap_reached, added_this_title = self._grab(req)
 
         # A contained grab failure (tracker/client down) means a release this
         # title should have is missing: never cache - even on a partial grab - so
@@ -386,12 +452,12 @@ class GrabPipeline:
             # entry's next update once a parser lands. Private-only hashes are
             # deliberately NOT excluded: private releases are never grabbed, so
             # their quiet suppression is the intended behavior.
-            skipped = set(self._ctx.unsupported_tracker_hashes)
+            skipped = set(self._ctx.per_title.unsupported_tracker_hashes)
             cacheable = [h for h in req.torrent_hashes if h is None or h not in skipped]
             # The fallback-satisfied marker: a fallback grab or the owned-fallback
             # soft-skip. Always written - the partial-merge upsert would otherwise
             # preserve a stale True after a later genuine grab.
-            fallback_satisfied = self._ctx.fallback_covered or any(
+            fallback_satisfied = self._ctx.per_title.fallback_covered or any(
                 u.is_fallback and u.download for rg_item in req.seadex_dict.values() for u in rg_item.urls.values()
             )
             req.cache_details["torrent_hashes"] = cacheable
@@ -401,57 +467,14 @@ class GrabPipeline:
                 req.al_id,
                 req.cache_details,
             )
-        # A release was skipped for a reason outside the user's control (and either
-        # nothing was added or a fallback hold / grab failure blocks the cache):
-        # surface ONE needs-action reason for the title (private-only wins) so it
-        # shows in the summary. In fallback mode the hold is a fallback that couldn't (no public
-        # alternative covered the missing files) or wouldn't (the user's own
-        # interactive private pick, or an owned-at-stale-size pick a fallback must
-        # not replace) fall back - either way the tip must not suggest the
-        # fallback already on.
-        elif self._ctx.private_only_skipped:
-            if self._config.seadex.private_releases is PrivateReleaseAction.FALLBACK:
-                if self._config.advanced.interactive:
-                    reason = "hand-picked private release; private releases not supported"
-                    kind = NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK
-                elif self._ctx.private_only_stale_held:
-                    # One row per title: the stale bit wins over a coexisting
-                    # plain hold (self-correcting across runs; never cached).
-                    reason = (
-                        "private-only release; your copy is outdated (its file size no longer matches) "
-                        "and only a fallback covers it"
-                    )
-                    kind = NeedsActionKind.PRIVATE_ONLY_STALE
-                else:
-                    reason = "private-only release; no public alternative covers these files"
-                    kind = NeedsActionKind.PRIVATE_ONLY_NO_FALLBACK
-            else:
-                reason, kind = (
-                    "private-only release; private releases not supported",
-                    NeedsActionKind.PRIVATE_ONLY,
-                )
-            self._ctx.stats.needs_action.append(
-                self._needs_action(self._ctx.private_only_groups, reason, kind),
-            )
-        elif self._ctx.unsupported_tracker_skipped:
-            self._ctx.stats.needs_action.append(
-                self._needs_action(
-                    self._ctx.unsupported_tracker_groups,
-                    "tracker not yet supported; grab manually",
-                    NeedsActionKind.UNSUPPORTED_TRACKER,
-                ),
-            )
-        elif grab_failed:
-            # No user action needed - the warning named the failure and the
-            # uncached title retries next run - but the summary must say why the
-            # title is neither added nor up to date.
-            self._ctx.stats.needs_action.append(
-                self._needs_action(
-                    self._grab_failed_groups,
-                    "grab failed; will retry next run",
-                    NeedsActionKind.GRAB_FAILED,
-                ),
-            )
+        else:
+            # Cache-write and needs-action are mutually exclusive: only a title NOT
+            # cached as done is classified into at most one needs-action summary row
+            # (a release skipped outside the user's control, or a fallback hold /
+            # grab failure that blocks the cache).
+            rec = self._classify_needs_action(grab_failed=grab_failed)
+            if rec is not None:
+                self._ctx.stats.needs_action.append(rec)
 
         # Cap reached: stop the run now that the summary rows are recorded (no
         # point throttling a run that's over).
@@ -463,13 +486,13 @@ class GrabPipeline:
 
         return False
 
-    def _grab(self, req: GrabRequest) -> bool:
+    def _grab(self, req: GrabRequest) -> GrabResult:
         """Add this title's torrents, notify, and honor the run-wide cap.
 
-        Runs only when there's something to download. Returns True once
-        max_torrents_to_add has been reached (the cap notice is logged here; the
-        engine's finalize site does the cache save) so the caller stops the whole
-        run; otherwise False.
+        Runs only when there's something to download. Returns a `GrabResult`
+        carrying whether max_torrents_to_add was reached (the cap notice is logged
+        here; the engine's finalize site does the cache save) so the caller stops
+        the whole run, and how many torrents this title added.
         """
 
         # Resolve the AniList art (cover thumbnail + wide banner, the same
@@ -511,7 +534,7 @@ class GrabPipeline:
                     entry=req.entry,
                     thumb_url=anilist_thumb,
                     banner_url=anilist_banner,
-                    release_group=req.release_group,
+                    replaced_groups=req.replaced_groups,
                     seadex_dict=req.seadex_dict,
                     results=results,
                     failed_groups=frozenset(self._grab_failed_groups),
@@ -522,9 +545,9 @@ class GrabPipeline:
         cap = self._effective_cap
         if cap is not None and self._ctx.torrents_added >= cap:
             self._reporter.log_max_torrents_added(cap)
-            # Cap reached: signal the run to stop with a pure bool. run_sync breaks
-            # the scan and runs the single _finalize_run site (so the blocking/hybrid
-            # pass still imports this run's records before the save + summary).
-            return True
+            # Cap reached: signal the run to stop. run_sync breaks the scan and runs
+            # the single _finalize_run site (so the blocking/hybrid pass still
+            # imports this run's records before the save + summary).
+            return GrabResult(cap_reached=True, added=n_torrents_added)
 
-        return False
+        return GrabResult(cap_reached=False, added=n_torrents_added)

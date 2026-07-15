@@ -1,23 +1,23 @@
 """The engine-facing strategy contracts: the hooks a per-arr strategy implements."""
 
 from abc import ABC, abstractmethod
-from typing import Protocol
 
 from .manual_import import ImportProbe, ImportProgress, PendingImport
 from .mappings import MappingEntry
 from .seadex_types import ArrItem, HistoryRecord, ProgressSink
 
 
-class ImportCompleter(Protocol):
-    """The single strategy hook the engine drives after a download completes.
+class ImportCompleter(ABC):
+    """The strategy hooks the engine drives after a download completes.
 
     Narrow and NON-generic, so the engine can hold the active strategy as
-    `ImportCompleter | None` and call exactly this one method without the
+    `ImportCompleter | None` and call exactly these methods without the
     invariant-`ArrSync[ItemT]` cast (the engine never touches `ItemT`).
-    `ArrSync` structurally satisfies it, so a concrete strategy assigns to an
-    `ImportCompleter` slot with no cast.
+    `ArrSync` subclasses it, so a concrete strategy assigns to an
+    `ImportCompleter` slot nominally.
     """
 
+    @abstractmethod
     def import_completed(
         self,
         pending: PendingImport,
@@ -25,12 +25,54 @@ class ImportCompleter(Protocol):
         *,
         force: bool = False,
         at_deadline: bool = False,
-    ) -> ImportProbe: ...
+    ) -> ImportProbe:
+        """Reconcile one completed download with Sonarr (one poll).
 
-    def import_progress(self, pending: PendingImport) -> ImportProgress: ...
+        Called repeatedly by the engine's monitor/snapshot once qBittorrent
+        reports the torrent complete. Reads Sonarr's (refreshed) queue and the
+        current episode files as the source of truth: lets Sonarr finish when it
+        is actively importing, treats target episodes that already hold the
+        recommended release as imported, and otherwise drives a series-pinned
+        manual import using *our* authoritative file->episode mapping (never
+        Sonarr's blind parse, so it can't import an episode our mapping assigned
+        to another preferred torrent). Radarr is a no-op (out of scope).
+
+        Args:
+            pending: The durable record for the completed torrent.
+            content_path: The qBittorrent `content_path` of the finished
+                download (the folder/file the manual import reads from disk).
+            force: When True, stop deferring to Sonarr on a clean
+                `importPending` and drive our manual import now. The engine sets
+                this on the snapshot/reconcile passes and on the final in-bound
+                monitor poll, so a download Sonarr will never import (e.g.
+                Completed Download Handling off) is still imported rather than
+                waited on forever.
+            at_deadline: When True, this is the final attempt for the
+                record, so an intended file still not visible is terminal -> warn
+                loudly. Off the deadline a still-missing file is expected (an
+                early poll) and only logged at debug. Distinct from `force`: the
+                snapshot/reconcile force without being at a deadline (no warning).
+
+        Returns:
+            The `ImportProbe` readiness (drop / retry / leave) plus whether the
+            intended episode files are verified present (`files_present`) and
+            whether an import command was just accepted (`command_issued`).
+        """
+
+    @abstractmethod
+    def import_progress(self, pending: PendingImport) -> ImportProgress:
+        """Cheap, read-only "files inserted" count for the wait cockpit's bar.
+
+        Called between the heavy `import_completed` polls (the Tier-2 fast poll)
+        to fill the importing row's bar as files land and to promote the row once
+        every intended file is present. MUST NOT refresh downloads, read the queue,
+        or issue commands - only the fresh episode files. `SonarrSync` counts the
+        seed targets that now hold the recommended release; `RadarrSync` records
+        no pending imports, so it returns an indeterminate zero.
+        """
 
 
-class ArrSync[ItemT: ArrItem](ABC):
+class ArrSync[ItemT: ArrItem](ImportCompleter):
     """An Arr-specific sync strategy the run machinery drives.
 
     Owns the Arr REST client and the Arr's domain logic (episode mapping,
@@ -125,56 +167,5 @@ class ArrSync[ItemT: ArrItem](ABC):
         which short-circuits the snapshot entirely.
         """
 
-    @abstractmethod
-    def import_completed(
-        self,
-        pending: PendingImport,
-        content_path: str,
-        *,
-        force: bool = False,
-        at_deadline: bool = False,
-    ) -> ImportProbe:
-        """Reconcile one completed download with Sonarr (one poll).
-
-        Called repeatedly by the engine's monitor/snapshot once qBittorrent
-        reports the torrent complete. Reads Sonarr's (refreshed) queue and the
-        current episode files as the source of truth: lets Sonarr finish when it
-        is actively importing, treats target episodes that already hold the
-        recommended release as imported, and otherwise drives a series-pinned
-        manual import using *our* authoritative file->episode mapping (never
-        Sonarr's blind parse, so it can't import an episode our mapping assigned
-        to another preferred torrent). Radarr is a no-op (out of scope).
-
-        Args:
-            pending: The durable record for the completed torrent.
-            content_path: The qBittorrent `content_path` of the finished
-                download (the folder/file the manual import reads from disk).
-            force: When True, stop deferring to Sonarr on a clean
-                `importPending` and drive our manual import now. The engine sets
-                this on the snapshot/reconcile passes and on the final in-bound
-                monitor poll, so a download Sonarr will never import (e.g.
-                Completed Download Handling off) is still imported rather than
-                waited on forever.
-            at_deadline: When True, this is the final attempt for the
-                record, so an intended file still not visible is terminal -> warn
-                loudly. Off the deadline a still-missing file is expected (an
-                early poll) and only logged at debug. Distinct from `force`: the
-                snapshot/reconcile force without being at a deadline (no warning).
-
-        Returns:
-            The `ImportProbe` readiness (drop / retry / leave) plus whether the
-            intended episode files are verified present (`files_present`) and
-            whether an import command was just accepted (`command_issued`).
-        """
-
-    @abstractmethod
-    def import_progress(self, pending: PendingImport) -> ImportProgress:
-        """Cheap, read-only "files inserted" count for the wait cockpit's bar.
-
-        Called between the heavy `import_completed` polls (the Tier-2 fast poll)
-        to fill the importing row's bar as files land and to promote the row once
-        every intended file is present. MUST NOT refresh downloads, read the queue,
-        or issue commands - only the fresh episode files. `SonarrSync` counts the
-        seed targets that now hold the recommended release; `RadarrSync` records
-        no pending imports, so it returns an indeterminate zero.
-        """
+    # import_completed / import_progress are inherited (abstract) from
+    # ImportCompleter - the narrow non-generic seam the engine drives.
