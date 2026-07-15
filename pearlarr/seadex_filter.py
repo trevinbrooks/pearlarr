@@ -304,14 +304,8 @@ class SeadexReleaseFilter:
                 severity=notice.severity,
             )
 
-        # Carry the skip flag/groups onto the run context (reset per title in the
+        # Carry the skip flags/groups onto the run context (reset per title in the
         # prologue; add_torrent may append more before grab_and_cache reads them).
-        if result.skips.skipped:
-            self._ctx.per_title.private_only_skipped = True
-            self._ctx.per_title.private_only_groups.extend(result.skips.groups)
-        if result.skips.stale_held:
-            self._ctx.per_title.private_only_stale_held = True
-        if result.skips.fallback_covered:
-            self._ctx.per_title.fallback_covered = True
+        self._ctx.per_title.absorb_skips(result.skips)
 
         return FilterResult(result.torrent_hashes, result.seadex_dict)

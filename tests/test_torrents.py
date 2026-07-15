@@ -85,6 +85,10 @@ class _FakeQbit:
 
     def torrents_info(self, *, torrent_hashes: str) -> list[_TorrInfo]:
         self.info_queries.append(torrent_hashes)
+        # qBittorrent treats an empty `hashes` filter as "no filter" and returns
+        # every torrent - the footgun the empty-infohash normalization guards against.
+        if not torrent_hashes:
+            return [_TorrInfo(hash=h, name=n) for h, n in self._present.items()]
         name = self._present.get(torrent_hashes)
         return [_TorrInfo(hash=torrent_hashes, name=name)] if name is not None else []
 
@@ -170,6 +174,35 @@ def test_add_hashless_falls_back_to_source_title(monkeypatch: pytest.MonkeyPatch
     assert name == _SOURCE_TITLE
     assert qbit.add_calls == [_AddCall(urls=_PARSED_URL, category="anime", tags=["seadex"])]
     assert qbit.info_queries == []
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("", None), ("   ", None), (_HASH, _HASH), (f"  {_HASH}  ", _HASH)])
+def test_seadex_url_item_normalizes_infohash(raw: str, expected: str | None) -> None:
+    """`SeadexUrlItem` strips its infohash and folds an empty/blank one to None (a real hash is never empty)."""
+
+    assert SeadexUrlItem(infohash=raw).infohash == expected
+
+
+def test_add_empty_infohash_is_treated_as_hashless(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty-string infohash is grabbed, not falsely deduped against every torrent.
+
+    qBittorrent returns *all* torrents for an empty `hashes` filter, so a bare
+    truthiness dedup would report ALREADY_ADDED against an unrelated torrent.
+    `SeadexUrlItem` folds "" -> None at construction, so the dedup lookup is
+    skipped and the release is added.
+    """
+
+    _patch_nyaa_parser(monkeypatch)
+    qbit = _FakeQbit(present={_HASH: "Unrelated Torrent"})
+    service = _service(qbit)
+
+    outcome, name = service.add(
+        item=SeadexUrlItem(url="https://nyaa.si/view/1", tracker=Tracker.NYAA, infohash=""), preview=False
+    )
+
+    assert outcome is AddOutcome.ADDED
+    assert name == _SOURCE_TITLE
+    assert qbit.info_queries == []  # dedup lookup skipped: "" was normalized to None
 
 
 def test_add_qbit_rejects_add_raises(monkeypatch: pytest.MonkeyPatch) -> None:

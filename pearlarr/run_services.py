@@ -441,7 +441,7 @@ class RunServices:
         if not anilist_title:
             anilist_title = f"AniList #{al_id}"
 
-        self._ctx.current_title = anilist_title
+        self._ctx.per_title.current_title = anilist_title
 
         return anilist_title
 

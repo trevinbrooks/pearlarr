@@ -434,7 +434,7 @@ class TestGrabAndCacheCapStop:
         torrents = FakeTorrents({"h1": (AddOutcome.ADDED, "Show-RG")})
         pipeline = _pipeline(torrents=torrents, max_torrents_to_add=1, sleep_time=0)
         pipeline._anilist.al_cache.update({42: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
 
         req = GrabRequest(
             al_id=42,
@@ -530,7 +530,7 @@ class TestUnsupportedTrackerSkip:
         pipeline = _pipeline(torrents=FakeTorrents({}), private_releases="warn", sleep_time=0)
         # Pre-seed the AniList cache so _grab's thumbnail lookup stays offline.
         pipeline._anilist.al_cache.update({42: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
 
         req = GrabRequest(
             al_id=42,
@@ -562,7 +562,7 @@ class TestUnsupportedTrackerSkip:
 
         pipeline = _pipeline(torrents=FakeTorrents({}), private_releases="warn", sleep_time=0)
         pipeline._anilist.al_cache.update({7: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
 
         req = GrabRequest(
             al_id=7,
@@ -598,7 +598,7 @@ class TestUnsupportedTrackerSkip:
 
         pipeline = _pipeline(torrents=FakeTorrents({}), private_releases="fallback", sleep_time=0)
         pipeline._anilist.al_cache.update({7: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
 
         req = GrabRequest(
             al_id=7,
@@ -630,7 +630,7 @@ class TestUnsupportedTrackerSkip:
 
         pipeline = _pipeline(torrents=FakeTorrents({}), private_releases="fallback", sleep_time=0)
         pipeline._anilist.al_cache.update({7: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
         pipeline._ctx.per_title.private_only_stale_held = True
 
         req = GrabRequest(
@@ -664,7 +664,7 @@ class TestUnsupportedTrackerSkip:
 
         pipeline = _pipeline(torrents=FakeTorrents({}), private_releases="fallback", interactive=True, sleep_time=0)
         pipeline._anilist.al_cache.update({7: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
 
         req = GrabRequest(
             al_id=7,
@@ -700,7 +700,7 @@ class TestUnsupportedTrackerSkip:
         torrents = FakeTorrents({"hF": (AddOutcome.ADDED, "Show-Fall")})
         pipeline = _pipeline(torrents=torrents, private_releases="fallback", sleep_time=0)
         pipeline._anilist.al_cache.update({42: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
 
         req = GrabRequest(
             al_id=42,
@@ -738,7 +738,7 @@ class TestUnsupportedTrackerSkip:
         torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-NAN0")})
         pipeline = _pipeline(torrents=torrents, private_releases="warn", sleep_time=0)
         pipeline._anilist.al_cache.update({42: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
 
         req = GrabRequest(
             al_id=42,
@@ -774,7 +774,7 @@ class TestUnsupportedTrackerSkip:
         pipeline = _pipeline(torrents=torrents, private_releases="warn", sleep_time=0)
         pipeline.cache_store.update_cache(Arr.SONARR, 7, {"fallback_satisfied": True})
         pipeline._anilist.al_cache.update({7: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
 
         req = GrabRequest(
             al_id=7,
@@ -806,7 +806,7 @@ class TestUnsupportedTrackerSkip:
         torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-NAN0")})
         pipeline = _pipeline(torrents=torrents, private_releases="warn", sleep_time=0)
         pipeline._anilist.al_cache.update({7: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
 
         req = GrabRequest(
             al_id=7,
@@ -902,7 +902,7 @@ class TestGrabFailureContainment:
         torrents = FakeTorrents({}, raises={"h1": httpx.ConnectError("nyaa down")})
         pipeline = _pipeline(torrents=torrents, sleep_time=0)
         pipeline._anilist.al_cache.update({42: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
 
         stop = pipeline.grab_and_cache(self._request(42, seadex_dict, ["h1"]))
 
@@ -926,7 +926,7 @@ class TestGrabFailureContainment:
         )
         pipeline = _pipeline(torrents=torrents, sleep_time=0)
         pipeline._anilist.al_cache.update({42: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
 
         stop = pipeline.grab_and_cache(self._request(42, seadex_dict, ["hBad", "hGood"]))
 
@@ -949,7 +949,7 @@ class TestGrabFailureContainment:
         )
         pipeline = _pipeline(torrents=torrents, max_torrents_to_add=1, sleep_time=0)
         pipeline._anilist.al_cache.update({42: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
 
         stop = pipeline.grab_and_cache(self._request(42, seadex_dict, ["hBad", "hGood"]))
 
@@ -971,7 +971,7 @@ class TestGrabFailureContainment:
         )
         pipeline = _pipeline(torrents=torrents, sleep_time=0)
         pipeline._anilist.al_cache.update({1: {}, 2: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
 
         pipeline.grab_and_cache(self._request(1, {"RG": rg_group({bad.url: bad})}, ["h1"]))
         pipeline.grab_and_cache(self._request(2, {"RG": rg_group({good.url: good})}, ["h2"]))
@@ -1014,7 +1014,7 @@ class TestFallbackHoldNeverCaches:
         torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-Pub")})
         pipeline = _pipeline(torrents=torrents, private_releases="fallback", sleep_time=0)
         pipeline._anilist.al_cache.update({42: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
 
         stop = pipeline.grab_and_cache(self._request(42))
 
@@ -1033,7 +1033,7 @@ class TestFallbackHoldNeverCaches:
         torrents = FakeTorrents({"hN": (AddOutcome.ADDED, "Show-Pub")})
         pipeline = _pipeline(torrents=torrents, private_releases="fallback", interactive=True, sleep_time=0)
         pipeline._anilist.al_cache.update({43: {}})
-        pipeline._ctx.current_title = "Show S1"
+        pipeline._ctx.per_title.current_title = "Show S1"
 
         pipeline.grab_and_cache(self._request(43))
 

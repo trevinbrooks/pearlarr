@@ -12,6 +12,7 @@ run loop holds), so the grab bookkeeping the run summary reads stays in sync.
 """
 
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -65,6 +66,16 @@ class GrabRequest:
     coverage: str = ""
     """Sonarr's episode coverage string ("" for Radarr - movies have none)."""
     pending_seeds: dict[str, PendingImport] | None = None
+
+
+def clean_replaced_groups(groups: Iterable[str | None]) -> tuple[str, ...]:
+    """Drop falsy keys so `replaced_groups` stays a clean `tuple[str, ...]`.
+
+    The one spot both strategies funnel their (possibly null-keyed) release groups
+    through, so the "Replacing" field never renders a blank entry.
+    """
+
+    return tuple(group for group in groups if group)
 
 
 class GrabPipeline:
@@ -236,12 +247,12 @@ class GrabPipeline:
             # per-torrent grabs); fall back to the entry-level coverage we
             # mapped from the Arr so the summary's "files" is never blank
             # when a release's filenames couldn't be parsed (e.g. an OVA).
-            coverage_str = _coverage.coverage_string(url_item.episodes) or self._ctx.current_coverage
+            coverage_str = _coverage.coverage_string(url_item.episodes) or self._ctx.per_title.current_coverage
             self._ctx.stats.added.append(
                 GrabRecord(
-                    title=self._ctx.current_title,
+                    title=self._ctx.per_title.current_title,
                     coverage=coverage_str,
-                    url=self._ctx.current_url,
+                    url=self._ctx.per_title.current_url,
                     name=result.name,
                     group=srg,
                 ),
@@ -300,10 +311,10 @@ class GrabPipeline:
         """
 
         return NeedsActionRecord(
-            title=self._ctx.current_title,
-            coverage=self._ctx.current_coverage,
+            title=self._ctx.per_title.current_title,
+            coverage=self._ctx.per_title.current_coverage,
             group=", ".join(dict.fromkeys(groups)),
-            url=self._ctx.current_url,
+            url=self._ctx.per_title.current_url,
             reason=reason,
             kind=kind,
         )

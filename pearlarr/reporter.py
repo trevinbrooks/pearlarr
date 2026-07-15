@@ -3,7 +3,7 @@
 import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import qbittorrentapi
 from seadex import EntryRecord
@@ -46,6 +46,10 @@ from .output import (
 )
 from .seadex_types import SeadexDict
 from .torrents import AddOutcome, ReleaseOutcome
+
+if TYPE_CHECKING:
+    # Annotation-only (PerTitleState.absorb_skips); planner doesn't import us.
+    from .planner import PrivateOnlySkips
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +161,23 @@ class PerTitleState:
     unsupported_tracker_hashes: list[str] = field(default_factory=list[str])
     """Hashes excluded from the cached hash set on a mixed (something else grabbed) title, so
     the release is re-considered once a parser lands."""
+    current_title: str | None = None
+    """Title of the entry currently being processed, so grabs and the summary can attribute
+    what they grab."""
+    current_url: str | None = None
+    """SeaDex URL of the entry currently being processed, so grabs and the summary can link
+    what they grab."""
+    current_coverage: str | None = None
+    """Coverage of the entry currently being processed, so grabs and the summary can attribute
+    what they grab."""
+
+    def absorb_skips(self, skips: "PrivateOnlySkips") -> None:
+        """Fold a planner private-only skip result onto this title's flags."""
+
+        self.private_only_skipped |= skips.skipped
+        self.private_only_groups.extend(skips.groups)
+        self.private_only_stale_held |= skips.stale_held
+        self.fallback_covered |= skips.fallback_covered
 
 
 @dataclass
@@ -174,15 +195,6 @@ class RunContext:
     in `reset_run_stats`; `OFF` makes every pending-import path a no-op."""
     stats: RunStats = field(default_factory=RunStats)
     torrents_added: int = 0
-    current_title: str | None = None
-    """Title of the entry currently being processed, so grabs and the summary can attribute
-    what they grab."""
-    current_url: str | None = None
-    """SeaDex URL of the entry currently being processed, so grabs and the summary can link
-    what they grab."""
-    current_coverage: str | None = None
-    """Coverage of the entry currently being processed, so grabs and the summary can attribute
-    what they grab."""
     per_title: PerTitleState = field(default_factory=PerTitleState)
     """The per-title scratch flags, reset by reassignment (`per_title = PerTitleState()`) at
     the top of each title, so a leftover skip/coverage flag can never leak between titles."""
@@ -473,9 +485,9 @@ class RunReporter:
         # Remember title, URL, and coverage so add_torrent / the summary can
         # attribute and link what they grab, and show the same files we mapped
         # from the Arr even when a release's own file list can't be parsed.
-        ctx.current_title = anilist_title
-        ctx.current_url = sd_entry.url
-        ctx.current_coverage = coverage
+        ctx.per_title.current_title = anilist_title
+        ctx.per_title.current_url = sd_entry.url
+        ctx.per_title.current_coverage = coverage
 
         self._open_entry(
             EntryHeader(

@@ -283,6 +283,10 @@ class RichRenderer(Renderer):
         vanish from the file — deliberately NOT the diagnostics' console floor.
         """
 
+        # Skip building the (sometimes hefty, e.g. the run summary) scan lines
+        # when there's no console to render them; `_render_legacy` discards them.
+        if self._console_source() is None:
+            return
         self._render_legacy(scan_event_lines(event))
 
     def _frontier_has(self, *kinds: ScopeKind) -> bool:

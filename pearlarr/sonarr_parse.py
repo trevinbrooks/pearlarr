@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import Any, NamedTuple, NotRequired, TypedDict, cast
 
 from .cache import UPDATED_AT_STR_FORMAT, record_is_fresh
+from .json_narrow import is_json_list, is_json_obj
 from .log import count_noun
 from .run_services import RunDeps
 from .seadex_types import EpisodeRecord, ParsedEpisode, SeadexDict
@@ -167,14 +168,14 @@ def parsed_episodes(record: Mapping[str, object]) -> list[ParsedEpisode]:
     """
 
     raw = record.get("episodes")
-    if not isinstance(raw, list):
+    if not is_json_list(raw):
         return []
     episodes: list[ParsedEpisode] = []
-    for entry in cast("list[object]", raw):
-        if not isinstance(entry, dict):
+    for entry in raw:
+        if not is_json_obj(entry):
             continue
-        season = cast("dict[str, object]", entry).get("season")
-        episode = cast("dict[str, object]", entry).get("episode")
+        season = entry.get("season")
+        episode = entry.get("episode")
         if isinstance(season, int) and isinstance(episode, int):
             episodes.append(ParsedEpisode(season=season, episode=episode))
     return episodes
