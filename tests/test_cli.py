@@ -50,7 +50,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import ClassVar, NoReturn, cast
+from typing import ClassVar, NoReturn, cast, override
 
 import pytest
 import truststore
@@ -79,7 +79,7 @@ from pearlarr.cli import (
     run_scheduled,
     run_single,
 )
-from pearlarr.config import AppConfig, Arr, LogFormat, template_path
+from pearlarr.config import AppConfig, Arr, ArrTarget, LogFormat, template_path
 from pearlarr.config_migrations import CONFIG_VERSION
 from pearlarr.console_caps import CapsCache
 from pearlarr.log import (
@@ -99,6 +99,7 @@ from pearlarr.output import (
     ItemStarted,
     NextRunScheduled,
     OutputHub,
+    Renderer,
     RunStarted,
     ScanStarted,
     Severity,
@@ -504,7 +505,7 @@ class TestConfiguredArrs:
 
     def test_implicit_selection_skips_the_unconfigured_arr(self, recording: RecordingHub) -> None:
         kept = configured_arrs(
-            [(Arr.RADARR, None), (Arr.SONARR, None)],
+            [ArrTarget(Arr.RADARR), ArrTarget(Arr.SONARR)],
             _config_with(sonarr=True),
             explicit=False,
             config_path="config.yml",
@@ -525,7 +526,7 @@ class TestConfiguredArrs:
             {"sonarr": {"url": "http://sonarr:8989", "api_key": "k"}, "radarr": {"url": "http://radarr:7878"}},
         )
         kept = configured_arrs(
-            [(Arr.RADARR, None), (Arr.SONARR, None)],
+            [ArrTarget(Arr.RADARR), ArrTarget(Arr.SONARR)],
             config,
             explicit=False,
             config_path="config.yml",
@@ -543,7 +544,7 @@ class TestConfiguredArrs:
         recording: RecordingHub,
     ) -> None:
         config = AppConfig.model_validate({"radarr": {"url": "http://radarr:7878"}})
-        kept = configured_arrs([(Arr.RADARR, None)], config, explicit=True, config_path="config.yml")
+        kept = configured_arrs([ArrTarget(Arr.RADARR)], config, explicit=True, config_path="config.yml")
         assert kept is None
         (error,) = recording.of_type(Diagnostic)
         assert error.severity is Severity.ERROR
@@ -551,7 +552,7 @@ class TestConfiguredArrs:
 
     def test_explicit_selection_of_an_unconfigured_arr_refuses(self, recording: RecordingHub) -> None:
         kept = configured_arrs(
-            [(Arr.RADARR, 42)],
+            [ArrTarget(Arr.RADARR, 42)],
             _config_with(sonarr=True),
             explicit=True,
             config_path="config.yml",
@@ -565,7 +566,7 @@ class TestConfiguredArrs:
 
     def test_nothing_configured_reports_and_refuses(self, recording: RecordingHub) -> None:
         kept = configured_arrs(
-            [(Arr.RADARR, None), (Arr.SONARR, None)],
+            [ArrTarget(Arr.RADARR), ArrTarget(Arr.SONARR)],
             _config_with(),
             explicit=False,
             config_path="config.yml",
@@ -579,7 +580,7 @@ class TestConfiguredArrs:
         )
 
     def test_fully_configured_passes_through_unchanged(self, recording: RecordingHub) -> None:
-        arrs: list[tuple[Arr, int | None]] = [(Arr.RADARR, None), (Arr.SONARR, 7)]
+        arrs: list[ArrTarget] = [ArrTarget(Arr.RADARR), ArrTarget(Arr.SONARR, 7)]
         kept = configured_arrs(arrs, _config_with(sonarr=True, radarr=True), explicit=True, config_path="config.yml")
         assert kept == arrs
         assert recording.of_type(Diagnostic) == []
@@ -1111,7 +1112,7 @@ def _swallow_signal(signum: int, handler: object) -> None:
     """
 
 
-class _CycleStampingRenderer:
+class _CycleStampingRenderer(Renderer):
     """Records each hub event alongside how many `begin_cycle` calls preceded it.
 
     Makes post-begin ordering assertable (CycleStarted lands in the fresh cycle).
@@ -1123,15 +1124,19 @@ class _CycleStampingRenderer:
         self.cycles = 0
         self.events: list[tuple[Event, int]] = []
 
+    @override
     def handle(self, event: Event, when: float) -> None:
         self.events.append((event, self.cycles))
 
+    @override
     def begin_cycle(self) -> None:
         self.cycles += 1
 
+    @override
     def set_level(self, level: int) -> None:
         pass
 
+    @override
     def close(self) -> None:
         pass
 
@@ -1534,7 +1539,7 @@ class TestScheduledLifecycle:
         Path(paths.config).write_text("sonar:\n  url: x\n", encoding="utf-8")
 
         result = run_arrs(
-            [(Arr.SONARR, None)],
+            [ArrTarget(Arr.SONARR)],
             paths=paths,
             logger=logger,
             file_sink=FileLogSink(paths.log_dir),
@@ -1566,7 +1571,9 @@ class TestScheduledLifecycle:
 
         monkeypatch.setattr("pearlarr.bootstrap.build_resolver", refuse_resolver)
 
-        assert run_arrs([(Arr.SONARR, None)], paths=paths, logger=logger, file_sink=FileLogSink(paths.log_dir)) is False
+        assert (
+            run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_sink=FileLogSink(paths.log_dir)) is False
+        )
 
         # Selected by content: the 0644 write also draws the loose-permissions warn.
         warning = next(d for d in recording.of_type(Diagnostic) if "older config schema" in d.message)
@@ -1601,7 +1608,7 @@ class TestScheduledLifecycle:
         monkeypatch.setattr(FileLogSink, "apply_retention_days", record)
         monkeypatch.setattr("pearlarr.bootstrap.build_resolver", refuse_resolver)
 
-        run_arrs([(Arr.SONARR, None)], paths=paths, logger=logger, file_sink=FileLogSink(paths.log_dir))
+        run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_sink=FileLogSink(paths.log_dir))
 
         assert applied == [3]
 
@@ -1684,7 +1691,7 @@ class TestRunLockContention:
         # the guard would raise the missing-config typer.Exit).
         with single_instance_lock(paths.data_dir) as held:
             assert held
-            result = run_arrs([(Arr.SONARR, None)], paths=paths, logger=logger, file_sink=FileLogSink(paths.log_dir))
+            result = run_arrs([ArrTarget(Arr.SONARR)], paths=paths, logger=logger, file_sink=FileLogSink(paths.log_dir))
 
         assert result is False
         assert diagnostic_messages(recording, Severity.WARNING) == [

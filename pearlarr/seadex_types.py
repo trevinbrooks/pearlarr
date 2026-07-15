@@ -29,6 +29,7 @@ from enum import StrEnum
 from typing import (
     Annotated,
     Any,
+    NamedTuple,
     Protocol,
     cast,
     runtime_checkable,
@@ -124,18 +125,13 @@ def season_episode_key(season: int | None, episode: int | None) -> tuple[int, in
     )
 
 
-def as_size_list(size: int | list[int | None] | None) -> list[int]:
-    """Normalize a size value to a list of concrete sizes.
+def as_size_list(size: list[int | None]) -> list[int]:
+    """Normalize a size list to concrete sizes.
 
-    `None` (or a missing size) becomes `[]`; a bare int becomes `[int]`; a
-    list is copied with any `None` entries dropped (a `None` size carries no
+    A list is copied with any `None` entries dropped (a `None` size carries no
     size to compare). The single home for the size-as-list coercion.
     """
 
-    if size is None:
-        return []
-    if isinstance(size, int):
-        return [size]
     return [s for s in size if s is not None]
 
 
@@ -304,9 +300,10 @@ type _ZeroInt = Annotated[int, BeforeValidator(_int_or_zero)]
 class ProgressSink(Protocol):
     """Sink for step progress - drives the boot cockpit's live bar.
 
-    Structural, so the boot flow's step scope satisfies it without the data /
-    gateway modules importing the output layer. `fraction` is 0-1 completion;
-    `detail` is a short human note.
+    Sanctioned Protocol exception to the ABC house rule: structural, so the boot
+    flow's step scope satisfies it without the data / gateway modules importing
+    the output layer (a local ABC would force that import). `fraction` is 0-1
+    completion; `detail` is a short human note.
     """
 
     def progress(self, fraction: float, detail: str | None = None) -> None: ...
@@ -319,9 +316,11 @@ class ProgressSink(Protocol):
 class ArrItem(Protocol):
     """The attribute surface shared by a Sonarr series and a Radarr movie.
 
-    Read-only properties (nothing writes to an item), so the frozen dataclass
-    views (`SonarrSeries` / `RadarrMovie`) and mutable test
-    stand-ins both satisfy it structurally.
+    Sanctioned (`runtime_checkable`) Protocol exception to the ABC house rule:
+    read-only properties (nothing writes to an item), so the pydantic views
+    (`SonarrSeries` / `RadarrMovie`) and mutable test stand-ins both satisfy it
+    structurally without inheriting a local ABC - and the client tests
+    `isinstance`-check against it, which a nominal ABC would silently flip.
     """
 
     @property
@@ -517,15 +516,14 @@ class QualitySource(StrEnum):
         default) gets a chance to fill the axis.
         """
 
-        if not value:
-            return None
-        folded = value.casefold()
-        for member in cls:
-            if member is cls.UNKNOWN:
-                continue
-            if member.value.casefold() == folded:
-                return member
-        return None
+        return _SOURCE_BY_FOLDED.get(value.casefold()) if value else None
+
+
+# Case-folded value -> member, so `QualitySource.parse` is one dict lookup
+# rather than a per-call scan; UNKNOWN is excluded so it folds to None.
+_SOURCE_BY_FOLDED: dict[str, QualitySource] = {
+    m.value.casefold(): m for m in QualitySource if m is not QualitySource.UNKNOWN
+}
 
 
 class Quality(_WireModel):
@@ -851,6 +849,19 @@ class MovieFile(_ApiModel):
 
 
 # --- Sonarr parse (`/api/v3/parse` `parsedEpisodeInfo`) -------------------
+
+
+class ParsedEpisode(NamedTuple):
+    """One Sonarr `/parse` series-MATCHED `(season, episode)` pair.
+
+    The element type `SonarrClient.parse` yields, produced from the validated
+    boundary model. Distinct from `EpisodeRecord` (which also carries a size)
+    and `ParsedFileInfo` (the series-agnostic name parse). Persisted as a
+    `{"season", "episode"}` JSON object at the parse-cache seam.
+    """
+
+    season: int
+    episode: int
 
 
 def _tuple_or_empty(value: object) -> object:

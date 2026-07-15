@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import md5, sha256
 from types import UnionType
-from typing import Any, Literal, Union, cast, get_args, get_origin
+from typing import Any, Literal, NamedTuple, Union, cast, get_args, get_origin
 
 import yaml
 from pydantic import (
@@ -85,6 +85,18 @@ class Arr(StrEnum):
 
     SONARR = "sonarr"
     RADARR = "radarr"
+
+
+class ArrTarget(NamedTuple):
+    """One arr-selection target: which arr, plus the optional single item to narrow to.
+
+    `item_id` is a TMDB id for Radarr, a TVDB/series id for Sonarr (None runs the
+    whole library). A NamedTuple so it still unpacks and compares as a plain
+    `(arr, item_id)` pair, keeping the name that says what the second slot means.
+    """
+
+    arr: Arr
+    item_id: int | None = None
 
 
 class PrivateReleaseAction(StrEnum):

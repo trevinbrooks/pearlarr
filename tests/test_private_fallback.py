@@ -130,7 +130,7 @@ def _grab_request(al_id: int, seadex_dict: SeadexDict, hashes: list[str | None],
         seadex_dict=seadex_dict,
         torrent_hashes=hashes,
         cache_details={"name": "Show", "updated_at": entry.updated_at},
-        release_group=None,
+        replaced_groups=(),
     )
 
 
@@ -170,8 +170,8 @@ class TestUpgradePendingHoldsForOwnedStale:
         assert hashes == []
         warnings = _warning_texts(recording)
         assert any(STALE_NOTICE in m for m in warnings), warnings
-        assert ctx.private_only_skipped is True
-        assert ctx.private_only_stale_held is True
+        assert ctx.per_title.private_only_skipped is True
+        assert ctx.per_title.private_only_stale_held is True
 
         # The fallback hold keeps the title uncached and surfaces the STALE row,
         # so it resurfaces every run until the user updates or deletes the copy.
@@ -204,8 +204,8 @@ class TestUpgradePendingHoldsForOwnedStale:
         assert hashes == []
         warnings = _warning_texts(recording)
         assert any(STALE_NOTICE in m for m in warnings), warnings
-        assert ctx.private_only_skipped is True
-        assert ctx.private_only_stale_held is True
+        assert ctx.per_title.private_only_skipped is True
+        assert ctx.per_title.private_only_stale_held is True
 
 
 class TestOwnedPreferredPrivateAtMatchingSize:
@@ -247,8 +247,8 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         assert out["Fall"].urls[PUB_URL].download is False
         assert hashes == []
         assert recording.events == []
-        assert ctx.private_only_skipped is False
-        assert ctx.private_only_stale_held is False
+        assert ctx.per_title.private_only_skipped is False
+        assert ctx.per_title.private_only_stale_held is False
 
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
         stopped = pipe.grab_and_cache(_grab_request(11, out, hashes, entry))
@@ -285,8 +285,8 @@ class TestOwnedPreferredPrivateAtMatchingSize:
         assert out["Fall"].urls[PUB_URL].download is False
         assert hashes == []
         assert recording.events == []
-        assert ctx.private_only_skipped is False
-        assert ctx.private_only_stale_held is False
+        assert ctx.per_title.private_only_skipped is False
+        assert ctx.per_title.private_only_stale_held is False
 
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
         stopped = pipe.grab_and_cache(_grab_request(22, out, hashes, entry))
@@ -324,7 +324,7 @@ class TestOwnedPreferredPrivateAtMatchingSize:
 
         warnings = _warning_texts(recording)
         assert any("private-only (private releases not supported)" in m for m in warnings), warnings
-        assert ctx.private_only_skipped is True
+        assert ctx.per_title.private_only_skipped is True
 
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="warn", sleep_time=0)
         pipe.grab_and_cache(_grab_request(11, out, hashes, entry))
@@ -364,8 +364,8 @@ class TestOwnedFallbackSoftSkip:
         info = _info_texts(recording)
         assert any("a public fallback already covers these files" in m for m in info), info
         assert _warning_texts(recording) == []
-        assert ctx.private_only_skipped is False
-        assert ctx.fallback_covered is True
+        assert ctx.per_title.private_only_skipped is False
+        assert ctx.per_title.fallback_covered is True
 
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
         pipe.grab_and_cache(_grab_request(11, out, hashes, entry))
@@ -455,9 +455,9 @@ class TestFilterDownloadsNoticeSeam:
         assert any("PrivB private-only (private releases not supported)" in m for m in warnings), warnings
         # The skip flag + group names land on the run context for the grab tail
         # (a promotion succeeded, so no stale hold rides along).
-        assert ctx.private_only_skipped is True
-        assert ctx.private_only_groups == ["PrivB"]
-        assert ctx.private_only_stale_held is False
+        assert ctx.per_title.private_only_skipped is True
+        assert ctx.per_title.private_only_groups == ["PrivB"]
+        assert ctx.per_title.private_only_stale_held is False
 
 
 class TestMixedGroupKeeperPreference:
@@ -546,7 +546,7 @@ class TestMixedGroupKeeperPreference:
         assert out["G"].urls[PRIV_URL].download is False
         assert hashes == [self.H_HASH]
         assert _warning_texts(recording) == []
-        assert ctx.private_only_skipped is False
+        assert ctx.per_title.private_only_skipped is False
 
         torrents = FakeTorrents({self.H_HASH: (AddOutcome.ADDED, "H S01+S02")})
         pipe = make_grab_pipeline(
@@ -611,8 +611,8 @@ class TestMixedGroupKeeperPreference:
             pipe.grab_and_cache(_grab_request(56, out, hashes, entry))
 
         assert [s.group for s in _private_skips(recording)] == ["G"]
-        assert ctx.private_only_skipped is True
-        assert ctx.private_only_groups == ["G"]
+        assert ctx.per_title.private_only_skipped is True
+        assert ctx.per_title.private_only_groups == ["G"]
         assert torrents.calls == [PUB_HASH]
         assert cache.check_al_id_in_cache(Arr.SONARR, 56, entry) is True
 
@@ -688,8 +688,8 @@ class TestSurvivingPrivateCoverage:
             pipe.grab_and_cache(_grab_request(33, out, hashes, entry))
 
         assert [s.group for s in _private_skips(recording)] == ["A"]
-        assert ctx.private_only_skipped is True
-        assert ctx.private_only_groups == ["A"]
+        assert ctx.per_title.private_only_skipped is True
+        assert ctx.per_title.private_only_groups == ["A"]
         assert torrents.calls == [PUB_HASH]
         # A non-interactive fallback hold blocks the cache even on a partial grab
         # (the S2 files stay missing), and the no-fallback row resurfaces the title
@@ -761,7 +761,7 @@ class TestPromotionGeneralization:
         info = _info_texts(recording)
         assert any("grabbing public alternative Pub" in m for m in info), info
         assert _warning_texts(recording) == []
-        assert ctx.private_only_skipped is False
+        assert ctx.per_title.private_only_skipped is False
 
         torrents = FakeTorrents({PUB_HASH: (AddOutcome.ADDED, "Show S01 web")})
         pipe = make_grab_pipeline(
@@ -804,7 +804,7 @@ class TestPromotionGeneralization:
         assert out["Priv"].urls[PRIV_URL].download is False
         assert hashes == [PUB_HASH]
         assert _warning_texts(recording) == []
-        assert ctx.private_only_skipped is False
+        assert ctx.per_title.private_only_skipped is False
 
     M_PUB_URL = "https://nyaa.si/view/3"
     M_PUB_HASH = "c" * 40
@@ -883,8 +883,8 @@ class TestPromotionGeneralization:
         assert out["M"].urls[PRIV_URL].download is True
         assert hashes == []
         assert recording.events == []
-        assert ctx.private_only_skipped is False
-        assert ctx.private_only_stale_held is True
+        assert ctx.per_title.private_only_skipped is False
+        assert ctx.per_title.private_only_stale_held is True
 
 
 class TestEqualUnionMixedGroups:
@@ -997,7 +997,7 @@ class TestEqualUnionMixedGroups:
             # refused with a WARNING, and warn mode still caches the title.
             assert set(torrents.calls) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
             assert _private_skips(recording), recording.events
-            assert ctx.private_only_skipped is True
+            assert ctx.per_title.private_only_skipped is True
             assert cache.check_al_id_in_cache(Arr.SONARR, al_id, entry) is True
 
 

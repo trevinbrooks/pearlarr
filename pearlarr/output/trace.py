@@ -19,6 +19,7 @@ class CapturedTrace:
     """
 
     rich_trace: Trace
+    """The bounded rich Trace consumed by the console renderer (Traceback)."""
     plain: str
     """The full plain-text traceback for the file sink (stdlib format, no locals)."""
 

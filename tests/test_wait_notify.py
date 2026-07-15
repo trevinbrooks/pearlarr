@@ -226,7 +226,7 @@ def _notice(
     entry: EntryRecord | None = None,
     thumb_url: str | None = None,
     banner_url: str | None = None,
-    release_group: list[str | None] | None = None,
+    replaced_groups: tuple[str, ...] = (),
     seadex_dict: SeadexDict | None = None,
     results: Sequence[ReleaseOutcome] = (),
     failed_groups: frozenset[str] = frozenset(),
@@ -241,7 +241,7 @@ def _notice(
         entry=entry if entry is not None else make_entry_record(),
         thumb_url=thumb_url,
         banner_url=banner_url,
-        release_group=release_group,
+        replaced_groups=replaced_groups,
         seadex_dict=seadex_dict or {},
         results=results,
         failed_groups=failed_groups,
@@ -404,7 +404,7 @@ class TestGrabLayout:
         embed = self._embed(
             pushes,
             _notice(
-                release_group=["Erai_raws", None, ""],
+                replaced_groups=("Erai_raws",),
                 seadex_dict=seadex_dict,
                 results=[ReleaseOutcome(AddOutcome.ADDED, "PMR release", "PMR")],
                 coverage="S01 E01-E12",
@@ -413,7 +413,7 @@ class TestGrabLayout:
 
         # The lone pick hoists into the description (bold label, group as a code
         # span, then the release line + tags subtext); episodes and the replaced
-        # groups pair up as side-by-side inline fields; empty/None groups drop.
+        # groups pair up as side-by-side inline fields (the caller passes them clean).
         assert embed.description == (
             "**Grabbed · `PMR`**\n"
             "[Nyaa](https://nyaa.si/view/1) · 1.0 GB · 2 files · dual audio · fallback · upgrade\n"
@@ -442,7 +442,7 @@ class TestGrabLayout:
                     ReleaseOutcome(AddOutcome.ALREADY_ADDED, None, "InFlight"),
                 ],
                 failed_groups=frozenset({"Errored"}),
-                release_group=["Erai_raws"],
+                replaced_groups=("Erai_raws",),
             ),
         )
 
@@ -466,7 +466,7 @@ class TestGrabLayout:
         assert embed.fields == ()
 
     def test_replacing_collapses_beyond_cap(self, pushes: list[DiscordEmbed]) -> None:
-        embed = self._embed(pushes, _notice(release_group=[f"Group{i:02d}" for i in range(12)]))
+        embed = self._embed(pushes, _notice(replaced_groups=tuple(f"Group{i:02d}" for i in range(12))))
 
         [replacing] = embed.fields
         assert replacing.value == "Group00, Group01, Group02, … +9 more"

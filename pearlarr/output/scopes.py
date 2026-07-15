@@ -133,10 +133,15 @@ class _ScopeBase:
 
     _KIND_WORD: ClassVar[str] = "scope"
 
-    def __init__(self, emit: Emit, label: str) -> None:
+    def __init__(self, emit: Emit, label: str, scope: ScopeId) -> None:
         self._emit = emit
         self._label = label
+        self._scope = scope
         self._open = True
+
+    @property
+    def scope_id(self) -> ScopeId:
+        return self._scope
 
     def _late(self, what: str, severity: Severity) -> None:
         kind = type(self)._KIND_WORD
@@ -161,18 +166,13 @@ class StepScope(_ScopeBase):
     _KIND_WORD: ClassVar[str] = "step"
 
     def __init__(self, emit: Emit, scope: ScopeId, label: str, clock: Callable[[], float]) -> None:
-        super().__init__(emit, label)
-        self._scope = scope
+        super().__init__(emit, label, scope)
         self._clock = clock
         self._started = clock()
         self._category = OutcomeCategory.SUCCESS
         self._detail: str | None = None
         self._slow_sent = False
         emit(BootStepStarted(scope=scope, label=label))
-
-    @property
-    def scope_id(self) -> ScopeId:
-        return self._scope
 
     def progress(self, fraction: float, detail: str | None = None) -> None:
         """Report 0-1 progress; the first report also emits the one-time slow heads-up."""
@@ -241,14 +241,9 @@ class EntryScope(_ScopeBase):
     _KIND_WORD: ClassVar[str] = "entry"
 
     def __init__(self, emit: Emit, scope: ScopeId, header: EntryHeader) -> None:
-        super().__init__(emit, header.title)
-        self._scope = scope
+        super().__init__(emit, header.title, scope)
         emit(ScopeOpened(scope=scope, label=header.title))
         emit(replace(header, scope=scope))
-
-    @property
-    def scope_id(self) -> ScopeId:
-        return self._scope
 
     def post(self, fact: EntryFact) -> None:
         """Emit an entry-block fact stamped with this scope's id (demotes when stale)."""
@@ -274,14 +269,9 @@ class WaitScope(_ScopeBase):
     _KIND_WORD: ClassVar[str] = "wait"
 
     def __init__(self, emit: Emit, scope: ScopeId, total: int, *, pulse_s: float) -> None:
-        super().__init__(emit, "wait")
-        self._scope = scope
+        super().__init__(emit, "wait", scope)
         emit(ScopeOpened(scope=scope, label="wait"))
         emit(WaitStarted(total=total, pulse_s=pulse_s, scope=scope))
-
-    @property
-    def scope_id(self) -> ScopeId:
-        return self._scope
 
     def progress(self, snapshot: WaitSnapshot) -> None:
         if not self._open:
@@ -305,6 +295,8 @@ class WaitScope(_ScopeBase):
         self.close()
 
     def close(self) -> None:
+        """Idempotent; finish() closes the region, or callers close it explicitly."""
+
         if not self._open:
             return
         self._open = False

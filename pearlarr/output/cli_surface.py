@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import sys
-from typing import TYPE_CHECKING, ClassVar, assert_never, final
+from typing import TYPE_CHECKING, assert_never, final, override
 
 import typer
 import yaml
@@ -60,7 +60,7 @@ from .events import (
     WaitProgress,
     WaitStarted,
 )
-from .hub import OutputHub
+from .hub import OutputHub, Renderer
 from .runtime import install_hub, uninstall_hub
 from .textline import JsonRenderer
 from ..config import Arr
@@ -71,7 +71,7 @@ if TYPE_CHECKING:
 
 
 @final
-class CliTextRenderer:
+class CliTextRenderer(Renderer):
     """The subcommands' human seat: reproduces the `typer.echo` output verbatim.
 
     A WARNING+ diagnostic goes to stderr (so `config show > cfg.yml` stays
@@ -80,8 +80,7 @@ class CliTextRenderer:
     reach this seat, so they render nothing.
     """
 
-    writes_file_only: ClassVar[bool] = False
-
+    @override
     def handle(self, event: Event, when: float) -> None:
         del when
         match event:
@@ -143,12 +142,15 @@ class CliTextRenderer:
             case _:
                 assert_never(event)
 
+    @override
     def begin_cycle(self) -> None:
         pass
 
+    @override
     def set_level(self, level: int) -> None:
         pass
 
+    @override
     def close(self) -> None:
         pass
 

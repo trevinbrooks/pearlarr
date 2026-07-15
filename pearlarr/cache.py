@@ -727,6 +727,14 @@ class CacheStore(AbstractCacheStore):
             (*key, json.dumps(record)),
         )
 
+    def _pending_rows(self, sql: str, params: tuple[int | str, ...]) -> dict[str, dict[str, Any]]:
+        """Deserialize a `SELECT infohash, json(record)` pending-imports query, keyed by infohash."""
+
+        out: dict[str, dict[str, Any]] = {}
+        for infohash, rec_json in self._conn.execute(sql, params):
+            out[infohash] = json.loads(rec_json)
+        return out
+
     def _evict_stale_json(self, block: _JsonBlock, cutoff: datetime) -> int:
         """Delete records older than `cutoff` (or stamp-less); count deleted.
 
@@ -794,13 +802,10 @@ class CacheStore(AbstractCacheStore):
         `put_pending` / `drop_pending`).
         """
 
-        out: dict[str, dict[str, Any]] = {}
-        for infohash, rec_json in self._conn.execute(
+        return self._pending_rows(
             "SELECT infohash, json(record) FROM pending_imports WHERE arr = ?",
             (_arr_key(arr),),
-        ):
-            out[infohash] = json.loads(rec_json)
-        return out
+        )
 
     @override
     def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
@@ -814,13 +819,10 @@ class CacheStore(AbstractCacheStore):
         is excluded.
         """
 
-        out: dict[str, dict[str, Any]] = {}
-        for infohash, rec_json in self._conn.execute(
+        return self._pending_rows(
             "SELECT infohash, json(record) FROM pending_imports WHERE arr = ? AND record ->> 'series_id' = ?",
             (_arr_key(arr), series_id),
-        ):
-            out[infohash] = json.loads(rec_json)
-        return out
+        )
 
     @override
     def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
@@ -874,9 +876,9 @@ class CacheStore(AbstractCacheStore):
         """
 
         rows = self._conn.execute(
-            "SELECT infohash FROM torrent_hashes WHERE arr = ? AND infohash != '' "
+            "SELECT infohash FROM torrent_hashes WHERE arr = ? AND infohash != ? "
             "UNION SELECT infohash FROM pending_imports WHERE arr = ?",
-            (_arr_key(arr), _arr_key(arr)),
+            (_arr_key(arr), _NO_HASH, _arr_key(arr)),
         ).fetchall()
         return frozenset(str(row[0]).casefold() for row in rows)
 

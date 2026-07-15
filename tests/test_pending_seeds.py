@@ -13,7 +13,7 @@ cached `/parse` results and the `(season, episode) -> id` index. Built bare
 
 from pearlarr.manual_import import normalize_basename
 from pearlarr.seadex_sonarr import SonarrSync
-from pearlarr.seadex_types import SonarrEpisode
+from pearlarr.seadex_types import ParsedEpisode, SonarrEpisode
 
 from .builders import FakeCacheStore, make_config, make_sonarr_sync, rg_group, url_item
 from .fakes import FakeSonarrClient
@@ -160,7 +160,7 @@ class TestParseWriteVisibleToSeeds:
     """
 
     def test_parse_write_feeds_seed_build(self) -> None:
-        sonarr = FakeSonarrClient(parse=[{"season": 1, "episode": 1}])
+        sonarr = FakeSonarrClient(parse=[ParsedEpisode(season=1, episode=1)])
         # No pre-seed: the parse pass must populate the shared cache itself.
         strat = make_sonarr_sync(
             sonarr=sonarr,

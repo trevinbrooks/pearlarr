@@ -338,8 +338,8 @@ def test_graduations_returns_only_unseen_terminals() -> None:
         ),
     )
 
-    assert [t.key for t in graduations(frozenset(), snap)] == ["h1", "h3"]  # snapshot order
-    assert [t.key for t in graduations(frozenset({"h1"}), snap)] == ["h3"]
+    assert [g.view.key for g in graduations(frozenset(), snap)] == ["h1", "h3"]  # snapshot order
+    assert [g.view.key for g in graduations(frozenset({"h1"}), snap)] == ["h3"]
     assert graduations(frozenset({"h1", "h3"}), snap) == []
 
 

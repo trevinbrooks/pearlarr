@@ -157,7 +157,7 @@ def render_rule(char: str) -> Rule:
     The two weights keep the break levels distinguishable without color.
     """
 
-    if "=" in char:
+    if char == "=":
         return Rule(style="cyan", characters="━")
     return Rule(style="grey37", characters="─")
 
@@ -570,7 +570,7 @@ def group_highlight(
     group: str | None,
     group_style: str = "cyan",
     base_style: str = "",
-) -> "Text | str":
+) -> str | Text:
     """Build a torrent-name value with its SeaDex release group called out.
 
     The release group is the thing worth spotting at a glance on a grab line, so

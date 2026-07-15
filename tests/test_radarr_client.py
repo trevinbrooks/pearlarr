@@ -10,11 +10,14 @@ run; plus the `collect_anime_movies` wiring.
 """
 
 from collections.abc import Set as AbstractSet
+from typing import override
 
 import httpx
 import respx
 
 from pearlarr.arr_http import ArrHttp
+from pearlarr.mapping_store import AnimeIdColumn
+from pearlarr.mappings import AnimeIdSets
 from pearlarr.output import Severity
 from pearlarr.radarr_client import RadarrClient, collect_anime_movies
 from pearlarr.seadex_types import HistoryRecord, MovieFile, RadarrItem, RadarrMovie
@@ -237,14 +240,15 @@ def test_all_movies_skips_non_dict_elements() -> None:
     assert [m.id for m in movies] == [9]
 
 
-class _RecordingIdSets:
+class _RecordingIdSets(AnimeIdSets):
     """Recording `AnimeIdSets`: preset per-column id sets, calls recorded."""
 
     def __init__(self, sets: dict[str, set[int | str]]) -> None:
         self._sets = sets
         self.calls: list[str] = []
 
-    def anime_id_set(self, column: str) -> AbstractSet[int | str]:
+    @override
+    def anime_id_set(self, column: AnimeIdColumn) -> AbstractSet[int | str]:
         self.calls.append(column)
         return self._sets.get(column, set())
 

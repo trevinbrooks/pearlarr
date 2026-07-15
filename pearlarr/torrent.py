@@ -1,5 +1,6 @@
 """Per-tracker parsers: turn a tracker page/feed URL into a download link and release title."""
 
+from typing import NamedTuple
 from urllib.parse import urlencode, urljoin
 
 import httpx
@@ -7,7 +8,7 @@ import pynyaa
 from bs4 import BeautifulSoup
 
 from .json_narrow import is_json_list, is_json_obj
-from .web_client import get_with_retries, make_web_client
+from .web_client import get_with_retries
 
 ANIMETOSHO_FEED_URL = "https://animetosho.org/feed/json"
 RUTRACKER_MAGNET_ANNOUNCE = "http://bt2.t-ru.org/ann?magnet"
@@ -22,10 +23,15 @@ class TorrentParseError(Exception):
     """A tracker page/feed didn't yield the release's torrent link or title."""
 
 
-# Reused when a caller doesn't pass its own client, so even standalone use of
-# these helpers gets keep-alive pooling and the transient-retry policy. The
-# main code path threads in RunDeps.web instead.
-_DEFAULT_CLIENT = make_web_client()
+class ParsedTorrent(NamedTuple):
+    """A parsed tracker result: the download/magnet link and the release title."""
+
+    link: str | None
+    """The .torrent download link or magnet URI, or None when the source yields
+    no matching link."""
+    title: str
+
+
 # pynyaa rides httpx: give its client the same bounds (and keep pynyaa's own
 # User-Agent, which its default client would otherwise set).
 _NYAA_SESSION = pynyaa.Nyaa(
@@ -36,31 +42,29 @@ _NYAA_SESSION = pynyaa.Nyaa(
 )
 
 
-def get_nyaa_torrent(url: str) -> tuple[str, str]:
+def get_nyaa_torrent(url: str) -> ParsedTorrent:
     """Get the Nyaa download link and release title from a Nyaa URL."""
 
     release = _NYAA_SESSION.get(url)
 
-    return release.torrent.url, release.title
+    return ParsedTorrent(release.torrent.url, release.title)
 
 
 def get_animetosho_torrent(
     url: str,
-    client: httpx.Client | None = None,
-) -> tuple[str | None, str]:
+    client: httpx.Client,
+) -> ParsedTorrent:
     """Get the AnimeTosho download link and release title from a URL.
 
     Args:
         url: URL of the AnimeTosho release page
         client: Client to reuse for the two requests this makes to the
-            same host. Defaults to a shared one.
+            same host.
 
     Returns:
         The .torrent download link (None if no matching link is found in the
         feed) and the human-readable release title scraped from the page.
     """
-
-    client = client or _DEFAULT_CLIENT
 
     # Start by getting the webpage, so we can get a title. A 5xx/Cloudflare page
     # would otherwise scrape as a misleading "no title" parse error.
@@ -104,20 +108,20 @@ def get_animetosho_torrent(
             parsed_url = raw_url if isinstance(raw_url, str) else None
             break
 
-    return parsed_url, title
+    return ParsedTorrent(parsed_url, title)
 
 
 def get_rutracker_torrent(
     url: str,
     infohash: str | None,
-    client: httpx.Client | None = None,
-) -> tuple[str, str]:
+    client: httpx.Client,
+) -> ParsedTorrent:
     """Get the RuTracker magnet link and torrent title from a URL.
 
     Args:
         url: URL of the RuTracker topic
         infohash: The hash the magnet's `urn:btih` payload is built from.
-        client: Client to reuse for the page fetch. Defaults to a shared one.
+        client: Client to reuse for the page fetch.
 
     Returns:
         The magnet link and the human-readable torrent title scraped from
@@ -132,8 +136,6 @@ def get_rutracker_torrent(
     # usual parse miss before fetching anything.
     if infohash is None:
         raise TorrentParseError("RuTracker release has no infohash to build a magnet link from")
-
-    client = client or _DEFAULT_CLIENT
 
     # Pull the torrent title from souping the URL. Use the stdlib html.parser
     # (as the AnimeTosho scraper does) - lxml is not a dependency, and the page
@@ -154,4 +156,4 @@ def get_rutracker_torrent(
     url_encoded = urlencode(params)
     parsed_url = f"magnet:?{url_encoded}"
 
-    return parsed_url, torrent_title
+    return ParsedTorrent(parsed_url, torrent_title)

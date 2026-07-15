@@ -396,7 +396,7 @@ def sanitize_torrent_telemetry(
     raw_total = coerce_int(size)
     bytes_total = raw_total if raw_total is not None and raw_total > 0 else None
     raw_done = coerce_int(completed)
-    bytes_done = max(0, raw_done) if raw_done is not None and raw_done > 0 else None
+    bytes_done = raw_done if raw_done is not None and raw_done > 0 else None
     if bytes_done is not None and bytes_total is not None:
         bytes_done = min(bytes_done, bytes_total)
     return TorrentTelemetry(frac, speed_bps, eta_s, bytes_done, bytes_total)

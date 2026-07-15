@@ -4,13 +4,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
-from typing import NamedTuple, Protocol, override
+from typing import NamedTuple, override
 
 import httpx
 
 from .anibridge import AniBridge
 from .arr_http import ArrHttp
 from .mapping_store import AnimeIdColumn
+from .mappings import AnimeIdSets
 from .seadex_types import ArrItem, HistoryRecord, MovieFile, RadarrItem, RadarrMovie, validate_each
 
 
@@ -148,16 +149,6 @@ class IdFilter(NamedTuple):
     anibridge_ids: AbstractSet[int | str]
 
 
-class AnimeIdSets(Protocol):
-    """The slice of `MappingResolver` the library filter needs.
-
-    A structural type so this module needn't import `MappingResolver` (which
-    imports this one). Supplies the DISTINCT Anime-IDs id set for a given column.
-    """
-
-    def anime_id_set(self, column: AnimeIdColumn) -> AbstractSet[int | str]: ...
-
-
 def collect_anime_items[ItemT: ArrItem](
     list_fn: Callable[[], list[ItemT]],
     filters: tuple[IdFilter, ...],
@@ -202,6 +193,29 @@ def collect_anime_items[ItemT: ArrItem](
     return kept
 
 
+def build_id_filters(
+    fields: tuple[IdField, ...],
+    mappings: AnimeIdSets,
+    anibridge: AniBridge | None,
+) -> tuple[IdFilter, ...]:
+    """Build one `IdFilter` per id space for `collect_anime_items`.
+
+    Pairs each id space's Anime-IDs candidate set with AniBridge's (empty when
+    AniBridge is off). Shared by `collect_anime_movies` and Sonarr's
+    `get_all_sonarr_series`, which each pass the result to `collect_anime_items`
+    with their own `list_fn`.
+    """
+
+    return tuple(
+        IdFilter(
+            field,
+            anime_ids=mappings.anime_id_set(field.mapping_key),
+            anibridge_ids=anibridge.id_set(field.mapping_key) if anibridge else set(),
+        )
+        for field in fields
+    )
+
+
 def collect_anime_movies(
     radarr_client: AbstractRadarrClient,
     mappings: AnimeIdSets,
@@ -225,12 +239,5 @@ def collect_anime_movies(
     fields = (IdField("tmdb_movie_id", "tmdbId"), IdField("imdb_id", "imdbId"))
     return collect_anime_items(
         radarr_client.all_movies,
-        tuple(
-            IdFilter(
-                field,
-                anime_ids=mappings.anime_id_set(field.mapping_key),
-                anibridge_ids=anibridge.id_set(field.mapping_key) if anibridge else set(),
-            )
-            for field in fields
-        ),
+        build_id_filters(fields, mappings, anibridge),
     )

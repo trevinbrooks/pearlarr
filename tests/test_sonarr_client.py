@@ -29,6 +29,7 @@ from pearlarr.seadex_types import (
     HistoryRecord,
     Language,
     ManualImportFile,
+    ParsedEpisode,
     ParsedFileInfo,
     Quality,
     QueueRecord,
@@ -357,7 +358,7 @@ def test_parse_skips_entries_missing_season_or_episode() -> None:
     }
     respx.get(f"{_BASE}/parse").respond(json=body)
 
-    assert _make_client().parse("Cool.Anime.S01E01.mkv") == [{"season": 1, "episode": 1}]
+    assert _make_client().parse("Cool.Anime.S01E01.mkv") == [ParsedEpisode(season=1, episode=1)]
 
 
 @respx.mock

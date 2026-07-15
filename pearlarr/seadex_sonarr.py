@@ -389,8 +389,7 @@ class SonarrSync(ArrSync[SonarrItem]):
             return False
 
         # If all episodes are unmonitored, then skip if ignore_unmonitored is switched on
-        ep_list_monitored = [ep.monitored for ep in ep_list]
-        if not any(ep_list_monitored) and self._config.sonarr.ignore_unmonitored:
+        if self._config.sonarr.ignore_unmonitored and not any(ep.monitored for ep in ep_list):
             run.log_anilist_item_unmonitored(
                 item_title=anilist_title,
             )
@@ -426,12 +425,15 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         self.logger.debug(f"SeaDex: {', '.join(seadex_dict)}")
 
-        # Parse out filenames and check for overlaps
+        # Parse out filenames
         seadex_dict = self._parse.parse_episodes_from_seadex(seadex_dict, series_fp=self._episodes.series_fp)
-        overlapping_results = get_overlapping_results(seadex_dict=seadex_dict)
 
         # If we're in interactive mode and there are multiple equivalent options here, then select
-        if self._config.advanced.interactive and len(seadex_dict) > 1 and overlapping_results:
+        if (
+            self._config.advanced.interactive
+            and len(seadex_dict) > 1
+            and get_overlapping_results(seadex_dict=seadex_dict)
+        ):
             seadex_dict = run.filter_seadex_interactive(
                 seadex_dict=seadex_dict,
                 sd_entry=sd_entry,
@@ -480,7 +482,9 @@ class SonarrSync(ArrSync[SonarrItem]):
                 seadex_dict=seadex_dict,
                 torrent_hashes=torrent_hashes,
                 cache_details=cache_details,
-                release_group=sonarr_release_groups,
+                # get_sonarr_release_dict already drops null/empty group keys; the
+                # filter keeps replaced_groups a clean tuple[str, ...] for the type.
+                replaced_groups=tuple(rg for rg in sonarr_release_groups if rg),
                 coverage=coverage,
                 pending_seeds=pending_seeds,
             ),

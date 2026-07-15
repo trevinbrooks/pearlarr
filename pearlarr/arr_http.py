@@ -67,9 +67,12 @@ def make_httpx_client(*, verify: bool = True) -> httpx.Client:
     )
 
 
-@dataclass
+@dataclass(frozen=True)
 class ArrHttp:
     """One arr's bound HTTP surface: base url + auth header + fail-open policy.
+
+    Frozen: `bind` is the single write point, so the auth header and base url
+    can't be reassigned on a shared instance post-bind.
 
     Owns the boilerplate every raw endpoint would otherwise repeat: the auth header rides
     each request (the client is shared across arrs, so never on the client),

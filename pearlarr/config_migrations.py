@@ -178,8 +178,8 @@ def render_migrated_config(template: str, config: Mapping[str, Json]) -> str:
             else:
                 group = None
                 out.extend(_value_lines("", key, value) if key in config else [line])
-        elif (field := _FIELD_KEY.match(line)) and group is not None and field.group(1) in group:
-            out.extend(_value_lines("  ", field.group(1), group[field.group(1)]))
+        elif (field := _FIELD_KEY.match(line)) and group is not None and (fkey := field.group(1)) in group:
+            out.extend(_value_lines("  ", fkey, group[fkey]))
         else:
             out.append(line)
     return "\n".join(out) + "\n"

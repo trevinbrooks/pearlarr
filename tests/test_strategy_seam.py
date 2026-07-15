@@ -1514,8 +1514,8 @@ class TestRadarrProcessAlIdSeam:
         # The grab consumes the FILTERED dict + hashes, not the pre-filter dict.
         assert req.seadex_dict is filtered
         assert req.torrent_hashes == ["feedface"]
-        # release_group carries the movie's release-dict keys (all of them).
-        assert req.release_group == ["OldGroup"]
+        # replaced_groups carries the movie's release-dict keys (all of them).
+        assert req.replaced_groups == ("OldGroup",)
 
     def test_multi_edition_movie_forwards_every_release_group(self) -> None:
         # A multi-edition movie holds files from two groups; the GrabRequest (and
@@ -1539,7 +1539,7 @@ class TestRadarrProcessAlIdSeam:
         strat.process_al_id(_Item(id=3, title="Item Title"), 5, MappingEntry(anilist_id=5))
 
         [req] = run.grab_requests
-        assert req.release_group == ["GroupA", "GroupB"]
+        assert req.replaced_groups == ("GroupA", "GroupB")
 
     def _interactive_call_count(self, *, interactive: bool, n_groups: int) -> int:
         """Run one process_al_id and count the interactive-filter invocations."""

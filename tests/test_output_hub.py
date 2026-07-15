@@ -45,7 +45,7 @@ from pearlarr.paths import resolve_paths
 _EVENT = RunStarted(version="v1.0.0", data_dir="/data")
 
 
-class _FailingRenderer:
+class _FailingRenderer(Renderer):
     """A renderer whose handle always raises (the containment test double)."""
 
     writes_file_only: ClassVar[bool] = False
@@ -54,16 +54,20 @@ class _FailingRenderer:
         self.calls = 0
         self.closes = 0
 
+    @override
     def handle(self, event: Event, when: float) -> None:
         self.calls += 1
         raise RuntimeError("render bug")
 
+    @override
     def begin_cycle(self) -> None:
         pass
 
+    @override
     def set_level(self, level: int) -> None:
         pass
 
+    @override
     def close(self) -> None:
         self.closes += 1
 
@@ -95,7 +99,7 @@ class _FailingCloseRenderer(_FailingRenderer):
         raise RuntimeError("close bug")
 
 
-class _EmittingRenderer:
+class _EmittingRenderer(Renderer):
     """A renderer that emits a follow-up Diagnostic from inside handle (once)."""
 
     writes_file_only: ClassVar[bool] = False
@@ -104,17 +108,21 @@ class _EmittingRenderer:
         self.hub: OutputHub | None = None
         self.emitted = False
 
+    @override
     def handle(self, event: Event, when: float) -> None:
         if not self.emitted and self.hub is not None:
             self.emitted = True
             self.hub.emit(Diagnostic(severity=Severity.INFO, message="re-entrant"))
 
+    @override
     def begin_cycle(self) -> None:
         pass
 
+    @override
     def set_level(self, level: int) -> None:
         pass
 
+    @override
     def close(self) -> None:
         pass
 
@@ -130,7 +138,7 @@ class _DoubleEmittingRenderer(_EmittingRenderer):
             self.hub.emit(Diagnostic(severity=Severity.INFO, message="second"))
 
 
-class _LockProbeRenderer:
+class _LockProbeRenderer(Renderer):
     """`handle()` probes the hub lock from a HELPER thread (the same thread would re-acquire an RLock it owns)."""
 
     writes_file_only: ClassVar[bool] = False
@@ -139,6 +147,7 @@ class _LockProbeRenderer:
         self.hub: OutputHub | None = None
         self.lock_was_free: list[bool] = []
 
+    @override
     def handle(self, event: Event, when: float) -> None:
         hub = self.hub
         assert hub is not None
@@ -156,17 +165,20 @@ class _LockProbeRenderer:
         helper.join(timeout=30.0)
         self.lock_was_free.extend(acquired)
 
+    @override
     def begin_cycle(self) -> None:
         pass
 
+    @override
     def set_level(self, level: int) -> None:
         pass
 
+    @override
     def close(self) -> None:
         pass
 
 
-class _GatedRenderer:
+class _GatedRenderer(Renderer):
     """Blocks inside `handle` (on the first event only) until released.
 
     Records each handled event with its handling thread plus lifecycle calls,
@@ -182,6 +194,7 @@ class _GatedRenderer:
         self.log: list[str] = []
         self._blocked_once = False
 
+    @override
     def handle(self, event: Event, when: float) -> None:
         name = type(event).__name__
         self.handled.append((name, threading.current_thread()))
@@ -193,17 +206,20 @@ class _GatedRenderer:
             assert self.release.wait(timeout=30.0), "gate never released"
         self.log.append(f"handled:{name}")
 
+    @override
     def begin_cycle(self) -> None:
         self.log.append("cycle")
 
+    @override
     def set_level(self, level: int) -> None:
         pass
 
+    @override
     def close(self) -> None:
         pass
 
 
-class _InterruptOnceRenderer:
+class _InterruptOnceRenderer(Renderer):
     """Raises KeyboardInterrupt on the first handle only (the baton-recovery probe)."""
 
     writes_file_only: ClassVar[bool] = False
@@ -211,22 +227,26 @@ class _InterruptOnceRenderer:
     def __init__(self) -> None:
         self.calls = 0
 
+    @override
     def handle(self, event: Event, when: float) -> None:
         self.calls += 1
         if self.calls == 1:
             raise KeyboardInterrupt
 
+    @override
     def begin_cycle(self) -> None:
         pass
 
+    @override
     def set_level(self, level: int) -> None:
         pass
 
+    @override
     def close(self) -> None:
         pass
 
 
-class _ReArmableGate:
+class _ReArmableGate(Renderer):
     """Blocks inside `handle` once per armed episode until released.
 
     `arm()` re-arms it for the next episode — the overflow-note-per-episode
@@ -245,18 +265,22 @@ class _ReArmableGate:
         self.release.clear()
         self._armed = True
 
+    @override
     def handle(self, event: Event, when: float) -> None:
         if self._armed:
             self._armed = False
             self.entered.set()
             assert self.release.wait(timeout=30.0), "gate never released"
 
+    @override
     def begin_cycle(self) -> None:
         pass
 
+    @override
     def set_level(self, level: int) -> None:
         pass
 
+    @override
     def close(self) -> None:
         pass
 
@@ -283,7 +307,7 @@ def test_null_renderer_satisfies_the_protocol() -> None:
     hub.close()
 
 
-class _FileishRecorder:
+class _FileishRecorder(Renderer):
     """A recording survivor that claims the file_only surface (a FileLogSink stand-in)."""
 
     writes_file_only: ClassVar[bool] = True
@@ -291,15 +315,19 @@ class _FileishRecorder:
     def __init__(self) -> None:
         self.events: list[Event] = []
 
+    @override
     def handle(self, event: Event, when: float) -> None:
         self.events.append(event)
 
+    @override
     def begin_cycle(self) -> None:
         pass
 
+    @override
     def set_level(self, level: int) -> None:
         pass
 
+    @override
     def close(self) -> None:
         pass
 
@@ -310,7 +338,7 @@ class _FailingFileish(_FailingRenderer):
     writes_file_only: ClassVar[bool] = True
 
 
-class _LifecycleEmitter:
+class _LifecycleEmitter(Renderer):
     """begin_cycle emits into the hub (the bridge-adoption re-entrancy shape)."""
 
     writes_file_only: ClassVar[bool] = False
@@ -320,22 +348,26 @@ class _LifecycleEmitter:
         self.events: list[Event] = []
         self.seen_during_cycle: int | None = None
 
+    @override
     def handle(self, event: Event, when: float) -> None:
         self.events.append(event)
 
+    @override
     def begin_cycle(self) -> None:
         if self.hub is not None:
             self.hub.emit(Diagnostic(severity=Severity.INFO, message="mid-lifecycle"))
             self.seen_during_cycle = len(self.events)
 
+    @override
     def set_level(self, level: int) -> None:
         pass
 
+    @override
     def close(self) -> None:
         pass
 
 
-class _EmitThenInterrupt:
+class _EmitThenInterrupt(Renderer):
     """Emits a follow-up once, then raises KeyboardInterrupt from EVERY handle of the trigger event.
 
     This is the signal-mid-dispatch shape (the marker is a SIGTERM handler's
@@ -349,6 +381,7 @@ class _EmitThenInterrupt:
         self.hub: OutputHub | None = None
         self._marked = False
 
+    @override
     def handle(self, event: Event, when: float) -> None:
         if isinstance(event, RunStarted) and self.hub is not None:
             if not self._marked:
@@ -356,12 +389,15 @@ class _EmitThenInterrupt:
                 self.hub.emit(Diagnostic(severity=Severity.INFO, message="exit marker"))
             raise KeyboardInterrupt
 
+    @override
     def begin_cycle(self) -> None:
         pass
 
+    @override
     def set_level(self, level: int) -> None:
         pass
 
+    @override
     def close(self) -> None:
         pass
 
@@ -1167,13 +1203,14 @@ def test_a_mid_dispatch_lifecycle_call_keeps_the_baton_and_the_emit_order() -> N
 
     recorder = RecordingRenderer()
 
-    class _LifecycleCaller:
+    class _LifecycleCaller(Renderer):
         writes_file_only: ClassVar[bool] = False
 
         def __init__(self) -> None:
             self.hub: OutputHub | None = None
             self._fired = False
 
+        @override
         def handle(self, event: Event, when: float) -> None:
             del when
             if isinstance(event, RunStarted) and self.hub is not None and not self._fired:
@@ -1181,12 +1218,15 @@ def test_a_mid_dispatch_lifecycle_call_keeps_the_baton_and_the_emit_order() -> N
                 self.hub.emit(Diagnostic(severity=Severity.INFO, message="queued behind"))
                 self.hub.set_level(logging.WARNING)
 
+        @override
         def begin_cycle(self) -> None:
             pass
 
+        @override
         def set_level(self, level: int) -> None:
             pass
 
+        @override
         def close(self) -> None:
             pass
 
@@ -1237,41 +1277,49 @@ def test_close_hands_teardown_chatter_to_the_file_sink_before_closing_it() -> No
     teardown failure) still reaches the file.
     """
 
-    class _FileRecorder:
+    class _FileRecorder(Renderer):
         writes_file_only: ClassVar[bool] = True
 
         def __init__(self) -> None:
             self.handled: list[Event] = []
             self.closed = False
 
+        @override
         def handle(self, event: Event, when: float) -> None:
             del when
             self.handled.append(event)
 
+        @override
         def begin_cycle(self) -> None:
             pass
 
+        @override
         def set_level(self, level: int) -> None:
             pass
 
+        @override
         def close(self) -> None:
             self.closed = True
 
-    class _NoisyCloser:
+    class _NoisyCloser(Renderer):
         writes_file_only: ClassVar[bool] = False
 
         def __init__(self) -> None:
             self.hub: OutputHub | None = None
 
+        @override
         def handle(self, event: Event, when: float) -> None:
             pass
 
+        @override
         def begin_cycle(self) -> None:
             pass
 
+        @override
         def set_level(self, level: int) -> None:
             pass
 
+        @override
         def close(self) -> None:
             if self.hub is not None:
                 self.hub.emit(
@@ -1296,21 +1344,25 @@ def test_begin_cycle_applies_the_level_to_a_fresh_console_exactly_once() -> None
     One bug must cost the fresh console ONE strike, not two.
     """
 
-    class _LevelRecorder:
+    class _LevelRecorder(Renderer):
         writes_file_only: ClassVar[bool] = False
 
         def __init__(self) -> None:
             self.levels: list[int] = []
 
+        @override
         def handle(self, event: Event, when: float) -> None:
             pass
 
+        @override
         def begin_cycle(self) -> None:
             pass
 
+        @override
         def set_level(self, level: int) -> None:
             self.levels.append(level)
 
+        @override
         def close(self) -> None:
             pass
 

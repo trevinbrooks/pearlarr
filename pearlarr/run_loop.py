@@ -122,6 +122,17 @@ class RunLoop:
         )
         self.begin_run(self._ctx)
 
+    @property
+    def _wait_active(self) -> bool:
+        """Whether the wait machinery runs this pass (an active mode, not preview).
+
+        Run-invariant (dry_run, qbit, and the resolved wait mode are all fixed
+        for the whole run); named once so the run-start prune, the per-item
+        pending snapshot, and _finalize_run share one gate.
+        """
+
+        return self._ctx.import_wait_mode is not ImportWaitMode.OFF and not self._services.is_preview()
+
     # --- Run orchestration (shared machinery) -------------------------------
     #
     # run_sync is the shared scaffolding both Arrs use (reset stats, fetch items,
@@ -171,8 +182,8 @@ class RunLoop:
         # Hold the active strategy (so _finalize_run / _grab can call its import
         # hook) and resolve the effective wait mode (cli > config > default) for
         # the whole run. The loop only ever calls import_completed off it, so it
-        # is held under the narrow, non-generic ImportCompleter protocol - which a
-        # concrete ArrSync structurally satisfies, so no invariant-ItemT cast.
+        # is held under the narrow, non-generic ImportCompleter ABC - which a
+        # concrete ArrSync subclasses, so no invariant-ItemT cast.
         self._active_strategy = strategy
         resolved_wait_mode = resolve_wait_mode(
             import_wait_mode,
@@ -194,7 +205,7 @@ class RunLoop:
         # report and import carried-over records run AFTER the per-item loop (the
         # inline per-series snapshot) and in _finalize_run (deferred reconcile +
         # the post-summary blocking monitor), never before the banner.
-        if self._ctx.import_wait_mode is not ImportWaitMode.OFF and not self._services.is_preview():
+        if self._wait_active:
             self._wait_manager.prune_expired_pending()
 
         # Fetch the library (the long pre-scan network wait) inside the cockpit so
@@ -290,69 +301,9 @@ class RunLoop:
         cap_reached = False
         for item_idx, item in enumerate(all_items):
             try:
-                item_title = item.title
-
-                self._reporter.log_arr_item_start(
-                    arr,
-                    item_title,
-                    item_idx + 1,
-                    n_items,
-                )
-
-                # If we're not monitored, then skip if ignore_unmonitored is switched on
-                if not item.monitored and self._arr_config.ignore_unmonitored:
-                    self._reporter.log_arr_item_unmonitored(self._ctx, item_title)
-                    continue
-
-                # Get the mappings from the Arr item to AniList
-                al_mappings = strategy.item_anilist_ids(item)
-
-                if len(al_mappings) == 0:
-                    self._reporter.log_no_anilist_mappings(self._ctx, item_title)
-                    continue
-
-                for al_id, mapping in al_mappings.items():
-                    # process_al_id returns True only when max_torrents_to_add was
-                    # reached - stop the whole run. The post-loop _finalize_run (the
-                    # single finalize site) still runs, so the blocking/hybrid pass
-                    # imports this run's records before the save + summary. A separate
-                    # post-loop max check would be redundant with this: the in-block
-                    # check fires after every add, so torrents_added can't reach the
-                    # cap without process_al_id stopping first.
-                    try:
-                        if strategy.process_al_id(
-                            item=item,
-                            al_id=al_id,
-                            mapping=mapping,
-                        ):
-                            cap_reached = True
-                            break
-                    except Exception as e:
-                        # Contain a per-id failure to THIS AniList id: a transient error
-                        # on one season must not skip the item's other seasons.
-                        hub_error(
-                            f"{item_title} (AniList #{al_id}): unexpected error ({e}) - skipping this AniList id",
-                            exc=e,
-                        )
-                        continue
-
-                if cap_reached:
+                if self._scan_item(strategy, item, item_idx, n_items):
+                    cap_reached = True
                     break
-
-                # Non-blocking per-item snapshot of this series' CARRIED-OVER
-                # pending records (grabbed in a prior run). Runs after all of an
-                # item's AniList ids so it covers the cached/grabbed/no-entry paths
-                # uniformly, and reports each carried-over record inline inside the
-                # series block. Sonarr returns its series id; Radarr returns None
-                # (no pending records), short-circuiting the snapshot.
-                sid = strategy.pending_import_series_id(item)
-                if (
-                    sid is not None
-                    and self._ctx.import_wait_mode is not ImportWaitMode.OFF
-                    and not self._services.is_preview()
-                ):
-                    self._wait_manager.snapshot_pending_for_series(sid)
-
             except Exception as e:
                 title = getattr(item, "title", "unknown title")
                 hub_error(f"{title}: unexpected error ({e}) - skipping this title", exc=e)
@@ -379,6 +330,81 @@ class RunLoop:
         # the run and log the summary. Per-title update_cache calls only mutate
         # memory, so this finalize is what actually saves (and sorts by id).
         self._finalize_run()
+
+    def _scan_item[ItemT: ArrItem](
+        self,
+        strategy: ArrSync[ItemT],
+        item: ItemT,
+        item_idx: int,
+        n_items: int,
+    ) -> bool:
+        """Scan one library item; return True iff a grab hit the add cap.
+
+        Guard-claused: the unmonitored skip and the no-mappings skip return
+        False early. The al_id sub-loop returns True the instant process_al_id
+        signals the cap - its inner per-id try/except still contains a transient
+        error to that one AniList id and continues. The carried-over pending
+        snapshot is the tail before the final False. `arr` is read off the
+        services hub (the local authority), so the caller passes only the
+        strategy + the item and its scan position.
+        """
+
+        arr = self._services.arr
+        item_title = item.title
+
+        self._reporter.log_arr_item_start(
+            arr,
+            item_title,
+            item_idx + 1,
+            n_items,
+        )
+
+        # If we're not monitored, then skip if ignore_unmonitored is switched on
+        if not item.monitored and self._arr_config.ignore_unmonitored:
+            self._reporter.log_arr_item_unmonitored(self._ctx, item_title)
+            return False
+
+        # Get the mappings from the Arr item to AniList
+        al_mappings = strategy.item_anilist_ids(item)
+
+        if len(al_mappings) == 0:
+            self._reporter.log_no_anilist_mappings(self._ctx, item_title)
+            return False
+
+        for al_id, mapping in al_mappings.items():
+            # process_al_id returns True only when max_torrents_to_add was
+            # reached - stop the whole run. The post-loop _finalize_run (the
+            # single finalize site) still runs, so the blocking/hybrid pass
+            # imports this run's records before the save + summary. A separate
+            # post-loop max check would be redundant with this: the in-block
+            # check fires after every add, so torrents_added can't reach the
+            # cap without process_al_id stopping first.
+            try:
+                if strategy.process_al_id(
+                    item=item,
+                    al_id=al_id,
+                    mapping=mapping,
+                ):
+                    return True
+            except Exception as e:
+                # Contain a per-id failure to THIS AniList id: a transient error
+                # on one season must not skip the item's other seasons.
+                hub_error(
+                    f"{item_title} (AniList #{al_id}): unexpected error ({e}) - skipping this AniList id",
+                    exc=e,
+                )
+                continue
+
+        # Non-blocking per-item snapshot of this series' CARRIED-OVER
+        # pending records (grabbed in a prior run). Runs after all of an
+        # item's AniList ids so it covers the cached/grabbed/no-entry paths
+        # uniformly, and reports each carried-over record inline inside the
+        # series block. Sonarr returns its series id; Radarr returns None
+        # (no pending records), short-circuiting the snapshot.
+        if self._wait_active and (sid := strategy.pending_import_series_id(item)) is not None:
+            self._wait_manager.snapshot_pending_for_series(sid)
+
+        return False
 
     # --- Wait-for-completion orchestration ----------------------------------
     #
@@ -416,15 +442,14 @@ class RunLoop:
         self._reporter.scan_finished(self._ctx.arr)
 
         preview = self._services.is_preview()
-        active = self._ctx.import_wait_mode is not ImportWaitMode.OFF and not preview
 
         # The finally guards the whole tail: a raise in reconcile/tally/summary/
         # monitor must not let bootstrap's close roll back the run's staged
         # writes. The save trails the monitor to also capture its drops.
         try:
-            if active and self._ctx.import_wait_mode is ImportWaitMode.DEFERRED:
+            if self._wait_active and self._ctx.import_wait_mode is ImportWaitMode.DEFERRED:
                 self._wait_manager.reconcile_remaining()
-            if active:
+            if self._wait_active:
                 self._wait_manager.tally_carried_over_into_stats()
 
             self._reporter.log_run_summary(
@@ -433,7 +458,7 @@ class RunLoop:
                 has_client=self.qbit is not None,
             )
 
-            if active and self._ctx.import_wait_mode in (
+            if self._wait_active and self._ctx.import_wait_mode in (
                 ImportWaitMode.BLOCKING,
                 ImportWaitMode.HYBRID,
             ):

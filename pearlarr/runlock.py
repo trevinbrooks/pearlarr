@@ -51,7 +51,8 @@ def single_instance_lock(
     try:
         lock.acquire(blocking=False)
     except Timeout:
-        # Another process holds the lock.
+        # Another process holds the lock. Timeout subclasses OSError, so this
+        # clause must stay above the OSError catch below.
         yield False
         return
     except OSError as e:

@@ -189,13 +189,10 @@ class BootRegion(LiveRegion):
             line.append("  ")
             line.append(block_bar(fraction, _BAR_WIDTH, caps))
             line.append(f" {round(fraction * 100)}%", style="cyan")
-            if detail:
-                line.append("  ")
-                line.append(detail, style="grey50")
-        elif detail:
+        if detail:
             line.append("  ")
             line.append(detail, style="grey50")
-        else:
+        elif fraction is None:
             line.append(_ellipsis(caps), style="bold")
         return line
 

@@ -123,7 +123,7 @@ class BootFlow:
         if window is None or self._section_failed:
             return
         # The mark carries the counter it was stamped on (a hub swap can't skew the
-        # diff); counts exclude file_only forensics, so only an ERROR a visible
+        # diff); counts exclude file_only forensics, so only an ERROR+ a visible
         # surface could show suppresses the ready line.
         if window.counts_mark.since().errors > 0:
             return

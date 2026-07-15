@@ -47,7 +47,7 @@ class Accent(Enum):
     BAD = auto()
     ACCENT = auto()
     FOCUS = auto()
-    # An informational "nothing to do" status (renders blue on the scan surface).
+    # An informational "nothing to do" status.
     NOTE = auto()
 
 

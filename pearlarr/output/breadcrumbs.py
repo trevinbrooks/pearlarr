@@ -120,15 +120,15 @@ class BreadcrumbFold:
             case BootStepFinished(scope=scope):
                 self._pop_through(scope)
             case RunStarted() | CycleStarted() | RunFinished():
-                self._close_at(1)
+                self._close_at(1)  # unwind to root (all levels)
             case ScanStarted(arr=arr):
                 self._push(ScopeKind.RUN, str(arr))
             case ItemStarted(index=index, total=total, title=title):
                 self._push(ScopeKind.ITEM, f"[{index}/{total}] {title}")
             case ScanFinished() | RunSummaryReady():
-                self._close_at(2)
+                self._close_at(2)  # close item/wait/entry, keep the run
             case WaitStarted():
-                self._close_at(3)
+                self._close_at(3)  # close the entry before the wait pass
             case (
                 NextRunScheduled()
                 | BootStepProgressed()
@@ -173,7 +173,7 @@ class BreadcrumbFold:
         return tuple(self._stack)
 
     def path_text(self) -> str:
-        """The full PATH_SEP-joined breadcrumb, e.g. "sonarr / [3/182] Frieren / entry"."""
+        """The full PATH_SEP-joined breadcrumb, e.g. "sonarr" then "[3/182] Frieren" then "entry"."""
 
         return PATH_SEP.join(_segment(node) for node in self._stack)
 

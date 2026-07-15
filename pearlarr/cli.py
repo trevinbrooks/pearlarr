@@ -23,6 +23,7 @@ from . import bootstrap
 from .config import (
     AppConfig,
     Arr,
+    ArrTarget,
     ConfigRewriteError,
     LogFormat,
     strip_userinfo,
@@ -513,7 +514,7 @@ def run_scheduled(
         # No ad-hoc preamble here: the branded title (logged by run_arrs) leads
         # each cycle, so the scheduled path reads the same as a single run.
         bootstrap.run_arrs(
-            [(Arr.RADARR, None), (Arr.SONARR, None)],
+            [ArrTarget(Arr.RADARR), ArrTarget(Arr.SONARR)],
             paths=paths,
             logger=logger,
             file_sink=file_sink,
@@ -583,15 +584,15 @@ def run_single(
     # selection at all, run everything configured (mirrors scheduled mode). The
     # distinction is remembered so bootstrap.configured_arrs can refuse an explicit
     # request for an unconfigured arr instead of silently skipping it.
-    arrs: list[tuple[Arr, int | None]] = []
+    arrs: list[ArrTarget] = []
     if radarr or movie_id is not None:
-        arrs.append((Arr.RADARR, movie_id))
+        arrs.append(ArrTarget(Arr.RADARR, movie_id))
     if sonarr or series_id is not None:
-        arrs.append((Arr.SONARR, series_id))
+        arrs.append(ArrTarget(Arr.SONARR, series_id))
 
     explicit_selection = bool(arrs)
     if not arrs:
-        arrs = [(Arr.RADARR, None), (Arr.SONARR, None)]
+        arrs = [ArrTarget(Arr.RADARR), ArrTarget(Arr.SONARR)]
 
     # Resolve the data directory once and make sure it exists (config-template copy
     # + run lock both need it).
@@ -826,13 +827,12 @@ def cache_backup(json_output: Annotated[bool, typer.Option("--json", help=_JSON_
                 return False
 
             tmp_backup = paths.cache_backup + ".tmp"
-            source = sqlite3.connect(paths.cache)
             try:
-                dest = sqlite3.connect(tmp_backup)
-                try:
+                with (
+                    contextlib.closing(sqlite3.connect(paths.cache)) as source,
+                    contextlib.closing(sqlite3.connect(tmp_backup)) as dest,
+                ):
                     source.backup(dest)
-                finally:
-                    dest.close()
             except sqlite3.DatabaseError as e:
                 # Report the corrupt/torn source cleanly and drop the torn temp file;
                 # a previous good cache.backup.db is left untouched.
@@ -840,8 +840,6 @@ def cache_backup(json_output: Annotated[bool, typer.Option("--json", help=_JSON_
                     os.remove(tmp_backup)
                 hub_error(f"Cache backup failed ({e}) - run pearlarr cache check to inspect cache.db")
                 return False
-            finally:
-                source.close()
 
             try:
                 os.replace(tmp_backup, paths.cache_backup)

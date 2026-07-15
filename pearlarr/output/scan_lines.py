@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Final, assert_never
+from typing import Final, NamedTuple, assert_never
 
 from rich.console import Console
 from rich.text import Text
@@ -316,26 +316,38 @@ def _summary_kv(key: str, value: str, *, value_style: str | None = None) -> Lega
     return _kv_line(KvLine(key=key, value=value, key_width=_SUMMARY_KEY_WIDTH, value_style=value_style, indent=1))
 
 
+class SummaryRow(NamedTuple):
+    """One labeled row of a summary per-entry block; a falsy `value` is skipped."""
+
+    label: str
+    value: str | Text | None
+    accent: str
+
+
 def _summary_block(
     title: str,
     title_style: str | None,
-    rows: Iterable[tuple[str, str | Text | None, str]],
+    rows: Iterable[SummaryRow],
 ) -> Iterator[LegacyLine]:
     """A summary per-entry block: title at indent 2, labeled rows at indent 3."""
 
     yield _info(indent_string(title, level=2), StyledLine(style=title_style or ""))
-    for label, value, accent in rows:
-        if not value:
+    for row in rows:
+        if not row.value:
             continue
-        yield _kv_line(KvLine(key=label, value=value, key_width=_BLOCK_KEY_WIDTH, value_style=accent, indent=3, sep=""))
+        yield _kv_line(
+            KvLine(
+                key=row.label, value=row.value, key_width=_BLOCK_KEY_WIDTH, value_style=row.accent, indent=3, sep=""
+            ),
+        )
 
 
 def _needs_block(item: NeedsActionFact) -> Iterator[LegacyLine]:
-    rows: list[tuple[str, str | Text | None, str]] = [
-        ("files", item.coverage, "grey50"),
-        ("group", item.group, "yellow"),
-        ("reason", item.reason, "yellow"),
-        ("link", item.url, "grey50"),
+    rows = [
+        SummaryRow("files", item.coverage, "grey50"),
+        SummaryRow("group", item.group, "yellow"),
+        SummaryRow("reason", item.reason, "yellow"),
+        SummaryRow("link", item.url, "grey50"),
     ]
     yield from _summary_block(item.title or "(unknown title)", "yellow", rows)
 
@@ -350,10 +362,10 @@ def _added_block(item: GrabFact, *, dry_run: bool) -> Iterator[LegacyLine]:
         group_style="grey50" if dry_run else "cyan",
         base_style="grey50" if dry_run else "green",
     )
-    rows: list[tuple[str, str | Text | None, str]] = [
-        ("files", item.coverage, "grey50"),
-        ("link", item.url, "grey50"),
-        ("torrent", torrent_value, "grey50" if dry_run else "green"),
+    rows = [
+        SummaryRow("files", item.coverage, "grey50"),
+        SummaryRow("link", item.url, "grey50"),
+        SummaryRow("torrent", torrent_value, "grey50" if dry_run else "green"),
     ]
     yield from _summary_block(item.title or "(unknown title)", "grey50" if dry_run else None, rows)
 
@@ -373,7 +385,7 @@ def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
         _BLANK,
         # The DRY RUN note rides the rule title only; the message stays plain (the
         # text surfaces carry dry_run/note as structured fields via _fact_of).
-        LegacyLine(logging.INFO, title, TitledRule(title=rule_title, heavy=True)),
+        _info(title, TitledRule(title=rule_title, heavy=True)),
         _BLANK,
         _summary_kv("checked", str(tally.checked)),
     ]
@@ -426,7 +438,7 @@ def run_summary_lines(event: RunSummaryReady) -> tuple[LegacyLine, ...]:
     if tip is not None:
         lines.append(_info(indent_string(tip, level=1), StyledLine(style="grey50")))
 
-    lines.append(LegacyLine(logging.INFO, rule_string("="), SectionRule("=")))
+    lines.append(_info(rule_string("="), SectionRule("=")))
     return tuple(lines)
 
 

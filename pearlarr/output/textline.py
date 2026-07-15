@@ -88,6 +88,7 @@ from .events import (
     WaitStarted,
     severity_of,
 )
+from .hub import Renderer
 from .wait_lines import PulseThrottle
 from ..log import LOG_NAME
 from ..manual_import import OutcomeCategory
@@ -697,20 +698,18 @@ class _PerSecondMemo:
         return self._memo[1]
 
 
-class _TextLineSink:
+class _TextLineSink(Renderer):
     """The shared sink chassis: admission, fold ordering, per-second timestamps.
 
     Subclasses provide only the render step; `handle` folds the event AFTER
     rendering — in a `finally`, so a render/write bug can never desync the path.
     """
 
-    writes_file_only: ClassVar[bool] = False
-    """The single file_only routing rule: console-ish surfaces skip, the file keeps."""
-
     def __init__(self) -> None:
         self._crumbs = BreadcrumbFold()
         self._threshold: int = int(Severity.INFO)
 
+    @override
     def handle(self, event: Event, when: float) -> None:
         severity = severity_of(event)
         try:
@@ -719,15 +718,18 @@ class _TextLineSink:
         finally:
             self._crumbs.apply(event)
 
+    @override
     def begin_cycle(self) -> None:
         self._crumbs.reset()
         self._turn_over()
 
+    @override
     def set_level(self, level: int) -> None:
         # Text surfaces share the file's semantics: the raw configured level.
         # The INFO floor is rich-console-only (log.py's console_level).
         self._threshold = level
 
+    @override
     def close(self) -> None:
         pass
 
@@ -825,7 +827,7 @@ class FileLogSink(_GrammarSink):
     (collisions get a `.1`, `.2`, ... suffix); a config-free count backstop then
     caps the backup count, so a crash-looping scheduler can't grow the log dir
     unboundedly before config has ever loaded. Age-based retention is a separate
-    step (`set_retention_days`), applied once per cycle as soon as the run's
+    step (`apply_retention_days`), applied once per cycle as soon as the run's
     `advanced.log_retention_days` is known. Every line flushes as written (crash
     fidelity: the tail is on disk when the process dies). A reopen after close
     appends (never a silent truncate without a pending rotation).
