@@ -36,6 +36,7 @@ from pearlarr.console_caps import console_of
 from pearlarr.log import (
     RichConsoleHandler,
     apply_log_level,
+    compact_duration,
     mark_hub_console_owner,
     setup_logger,
 )
@@ -312,3 +313,13 @@ class TestInvalidLevelComplaint:
         assert "Invalid log level 'BOGUS'" in diagnostic.message
         assert not diagnostic.file_only
         assert last_resort.records == []
+
+
+class TestCompactDuration:
+    """`compact_duration` covers every magnitude and floors negatives to "0s"."""
+
+    def test_covers_every_magnitude(self) -> None:
+        assert compact_duration(4000) == "1h06m"
+        assert compact_duration(130) == "2m"
+        assert compact_duration(40) == "40s"
+        assert compact_duration(-5) == "0s"

@@ -18,7 +18,7 @@ from typing import cast
 import httpx
 
 from .config import strip_userinfo
-from .log import LOG_NAME
+from .log import LOG_NAME, compact_duration
 from .output import hub_note, hub_warn
 from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord, Json, validate_each
 
@@ -34,18 +34,6 @@ HEARTBEAT_INTERVAL_S = 300.0
 # Coalesced-repeat breadcrumbs ride the stdlib channel (first-party child of
 # the app logger, so the bridge adopts them into the file sink at DEBUG).
 _LOG = logging.getLogger(f"{LOG_NAME}.arr_http")
-
-
-def _streak_age(seconds: float) -> str:
-    """Short streak age for coalesced lines: `"45s"` / `"12m"` / `"1h05m"`."""
-
-    total = max(0, int(seconds))
-    if total >= 3600:
-        hours, minutes = divmod(total // 60, 60)
-        return f"{hours}h{minutes:02d}m"
-    if total >= 60:
-        return f"{total // 60}m"
-    return f"{total}s"
 
 
 @dataclass
@@ -452,7 +440,7 @@ class ArrHttp:
         if count == 1:
             hub_warn(warn.replace("{detail}", detail))
         elif heartbeat_due:
-            hub_warn(warn.replace("{detail}", f"{detail}; still failing - attempt {count}, {_streak_age(age)}"))
+            hub_warn(warn.replace("{detail}", f"{detail}; still failing - attempt {count}, {compact_duration(age)}"))
         else:
             _LOG.debug(f"{warn.replace('{detail}', detail)} - failure {count} in a row")
         return None
@@ -476,6 +464,6 @@ class ArrHttp:
         if not ended:
             return
         total = sum(streak.count for streak in ended)
-        age = _streak_age(now - min(streak.first_at for streak in ended))
+        age = compact_duration(now - min(streak.first_at for streak in ended))
         noun = "failure" if total == 1 else "failures"
         hub_note(f"{warn.partition(' ({detail})')[0]} - recovered after {total} {noun} ({age})")
