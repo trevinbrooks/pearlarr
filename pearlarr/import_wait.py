@@ -397,11 +397,7 @@ class ImportWaitManager:
             view.update(mp.snapshot())
             while mp.active:
                 try:
-                    mp.begin_cycle()
-                    for record in mp.records:
-                        if record.key.row_key not in mp.active:
-                            continue
-                        mp.advance(record)
+                    mp.run_cycle()
                     view.update(mp.snapshot())
                     if mp.active:
                         self._progress_wait(mp, view, nap)
@@ -603,28 +599,35 @@ class MonitorPass:
         # Sampled once here. The download clock for every record starts now and
         # `elapsed` measures from it.
         self.start = now()
-        self.dl_start = {r.key.row_key: self.start for r in records}
+        self.dl_start = {}
         self.import_start = {}
-        self.active = {r.key.row_key for r in records}
-        self.views = {
-            r.key.row_key: TorrentView(
-                key=r.key.row_key,
+        self.active = set()
+        self.views = {}
+        # Each row's underlying torrent, for the telemetry batch (siblings share one).
+        self._hash_of: dict[str, str] = {}
+        for r in records:
+            k = r.key.row_key
+            self.dl_start[k] = self.start
+            self.active.add(k)
+            self.views[k] = TorrentView(
+                key=k,
                 label=r.display_label,
                 phase=Phase.QUEUED,
             )
-            for r in records
-        }
-        # Each row's underlying torrent, for the telemetry batch (siblings share one).
-        self._hash_of = {r.key.row_key: r.infohash for r in records}
+            self._hash_of[k] = r.infohash
         # Per-cycle heavy-poll memo: sibling records share ONE qBittorrent read
-        # per cycle (and see the same reading). Cleared by `begin_cycle`.
+        # per cycle (and see the same reading). Cleared by `run_cycle`.
         self._cycle_polls: dict[str, TorrentProbe] = {}
         self.results = []
 
-    def begin_cycle(self) -> None:
-        """Start a heavy-poll cycle: clear the shared per-hash poll memo."""
+    def run_cycle(self) -> None:
+        """Run one heavy-poll cycle: clear the per-hash memo, then advance every active record."""
 
         self._cycle_polls.clear()
+        for record in self.records:
+            if record.key.row_key not in self.active:
+                continue
+            self.advance(record)
 
     def _poll(self, infohash: str) -> TorrentProbe:
         """The hash's heavy poll for this cycle - read once, shared by siblings."""
@@ -686,11 +689,10 @@ class MonitorPass:
         (`at_deadline`) both forces and warns.
         """
 
-        h = record.infohash
         k = record.key.row_key
         label = record.display_label
 
-        poll = self._poll(h)
+        poll = self._poll(record.infohash)
 
         if poll.outcome is None:
             if self.now() - self.dl_start[k] >= self.dl_timeout:

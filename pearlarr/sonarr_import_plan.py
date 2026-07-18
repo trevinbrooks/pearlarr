@@ -307,7 +307,6 @@ def translate_download_path(
 
     best_rank: tuple[int, bool] | None = None
     best_local = ""
-    best_length = 0
     for mapping in mappings:
         if not mapping.remote_path or not mapping.local_path:
             continue
@@ -319,12 +318,11 @@ def translate_download_path(
         if best_rank is None or rank > best_rank:
             best_rank = rank
             best_local = mapping.local_path
-            best_length = len(remote)
 
     if best_rank is None:
         return content_path
     base = best_local.rstrip("/\\") or "/"
-    suffix = content_segments[best_length:]
+    suffix = content_segments[best_rank[0] :]
     if not suffix:
         return base
     joined = "/".join(suffix)
