@@ -2,8 +2,8 @@
 """Tests for the rich console surface's diagnostic path (`output.rich_renderer`).
 
 Pin ambient placement against the cockpit scopes (boot-ledger indent while the
-boot section is open, wait indent while the wait region is open, column 0
-otherwise - including under bare RUN/ITEM nodes), the unwind close that empties
+boot section is open, wait indent while the wait region is open, item indent
+while an item is being worked, column 0 under RUN alone), the unwind close that empties
 the frontier for a leg-fatal error, the S4 floors (third-party WARNING floor
 unless DEBUG; first-party INFO renders dim), the `file_only` and
 no-rich-console no-ops, trace rendering without locals, markup literalness,
@@ -91,10 +91,11 @@ class TestPlacement:
 
         assert _lines(stream) == [f"{INDENT}⚠ webhook flaked"]
 
-    def test_mid_scan_stays_at_column_zero_under_run_and_item_alone(self) -> None:
-        """RUN/ITEM are structural, not indented contexts: between entries (the item's own rows), a diagnostic keeps column 0.
+    def test_mid_scan_indents_under_an_open_item(self) -> None:
+        """ITEM is an indented context: import-flow diagnostics join the listing.
 
-        An open entry scope indents it - see `test_output_scan_render`.
+        The folder-fallback lines fire between a series' entry blocks; they
+        indent with the listing instead of breaking it at the run margin.
         """
 
         renderer, stream = _renderer()
@@ -106,9 +107,20 @@ class TestPlacement:
             _warning("mid-scan"),
         )
 
-        # The scan arm renders the banner/header lines; the diagnostic
-        # itself lands un-indented at column 0.
-        assert _lines(stream)[-1] == "⚠ mid-scan"
+        assert _lines(stream)[-1] == f"{INDENT}⚠ mid-scan"
+
+    def test_before_the_first_item_stays_at_column_zero_under_run_alone(self) -> None:
+        """RUN alone is structural: before any item opens, the run margin holds."""
+
+        renderer, stream = _renderer()
+
+        _feed(
+            renderer,
+            ScanStarted(arr=Arr.SONARR, total=182),
+            _warning("before the first item"),
+        )
+
+        assert _lines(stream)[-1] == "⚠ before the first item"
 
     def test_begin_cycle_resets_the_fold(self) -> None:
         renderer, stream = _renderer()

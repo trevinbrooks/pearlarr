@@ -34,6 +34,7 @@ from pearlarr.output import (
     LedgerRow,
     RecommendedGroup,
     RichRenderer,
+    ScanFinished,
     ScanStarted,
     ScopeClosed,
     ScopeId,
@@ -348,9 +349,9 @@ class TestRichRendererScanArm:
 
 
 class TestEntryIndentedDiagnostics:
-    """The generalized placement rule: a diagnostic indents while an ENTRY scope is open (like boot/wait).
+    """The generalized placement rule: a diagnostic indents while an ENTRY or ITEM scope is open (like boot/wait).
 
-    Under RUN/ITEM alone it stays column-0.
+    Under RUN alone it stays column-0.
     """
 
     _ENTRY = ScopeId(ScopeKind.ENTRY, 1)
@@ -366,18 +367,22 @@ class TestEntryIndentedDiagnostics:
         renderer.handle(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME), 0.0)
         assert "  ⚠ tracker down" in _plain_lines(stream)
 
-    def test_diagnostic_stays_column_zero_under_run_and_item_alone(self) -> None:
+    def test_diagnostic_indents_under_an_open_item_between_entries(self) -> None:
+        # Import-flow lines fire between a series' entry blocks: they indent
+        # with the listing, not the run margin.
         renderer, stream = _renderer()
         self._open_item(renderer)
         renderer.handle(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME), 0.0)
-        assert "⚠ tracker down" in _plain_lines(stream)
-        assert "  ⚠ tracker down" not in _plain_lines(stream)
+        assert "  ⚠ tracker down" in _plain_lines(stream)
 
-    def test_closing_the_entry_scope_returns_diagnostics_to_column_zero(self) -> None:
+    def test_scan_finished_returns_diagnostics_to_column_zero(self) -> None:
+        # ScanFinished evicts the item (and any entry under it): a diagnostic
+        # after the listing sits back at the run margin.
         renderer, stream = _renderer()
         self._open_item(renderer)
         renderer.handle(ScopeOpened(scope=self._ENTRY, label="entry"), 0.0)
         renderer.handle(ScopeClosed(scope=self._ENTRY), 0.0)
+        renderer.handle(ScanFinished(arr=Arr.SONARR), 0.0)
         renderer.handle(Diagnostic(severity=Severity.WARNING, message="tracker down", origin=LOG_NAME), 0.0)
         assert "⚠ tracker down" in _plain_lines(stream)
         assert "  ⚠ tracker down" not in _plain_lines(stream)
