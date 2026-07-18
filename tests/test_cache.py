@@ -21,6 +21,7 @@ from pearlarr.log import LOG_NAME
 from pearlarr.manual_import import PendingImport, PendingKey
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
+from pearlarr.sonarr_parse import parsed_full_season
 from pearlarr.sqlite_util import is_corruption
 
 from .builders import make_entry_record
@@ -513,6 +514,29 @@ class TestSonarrParse:
         store.put_sonarr_parse("file.mkv", rec)
         assert store.get_sonarr_parse("file.mkv") == rec
         assert store.get_sonarr_parse("missing.mkv") is None
+        store.close()
+
+    def test_full_season_key_round_trips(self, tmp_path: Path) -> None:
+        store = _open(tmp_path)
+        rec = {
+            "fetched_at": "2026-06-20 12:00:00",
+            "episodes": [{"season": 5, "episode": 1}],
+            "full_season": True,
+        }
+        store.put_sonarr_parse("op.mkv", rec)
+        assert store.get_sonarr_parse("op.mkv") == rec
+        store.close()
+
+    def test_legacy_record_reads_back_without_full_season(self, tmp_path: Path) -> None:
+        # A pre-existing row carries no full_season key: it reads back absent, so
+        # parsed_full_season yields False and it seeds exactly as before.
+        store = _open(tmp_path)
+        rec = {"fetched_at": "2026-06-20 12:00:00", "episodes": [{"season": 1, "episode": 1}]}
+        store.put_sonarr_parse("legacy.mkv", rec)
+        read_back = store.get_sonarr_parse("legacy.mkv")
+        assert read_back is not None
+        assert "full_season" not in read_back
+        assert parsed_full_season(read_back) is False
         store.close()
 
 

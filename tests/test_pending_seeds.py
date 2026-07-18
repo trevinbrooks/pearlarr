@@ -11,6 +11,8 @@ cached `/parse` results and the `(season, episode) -> id` index. Built bare
 (no live Sonarr) with a seeded in-memory parse cache.
 """
 
+from collections.abc import Mapping
+
 from pearlarr.manual_import import normalize_basename
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import ParsedEpisode, SonarrEpisode
@@ -19,15 +21,16 @@ from pearlarr.sonarr_import import PendingSeedContext
 from .builders import FakeCacheStore, make_config, make_sonarr_sync, rg_group, url_item
 from .fakes import FakeSonarrClient
 
-# One persisted `/parse` cache shape: `filename -> {"episodes": [{season, episode}]}`.
-# The seed builder reads `record["episodes"]` straight off this (no freshness stamp),
-# so the test records carry only that key.
-type ParseCache = dict[str, dict[str, list[dict[str, int]]]]
+# One persisted `/parse` cache shape: `filename -> {"episodes": [{season, episode}]}`,
+# plus the optional `full_season` bool the grab-time seed guard reads. The seed
+# builder reads both straight off this (no freshness stamp). A covariant Mapping
+# so a records-only literal and a full-season one both pass without annotation.
+type ParseCache = Mapping[str, Mapping[str, object]]
 
 
 def _strat(parse_cache: ParseCache) -> SonarrSync:
     return make_sonarr_sync(
-        cache_store=FakeCacheStore(sonarr_parse=parse_cache),
+        cache_store=FakeCacheStore(sonarr_parse={name: dict(rec) for name, rec in parse_cache.items()}),
     )
 
 
@@ -183,6 +186,33 @@ class TestSeedGuards:
         assert set(seeds) == {"h1"}
         assert seeds["h1"].file_episode_map == {}
         assert seeds["h1"].seadex_files == ["Show S05 Ending.mkv"]
+
+    def test_small_full_season_parse_never_seeds(self) -> None:
+        # A bare-"S01" OP/ED Sonarr matched to a whole season of only two
+        # episodes: the pair count slips under the span cap, so Sonarr's own
+        # fullSeason flag on the record is what keeps it from seeding.
+        ep_list = [_ep(101, 1, 1), _ep(102, 1, 2)]
+        parse_cache = {
+            "Show S01 Opening.mkv": {
+                "episodes": [{"season": 1, "episode": 1}, {"season": 1, "episode": 2}],
+                "full_season": True,
+            },
+        }
+        seadex_dict = {
+            "RG": rg_group(
+                {"u1": url_item(files=["Show S01 Opening.mkv"], size=[1000], infohash="h1", download=True)},
+            ),
+        }
+
+        seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+        )
+
+        # Still tracked (it carries a video file), just never pre-assigned.
+        assert set(seeds) == {"h1"}
+        assert seeds["h1"].file_episode_map == {}
 
     def test_legitimate_double_episode_span_still_seeds(self) -> None:
         ep_list = [_ep(101, 1, 1), _ep(102, 1, 2)]
@@ -346,3 +376,31 @@ class TestParseWriteVisibleToSeeds:
         )
 
         assert seeds["h1"].file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
+
+    def test_full_season_flag_flows_from_parse_write_to_seed_refusal(self) -> None:
+        # End-to-end through the real write path: a fullSeason parse persists the
+        # flag on the record, and the seed builder refuses the file by it.
+        sonarr = FakeSonarrClient(
+            parse=[ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=2)],
+            parse_full_season=True,
+        )
+        strat = make_sonarr_sync(
+            sonarr=sonarr,
+            config=make_config(sleep_time=2),  # sequential: deterministic, no warm pool
+            cache_store=FakeCacheStore(),
+        )
+        ep_list = [_ep(101, 1, 1), _ep(102, 1, 2)]
+        seadex_dict = {
+            "RG": rg_group(
+                {"u1": url_item(files=["Show S01 Opening.mkv"], size=[1000], infohash="h1", download=True)},
+            ),
+        }
+
+        strat._parse.parse_episodes_from_seadex(seadex_dict, series_fp="fp")
+        seeds = strat._reconciler.build_pending_seeds(
+            seadex_dict=seadex_dict,
+            ep_list=ep_list,
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
+        )
+
+        assert seeds["h1"].file_episode_map == {}

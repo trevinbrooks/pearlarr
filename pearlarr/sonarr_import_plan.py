@@ -456,6 +456,8 @@ _MATCHED_SPAN_CAP = 3
 def episode_ids_for_parsed(
     parsed: list[ParsedEpisode],
     ep_id_map: dict[tuple[int, int], int],
+    *,
+    full_season: bool = False,
 ) -> list[int]:
     """Map Sonarr `/parse` `(season, episode)` pairs to OUR episode ids.
 
@@ -465,16 +467,22 @@ def episode_ids_for_parsed(
 
     The pairs are Sonarr's series-MATCHED resolution (the persisted parse
     record keeps nothing else), so the grab-time seed honors the same borrow
-    limits `_exact_episode_ids` enforces at import time: duplicate pairs
-    collapse to one claim, a span of more than `_MATCHED_SPAN_CAP` distinct
-    pairs is refused whole (Sonarr matches a bare "S05" extra to the WHOLE
-    season, and seeding that would import one OP/ED file as every episode),
-    and a pair that does not resolve (or resolves to a 0 id) refuses the file
-    rather than seeding the resolved half of a multi-episode span. A refused
-    file is simply not seeded - import-time assignment places or refuses it
-    under the full guard set.
+    limits `_exact_episode_ids` enforces at import time: a `full_season` parse
+    is refused whole (PRIMARY, count-independent, ahead of the span cap -
+    mirroring the import-time gate's ordering); Sonarr matches a bare "S0X"
+    OP/ED to the WHOLE season, and a small enough season slips under the span
+    cap yet must still never seed one file as every episode. Then: duplicate
+    pairs collapse to one claim, a span of more than `_MATCHED_SPAN_CAP`
+    distinct pairs is refused whole, and a pair that does not resolve (or
+    resolves to a 0 id) refuses the file rather than seeding the resolved half
+    of a multi-episode span. A refused file is simply not seeded - import-time
+    assignment places or refuses it under the full guard set.
     """
 
+    # Full-season parses (Sonarr's own fullSeason flag) never seed, regardless
+    # of span - a <= cap season would otherwise slip past the pair count below.
+    if full_season:
+        return []
     pairs = list(dict.fromkeys((ep.season, ep.episode) for ep in parsed))
     if not pairs or len(pairs) > _MATCHED_SPAN_CAP:
         return []

@@ -74,7 +74,7 @@ from .sonarr_import_plan import (
     translate_download_path,
 )
 from .sonarr_mapper import FileEpisodeMapper
-from .sonarr_parse import parsed_episodes, video_file_entries
+from .sonarr_parse import parsed_episodes, parsed_full_season, video_file_entries
 
 # RefreshMonitoredDownloads is quick (Sonarr re-scans its clients). Poll its
 # command status up to this many times, sleeping this long between, before
@@ -747,7 +747,11 @@ class ImportReconciler:
                     record = self.cache_store.get_sonarr_parse(base)
                     if not record:
                         continue
-                    file_ids = episode_ids_for_parsed(parsed_episodes(record), ep_id_map)
+                    file_ids = episode_ids_for_parsed(
+                        parsed_episodes(record),
+                        ep_id_map,
+                        full_season=parsed_full_season(record),
+                    )
                     # First claim in file order wins: assignment defers a later
                     # file whose ids collide, so the seed refuses it the same way.
                     if file_ids and not any(i in claimed for i in file_ids):

@@ -20,7 +20,7 @@ from pearlarr.config import Arr
 from pearlarr.mappings import ExternalIds, MappingEntry
 from pearlarr.run_services import RunServices
 from pearlarr.seadex_gateway import SeaDexMiss
-from pearlarr.seadex_types import ParsedEpisode, SeadexDict, SonarrEpisode
+from pearlarr.seadex_types import ParsedEpisode, SeadexDict, SonarrEpisode, SonarrParse
 from pearlarr.sonarr_episodes import (
     SONARR_FETCH_WORKERS,
     SonarrEpisodes,
@@ -471,9 +471,11 @@ class _ParseSonarr:
         self._result = result
         self.calls: list[str] = []
 
-    def parse(self, filename: str) -> list[ParsedEpisode] | None:
+    def parse(self, filename: str) -> SonarrParse | None:
         self.calls.append(filename)
-        return self._result
+        # Wrap the scripted episodes into the boundary's SonarrParse shape; these
+        # negative-cache tests never exercise the full-season flag.
+        return None if self._result is None else SonarrParse(episodes=self._result)
 
 
 class TestParseEpisodesNegativeCache:
