@@ -177,6 +177,10 @@ class ImportExecutor:
         self._path_mappings: list[RemotePathMapping] | None = None
         self._translated_paths: dict[str, str] = {}
 
+        # Dead-tracked downloads whose folder scan came back EMPTY (the one
+        # genuinely stuck fallback shape), warned once a run - not every poll.
+        self._warned_empty_folder: set[str] = set()
+
     def reset(self) -> None:
         """Drop the per-run import scratch (run-start, via get_items)."""
 
@@ -189,6 +193,7 @@ class ImportExecutor:
         self._history_verdicts = {}
         self._path_mappings = None
         self._translated_paths = {}
+        self._warned_empty_folder = set()
 
     def refresh_downloads(self) -> None:
         """Queue RefreshMonitoredDownloads (throttled) and wait for it, best-effort.
@@ -329,16 +334,28 @@ class ImportExecutor:
         costs one extra GET. A downloadId scan answering `[]` is NOT a trigger
         (Sonarr answered "no files visible yet"; the existing retry semantics
         apply). Returns None only when the active scan(s) failed outright.
+
+        NOISE OWNERSHIP: the downloadId scan fails silently (its client warn
+        would brand every dead-tracked poll with a misleading "will retry"
+        right before the fallback handles it), and this method surfaces the one
+        line each outcome deserves: the dead-tracked note on the first probe, a
+        once-per-run warning when a dead-tracked download's folder scan finds
+        NOTHING (the genuinely stuck shape - untranslated path, deleted files),
+        and the folder-scan client warn when the fallback fetch itself fails.
         """
 
         if pending.infohash not in self._folder_pinned:
             candidates = self.sonarr.manual_import_candidates(pending=pending)
             if candidates is not None:
                 return _CandidateScan(candidates, omit_download_id=False)
+            self.logger.debug(
+                f"{content_path}: downloadId scan failed for {pending.display_label} - trying the folder fallback"
+            )
 
         verdict = self._probe_history(pending)
+        folder = self._sonarr_visible_path(content_path)
         folder_candidates = self.sonarr.manual_import_candidates_by_folder(
-            folder=self._sonarr_visible_path(content_path),
+            folder=folder,
             title=pending.display_label,
         )
         if folder_candidates is None:
@@ -349,6 +366,14 @@ class ImportExecutor:
             # on it would wedge the record in a mode that can never see files
             # while the recoverable downloadId scan goes unretried.
             self._folder_pinned.add(pending.infohash)
+        elif verdict is not None and verdict.dead_tracked and pending.infohash not in self._warned_empty_folder:
+            # Dead-tracked + empty folder = silent retries until the record
+            # expires; say so once. A clean/unknown verdict self-heals by id.
+            self._warned_empty_folder.add(pending.infohash)
+            hub_warn(
+                f"{pending.display_label}: Sonarr won't serve this download by id and "
+                f"a scan of its folder found no files ({folder}) - will retry"
+            )
         return _CandidateScan(
             folder_candidates,
             omit_download_id=verdict is not None and verdict.dead_tracked,
@@ -395,7 +420,7 @@ class ImportExecutor:
 
         scan = self._scan_candidates(pending, content_path)
         if scan is None:
-            # Transient (timeout / non-200); the client already warned. Ask again.
+            # Transient (timeout / non-200); the folder-scan client warned. Ask again.
             return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
         candidates_by_basename = self._mapper.candidate_files(scan.candidates)

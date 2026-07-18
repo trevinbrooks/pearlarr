@@ -2,10 +2,9 @@
 
 `FileEpisodeMapper` turns the on-disk manual-import candidates for a completed
 download into the authoritative `basename -> episode ids` map, honoring OUR
-resolved set (never Sonarr's series-matched title parse): the grab-time map is
-taken as-is, every other on-disk leaf is parsed series-agnostically and placed
-into our resolved set via the pure `assign_episode_ids`. Owns the per-run
-on-disk parse cache.
+resolved set (Sonarr's parse informs, never decides): the grab-time map is
+taken as-is, every other on-disk leaf is parsed and placed into our resolved
+set via the pure `assign_episode_ids`. Owns the per-run on-disk parse cache.
 """
 
 import os
@@ -57,7 +56,7 @@ class FileEpisodeMapper:
 
         self.sonarr = sonarr
 
-        # Per-run, in-memory cache of the series-agnostic `/parse` of an on-disk
+        # Per-run, in-memory cache of the `/parse` of an on-disk
         # leaf (raw basename -> ParsedFileInfo), so the import poll loop sends a
         # given filename to Sonarr's parser at most once a run rather than every
         # poll. A /parse miss (None) is treated as transient and deliberately NOT
@@ -103,17 +102,20 @@ class FileEpisodeMapper:
     ) -> tuple[dict[str, list[int]], list[str]]:
         """Build the final `basename -> episode ids` map from OUR resolved set.
 
-        Identity is assigned off each file's series-agnostic parse against the live
-        series episode map - never Sonarr's series-matched title parse: a file's
-        `(season, episode)` is honored only *inside* our resolved set, an
-        absolute-numbered pack is mapped positionally onto it, and anything ambiguous
-        is returned as skipped (the caller warns and leaves it - the chosen safe
-        posture).
+        Identity never comes from Sonarr's series-matched title parse alone: a
+        file's parsed `(season, episode)` - from its name, or from Sonarr's
+        matched resolution of an absolute-only name - is honored only *inside*
+        our resolved set, an absolute-numbered pack is mapped positionally onto
+        it, and anything ambiguous is returned as skipped (the caller warns and
+        leaves it - the chosen safe posture).
 
         Files our grab-time `file_episode_map` already covers (the add-time
-        assignment) are taken as-is - no need to re-parse what we resolved at grab
-        time. Every other on-disk video leaf is parsed series-agnostically and handed
-        to the pure `assign_episode_ids`, which places it into our resolved set
+        assignment) keep their seeded ids untouched; when anything is left to
+        place, their parses are still fetched so the positional leg's
+        shared-absolute tell sees the whole batch (an earlier poll's placement
+        must not hide a v2 duplicate). Every uncovered on-disk video leaf is
+        handed to the pure `assign_episode_ids`, which places it into our
+        resolved set
         (`ordered_episode_ids`, the add-flow's season-sorted episodes - or, for a
         record predating that field, one synthesized from its seeds). When there is
         no set to scope against (an on-disk specials record whose grab-time parse
@@ -136,10 +138,10 @@ class FileEpisodeMapper:
         placed = set(ordered)
         ordered += [norm_base for norm_base in on_disk if norm_base not in placed]
 
-        # Honor our grab-time map (OUR add-time assignment) - no need to re-parse
-        # what we resolved at grab time. Intended files not yet on disk stay in the
-        # map so the planner detects them missing and retries (never silent-drops);
-        # only the on-disk leftovers the seed doesn't cover (e.g. a specials pack
+        # Honor our grab-time map (OUR add-time assignment) - seeded ids are
+        # taken as-is. Intended files not yet on disk stay in the map so the
+        # planner detects them missing and retries (never silent-drops); only
+        # the on-disk leftovers the seed doesn't cover (e.g. a specials pack
         # whose grab-time parse found nothing) are resolved from their parse.
         seeded: dict[str, list[int]] = {}
         for name, ids in pending.file_episode_map.items():
@@ -149,9 +151,19 @@ class FileEpisodeMapper:
         seeded_ids = {i for ids in seeded.values() for i in ids}
 
         leftover = [norm for norm in ordered if norm not in seeded]
-        parsed_by_file = {
-            norm_base: self._parsed_file_info(os.path.basename(on_disk[norm_base].path)) for norm_base in leftover
-        }
+        # Parse the WHOLE batch when anything is left to place: the positional
+        # leg's shared-absolute tell scans seeded files too, or a v1 placed on
+        # an earlier poll would hide its v2 (parses are cached per run).
+        # Mapped names are parsed BY NAME even when their files have moved out
+        # (a completed move-mode import) - a gone v1 must not blind the tell.
+        parsed_by_file: dict[str, ParsedFileInfo | None] = {}
+        if leftover:
+            for norm_base in ordered:
+                parsed_by_file[norm_base] = self._parsed_file_info(os.path.basename(on_disk[norm_base].path))
+            for name in pending.file_episode_map:
+                norm_base = normalize_basename(name)
+                if norm_base not in parsed_by_file:
+                    parsed_by_file[norm_base] = self._parsed_file_info(os.path.basename(name))
 
         # The set the leftovers assign into: ordered_episode_ids, or - for a record
         # predating that field - one synthesized from its seeds (so the old
@@ -180,10 +192,10 @@ class FileEpisodeMapper:
         return {**seeded, **result.assigned}, result.skipped
 
     def _parsed_file_info(self, raw_base: str) -> ParsedFileInfo | None:
-        """Series-agnostic parse of one on-disk leaf, cached per run.
+        """Sonarr `/parse` of one on-disk leaf, cached per run.
 
-        Prefers Sonarr's `/parse` `parsedEpisodeInfo` (it handles absolute
-        numbering); on a transient parse failure (None) falls back to an offline
+        Carries the name-parsed numbers plus Sonarr's series-matched pairs;
+        on a transient parse failure (None) falls back to an offline
         `SxxExx` regex - without caching - so a momentary Sonarr hiccup neither
         strands a correctly-named file nor sticks for the rest of the run.
         """

@@ -479,6 +479,9 @@ def parse_se_from_filename(name: str) -> ParsedFileInfo | None:
     `ParsedFileInfo` (season + episode). Returns None when the name carries
     no `SxxExx` (an absolute-numbered or unparseable leaf) - those are left to
     Sonarr's parse or the absolute-index leg, never guessed from a bare number.
+    Marked `offline` because the regex knows nothing about absolute numbers: a
+    dual-numbered name ("S01E12 - 12") parsed here would otherwise launder its
+    lost absolute into a "known" parse and blind the positional leg's tell.
     """
 
     m = _SXXEXX.search(name)
@@ -487,7 +490,12 @@ def parse_se_from_filename(name: str) -> ParsedFileInfo | None:
     return ParsedFileInfo(
         season_number=int(m.group(1)),
         episode_numbers=(int(m.group(2)),),
+        offline=True,
     )
+
+
+# One file plausibly spans a double or triple episode, never more.
+_MATCHED_SPAN_CAP = 3
 
 
 @dataclass(frozen=True)
@@ -516,31 +524,88 @@ def _exact_episode_ids(
     treated as unplaced and skipped rather than half-imported). A missing season
     collapses to `SONARR_MISSING_KEY`, matching `build_episode_id_map`.
 
+    A name with no `(season, episode)` of its own falls back to Sonarr's
+    series-MATCHED pairs (`matched_episodes` - how an absolute-only name gets
+    its concrete season mapping), but ONLY under scope enforcement: membership
+    in `resolved_set` is what keeps Sonarr's series match from deciding
+    identity on its own, so the matched pairs never apply unscoped. A matched
+    pair also carries Sonarr's own episode id when present; it must AGREE with
+    our map's id for the same numbers, so a wrong-series title match whose
+    numbers coincide with ours is refused. Junk duplicate pairs collapse to
+    one claim before the every-pair check. A full-season parse (or more
+    distinct matched claims than `_MATCHED_SPAN_CAP`) is never borrowed -
+    Sonarr matches a bare "S01" name to the WHOLE season, and one junk file
+    must not swallow it. A borrowed span must also cover the name's own
+    absolute numbers: a "12-13" file whose match resolved only E12 would
+    otherwise half-import.
+
     Normally an id must also be inside `resolved_set` (our per-entry scope, which
     keeps an episode another preferred torrent owns out). When `allow_unscoped` is
     set - only when we have NO resolved set to scope against (an empty
     `ordered_episode_ids`, e.g. a record grabbed before specials resolution
     populated it) - the membership check is dropped so a correctly-named file still
     lands on its real series episode instead of sticking forever. This trusts Sonarr
-    for an UNAMBIGUOUS `(season, episode)` only; absolute numbers never reach here.
+    for an UNAMBIGUOUS name-parsed `(season, episode)` only; absolute numbers and
+    matched pairs never reach the unscoped arm.
     """
 
-    if info is None or not info.episode_numbers:
+    if info is None:
+        return []
+    claims: list[tuple[int | None, int, int | None]] = [
+        (info.season_number, episode, None) for episode in info.episode_numbers
+    ]
+    borrowed = False
+    # Full-season parses (bare "S01") match the whole season and never borrow.
+    if not claims and not allow_unscoped and not info.full_season:
+        claims = [(matched.season_number, matched.episode_number, matched.id) for matched in info.matched_episodes]
+        borrowed = True
+    claims = list(dict.fromkeys(claims))
+    # The cap counts DISTINCT borrowed (season, episode) pairs (junk wire
+    # duplicates collapse): a wider span is the season-pack shape sans flag.
+    span = len({(season, episode) for season, episode, _ in claims})
+    if not claims or (borrowed and span > _MATCHED_SPAN_CAP):
+        return []
+    # A borrowed span must also COVER the name's own absolutes: fewer matched
+    # pairs than absolute numbers is a partially-resolved multi-episode file,
+    # and placing the resolved half would half-import it.
+    if borrowed and info.absolute_episode_numbers and span != len(set(info.absolute_episode_numbers)):
         return []
     ids: list[int] = []
-    for episode in info.episode_numbers:
-        ep_id = ep_id_map.get(season_episode_key(info.season_number, episode))
-        if ep_id and (allow_unscoped or ep_id in resolved_set):
+    for season, episode, claimed_id in claims:
+        ep_id = ep_id_map.get(season_episode_key(season, episode))
+        if ep_id and claimed_id in (None, ep_id) and (allow_unscoped or ep_id in resolved_set):
             ids.append(ep_id)
-    if len(ids) != len(info.episode_numbers):
+    if len(ids) != len(claims):
         return []
-    return ids
+    # The triple dedup keeps (s,e,None) and (s,e,id) apart; collapse the
+    # resolved ids so one episode never reaches the wire twice.
+    return list(dict.fromkeys(ids))
 
 
 def _has_no_signal(info: ParsedFileInfo | None) -> bool:
-    """Whether a file carries no usable episode number at all (parse miss)."""
+    """Whether a file's NAME carries no usable episode number at all (parse miss).
+
+    Deliberately blind to `matched_episodes`: the degenerate single-file
+    fallback keys on this, and an out-of-set Sonarr match must not veto the
+    placement OUR resolution intends (Sonarr informs identity, never decides -
+    in either direction). Cardinality is `_spans_multiple`'s question.
+    """
 
     return info is None or (not info.episode_numbers and not info.absolute_episode_numbers)
+
+
+def _spans_multiple(info: ParsedFileInfo) -> bool:
+    """Whether Sonarr's evidence says the file holds MORE than one episode.
+
+    Identity never comes from the series match alone, but cardinality is a
+    different question: a full-season parse or a multi-pair match means
+    placing the file as ONE episode is a structural half-import, so the
+    degenerate single-file fallback refuses it. A single pair - agreeing,
+    disagreeing, or out of set - stays the fallback's business.
+    """
+
+    pairs = {(matched.season_number, matched.episode_number) for matched in info.matched_episodes}
+    return info.full_season or len(pairs) > 1
 
 
 def assign_episode_ids(
@@ -560,16 +625,26 @@ def assign_episode_ids(
     1. **Exact (season, episode):** a file whose parsed `(season, episode)`
        resolves to an id *inside* the resolved set is placed there (handles
        correctly-named files Sonarr just couldn't match to the series, and
-       per-season multi-season packs). With NO resolved set (an empty
-       `ordered_episode_ids`), this leg places against the live series episode
-       map directly, so a correctly-named file still imports rather than sticking.
+       per-season multi-season packs). An absolute-only name borrows Sonarr's
+       series-matched pair (`matched_episodes`) under the same in-set scoping,
+       so a batch spanning entries places exactly - never positionally. With NO
+       resolved set (an empty `ordered_episode_ids`), this leg places against
+       the live series episode map directly, so a correctly-named file still
+       imports rather than sticking (name-parsed pairs only; see
+       `_exact_episode_ids`).
     2. **Absolute index:** the leftover files are mapped onto the leftover resolved
        ids by absolute number - but ONLY when every leftover file carries a single
-       absolute number, the counts match 1:1, and no two files share an absolute
-       (a shared absolute is the tell of per-title-restart numbering across a
-       season boundary, e.g. a "... - 01" from two different sub-series, and is
-       refused rather than scrambled). Handles mis-numbered specials and
-       continuous absolute batches.
+       absolute number, the counts match 1:1, every parse in the batch is known
+       (a None parse - or the offline regex stand-in for one, which is blind
+       to absolutes - could be hiding a duplicate, so the leg fails closed), and
+       no two files ANYWHERE in the batch share an absolute (a shared absolute
+       is the tell of per-title-restart numbering across a season boundary,
+       e.g. a "... - 01" from two different sub-series, or a v2 of an
+       already-placed file; every absolute of every parse supplied is counted -
+       seeded files included - so neither a leg-1 placement nor an earlier
+       poll's can hide one sharer from this leg). Handles mis-numbered
+       specials and continuous absolute batches; anything short of that clean
+       shape is refused rather than scrambled.
     3. **Skip:** anything still unplaced is returned in `skipped` for the caller
        to warn on - never guessed.
 
@@ -577,7 +652,10 @@ def assign_episode_ids(
         ordered_files: On-disk video files (normalized basenames)
             in SeaDex order - the order only fixes deterministic output.
         parsed_by_file: Series-agnostic parse per file (None when Sonarr's
-            parse was unavailable and no SxxExx fell out of the name).
+            parse was unavailable and no SxxExx fell out of the name). May
+            cover MORE files than `ordered_files` - the shared-absolute tell
+            scans every parse supplied so an already-seeded file still exposes
+            a duplicate, but only `ordered_files` are ever placed.
         ordered_episode_ids: The resolved episode ids, season-order.
         ep_id_map: `(season, episode) -> id` over ALL the series' episodes;
             membership in the resolved set does the scoping, so an exact parse
@@ -629,11 +707,28 @@ def assign_episode_ids(
         if info is not None and len(info.absolute_episode_numbers) == 1:
             abs_by_file[name] = info.absolute_episode_numbers[0]
 
+    # The restart-numbering tell is a BATCH property, counting every absolute
+    # of every parse supplied - seeded files included, or a v1 placed on an
+    # earlier poll would hide its v2 from this leg. Deduped per parse: the
+    # tell is two FILES sharing an absolute, not junk repeats within one.
+    batch_absolutes = [
+        number
+        for parsed in parsed_by_file.values()
+        if parsed is not None
+        for number in dict.fromkeys(parsed.absolute_episode_numbers)
+    ]
+    # A parse the caller couldn't get (None), or the offline regex stand-in
+    # for one (blind to absolutes: "S01E12 - 12" would launder its lost 12),
+    # may be hiding a duplicate - the tell's input is incomplete, so the leg
+    # fails CLOSED, the same posture a hiccuped leftover gets from the count.
+    all_parses_known = all(parsed is not None and not parsed.offline for parsed in parsed_by_file.values())
+
     clean_absolute = (
         bool(abs_by_file)
+        and all_parses_known
         and len(abs_by_file) == len(deferred)  # every leftover has one absolute
         and len(abs_by_file) == len(leftover_ids)  # 1:1 with the leftover ids
-        and len(set(abs_by_file.values())) == len(abs_by_file)  # no shared absolute (restart numbering)
+        and len(set(batch_absolutes)) == len(batch_absolutes)  # no shared absolute (restart numbering)
     )
 
     skipped: list[str] = []
@@ -643,14 +738,15 @@ def assign_episode_ids(
     elif (
         len(deferred) == 1
         and len(leftover_ids) == 1
-        and _has_no_signal(
-            parsed_by_file.get(deferred[0]),
-        )
+        and (single := parsed_by_file.get(deferred[0])) is not None
+        and _has_no_signal(single)
+        and not _spans_multiple(single)
     ):
-        # Degenerate positional: one leftover file, one leftover episode, and the
-        # file carries NO usable number - it is that episode (the single-file
-        # fallback). A file that parsed to a concrete episode OUTSIDE our set is
-        # not swept up here; it stays skipped.
+        # Degenerate positional: one leftover file, one leftover episode, and
+        # Sonarr SAW the name and found no number - it is that episode (the
+        # single-file fallback). A None parse is no evidence at all (a blip
+        # heals next poll), and multi-episode matched evidence means placing
+        # as one episode would half-import - both refuse instead.
         assigned[deferred[0]] = [leftover_ids[0]]
     else:
         skipped = list(deferred)

@@ -46,8 +46,9 @@ MANUAL_IMPORT_TIMEOUT_S = 120
 class _ParsedEpisode(BaseModel):
     """One `ParseResource.episodes[]` entry, reduced to the two numbers read.
 
-    Private to `SonarrClient.parse` - the only consumer of the
-    series-matched array (the file size comes from the SeaDex file list).
+    Private to `SonarrClient.parse`, the sweep-side reader of the
+    series-matched array; the import side reads the same array through
+    `ParsedFileInfo.matched_episodes` (which also keeps Sonarr's id).
     """
 
     model_config = ConfigDict(frozen=True, extra="ignore")
@@ -266,15 +267,15 @@ class SonarrClient(AbstractSonarrClient):
 
     @override
     def parse_episode_info(self, filename: str) -> ParsedFileInfo | None:
-        """Parse a filename into SERIES-AGNOSTIC season / episode / absolute numbers.
+        """Parse a filename into season / episode / absolute numbers via `/api/v3/parse`.
 
-        Reads the `/api/v3/parse` response's `parsedEpisodeInfo` - the numbers
-        Sonarr lifts straight from the release NAME - rather than its `episodes`
-        array (Sonarr's series-*matched* episodes, which is empty whenever the
-        title can't be matched to a library series). That field is what lets the
-        import place a specials / alias-titled release Sonarr can't match: the
-        season+episode (or absolute) numbers are still present, and OUR resolved
-        mapping turns them into episode ids.
+        The response's `parsedEpisodeInfo` carries the SERIES-AGNOSTIC numbers
+        Sonarr lifts straight from the release NAME - populated even for a
+        specials / alias-titled release Sonarr can't match to a library
+        series. Its `episodes` array (the series-MATCHED resolution, the only
+        place an absolute-only name gets a concrete `(season, episode)`) rides
+        along as `matched_episodes`; assignment consults it strictly inside
+        OUR resolved set (`_exact_episode_ids`).
 
         Returns the parsed info, or None (with a warning) on a non-200 or a
         transient request error, so the caller can retry.
@@ -321,12 +322,15 @@ class SonarrClient(AbstractSonarrClient):
         makes Sonarr scan the *library* folder rather than the download, returning
         the wrong files.)
 
-        Returns `None` (with a warning) on a non-200 *or* a transient request
-        error (timeout / connection drop) - both mean "ask again", e.g. Sonarr is
-        still building the parse over a slow remote mount. Returns an empty list
-        only when Sonarr genuinely reports no candidates (the files aren't visible
-        on its mount yet). The caller treats both as keep-waiting, but the
-        distinction keeps the intent clear.
+        Returns `None` SILENTLY on a non-200 *or* a transient request error
+        (timeout / connection drop) - both mean "ask again", e.g. Sonarr is
+        still building the parse over a slow remote mount. Quiet by design:
+        the executor immediately falls back to the folder scan, which owns the
+        poll's messaging (a warning here would brand every dead-tracked
+        download's 500 with a misleading "will retry" right before the
+        fallback handles it; a real outage still warns through the folder
+        scan's own template). Returns an empty list only when Sonarr genuinely
+        reports no candidates (the files aren't visible on its mount yet).
 
         Each raw ManualImportResource is validated into a
         `ManualImportCandidate` (`path` / `quality` /
@@ -343,7 +347,7 @@ class SonarrClient(AbstractSonarrClient):
                 # non-recommended file, whose candidate a filtered scan would drop.
                 "filterExistingFiles": "false",
             },
-            warn=f"Could not fetch manual-import candidates for {pending.title} ({{detail}}) - will retry",
+            warn=None,
             timeout=MANUAL_IMPORT_TIMEOUT_S,
         )
         if raw is None:

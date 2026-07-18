@@ -10,7 +10,7 @@ straight into cache.db and every mapping source is disabled, so the scan finds
 zero series, nothing leaves loopback, and the end-of-run blocking monitor is
 the only thing driving the import.
 
-Three scenarios pin the dead-loop cure end to end:
+Four scenarios pin the dead-loop cure end to end:
 
 * DEAD-TRACKED: the downloadId scan 500s forever (Sonarr's poisoned tracked
   download), history's newest relevant event is `downloadFolderImported`, and
@@ -23,6 +23,10 @@ Three scenarios pin the dead-loop cure end to end:
   back to the downloadId scan and imports through the normal tracked shape.
 * UNSCANNABLE: both scans fail every poll; the record defers (never drops)
   and the folder-scan warn template fires.
+* ABSOLUTE-BATCH: dead-tracked with the real Thighs incident's file shape - an
+  empty grab-time map, absolute-only names resolved through Sonarr's
+  series-matched `/parse` pairs, and an out-of-entry sibling episode + NC
+  extra sharing the folder that must be skipped, never veto the batch.
 """
 
 import json
@@ -64,6 +68,15 @@ _EPISODES: tuple[tuple[int, str], ...] = (
     (301001, "Demo Batch - S01E01 (BD 1080p) [Thighs].mkv"),
     (301002, "Demo Batch - S01E02 (BD 1080p) [Thighs].mkv"),
 )
+# The absolute-batch incident shape: two in-entry episodes (absolute names,
+# no SxxExx), an out-of-entry sibling, and an NC extra the video filter drops.
+_ABS_FILES: tuple[tuple[int, str], ...] = (
+    (301001, "Demo Batch - 01 (BD 1080p) [Thighs].mkv"),
+    (301002, "Demo Batch - 02 (BD 1080p) [Thighs].mkv"),
+)
+_ABS_SIBLING = "Demo Batch - 03 (BD 1080p) [Thighs].mkv"
+_ABS_EXTRA = "Demo Batch - NCED1 (BD 1080p) [Thighs].mkv"
+_ABSOLUTE_NUMBER = re.compile(r" - (\d{2}) ")
 _IMPORTED_EVENT_DATE = "2026-06-20T14:05:11Z"
 _DEAD_TRACKED_NOTE = (
     "Sonarr recorded this download as imported on 2026-06-20 and won't serve it by id - "
@@ -93,6 +106,12 @@ class _Scenario:
     ready_timeout: int = 30
     """The run's `imports.ready_timeout`; small for the deadline scenario."""
 
+    absolute_batch: bool = False
+    """Replay the real Thighs incident shape: an EMPTY grab-time map,
+    absolute-only names, and an out-of-entry sibling + NC extra in the folder.
+    The import must self-heal through `/parse`'s series-matched pairs, with
+    the sibling skipped instead of vetoing the batch."""
+
 
 _DEAD_TRACKED = _Scenario(heal_download_scan=False, folder_scan="candidates", history_event="downloadFolderImported")
 _TRANSIENT = _Scenario(heal_download_scan=True, folder_scan="empty", history_event="grabbed")
@@ -101,6 +120,12 @@ _UNSCANNABLE = _Scenario(
     folder_scan="error",
     history_event="downloadFolderImported",
     ready_timeout=1,
+)
+_ABSOLUTE_BATCH = _Scenario(
+    heal_download_scan=False,
+    folder_scan="candidates",
+    history_event="downloadFolderImported",
+    absolute_batch=True,
 )
 
 
@@ -166,7 +191,7 @@ class _World:
         with self.lock:
             healed = self.scenario.heal_download_scan and self.folder_scans > 0
             self.download_scan_statuses.append(200 if healed else 500)
-            return _candidates() if healed else None
+            return _candidates(self.scenario.absolute_batch) if healed else None
 
     def folder_scan_response(self) -> list[Json] | None:
         """The next folder-scan body (None = serve a 500) - and count the activation."""
@@ -175,7 +200,7 @@ class _World:
             self.folder_scans += 1
             match self.scenario.folder_scan:
                 case "candidates":
-                    return _candidates()
+                    return _candidates(self.scenario.absolute_batch)
                 case "empty":
                     return []
                 case "error":
@@ -205,6 +230,20 @@ class _World:
                     "size": 1000,
                 }
             rows.append(row)
+        if self.scenario.absolute_batch:
+            # The sibling's episode EXISTS in the series but not in the entry,
+            # so its rejection exercises the resolved-set scope gate.
+            rows.append(
+                {
+                    "id": 301003,
+                    "seriesId": _SERIES_ID,
+                    "seasonNumber": 1,
+                    "episodeNumber": 3,
+                    "monitored": True,
+                    "hasFile": False,
+                    "episodeFileId": 0,
+                },
+            )
         return rows
 
     def history_payload(self) -> Json:
@@ -242,11 +281,45 @@ class _World:
             ]
 
 
-def _candidates() -> list[Json]:
+def _parse_payload(title: str) -> Json:
+    """Sonarr's `/parse` for the absolute batch, mirroring the live wire.
+
+    `parsedEpisodeInfo` carries the absolute number with NO (season, episode);
+    the series-MATCHED `episodes` array resolves it to a concrete pair (with
+    Sonarr's episode id, so the id-consistency check runs end to end). A name
+    without a two-digit absolute folds to a null object and no episodes - the
+    live NC-extra shape, though the video filter keeps such files from ever
+    being parsed in this scenario.
+    """
+
+    match = _ABSOLUTE_NUMBER.search(title)
+    if match is None:
+        return {"title": title, "parsedEpisodeInfo": None, "episodes": []}
+    number = int(match.group(1))
+    return {
+        "title": title,
+        "parsedEpisodeInfo": {
+            "seasonNumber": 0,
+            "episodeNumbers": [],
+            "absoluteEpisodeNumbers": [number],
+            "special": False,
+        },
+        "episodes": [{"id": 301000 + number, "seasonNumber": 1, "episodeNumber": number}],
+    }
+
+
+def _scenario_files(absolute: bool) -> list[str]:
+    """The on-disk file names a scan serves (sibling + extra exist on disk only)."""
+
+    named = _ABS_FILES if absolute else _EPISODES
+    return [name for _, name in named] + ([_ABS_SIBLING, _ABS_EXTRA] if absolute else [])
+
+
+def _candidates(absolute: bool) -> list[Json]:
     """The on-disk candidates either scan mode serves for the download folder."""
 
     out: list[Json] = []
-    for number, (_, name) in enumerate(_EPISODES, start=1):
+    for number, name in enumerate(_scenario_files(absolute), start=1):
         out.append(
             {
                 "id": number,
@@ -347,6 +420,8 @@ class _SonarrHandler(_JsonHandler):
             self._send_json({"page": 1, "pageSize": 1000, "totalRecords": 0, "records": []})
         elif route == "/api/v3/history":
             self._send_json(self.world.history_payload())
+        elif route == "/api/v3/parse":
+            self._send_json(_parse_payload(request.params.get("title", "")))
         elif route == "/api/v3/manualimport":
             self._manual_import(request)
         elif route == "/api/v3/command":
@@ -463,22 +538,31 @@ def _serve(world: _World) -> Generator[tuple[str, str]]:
             server.server_close()
 
 
-def _seed_pending(cache_path: Path, checksum: str) -> None:
-    """Plant the carried-over record a prior run's grab would have left behind."""
+def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
+    """Plant the carried-over record a prior run's grab would have left behind.
 
+    The absolute-batch scenario's record carries an EMPTY grab-time map (the
+    incident state: grab time resolved nothing, import time must self-heal);
+    its `seadex_files` still name the episode files - never the extra, which
+    only exists on disk.
+    """
+
+    named = _ABS_FILES if scenario.absolute_batch else _EPISODES
     record = PendingImport(
         infohash=_INFOHASH,
         series_id=_SERIES_ID,
-        file_episode_map={normalize_basename(name): [ep_id] for ep_id, name in _EPISODES},
+        file_episode_map={}
+        if scenario.absolute_batch
+        else {normalize_basename(name): [ep_id] for ep_id, name in named},
         episode_ids=[],
         release_group=_GROUP,
         is_dual_audio=False,
-        seadex_files=[name for _, name in _EPISODES],
+        seadex_files=[name for _, name in named],
         title=_TITLE,
         added_at=datetime.now().strftime(UPDATED_AT_STR_FORMAT),
         coverage="S01 E01-E02",
         url=None,
-        ordered_episode_ids=[ep_id for ep_id, _ in _EPISODES],
+        ordered_episode_ids=[ep_id for ep_id, _ in named],
     )
     store = CacheStore.load(str(cache_path), config_checksum=checksum)
     try:
@@ -540,7 +624,7 @@ def _drive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scenario: _Scenario)
         # descriptor matches what the run will stamp.
         checksum = AppConfig.load(str(config_path)).checksum()
         cache_path = tmp_path / "cache.db"
-        _seed_pending(cache_path, checksum)
+        _seed_pending(cache_path, checksum, scenario)
 
         ok = run_single(sonarr=True)
 
@@ -658,6 +742,35 @@ def test_transient_scan_blip_does_not_pin_folder_mode(
     assert len(files) == len(_EPISODES)
     for entry in files:
         assert entry.get("downloadId") == _INFOHASH
+
+
+def test_absolute_batch_empty_seed_self_heals_and_sibling_is_skipped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    outcome = _drive(tmp_path, monkeypatch, _ABSOLUTE_BATCH)
+    out = _flat(capsys.readouterr().out)
+
+    # The real Thighs incident shape: the entry's own files place exactly and
+    # import; the out-of-entry sibling is skipped + warned, never a veto.
+    assert outcome.ok is True
+    assert outcome.pending_after == frozenset()
+    assert 'imported title="Demo Batch · Thighs" files=2' in out
+    assert "complete imported=1 deferred=0 failed=0" in out
+    assert current_hub().counts.mark().errors == 0
+
+    # The sibling surfaced loudly, exactly once (per-run memo, not per poll).
+    assert out.count("1 file could not be matched to an episode and was not imported") == 1
+
+    # ONE ManualImport carrying exactly the two episode files on their matched
+    # ids; neither the sibling nor the extra ever reached the wire.
+    commands = outcome.world.manual_commands
+    assert len(commands) == 1
+    files = _body_files(commands[0][1])
+    assert {str(entry.get("path")): entry.get("episodeIds") for entry in files} == {
+        f"{_CONTENT_PATH}/{name}": [ep_id] for ep_id, name in _ABS_FILES
+    }
 
 
 def test_unscannable_download_defers_with_folder_warn(
