@@ -565,6 +565,18 @@ def kv_string(
     return f"{line} {value}"
 
 
+def compact_duration(seconds: float) -> str:
+    """Compact duration - "40s" / "2m" / "1h05m". Negative floors to "0s"."""
+
+    total = max(0, int(seconds))
+    if total >= 3600:
+        hours, minutes = divmod(total // 60, 60)
+        return f"{hours}h{minutes:02d}m"
+    if total >= 60:
+        return f"{total // 60}m"
+    return f"{total}s"
+
+
 def group_highlight(
     name: str | None,
     group: str | None,

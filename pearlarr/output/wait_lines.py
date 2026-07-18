@@ -35,6 +35,7 @@ from ..log import (
     STATE_WIDTH,
     SectionRule,
     StyledLine,
+    compact_duration,
     count_noun,
     format_elapsed,
     human_bytes,
@@ -390,12 +391,4 @@ def sparkline(samples: tuple[int, ...]) -> str:
 def _compact_eta(seconds: float) -> str:
     """A short `~` ETA, e.g. `"~2m"` / `"~1h05m"` / `"~40s"`."""
 
-    # Floor at 0: a negative ETA (an unsanitized producer edge) must never
-    # render "~-5s".
-    total = max(0, int(seconds))
-    if total >= 3600:
-        hours, minutes = divmod(total // 60, 60)
-        return f"~{hours}h{minutes:02d}m"
-    if total >= 60:
-        return f"~{total // 60}m"
-    return f"~{total}s"
+    return f"~{compact_duration(seconds)}"
