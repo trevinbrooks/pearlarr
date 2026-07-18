@@ -455,8 +455,8 @@ def test_parse_episode_info_decodes_absolute() -> None:
     in-set fallback for exactly this shape.
     """
 
-    respx.get(f"{_BASE}/parse").respond(json=sonarr_fixture("parse_crushru_abs14.json"))
-    info = _make_client().parse_episode_info("CrushRu.-.14.mkv")
+    respx.get(f"{_BASE}/parse").respond(json=sonarr_fixture("parse_glimmerzu_abs14.json"))
+    info = _make_client().parse_episode_info("GlimmerZu.-.14.mkv")
 
     assert info == ParsedFileInfo(
         season_number=0,
