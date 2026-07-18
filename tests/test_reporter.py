@@ -7,7 +7,7 @@ counters each `log_*` method bumps, the active-title attribution set by
 `log_al_title`, and that the summary renders without error on both the real
 and dry-run paths. Presentation is captured as EMITTED events (via the `emit`
 seam) and, where a test pins output, re-derived to lines through the shipped
-builders; most tests just assert on the `RunContext` mutations.
+builders. Most tests just assert on the `RunContext` mutations.
 
 The collaborators are real, not mocks: the reporter is built with the shared
 in-memory `FakeCacheStore` (typed by `AbstractCacheStore`) and a real
@@ -59,7 +59,7 @@ def _record(
 ) -> tuple[RunReporter, list[Event]]:
     """A real RunReporter (faked cache leaf, real gateway) plus its recorded events.
 
-    The reporter EMITS events through the recorder; tests that pin output re-derive
+    The reporter EMITS events through the recorder. Tests that pin output re-derive
     lines from the events. A real gateway with a faked cache store: the reporter
     only reads/updates its `al_cache` dict, so the real wiring runs without a
     network.
@@ -483,7 +483,7 @@ class TestSummaryPendingCounters:
         assert not any("importing" in m for m in messages)
 
     def test_this_run_grab_shows_added_only_no_queued(self) -> None:
-        # REGRESSION (double-report): a this-run grab is `added`; with the counters
+        # REGRESSION (double-report): a this-run grab is `added`. With the counters
         # left at 0 (the engine never bumps them for this-run grabs), the summary
         # shows `added` but no `queued` row for the same torrent.
         ctx = RunContext(arr=Arr.SONARR)
@@ -621,7 +621,7 @@ class TestLogSeadexAction:
         assert "Show-NAN0" in joined
 
     def test_added_hashless_release_shows_group_not_none(self) -> None:
-        # A hashless/private torrent has name=None; the row must fall back to the
+        # A hashless/private torrent has name=None. The row must fall back to the
         # release group, never render the literal "None".
         logged, messages = _action_messages(
             [ReleaseOutcome(outcome=AddOutcome.ADDED, name=None, group="NAN0")],
@@ -658,7 +658,7 @@ class TestLogSeadexAction:
         assert "waiting to import" not in joined
 
     def test_mixed_added_and_already_added_reads_adding(self) -> None:
-        # A fresh grab happened, so the headline is "adding"; the per-release rows
+        # A fresh grab happened, so the headline is "adding". The per-release rows
         # disambiguate (one added, one still downloading).
         _, messages = _action_messages(
             [
@@ -695,7 +695,7 @@ class TestLogSeadexAction:
 
     def test_recommended_group_tags_are_sorted(self) -> None:
         # G2: the tags ride a frozenset (StrEnum hash is per-process random), so
-        # the producer sorts them; feed several unordered and pin the emitted order.
+        # the producer sorts them. Feed several unordered and pin the emitted order.
         reporter, events = _record()
         seadex_dict = {
             "NAN0": rg_group(

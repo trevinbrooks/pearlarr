@@ -1,11 +1,11 @@
 {
-    "title": "[Group] To Love-Ru Darkness - 01 [BDRip].mkv",
+    "title": "[Group] To Crush-Ru Darkness - 01 [BDRip].mkv",
     "parsedEpisodeInfo": {
-        "releaseTitle": "[Group] To Love-Ru Darkness - 01 [BDRip]",
-        "seriesTitle": "To Love-Ru Darkness",
+        "releaseTitle": "[Group] To Crush-Ru Darkness - 01 [BDRip]",
+        "seriesTitle": "To Crush-Ru Darkness",
         "seriesTitleInfo": {
-            "title": "To Love-Ru Darkness",
-            "titleWithoutYear": "To Love-Ru Darkness",
+            "title": "To Crush-Ru Darkness",
+            "titleWithoutYear": "To Crush-Ru Darkness",
             "year": 0
         },
         "quality": {
@@ -51,8 +51,8 @@
         "releaseType": "singleEpisode"
     },
     "series": {
-        "title": "To LOVE-Ru",
-        "sortTitle": "to loveru",
+        "title": "To CRUSH-Ru",
+        "sortTitle": "to crushru",
         "status": "ended",
         "ended": true,
         "overview": "When an alien from the planet Deviluke runs away and goes into hiding on earth, she meets a human named Yuuki Rito. Watch as she wants to get married to him while he wants no part of it",
@@ -103,7 +103,7 @@
             }
         ],
         "year": 2008,
-        "path": "/tv/To LOVE-Ru (2008)",
+        "path": "/tv/To CRUSH-Ru (2008)",
         "qualityProfileId": 6,
         "seasonFolder": true,
         "monitored": true,
@@ -117,9 +117,9 @@
         "firstAired": "2008-04-04T00:00:00Z",
         "lastAired": "2015-10-29T00:00:00Z",
         "seriesType": "standard",
-        "cleanTitle": "toloveru",
+        "cleanTitle": "tocrushru",
         "imdbId": "tt1216222",
-        "titleSlug": "to-love-ru",
+        "titleSlug": "to-crush-ru",
         "certification": "TV-MA",
         "genres": [
             "Action",

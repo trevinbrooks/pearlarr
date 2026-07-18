@@ -27,7 +27,7 @@ from .seadex_types import (
 from .sonarr_client import AbstractSonarrClient
 
 # Bounded concurrency for the episode/parse network fan-out. Only used when
-# advanced.sleep_time == 0; must stay <= the session's pool_maxsize (RunDeps.build).
+# advanced.sleep_time == 0. Must stay <= the session's pool_maxsize (RunDeps.build).
 # Episode fetches are I/O-bound, but a typical Sonarr (often behind a reverse
 # proxy) saturates around ~10-12 concurrent, so larger values don't help.
 SONARR_FETCH_WORKERS = 12
@@ -37,8 +37,8 @@ def fetch_workers(config: AppConfig) -> int:
     """Concurrency for the episode / parse network fan-out.
 
     Sequential (1) whenever a rate-limit throttle is requested
-    (`advanced.sleep_time > 0`), so the bounded pool never bypasses the user's
-    intended throttle; otherwise the bounded pool size. Shared by the episode
+    (`advanced.sleep_time > 0`), so the bounded pool never bypasses the configured
+    throttle. Otherwise, the bounded pool size. Shared by the episode
     prefetch and the parse warm, so it lives at module scope, owned by neither.
     """
 
@@ -84,7 +84,7 @@ def check_ep_by_anibridge(
     """Check whether a Sonarr episode is covered by an AniBridge mapping.
 
     `tvdb_mappings` maps a season to its inclusive `(start, end)` TVDB episode
-    ranges: an empty list matches the whole season; an end of None is open-ended.
+    ranges: an empty list matches the whole season, an end of None is open-ended.
     """
 
     ep_season = ep.season_number if ep.season_number is not None else -1
@@ -126,7 +126,7 @@ class SonarrEpisodes:
                 gateway/reporter are unpacked off it).
             sonarr: The strategy's Sonarr client (built once,
                 reused so a multi-season series fetches its episodes once).
-            services: The services hub; `prefetch` calls into it to
+            services: The services hub. `prefetch` calls into it to
                 resolve AniList ids and the needs-scan gate.
         """
 
@@ -142,7 +142,7 @@ class SonarrEpisodes:
 
         # Per-run cache of the raw Sonarr episode fetch, keyed by series id. A
         # multi-season series maps to several AniList ids, each of which would
-        # otherwise re-fetch the same whole-series episode list; cache it for the
+        # otherwise re-fetch the same whole-series episode list. Cache it for the
         # run so the network round-trip happens once per series. Reset at run start
         # (collect_series, driven by the strategy's get_items hook).
         self._ep_list_cache: dict[int, list[SonarrEpisode]] = {}
@@ -159,7 +159,7 @@ class SonarrEpisodes:
         return self._series_fp
 
     def collect_series(self) -> list[SonarrItem]:
-        """Enumerate the AniList-mapped Sonarr series; the run-start reset point.
+        """Enumerate the AniList-mapped Sonarr series. The run-start reset point.
 
         Drops the per-run episode cache and re-fingerprints the series-id set so a
         fresh run always re-reads the current library. Called once per run from the
@@ -190,7 +190,7 @@ class SonarrEpisodes:
         thread pool collapses that to a few seconds while keeping every list
         FRESH - the grab/skip decision reads each episode's existing file, so the
         lists are deliberately not persisted across runs. Only the network fetch
-        runs in the pool; the in-memory `_ep_list_cache` is populated on the
+        runs in the pool. The in-memory `_ep_list_cache` is populated on the
         main thread (the cache and mappings are not thread-safe). A series whose
         fetch fails is left unwarmed and re-fetched (and logged) by
         `get_ep_list` on the main thread during the loop.
@@ -205,7 +205,7 @@ class SonarrEpisodes:
             items: The run's series list (already narrowed for
                 a single-series run).
             progress: Boot cockpit step fed per-series
-                fraction + "done/total" detail as each fetch completes; None
+                fraction + "done/total" detail as each fetch completes. None
                 outside the cockpit.
 
         Returns:
@@ -235,7 +235,7 @@ class SonarrEpisodes:
             return 0
 
         def warm(series_id: int) -> tuple[int, list[SonarrEpisode] | None]:
-            # quiet: a transient miss here isn't logged from a worker; get_ep_list
+            # quiet: a transient miss here isn't logged from a worker. get_ep_list
             # retries and logs it on the main thread if it still fails. A RAISE (not
             # just a None return) degrades to None too, so one bad series can't abort
             # the whole concurrent sweep (the docstring's per-series degradation).
@@ -271,7 +271,7 @@ class SonarrEpisodes:
         repeated polls and never observe the import landing - the record would time
         out as "still importing" (or, in `move` mode where the file leaves the
         download folder, never be confirmed at all). So this fetches fresh every
-        call and refreshes the per-run cache for any later reader; a transient
+        call and refreshes the per-run cache for any later reader. A transient
         fetch failure falls back to the last-known list (or empty) so a later poll
         simply retries.
         """
@@ -301,7 +301,7 @@ class SonarrEpisodes:
 
         # Get all the episodes for the whole series. The fetch is per-series (not
         # per-AniList-id), so a multi-season series resolving to several ids would
-        # otherwise re-request the identical list; cache it per series for the run
+        # otherwise re-request the identical list. Cache it per series for the run
         # and only do the per-id filtering below on the shared, read-only list.
         ep_list = self._ep_list_cache.get(sonarr_series_id)
         if ep_list is None:
@@ -311,20 +311,20 @@ class SonarrEpisodes:
             self._ep_list_cache[sonarr_series_id] = ep_list
 
         # Filter down here by various things. Resolve the include test once by
-        # mode rather than re-branching on a string for every episode; the
+        # mode rather than re-branching on a string for every episode. The
         # comprehension preserves ep_list order, exactly as the append loop did.
         if mode is MappingMode.ANIME_IDS:
             if mapping.source is MappingSource.ANIBRIDGE:
                 # Degraded AniBridge entry (imdb/tmdb-resolved, so no tvdb season
                 # ranges): tvdb_season=-1 would otherwise grab the wrong episodes.
-                # Skip; process_al_id surfaces NO_EPISODES + the AniBridge warning.
+                # Skip. process_al_id surfaces NO_EPISODES + the AniBridge warning.
                 return []
             final_ep_list = [ep for ep in ep_list if check_ep_by_anime_ids(ep=ep, tvdb_season=tvdb_season)]
         else:
             tvdb_mappings = mapping.tvdb_mappings or {}
             if not tvdb_mappings:
                 # AniBridge attached no usable per-season ranges, so nothing resolves.
-                # Return empty; process_al_id surfaces the visible NO_EPISODES skip.
+                # Return empty. process_al_id surfaces the visible NO_EPISODES skip.
                 return []
             final_ep_list = [ep for ep in ep_list if check_ep_by_anibridge(ep=ep, tvdb_mappings=tvdb_mappings)]
 
@@ -386,8 +386,8 @@ class SonarrEpisodes:
         Args:
             final_ep_list: Season-filtered episodes to slice.
             al_id: AniList ID, used to resolve the expected episode count.
-            mapping: SeaDex mapping (read for `tvdb_epoffset` and `tvdb_season`;
-                a `tvdb_season` of -1 means single-season offset slice).
+            mapping: SeaDex mapping (read for `tvdb_epoffset` and `tvdb_season`.
+                A `tvdb_season` of -1 means single-season offset slice).
         """
 
         # Slice the list to get the correct episodes, so any potential offsets

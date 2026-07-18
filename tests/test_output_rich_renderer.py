@@ -5,9 +5,9 @@ Pin ambient placement against the cockpit scopes (boot-ledger indent while the
 boot section is open, wait indent while the wait region is open, item indent
 while an item is being worked, column 0 under RUN alone), the unwind close that empties
 the frontier for a leg-fatal error, the S4 floors (third-party WARNING floor
-unless DEBUG; first-party INFO renders dim), the `file_only` and
+unless DEBUG, first-party INFO renders dim), the `file_only` and
 no-rich-console no-ops, trace rendering without locals, markup literalness,
-the begin_cycle fold reset, and the durable loop lines (NextRunScheduled; the
+the begin_cycle fold reset, and the durable loop lines (NextRunScheduled, the
 ReleaseSkipped/GrabFailed scan routing). The ENTRY-indent arm is pinned in
 `test_output_scan_render`.
 """
@@ -94,7 +94,7 @@ class TestPlacement:
     def test_mid_scan_indents_under_an_open_item(self) -> None:
         """ITEM is an indented context: import-flow diagnostics join the listing.
 
-        The folder-fallback lines fire between a series' entry blocks; they
+        The folder-fallback lines fire between a series' entry blocks. They
         indent with the listing instead of breaking it at the run margin.
         """
 
@@ -153,7 +153,7 @@ class TestUnwindPlacement:
             _warning("Sonarr run failed"),
         )
 
-        # RunFinished renders nothing itself; it just empties the frontier.
+        # RunFinished renders nothing itself. It just empties the frontier.
         assert _lines(stream)[-1] == "⚠ Sonarr run failed"
 
     def test_without_the_unwind_emit_the_error_indents_under_the_entry(self) -> None:
@@ -186,7 +186,7 @@ class TestUnwindPlacement:
 
     def test_a_repeat_run_finished_is_a_no_op(self) -> None:
         # A repeat close must not disturb an already-empty frontier (defense in
-        # depth; production emits it once per leg).
+        # depth, production emits it once per leg).
         renderer, stream = _renderer()
 
         _feed(
@@ -201,7 +201,7 @@ class TestUnwindPlacement:
 
 
 class TestFloors:
-    """Severity floors: third-party diagnostics floor at WARNING unless DEBUG; first-party honors the configured level."""
+    """Severity floors: third-party diagnostics floor at WARNING unless DEBUG. First-party honors the configured level."""
 
     def test_third_party_info_is_floored_at_the_default_level(self) -> None:
         renderer, stream = _renderer()
@@ -239,7 +239,7 @@ class TestFloors:
         assert str(text.style) == "grey50"
 
     def test_threshold_table(self) -> None:
-        """S4: first-party keeps console_level semantics; third-party floors at WARNING unless the configured level is DEBUG."""
+        """S4: first-party keeps console_level semantics. Third-party floors at WARNING unless the configured level is DEBUG."""
 
         assert diagnostic_threshold(logging.INFO, first_party=True) == logging.INFO
         assert diagnostic_threshold(logging.ERROR, first_party=True) == logging.INFO
@@ -274,7 +274,7 @@ class TestNoOps:
 class TestDurableLoopLines:
     """The scheduled-loop footer arm + the typed release-fact lines."""
 
-    # A Thursday; aware (the producer's contract) — the footer shows wall time.
+    # A Thursday, aware (the producer's contract) - the footer shows wall time.
     _AT = datetime(2026, 1, 1, 23, 5, tzinfo=timezone(timedelta(hours=-5)))
 
     def test_next_run_scheduled_prints_the_plain_footer(self) -> None:

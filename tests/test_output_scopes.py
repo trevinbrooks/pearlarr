@@ -140,7 +140,7 @@ def test_step_progress_emits_the_slow_heads_up_exactly_once() -> None:
 
     assert [s.label for s in recorder.of_type(BootStepSlow)] == ["Refreshing mappings"]
     progressed = recorder.of_type(BootStepProgressed)
-    # Fractions clamp to 0-1; the last detail sticks.
+    # Fractions clamp to 0-1. The last detail sticks.
     assert [(p.fraction, p.detail) for p in progressed] == [(0.25, "anime-ids"), (1.0, "anime-ids")]
 
 
@@ -304,5 +304,5 @@ def test_late_wait_emissions_demote() -> None:
 
 
 # (There is no Diagnostics handle: hub_note/hub_warn/hub_error are the
-# position-free one-liner surface; the hub's once_key dedup mechanism is
+# position-free one-liner surface. The hub's once_key dedup mechanism is
 # pinned in test_output_hub.)

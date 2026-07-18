@@ -1,4 +1,4 @@
-# Markdown lint gate (markdownlint-cli2; the docs job in build.yaml runs it).
+# Markdown lint gate (markdownlint-cli2). The docs job in build.yaml runs it.
 # Generated files are deliberately in scope - the generator must emit clean markdown.
 # Local run from the repo root: npx markdownlint-cli2
 globs:

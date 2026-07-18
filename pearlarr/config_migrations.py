@@ -1,6 +1,6 @@
 """Config schema versioning: the chain that brings an older config file forward.
 
-`CONFIG_VERSION` names the current schema; `AppConfig.load` runs
+`CONFIG_VERSION` names the current schema. `AppConfig.load` runs
 `migrate_mapping` over the raw parsed YAML before validation, so a config
 written for an older Pearlarr keeps loading (in memory - the file on disk is
 never touched by a load). `pearlarr config migrate` rewrites the file itself,
@@ -35,7 +35,7 @@ class MigrationOutcome:
     """The schema version the mapping declared before this pass ran."""
 
     notes: tuple[str, ...]
-    """Human-readable functional changes; empty when the pass only stamped config_version."""
+    """Human-readable functional changes. Empty when the pass only stamped config_version."""
 
 
 def declared_version(config: Mapping[str, Json]) -> int | None:
@@ -75,7 +75,7 @@ def _to_v1(config: dict[str, Json]) -> list[str]:
     notes: list[str] = []
     if (seadex := _group(config, "seadex")) is not None:
         if "public_only" in seadex:
-            # Replaced by private_releases; both old values behaved as today's
+            # Replaced by private_releases. Both old values behaved as today's
             # warn (private releases were never grabbed), so dropping the key
             # keeps the behavior.
             seadex.pop("public_only")
@@ -136,7 +136,7 @@ _NO_WRAP = 2**20
 def _scalar_token(value: Json) -> str:
     """One YAML token that round-trips `value` on a single physical line.
 
-    Plain style for readability; a string carrying line breaks or tabs is
+    Plain style for readability. A string carrying line breaks or tabs is
     forced into double-quoted style, whose escapes keep it on one line.
     """
 
@@ -146,7 +146,7 @@ def _scalar_token(value: Json) -> str:
 
 
 def _value_lines(indent: str, key: str, value: Json) -> list[str]:
-    """`key: value` at `indent`; a filled container goes block-style below the key."""
+    """`key: value` at `indent`. A filled container goes block-style below the key."""
 
     if value is None:
         return [f"{indent}{key}:"]
@@ -160,7 +160,7 @@ def render_migrated_config(template: str, config: Mapping[str, Json]) -> str:
     """The current annotated template with a migrated mapping's values spliced in.
 
     Comments, docs and key order come from the template (what `config init`
-    ships); a key the mapping sets explicitly takes the mapping's value, every
+    ships). A key the mapping sets explicitly takes the mapping's value, every
     other line keeps the template's, so blank-means-default stays blank. The
     mapping must already be migrated and validated: every key it carries exists
     in the template, so nothing can be dropped.

@@ -223,7 +223,7 @@ class TestBuilders:
 
     def test_multi_tag_group_renders_in_event_order(self) -> None:
         # The event carries an ORDERED tag tuple, fixing today's frozenset-random
-        # join order; the rendered form is pinned here.
+        # join order. The rendered form is pinned here.
         event = GrabAction(
             status=GrabStatus.ADDING,
             groups=(RecommendedGroup(name="GroupA", tags=("HDR", "Dual Audio")),),

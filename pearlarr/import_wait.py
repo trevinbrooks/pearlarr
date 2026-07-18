@@ -4,7 +4,7 @@
 qBittorrent polls, the carried-over pending-record reconciliation (the
 per-series inline snapshot + the deferred reconcile + the pre-summary tally),
 the durable-store TTL prune, and the interleaved end-of-run blocking monitor
-that drives + verifies each import; the engine calls the manager's passes in
+that drives + verifies each import. The engine calls the manager's passes in
 order.
 
 Binds the run `RunContext` AND the active strategy via `begin_run`
@@ -64,10 +64,10 @@ class ImportWaitManager:
     """Polls, reconciles, and runs the blocking monitor for one Arr run.
 
     Constructed once per run in `RunLoop` from the unpacked
-    deps + the placeholder ctx; `begin_run` rebinds the ctx + active strategy
+    deps + the placeholder ctx. `begin_run` rebinds the ctx + active strategy
     each run. The five passes the engine drives are the public surface: `run_sync`
     calls `prune_expired_pending` (run start) and
-    `snapshot_pending_for_series` (per item); `_finalize_run` calls
+    `snapshot_pending_for_series` (per item). `_finalize_run` calls
     `reconcile_remaining` / `tally_carried_over_into_stats` /
     `run_monitor`. The poll/import/drop helpers stay private to the subsystem.
     """
@@ -84,8 +84,8 @@ class ImportWaitManager:
         self._reporter = deps.reporter
         self.logger = deps.logger
         self.qbit = deps.qbit
-        # Seeded with the engine's placeholder ctx + the (initially None) strategy;
-        # both rebound each run via begin_run (the same objects the engine holds, so
+        # Seeded with the engine's placeholder ctx + the (initially None) strategy.
+        # Both rebound each run via begin_run (the same objects the engine holds, so
         # the reconcile/monitor see this run's grabs + drive this run's strategy).
         self._ctx = ctx
         self._active_strategy = strategy
@@ -116,7 +116,7 @@ class ImportWaitManager:
         """Poll qBittorrent once for a torrent's terminal/in-progress state.
 
         Returns a `TorrentProbe`: a terminal `WaitOutcome` (COMPLETE
-        carries the `content_path`; ERRORED/MISSING carry None), or
+        carries the `content_path` - ERRORED/MISSING carry None), or
         `outcome=None` for "still waiting" - either the torrent is still
         downloading or the qBittorrent call failed transiently (auto-reauth /
         connection drop), which the wait loop treats as keep-waiting. This is the
@@ -131,7 +131,7 @@ class ImportWaitManager:
             info = self.qbit.torrents_info(torrent_hashes=infohash)
         except (qbittorrentapi.APIError, qbittorrentapi.APIConnectionError):
             # Transient: a dropped connection or a re-auth in flight. Treat as
-            # still-waiting so the caller keeps polling until the deadline; the
+            # still-waiting so the caller keeps polling until the deadline. The
             # un-observed flag keeps the row's last real telemetry on screen.
             return TorrentProbe(None, None, 0.0, observed=False)
 
@@ -184,15 +184,15 @@ class ImportWaitManager:
     ) -> ImportProbe:
         """Drive the strategy's `import_completed`, swallowing any error.
 
-        The import does live Sonarr HTTP work; a malformed response (a 200 with
+        The import does live Sonarr HTTP work. A malformed response (a 200 with
         a non-JSON body, a candidate missing `path`, ...) must not abort the
         run and skip the end-of-run `cache_store.save` in `_finalize_run`.
         On any exception the record is left pending (returns a `LEAVE` probe) and
-        the run continues; a real terminal failure is just retried next run / TTL'd.
+        the run continues. A real terminal failure is just retried next run / TTL'd.
 
         `force` is threaded through so the engine can tell the strategy to stop
         deferring to Sonarr on a clean `importPending` (the snapshot/reconcile
-        passes and the final in-bound monitor poll); `at_deadline` flags the final
+        passes and the final in-bound monitor poll). `at_deadline` flags the final
         attempt so a still-missing file warns loudly rather than at debug.
         """
 
@@ -212,7 +212,7 @@ class ImportWaitManager:
     def import_progress(self, pending: PendingImport) -> ImportProgress:
         """Cheap, read-only files-landed count for the wait bar (Tier-2 poll).
 
-        Delegates to the active strategy; never refreshes downloads, reads the
+        Delegates to the active strategy. Never refreshes downloads, reads the
         queue, or issues a command (the strategy contract enforces that). An
         indeterminate zero when no strategy is bound.
         """
@@ -224,7 +224,7 @@ class ImportWaitManager:
     def _this_run_infohashes(self) -> set[str]:
         """Infohashes grabbed THIS run - excluded from the carried-over passes.
 
-        A this-run grab is reported as `added`; the snapshot / reconcile / tally
+        A this-run grab is reported as `added`. The snapshot / reconcile / tally
         skip these so a record is never double-reported as queued/importing/imported.
         """
 
@@ -238,11 +238,11 @@ class ImportWaitManager:
         """Poll one carried-over record once and fold it to a `PendingState`.
 
         Shared by the inline snapshot and the deferred reconcile: one non-blocking
-        `poll_torrent`; on COMPLETE drive one forced (CDH-off safe),
+        `poll_torrent`, then on COMPLETE drive one forced (CDH-off safe),
         non-deadline import attempt (so a still-missing file never warns). The
         outcome + the probe's verified-files flag fold through
         `classify_pending` into one state, stashed per infohash for the
-        pre-summary tally; a terminal IMPORTED is dropped + counted, a MISSING is
+        pre-summary tally. A terminal IMPORTED is dropped + counted, a MISSING is
         dropped. Returns the classified state.
         """
 
@@ -298,7 +298,7 @@ class ImportWaitManager:
         The deferred-mode pre-summary step: reconciles, via `_reconcile_one`,
         every durable record whose infohash wasn't already touched by the
         per-series inline snapshot and isn't a this-run grab (those stay
-        `added`). Quiet (no live region; deferred never blocks).
+        `added`). Quiet (no live region, deferred never blocks).
         """
 
         if self._active_strategy is None:
@@ -318,7 +318,7 @@ class ImportWaitManager:
         `imported` is bumped at the point a record is reconciled+dropped (in the
         snapshot / reconcile), so here we only fold the records still in the store
         into `queued` / `importing`: a record touched this run uses its known
-        `PendingState`; an un-touched store record (e.g. another series, in
+        `PendingState`. An un-touched store record (e.g. another series, in
         pure blocking where no reconcile ran) defaults to `QUEUED` without an
         extra poll. This-run grabs are excluded throughout (they're `added`), so
         no record is ever double-counted.
@@ -350,10 +350,10 @@ class ImportWaitManager:
         printed). The working set is every pending record - this run's grabs
         (`_ctx.pending_imports`) AND carried-over store records, deduped by
         infohash - so a single-series run still finishes other-series carried-over
-        downloads (the user's "monitor ALL" choice). Each cycle advances every
+        downloads (the configured "monitor ALL" choice). Each cycle advances every
         active torrent once (so a fast torrent isn't stuck behind a slow one) into a
         `dict[infohash -> TorrentView]`, then pushes ONE `WaitSnapshot` to
-        the view (which emits a graduation per newly-terminal torrent; the
+        the view (which emits a graduation per newly-terminal torrent, and the
         renderers scroll it back).
         `imported` is reported ONLY when the episode files are verified present
         (`probe.files_present`), so an in-flight remote-mount copy reads
@@ -361,7 +361,7 @@ class ImportWaitManager:
         for the download, `imports.ready_timeout` for the import (from the first
         COMPLETE). Ctrl-C pushes one final snapshot (so that cycle's terminals
         still graduate) then breaks the loop (the `finally` restores the terminal
-        and the caller still saves the cache); the terminal outcomes are returned as a
+        and the caller still saves the cache). The terminal outcomes are returned as a
         `WaitResult` for the run report + completion notification. The clock /
         sleep / view are injectable for tests.
         """
@@ -384,7 +384,7 @@ class ImportWaitManager:
             )
 
         # Fresh-per-call behavioral object: it owns the per-cycle accumulators (so
-        # there's nothing to reset between calls) and the advance logic; the loop
+        # there's nothing to reset between calls) and the advance logic. The loop
         # here keeps only the view lifecycle, the cycle pacing, and the Ctrl-C break.
         mp = MonitorPass(
             self,
@@ -426,8 +426,8 @@ class ImportWaitManager:
     ) -> None:
         """Sleep one heavy-poll interval, refreshing the live rows between slices.
 
-        Splits the inter-poll `nap` into `imports.progress_poll_interval` slices;
-        between the heavy cycles it runs only the cheap fast-lane reads: the
+        Splits the inter-poll `nap` into `imports.progress_poll_interval` slices.
+        Between the heavy cycles it runs only the cheap fast-lane reads: the
         episode-file count behind each importing row's "files inserted" bar
         (promoting a row the instant its files all land) and ONE batched
         qBittorrent info read keeping the downloading rows' bar/speed/ETA live
@@ -578,7 +578,7 @@ class MonitorPass:
         self.now = now
         self.dl_timeout = dl_timeout
         self.import_timeout = import_timeout
-        # Sampled once here; the download clock for every record starts now and
+        # Sampled once here. The download clock for every record starts now and
         # `elapsed` measures from it.
         self.start = now()
         self.dl_start = {r.infohash: self.start for r in records}
@@ -609,7 +609,7 @@ class MonitorPass:
 
         Drops the durable record when (and only when) `outcome.dropped` - True for
         exactly IMPORTED and MISSING, so the displayed word and the store mutation
-        can't diverge; a SUCCESS-class outcome additionally gets the post-import
+        can't diverge. A SUCCESS-class outcome additionally gets the post-import
         category, keyed off the same pinned enum vocabulary. The terminal row
         carries the pass-elapsed clock and (for an import) the verified files
         count, so the graduation ledger can state them.
@@ -640,7 +640,7 @@ class MonitorPass:
         the caller snapshots) and, on a terminal outcome, retires it via
         `_terminal`. `import_start` is stamped on the first COMPLETE.
         `imported` is gated on verified episode files, so a freshly-issued import
-        command reads `importing` until the copy lands; the final in-bound attempt
+        command reads `importing` until the copy lands. The final in-bound attempt
         (`at_deadline`) both forces and warns.
         """
 
@@ -663,7 +663,7 @@ class MonitorPass:
                     self.views[h] = replace(prior, phase_elapsed_s=self.now() - self.dl_start[h])
                 return
             # Speed history advances once per heavy poll (stalled/None -> 0),
-            # bounded to the sparkline window; the fast telemetry refresh
+            # bounded to the sparkline window. The fast telemetry refresh
             # deliberately never samples it, so the window stays minutes wide.
             history = prior.speed_history if prior is not None and prior.phase is Phase.DOWNLOADING else ()
             self.views[h] = TorrentView(
@@ -713,7 +713,7 @@ class MonitorPass:
             # RETRY / copy in flight: the command was accepted but the files
             # haven't landed yet (or Sonarr is still scanning). Seed the "files
             # inserted" bar from the probe counts - determinate only when the seed
-            # map is whole (target_count > 0); otherwise an indeterminate row.
+            # map is whole (target_count > 0). Otherwise an indeterminate row.
             total = probe.target_count
             done = probe.imported_count
             self.views[h] = TorrentView(
@@ -753,7 +753,7 @@ class MonitorPass:
             except Exception:
                 self._mgr.logger.debug(f"import progress poll for {h} failed", exc_info=True)
                 continue
-            # Indeterminate (partial seed map) -> no bar, no promotion; leave the
+            # Indeterminate (partial seed map) -> no bar, no promotion. Leave the
             # row to the heavy poll's repaired done-check.
             if not progress.determinate or progress.total <= 0:
                 continue

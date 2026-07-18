@@ -1,6 +1,6 @@
 """Single-instance run lock: guard against two runs sharing one data directory.
 
-A run reads and writes `cache.db` (and the WAL) in its data directory; two runs
+A run reads and writes `cache.db` (and the WAL) in its data directory. Two runs
 pointed at the *same* directory would duplicate work and could race on imports.
 SQLite's own locking keeps the file from corrupting, but it won't stop the wasted,
 overlapping work - so we take a coarse advisory lock on the data dir and skip a run

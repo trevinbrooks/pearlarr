@@ -6,7 +6,7 @@ coda (`graduation_tail`) reduce the wait value types in `events` to
 a rich-free layout brain the cockpit consumes. The `LegacyLine`
 builders (`wait_start_line` and friends) map each durable wait fact to
 the rich console's scrollback line (rendered by the WaitRegion via
-`render_legacy_lines`); the file/plain/json surfaces take the same facts
+`render_legacy_lines`). The file/plain/json surfaces take the same facts
 through the `textline` grammar. `PulseThrottle` carries the shared
 pulse cadence: the rich non-live digest and each textline grammar sink hold
 their own copy (the file/plain heartbeat renders regardless of console mode).
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 type WaitEvent = WaitStarted | WaitProgress | TorrentGraduated | WaitFinished
 """The event subset both wait render seats consume."""
 
-# The live cockpit never grows past this many in-flight rows; the rest collapse
+# The live cockpit never grows past this many in-flight rows. The rest collapse
 # into a one-line "+ N more ..." overflow, so a large carried-over backlog can't
 # blow the region past the screen. Clamped against the real terminal height too.
 MAX_LIVE_ROWS = 12
@@ -66,7 +66,7 @@ def graduation_tail(outcome: Outcome, files: int | None, waited_s: float) -> str
 
     Baked into the logged message (not a console-only `tail` extra), so the
     file log carries it too. An import states its scale (`files`) and how long
-    the wait took; a left-pending outcome says it will be retried; a dropped
+    the wait took. A left-pending outcome says it will be retried. A dropped
     failure says the record is gone - so no outcome word reads as a dead end.
     """
 
@@ -85,7 +85,7 @@ def graduation_tail(outcome: Outcome, files: int | None, waited_s: float) -> str
 
 # --- the durable ledger-line builders (the rich console's scrollback) ----------------
 #
-# Start/pulse/tally lines carry INFO; a graduation carries severity_of's
+# Start/pulse/tally lines carry INFO. A graduation carries severity_of's
 # category-based level, so a FAILED graduation renders at ERROR and survives
 # a raised level.
 
@@ -128,7 +128,7 @@ def wait_graduation_line(event: TorrentGraduated, caps: Capabilities) -> LegacyL
 
 
 def wait_tally_lines(event: WaitFinished) -> list[LegacyLine]:
-    """The closing wait summary (rule + tally); `[]` when nothing graduated."""
+    """The closing wait summary (rule + tally). `[]` when nothing graduated."""
 
     if event.imported == 0 and event.deferred == 0 and event.failed == 0:
         return []
@@ -150,7 +150,7 @@ class PulseThrottle:
 
     One copy per seat: the rich non-live digest and each textline grammar sink
     (the file is mode-independent, so its pulses render on live-TTY runs too).
-    `arm` (on WaitStarted) sets the interval; the FIRST `fire` returns False
+    `arm` (on WaitStarted) sets the interval. The FIRST `fire` returns False
     unconditionally (the start line already announces the pass, so the start
     snapshot never pulses), then a pulse is due once elapsed reaches the
     elapsed-anchored next mark. State advances regardless of log level.
@@ -169,7 +169,7 @@ class PulseThrottle:
         self._skip_first = True
 
     def fire(self, elapsed_s: float) -> bool:
-        """Advance the cadence; True when a pulse is due at `elapsed_s`."""
+        """Advance the cadence. True when a pulse is due at `elapsed_s`."""
 
         if self._interval is None:
             return False
@@ -192,7 +192,7 @@ class RowModel:
     """One rendered in-flight row, as plain strings - the pure-render unit.
 
     `live_model` formats every value here (no rich), so the row layout is
-    unit-testable; the view turns these into styled cells. Every column keeps
+    unit-testable. The view turns these into styled cells. Every column keeps
     ONE meaning across all row kinds.
     """
 
@@ -211,8 +211,8 @@ class RowModel:
     size: str = ""
     """The total download size."""
     show_bar: bool = False
-    """Draw a determinate block bar for `fraction` (downloads always; an importing
-    row only when its files-inserted count is known); else the status word."""
+    """Draw a determinate block bar for `fraction`. Downloads always get one, an
+    importing row only when its files-inserted count is known, else the status word."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,7 +230,7 @@ def live_model(snapshot: WaitSnapshot, caps: Capabilities) -> LiveModel:
     """Reduce a snapshot to a bounded, ordered cockpit frame - pure, no rich.
 
     Orders in-flight rows `importing` first, then `downloading` by soonest
-    ETA (unknown/stalled last), then `queued`; caps the visible rows to a
+    ETA (unknown/stalled last), then `queued`. Caps the visible rows to a
     height budget and collapses the rest into an overflow tally. Terminal rows
     are excluded (they graduate to scrollback).
     """
@@ -269,7 +269,7 @@ def live_model(snapshot: WaitSnapshot, caps: Capabilities) -> LiveModel:
 
 
 # Every non-terminal Phase, drift-pinned (test_output_wait_render ties it to
-# set(Phase)); _overflow_text and wait_pulse_line hand-list the same trio.
+# set(Phase)). _overflow_text and wait_pulse_line hand-list the same trio.
 _PHASE_RANK = {Phase.IMPORTING: 0, Phase.DOWNLOADING: 1, Phase.QUEUED: 2}
 
 
@@ -373,7 +373,7 @@ _SPARK_CHARS = "▁▂▃▄▅▆▇█"
 def sparkline(samples: tuple[int, ...]) -> str:
     """The speed-history glyph run, scaled to the window's own peak.
 
-    A wedged download reads as a decay to the floor ("▆▄▁▁"); a slow-but-moving
+    A wedged download reads as a decay to the floor ("▆▄▁▁"). A slow-but-moving
     one keeps a steady band. All-zero history stays on the floor glyph (never
     blank), so a stall is visible rather than invisible.
     """

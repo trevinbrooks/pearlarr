@@ -2,14 +2,14 @@
 
 An event-stream chassis: producers emit the closed union of frozen event
 dataclasses (`events`) through typed scope handles (`scopes`) into one
-synchronous `hub.OutputHub`; surfaces subscribe as renderers. The shared
+synchronous `hub.OutputHub`. Surfaces subscribe as renderers. The shared
 `breadcrumbs.BreadcrumbFold` folds scope boundaries into the open path
-(labels for the text sinks in `textline`; the placement authority is the
+(labels for the text sinks in `textline`. The placement authority is the
 `rich_renderer.RichRenderer`'s instance). The logging bridge
-(`bridge`) adopts stdlib records into Diagnostic events; the RichRenderer
-owns the rich console (boot/scan/wait cockpits + diagnostic placement); the
+(`bridge`) adopts stdlib records into Diagnostic events. The RichRenderer
+owns the rich console (boot/scan/wait cockpits + diagnostic placement). The
 `textline` sinks own the structured log file (`FileLogSink`), plain
-stdout (`LineRenderer`) and json stdout (`JsonRenderer`) — one
+stdout (`LineRenderer`) and json stdout (`JsonRenderer`) - one
 grammar, plain == file by construction.
 """
 

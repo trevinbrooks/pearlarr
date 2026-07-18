@@ -55,7 +55,7 @@ class TestResolvePaths:
 
     def test_default_falls_back_to_platformdirs(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("PEARLARR_DATA_DIR", raising=False)
-        # The OS-standard per-user location; we don't pin the prefix (it differs per
+        # The OS-standard per-user location. We don't pin the prefix (it differs per
         # platform), only that it is absolute and names the app.
         data_dir = resolve_paths().data_dir
         assert os.path.isabs(data_dir)
@@ -99,7 +99,7 @@ class TestLogRouting:
 
     @staticmethod
     def _install(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-        """The production install against `data_dir`; stdout swapped off the tty."""
+        """The production install against `data_dir`. stdout is swapped off the tty."""
 
         monkeypatch.setattr(sys, "stdout", io.StringIO())
         _install_output_hub(resolve_paths(str(data_dir)))
@@ -132,7 +132,7 @@ class TestLogRouting:
     def test_invalid_log_level_complaint_reaches_the_file_log(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # The complaint fires inside setup_logger; with the hub + bridge already
+        # The complaint fires inside setup_logger. With the hub + bridge already
         # installed (the cli order) it reaches the FileLogSink, never lastResort.
         log_file = self._install(tmp_path / "data", monkeypatch)
 

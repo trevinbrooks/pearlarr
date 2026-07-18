@@ -3,11 +3,11 @@
 The output package's live regions (`boot_region`,
 `wait_region`) drive an optional sticky `rich.Live` region over
 the SAME `Console` the logger already owns, and both must degrade to a calm
-log digest on a non-TTY (Docker / a pipe / a dumb or too-narrow terminal); the
-wait narrator's `wants_telemetry` probe branches on the same signals. The probe lives here once: `console_of` finds the logger's
-console and `detect_capabilities` folds rich's derived signals (plus
-`log.console_supports_unicode`) into the small `Capabilities` value the
-seats branch on.
+log digest on a non-TTY (Docker / a pipe / a dumb or too-narrow terminal). The
+wait narrator's `wants_telemetry` probe branches on the same signals. The probe
+lives here once: `console_of` finds the logger's console and `detect_capabilities`
+folds rich's derived signals (plus `log.console_supports_unicode`) into the
+small `Capabilities` value the seats branch on.
 """
 
 import logging
@@ -59,7 +59,7 @@ def detect_capabilities(console: Console | None) -> Capabilities:
     """Fold rich's derived console signals into our render capabilities.
 
     Reads rich's own folded flags (which already honor `NO_COLOR` / `TERM` /
-    isatty / legacy Windows) rather than re-parsing the environment; the only
+    isatty / legacy Windows) rather than re-parsing the environment. The only
     things added on top are the `MIN_LIVE_WIDTH` floor and a glyph-encodability
     probe, which decide box-vs-lines and the glyph set.
     """
@@ -84,7 +84,7 @@ class CapsCache:
     """An identity-keyed `detect_capabilities` cache for the render seats.
 
     The console seat's regions (boot + wait) branch on the probe (the slow
-    heads-up policy); they must share ONE instance per hub, or a mid-boot resize
+    heads-up policy). They must share ONE instance per hub, or a mid-boot resize
     across `MIN_LIVE_WIDTH` could flip one surface's decision only.
     """
 
@@ -94,7 +94,7 @@ class CapsCache:
         self._state: tuple[Console, Capabilities] | None = None
 
     def for_console(self, console: Console | None) -> Capabilities:
-        """The cached probe for `console`; a new identity re-probes and replaces."""
+        """The cached probe for `console`. A new identity re-probes and replaces."""
 
         if console is None:
             return detect_capabilities(None)
@@ -105,7 +105,7 @@ class CapsCache:
         return state[1]
 
     def reset(self) -> None:
-        """Drop the cached probe (cycle start; idempotent)."""
+        """Drop the cached probe (cycle start, idempotent)."""
 
         self._state = None
 

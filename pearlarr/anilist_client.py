@@ -150,7 +150,7 @@ def _errors_are_retryable(body: dict[str, Any] | None) -> bool:
 def _parse_errors(body: dict[str, Any] | None) -> list[AniListError]:
     """Parse a GraphQL body's `errors` array into typed `AniListError`.
 
-    The `errors` array is the dynamic GraphQL boundary; this maps each raw
+    The `errors` array is the dynamic GraphQL boundary. This maps each raw
     entry into the typed domain (skipping any non-object entry), so the caller
     reads `err.status` / `err.message` rather than untyped `dict` keys.
     """
@@ -188,7 +188,7 @@ def extract_path(body: dict[str, Any] | None, *path: str) -> dict[str, Any]:
 def media_node_from(raw: dict[str, Any]) -> AniListMediaNode:
     """Validate a raw `Media` dict into the typed node (single-object fail-open).
 
-    A miss (`{}`) validates to the all-`None` node; a malformed node
+    A miss (`{}`) validates to the all-`None` node. A malformed node
     degrades to the same all-`None` miss with one scrubbed warning.
     """
 
@@ -202,9 +202,9 @@ def media_node_from(raw: dict[str, Any]) -> AniListMediaNode:
 def media_from(body: dict[str, Any] | None) -> AniListMediaNode:
     """Parse the Media node from a single-id body into an AniListMediaNode.
 
-    The raw `{"data": {"Media": {...}}}` body is the dynamic GraphQL boundary;
-    this is where it crosses into the typed domain. A miss (`data`/`Media`
-    null) yields an all-`None` node; so does a malformed node (see
+    The raw `{"data": {"Media": {...}}}` body is the dynamic GraphQL boundary,
+    and this is where it crosses into the typed domain. A miss (`data`/`Media`
+    null) yields an all-`None` node, and so does a malformed node (see
     `media_node_from`).
     """
 
@@ -218,7 +218,7 @@ class AniListClient:
     and the per-run retry narration are bound at construction, so callers ask
     for bodies by id instead of threading `(client, retry_log)` through
     every call. Construction is network-free. The gateway layers the run cache
-    on top; this class is deliberately cache-blind.
+    on top. This class is deliberately cache-blind.
     """
 
     def __init__(self, *, client: httpx.Client) -> None:
@@ -265,7 +265,7 @@ class AniListClient:
         On a rate-limit (HTTP 429) or a transient 5xx, AniList returns
         "{"data": null, ...}". It can also soft-throttle with HTTP 200 and a
         throttle/rate-limit error in the "errors" array (see
-        `_errors_are_retryable`); both take the same backoff path. Returning a
+        `_errors_are_retryable`). Both take the same backoff path. Returning a
         throttled response untried is what surfaced downstream as
         "'NoneType' object has no attribute 'get'" when a run made many requests
         in quick succession, so we wait (honoring Retry-After when present) and
@@ -273,7 +273,7 @@ class AniListClient:
         error payload after the final attempt - or "{}" if the response body
         wasn't JSON. The bound retry log narrates the waits and warns once per
         run on a final give-up. The bound client is the shared web client (its
-        defaults carry the identifying User-Agent and the timeout bounds); this
+        defaults carry the identifying User-Agent and the timeout bounds). This
         loop stays AniList's ONE retry policy - the web client's generic GET
         helper is never involved.
         """
@@ -313,8 +313,8 @@ class AniListClient:
                 retryable = True
 
             if retryable and attempt < MAX_RETRIES:
-                # Prefer the server's Retry-After (seconds, honored exactly);
-                # otherwise fall back to the shared exponential backoff.
+                # Prefer the server's Retry-After (seconds, honored exactly).
+                # Otherwise fall back to the shared exponential backoff.
                 retry_after = resp.headers.get("Retry-After")
                 wait = _exp_backoff(attempt)
                 if retry_after is not None:
@@ -322,7 +322,7 @@ class AniListClient:
                         wait = float(retry_after)
 
                 wait = min(max(wait, 1), MAX_BACKOFF)
-                # A 429 / soft-throttle reads as a rate limit; a 5xx names itself.
+                # A 429 / soft-throttle reads as a rate limit. A 5xx names itself.
                 reason = (
                     f"returned HTTP {resp.status_code}"
                     if resp.status_code in RETRYABLE_STATUS and resp.status_code != 429

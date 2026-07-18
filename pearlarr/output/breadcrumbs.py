@@ -1,13 +1,13 @@
 """The shared pure fold of scope/boundary events into the open-node path.
 
 One implementation, instantiated per surface: the rich renderer's instance is the
-sole placement authority; text-sink instances derive labels only — the
+sole placement authority. Text-sink instances derive labels only - the
 `[path]` breadcrumb for handle-carried ScopeIds and the advisory `during=` tail
-for diagnostics — never position, never layout.
+for diagnostics - never position, never layout.
 
 The fold is replay-deterministic: the same event stream always yields the same
 state. The fixed transition table IS `KIND_DEPTH` plus the `match` in
-`BreadcrumbFold.apply` — boundary events close strictly-deeper nodes, never
+`BreadcrumbFold.apply` - boundary events close strictly-deeper nodes, never
 heuristic inference. A close on an unknown/already-closed id is a no-op, so
 defensive closes (the unwind teardown, the doubled run-close) are idempotent.
 """
@@ -68,12 +68,12 @@ KIND_DEPTH: Final[Mapping[ScopeKind, int]] = {
     ScopeKind.BOOT_STEP: 2,
     ScopeKind.ITEM: 2,
     # Same depth as ITEM is deliberate: a wait pass is mutually exclusive
-    # with an item; revisit only if a per-item wait ever appears.
+    # with an item. Revisit only if a per-item wait ever appears.
     ScopeKind.WAIT_REGION: 2,
     ScopeKind.ENTRY: 3,
 }
 
-# Fixed path segments for section-like kinds; other kinds render their label.
+# Fixed path segments for section-like kinds. Other kinds render their label.
 SEGMENT_WORD: Final[Mapping[ScopeKind, str]] = {
     ScopeKind.BOOT_SECTION: "boot",
     ScopeKind.ENTRY: "entry",
@@ -186,7 +186,7 @@ class BreadcrumbFold:
         return None
 
     def during(self) -> str | None:
-        """The top node's label — the advisory `during=` tail for diagnostics."""
+        """The top node's label - the advisory `during=` tail for diagnostics."""
 
         return self._stack[-1].label if self._stack else None
 

@@ -9,7 +9,7 @@ from platformdirs import user_data_dir
 
 from .env_registry import DATA_DIR_ENV
 
-# The env var stays the canonical override (Docker sets it to /config); the
+# The env var stays the canonical override (Docker sets it to /config). The
 # CLI's --data-dir flag folds into it (see cli.main).
 APP_NAME = "pearlarr"
 
@@ -17,7 +17,7 @@ APP_NAME = "pearlarr"
 # NOTE for any future APP_NAME rename: APP_NAME is also the platformdirs
 # directory, so a rename must ship a data-dir migration.
 PROJECT_URL = "https://github.com/trevinbrooks/pearlarr"
-"""The single in-code source for the project's repository URL; the CLI epilog and Discord embeds read it."""
+"""The single in-code source for the project's repository URL. The CLI epilog and Discord embeds read it."""
 
 
 @dataclass(frozen=True, slots=True)

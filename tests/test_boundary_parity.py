@@ -130,7 +130,7 @@ def test_golden_body_dead_tracked_folder_import_omits_download_id() -> None:
     500s (the poisoned tracked download), the history probe reports a prior
     import, the folder scan serves the candidate. The POSTed body must OMIT
     `downloadId` on every file (a downloadId there re-enters Sonarr's poisoned
-    tracked branch; a null is not the same as absent) and force copy under the
+    tracked branch, a null is not the same as absent) and force copy under the
     configured auto (the untracked Execute branch resolves Auto to MOVE).
     """
 
@@ -445,11 +445,11 @@ def test_radarr_history_item_id_reads_movie_id_and_junk_folds() -> None:
 
 @respx.mock
 def test_rejections_fold_strings_and_dicts_and_skip_other_shapes() -> None:
-    """One rejections list mixes several item shapes; the well-formed ones fold, the rest are skipped.
+    """One rejections list mixes several item shapes. The well-formed ones fold, the rest are skipped.
 
     The shapes are a bare string (older Sonarr), a proper `{reason}` object,
     a reason-less object, and non-str/non-dict junk. The first three fold to
-    `ImportRejection`s; the junk entries are skipped.
+    `ImportRejection`s. The junk entries are skipped.
     """
 
     respx.get(f"{_BASE}/manualimport").respond(

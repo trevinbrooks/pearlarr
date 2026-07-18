@@ -5,7 +5,7 @@
 prints each envelope back as one `ts LEVEL [bracket] message k=v` line, for
 reading a docker-captured or archived log after the fact. `-` reads stdin.
 
-The grammar lives once, in `output.textline.render_envelope_line`; this module
+The grammar lives once, in `output.textline.render_envelope_line`. This module
 owns only IO and policy. The stream is a lossy RENDERING of typed events (not a
 serialization), so the formatter is generic and additive-proof: an unknown
 newer event name still renders. The capture streams line by line (months of a
@@ -48,7 +48,7 @@ class _RenderCounts(NamedTuple):
 def replay(source: str) -> bool:
     """Render the JSON envelope capture at `source` (`-` = stdin) as text lines.
 
-    Returns True when at least one event rendered; False (with the reason already
+    Returns True when at least one event rendered. False (with the reason already
     reported through the hub) when the capture can't be read or held no events.
     """
 
@@ -63,7 +63,7 @@ def replay(source: str) -> bool:
             with open(source, encoding="utf-8", errors="replace") as handle:
                 counts = _render_stream(handle)
     except BrokenPipeError:
-        # Downstream closed (e.g. `| head`): stop quietly like any line tool; the
+        # Downstream closed (e.g. `| head`): stop quietly like any line tool. The
         # dup2 keeps the interpreter's exit flush from whining about the dead pipe.
         with contextlib.suppress(OSError):
             os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
@@ -85,7 +85,7 @@ def replay(source: str) -> bool:
 
 
 def _render_stream(lines: Iterable[str]) -> _RenderCounts:
-    """Echo every renderable envelope in `lines`; count what rendered and what didn't."""
+    """Echo every renderable envelope in `lines`, counting what rendered and what didn't."""
 
     rendered = 0
     skipped = 0

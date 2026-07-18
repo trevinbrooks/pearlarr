@@ -1,7 +1,7 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # The verify pin reads the client's private transport chain (httpx exposes no
-# public ssl-context accessor); the repo already disables the rule for tests.
+# public ssl-context accessor). The repo already disables the rule for tests.
 """Direct tests for the shared non-arr web client and its GET retry helper.
 
 `make_web_client` is the second process-wide client (tracker pages, AniList,
@@ -82,7 +82,7 @@ def test_get_with_retries_transient_5xx_recovers() -> None:
 @respx.mock
 def test_get_with_retries_exhausted_5xx_returns_the_response() -> None:
     # raise_on_status=False parity: the still-503 response is RETURNED so the
-    # call site's raise_for_status surfaces it; the helper never raises on status.
+    # call site's raise_for_status surfaces it. The helper never raises on status.
     route = respx.get(_URL).respond(status_code=503)
     sleeps: list[float] = []
 
@@ -135,7 +135,7 @@ def test_get_with_retries_honors_retry_after() -> None:
 
 @respx.mock
 def test_get_with_retries_caps_and_falls_back_on_bad_retry_after() -> None:
-    # An absurd window is capped; an unparseable one (e.g. an HTTP-date) falls
+    # An absurd window is capped. An unparseable one (e.g. an HTTP-date) falls
     # back to that attempt's exponential backoff instead of being honored.
     route = respx.get(_URL)
     route.side_effect = [

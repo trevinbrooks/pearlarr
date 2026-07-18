@@ -27,12 +27,12 @@ if TYPE_CHECKING:
 class FilterResult(NamedTuple):
     """The applied download plan, as the strategies consume it.
 
-    The strategy-facing slice of `PlanResult` (its hashes + dict); the `skips`
+    The strategy-facing slice of `PlanResult` (its hashes + dict). The `skips`
     outcome is folded onto the run context in `filter_downloads`.
     """
 
     torrent_hashes: list[str | None]
-    """The unique hashes to remember in the cache record; None for a hashless private torrent."""
+    """The unique hashes to remember in the cache record. None for a hashless private torrent."""
     seadex_dict: SeadexDict
     """The same `seadex_dict` annotated in place with per-url `download` flags."""
 
@@ -46,7 +46,7 @@ def _is_public_torrent(torrent: TorrentRecord) -> bool:
 class SeadexReleaseFilter:
     """Turns a SeaDex `EntryRecord` into the run's filtered/ranked release dict.
 
-    Owns no per-run caches; it binds the run `RunContext` (`begin_run`)
+    Owns no per-run caches. It binds the run `RunContext` (`begin_run`)
     only so `filter_downloads` can stamp the private-only skip flags the grab tail
     later reads. `RunServices` keeps same-named thin
     delegators (`get_seadex_dict` / `filter_seadex_interactive` /
@@ -65,7 +65,7 @@ class SeadexReleaseFilter:
         self.cache_store = deps.cache_store
         self.logger = deps.logger
         self._reporter = deps.reporter
-        # Seeded with the services hub's placeholder ctx; rebound each run via
+        # Seeded with the services hub's placeholder ctx, rebound each run via
         # begin_run (the same object the hub holds, so a write here is seen by the
         # grab tail).
         self._ctx = ctx
@@ -127,8 +127,8 @@ class SeadexReleaseFilter:
     ) -> tuple[list[TorrentRecord], set[str]]:
         """Offer the best public alternatives for uncovered private picks (fallback mode).
 
-        Returns the (maybe augmented) candidates and the set of fallback urls;
-        outside `private_releases: fallback` the candidates come back unchanged
+        Returns the (maybe augmented) candidates and the set of fallback urls.
+        Outside `private_releases: fallback` the candidates come back unchanged
         with an empty set, so the caller stays branch-free.
         """
 
@@ -136,7 +136,7 @@ class SeadexReleaseFilter:
             return candidates, set()
 
         # If any preferred private pick isn't covered by the public picks' files
-        # (per-group when its files are unknown) and the user chose fallback over
+        # (per-group when its files are unknown) and fallback was chosen over
         # warn-and-wait, also offer the best PUBLIC alternatives (same cascade
         # over the public torrents not already picked). The private picks stay
         # in, both so the planner can see the Arr already has one, and so it can
@@ -217,7 +217,7 @@ class SeadexReleaseFilter:
         seadex_dict: SeadexDict,
         sd_entry: EntryRecord,
     ) -> SeadexDict:
-        """If multiple matches are found, let the user filter them interactively."""
+        """If multiple matches are found, filter them interactively."""
 
         # The prompt rows are interactive UI for the input() below, not log
         # events: they render straight to the terminal so they stay visible at
@@ -241,7 +241,7 @@ class SeadexReleaseFilter:
         all_srgs = list(seadex_dict.keys())
         for s_i, s in enumerate(all_srgs):
             # Flag the non-preferred public stand-ins (private_releases: fallback)
-            # so the pick is informed; a picked private release is refused later.
+            # so the pick is informed. A picked private release is refused later.
             fallback_tag = " (public fallback)" if any(u.is_fallback for u in seadex_dict[s].urls.values()) else ""
             say(indent_string(f"[{s_i}]: {s}{fallback_tag}"))
 
@@ -257,7 +257,7 @@ class SeadexReleaseFilter:
                 try:
                     srg = all_srgs[int(srg_idx)]
                 except (ValueError, IndexError):
-                    # ValueError: a non-numeric entry (a typo); IndexError: out of
+                    # ValueError: a non-numeric entry (a typo). IndexError: out of
                     # range. Skip the bad token instead of abandoning the whole entry.
                     hub_warn(f"Skipping invalid selection {srg_idx!r}")
                     continue
@@ -295,7 +295,7 @@ class SeadexReleaseFilter:
             ep_list=ep_list,
         )
 
-        # The planner reports what to log rather than logging it; post each
+        # The planner reports what to log rather than logging it. Post each
         # private-only skip exactly as the inline call used to.
         for notice in result.skips.notices:
             self._reporter.detail(
@@ -305,7 +305,7 @@ class SeadexReleaseFilter:
             )
 
         # Carry the skip flags/groups onto the run context (reset per title in the
-        # prologue; add_torrent may append more before grab_and_cache reads them).
+        # prologue. add_torrent may append more before grab_and_cache reads them).
         self._ctx.per_title.absorb_skips(result.skips)
 
         return FilterResult(result.torrent_hashes, result.seadex_dict)

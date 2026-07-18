@@ -2,7 +2,7 @@
 """Tests for the Notifier pushes: the grab embed and the wait-complete summary.
 
 `Notifier.push_wait_summary` posts the wait-pass outcome (colored by its
-worst outcome class) to Discord and/or a generic webhook; `push_grab` posts
+worst outcome class) to Discord and/or a generic webhook. `push_grab` posts
 the per-title grab embed. Both are best-effort, so these pin the happy paths,
 the no-url no-op, and the containment invariant: a notification failure warns
 and returns False, it must never abort a grab or the end-of-run cache save.
@@ -147,7 +147,7 @@ def test_push_wait_summary_webhook_failure_warns_and_returns_false() -> None:
     assert posted is False
     [warning] = diagnostic_messages(recording, Severity.WARNING)
     # The exception is never interpolated: its str embeds the webhook URL,
-    # which IS the credential. The config key points the user at the fix.
+    # which IS the credential. The config key name is the pointer to the fix.
     assert warning == "Wait-report webhook POST failed (ConnectError) - check notifications.wait_webhook_url"
     assert "hook.example" not in warning
 
@@ -162,7 +162,7 @@ def test_push_wait_summary_builds_discord_embed(pushes: list[DiscordEmbed]) -> N
     names = [field.name for field in embed.fields]
     assert names == ["Imported (2)", "Left for a later run (1)", "Failed (1)"]
     assert "Frieren" in embed.fields[0].value
-    # Deferred/failed rows carry the outcome detail; a failure colors the embed red.
+    # Deferred/failed rows carry the outcome detail. A failure colors the embed red.
     assert embed.fields[2].value == "Bleach TYBW — download errored; left pending"
     assert embed.color == COLOR_FAILED
 
@@ -188,7 +188,7 @@ def test_pushes_are_paced_only_within_a_burst(
     pushes: list[DiscordEmbed],
 ) -> None:
     # Pacing lives in the Notifier (discord_push is a pure POST), so a single or
-    # final push never pays a trailing sleep; only a burst's later pushes wait
+    # final push never pays a trailing sleep. Only a burst's later pushes wait
     # out the remainder of the 1s spacing.
     del pushes  # the pushes fixture supplies the no-network discord_push
     sleeps: list[float] = []
@@ -266,7 +266,7 @@ def test_push_grab_builds_linked_embed(pushes: list[DiscordEmbed]) -> None:
 
     assert posted is True
     embed = pushes[0]
-    # The author line names the event, with the arr's own logo beside it; the
+    # The author line names the event, with the arr's own logo beside it. The
     # title is the AniList title linking to the entry page.
     assert embed.author_name == "Sonarr · SeaDex grab"
     assert embed.author_icon_url == "https://raw.githubusercontent.com/Sonarr/Sonarr/develop/Logo/512.png"
@@ -342,7 +342,7 @@ class TestGrabNotes:
         assert notes == "> " + " ".join(["word"] * 80) + " …"
 
     def test_comparison_links(self, pushes: list[DiscordEmbed]) -> None:
-        # A single link needs no number; several are numbered on one line.
+        # A single link needs no number. Several are numbered on one line.
         single = self._notes(
             pushes,
             _notice(entry=make_entry_record(comparisons=("https://slow.pics/c/one",))),
@@ -356,7 +356,7 @@ class TestGrabNotes:
         assert multi == "[Comparison 1](https://slow.pics/c/1) · [Comparison 2](https://slow.pics/c/2)"
 
     def test_blank_comparison_segments_are_dropped(self, pushes: list[DiscordEmbed]) -> None:
-        # The lib's lax parse can yield an empty segment (sorted first); it must
+        # The lib's lax parse can yield an empty segment (sorted first). It must
         # not render a broken [Comparison N]() link - nor inflate the numbering.
         notes = self._notes(
             pushes,
@@ -412,7 +412,7 @@ class TestGrabLayout:
         )
 
         # The lone pick hoists into the description (bold label, group as a code
-        # span, then the release line + tags subtext); episodes and the replaced
+        # span, then the release line + tags subtext). Episodes and the replaced
         # groups pair up as side-by-side inline fields (the caller passes them clean).
         assert embed.description == (
             "**Grabbed · `PMR`**\n"
@@ -425,9 +425,9 @@ class TestGrabLayout:
         )
 
     def test_multiple_groups_keep_the_field_stack(self, pushes: list[DiscordEmbed]) -> None:
-        # "Grabbed" only when the client actually added something; a pick already
-        # mid-download says so; a contained add failure (no outcome) reads
-        # "Failed"; a group whose releases were never attempted reads "Skipped".
+        # "Grabbed" only when the client actually added something. A pick already
+        # mid-download says so. A contained add failure (no outcome) reads
+        # "Failed". A group whose releases were never attempted reads "Skipped".
         seadex_dict = {
             srg: rg_group({f"https://nyaa.si/view/{i}": url_item(url=f"https://nyaa.si/view/{i}", download=True)})
             for i, srg in enumerate(("Fresh", "InFlight", "Errored", "Held"))
@@ -553,7 +553,7 @@ def test_push_grab_429_honors_retry_after(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Discord's Retry-After (an int or float seconds string) is slept out
-    # before the retry; an unparseable value falls back to the 1s default.
+    # before the retry. An unparseable value falls back to the 1s default.
     push = _SequencedPush(_http_error(429, retry_after=header))
     monkeypatch.setattr(notify, "discord_push", push)
     sleeps = _record_sleeps(monkeypatch)

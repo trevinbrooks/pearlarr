@@ -33,17 +33,17 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     * `MappingStore`: `make_run_deps` / `make_sonarr_sync` build a real
       `MappingResolver` whose `:memory:` store the tests can't close in the
       builder (they query `deps.mappings` after construction). Wrapping the
-      `open` factory registers every store regardless of construction path;
+      `open` factory registers every store regardless of construction path.
       `close()` is idempotent, so stores that already close themselves are fine.
     * The file handler `setup_logger` attaches to the `"Pearlarr"`
-      logger (only the e2e smoke drives the real logging path); left open, its
+      logger (only the e2e smoke drives the real logging path). Left open, its
       file handle leaks.
 
     `httpx.Client` is the same leak class minus the warning (httpx doesn't warn
     on GC): builders and test bodies construct ad-hoc clients (respx-mocked or
     never driven) with no owner to close them. Wrapping `__init__` registers
     every client a test constructs. Module-lifetime clients predate the
-    function-scoped wrap and are left alone; `close()` is idempotent, so clients
+    function-scoped wrap and are left alone. `close()` is idempotent, so clients
     a test already context-manages are unaffected.
 
     The process-global `"Pearlarr"` logger is also fully reset (all handlers
@@ -54,7 +54,7 @@ def close_leaked_handles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     installed the hub/bridge (the cli run commands do) would otherwise leave the
     bridge on the ROOT logger, echoing every later test's third-party warnings.
     `setup_logger`/`apply_log_level` also open the ROOT logger's level (the
-    bridge's gate); it is restored to the stdlib WARNING default here.
+    bridge's gate). It is restored to the stdlib WARNING default here.
     """
 
     opened: list[MappingStore] = []
@@ -100,13 +100,13 @@ def isolate_data_dir(
     A backstop: `resolve_paths()` is read at runtime across `cli.py` and
     `mappings.py`, and `test_cli` does destructive cache ops keyed off it - one
     forgotten `setenv` would touch the developer's real data dir. Tests that set
-    the env themselves still override this default; `@pytest.mark.real_data_dir`
+    the env themselves still override this default. `@pytest.mark.real_data_dir`
     opts fully out (`test_paths` and the `@realdata` parity suite, which need
     the real dir / manage the env directly).
     """
 
     # `request.keywords` aggregates the item's markers (incl. class/module
-    # pytestmark); `FixtureRequest.node` is untyped, so read markers off it.
+    # pytestmark). `FixtureRequest.node` is untyped, so read markers off it.
     if "real_data_dir" in request.keywords:
         return
     monkeypatch.setenv(DATA_DIR_ENV, str(tmp_path / "pearlarr_data"))
@@ -116,7 +116,7 @@ def isolate_data_dir(
 def app_logger() -> Iterator[logging.Logger]:
     """The real app logger, isolated: handlers/filters/level/propagate restored.
 
-    Starts at DEBUG so nothing is level-gated by default; tests pinning gated
+    Starts at DEBUG so nothing is level-gated by default. Tests pinning gated
     output set the level they need on the yielded logger.
     """
 

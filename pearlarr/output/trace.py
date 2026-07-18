@@ -12,10 +12,10 @@ from rich.traceback import Trace, Traceback
 @final
 @dataclass(frozen=True, slots=True)
 class CapturedTrace:
-    """A traceback extracted once from a live exception; holding it never pins frames.
+    """A traceback extracted once from a live exception. Holding it never pins frames.
 
     `show_locals=False` at extraction means frame locals (API keys, webhook URLs)
-    are never copied out of the frames — the secrets guarantee is structural.
+    are never copied out of the frames - the secrets guarantee is structural.
     """
 
     rich_trace: Trace

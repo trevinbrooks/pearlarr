@@ -1,7 +1,7 @@
 """Build the demo Sonarr fixtures: Frieren (missing), Cowboy Bebop (up to date), FMAB (upgrade).
 
 Maintainer tooling behind `scripts/demo/record.sh`, which runs this only when
-`fixtures/` is empty; the generated files are committed so re-records don't
+`fixtures/` is empty. The generated files are committed so re-records don't
 drift with SeaDex. Needs network - the Bebop file sizes come off the live entry.
 """
 

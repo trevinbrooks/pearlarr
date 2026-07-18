@@ -64,7 +64,7 @@ class RadarrClient(AbstractRadarrClient):
         Construction is network-free (no connection probe): the first request
         happens on the first method call, so an unreachable Radarr surfaces as
         that call's typed error / fail-open path, never a constructor hang.
-        Warnings ride the hub — unlike Sonarr, this client emits no lines of
+        Warnings ride the hub - unlike Sonarr, this client emits no lines of
         its own, so it holds no logger at all.
 
         Args:
@@ -114,7 +114,7 @@ class RadarrClient(AbstractRadarrClient):
 
     @override
     def history_since(self, date: str) -> list[HistoryRecord] | None:
-        """History since `date`, or None on failure (fail-open; shared helper)."""
+        """History since `date`, or None on failure (fail-open, shared helper)."""
 
         return self._http.history_since(
             date,

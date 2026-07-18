@@ -1,8 +1,8 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # These access the wait manager's + engine's private members (mgr._reporter,
-# mgr._pending_records, mgr._ctx, engine._wait_manager, ...); strict re-flags that and
-# the repo disables reportPrivateUsage for tests.
+# mgr._pending_records, mgr._ctx, engine._wait_manager, ...). Strict re-flags that,
+# and the repo disables reportPrivateUsage for tests.
 """Unit tests for the completion wait/poll machinery (`ImportWaitManager`).
 
 These pin `ImportWaitManager.poll_torrent` (the single-shot state read)
@@ -80,9 +80,9 @@ class FakeTorrent:
     """Mimics one qBittorrent torrent info row (the fields `poll_torrent` reads).
 
     The telemetry fields (`dlspeed` / `eta` / `completed` / `size`) default
-    to None so the common monitor tests don't have to set them; `poll_torrent`
+    to None so the common monitor tests don't have to set them. `poll_torrent`
     reads them via `getattr` and sanitizes None to None. `hash` is only read
-    by the batched `poll_telemetry` (which keys its result off it); a blank
+    by the batched `poll_telemetry` (which keys its result off it). A blank
     hash is filled in from the script key when served from a `FakeQbit`
     telemetry script, so only a deliberate-mismatch test needs to set it.
     """
@@ -120,11 +120,11 @@ class FakeQbit:
     `torrents` scripts the heavy per-hash poll: each infohash maps to its own
     ordered lifecycle of readings, and every single-hash `torrents_info` call
     advances THAT hash's script by one (clamping at the last, so a steady state
-    repeats indefinitely). An unscripted hash reads as gone (`[]`); an
+    repeats indefinitely). An unscripted hash reads as gone (`[]`). An
     Exception step is raised to exercise the transient-error path. `telemetry`
     separately scripts the fast batched poll the same way - a batch read never
     consumes a heavy script (and vice versa), so a test scripts torrent
-    lifecycles declaratively without caring which lane polls first; hashes with
+    lifecycles declaratively without caring which lane polls first. Hashes with
     no telemetry script simply don't appear in a batch. Hash matching is
     case-insensitive on both lanes (real qBittorrent is). `calls` counts every
     `torrents_info` call, either lane.
@@ -151,7 +151,7 @@ class FakeQbit:
 
     @staticmethod
     def _next(steps: list[QbitStep], index: dict[str, int], key: str) -> FakeTorrent:
-        """Advance `key`'s cursor through `steps` (clamped); raise Exception steps."""
+        """Advance `key`'s cursor through `steps` (clamped). Raise Exception steps."""
 
         i = index.get(key, 0)
         index[key] = i + 1
@@ -238,8 +238,8 @@ class TestPollTorrent:
         assert mgr.poll_torrent("h") == TorrentProbe(None, None, 0.5)
 
     def test_none_on_transient_api_error(self) -> None:
-        # A dropped connection / re-auth in flight is "still waiting", not terminal;
-        # the un-observed flag tells the monitor the zeroed telemetry is a
+        # A dropped connection / re-auth in flight is "still waiting", not terminal.
+        # The un-observed flag tells the monitor the zeroed telemetry is a
         # placeholder (keep the last real bar), not a reading.
         mgr = make_wait_manager(FakeQbit({"h": [qbittorrentapi.APIConnectionError("boom")]}))
 
@@ -283,7 +283,7 @@ class TestPollTelemetry:
     """poll_telemetry: ONE batched, read-only info call for the fast cockpit refresh."""
 
     def test_batches_and_matches_hashes_case_insensitively(self) -> None:
-        # qBittorrent lowercases response hashes; the result must key back to OUR
+        # qBittorrent lowercases response hashes. The result must key back to OUR
         # infohash spelling so the monitor's views dict matches.
         row = FakeTorrent(progress=0.5, dlspeed=200, completed=100, size=1000)
         qbit = FakeQbit(telemetry={"ABC123": [row]})  # blank row hash fills in as "ABC123"
@@ -330,7 +330,7 @@ class TestPollTelemetry:
 
 
 class FakeClock:
-    """A monotonic clock the wait loop reads; advances by a fixed step per sleep."""
+    """A monotonic clock the wait loop reads. Advances by a fixed step per sleep."""
 
     def __init__(self, step: float) -> None:
         self.t = 0.0
@@ -340,7 +340,7 @@ class FakeClock:
         return self.t
 
     def sleep(self, _seconds: float) -> None:
-        # Ignore the requested duration; advance our own clock so the loop's
+        # Ignore the requested duration. Advance our own clock so the loop's
         # deadline arithmetic is exercised without ever really sleeping.
         self.t += self._step
 
@@ -370,7 +370,7 @@ class _RecordingStrategy(FakeStrategy):
     last), or a `completed_error` raised (the swallowed-import path).
     `import_progress` likewise records (`progress_calls`) and dispenses an
     `ImportProgress`, defaulting to an indeterminate zero - the Tier-2
-    fast-poll no-op the heavy-poll tests rely on; `progress_error` is raised
+    fast-poll no-op the heavy-poll tests rely on. `progress_error` is raised
     ONCE on the first call (the fast-lane containment path), then cleared.
     """
 
@@ -511,7 +511,7 @@ class TestPruneExpiredPending:
         mgr.prune_expired_pending()
 
         assert set(mgr._pending_records()) == {"fresh"}
-        # Only the aged drop is announced (an INFO hub Diagnostic); the
+        # Only the aged drop is announced (an INFO hub Diagnostic). The
         # unparseable-stamp drop stays DEBUG chatter on the logger.
         (aged,) = recording.of_type(Diagnostic)
         assert aged.severity is Severity.INFO
@@ -741,8 +741,8 @@ class TestReconcileRemaining:
         assert strategy.import_calls == []
 
     def test_two_imports_both_counted(self) -> None:
-        # MUTATION PIN: `stats.imported += 1` degraded to `= 1` clamps at one;
-        # two carried-over imports in one pass must tally 2.
+        # MUTATION PIN: `stats.imported += 1` degraded to `= 1` clamps at one.
+        # Two carried-over imports in one pass must tally 2.
         strategy = _RecordingStrategy(
             completed=import_probe(ImportReadiness.IMPORTED, files_present=True),
         )
@@ -805,8 +805,8 @@ class TestTallyCarriedOverIntoStats:
         assert mgr._ctx.stats.importing == 0
 
     def test_two_importing_records_both_tallied(self) -> None:
-        # MUTATION PIN: `stats.importing += 1` degraded to `= 1` clamps at one;
-        # two known-IMPORTING records must tally 2.
+        # MUTATION PIN: `stats.importing += 1` degraded to `= 1` clamps at one.
+        # Two known-IMPORTING records must tally 2.
         mgr = make_orchestration_manager(
             qbit=None,
             strategy=_RecordingStrategy(),
@@ -850,7 +850,7 @@ class TestRunMonitor:
     """run_monitor: interleaved, copy-aware wait+import over ALL pending."""
 
     def test_interleaved_fast_and_slow(self) -> None:
-        # Two torrents: "fast" completes + imports first cycle (files present);
+        # Two torrents: "fast" completes + imports first cycle (files present).
         # "slow" is still downloading, then completes + imports a later cycle. Both
         # advance each cycle (interleaved), so the fast one isn't stuck behind slow.
         strategy = _RecordingStrategy(
@@ -897,7 +897,7 @@ class TestRunMonitor:
 
     def test_imported_only_when_files_present_two_cycles(self) -> None:
         # The copy is async: cycle 1 issues the command (RETRY + command_issued,
-        # files NOT present) -> reads `importing`; cycle 2 verifies files present
+        # files NOT present) -> reads `importing`. Cycle 2 verifies files present
         # -> `imported`. imported is gated on verified files, never command accept.
         strategy = _RecordingStrategy(
             completed_sequence=[
@@ -955,7 +955,7 @@ class TestRunMonitor:
 
         mgr.run_monitor(now=clock.now, sleep=clock.sleep, view=view)
 
-        # Only ONE heavy poll; the fast poll did the rest.
+        # Only ONE heavy poll. The fast poll did the rest.
         assert len(strategy.import_calls) == 1
         assert len(strategy.progress_calls) == 3
         # The bar advanced (2/3 seen) before the row finished.
@@ -968,7 +968,7 @@ class TestRunMonitor:
         assert mgr._pending_records() == {}
 
     def test_tier2_disabled_skips_the_fast_poll(self) -> None:
-        # progress_poll_interval=0 -> no cheap poll at all; the heavy poll alone
+        # progress_poll_interval=0 -> no cheap poll at all. The heavy poll alone
         # drives completion (the bar simply steps once per poll).
         strategy = _RecordingStrategy(
             completed_sequence=[
@@ -1186,7 +1186,7 @@ class TestRunMonitor:
 
     def test_keyboard_interrupt_breaks_and_leaves_records(self) -> None:
         # Ctrl-C during the poll nap must break the loop (not propagate), so the
-        # caller's finally still restores the terminal + saves the cache; the
+        # caller's finally still restores the terminal + saves the cache. The
         # in-flight record is left pending and a WaitResult is still returned.
         strategy = _RecordingStrategy()
         pending = pending_import(infohash="h", added_at=_FRESH)
@@ -1227,7 +1227,7 @@ class TestRunMonitor:
         # the console tally/ledger can never undercount the returned WaitResult.
         first = pending_import(infohash="h1", added_at=_FRESH)
         second = pending_import(infohash="h2", added_at=_FRESH)
-        # h1 is unscripted -> gone -> MISSING terminal on its first advance; the
+        # h1 is unscripted -> gone -> MISSING terminal on its first advance. The
         # interrupt then lands on h2's poll, before that cycle's snapshot push.
         qbit = _InterruptOnHash({"h2": [FakeTorrent(progress=0.3)]}, interrupt_on="h2")
         mgr = make_orchestration_manager(
@@ -1248,7 +1248,7 @@ class TestRunMonitor:
 
     def test_import_exception_is_swallowed_and_record_left(self) -> None:
         # A failing import (e.g. malformed Sonarr response) must NOT propagate and
-        # abort _finalize_run's cache save; the record is left pending instead.
+        # abort _finalize_run's cache save. The record is left pending instead.
         strategy = _RecordingStrategy(completed_error=RuntimeError("boom"))
         pending = pending_import(infohash="h", added_at=_FRESH)
         qbit = FakeQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
@@ -1422,7 +1422,7 @@ class TestMonitorFastTelemetry:
         assert view.phase is Phase.DOWNLOADING
         assert view.fraction == 1.0
         assert view.speed_bps == 250
-        # The sparkline window is heavy-poll-sampled; the fast refresh adds nothing.
+        # The sparkline window is heavy-poll-sampled. The fast refresh adds nothing.
         assert view.speed_history == (100,)
         assert "h" in mp.active
 
@@ -1570,7 +1570,7 @@ class _RecordingCacheStore(FakeCacheStore):
 class _FinalizeWaitManager:
     """A stand-in wait manager for the finalize-ordering tests.
 
-    Every pass appends its ordering marker; the real ones return early on the
+    Every pass appends its ordering marker. The real ones return early on the
     empty working set these tests build - recording nothing - so a recording
     stand-in is what makes each step observable. `raise_on` scripts one pass to
     fail, for the unwind pins (the raise escapes `_finalize_run`, exactly as a

@@ -27,7 +27,7 @@ from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord, Json, validate_e
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 GET_RETRIES = 3
 BACKOFF_BASE_S = 0.5
-# Streak re-warn cadence default; the composition root binds the configured
+# Streak re-warn cadence default. The composition root binds the configured
 # `imports.digest_interval` (same default) at `bind`.
 HEARTBEAT_INTERVAL_S = 300.0
 
@@ -88,7 +88,7 @@ class ArrAuthError(Exception):
     """An arr rejected the API key (401/403) on the load-bearing library fetch.
 
     A distinct error from `ArrConnectionError` so the CLI containment arm can
-    point the user at `<arr>.api_key` specifically.
+    point the operator at `<arr>.api_key` specifically.
     """
 
 
@@ -148,7 +148,7 @@ class ArrHttp:
     would only stretch each poll."""
     heartbeat_s: float = HEARTBEAT_INTERVAL_S
     """Seconds between "still failing" re-warns while a streak runs (bound from
-    `imports.digest_interval` at the composition root; ArrHttp knows no config)."""
+    `imports.digest_interval` at the composition root - ArrHttp knows no config)."""
     clock: Callable[[], float] = time.monotonic  # injectable streak clock (faked in tests)
     streaks: FailureStreaks = field(default_factory=FailureStreaks, compare=False)
     """The failure-streak ledger. MUST stay `init=True`: `dataclasses.replace`
@@ -161,7 +161,7 @@ class ArrHttp:
         """The base URL as messages may show it: any embedded login masked.
 
         Requests ride `base_url` verbatim (a `user:pass@` login there is
-        real basic auth, e.g. an arr behind a protected reverse proxy); every
+        real basic auth, e.g. an arr behind a protected reverse proxy). Every
         error/warning string uses this instead - the login is a credential
         under the redaction guarantee.
         """
@@ -205,10 +205,10 @@ class ArrHttp:
         """The retrying GET core the fail-open and strict paths share.
 
         Retries transient failures (connect/read errors, 429/5xx) up to
-        `retries` times (the bind-time budget; the wait-path poll handle rides
+        `retries` times (the bind-time budget - the wait-path poll handle rides
         0) with jittered exponential backoff - GETs only, so
         this stays safe for idempotent reads. `timeout` overrides the
-        client-level timeout per request (the 120s manual-import scans);
+        client-level timeout per request (the 120s manual-import scans).
         None rides the client default. Returns the final response (a 200, or
         the terminal / retry-exhausted non-200) paired with a detail naming
         the failure, or `(None, detail)` when no request completed.
@@ -226,7 +226,7 @@ class ArrHttp:
                     timeout=request_timeout,
                 )
             except (httpx.HTTPError, httpx.InvalidURL) as e:
-                # InvalidURL is NOT an HTTPError subclass; a config URL weird
+                # InvalidURL is NOT an HTTPError subclass. A config URL weird
                 # enough to fail httpx's parser must still fail open, not abort.
                 # Naming the failure type: "ConnectError" beats a bare "failed".
                 detail = f"request failed ({type(e).__name__})"
@@ -272,14 +272,14 @@ class ArrHttp:
         warn: str | None,
         timeout: float | None = None,
     ) -> object | None:
-        """GET `path` and parse the JSON body; fail open to None with one warning.
+        """GET `path` and parse the JSON body, failing open to None with one warning.
 
         Rides `_get_with_retries` (transient failures retry with jittered
         backoff, up to the handle's `retries`). Any terminal failure (request
         error, non-200, non-JSON body)
         warns via `warn` - a template whose `{detail}` names the cause - and
-        returns None; `warn=None` keeps a deliberate quiet path silent.
-        `timeout` overrides the client-level timeout per request (seconds);
+        returns None. `warn=None` keeps a deliberate quiet path silent.
+        `timeout` overrides the client-level timeout per request (seconds).
         None rides the client default.
         """
 
@@ -332,10 +332,10 @@ class ArrHttp:
         json: Json,
         warn: str | None,
     ) -> object | None:
-        """POST `json` to `path` and parse the body; fail open to None with one warning.
+        """POST `json` to `path` and parse the body, failing open to None with one warning.
 
         ONE attempt, never retried: a POST is not idempotent, so a retry could
-        double-queue a command. Both 200 and 201 read as success; any failure
+        double-queue a command. Both 200 and 201 read as success. Any failure
         (request error, other status, non-JSON body) warns via `warn` - the
         same `{detail}` template as `get_json`, None for a deliberate quiet
         path - and returns None.
@@ -360,13 +360,13 @@ class ArrHttp:
         *,
         params: Mapping[str, str] | None = None,
     ) -> list[object]:
-        """GET `path` and parse the JSON array body; RAISE instead of failing open.
+        """GET `path` and parse the JSON array body - RAISE instead of failing open.
 
         The strict counterpart of `get_json_list`, for the load-bearing
         library fetch where a failure must abort the leg rather than read as an
         empty library. Shares the retry core (transient statuses still retry
         first), then turns any terminal failure into a typed error: a 401/403
-        raises `ArrAuthError`; a transport error, any other non-200, a
+        raises `ArrAuthError`. A transport error, any other non-200, a
         non-JSON body or a non-array payload raises
         `ArrConnectionError` - both with a clean message naming this
         arr's base url and the failure detail.
@@ -393,7 +393,7 @@ class ArrHttp:
     ) -> list[HistoryRecord] | None:
         """History records since `date` (`/api/v3/history/since`, ascending), or None.
 
-        One unfiltered call (`eventType` is single-valued server-side; the
+        One unfiltered call (`eventType` is single-valued server-side - the
         activity scan filters client-side), shared by both arr clients - the
         record's `seriesId`/`movieId` fold into one `item_id` at the
         model. Fails open to None through `get_json_list`'s matrix with a

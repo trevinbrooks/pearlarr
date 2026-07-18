@@ -8,7 +8,7 @@ the `PendingImport` JSON round-trip) and
 map, the authoritative file->episode mapping and import planning (strict-honor
 + never-overwrite + never-skip), the queue classifier and episode-file status,
 the filename quality parse, and the layered quality/language selection). All
-pure, no network or disk; `SonarrEpisode` is built directly via
+pure, no network or disk. `SonarrEpisode` is built directly via
 `SonarrEpisode.model_validate`.
 """
 
@@ -125,7 +125,7 @@ class TestNormalize:
     """
 
     def test_nfc_nfd_match(self) -> None:
-        # Same text, NFC (composed) vs NFD (decomposed) "é"; both fold equal.
+        # Same text, NFC (composed) vs NFD (decomposed) "é". Both fold equal.
         nfc = "Café - 01.mkv"
         nfd = "Café - 01.mkv"
         assert normalize_basename(nfc) == normalize_basename(nfd)
@@ -138,14 +138,14 @@ class TestNormalize:
 
     def test_group_strip_only_removes_wrapping_dashes(self) -> None:
         # MUTATION PIN: strip("-") widened to a multi-char strip set would eat
-        # the X off an X-edged group; only wrapping dashes (and whitespace) go,
+        # the X off an X-edged group. Only wrapping dashes (and whitespace) go,
         # and interior dashes always stay.
         assert normalize_group("Xrays-") == "xrays"
         assert normalize_group("X-Raws") == "x-raws"
 
     def test_group_dash_wrapped_agrees_with_planner(self) -> None:
-        # normalize_group is the single source of truth normalize_rg delegates to;
-        # a dash-wrapped group must compare equal on both ends or a release the
+        # normalize_group is the single source of truth normalize_rg delegates to.
+        # A dash-wrapped group must compare equal on both ends or a release the
         # planner grabbed gets re-imported over by the overwrite guard.
         assert normalize_group("-Aergia-") == "aergia"
         assert normalize_group("-Aergia-") == normalize_rg("-Aergia-")
@@ -172,7 +172,7 @@ class TestEpisodeIdsForParsed:
 class TestEpisodeFileStatuses:
     """`episode_file_statuses` classifies each episode's file, and the two summary helpers derive from that.
 
-    `all_targets_done` is true only when every status is recommended; `targets_needing_import` excludes only
+    `all_targets_done` is true only when every status is recommended. `targets_needing_import` excludes only
     the recommended ones.
     """
 
@@ -196,7 +196,7 @@ class TestEpisodeFileStatuses:
         assert statuses == {99: EpisodeFileStatus.ABSENT}
 
     def test_dash_wrapped_group_counts_as_recommended(self) -> None:
-        # Sonarr can report a file's group dash-wrapped ("-Aergia-"); the overwrite
+        # Sonarr can report a file's group dash-wrapped ("-Aergia-"). The overwrite
         # guard must still match it against the recommended set built from "Aergia".
         episodes = {5: _ep(ep_id=5, file_id=50, group="-Aergia-")}
         statuses = episode_file_statuses([5], EpisodeSnapshot(episodes, {normalize_group("Aergia")}))
@@ -249,7 +249,7 @@ class TestPlanImportFiles:
         amap = {"a.mkv": [11]}
         cands = {"a.mkv": _candidate("a.mkv"), "rogue.mkv": _candidate("rogue.mkv")}
         decisions = plan_import_files(amap, cands, needing_import={11})
-        # Only our mapped file is decided on; the rogue on-disk file is ignored.
+        # Only our mapped file is decided on. The rogue on-disk file is ignored.
         assert {d.basename for d in decisions} == {"a.mkv"}
 
     def test_intended_file_missing_from_disk_is_flagged_not_dropped(self) -> None:
@@ -307,7 +307,7 @@ def _command(
 
 
 def _paths(raw: str, sonarr_visible: str | None = None) -> ContentPaths:
-    """A `ContentPaths` pair; the Sonarr view defaults to the raw path (untranslated)."""
+    """A `ContentPaths` pair. The Sonarr view defaults to the raw path (untranslated)."""
 
     return ContentPaths(raw=raw, sonarr_visible=sonarr_visible if sonarr_visible is not None else raw)
 
@@ -342,7 +342,7 @@ class TestManualImportInFlight:
         assert manual_import_in_flight(cmds, "no-hash", _paths("/d/folder"), set())
 
     def test_folder_import_matches_by_translated_prefix(self) -> None:
-        # A dead-tracked folder import POSTs the TRANSLATED path; the raw
+        # A dead-tracked folder import POSTs the TRANSLATED path. The raw
         # qBittorrent prefix matches nothing, the Sonarr-visible one must.
         cmds = [_command(files=[{"path": "/remote/tv/folder/ep.mkv", "episodeIds": []}])]
         assert manual_import_in_flight(
@@ -616,7 +616,7 @@ class TestResolveQuality:
     """
 
     def test_sonarr_wins_over_ours_and_default(self) -> None:
-        # Sonarr parsed (web, 1080); our filename parse and the default disagree.
+        # Sonarr parsed (web, 1080). Our filename parse and the default disagree.
         sonarr = ParsedQuality(source=QualitySource.WEB, resolution=1080)
         ours = ParsedQuality(source=QualitySource.BLURAY, resolution=2160)
         default = ParsedQuality(source=QualitySource.TELEVISION, resolution=720)
@@ -638,7 +638,7 @@ class TestResolveQuality:
         assert model.quality.id == 20
 
     def test_per_axis_fill_from_default(self) -> None:
-        # User's example: we parsed (None, 1080); default is Bluray-2160p ->
+        # User's example: we parsed (None, 1080). Default is Bluray-2160p ->
         # import as Bluray-1080p, NOT WEBDL-1080p and NOT Unknown.
         ours = ParsedQuality(source=None, resolution=1080)
         default = ParsedQuality(source=QualitySource.BLURAY, resolution=2160)
@@ -652,7 +652,7 @@ class TestResolveQuality:
         assert _resolved_name(model) == "Bluray-1080p"
 
     def test_blurayraw_downgrades_to_bluray_when_no_remux_def(self) -> None:
-        # 720p has no remux definition; a (blurayRaw, 720) gracefully downgrades
+        # 720p has no remux definition. A (blurayRaw, 720) gracefully downgrades
         # to Bluray-720p rather than failing.
         sonarr = ParsedQuality(source=QualitySource.BLURAY_RAW, resolution=720)
         model = resolve_quality(
@@ -763,7 +763,7 @@ class TestPendingImportRoundTrip:
         assert rebuilt.title is None
 
     def test_display_label_is_title_dot_group_with_fallbacks(self) -> None:
-        # The group disambiguates a series that grabbed several torrents; a
+        # The group disambiguates a series that grabbed several torrents. A
         # groupless record shows the bare title, a titleless one its infohash.
         rebuilt = PendingImport.from_json({"infohash": "h", "series_id": 1})
         assert rebuilt.display_label == "h"
@@ -881,7 +881,7 @@ class TestSanitizeTorrentTelemetry:
             # NaN progress (float and string) folds to 0.0, not a poisoned bar.
             (float("nan"), 100, 130, 50, 200, TorrentTelemetry(0.0, 100, 130, 50, 200)),
             ("nan", None, None, None, None, TorrentTelemetry(0.0, None, None, None, None)),
-            # Numeric-string progress parses; junk folds to 0.0.
+            # Numeric-string progress parses. Junk folds to 0.0.
             ("0.75", None, None, None, None, TorrentTelemetry(0.75, None, None, None, None)),
             ("fast", None, None, None, None, TorrentTelemetry(0.0, None, None, None, None)),
             # Progress clamps to [0, 1] on both ends.
@@ -890,8 +890,8 @@ class TestSanitizeTorrentTelemetry:
             # Idle (0) and negative speeds read as "no speed", never a 0 B/s row.
             (0.5, 0, None, None, None, TorrentTelemetry(0.5, None, None, None, None)),
             (0.5, -5, None, None, None, TorrentTelemetry(0.5, None, None, None, None)),
-            # qBittorrent's 8_640_000 "infinite" eta and a 0/negative eta are unknown;
-            # the last finite second still renders.
+            # qBittorrent's 8_640_000 "infinite" eta and a 0/negative eta are unknown.
+            # The last finite second still renders.
             (0.5, 100, 8_640_000, None, None, TorrentTelemetry(0.5, 100, None, None, None)),
             (0.5, 100, 0, None, None, TorrentTelemetry(0.5, 100, None, None, None)),
             (0.5, 100, 8_639_999, None, None, TorrentTelemetry(0.5, 100, 8_639_999, None, None)),
@@ -947,7 +947,7 @@ class TestClassifyQueue:
 
     def test_in_motion_beats_blocked_to_avoid_racing(self) -> None:
         # Something is actively importing -> wait, don't race it, even if a sibling
-        # record is blocked; a later poll re-evaluates once the import settles.
+        # record is blocked. A later poll re-evaluates once the import settles.
         assert classify_queue(["importing", "importBlocked"]) is QueueVerdict.WAIT
 
     def test_case_insensitive(self) -> None:

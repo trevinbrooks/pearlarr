@@ -48,7 +48,7 @@ from .seadex_types import SeadexDict
 from .torrents import AddOutcome, ReleaseOutcome
 
 if TYPE_CHECKING:
-    # Annotation-only (PerTitleState.absorb_skips); planner doesn't import us.
+    # Annotation-only (PerTitleState.absorb_skips). planner doesn't import us.
     from .planner import PrivateOnlySkips
 
 
@@ -77,17 +77,17 @@ class NeedsActionKind(Enum):
     (an interactive private pick) fall back, so its tip must not suggest turning fallback on."""
     PRIVATE_ONLY_STALE = auto()
     """Fallback mode refusing to replace an owned stale copy of the preferred private release
-    (an alternative exists; the fallback-never-supersedes rule holds it)."""
+    (an alternative exists - the fallback-never-supersedes rule holds it)."""
     UNSUPPORTED_TRACKER = auto()
     """A recommended release is on a tracker we have no parser for."""
     GRAB_FAILED = auto()
-    """A contained transient failure (tracker/qBittorrent down); the title stays uncached and
+    """A contained transient failure (tracker/qBittorrent down). The title stays uncached and
     retries next run, so it gets no tip."""
 
 
 @dataclass(frozen=True, slots=True)
 class NeedsActionRecord:
-    """One skip needing the user, recorded for the summary's "needs action" block."""
+    """One skip needing attention, recorded for the summary's "needs action" block."""
 
     title: str | None
     coverage: str | None
@@ -122,13 +122,13 @@ class RunStats:
     )
     unmonitored: int = 0
     queued: int = 0
-    """Carried-over pending-import count in the `QUEUED` state (never a this-run grab; those
+    """Carried-over pending-import count in the `QUEUED` state (never a this-run grab - those
     stay `added`)."""
     importing: int = 0
-    """Carried-over pending-import count in the `IMPORTING` state (never a this-run grab; those
+    """Carried-over pending-import count in the `IMPORTING` state (never a this-run grab - those
     stay `added`)."""
     imported: int = 0
-    """Carried-over pending-import count in the `IMPORTED` state (never a this-run grab; those
+    """Carried-over pending-import count in the `IMPORTED` state (never a this-run grab - those
     stay `added`)."""
 
 
@@ -149,13 +149,13 @@ class PerTitleState:
     list."""
     private_only_stale_held: bool = False
     """Set per-title when an owned-at-stale-size private pick is held because only a fallback
-    covers it (never a replacement); picks the summary row's kind."""
+    covers it (never a replacement). Picks the summary row's kind."""
     fallback_covered: bool = False
     """Set per-title when the Arr already owns a public fallback's files (the owned-fallback
-    soft-skip); drives the cache's fallback-satisfied marker."""
+    soft-skip). Drives the cache's fallback-satisfied marker."""
     unsupported_tracker_skipped: bool = False
-    """Set per-title when a recommended release is on a tracker we have no parser for (so we
-    can't grab it, but the user didn't deselect it); keeps the title from being cached as done."""
+    """Set per-title when a recommended release is on a tracker we have no parser for (so it
+    can't be grabbed, but it wasn't deliberately deselected). Keeps the title from being cached as done."""
     unsupported_tracker_groups: list[str] = field(default_factory=list[str])
     """Group names of the unsupported-tracker skip, riding along for the summary."""
     unsupported_tracker_hashes: list[str] = field(default_factory=list[str])
@@ -192,7 +192,7 @@ class RunContext:
     dry_run: bool = False
     import_wait_mode: ImportWaitMode = ImportWaitMode.OFF
     """The run's resolved wait-for-completion mode (cli > config > default), stamped
-    in `reset_run_stats`; `OFF` makes every pending-import path a no-op."""
+    in `reset_run_stats`. `OFF` makes every pending-import path a no-op."""
     stats: RunStats = field(default_factory=RunStats)
     torrents_added: int = 0
     per_title: PerTitleState = field(default_factory=PerTitleState)
@@ -201,13 +201,13 @@ class RunContext:
     started_monotonic: float | None = None
     """Run clock (monotonic, so an NTP/DST step can't yield negative elapsed)."""
     counts_mark: CountsMark = field(default_factory=lambda: SeverityCounts().bound_mark())
-    """The counts mark stamped at run start, diffed for the summary's issues row; defaults to
+    """The counts mark stamped at run start, diffed for the summary's issues row. Defaults to
     a throwaway zero counter, so an unstamped ctx diffs to zero."""
     pending_imports: list[PendingImport] = field(
         default_factory=list[PendingImport],
     )
     """`PendingImport` records written THIS run (on a successful add), for the end-of-run
-    blocking pass; the durable copies live in `cache_store` under `pending_imports`, so this
+    blocking pass. The durable copies live in `cache_store` under `pending_imports`, so this
     is just the fast in-memory list to wait on."""
     pending_states: dict[str, PendingState] = field(
         default_factory=dict[str, PendingState],
@@ -259,10 +259,10 @@ class RunReporter:
     the hub-counts source `counts_mark` binds into the run-start mark, the
     cache store, the AniList gateway). The methods hold every producer-side
     decision - stats bumps, ctx mutation, gates, title fallbacks - then state
-    WHAT happened as an event; the scan-line builders (`output.scan_lines`)
+    WHAT happened as an event. The scan-line builders (`output.scan_lines`)
     own the layout. An open entry block
     rides `self._entry`: a CHECKING header opens one and its details stream
-    through it (any boundary/sibling closes it, idempotently, first); a COMPLETE
+    through it (any boundary/sibling closes it, idempotently, first). A COMPLETE
     block (cached / carried-over pending) opens and self-closes via `_block`, so
     the frontier never carries a finished block - a gap diagnostic attributes
     to the open item, not to a stale entry (the item indent applies either way).
@@ -281,7 +281,7 @@ class RunReporter:
         self._counts = counts
         self.cache_store = cache_store
         self.anilist = anilist
-        # The entry block currently open (a coverage/url-bearing header); None
+        # The entry block currently open (a coverage/url-bearing header). None
         # between entries. Boundaries and sibling rows close it before emitting.
         self._entry: EntryScope | None = None
 
@@ -342,7 +342,7 @@ class RunReporter:
         """The ONE path for the typed release-level facts: via the open entry scope, else scope-free.
 
         The narrowed public type keeps EntryDetail / LedgerRow / GrabAction on
-        their dedicated paths; the grab pipeline posts its per-release
+        their dedicated paths. The grab pipeline posts its per-release
         skipped/failed facts here.
         """
 
@@ -391,7 +391,7 @@ class RunReporter:
         self._emit(ScanFinished(arr=arr))
 
     def run_finished(self, arr: Arr) -> None:
-        """Close the run (the leg-close boundary); bootstrap emits it on unwind.
+        """Close the run (the leg-close boundary). bootstrap emits it on unwind.
 
         The entry close is defensive - `scan_finished` ran on every path here.
         """
@@ -453,14 +453,14 @@ class RunReporter:
         """A ledger row for an id with no SeaDex entry block to show.
 
         Renders the caller-supplied `name` when one is known (the outage path
-        reads it off the cache row); otherwise resolves a human title live via
+        reads it off the cache row). Otherwise resolves a human title live via
         AniList - through the gateway, so its retry log narrates any backoff.
         Either way the id rides its own "anilist" detail line when a title showed.
         """
 
         title = name if name is not None else self.anilist.title(al_id)
         self._ledger(state, title or f"AniList #{al_id}")
-        # Only repeat the id on its own line when the ledger shows a title;
+        # Only repeat the id on its own line when the ledger shows a title.
         # otherwise the ledger already reads "AniList #<id>" and a detail line
         # would just duplicate it. PLAIN accent -> style-less kv, as today.
         if title:
@@ -478,9 +478,9 @@ class RunReporter:
         """Open the active-entry block: a focal "checking" header + coverage/URL.
 
         The entry being evaluated is the focal header of the title block, keyed on
-        state CHECKING; its coverage/URL continuation and any details that follow
+        state CHECKING. Its coverage/URL continuation and any details that follow
         ride the opened scope. The active title/url/coverage are remembered on
-        `ctx`. `coverage` is a one-line range (e.g. "S04 E01-E12"); None / ""
+        `ctx`. `coverage` is a one-line range (e.g. "S04 E01-E12"). None / ""
         renders URL only (e.g. a Radarr movie).
         """
 
@@ -521,7 +521,7 @@ class RunReporter:
         with a name lookup only if the cache predates name storage. The record is
         read under the explicit `arr` the entry is cached under (which may not be
         the running arr). UNCHANGED means the SeaDex entry's update time matches
-        the cache; pass IN_RADARR for entries already handled by a Radarr sync.
+        the cache. Pass IN_RADARR for entries already handled by a Radarr sync.
         """
 
         ctx.stats.cached += 1
@@ -566,7 +566,7 @@ class RunReporter:
         is self-attributed by its release title, coverage and SeaDex link), for the
         three reportable states
         (`queued` / `importing` / `imported`). MISSING / ERRORED render
-        nothing (no ledger vocabulary; the engine logs them at debug). This bumps
+        nothing (no ledger vocabulary - the engine logs them at debug). This bumps
         NO counter - the engine owns the drop/count bookkeeping.
         """
 
@@ -606,10 +606,10 @@ class RunReporter:
 
         Called after the adding has run, so the status reflects what actually
         happened. Three outcomes: a fresh grab reads "adding" (a dry run reads
-        "would add"); a recommended release already in the client from a PRIOR run -
+        "would add"). A recommended release already in the client from a PRIOR run -
         still downloading, not yet imported - reads "already downloading" (and,
-        when the end-of-run monitor is active this session, "waiting to import");
-        the genuine "you already own it" never reaches here. The block carries, in
+        when the end-of-run monitor is active this session, "waiting to import").
+        The genuine "you already own it" never reaches here. The block carries, in
         order: the status, then each recommended release group, then the
         per-release outcome (added / downloading).
 
@@ -624,7 +624,7 @@ class RunReporter:
                 import.
 
         Returns:
-            True if a status block was posted; False if there was nothing to
+            True if a status block was posted. False if there was nothing to
                 report (e.g., every release was skipped - the skip warning already
                 explains that, so a status would only mislead)
         """
@@ -635,7 +635,7 @@ class RunReporter:
             return False
 
         # One pass over the outcomes: split added/downloading (a hashless/private
-        # release has no name; the builder falls back to its group, so "" is fine).
+        # release has no name. The builder falls back to its group, so "" is fine).
         added: list[ReleaseName] = []
         downloading: list[ReleaseName] = []
         for r in results:
@@ -685,7 +685,7 @@ class RunReporter:
     # --- summary boundary ----------------------------------------------------
 
     def counts_mark(self) -> CountsMark:
-        """The counts mark run start stamps; `log_run_summary` diffs against it.
+        """The counts mark run start stamps. `log_run_summary` diffs against it.
 
         The mark carries the counter it was stamped on, so its `since()` diff
         can never read a different hub than the mark did.
@@ -694,9 +694,9 @@ class RunReporter:
         return self._counts().bound_mark()
 
     def log_run_summary(self, ctx: RunContext, *, preview: bool, has_client: bool) -> None:
-        """Emit the end-of-run scoreboard (the summary boundary; closes the entry).
+        """Emit the end-of-run scoreboard (the summary boundary, closes the entry).
 
-        The arr and the resolved wait mode are read off `ctx`; the carried-over
+        The arr and the resolved wait mode are read off `ctx`. The carried-over
         `queued` / `importing` / `imported` rows render only when the mode is
         not OFF (renderer policy off `wait_mode_on`).
 

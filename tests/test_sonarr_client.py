@@ -8,7 +8,7 @@ httpx-based `ArrHttp`, mocked via `respx`. Bodies come from the
 captured `tests/fixtures/sonarr` JSON where one exists (queue /
 manual-import / command-list / quality-definitions), otherwise a minimal
 inline body. POST bodies are asserted by decoding the captured request content
-(no Any-typed body reads); GET request shape is read off
+(no Any-typed body reads). GET request shape is read off
 `route.calls.last.request.url`.
 """
 
@@ -217,7 +217,7 @@ def test_queue_later_page_failure_keeps_fetched_records() -> None:
     """
 
     route = respx.get(f"{_BASE}/queue")
-    # Page 1 succeeds; page 2 stays 500 through the transport retries.
+    # Page 1 succeeds. Page 2 stays 500 through the transport retries.
     route.side_effect = [httpx.Response(200, json=_queue_page(3, ["HASH0", "HASH1"]))] + [httpx.Response(500)] * 10
     client = _make_client()
     records = client.queue()
@@ -367,7 +367,7 @@ def test_parse_clean_no_match_returns_empty_list() -> None:
     """A clean 200 where Sonarr matched no episode returns `[]`.
 
     This is a *confirmed* no-match the caller may negative-cache, distinct
-    from a failure's None; a missing `episodes` key is the same clean
+    from a failure's None. A missing `episodes` key is the same clean
     no-match.
     """
 
@@ -449,13 +449,13 @@ def test_parse_episode_info_decodes_season_episode() -> None:
 def test_parse_episode_info_decodes_absolute() -> None:
     """An absolute-numbered release decodes to its absolute numbers (season 0, no SxxExx episode numbers).
 
-    The name alone carries no `(season, episode)`; Sonarr's series-matched
+    The name alone carries no `(season, episode)`. Sonarr's series-matched
     `episodes` array rides along as `matched_episodes` - the exact leg's
     in-set fallback for exactly this shape.
     """
 
-    respx.get(f"{_BASE}/parse").respond(json=sonarr_fixture("parse_toloveru_abs14.json"))
-    info = _make_client().parse_episode_info("ToLoveRu.-.14.mkv")
+    respx.get(f"{_BASE}/parse").respond(json=sonarr_fixture("parse_crushru_abs14.json"))
+    info = _make_client().parse_episode_info("CrushRu.-.14.mkv")
 
     assert info == ParsedFileInfo(
         season_number=0,
@@ -549,7 +549,7 @@ def test_folder_scan_sends_folder_and_never_download_or_series_id() -> None:
     """CONTRACT: the folder scan carries NEITHER `downloadId` NOR `seriesId`.
 
     A `downloadId` re-enters the poisoned tracked branch (the NRE the fallback
-    exists to dodge); a `seriesId` makes the controller scan the LIBRARY folder
+    exists to dodge). A `seriesId` makes the controller scan the LIBRARY folder
     instead of ours. Candidates decode exactly like the downloadId scan.
     """
 
@@ -573,7 +573,7 @@ def test_folder_scan_sends_folder_and_never_download_or_series_id() -> None:
 
 @respx.mock
 def test_folder_scan_non_200_returns_none_and_empty_stays_empty() -> None:
-    """A non-200 folder scan is None (retry); a 200 `[]` is a real empty answer."""
+    """A non-200 folder scan is None (retry). A 200 `[]` is a real empty answer."""
 
     respx.get(f"{_BASE}/manualimport").respond(status_code=500)
     assert _make_client().manual_import_candidates_by_folder(folder="/d", title="t") is None
@@ -600,7 +600,7 @@ def test_folder_scan_request_error_returns_none() -> None:
 def test_history_for_download_decodes_and_pins_paging() -> None:
     """The probe pins page-1 / pageSize-100 / date-descending explicitly and uppercases the hash.
 
-    A 23-file batch has ~46+ events; an unlucky default page size would yield a
+    A 23-file batch has ~46+ events. An unlucky default page size would yield a
     false verdict from a partial newest-first window.
     """
 
@@ -637,7 +637,7 @@ def test_history_for_download_non_200_returns_none() -> None:
 
 @respx.mock
 def test_history_for_download_junk_record_is_skipped_not_fatal() -> None:
-    """A junk `records[]` entry skips; the page (and its verdict) survives."""
+    """A junk `records[]` entry skips. The page (and its verdict) survives."""
 
     envelope: dict[str, object] = {
         "records": ["junk", {"eventType": "downloadFailed", "date": "2026-01-01T00:00:00Z"}],
@@ -654,7 +654,7 @@ def test_history_for_download_junk_record_is_skipped_not_fatal() -> None:
 
 @respx.mock
 def test_remote_path_mappings_decodes() -> None:
-    """Mappings decode host/remotePath/localPath; None only on failure."""
+    """Mappings decode host/remotePath/localPath. None only on failure."""
 
     respx.get(f"{_BASE}/remotepathmapping").respond(
         json=[
@@ -891,7 +891,7 @@ def test_history_since_decodes_records_and_builds_request() -> None:
     """`history_since()` narrows each record to a `HistoryRecord`.
 
     This includes the case-insensitive `data` reason key and a null
-    `downloadId`; the request pins the date + the include flags off.
+    `downloadId`. The request pins the date + the include flags off.
     """
 
     body: list[object] = [
@@ -952,7 +952,7 @@ def test_history_since_non_200_returns_none_and_warns() -> None:
 
     assert result is None
     # The single warning for a failed history fetch states its consequence too
-    # (the activity monitor only debug-logs, so this line is all the user sees).
+    # (the activity monitor only debug-logs, so this line is all that surfaces).
     [warning] = diagnostic_messages(recording, Severity.WARNING)
     assert warning == "Could not fetch Sonarr history (status code 500) - skipping activity detection this run"
 

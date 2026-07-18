@@ -2,8 +2,8 @@
 
 `Notifier` owns the Discord webhook - building the grab embed from a
 `GrabNotice` and the wait-complete summary embed (plus a generic
-outbound webhook POST of the wait report). It's gated on a configured url;
-with none, every push is a no-op.
+outbound webhook POST of the wait report). It's gated on a configured url.
+With none, every push is a no-op.
 """
 
 import time
@@ -32,8 +32,8 @@ from .torrents import AddOutcome, ReleaseOutcome
 from .wait_view import WaitResult
 
 # Cap how many titles a single notification field lists before collapsing the
-# remainder into a "… +N more" line, keeping a big carried-over backlog readable;
-# the payload boundary's char clamps are the hard limit guarantee.
+# remainder into a "… +N more" line, keeping a big carried-over backlog readable.
+# The payload boundary's char clamps are the hard limit guarantee.
 _MAX_FIELD_TITLES = 25
 
 # Arr logos for the grab embed's author line: the icon marks which arr the
@@ -42,17 +42,17 @@ _SONARR_ICON = "https://raw.githubusercontent.com/Sonarr/Sonarr/develop/Logo/512
 _RADARR_ICON = "https://raw.githubusercontent.com/Radarr/Radarr/develop/Logo/512.png"
 
 # Cap the comma-separated "Replacing" list so its inline field stays one short
-# row; the remainder collapses into a "… +N more" tail.
+# row. The remainder collapses into a "… +N more" tail.
 _MAX_REPLACING = 3
 
 # Taste limit for the SeaDex notes blockquote (the 1024 field-value clamp is
-# the hard backstop); truncation lands on a word boundary.
+# the hard backstop). Truncation lands on a word boundary.
 _MAX_NOTES_LEN = 400
 
 # Minimum spacing between consecutive Discord pushes (webhook rate limiting).
 _PUSH_SPACING_S = 1.0
 
-# Longest 429 Retry-After worth blocking the run for; anything above skips the
+# Longest 429 Retry-After worth blocking the run for. Anything above skips the
 # retry and drops the notification instead.
 _MAX_RETRY_AFTER_S = 5.0
 
@@ -104,14 +104,14 @@ class GrabNotice:
     thumb_url: str | None
     banner_url: str | None
     replaced_groups: tuple[str, ...]
-    """The existing arr release groups this grab is replacing (the "Replacing" field);
-    the caller passes them clean, so the notifier renders them verbatim."""
+    """The existing arr release groups this grab is replacing (the "Replacing" field).
+    The caller passes them clean, so the notifier renders them verbatim."""
     seadex_dict: SeadexDict
     results: Sequence[ReleaseOutcome]
     """The torrent-client add outcomes, so the embed can label a group whose releases
     were already in the client accordingly rather than claiming a fresh grab."""
     failed_groups: frozenset[str]
-    """Groups whose add failed at the client (contained; retried next run) - a
+    """Groups whose add failed at the client (contained, retried next run) - a
     failed add produces no outcome, so the label needs the explicit note."""
     coverage: str
 
@@ -130,7 +130,7 @@ def _md_escape(text: str) -> str:
 def _titles_match(a: str, b: str) -> bool:
     """True when two titles differ only by case or apostrophe style.
 
-    The Arr and AniList titles are near-duplicates for most entries; the embed
+    The Arr and AniList titles are near-duplicates for most entries. The embed
     shows the Arr's own title only when it adds information.
     """
 
@@ -141,11 +141,11 @@ def _titles_match(a: str, b: str) -> bool:
 
 
 def _notes_block(notes: str) -> str:
-    """The SeaDex entry notes as one blockquote — the "why this pick" line.
+    """The SeaDex entry notes as one blockquote - the "why this pick" line.
 
-    Notes are plain text; they are NOT markdown-escaped (a stray emphasis is
+    Notes are plain text. They are NOT markdown-escaped (a stray emphasis is
     cosmetic, mangled escape backslashes are worse). Blank lines drop so the
-    quote stays one block; overlong notes truncate on a word boundary.
+    quote stays one block. Overlong notes truncate on a word boundary.
     """
 
     text = notes.strip()
@@ -165,7 +165,7 @@ def _grab_notes(notice: GrabNotice) -> str:
     """The trailing notes stack: subtitle, entry notes, comparison links, caveats.
 
     The Arr's own title appears as a muted `-#` subtext byline only when it
-    differs from the AniList one; each piece is omitted when it has nothing to
+    differs from the AniList one. Each piece is omitted when it has nothing to
     say.
     """
 
@@ -174,7 +174,7 @@ def _grab_notes(notice: GrabNotice) -> str:
         parts.append(f"-# {_md_escape(notice.arr_title)}")
     if notes := _notes_block(notice.entry.notes):
         parts.append(notes)
-    # The lib's lax comparison parse can yield an empty segment; a blank url
+    # The lib's lax comparison parse can yield an empty segment. A blank url
     # would render a broken [Comparison N]() link, so filter falsy first.
     if comparisons := tuple(c for c in notice.entry.comparisons if c):
         single = len(comparisons) == 1
@@ -216,7 +216,7 @@ def _group_blocks(notice: GrabNotice) -> list[_GroupBlock]:
 
     The label reflects what actually happened at the torrent client: "Grabbed"
     when anything was added, "Already downloading" when every acted release was
-    already there, "Failed" when an add errored (contained; retried next run),
+    already there, "Failed" when an add errored (contained, retried next run),
     "Skipped" when none of its releases were attempted. Tags trail the release
     lines as muted subtext.
     """
@@ -325,8 +325,8 @@ class Notifier:
         """Post a grab notification: the AniList title linking to the SeaDex entry.
 
         The author line names the event ("Sonarr · SeaDex grab") under the
-        arr's own logo; a single-group grab carries its pick in the
-        description, a multi-group grab stacks one field per group; the
+        arr's own logo. A single-group grab carries its pick in the
+        description, a multi-group grab stacks one field per group. The
         AniList art frames it (cover thumbnail + wide banner).
         """
 
@@ -335,7 +335,7 @@ class Notifier:
     def push_wait_summary(self, *, arr: Arr, result: WaitResult) -> bool:
         """Post the wait-pass outcome to Discord and/or the generic webhook.
 
-        A no-op (returns False) when nothing waited or no url is configured; the
+        A no-op (returns False) when nothing waited or no url is configured. The
         caller already gates on `wait_notify` and swallows any error, so this
         can never abort the end-of-run cache save. `arr` names the wait pass in
         the title.
@@ -362,7 +362,7 @@ class Notifier:
         """One counted field per outcome class (imported / left / failed), if any.
 
         Deferred and failed rows carry the outcome's human detail (the reason
-        the torrent didn't land); imported rows list just the title.
+        the torrent didn't land). Imported rows list just the title.
         """
 
         sections = (
@@ -386,7 +386,7 @@ class Notifier:
         return tuple(fields)
 
     def _post_webhook(self, arr: Arr, result: WaitResult, url: str) -> bool:
-        """POST the report JSON to the generic webhook; warn-and-swallow request errors."""
+        """POST the report JSON to the generic webhook, warning and swallowing request errors."""
 
         payload = {
             "arr": str(arr),
@@ -458,7 +458,7 @@ class Notifier:
 
         A 429 is Discord throttling a healthy webhook, not a dead one, so pushes
         stay enabled and the config is never blamed. A short Retry-After
-        (<= 5s) is slept out and the push retried once; a longer one - or a
+        (<= 5s) is slept out and the push retried once. A longer one - or a
         retry that fails too - drops THIS notification and says so.
         """
 

@@ -4,7 +4,7 @@
 #   scripts/changelog.sh section <name>       # print the body of "## [<name>]"
 #   scripts/changelog.sh roll <version> <date># promote Unreleased to a dated section
 #
-# <name> is "Unreleased" or a bare version; the version header carries " - <date>".
+# <name> is "Unreleased" or a bare version. The version header carries " - <date>".
 set -euo pipefail
 
 die() { echo "changelog: $*" >&2; exit 1; }

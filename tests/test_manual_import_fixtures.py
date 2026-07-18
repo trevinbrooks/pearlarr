@@ -8,11 +8,11 @@ motivated the rewrite: a specials/alias release Sonarr can't match to a series
 series-*matched* `episodes` array, so the import silently mapped nothing. The
 fix reads the series-*agnostic* `parsedEpisodeInfo` and assigns it into OUR
 resolved episode set - identity comes from the same mapping the add flow
-already trusts; Sonarr's title match only informs, in-set (`matched_episodes`).
+already trusts. Sonarr's title match only informs, in-set (`matched_episodes`).
 
-The pure `assign_episode_ids` tests encode the three cases the user raised
-(correctly-named specials, mis-numbered specials, multi-season "To Love-Ru"); the
-end-to-end test drives the real Yamada fixtures through `import_completed`.
+The pure `assign_episode_ids` tests encode the three cases raised during triage
+(correctly-named specials, mis-numbered specials, multi-season "To Crush-Ru").
+The end-to-end test drives the real Yamada fixtures through `import_completed`.
 """
 
 import json
@@ -63,7 +63,7 @@ _FIXTURES = Path(__file__).parent / "fixtures" / "sonarr"
 def load_fixture[T](name: str, _shape: type[T] | None = None) -> T:
     """Parse one captured Sonarr response, typed by the call site's annotation.
 
-    `_shape` is unused at runtime; it gives `T` a second occurrence so pyright
+    `_shape` is unused at runtime. It gives `T` a second occurrence so pyright
     does not flag the otherwise return-only TypeVar (reportInvalidTypeVarUse). The
     raw JSON shape (`Any`) is narrowed by the consuming boundary models.
     """
@@ -109,10 +109,10 @@ class TestQualityResolution:
     """The quality fix's load-bearing claims.
 
     Quality is matched by the structured `(source, resolution)` pair. The
-    candidate-read test runs on a verbatim live-Sonarr capture; the
+    candidate-read test runs on a verbatim live-Sonarr capture. The
     qualitydefinition list is a hand-authored STAND-IN (`qualitydefinitions.json`)
     mirroring real Sonarr - the live `/api/v3/qualitydefinition` capture is owed
-    (the user's instance sits behind an auth proxy). Dropping a real capture in
+    (your instance sits behind an auth proxy). Dropping a real capture in
     place of the stand-in re-runs these against reality unchanged.
     """
 
@@ -120,7 +120,7 @@ class TestQualityResolution:
         # CONTRACT, not validation: the matcher keys on (source, resolution), so
         # every definition must carry both. This guards the stand-in (and any real
         # capture swapped in for it) - it does NOT by itself prove the live
-        # instance serializes the fields; that capture is owed to the user.
+        # instance serializes the fields. That capture is still owed.
         defs = _load_definitions()
         assert defs
         for definition in defs:
@@ -133,8 +133,9 @@ class TestQualityResolution:
 
     def test_bd_remux_resolves_against_full_def_list(self) -> None:
         # The original failure: a 1080p BD remux. Sonarr parses it as
-        # (blurayRaw, 1080); against the full definition list that must resolve to
-        # the "Bluray-1080p Remux" definition (valid id+name) - never omitted.
+        # (blurayRaw, 1080). Matched against the full definition list, that pair
+        # must resolve to the "Bluray-1080p Remux" definition (valid id+name) -
+        # never omitted.
         sonarr = ParsedQuality(source=QualitySource.BLURAY_RAW, resolution=1080)
         model = resolve_quality(
             sonarr,
@@ -183,7 +184,7 @@ class TestParsedFileInfoFromRealBodies:
         assert info.absolute_episode_numbers == ()
 
     def test_absolute_numbered_file_reports_absolute_not_season_episode(self) -> None:
-        body: dict[str, object] = load_fixture("parse_toloveru_abs14.json")
+        body: dict[str, object] = load_fixture("parse_crushru_abs14.json")
         info = ParsedFileInfo.model_validate(body)
         assert info.episode_numbers == ()
         assert info.absolute_episode_numbers == (14,)
@@ -236,13 +237,13 @@ class TestParseSeFromFilename:
 
 
 # --------------------------------------------------------------------------- #
-# assign_episode_ids - the three cases the user raised, plus guards
+# assign_episode_ids - the three cases raised during triage, plus guards
 # --------------------------------------------------------------------------- #
 class TestAssignExactSeason:
     """Leg 1: a correctly-named file Sonarr just couldn't match to the series."""
 
     def test_yamada_specials_assigned_by_exact_season_episode(self) -> None:
-        # Resolved set is the entry's S00 episodes (ids 8030..8032); the two files
+        # Resolved set is the entry's S00 episodes (ids 8030..8032). The two files
         # carry S00E01 / S00E02 and land on 8030 / 8031.
         files = ["s00e01.mkv", "s00e02.mkv"]
         parsed = {
@@ -328,8 +329,8 @@ class TestAssignAbsolute:
         }
 
     def test_no_signal_file_refuses_the_positional_leg(self) -> None:
-        # A file whose parse yields nothing could be a hiccuped real episode;
-        # the every-file check refuses the whole leg (skip + warn, retried).
+        # A file whose parse yields nothing could be a hiccuped real episode.
+        # The every-file check refuses the whole leg (skip + warn, retried).
         parsed: dict[str, ParsedFileInfo | None] = {
             "a.mkv": _pinfo(absolutes=(1,)),
             "b.mkv": _pinfo(absolutes=(2,)),
@@ -456,7 +457,7 @@ class TestAssignMatchedPairs:
         assert result.assigned == {"x.mkv": [501]}
 
     def test_mixed_id_duplicate_claims_place_once(self) -> None:
-        # (s,e,None) and (s,e,id) survive the triple dedup as two claims; the
+        # (s,e,None) and (s,e,id) survive the triple dedup as two claims. The
         # wire list still carries the episode id once. Two resolved ids keep
         # the degenerate arm out, so this pins leg 1 itself.
         info = ParsedFileInfo(
@@ -483,7 +484,7 @@ class TestAssignMatchedPairs:
         assert result.assigned == {"only.mkv": [501]}
 
     def test_full_season_parse_never_borrows_matched_pairs(self) -> None:
-        # Sonarr matches a bare "S01" extras file to EVERY season episode; one
+        # Sonarr matches a bare "S01" extras file to EVERY season episode. One
         # junk file must not swallow the entry while the real files place.
         parsed: dict[str, ParsedFileInfo | None] = {
             "extras.mkv": _pinfo(matched=((1, 1), (1, 2)), full_season=True),
@@ -576,7 +577,7 @@ class TestAssignMatchedPairs:
         assert result.skipped == ["span.mkv"]
 
     def test_full_season_file_never_takes_the_spare_id(self) -> None:
-        # Leg 1 quarantines the season-pack shape; the degenerate arm must
+        # Leg 1 quarantines the season-pack shape. The degenerate arm must
         # not hand it the one spare id either.
         parsed: dict[str, ParsedFileInfo | None] = {
             "extras-s01.mkv": _pinfo(matched=((1, 1), (1, 2), (1, 3), (1, 4)), full_season=True),
@@ -596,7 +597,7 @@ class TestAssignMatchedPairs:
 class TestAssignGuards:
     """Leg 3: refuse to guess - skip + warn instead."""
 
-    def test_toloveru_per_title_restart_is_refused(self) -> None:
+    def test_crushru_per_title_restart_is_refused(self) -> None:
         # One torrent spanning two sub-series whose numbering BOTH restart at 1:
         # the shared absolutes are the tell of a season-boundary scramble, so the
         # whole absolute leg is refused rather than mis-assigned.
@@ -677,7 +678,7 @@ class TestAssignScopeGate:
 
     def test_hiccuped_episode_parse_refuses_the_leg(self) -> None:
         # A None-parse file that is really an EPISODE (parse hiccup, no SxxExx
-        # fallback) refuses the leg; the next poll re-parses (misses uncached).
+        # fallback) refuses the leg. The next poll re-parses (misses uncached).
         parsed: dict[str, ParsedFileInfo | None] = {
             "a.mkv": _pinfo(absolutes=(1,)),
             "b.mkv": _pinfo(absolutes=(2,)),
@@ -717,7 +718,7 @@ class TestAssignScopeGate:
         assert sorted(result.skipped) == ["e-12.mkv", "s-11.mkv"]
 
     def test_v2_duplicate_of_a_placed_file_is_refused(self) -> None:
-        # Leg 1 places "- 12" via its matched pair; the v2 shares absolute 12,
+        # Leg 1 places "- 12" via its matched pair. The v2 shares absolute 12,
         # so the BATCH-wide duplicate tell refuses the positional leg for it.
         parsed: dict[str, ParsedFileInfo | None] = {
             "e-12.mkv": _pinfo(season=0, absolutes=(12,), matched=((1, 12),)),
@@ -731,8 +732,8 @@ class TestAssignScopeGate:
         assert result.skipped == ["e-12v2.mkv"]
 
     def test_seeded_sharer_still_vetoes_the_positional_leg(self) -> None:
-        # The v1 was placed on an EARLIER poll (seeded, not in ordered_files);
-        # its parse still reaches the duplicate tell, so the v2 stays refused.
+        # The v1 was placed on an EARLIER poll (seeded, not in ordered_files).
+        # Its parse still reaches the duplicate tell, so the v2 stays refused.
         parsed: dict[str, ParsedFileInfo | None] = {
             "e-12.mkv": _pinfo(season=0, absolutes=(12,), matched=((1, 12),)),
             "e-12v2.mkv": _pinfo(season=0, absolutes=(12,), matched=((1, 12),)),
@@ -797,7 +798,7 @@ class TestAssignScopeGate:
         assert result.skipped == ["e-12v2.mkv"]
 
     def test_placed_sharer_still_vetoes_on_the_next_poll(self) -> None:
-        # Poll 1 places the v1 and self-heals it onto the record; poll 2 must
+        # Poll 1 places the v1 and self-heals it onto the record. Poll 2 must
         # not let the now-seeded v1 hide the shared absolute from the tell.
         v1, v2 = "Show - 12 [1080p].mkv", "Show - 12v2 [1080p].mkv"
         parses = {
@@ -844,7 +845,7 @@ class TestAssignScopeGate:
         assert normalize_basename(v2) in skipped
 
     def test_seeded_dual_numbered_sharer_offline_fallback_fails_closed(self) -> None:
-        # The seeded v1 is dual-numbered; its /parse blips and the offline
+        # The seeded v1 is dual-numbered. Its /parse blips and the offline
         # SxxExx fallback loses the absolute - the tell must treat that
         # stand-in as unknown, not let the v2 slide onto the spare id.
         v1, v2 = "Show - S01E12 - 12 [1080p].mkv", "Show - 12v2 [1080p].mkv"
@@ -865,7 +866,7 @@ class TestAssignScopeGate:
         assert normalize_basename(v2) in skipped
 
     def test_moved_out_seeded_sharer_still_vetoes(self) -> None:
-        # The seeded v1 already imported and MOVED OUT of the folder; its
+        # The seeded v1 already imported and MOVED OUT of the folder. Its
         # name still parses (Sonarr's /parse is name-based), so the tell must
         # keep seeing absolute 12 and refuse the v2 the spare id.
         v1, v2 = "Show - 12 [1080p].mkv", "Show - 12v2 [1080p].mkv"
@@ -910,9 +911,9 @@ class TestAssignScopeGate:
 
     def test_empty_resolved_set_skips_absolute_only_files(self) -> None:
         # With NO resolved set, the absolute leg has nothing to index into, so an
-        # absolute-only pack (Overlord-style "- 01".."- 03") is left for the user
-        # rather than guessed - absolute numbers are never trusted to decide identity
-        # on their own (the To Love-Ru safety posture).
+        # absolute-only pack (Overlord-style "- 01".."- 03") is left for manual
+        # placement rather than guessed - absolute numbers are never trusted to
+        # decide identity on their own (the To Crush-Ru safety posture).
         files = [f"{n:02d}.mkv" for n in range(1, 4)]
         parsed = {name: _pinfo(season=0, absolutes=(i + 1,)) for i, name in enumerate(files)}
 
@@ -941,7 +942,7 @@ class TestAssignScopeGate:
         assert result.skipped == ["only.mkv"]
 
     def test_mixed_exact_then_leftover_absolute(self) -> None:
-        # One file names its season (placed by leg 1); the remaining absolute file
+        # One file names its season (placed by leg 1). The remaining absolute file
         # maps onto the one leftover id.
         parsed = {
             "s01e01.mkv": _pinfo(season=1, episodes=(1,)),
@@ -993,7 +994,10 @@ class TestClassifyRealQueue:
 # PendingImport round-trip carries the new resolved set (with back-compat)
 # --------------------------------------------------------------------------- #
 class TestPendingImportOrderedIds:
-    """`ordered_episode_ids` round-trips through JSON; a legacy record missing the key rehydrates to an empty list."""
+    """`ordered_episode_ids` round-trips through JSON.
+
+    A legacy record missing the key rehydrates to an empty list.
+    """
 
     def test_round_trip_preserves_ordered_episode_ids(self) -> None:
         rec = pending_import(ordered_episode_ids=[8030, 8031, 8032])
@@ -1084,7 +1088,7 @@ class TestManualImportInFlightFixture:
         )
 
     def test_folder_import_matches_by_episode_id(self) -> None:
-        # The Vodes folder import carries no downloadId; episode 5645 is ours.
+        # The Vodes folder import carries no downloadId. Episode 5645 is ours.
         assert manual_import_in_flight(
             self._commands(),
             "no-such-hash",
@@ -1148,7 +1152,7 @@ class TestYamadaEndToEnd:
     def test_specials_import_to_resolved_episode_ids(self) -> None:
         strat, sonarr, seadex_files = _yamada_strat()
 
-        # Resolved set = the entry's S00 episodes (8030, 8031, 8032); the torrent
+        # Resolved set = the entry's S00 episodes (8030, 8031, 8032). The torrent
         # only carries E01/E02, so only those two get placed.
         pending = pending_import(
             infohash="1111111111111111111111111111111111111111",
@@ -1168,7 +1172,8 @@ class TestYamadaEndToEnd:
         assert probe.command_issued is True
         assert len(sonarr.execute_calls) == 1
         # The configured import mode is threaded onto the execute command (default
-        # "auto"; "move" deletes the source files, so a wrong mode must not be silent).
+        # "auto"). Selecting "move" deletes the source files, so a wrong mode must
+        # not be silent.
         assert sonarr.execute_calls[0][1] == "auto"
 
         files = sonarr.execute_calls[0][0]

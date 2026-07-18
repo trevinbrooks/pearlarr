@@ -5,7 +5,7 @@ The httpx-native transport the raw arr endpoints share. Pins the fail-open
 matrix (request error / non-200 / non-JSON / wrong shape -> None + ONE warning
 naming the cause), the strict library-fetch matrix (the same failures RAISE
 typed `ArrConnectionError`/`ArrAuthError` instead), the GET retry policy
-(transient statuses retry with backoff, terminal ones don't; the `retries=0`
+(transient statuses retry with backoff, terminal ones don't - the `retries=0`
 poll handle never retries), the consecutive-failure coalescing (streak dict,
 heartbeat re-warns, recovery notes, shared ledger), the POST policy
 (`post_json` NEVER retries - not idempotent), the per-request GET timeout
@@ -156,7 +156,7 @@ def test_shape_helpers_reject_the_wrong_shape() -> None:
 @respx.mock
 def test_warn_template_with_literal_braces_is_safe() -> None:
     # Migration call sites embed filenames/titles, which can carry braces
-    # ("Steins;{Gate}"); the fail-open warning must never crash on them.
+    # ("Steins;{Gate}"). The fail-open warning must never crash on them.
     respx.get(f"{_URL}/api/v3/thing").respond(status_code=404)
     http, recording = _bind()
 
@@ -177,7 +177,7 @@ def test_warn_none_fails_open_silently() -> None:
 def test_get_timeout_override_rides_the_request() -> None:
     """`timeout=` overrides the client-level timeout for that request only.
 
-    Used for the 120s manual-import scans; the default rides the client's timeout.
+    Used for the 120s manual-import scans. The default rides the client's timeout.
     """
 
     seen: list[dict[str, float | None]] = []
@@ -242,7 +242,7 @@ class _ManualClock:
 
 @respx.mock
 def test_no_retry_handle_attempts_once_primary_keeps_the_budget() -> None:
-    """`replace(http, retries=0)` makes exactly ONE attempt; the primary still retries.
+    """`replace(http, retries=0)` makes exactly ONE attempt. The primary still retries.
 
     The wait-path poll handle: its monitor loop IS the retry mechanism.
     """
@@ -295,7 +295,7 @@ def test_repeat_failures_coalesce_then_recover() -> None:
 
 @respx.mock
 def test_interleaved_keys_keep_independent_streaks() -> None:
-    """Two alternating failing templates never share a streak; recovery is per-template."""
+    """Two alternating failing templates never share a streak. Recovery is per-template."""
 
     route_a = respx.get(f"{_URL}/api/v3/a")
     route_a.side_effect = [httpx.Response(404), httpx.Response(404), httpx.Response(200, json=[])]
@@ -342,7 +342,7 @@ def test_heartbeat_rewarns_at_the_bound_cadence() -> None:
 
 @respx.mock
 def test_concurrent_failures_keep_an_exact_streak_count() -> None:
-    """Concurrent sweep threads hammer one failing key; the count stays exact.
+    """Concurrent sweep threads hammer one failing key. The count stays exact.
 
     Pins the ledger lock: `streak.count += 1` is a read-modify-write that
     would drop increments unlocked (the shared client pool serves
@@ -366,7 +366,7 @@ def test_concurrent_failures_keep_an_exact_streak_count() -> None:
         thread.join()
 
     assert http.streaks.active[("down ({detail})", "status code 404")].count == workers * per_worker
-    # Exactly ONE first-failure warning; every repeat coalesced away.
+    # Exactly ONE first-failure warning. Every repeat coalesced away.
     assert [note.message for note in recording.of_type(Diagnostic)] == ["down (status code 404)"]
 
 
@@ -399,7 +399,7 @@ def test_post_json_accepts_201_created() -> None:
 
 @respx.mock
 def test_post_json_does_not_retry_a_retryable_status() -> None:
-    # 500 retries on a GET; a POST is not idempotent, so ONE attempt only.
+    # 500 retries on a GET. A POST is not idempotent, so ONE attempt only.
     route = respx.post(f"{_URL}/api/v3/command").respond(status_code=500)
     http, recording = _bind()
 
@@ -440,7 +440,7 @@ def test_strict_get_401_raises_auth_error_without_retrying() -> None:
 
     assert str(excinfo.value) == f"Sonarr at {_URL} rejected the API key (status code 401)"
     assert route.call_count == 1  # 401 is terminal: no retries
-    assert recording.of_type(Diagnostic) == []  # the raise IS the report; no fail-open warning
+    assert recording.of_type(Diagnostic) == []  # the raise IS the report, no fail-open warning
 
 
 @respx.mock

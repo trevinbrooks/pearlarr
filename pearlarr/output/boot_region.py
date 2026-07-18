@@ -3,8 +3,8 @@
 `BootRegion` is driven by `rich_renderer.RichRenderer`'s exhaustive match and
 owns the banner, the single live spinner + download bar, the graduation of
 finished steps to durable scrollback lines, and the capstone. On a
-live-capable console the spinner shows liveness (`BootStepSlow` is ignored); a
-non-live rich console degrades — no Live, a one-time heads-up line per slow
+live-capable console the spinner shows liveness (`BootStepSlow` is ignored). A
+non-live rich console degrades - no Live, a one-time heads-up line per slow
 step. Under plain/json there is no rich console and every event no-ops (the
 hub's text sinks carry those surfaces).
 """
@@ -32,7 +32,7 @@ from .live_region import LiveRegion
 from ..console_caps import Capabilities, CapsCache, block_bar, make_live, spinner_name
 from ..log import INDENT, format_elapsed, indent_string, print_literal, print_titled_rule
 
-# Width of the live download bar (mapping refresh); only the live cockpit draws
+# Width of the live download bar (mapping refresh). Only the live cockpit draws
 # it, so it doesn't need to scale with the terminal like the wait cockpit's does.
 _BAR_WIDTH = 16
 
@@ -99,10 +99,10 @@ class BootRegion(LiveRegion):
     """The boot cockpit: the live spinner plus its durable step ledger.
 
     Durable lines (banner, graduations, heads-up, capstone) print the moment
-    their event arrives — they reflow ABOVE the transient spinner via the shared
+    their event arrives - they reflow ABOVE the transient spinner via the shared
     Console lock, exactly like the diagnostic lines. The spinner is torn down by
     `section_left` when the renderer's fold evicts the boot-section node
-    (whatever event evicted it — and defensively by `begin_cycle`/`close`),
+    (whatever event evicted it - and defensively by `begin_cycle`/`close`),
     so scan output never lands under a stale live region.
     """
 
@@ -131,7 +131,7 @@ class BootRegion(LiveRegion):
                 if self._spinner is not None:
                     self._spinner.update(text=self._frame_text(caps, fraction, detail))
             case BootStepSlow(label=label):
-                # Live consoles show liveness via the spinner; the heads-up is
+                # Live consoles show liveness via the spinner. The heads-up is
                 # the non-live rich console's degraded liveness signal.
                 if not caps.live and self._admits_durable():
                     self._print(console, Text(slow_line(label, caps)))
@@ -177,8 +177,8 @@ class BootRegion(LiveRegion):
         if self._live is None:
             self._live = make_live(console)
             self._live.start()
-        # A fresh Spinner per step restarts the animation at frame 0 (intended);
-        # within a step only .text mutates so the dots keep their phase. Padding
+        # A fresh Spinner per step restarts the animation at frame 0 (intended).
+        # Within a step only .text mutates so the dots keep their phase. Padding
         # holds the spinner by reference, so progress updates re-render live.
         self._spinner = Spinner(spinner_name(caps), text=self._frame_text(caps, None, None), style="cyan")
         self._live.update(Padding(self._spinner, (0, 0, 0, len(INDENT))))

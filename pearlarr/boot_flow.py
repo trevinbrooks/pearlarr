@@ -1,6 +1,6 @@
 """The boot flow's producer facade: mint scopes, emit events, never render.
 
-Startup does real work before any series is scanned — read+validate config,
+Startup does real work before any series is scanned - read+validate config,
 download/parse the id-mapping sources, open the cache, log into qBittorrent,
 fetch the library, prefetch AniList + SeaDex metadata. The composition root
 (`bootstrap.py`) drives that work through `BootFlow`: the banner facts
@@ -8,9 +8,9 @@ ride a `RunStarted` event, each IO step runs inside a
 `StepScope` (timed + graduated by the renderers), and the
 section mark keeps diagnostics fired BETWEEN steps placed at the boot-ledger
 indent. Rendering lives entirely on the hub's surfaces (the RichRenderer's boot
-region, the file/plain/json text sinks) — this module emits facts only.
+region, the file/plain/json text sinks) - this module emits facts only.
 
-A run scans each configured arr in turn; each scan's per-item logging must start
+A run scans each configured arr in turn. Each scan's per-item logging must start
 with no live region above it, so `end_section` caps a section (emitting
 the `ready in Xs` capstone when it earned one) and the next `step`
 reopens a fresh one. Every method is total: emission rides the hub (which contains
@@ -43,8 +43,8 @@ from .output import (
 class _CapstoneWindow:
     """The capstone gate's window: opened at a section's first step, closed by `end_section`.
 
-    Opening at the first step keeps the banner→step gap — which holds only
-    import work — out of the capstone's timing.
+    Opening at the first step keeps the banner→step gap - which holds only
+    import work - out of the capstone's timing.
     """
 
     started_at: float
@@ -58,7 +58,7 @@ class BootFlow:
     The root emits the `banner`, runs each IO step inside `step`,
     calls `end_section` right before a per-arr scan starts logging (so the
     renderers tear their live region down first), and `close` once at the
-    end — the safety net when a section was left open.
+    end - the safety net when a section was left open.
     """
 
     def __init__(self, data_dir: str = "", *, clock: Callable[[], float] = time.monotonic) -> None:
@@ -84,7 +84,7 @@ class BootFlow:
         """Run one IO step as a StepScope: started/progress/slow/finished events out.
 
         The caller's exception still propagates (the step just graduates FAILED
-        first); a failed step suppresses the section's capstone.
+        first). A failed step suppresses the section's capstone.
         """
 
         self._section.open()
@@ -94,7 +94,7 @@ class BootFlow:
             with self._steps.step(label) as scope:
                 yield scope
         except BaseException:
-            # StepScope's __exit__ graduated the step FAILED; the section-level
+            # StepScope's __exit__ graduated the step FAILED. The section-level
             # verdict is ours (the scope knows nothing of the section).
             self._section_failed = True
             raise
@@ -111,7 +111,7 @@ class BootFlow:
         self._section_failed = False
 
     def close(self) -> None:
-        """Final teardown (idempotent) — safety net if a section was left open."""
+        """Final teardown (idempotent) - safety net if a section was left open."""
 
         self.end_section()
 
@@ -123,7 +123,7 @@ class BootFlow:
         if window is None or self._section_failed:
             return
         # The mark carries the counter it was stamped on (a hub swap can't skew the
-        # diff); counts exclude file_only forensics, so only an ERROR+ a visible
+        # diff). Counts exclude file_only forensics, so only an ERROR+ a visible
         # surface could show suppresses the ready line.
         if window.counts_mark.since().errors > 0:
             return

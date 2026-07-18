@@ -9,7 +9,7 @@ scrollback while the cockpit is active, stops the Live before the closing tally
 prints, degrades to a start line + throttled pulses on a non-live console, and
 tears its slot down whenever the wait region leaves the fold's frontier
 (ScopeClosed, a RunFinished unwind). A raised level suppresses the durable lines
-but never the cockpit; a raising frame build degrades to an empty frame whose
+but never the cockpit. A raising frame build degrades to an empty frame whose
 failure LATCHES for a main-thread report (the refresh thread never logs).
 """
 
@@ -48,7 +48,7 @@ from .fakes import CaptureHandler, install_recording_hub, strip_ansi
 
 
 def _render_group(group: Group) -> str:
-    """A group's plain rendering — what one refresh tick would draw."""
+    """A group's plain rendering - what one refresh tick would draw."""
 
     # legacy_windows pinned here and file-wide: Windows CI auto-detects a
     # legacy console, dropping the caps to ASCII and breaking glyph asserts.
@@ -241,8 +241,8 @@ class TestFrontierTeardown:
         assert renderer._wait._live is None and not live.is_started
 
     def test_a_second_pass_starts_a_fresh_live_slot(self) -> None:
-        # Negative control against stale reuse: the evicted slot is never repainted;
-        # a second pass mints a fresh Live (a leaked slot would be reused, nested).
+        # Negative control against stale reuse: the evicted slot is never repainted.
+        # A second pass mints a fresh Live (a leaked slot would be reused, nested).
         renderer, _stream = _live_renderer()
 
         _feed(
@@ -347,7 +347,7 @@ class TestWaitRegionDirect:
 
     def test_wide_frame_renders_the_bar_percent_and_importing_spinner(self) -> None:
         # The RowModel -> rich-widget mapping: a download shows its block bar +
-        # clamped percent; an importing row rides the shared Spinner marker with
+        # clamped percent. An importing row rides the shared Spinner marker with
         # its "copying" word in the bar column.
         region = self._region()
         download = TorrentView(key="d", label="Down", phase=Phase.DOWNLOADING, fraction=0.5)
@@ -391,7 +391,7 @@ def test_live_frame_latches_a_raising_group_build_without_logging(app_logger: lo
 
     # A render bug degrades to an empty frame with NO log record: the refresh
     # thread must never reach the bridge/hub at all (adoption makes any level
-    # dangerous — hub.emit under the Console lock is the ABBA inversion). The
+    # dangerous - hub.emit under the Console lock is the ABBA inversion). The
     # failure latches for the main thread instead.
     assert list(frame.__rich_console__(console, console.options)) == []
     assert capture.records == []
@@ -440,7 +440,7 @@ def test_wait_region_reports_a_latched_failure_once_on_the_next_handle() -> None
     assert recording.of_type(Diagnostic) == []
 
     # ...and the NEXT main-thread handle() reports it exactly once: a file-only
-    # WARNING Diagnostic carrying the latched exception's trace — durable at any
+    # WARNING Diagnostic carrying the latched exception's trace - durable at any
     # config level (the old logger.debug died at the logger gate above DEBUG).
     region.handle(_progress(_dl("Show"), elapsed=1))
     (report,) = [d for d in recording.of_type(Diagnostic) if d.message == "wait frame render failed"]

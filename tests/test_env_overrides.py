@@ -2,7 +2,7 @@
 # pyright: reportPrivateUsage=false
 # The overlay unit tests read the private `_env_overlay`/`_config_checksum` to pin
 # the nested-mapping shape and the digest formula directly (both unobservable
-# through a validated AppConfig); strict re-flags that and the repo disables
+# through a validated AppConfig). Strict re-flags that and the repo disables
 # reportPrivateUsage for tests.
 """Environment-variable config overrides: the `PEARLARR_<GROUP>__<KEY>` overlay.
 
@@ -29,12 +29,12 @@ class TestOverlayShape:
         assert _env_overlay({"PEARLARR_SONARR__URL": "http://x"}) == {"sonarr": {"url": "http://x"}}
 
     def test_only_delimiter_segments_split_underscores_within_a_key_survive(self) -> None:
-        # A single underscore is part of the key; only `__` nests.
+        # A single underscore is part of the key. Only `__` nests.
         assert _env_overlay({"PEARLARR_SEADEX__WANT_BEST": "false"}) == {"seadex": {"want_best": False}}
 
     def test_deeper_paths_nest_preserving_free_form_key_case(self) -> None:
         # Keys below qbittorrent.options reach qbittorrentapi verbatim and
-        # case-sensitively; folding them would make VERIFY_WEBUI_CERTIFICATE unreachable.
+        # case-sensitively. Folding them would make VERIFY_WEBUI_CERTIFICATE unreachable.
         assert _env_overlay({"PEARLARR_QBITTORRENT__OPTIONS__VERIFY_WEBUI_CERTIFICATE": "false"}) == {
             "qbittorrent": {"options": {"VERIFY_WEBUI_CERTIFICATE": False}},
         }
@@ -50,7 +50,7 @@ class TestOverlayShape:
 
     def test_delimiter_less_names_are_reserved(self) -> None:
         # The operational vars (data dir, Docker) carry no `__` and must never be
-        # swallowed into config; a non-prefixed name is ignored too.
+        # swallowed into config. A non-prefixed name is ignored too.
         overlay = _env_overlay(
             {
                 "PEARLARR_DATA_DIR": "/data",

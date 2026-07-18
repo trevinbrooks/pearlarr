@@ -47,7 +47,7 @@ class FileEpisodeMapper:
 
     Constructed once per run in `SonarrSync` from the
     strategy's Sonarr client. The import executor calls `candidate_files` then
-    `assign` for each completed download; `assign` returns the unplaceable
+    `assign` for each completed download. `assign` returns the unplaceable
     basenames for the executor to warn about (producer/consumer split).
     """
 
@@ -110,7 +110,7 @@ class FileEpisodeMapper:
         leaves it - the chosen safe posture).
 
         Files our grab-time `file_episode_map` already covers (the add-time
-        assignment) keep their seeded ids untouched; when anything is left to
+        assignment) keep their seeded ids untouched. When anything is left to
         place, their parses are still fetched so the positional leg's
         shared-absolute tell sees the whole batch (an earlier poll's placement
         must not hide a v2 duplicate). Every uncovered on-disk video leaf is
@@ -121,7 +121,7 @@ class FileEpisodeMapper:
         no set to scope against (an on-disk specials record whose grab-time parse
         found nothing), `assign_episode_ids` falls back to the live series map
         for exactly named files (see `allow_unscoped`). Fresh placements self-heal
-        onto the record; SeaDex order keeps output and the absolute leg stable.
+        onto the record. SeaDex order keeps output and the absolute leg stable.
 
         Returns `(merged_map, unplaceable_basenames)`.
         """
@@ -140,7 +140,7 @@ class FileEpisodeMapper:
 
         # Honor our grab-time map (OUR add-time assignment) - seeded ids are
         # taken as-is. Intended files not yet on disk stay in the map so the
-        # planner detects them missing and retries (never silent-drops); only
+        # planner detects them missing and retries (never silent-drops). Only
         # the on-disk leftovers the seed doesn't cover (e.g. a specials pack
         # whose grab-time parse found nothing) are resolved from their parse.
         seeded: dict[str, list[int]] = {}
@@ -194,7 +194,7 @@ class FileEpisodeMapper:
     def _parsed_file_info(self, raw_base: str) -> ParsedFileInfo | None:
         """Sonarr `/parse` of one on-disk leaf, cached per run.
 
-        Carries the name-parsed numbers plus Sonarr's series-matched pairs;
+        Carries the name-parsed numbers plus Sonarr's series-matched pairs.
         on a transient parse failure (None) falls back to an offline
         `SxxExx` regex - without caching - so a momentary Sonarr hiccup neither
         strands a correctly-named file nor sticks for the rest of the run.

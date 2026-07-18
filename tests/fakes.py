@@ -8,7 +8,7 @@ concrete fake implements it and records what a test needs to assert - so contrac
 are pinned by recorded state.
 
 Collaborators that the run machinery only reads as bare attributes (absorbed as
-`Any` by `make_bare_instance`) don't need a shared fake; keep those local to
+`Any` by `make_bare_instance`) don't need a shared fake. Keep those local to
 the test that drives them.
 """
 
@@ -89,7 +89,7 @@ SCAN_EVENT_TYPES = (
 def scan_lines_from_events(events: Iterable[Event]) -> list[LegacyLine]:
     """Re-derive the legacy scan lines a recorded event stream produces.
 
-    The reporter EMITS events; both output seats render them through
+    The reporter EMITS events. Both output seats render them through
     `scan_event_lines`. Tests that assert reporter output record the events and
     replay them here (scope-boundary / diagnostic events carry no lines and drop),
     so the assertions ride the SAME builders production uses.
@@ -153,7 +153,7 @@ class FakeArrItem:
     """A minimal item satisfying the `ArrItem` protocol surface.
 
     Sets the four attributes the run loop reads (`id` / `title` / `imdbId` /
-    `monitored`); a single class stands in for both a Sonarr series and a Radarr
+    `monitored`). A single class stands in for both a Sonarr series and a Radarr
     movie since the shared loop only touches `ArrItem`.
     """
 
@@ -187,7 +187,7 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         self._process_returns = process_returns
         self._process_raises_on = process_raises_on
         self.process_calls: list[int] = []
-        # Scripted history; reassign to None mid-test to script the failure path.
+        # Scripted history. Reassign to None mid-test to script the failure path.
         self.history: list[HistoryRecord] | None = [] if history is None else history
         self.history_calls: list[str] = []
 
@@ -248,7 +248,7 @@ class FakeSonarrClient(AbstractSonarrClient):
     """A typed, scriptable stand-in for the `AbstractSonarrClient` surface.
 
     Each read returns a per-instance field a test presets or reassigns mid-test
-    (e.g. `fake.episodes_return = [...]`); the two import commands RECORD their
+    (e.g. `fake.episodes_return = [...]`). The two import commands RECORD their
     typed call args, so a test asserts on recorded state (`execute_calls` /
     `candidate_calls`). Subclasses the `AbstractSonarrClient` ABC, so it's
     nominally checked against the real client's full method surface - a
@@ -297,7 +297,7 @@ class FakeSonarrClient(AbstractSonarrClient):
         self.folder_candidates_return: list[ManualImportCandidate] | None = folder_candidates
         self.history_page_return: HistoryPage | None = history_page
         self.path_mappings_return: list[RemotePathMapping] | None = path_mappings
-        # Recorded calls: the import commands keep their full args; the plain reads
+        # Recorded calls: the import commands keep their full args. The plain reads
         # keep a count / arg-list so a test can assert (not-)called.
         self.candidate_calls: list[PendingImport] = []
         self.execute_calls: list[tuple[list[ManualImportFile], str]] = []

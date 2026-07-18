@@ -1,14 +1,14 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# The grab assertions seed the pipeline's private AniList gateway (_anilist);
-# strict re-flags that and the repo disables reportPrivateUsage for tests.
+# The grab assertions seed the pipeline's private AniList gateway (_anilist).
+# Strict re-flags that, and the repo disables reportPrivateUsage for tests.
 """End-to-end regressions for `seadex.private_releases: fallback`.
 
 Drive the full build -> filter_downloads -> grab_and_cache path over one SeaDex
 entry, pinning the fallback contract: when a preferred release is private-only,
-grab the entry's best public alternative; warn when no public alternative
+grab the entry's best public alternative. Warn when no public alternative
 exists, or when the Arr owns the preferred private release at a stale size (a
-fallback never replaces an owned copy); soft-skip (INFO, cached as done) only
+fallback never replaces an owned copy). Soft-skip (INFO, cached as done) only
 when the Arr genuinely already owns the files. Regression coverage for the
 preferred-public size-mismatch promote and the coverage-blind per-group drop.
 """
@@ -174,7 +174,7 @@ class TestUpgradePendingHoldsForOwnedStale:
         assert ctx.per_title.private_only_stale_held is True
 
         # The fallback hold keeps the title uncached and surfaces the STALE row,
-        # so it resurfaces every run until the user updates or deletes the copy.
+        # so it resurfaces every run until the copy is updated or deleted.
         pipe = make_grab_pipeline(cache_store=cache, _ctx=ctx, private_releases="fallback", sleep_time=0)
         stopped = pipe.grab_and_cache(_grab_request(11, out, hashes, entry))
 
@@ -389,7 +389,7 @@ class TestFilterDownloadsNoticeSeam:
 
     def test_renders_both_levels_and_carries_skip_state(self) -> None:
         # One entry, two same-files sets: {PrivA, PubA} promotes the preferred
-        # public group (an INFO notice); {PrivB} is private-only with no cover
+        # public group (an INFO notice). {PrivB} is private-only with no cover
         # (a WARNING notice, plus the skip flag + group carried onto the
         # RunContext).
         ctx = RunContext(arr=Arr.SONARR)
@@ -437,7 +437,7 @@ class TestFilterDownloadsNoticeSeam:
                 self.PUBA_URL: [EpisodeRecord(season=1, episode=1, size=555)],
             },
         )
-        # S01E01 is held at a stale size (upgrade pending); S02E01 is missing.
+        # S01E01 is held at a stale size (upgrade pending). S02E01 is missing.
         ep_list = [sonarr_ep(1, 1, size=100, release_group="PrivA"), sonarr_ep(2, 1)]
 
         with _record() as recording:
@@ -729,7 +729,7 @@ class TestPromotionGeneralization:
 
     def test_preferred_public_alternative_is_promoted(self) -> None:
         # Upgrade-pending private pick + preferred public twin: pre-graft this
-        # warned "no public alternative" and held the title forever; now the
+        # warned "no public alternative" and held the title forever. Now the
         # public group is promoted, grabbed, and the title caches normally.
         ctx = RunContext(arr=Arr.SONARR)
         cache = FakeCacheStore()
@@ -869,7 +869,7 @@ class TestPromotionGeneralization:
                 ],
             },
         )
-        # S01E01 owned at matching size; S02E01 held at a stale size.
+        # S01E01 owned at matching size. S02E01 held at a stale size.
         ep_list = [
             sonarr_ep(1, 1, size=555, release_group="M"),
             sonarr_ep(2, 1, size=100, release_group="M"),
@@ -938,7 +938,7 @@ class TestEqualUnionMixedGroups:
 
     def test_no_episode_lost_regardless_of_group_order(self) -> None:
         # Pre-rescue, the losing group's public url was unflagged wholesale and
-        # its episode silently lost (order-dependent; warn mode then cached the
+        # its episode silently lost (order-dependent: warn mode then cached the
         # loss as done). Both public urls must now grab in either order.
         a_pub, a_priv, b_pub, b_priv = self._torrents()
         for al_id, order in ((91, (a_pub, a_priv, b_pub, b_priv)), (92, (b_pub, b_priv, a_pub, a_priv))):
@@ -993,7 +993,7 @@ class TestEqualUnionMixedGroups:
             with _record() as recording:
                 pipe.grab_and_cache(_grab_request(al_id, out, hashes, entry))
 
-            # Both episodes obtained; the keeper's surviving private batch is
+            # Both episodes obtained. The keeper's surviving private batch is
             # refused with a WARNING, and warn mode still caches the title.
             assert set(torrents.calls) == {self.A_PUB_HASH, self.B_PUB_HASH}, f"order={al_id}"
             assert _private_skips(recording), recording.events

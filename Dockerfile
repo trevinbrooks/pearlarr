@@ -36,7 +36,7 @@ RUN case "${TARGETARCH}" in \
 # Final: the venv, supercronic and the entrypoint on the same slim base.
 FROM python:3.14-slim
 LABEL org.opencontainers.image.source="https://github.com/trevinbrooks/pearlarr"
-# tzdata so TZ drives supercronic's local-time schedule; /config pre-created
+# tzdata so TZ drives supercronic's local-time schedule. /config pre-created
 # writable so a volume-less or named-volume run works out of the box.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tzdata \

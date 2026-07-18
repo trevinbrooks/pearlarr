@@ -16,7 +16,7 @@ Write model:
   Reads within the run still see the staged-but-uncommitted writes (same
   connection). `close()` rolls back anything still uncommitted.
 * A hard kill mid-run loses at most the titles finished since the last save
-  point; they're simply re-checked next run, never silently skipped - the safe
+  point. They're simply re-checked next run, never silently skipped - the safe
   direction.
 
 This rests on the connection using **deferred** transaction control. The
@@ -30,7 +30,7 @@ A missing cache opens an **in-memory** database and is *promoted* to the real
 file on the first non-preview `save` (via the sqlite3 backup API), so a preview
 run on a system with no cache yet still writes nothing to disk.
 
-Each arr instance constructs its own `CacheStore`; a scheduled cycle runs Radarr
+Each arr instance constructs its own `CacheStore`. A scheduled cycle runs Radarr
 (which commits `cache.db`) then Sonarr (which re-opens it), handing off through
 the *file*. Do not share one `CacheStore` / connection across arrs or threads.
 """
@@ -55,10 +55,10 @@ from .sqlite_util import open_or_quarantine, rollback_and_close
 
 # Timestamp format for cache record fields (entry `updated_at` and the AniList
 # meta / Sonarr parse `fetched_at`). Lives here because the cache owns the
-# record schema; consumers (the orchestrator and the Sonarr adapter) import it.
+# record schema. Consumers (the orchestrator and the Sonarr adapter) import it.
 UPDATED_AT_STR_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-# One statement per block; `IF NOT EXISTS` so it's a no-op on an existing db.
+# One statement per block. `IF NOT EXISTS` so it's a no-op on an existing db.
 # NOTE: `CREATE TABLE IF NOT EXISTS` creates a missing table but silently does NOT
 # alter an existing one. Changing a shipped table's shape therefore requires bumping
 # `SCHEMA_VERSION` and appending a step to `_MIGRATIONS` (see `_ensure_schema`)
@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS torrent_hashes (
     -- column stays NOT NULL (unchanged since the first release - `CREATE TABLE IF
     -- NOT EXISTS` would NOT migrate an existing db, so a nullable column would crash
     -- on an upgraded cache). `None` is persisted as the `_NO_HASH` sentinel and
-    -- mapped back on read; a real infohash is never empty, so there's no collision.
+    -- mapped back on read. A real infohash is never empty, so there's no collision.
     infohash TEXT NOT NULL,
     PRIMARY KEY (arr, al_id, infohash),
     FOREIGN KEY (arr, al_id) REFERENCES entries (arr, al_id) ON DELETE CASCADE
@@ -128,13 +128,13 @@ CREATE TABLE IF NOT EXISTS history_checkpoints (
 
 # Current cache.db schema version, stored in `PRAGMA user_version`. A fresh db is
 # stamped at this version on create (the :memory: db carries the stamp through the
-# promote backup); an older db is walked up through `_MIGRATIONS` one step at a
+# promote backup). An older db is walked up through `_MIGRATIONS` one step at a
 # time. Bump it (and append a step) whenever a shipped table changes shape.
 SCHEMA_VERSION = 1
 
 
 class CacheSchemaError(RuntimeError):
-    """The cache db was written by a newer pearlarr; refuse to open it.
+    """The cache db was written by a newer pearlarr. Refuse to open it.
 
     Deliberately NOT a `sqlite3.DatabaseError`: the file is healthy, so the
     quarantine path must never eat this - the run fails closed with a clear
@@ -143,7 +143,7 @@ class CacheSchemaError(RuntimeError):
 
 
 def _migrate_0_to_1(conn: sqlite3.Connection) -> None:
-    """v0 = any pre-versioning db; add the columns that shipped after the first cut.
+    """v0 = any pre-versioning db. Add the columns that shipped after the first cut.
 
     Guarded per column because v0 is a vintage *range*, not one shape - a db may
     already carry the manually applied ALTER that predates this gate.
@@ -154,7 +154,7 @@ def _migrate_0_to_1(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE entries ADD COLUMN fallback_satisfied INTEGER NOT NULL DEFAULT 0")
 
 
-# Step `n` brings a version-n db to version n+1; `_ensure_schema` applies the
+# Step `n` brings a version-n db to version n+1. `_ensure_schema` applies the
 # steps in order, one transaction per step, until SCHEMA_VERSION is reached.
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _migrate_0_to_1,
@@ -165,7 +165,7 @@ def _ensure_schema(conn: sqlite3.Connection, path: str) -> None:
     """Ensure the schema and bring an older db up to `SCHEMA_VERSION`.
 
     A brand-new db (no tables yet - the :memory: stand-in or the quarantine
-    fallback) gets the current schema and is stamped directly; migration steps are
+    fallback) gets the current schema and is stamped directly. Migration steps are
     only for dbs that lived through an older release. A db stamped *newer* than
     this build is refused outright (fail closed - see `CacheSchemaError`).
     Runs at load time, before any staged write, so the migration commits never
@@ -180,7 +180,7 @@ def _ensure_schema(conn: sqlite3.Connection, path: str) -> None:
             "file away to start a fresh cache",
         )
     fresh = conn.execute("SELECT count(*) FROM sqlite_master WHERE type = 'table'").fetchone()[0] == 0
-    # Creates any missing tables/indexes; never alters an existing table (that's
+    # Creates any missing tables/indexes. Never alters an existing table (that's
     # what the steps below are for). Implicitly commits first - a no-op here, since
     # nothing is staged this early in load.
     conn.executescript(_SCHEMA)
@@ -238,7 +238,7 @@ class CacheRecord(TypedDict, total=False):
     """The fixed shape of a per-entry cache update / a `cache_details` payload.
 
     `total=False` because producers assemble it incrementally (a movie carries
-    no coverage at first; Sonarr fills coverage/url later). `updated_at` may hold
+    no coverage at first. Sonarr fills coverage/url later). `updated_at` may hold
     a `datetime` at the producer and is strftime'd to `str` in place by
     `CacheStore.update_cache`, hence the union.
     """
@@ -249,10 +249,10 @@ class CacheRecord(TypedDict, total=False):
     updated_at: "str | datetime"
     fallback_satisfied: bool
     """Whether a public fallback satisfied the title (a fallback grab, or the Arr
-    already owning the fallback's files); warn mode re-checks marked entries."""
+    already owning the fallback's files). Warn mode re-checks marked entries."""
     torrent_hashes: list[str | None]
     """A SeaDex url's infohash is `str | None` and is appended unconditionally
-    (planner.filter_by_torrent_hash), so a remembered list can carry `None`; the
+    (planner.filter_by_torrent_hash), so a remembered list can carry `None`. The
     store preserves those Nones because the planner dedups on None membership."""
 
 
@@ -263,7 +263,7 @@ class CachedEntry:
     Lets a caller that needs several fields of the same `(arr, al_id)` row fetch
     them in one round-trip (see `CacheStore.get_entry`) instead of issuing a
     point `SELECT` per field. The text columns are nullable on disk, so those
-    fields are `str | None`; `fallback_satisfied` is NOT NULL (default 0).
+    fields are `str | None`. `fallback_satisfied` is NOT NULL (default 0).
     """
 
     updated_at: str | None
@@ -346,7 +346,7 @@ def _connect(path: str, *, ensure_wal: bool = True) -> sqlite3.Connection:
     target - delegating the pragma/transaction-control plumbing to the shared
     helper. The cache has FK constraints (`torrent_hashes` -> `entries` ON
     DELETE CASCADE), so foreign keys are enabled whenever WAL is (the writable run
-    path); read-only diagnostics pass `ensure_wal=False` and get neither.
+    path). Read-only diagnostics pass `ensure_wal=False` and get neither.
 
     Args:
         path: Database path (or `":memory:"`).
@@ -422,7 +422,7 @@ class CacheStore(AbstractCacheStore):
     def __init__(self, conn: sqlite3.Connection, path: str, *, on_memory: bool) -> None:
         self._conn = conn
         self._path = path
-        # True while backed by an in-memory db (the file didn't exist at load); the
+        # True while backed by an in-memory db (the file didn't exist at load). The
         # first non-preview save promotes it to `path`.
         self._on_memory = on_memory
 
@@ -437,18 +437,18 @@ class CacheStore(AbstractCacheStore):
     ) -> "CacheStore":
         """Open the cache db (or an in-memory stand-in) and reconcile the descriptor.
 
-        An existing file at `path` is opened in place; a missing one opens
+        An existing file at `path` is opened in place. A missing one opens
         `:memory:` so a preview run that never reaches a real save leaves no file
         behind. Either way the schema is ensured and the version/checksum
         descriptor is staged (committed at the first non-preview save).
         `config_checksum` is stamped into the descriptor so a changed config is
-        recorded (informational; not used to invalidate records - entries are
+        recorded (informational, not used to invalidate records - entries are
         freshness-keyed already).
         """
 
         exists = os.path.exists(path)
         # Fail-closed on transient errors, fail-open (quarantine + :memory:) on real
-        # corruption; the in-memory fallback is promoted on the first real save.
+        # corruption. The in-memory fallback is promoted on the first real save.
         # Schema is ensured before any staged write (executescript implicitly
         # COMMITs first, a no-op here since nothing is staged yet).
         conn, fell_back = open_or_quarantine(
@@ -474,7 +474,7 @@ class CacheStore(AbstractCacheStore):
         schema, reconcile the descriptor, or quarantine on corruption - the command
         should reflect the file as-is. A corrupt / not-a-database file raises
         `sqlite3.DatabaseError` from the first read (in `stats` /
-        `integrity_check`); the caller is expected to catch and report it, since
+        `integrity_check`). The caller is expected to catch and report it, since
         surfacing bad integrity is the whole point of those commands.
         """
 
@@ -491,7 +491,7 @@ class CacheStore(AbstractCacheStore):
         """Persist staged writes - unless this is a preview run.
 
         The single commit chokepoint. A preview never commits (so it never
-        persists); the first non-preview save on a still-in-memory db promotes it
+        persists). The first non-preview save on a still-in-memory db promotes it
         to the real file.
 
         Args:
@@ -647,7 +647,7 @@ class CacheStore(AbstractCacheStore):
         al_id: int,
         cache_details: CacheRecord | None = None,
     ) -> None:
-        """Merge fields into an entry's record (staged; persisted at a save point).
+        """Merge fields into an entry's record (staged, persisted at a save point).
 
         Only the supplied scalar fields are written (absent ones are left
         untouched), and a supplied `torrent_hashes` replaces the entry's whole
@@ -694,7 +694,7 @@ class CacheStore(AbstractCacheStore):
             hashes: list[str | None] = details["torrent_hashes"] or []
             # Keep None markers (a hashless release the planner still dedups on at
             # planner.filter_by_torrent_hash). None is stored as the _NO_HASH sentinel
-            # (the column is NOT NULL); ON CONFLICT then collapses duplicates -
+            # (the column is NOT NULL). ON CONFLICT then collapses duplicates -
             # including repeated sentinels - so at most one None marker is kept.
             self._conn.executemany(
                 "INSERT INTO torrent_hashes (arr, al_id, infohash) VALUES (?, ?, ?) "
@@ -717,7 +717,7 @@ class CacheStore(AbstractCacheStore):
         return json.loads(row[0]) if row else None
 
     def _json_put(self, block: _JsonBlock, key: tuple[int | str, ...], record: dict[str, Any]) -> None:
-        """Upsert a record into a JSONB block (staged; persisted at a save point)."""
+        """Upsert a record into a JSONB block (staged, persisted at a save point)."""
 
         cols = ", ".join(block.key_cols)
         placeholders = ", ".join("?" for _ in block.key_cols)
@@ -736,7 +736,7 @@ class CacheStore(AbstractCacheStore):
         return out
 
     def _evict_stale_json(self, block: _JsonBlock, cutoff: datetime) -> int:
-        """Delete records older than `cutoff` (or stamp-less); count deleted.
+        """Delete records older than `cutoff` (or stamp-less). Count deleted.
 
         Hits the block's indexed generated `fetched_at` column, so it's an index
         range-delete, not a scan. Staged like any write - committed at the next
@@ -757,7 +757,7 @@ class CacheStore(AbstractCacheStore):
     def iter_anilist_meta(self) -> Iterator[tuple[int, dict[str, Any]]]:
         """Yield `(al_id, record)` for every stored AniList-meta record.
 
-        The record is the `{"fetched_at": ..., "data": ...}` shape; the caller
+        The record is the `{"fetched_at": ..., "data": ...}` shape. The caller
         applies its own TTL freshness check (see `record_is_fresh`).
         """
 
@@ -774,7 +774,7 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def put_anilist_meta(self, al_id: int, record: dict[str, Any]) -> None:
-        """Upsert an AniList-meta record (staged; persisted at a save point)."""
+        """Upsert an AniList-meta record (staged, persisted at a save point)."""
 
         self._json_put(_ANILIST_META, (al_id,), record)
 
@@ -788,7 +788,7 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def put_sonarr_parse(self, filename: str, record: dict[str, Any]) -> None:
-        """Upsert a Sonarr parse record (staged; persisted at a save point)."""
+        """Upsert a Sonarr parse record (staged, persisted at a save point)."""
 
         self._json_put(_SONARR_PARSE, (filename,), record)
 
@@ -798,7 +798,7 @@ class CacheStore(AbstractCacheStore):
     def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]:
         """All pending-import records for an arr, keyed by infohash (snapshot).
 
-        Returns a plain dict copy; mutating it does not touch the store (use
+        Returns a plain dict copy. Mutating it does not touch the store (use
         `put_pending` / `drop_pending`).
         """
 
@@ -815,7 +815,7 @@ class CacheStore(AbstractCacheStore):
         this run is already absent), but the `series_id` filter is pushed into SQL
         via `record ->> 'series_id'` so only this series' records are deserialized.
         `series_id` is stored as a JSON int (`PendingImport.series_id`), so the
-        bound int compares directly; a record with no `series_id` yields NULL and
+        bound int compares directly. A record with no `series_id` yields NULL and
         is excluded.
         """
 
@@ -826,13 +826,13 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
-        """Upsert a pending-import record (staged; persisted at a save point)."""
+        """Upsert a pending-import record (staged, persisted at a save point)."""
 
         self._json_put(_PENDING_IMPORTS, (_arr_key(arr), infohash), record)
 
     @override
     def drop_pending(self, arr: Arr, infohash: str) -> None:
-        """Delete a pending-import record (staged; persisted at a save point)."""
+        """Delete a pending-import record (staged, persisted at a save point)."""
 
         self._conn.execute(
             "DELETE FROM pending_imports WHERE arr = ? AND infohash = ?",
@@ -853,7 +853,7 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def put_history_checkpoint(self, arr: Arr, checkpoint: HistoryCheckpoint) -> None:
-        """Upsert the arr's history cursor (staged; persisted at a save point).
+        """Upsert the arr's history cursor (staged, persisted at a save point).
 
         A perpetual-preview deployment never commits, so its checkpoint never
         advances and every pass re-scans the overlap window - harmless, since a
@@ -886,7 +886,7 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def evict_anilist_meta(self, cutoff: datetime) -> int:
-        """Delete AniList-meta records older than `cutoff` (or stamp-less); count.
+        """Delete AniList-meta records older than `cutoff` (or stamp-less). Count.
 
         See `_evict_stale_json`: an indexed range-delete, staged like any
         write, that only frees rows the gateway already refuses to read (older
@@ -897,7 +897,7 @@ class CacheStore(AbstractCacheStore):
 
     @override
     def evict_sonarr_parse(self, cutoff: datetime) -> int:
-        """Delete Sonarr parse records older than `cutoff` (or stamp-less); count.
+        """Delete Sonarr parse records older than `cutoff` (or stamp-less). Count.
 
         Mirrors `evict_anilist_meta` (see `_evict_stale_json`).
         """
@@ -905,7 +905,7 @@ class CacheStore(AbstractCacheStore):
         return self._evict_stale_json(_SONARR_PARSE, cutoff)
 
     def _count(self, table: str) -> int:
-        """Row count of one table; the name comes from stats()'s closed literals."""
+        """Row count of one table. The name comes from stats()'s closed literals."""
 
         row = self._conn.execute(f"SELECT count(*) FROM {table}").fetchone()
         return int(row[0]) if row else 0

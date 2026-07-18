@@ -5,7 +5,7 @@
 
 The byte guarantees on the wait ledger live in the builders (consumed by the
 WaitRegion's durable prints) and the `output.textline`
-grammar; the region-side rendering is pinned in test_output_wait_region. Here:
+grammar. The region-side rendering is pinned in test_output_wait_region. Here:
 the `PulseThrottle` unit contract, the builder edge cases (including the
 category-based graduation level), and the pure cockpit reducers
 (`live_model` / `sparkline` / `graduation_tail`).
@@ -69,7 +69,7 @@ class TestPulseThrottle:
         throttle.arm(300.0)
         assert throttle.fire(0.0) is False  # skip-first
         assert throttle.fire(299.0) is False  # within the interval
-        assert throttle.fire(300.0) is True  # due; re-arms at 600
+        assert throttle.fire(300.0) is True  # due, re-arms at 600
         assert throttle.fire(599.0) is False
         assert throttle.fire(650.0) is True  # elapsed-anchored: re-arms at 950, not a 900 grid mark
         assert throttle.fire(940.0) is False  # 940 < 950
@@ -79,7 +79,7 @@ class TestPulseThrottle:
         throttle = PulseThrottle()
         throttle.arm(600.0)
         assert throttle.fire(0.0) is False  # skip-first
-        assert throttle.fire(300.0) is False  # a shorter interval would fire; 600 rules
+        assert throttle.fire(300.0) is False  # a shorter interval would fire, 600 rules
         assert throttle.fire(600.0) is True
 
     def test_reset_disarms(self) -> None:
@@ -100,7 +100,7 @@ class TestPulseThrottle:
 
     def test_first_fire_is_skipped_even_past_the_interval(self) -> None:
         # skip-first as DISTINCT behavior: a late first snapshot (already past the
-        # mark) still never pulses — the old view's first render printed the start
+        # mark) still never pulses - the old view's first render printed the start
         # line and returned no matter when it ran.
         throttle = PulseThrottle()
         throttle.arm(5.0)
@@ -129,7 +129,7 @@ class TestWaitBuilders:
         assert line.message == "  ok imported    Show A  (1 file · 1m 00s)"
 
     def test_graduation_line_level_follows_the_outcome_category(self) -> None:
-        # P6: the rendered line and severity_of/the sink admission agree —
+        # P6: the rendered line and severity_of/the sink admission agree -
         # FAILED carries ERROR, DEFERRED WARNING, success INFO.
         caps = detect_capabilities(None)
         assert wait_graduation_line(_grad("A", Outcome.IMPORTED), caps).level == logging.INFO
@@ -177,7 +177,7 @@ def test_live_model_orders_and_bounds_the_box() -> None:
 
     model = live_model(snap, caps)
 
-    # height budget caps visible rows; the rest collapse to an overflow tally.
+    # height budget caps visible rows. The rest collapse to an overflow tally.
     assert len(model.rows) == 4
     assert model.rows[0].phase is Phase.IMPORTING  # importing sorts first
     assert "more downloading" in model.overflow
@@ -214,7 +214,7 @@ def test_live_model_importing_determinate_bar() -> None:
 
 
 def test_live_model_importing_is_indeterminate_without_a_total() -> None:
-    # No seed-complete count -> no bar; the status word carries the phase
+    # No seed-complete count -> no bar. The status word carries the phase
     # ("copying" once the import command's async copy is in flight), and the
     # elapsed clock sits in the same time column as every other row.
     snap = WaitSnapshot(
@@ -284,7 +284,7 @@ def test_sparkline_is_dropped_when_narrow_or_ascii() -> None:
 
 
 def test_sparkline_needs_two_samples() -> None:
-    # A single sample says nothing about the trend; the cell stays plain.
+    # A single sample says nothing about the trend. The cell stays plain.
     snap = WaitSnapshot((_downloading_row("h", "Show", 0.5, history=(3_200_000,)),))
 
     assert live_model(snap, _WIDE).rows[0].speed == "3.1 MB/s"
@@ -301,7 +301,7 @@ def test_compact_eta_covers_every_magnitude() -> None:
 
 
 def test_phase_rank_covers_every_non_terminal_phase() -> None:
-    # Drift pin: a new Phase member must be placed in the cockpit ordering — and
+    # Drift pin: a new Phase member must be placed in the cockpit ordering - and
     # in the overflow/pulse tallies that hand-list the same non-terminal trio.
     assert set(_PHASE_RANK) | {Phase.TERMINAL} == set(Phase)
 

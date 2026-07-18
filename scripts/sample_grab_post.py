@@ -19,7 +19,7 @@ per-group full-width FIELDS instead of the description - the layout whose
 `-#` subtext rendering the throwaway post verifies.
 
 Every value is real: the SeaDex entry (notes, comparison links) and its
-torrents (files, sizes, dual-audio flag) are fetched live; the AniList art
+torrents (files, sizes, dual-audio flag) are fetched live. The AniList art
 URLs and both titles were verified against the live AniList GraphQL API and
 Skyhook.
 """
@@ -136,7 +136,7 @@ def _capture(notice: GrabNotice) -> int:
             device_scale_factor=2,  # the README displays at half size - keep it crisp
         )
         page.goto(url, wait_until="networkidle")
-        # The card renders at Discohook's 520px cap; the README's width="520"
+        # The card renders at Discohook's 520px cap. The README's width="520"
         # displays it 1:1, so keep the two in step.
         page.wait_for_function("() => [...document.images].every((img) => img.complete && img.naturalWidth > 0)")
         page.locator('div[style*="border-left-color"]').screenshot(path=str(_PNG))

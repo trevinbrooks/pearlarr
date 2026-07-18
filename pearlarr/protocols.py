@@ -67,7 +67,7 @@ class ImportCompleter(ABC):
         to fill the importing row's bar as files land and to promote the row once
         every intended file is present. MUST NOT refresh downloads, read the queue,
         or issue commands - only the fresh episode files. `SonarrSync` counts the
-        seed targets that now hold the recommended release; `RadarrSync` records
+        seed targets that now hold the recommended release. `RadarrSync` records
         no pending imports, so it returns an indeterminate zero.
         """
 
@@ -78,13 +78,13 @@ class ArrSync[ItemT: ArrItem](ImportCompleter):
     Owns the Arr REST client and the Arr's domain logic (episode mapping,
     release-group resolution). Provides the items to process and the per-id
     body. The composition root injects the shared `RunDeps` (used to stand
-    up the client) and the `RunServices` hub (held as `self._services`);
-    the per-id hooks call the shared pipeline through it, so the run loop
+    up the client) and the `RunServices` hub (held as `self._services`).
+    The per-id hooks call the shared pipeline through it, so the run loop
     calls these hooks without passing the services (and the strategy never
     sees the loop type). Subclasses (`SonarrSync` / `RadarrSync`) must
-    implement every hook; the ABC enforces that at instantiation.
+    implement every hook. The ABC enforces that at instantiation.
 
-    Generic in `ItemT` (the Arr's item protocol — `seadex_types.SonarrItem`
+    Generic in `ItemT` (the Arr's item protocol - `seadex_types.SonarrItem`
     or `seadex_types.RadarrItem`) so each subclass binds its own item type
     rather than a loose `list`/`Any`. `ArrSync` is invariant in `ItemT` (it
     appears in both inputs and outputs), so a concrete
@@ -114,7 +114,7 @@ class ArrSync[ItemT: ArrItem](ImportCompleter):
     def warms_episodes(self) -> bool:
         """Whether `prefetch_episodes` does real work (gets a boot step).
 
-        `SonarrSync` warms per-series episode lists; `RadarrSync` has none, so
+        `SonarrSync` warms per-series episode lists. `RadarrSync` has none, so
         the run machinery skips the "Warming episode lists" step entirely rather
         than graduate an empty one.
         """
@@ -125,13 +125,13 @@ class ArrSync[ItemT: ArrItem](ImportCompleter):
 
         Called once in the pre-scan prefetch step, beside the AniList/SeaDex bulk
         prefetches. `SonarrSync` fans the per-series `/api/v3/episode` fetches
-        out over a bounded pool; `RadarrSync` is a no-op (no episodes).
+        out over a bounded pool. `RadarrSync` is a no-op (no episodes).
 
         Args:
             items: The run's item list (already narrowed for a
                 single-item run).
             progress: Boot cockpit step fed per-item
-                fraction + "done/total" detail; None outside the cockpit.
+                fraction + "done/total" detail. None outside the cockpit.
 
         Returns:
             How many items were warmed (attempted), for the caller's ledger
@@ -142,7 +142,7 @@ class ArrSync[ItemT: ArrItem](ImportCompleter):
     def history_since(self, date: str) -> list[HistoryRecord] | None:
         """Arr history records since `date`, or None on failure.
 
-        A one-line delegation to the arr client's `history_since`; the run
+        A one-line delegation to the arr client's `history_since`. The run
         machinery's activity scan reads it to spot arr-side file changes
         (imports / non-upgrade deletes) between SeaDex passes.
         """
@@ -154,7 +154,7 @@ class ArrSync[ItemT: ArrItem](ImportCompleter):
         al_id: int,
         mapping: MappingEntry,
     ) -> bool:
-        """Process one AniList id for one Arr item; True if it grabbed."""
+        """Process one AniList id for one Arr item, returning True if it grabbed."""
 
     @abstractmethod
     def pending_import_series_id(self, item: ItemT) -> int | None:
@@ -163,7 +163,7 @@ class ArrSync[ItemT: ArrItem](ImportCompleter):
         The key for the engine's per-item non-blocking snapshot hook: after all
         of an item's AniList ids are processed, the engine reconciles+reports any
         carried-over pending records for this series id inline. Sonarr returns
-        `item.id`; Radarr returns `None` (movies record no pending imports),
+        `item.id`. Radarr returns `None` (movies record no pending imports),
         which short-circuits the snapshot entirely.
         """
 

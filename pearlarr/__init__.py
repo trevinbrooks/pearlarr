@@ -2,7 +2,7 @@
 
 The supported interfaces are the CLI (`pearlarr`), the config schema, and the
 notification payloads. Every Python import path - including the names
-re-exported here - is internal and may change without notice; pin your exact
+re-exported here - is internal and may change without notice. Pin your exact
 version if you script against it anyway.
 """
 

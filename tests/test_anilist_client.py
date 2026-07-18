@@ -1,13 +1,13 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
-# These are deliberately under-test private helpers; the repo already disables
+# These are deliberately under-test private helpers. The repo already disables
 # reportPrivateUsage for all of tests/ (test code reads private members), but the
 # strict directive above re-enables it, so restore the repo's test policy here.
 """Direct unit tests for the pure helpers and retry path in `anilist_client`.
 
 These are otherwise only exercised incidentally. The classification / parsing /
 extraction helpers take plain `dict` bodies, so they are tested with no mocks
-at all; `AniListClient`'s retry loop is exercised through its public queries,
+at all. `AniListClient`'s retry loop is exercised through its public queries,
 faked at the `httpx` boundary with the `respx` library (no `unittest.mock`).
 """
 
@@ -114,9 +114,9 @@ def test_parse_errors_wellformed() -> None:
 
 
 def test_parse_errors_skips_malformed_entries() -> None:
-    """Non-object junk in the array is skipped; only the dict entries are parsed.
+    """Non-object junk in the array is skipped. Only the dict entries are parsed.
 
-    A dict without a `message` defaults to `""`; a non-int `status` becomes
+    A dict without a `message` defaults to `""`. A non-int `status` becomes
     `None` (here the second dict carries only a status).
     """
 
@@ -241,7 +241,7 @@ def test_query_returns_valid_200_body(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @respx.mock
 def test_query_retries_after_http_429(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 429 is retried; the following 200 succeeds, for two total requests."""
+    """A 429 is retried. The following 200 succeeds, for two total requests."""
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     success: dict[str, object] = {"data": {"Media": {"id": 2, "episodes": 24}}}
@@ -281,7 +281,11 @@ def test_query_retries_on_throttle_error_body(monkeypatch: pytest.MonkeyPatch) -
 
 @respx.mock
 def test_query_batch_reshapes_page_media_by_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A Page body is re-keyed to {id: single-id-shaped body}, so the results can seed the run cache directly; junk, id-less and non-int-id entries in the media array are skipped (an id unknown to AniList is simply absent, never an error)."""
+    """A Page body is re-keyed to {id: single-id-shaped body}, so the results can seed the run cache directly.
+
+    Junk, id-less and non-int-id entries in the media array are skipped (an id
+    unknown to AniList is simply absent, never an error).
+    """
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     page: dict[str, object] = {
@@ -342,7 +346,11 @@ def test_rate_limit_wait_is_narrated(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @respx.mock
 def test_give_up_warns_once_per_run_not_per_title(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Exhausting the retries warns ONCE; a second exhausted request (another title, same run) stays quiet - the flag is per client, i.e. per run."""
+    """Exhausting the retries warns ONCE.
+
+    A second exhausted request (another title, same run) stays quiet, since the
+    flag is per client, i.e. per run.
+    """
 
     monkeypatch.setattr(time, "sleep", _no_sleep)
     recording = RecordingHub()

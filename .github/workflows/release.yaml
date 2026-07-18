@@ -18,14 +18,14 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Record media + build dists only; publish nothing"
+        description: "Record media + build dists only. Publish nothing"
         type: boolean
         default: false
 
 permissions:
   contents: read
 
-# One release at a time; never cancel a publish mid-flight.
+# One release at a time. Never cancel a publish mid-flight.
 concurrency:
   group: release
   cancel-in-progress: false
@@ -95,7 +95,7 @@ jobs:
           exit 1
 
   # Re-record the README media at the release version (both bake it into their
-  # pixels). Failure fails the release - re-run once the flake clears; nothing
+  # pixels). Failure fails the release - re-run once the flake clears. Nothing
   # ships with the previous version baked in.
   record:
     name: Record README media
@@ -124,7 +124,7 @@ jobs:
           uv run playwright install --with-deps chromium
       - name: Record the demo GIF
         env:
-          VHS_NO_SANDBOX: "true" # vhs drives headless Chromium; runners have no sandbox
+          VHS_NO_SANDBOX: "true" # vhs drives headless Chromium. Runners have no sandbox
         run: |
           scripts/demo/record.sh
           mkdir -p docs/assets
@@ -139,7 +139,7 @@ jobs:
             docs/assets/example_post.png
           if-no-files-found: error
 
-  # Build sdist + wheel; hatch-fancy-pypi-readme rewrites the README's media
+  # Build sdist + wheel. hatch-fancy-pypi-readme rewrites the README's media
   # URLs to the version-pinned assets directory in the PyPI metadata only.
   build:
     name: Build distributions
@@ -182,7 +182,7 @@ jobs:
 
   # The README hot-links media from the separate pearlarr-assets repository
   # (GitHub's release-asset CDN forces application/octet-stream, which PyPI's
-  # image proxy refuses; raw.githubusercontent.com serves real image types,
+  # image proxy refuses. raw.githubusercontent.com serves real image types,
   # for files under its 5 MB cliff). A separate repository keeps media bytes
   # out of pearlarr clones entirely: its main branch serves the GitHub
   # README, its immutable vX.Y.Z tag serves that version's PyPI page forever.
@@ -201,8 +201,8 @@ jobs:
           name: readme-media
           path: media
       - name: Mint an app token for the assets repository
-        # An app token because the repo-scoped GITHUB_TOKEN cannot push to
-        # another repository (the pearlarr-release app; see CONTRIBUTING).
+        # An app token because the repo-scoped GITHUB_TOKEN cannot push to another
+        # repository (the pearlarr-release app). See CONTRIBUTING for details.
         id: app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
@@ -306,8 +306,8 @@ jobs:
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
-      # GHCR authenticates with the workflow's own identity + GITHUB_TOKEN;
-      # no registry secret to configure (or to be undefined on a fresh fork).
+      # GHCR authenticates with the workflow's own identity + GITHUB_TOKEN. No
+      # registry secret to configure (or to be undefined on a fresh fork).
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
         with:
@@ -402,7 +402,7 @@ jobs:
       TAG: ${{ needs.version.outputs.tag }}
     steps:
       # The runner's default python3 is below our >=3.13 floor, so pip refuses
-      # the wheel; install on the floor itself - the likeliest to break.
+      # the wheel. Install on the floor itself - the likeliest to break.
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"

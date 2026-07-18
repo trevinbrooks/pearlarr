@@ -35,7 +35,7 @@ def format_episode_coverage(episodes: list[EpisodeRecord]) -> list[tuple[str, st
     """Summarize per-season Sonarr episode coverage over a list of EpisodeRecord, whatever the source.
 
     The records may come from a torrent's `url_item` episodes or be built from
-    a Sonarr ep_list; the summary is the same either way.
+    a Sonarr ep_list. The summary is the same either way.
 
     Returns a list of (season_label, episode_ranges) tuples, one per season
     present in the records, ordered by season. The season label is e.g. "S01"
@@ -85,7 +85,7 @@ def episodes_from_ep_list(
 ) -> list[EpisodeRecord]:
     """Convert a Sonarr ep_list into `EpisodeRecord` coverage records.
 
-    Sonarr episodes carry "seasonNumber"/"episodeNumber"; the coverage helpers
+    Sonarr episodes carry "seasonNumber"/"episodeNumber". The coverage helpers
     read `EpisodeRecord.season`/`.episode`. `missing_only` keeps only missing
     episodes (no file on disk), to summarize what is still needed.
     """

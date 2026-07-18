@@ -17,12 +17,12 @@ The `reduce_overlapping_downloads` branch matrix these tests pin:
       no mismatch + owned fallback rides ... INFO soft-skip, fallback_covered
       neither .............................. WARNING "not supported", skipped
     public_flagged >= 1:
-      first fully-addable group ............ keeper; losers unflag (debug only)
+      first fully-addable group ............ keeper, losers unflag (debug only)
       none addable + mismatch + promotion .. INFO "remaining files private-only; grabbing ..."
       promotion refused + fallback rides ... stale_held set SILENTLY, degrade to first
       otherwise ............................ degrade to public_flagged[0]
       fallback keeper over private drops ... INFO "private-only; falling back to X"
-    then per set: rescue re-flags just-dropped public urls no survivor covers;
+    then per set: rescue re-flags just-dropped public urls no survivor covers.
     finally per group: identical non-empty filesets dedup to the first.
 
 Skip state (skipped/groups/notices/stale_held/fallback_covered) accumulates
@@ -310,7 +310,7 @@ class TestReduceOverlappingDownloads:
         assert skips.notices[0].reason == "remaining files private-only; grabbing public alternative P"
 
     def test_degraded_keeper_without_mismatch_does_not_promote(self) -> None:
-        # No size mismatch means the flags may be plain missing-content grabs;
+        # No size mismatch means the flags may be plain missing-content grabs.
         # the unflagged public group could be genuinely owned, so the keeper
         # degrades as before and nothing is promoted.
         planner = make_planner()
@@ -341,13 +341,13 @@ class TestReduceOverlappingDownloads:
         assert seadex["Fall"].urls["u2"].download is True
         assert seadex["Priv"].urls["u1"].download is False
         assert skips.skipped is False
-        # The keeper GRABS the fallback; the covered bit is only for the
+        # The keeper GRABS the fallback. The covered bit is only for the
         # owned-fallback soft-skip (the grab itself marks the cache).
         assert skips.fallback_covered is False
         assert len(skips.notices) == 1
         assert skips.notices[0].groups == ["Priv"]
         assert skips.notices[0].severity is Severity.INFO
-        # The keeper flow is now the sole producer of this wording; pin it exactly.
+        # The keeper flow is now the sole producer of this wording. Pin it exactly.
         assert skips.notices[0].reason == "private-only; falling back to Fall"
 
     def test_flagged_mixed_group_never_promotes_itself(self) -> None:
@@ -439,7 +439,7 @@ class TestReduceOverlappingDownloads:
         # One entry, two sets: an owned-fallback soft-skip (set 1) and a
         # size-mismatch fallback hold (set 2). The per-set bits land TOGETHER on
         # one result - fallback_covered and stale_held are independent - and only
-        # the held set reaches skipped/groups; the notices keep their levels.
+        # the held set reaches skipped/groups. The notices keep their levels.
         planner = make_planner()
         e1 = [EpisodeRecord(season=1, episode=1, size=0)]
         e2 = [EpisodeRecord(season=2, episode=1, size=0)]
@@ -811,7 +811,7 @@ class TestReduceDropRescue:
 
     def test_losers_uncovered_public_url_is_rescued(self) -> None:
         # Neither mixed group is fully addable, so the keeper degrades to the
-        # first; the loser's public url carries the set's only addable S2 (or S1)
+        # first. The loser's public url carries the set's only addable S2 (or S1)
         # coverage and must be re-flagged, whichever group wins.
         for b_first in (False, True):
             planner = make_planner()
@@ -819,7 +819,7 @@ class TestReduceDropRescue:
             planner.reduce_overlapping_downloads(seadex)
             assert seadex["A"].urls["a_pub"].download is True, f"b_first={b_first}"
             assert seadex["B"].urls["b_pub"].download is True, f"b_first={b_first}"
-            # Exactly one private batch survives (the keeper's); the loser's is dropped.
+            # Exactly one private batch survives (the keeper's). The loser's is dropped.
             priv_flags = [seadex["A"].urls["a_priv"].download, seadex["B"].urls["b_priv"].download]
             assert sorted(priv_flags) == [False, True], f"b_first={b_first}"
 
@@ -865,7 +865,7 @@ class TestReduceDropRescue:
     def test_rescue_accumulates_survivor_coverage(self) -> None:
         # MUTATION PIN (_rescue_dropped_coverage): `survivor_keys |= url_keys`
         # degraded to `=` forgets the ORIGINAL survivors after the first rescue.
-        # Keeper A covers S1; dropped B (S2) is rescued; dropped C (S1) is already
+        # Keeper A covers S1. Dropped B (S2) is rescued. Dropped C (S1) is already
         # covered by A and must stay dropped - under `=` it would be re-flagged.
         planner = make_planner()
         shared = [self.E11, self.E21]

@@ -77,7 +77,7 @@ def radarr_movies_matching(
     Only a season-0 mapping can match (shows and movies are sometimes lumped
     together, so a movie rides along as a special). An unset mapping id never
     matches - the `is not None` guards mean None == None is not a match.
-    Order is preserved; a movie matching on both ids appears once.
+    Order is preserved. A movie matching on both ids appears once.
     """
 
     radarr_movies: list[RadarrItem] = []
@@ -87,7 +87,7 @@ def radarr_movies_matching(
         mapping_imdb_id = mapping.imdb_id
 
         for m in movies:
-            # Match by TMDB or IMDb id; one append per movie either way.
+            # Match by TMDB or IMDb id. One append per movie either way.
             tmdb_match = mapping_tmdb_id is not None and m.tmdbId == mapping_tmdb_id
             imdb_match = mapping_imdb_id is not None and m.imdbId == mapping_imdb_id
             if tmdb_match or imdb_match:
@@ -113,18 +113,18 @@ class SonarrSync(ArrSync[SonarrItem]):
         """Stand up the Sonarr client from the injected shared collaborators.
 
         Args:
-            deps: The shared collaborators; the config/mappings
+            deps: The shared collaborators. The config/mappings
                 this strategy reads directly are unpacked off it, and it's handed
                 to the Sonarr collaborators for the cache/AniList gateway/log
                 formatter they read.
             services: The services hub the per-id hooks call into.
             sonarr_client: A pre-built client to use instead of constructing
-                the real `SonarrClient` (which needs the connection keys);
+                the real `SonarrClient` (which needs the connection keys).
                 None builds the real one.
             radarr_client: Same seam for the
                 movies-in-Radarr cross-check client, whose library is fetched
                 eagerly below (only consulted when
-                `sonarr.ignore_movies_in_radarr` is on); None builds the real
+                `sonarr.ignore_movies_in_radarr` is on). None builds the real
                 one when the feature is on and the Radarr keys are set.
         """
 
@@ -134,7 +134,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         self._mappings = deps.mappings
         self.anibridge = deps.mappings.anibridge
 
-        # Set up Sonarr. An injected client (tests) is used as-is; otherwise the
+        # Set up Sonarr. An injected client (tests) is used as-is. Otherwise the
         # connection keys are required only now (when a Sonarr run runs) and the
         # real client is built over the run's shared httpx client (parse fires
         # one request per file, so its keep-alive removes a per-file handshake).
@@ -156,7 +156,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         # Episode-domain collaborator: owns the per-run episode cache + series-id
         # fingerprint and the (series, al_id, mapping) -> episodes resolution. Built
-        # from the shared deps + this client; the strategy delegates get_items /
+        # from the shared deps + this client. The strategy delegates get_items /
         # prefetch_episodes to it and reads its series_fp for the parse cache.
         self._episodes = SonarrEpisodes(deps, self.sonarr, self._services)
 
@@ -168,7 +168,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         # Import-time file -> episode mapper: owns the gnarly assignment of on-disk
         # leaves into OUR resolved episode set + the per-run on-disk parse cache.
-        # The import executor calls candidate_files/assign; assign returns the
+        # The import executor calls candidate_files/assign. assign returns the
         # unplaceable files the executor warns about (producer/consumer split).
         self._mapper = FileEpisodeMapper(self.sonarr)
 
@@ -176,12 +176,12 @@ class SonarrSync(ArrSync[SonarrItem]):
         # import from the mapper's resolved map, owns the per-run quality/language
         # caches + the throttled rescan, and exposes the queue/command reads
         # import_completed consults. Built from the shared deps + this client + the
-        # mapper; its caches reset in get_items, the run-start hook.
+        # mapper. Its caches reset in get_items, the run-start hook.
         self._executor = ImportExecutor(deps, self.sonarr, self._mapper)
 
         # Import-reconcile collaborator: the import_completed decision + the
         # grab-time pending-seed build. Composes the episode collaborator + the
-        # executor; the import_completed / process_al_id hooks delegate to it.
+        # executor. The import_completed / process_al_id hooks delegate to it.
         self._reconciler = ImportReconciler(deps, self._episodes, self._executor)
 
         self.ignore_movies_in_radarr = self._config.sonarr.ignore_movies_in_radarr
@@ -204,7 +204,7 @@ class SonarrSync(ArrSync[SonarrItem]):
                     self.anibridge,
                 )
             elif radarr_url is not None and radarr_api_key is not None:
-                # The run's shared client is pinned to SONARR's verify_ssl; this
+                # The run's shared client is pinned to SONARR's verify_ssl. This
                 # one eager fetch talks to Radarr, so honor Radarr's own knob
                 # with a scoped client (closed as soon as the list is read).
                 with make_httpx_client(verify=self._config.radarr.verify_ssl) as radarr_http:
@@ -264,7 +264,7 @@ class SonarrSync(ArrSync[SonarrItem]):
     def prefetch_episodes(self, items: list[SonarrItem], *, progress: ProgressSink | None = None) -> int:
         """Warm the per-series episode lists before the scan loop.
 
-        Delegates to the episode collaborator's concurrent prefetch; returns how
+        Delegates to the episode collaborator's concurrent prefetch. Returns how
         many series it warmed (the needs-scan subset), for the caller's ledger.
         """
 
@@ -299,7 +299,7 @@ class SonarrSync(ArrSync[SonarrItem]):
         sonarr_series_id = item.id
 
         # Skip if already cached. The one-time backfill on a legacy record adds
-        # the URL and the season/episode coverage; the coverage needs the episode
+        # the URL and the season/episode coverage. The coverage needs the episode
         # list, so it's resolved lazily, only when the backfill actually runs.
         if run.cached_entry_skip(
             al_id,
@@ -457,7 +457,7 @@ class SonarrSync(ArrSync[SonarrItem]):
 
         # Build the authoritative per-torrent import seeds the engine will persist
         # at the add site. Only the releases marked for download (download +
-        # hash) get a seed; each carries our own (basename -> Sonarr episode ids)
+        # hash) get a seed. Each carries our own (basename -> Sonarr episode ids)
         # mapping so the later manual import never trusts Sonarr's blind parse.
         # Skipped entirely when the feature is off, to avoid the per-file work.
         # Gate on the engine's RESOLVED mode (cli > config), not the raw config,
@@ -494,7 +494,7 @@ class SonarrSync(ArrSync[SonarrItem]):
     def pending_import_series_id(self, item: SonarrItem) -> int | None:
         """The Sonarr series id whose carried-over pending records this item owns.
 
-        The engine's per-item snapshot hook keys off this; a Sonarr series owns
+        The engine's per-item snapshot hook keys off this. A Sonarr series owns
         its pending records by `series_id`, which is the Sonarr series id.
         """
 
@@ -511,7 +511,7 @@ class SonarrSync(ArrSync[SonarrItem]):
     ) -> ImportProbe:
         """One reconcile/import poll for a completed download (delegated).
 
-        The @abstractmethod hook stays here so the ABC instantiates; the reconcile
+        The @abstractmethod hook stays here so the ABC instantiates. The reconcile
         decision lives on `ImportReconciler`.
         """
 

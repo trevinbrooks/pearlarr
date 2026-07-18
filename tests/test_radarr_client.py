@@ -6,7 +6,7 @@ network-free) with every endpoint riding the httpx-based `ArrHttp`, mocked
 via `respx`. Pins the decode into the typed `MovieFile` /
 `RadarrMovie` views and the degrade-to-empty guard (non-200 / transient
 request error -> `[]` + a warning), so a Radarr outage never unwinds the
-run; plus the `collect_anime_movies` wiring.
+run, plus the `collect_anime_movies` wiring.
 """
 
 from collections.abc import Set as AbstractSet
@@ -273,7 +273,7 @@ def test_collect_anime_movies_wires_id_spaces() -> None:
 
 
 def test_movie_file_nullability() -> None:
-    """Missing releaseGroup/size parse to None; unknown keys are ignored."""
+    """Missing releaseGroup/size parse to None. Unknown keys are ignored."""
 
     assert MovieFile.model_validate({}) == MovieFile(release_group=None, size=None)
     parsed = MovieFile.model_validate({"releaseGroup": "SubsPlease", "size": 123, "id": 9, "unknown": True})

@@ -184,7 +184,7 @@ def test_run_finished_closes_everything_and_is_idempotent() -> None:
     )
     assert fold.nodes() == ()
 
-    # The defensive teardown close re-emits it; a no-op on an empty stack.
+    # The defensive teardown close re-emits it, a no-op on an empty stack.
     fold.apply(RunFinished(arr=Arr.SONARR))
     assert fold.nodes() == ()
 
@@ -266,7 +266,7 @@ def test_kind_depth_covers_every_scope_kind_with_no_stray_keys() -> None:
 def test_wait_region_depth_deliberately_equals_item_depth() -> None:
     """The P5 pin: production wait is run-level, running post-summary once item/entry nodes have closed.
 
-    It is mutually exclusive with an item and shares its depth; revisit only if a
+    It is mutually exclusive with an item and shares its depth. Revisit only if a
     per-item wait ever appears.
     """
 

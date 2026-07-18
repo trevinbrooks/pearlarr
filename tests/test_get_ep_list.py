@@ -12,7 +12,7 @@ through the gateway (whose retry log narrates backoffs), never the bare helpers.
 
 The `has_anidb=True` path is pinned too: the lookup gate (non-TV format or
 season 0, with an AniDB id), the either/or with the offset slice (a non-empty
-AniDB map bypasses it entirely; an empty one falls through to it), and the
+AniDB map bypasses it entirely, while an empty one falls through to it), and the
 None-key skip (an episode without a season/episode number can't hit the map).
 """
 
@@ -100,7 +100,7 @@ def test_anime_ids_lookups_route_through_the_gateway() -> None:
 
 
 def test_empty_anibridge_season_map_resolves_to_no_episodes() -> None:
-    """An empty `tvdb_mappings` -> `[]` (no silent grab; caller logs the skip)."""
+    """An empty `tvdb_mappings` -> `[]` (no silent grab, caller logs the skip)."""
 
     sonarr = _FakeSonarr([sonarr_ep(1, 1)])
     episodes = make_sonarr_episodes(sonarr=sonarr)

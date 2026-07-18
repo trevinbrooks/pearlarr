@@ -49,7 +49,7 @@ from .manual_import import ImportWaitMode
 from .seadex_types import Json
 
 # Tracker name classification. The *_TRACKER_NAMES tuples keep SeaDex's exact casings
-# (the docs generator renders them into the sample and reference); the sets are
+# (the docs generator renders them into the sample and reference). The sets are
 # casefolded so membership tests match the casefolded `seadex.trackers` setting and
 # the casefolded tracker names from SeaDex.
 PUBLIC_TRACKER_NAMES: tuple[str, ...] = ("Nyaa", "AnimeTosho", "AniDex", "RuTracker")
@@ -68,8 +68,8 @@ PUBLIC_TRACKERS = {tracker.casefold() for tracker in PUBLIC_TRACKER_NAMES}
 PRIVATE_TRACKERS = {tracker.casefold() for tracker in PRIVATE_TRACKER_NAMES}
 
 # Every name the seadex `Tracker` enum can emit (casefolded), so the cli can warn on
-# configured trackers that match nothing. Literals keep this module's imports light;
-# a parity test pins them against the installed enum.
+# configured trackers that match nothing. Literals keep this module's imports light.
+# A parity test pins them against the installed enum.
 KNOWN_TRACKERS = PUBLIC_TRACKERS | PRIVATE_TRACKERS | {tracker.casefold() for tracker in OTHER_TRACKER_NAMES}
 
 CONFIG_TEMPLATE_FILE = "config_sample.yml"
@@ -111,7 +111,7 @@ class PrivateReleaseAction(StrEnum):
     """Warn and skip without caching, so the title is re-checked every run until a public release appears."""
 
     FALLBACK = "fallback"
-    """Grab the entry's best public alternative instead; warn only when none exists at all."""
+    """Grab the entry's best public alternative instead. Warn only when none exists at all."""
 
 
 def template_path() -> str:
@@ -130,7 +130,7 @@ def starter_template_text() -> str:
 def write_starter_config(path: str) -> None:
     """Copy the bundled template to `path` as a user-owned starter config.
 
-    Drops the template's generated-file banner (the copy is the user's file to
+    Drops the template's generated-file banner (the copy is now yours to
     edit, not a generated artifact) and restricts the copy to owner-only.
     """
 
@@ -179,8 +179,8 @@ def strip_userinfo(value: str) -> str:
     """Mask a `user:pass@` login embedded in a URL/host value.
 
     Every user-facing rendering of a configured URL (`config show`, arr
-    connection errors) goes through this: the login is a credential, the
-    host is what the user needs to see.
+    connection errors) goes through this: the login is a credential, and the
+    host is what should stay visible.
     """
 
     scheme, sep, rest = value.partition("://")
@@ -197,10 +197,10 @@ class _ConfigBase(BaseModel):
     """Shared base for every settings group: strict, immutable, blank-tolerant.
 
     `extra="forbid"` turns a typo'd key into a `ValidationError` (the whole point
-    of validating); `frozen=True` matches the project's value-object convention and
-    makes sharing one loaded config across both arrs provably safe;
+    of validating). `frozen=True` matches the project's value-object convention and
+    makes sharing one loaded config across both arrs provably safe.
     `hide_input_in_errors=True` keeps a rejected value (which could be a
-    credential pasted under the wrong key) out of the ValidationError text;
+    credential pasted under the wrong key) out of the ValidationError text.
     `use_attribute_docstrings=True` lifts each field's attribute docstring into
     `FieldInfo.description` - the one authored home the docs generator renders.
     """
@@ -217,7 +217,7 @@ class _ConfigBase(BaseModel):
     def _drop_blank_none(cls, data: Any) -> Any:
         """Let blank YAML keys fall back to their declared default.
 
-        A present-but-blank YAML key (`foo:`) parses to `None`; a plain field
+        A present-but-blank YAML key (`foo:`) parses to `None`. A plain field
         default would not apply (the key is present) and `None` would be rejected
         by an `int`/`str` field. Drop `None` *only for known fields* so the
         default applies. Unknown keys are kept regardless of blankness, so
@@ -234,7 +234,7 @@ class _ConfigBase(BaseModel):
 class ArrSettings(_ConfigBase):
     """Connection + per-arr behavior, shared by the `sonarr` and `radarr` groups.
 
-    `api_key` is a `SecretStr` so a dumped/logged model masks it;
+    `api_key` is a `SecretStr` so a dumped/logged model masks it.
     `AppConfig.require_connection` (and the Sonarr->Radarr cross-check)
     unwrap it at the client-construction boundary. `verify_ssl: false` is the
     last-resort escape hatch for a self-signed arr whose CA can't be trusted via
@@ -263,7 +263,7 @@ class ArrSettings(_ConfigBase):
     ignore_unmonitored: bool = False
     """Skip items the arr does not monitor.
 
-    For Radarr this means unmonitored movies; for Sonarr, unmonitored series or
+    For Radarr this means unmonitored movies. For Sonarr, unmonitored series or
     entries whose episodes are all unmonitored.
     """
 
@@ -274,7 +274,7 @@ class ArrSettings(_ConfigBase):
 class SonarrSettings(ArrSettings):
     """Sonarr adds one cross-arr flag the Radarr group must not accept.
 
-    `ignore_movies_in_radarr` is read only on a Sonarr run; declaring it here (not
+    `ignore_movies_in_radarr` is read only on a Sonarr run. Declaring it here (not
     on the shared base) means `extra="forbid"` correctly rejects it under `radarr`.
     """
 
@@ -285,7 +285,7 @@ class SonarrSettings(ArrSettings):
 class QbittorrentSettings(_ConfigBase):
     """qBittorrent connection.
 
-    The connection fields are modelled explicitly; `options` is a scoped escape
+    The connection fields are modelled explicitly. `options` is a scoped escape
     hatch for the remaining `qbittorrentapi.Client` kwargs (e.g.
     `VERIFY_WEBUI_CERTIFICATE` for a self-signed-HTTPS WebUI, `REQUESTS_ARGS`) so the
     explicit model doesn't drop connectivity the old free-form `qbit_info` splat allowed.
@@ -318,8 +318,8 @@ class QbittorrentSettings(_ConfigBase):
     def credentials(self) -> tuple[str, str, str] | None:
         """The `(host, username, password)` triple, or `None` if any part is unset.
 
-        All three are needed to add torrents; a missing one means run in preview mode
-        (nothing is grabbed). The caller builds the client with explicit kwargs; the
+        All three are needed to add torrents. A missing one means run in preview mode
+        (nothing is grabbed). The caller builds the client with explicit kwargs. The
         password is unwrapped here, at its point of use.
         """
 
@@ -339,7 +339,7 @@ class SeadexSettings(_ConfigBase):
     """
 
     prefer_dual_audio: bool = True
-    """Prefer dual-audio releases; when off, prefer Japanese-audio releases."""
+    """Prefer dual-audio releases. When off, prefer Japanese-audio releases."""
 
     want_best: bool = True
     """Prefer releases SeaDex marks as best."""
@@ -373,11 +373,11 @@ class SeadexSettings(_ConfigBase):
     def _casefold_trackers(cls, value: Any) -> Any:
         """Casefold explicit trackers so membership tests match SeaDex's names.
 
-        An absent `trackers` key takes the `PUBLIC | PRIVATE` default_factory; an
+        An absent `trackers` key takes the `PUBLIC | PRIVATE` default_factory. An
         explicit empty list/string coalesces to that same default here (empty means "no
         restriction", never "match nothing" - which would silently grab nothing,
         mirroring the languages validator). A scalar string is one tracker, not iterated
-        character-by-character (`trackers: Nyaa` -> `{"nyaa"}`); a non-iterable scalar
+        character-by-character (`trackers: Nyaa` -> `{"nyaa"}`). A non-iterable scalar
         raises `ValueError` so it surfaces as a clean `ValidationError` instead of a
         raw `TypeError` that would escape the cli's error handler.
         """
@@ -393,13 +393,13 @@ class SeadexSettings(_ConfigBase):
 
 # Languages applied to imported files. An explicit empty list in the config coalesces
 # back to these (a file must never be imported with no language - Sonarr reads that as
-# Unknown and may re-grab); referenced by both the field default and the validator.
+# Unknown and may re-grab). Referenced by both the field default and the validator.
 _LANGUAGES_DUAL_DEFAULT = ["Japanese", "English"]
 _LANGUAGES_SINGLE_DEFAULT = ["Japanese"]
 
 
 class ImportsSettings(_ConfigBase):
-    """Wait-for-completion + Sonarr manual import (Sonarr only; Radarr is a no-op)."""
+    """Wait-for-completion + Sonarr manual import. Sonarr only, Radarr is a no-op."""
 
     wait_mode: ImportWaitMode = ImportWaitMode.OFF
     """When, if ever, to wait for grabbed torrents to finish downloading and then drive Sonarr's import."""
@@ -420,7 +420,7 @@ class ImportsSettings(_ConfigBase):
     progress_poll_interval: int = Field(default=5, ge=0)
     """Seconds between lightweight wait-screen refreshes (progress bars, speed, ETA) within each poll interval.
 
-    `0` disables the extra refreshes; rows then advance once per
+    `0` disables the extra refreshes. Rows then advance once per
     `poll_interval` while spinners and timers still animate. A value at or
     above `poll_interval` behaves as disabled.
     """
@@ -430,7 +430,7 @@ class ImportsSettings(_ConfigBase):
     """How the import takes finished files into the library.
 
     `auto` lets Sonarr choose between moving and copying (a still-seeding
-    torrent is copied); `move` and `copy` force it. Forwarded to Sonarr
+    torrent is copied). `move` and `copy` force it. Forwarded to Sonarr
     verbatim.
     """
 
@@ -446,14 +446,14 @@ class ImportsSettings(_ConfigBase):
     default_quality: str | None = None
     """Sonarr quality name, e.g. `Bluray-2160p`, filling the gaps when a file's quality cannot be detected.
 
-    Useful on a 4K instance. Blank adds no default; a name matching no Sonarr
+    Useful on a 4K instance. Blank adds no default. A name matching no Sonarr
     quality definition is warned about and ignored.
     """
 
     languages_dual: list[str] = Field(default_factory=lambda: list(_LANGUAGES_DUAL_DEFAULT))
     """Languages tagged on files imported from dual-audio releases.
 
-    An empty list falls back to the default; a file is never imported with no
+    An empty list falls back to the default. A file is never imported with no
     language (Sonarr would read it as Unknown and could re-grab it).
     """
 
@@ -476,7 +476,7 @@ class ImportsSettings(_ConfigBase):
 
         YAML 1.1 parses a bare `off` (the documented disabled value) as the boolean
         `False`, so without this `wait_mode: off` would fail enum validation and skip
-        the whole run. `False` reads as "disabled", so it maps to OFF; any other
+        the whole run. `False` reads as "disabled", so it maps to OFF. Any other
         unrecognized value still raises cleanly.
         """
 
@@ -507,7 +507,7 @@ class NotificationsSettings(_ConfigBase):
 
     Both webhook URLs are `SecretStr`: the URL itself embeds the
     credential (the Discord path IS the token), so a dumped/logged model masks
-    them; the Notifier construction unwraps them.
+    them. The Notifier construction unwraps them.
     """
 
     discord_url: SecretStr | None = None
@@ -519,14 +519,14 @@ class NotificationsSettings(_ConfigBase):
     wait_notify: bool = False
     """Send a notification when a wait pass completes.
 
-    Absent, it turns on automatically whenever any webhook URL is set; an
+    Absent, it turns on automatically whenever any webhook URL is set. An
     explicit value wins.
     """
 
     @model_validator(mode="before")
     @classmethod
     def _derive_wait_notify(cls, data: Any) -> Any:
-        """Default `wait_notify` on whenever any webhook is set; explicit value wins.
+        """Default `wait_notify` on whenever any webhook is set. An explicit value wins.
 
         Order-independent w.r.t. the inherited blank-drop: it keys off
         `wait_notify` being absent/None, true either way.
@@ -561,7 +561,7 @@ class AdvancedSettings(_ConfigBase):
     """Advanced knobs (rate limiting, caching, run cap, logging)."""
 
     # ge=0: 0 disables the rate-limit sleep (load-bearing for the concurrent
-    # episode fetch); a negative value would crash time.sleep mid-run.
+    # episode fetch). A negative value would crash time.sleep mid-run.
     sleep_time: int = Field(default=0, ge=0)
     """Seconds slept between API queries, as rate limiting. `0` disables the sleep."""
 
@@ -574,9 +574,9 @@ class AdvancedSettings(_ConfigBase):
 
     # ge=0: 0 disables the cap (the download-tool convention, per qBittorrent/Sonarr).
     max_torrents_to_add: int = Field(default=10, ge=0)
-    """Cap on torrents added per run; `0` removes the cap.
+    """Cap on torrents added per run. `0` removes the cap.
 
-    Keeps a first run on a large library from flooding qBittorrent; later runs
+    Keeps a first run on a large library from flooding qBittorrent. Later runs
     pick up where the cap stopped. Preview runs ignore the cap, so a preview
     always reports the whole library.
     """
@@ -597,13 +597,13 @@ class AdvancedSettings(_ConfigBase):
     """Console output format.
 
     `auto` resolves to `rich` on a terminal and `plain` when piped or under
-    Docker; `plain` and `json` also disable the live progress views.
+    Docker. `plain` and `json` also disable the live progress views.
     """
 
     log_retention_days: int = Field(default=14, ge=1)
     """How many days of dated log backups to keep.
 
-    Each run rotates the previous run's log to a dated backup; backups older
+    Each run rotates the previous run's log to a dated backup. Backups older
     than this many days are deleted once the run's configuration loads.
     """
 
@@ -637,16 +637,16 @@ class MappingsSettings(_ConfigBase):
     anime_mappings: dict[str, Any] | Literal[False] | None = None
     """Kometa `Anime-IDs` source, a fallback for IDs the primary graph misses.
 
-    Blank auto-downloads it; `false` disables it; an inline mapping is accepted.
+    Blank auto-downloads it. `false` disables it. An inline mapping is accepted.
     """
 
     anidb_mappings: Literal[False] | None = None
-    """AniDB `anime-lists` XML source, a fallback used for specials. Blank auto-downloads it; `false` disables it."""
+    """AniDB `anime-lists` XML source, a fallback used for specials. Blank auto-downloads it. `false` disables it."""
 
     anibridge_mappings: dict[str, Any] | Literal[False] | None = None
     """`anibridge-mappings` v3 graph, the primary source of IDs and per-season episode maps.
 
-    Blank auto-downloads it; `false` disables it; an inline mapping is accepted.
+    Blank auto-downloads it. `false` disables it. An inline mapping is accepted.
     """
 
 
@@ -654,7 +654,7 @@ def _digest_canonical(value: object) -> Json:
     """A model-dump value as digest-stable JSON data.
 
     Sets are sorted (their iteration order is hash-seed dependent, so it differs
-    between processes); dict keys are left to `json.dumps(sort_keys=True)`. A
+    between processes). Dict keys are left to `json.dumps(sort_keys=True)`. A
     `StrEnum` member passes through the `str` arm - `json.dumps` writes a str
     subclass's raw content, which IS the enum's plain value.
     """
@@ -673,7 +673,7 @@ def _digest_canonical(value: object) -> Json:
 class AppConfig(_ConfigBase):
     """The full validated config: one submodel per settings group.
 
-    `config_version` is the one top-level scalar; `load` brings an older file's
+    `config_version` is the one top-level scalar. `load` brings an older file's
     mapping forward (in memory) before validation, so removed or renamed keys
     from a previous schema never trip `extra="forbid"`.
     """
@@ -681,28 +681,28 @@ class AppConfig(_ConfigBase):
     config_version: int = Field(default=CONFIG_VERSION, ge=1)
     """Schema version of the config file's keys and values.
 
-    Stamped by the starter template and `pearlarr config migrate`; a file from
+    Stamped by the starter template and `pearlarr config migrate`. A file from
     an older Pearlarr is migrated automatically in memory at every load.
     """
 
     sonarr: SonarrSettings = Field(default_factory=SonarrSettings)
     """Sonarr connection and behavior.
 
-    `url` and `api_key` are required only when a Sonarr run actually executes;
-    a Radarr-only config still loads.
+    `url` and `api_key` are required only when a Sonarr run actually executes.
+    A Radarr-only config still loads.
     """
 
     radarr: ArrSettings = Field(default_factory=ArrSettings)
     """Radarr connection and behavior.
 
-    `url` and `api_key` are required only when a Radarr run actually executes;
-    a Sonarr-only config still loads.
+    `url` and `api_key` are required only when a Radarr run actually executes.
+    A Sonarr-only config still loads.
     """
 
     qbittorrent: QbittorrentSettings = Field(default_factory=QbittorrentSettings)
     """qBittorrent connection.
 
-    All of `host`, `username`, and `password` are needed to grab; leave any
+    All of `host`, `username`, and `password` are needed to grab. Leave any
     blank to run in preview mode (everything is reported, nothing is added).
     """
 
@@ -722,14 +722,14 @@ class AppConfig(_ConfigBase):
     """Rate limiting, caching, run caps, and logging."""
 
     mappings: MappingsSettings = Field(default_factory=MappingsSettings)
-    """ID and episode mapping sources. `anibridge_mappings` is the primary; the others fill anything it misses."""
+    """ID and episode mapping sources. `anibridge_mappings` is the primary. The others fill anything it misses."""
 
     # Set once by `load` after construction (frozen models still allow private-attr
-    # assignment); the file checksum is the cache descriptor, the path feeds error text.
+    # assignment). The file checksum is the cache descriptor, the path feeds error text.
     _path: str = PrivateAttr(default="")
     _checksum: str = PrivateAttr(default="")
     _migration: MigrationOutcome | None = PrivateAttr(default=None)
-    # Memoized on first `selection_digest()` call (immutable model); "" = not yet computed.
+    # Memoized on first `selection_digest()` call (immutable model). "" = not yet computed.
     _selection_digest: str = PrivateAttr(default="")
 
     @field_validator("config_version")
@@ -765,7 +765,7 @@ class AppConfig(_ConfigBase):
         parsed, migration = _parse_and_migrate(raw)
         environ = os.environ
         overlay = _env_overlay(environ)
-        # Env wins per leaf; a non-mapping file (junk) skips the merge so its own
+        # Env wins per leaf. A non-mapping file (junk) skips the merge so its own
         # validation error stands unchanged.
         if overlay and is_json_obj(parsed):
             _deep_merge(cast("dict[str, object]", parsed), overlay)
@@ -790,8 +790,8 @@ class AppConfig(_ConfigBase):
         that change which release a title should end up with. The cache compares
         this against the digest a previous full pass vouched for
         (`selection_stale`) and re-checks every cached verdict when it moved.
-        Whole-group on purpose: a future seadex knob is covered by default
-        (over-inclusion costs one re-check run; omission would leave stale verdicts).
+        Whole-group on purpose: a future seadex knob is covered by default.
+        Over-inclusion costs one re-check run. Omission would leave stale verdicts.
         Memoized (the model is immutable) so the run's repeated reads hash once.
         """
 
@@ -808,7 +808,7 @@ class AppConfig(_ConfigBase):
     def migration(self) -> MigrationOutcome | None:
         """The in-memory schema migration `load` applied, or None for a current file.
 
-        Non-None means the file on disk still spells the old schema; the callers
+        Non-None means the file on disk still spells the old schema. The callers
         that report suggest `pearlarr config migrate` to rewrite it.
         """
 
@@ -831,7 +831,7 @@ class AppConfig(_ConfigBase):
     def missing_arr_keys(self, arr: Arr) -> tuple[str, ...]:
         """The unset halves of the arr's connection pair, as dotted config keys.
 
-        Empty when the arr is fully configured; exactly one key means a
+        Empty when the arr is fully configured. Exactly one key means a
         half-configured arr (almost certainly a mistake, which the CLI warns
         about by name rather than skipping silently).
         """
@@ -844,7 +844,7 @@ class AppConfig(_ConfigBase):
         """The arr's `(url, api_key)`, or raise naming the missing key + file.
 
         Connection settings are optional at parse time so a config filled in for only
-        one arr still validates; this enforces them lazily when that arr actually runs.
+        one arr still validates. This enforces them lazily when that arr actually runs.
         """
 
         sub = self.for_arr(arr)
@@ -859,7 +859,7 @@ def _qualifying_env(environ: Mapping[str, str]) -> list[tuple[str, str]]:
     """The config-override environment variables, sorted by name.
 
     A variable qualifies only when it starts with `PEARLARR_` and carries the
-    `__` nesting delimiter after that prefix; a delimiter-less `PEARLARR_*` name
+    `__` nesting delimiter after that prefix. A delimiter-less `PEARLARR_*` name
     (the data-dir and Docker operational vars) is reserved and never read as
     config. Sorted for a deterministic overlay and checksum.
     """
@@ -884,8 +884,8 @@ def _mapping_annotation(annotation: object) -> bool:
 def _overlay_path(name: str) -> list[str]:
     """The key path a qualifying variable's name addresses.
 
-    Model-addressed segments fold to lowercase (matching the file's key style);
-    once the path enters a free-form mapping field (e.g. `qbittorrent.options`,
+    Model-addressed segments fold to lowercase (matching the file's key style).
+    Once the path enters a free-form mapping field (e.g. `qbittorrent.options`,
     whose keys reach qbittorrentapi verbatim and case-sensitively), the
     remaining segments keep the variable's exact case.
     """
@@ -974,7 +974,7 @@ def _config_checksum(raw: bytes, environ: Mapping[str, str]) -> str:
     """MD5 over the config bytes plus the qualifying env overrides (the cache descriptor).
 
     Folding the overrides in means an env change registers as a config change,
-    so the cache re-checks against the effective settings; an unrelated env var
+    so the cache re-checks against the effective settings. An unrelated env var
     leaves the digest untouched.
     """
 
@@ -998,7 +998,7 @@ def _parse_and_migrate(raw: bytes) -> tuple[object, MigrationOutcome | None]:
 
 
 class ConfigRewriteError(Exception):
-    """`upgrade_config_file`'s render did not round-trip; nothing was written."""
+    """`upgrade_config_file`'s render did not round-trip. Nothing was written."""
 
 
 @dataclass(frozen=True)
@@ -1013,7 +1013,7 @@ def _write_owner_only(path: str, data: bytes) -> None:
     """Write a secret-bearing file created 0600, never briefly looser.
 
     `O_CREAT` with mode 0600 closes the umask window an open-then-chmod
-    creation would leave; the follow-up chmod covers the pre-existing-file
+    creation would leave. The follow-up chmod covers the pre-existing-file
     case, where `O_TRUNC` keeps the old mode.
     """
 
@@ -1027,7 +1027,7 @@ def upgrade_config_file(path: str) -> ConfigUpgrade:
     """Rewrite an older config file at the current schema, keeping a backup.
 
     The rewrite is the current annotated template with this file's values (and
-    the schema fixes a load applies in memory) spliced in; the previous bytes
+    the schema fixes a load applies in memory) spliced in. The previous bytes
     land beside it first, as `<path>.bak`. Both new files are created
     owner-only (they carry API keys) and the swap goes through a temp file +
     `os.replace`, so a failed write can never leave a truncated config. A file
@@ -1068,7 +1068,7 @@ def upgrade_config_file(path: str) -> ConfigUpgrade:
         _write_owner_only(tmp, rendered.encode("utf-8"))
         os.replace(tmp, path)
     except OSError:
-        # Never leave a torn, secret-bearing temp file behind; the config
+        # Never leave a torn, secret-bearing temp file behind. The config
         # itself is untouched and the backup is a faithful copy of it.
         with contextlib.suppress(OSError):
             os.remove(tmp)

@@ -5,7 +5,7 @@ exhaustive match and owns the single self-animating `rich.Live` cockpit
 (`_FrameAnchor`/`_LiveFrame`/`_TableLayout` + the
 anchor-advance timer trick), the graduation of finished torrents to durable
 scrollback lines, and the closing tally. On a live-capable console
-`WaitProgress` feeds the cockpit; a non-live console degrades - a start line +
+`WaitProgress` feeds the cockpit. A non-live console degrades - a start line +
 throttled aggregate pulses, no Live. Under plain/json there is no rich console
 and every event no-ops (the hub's text sinks carry those surfaces).
 
@@ -96,7 +96,7 @@ class _LiveFrame:
     rich re-renders this on its background refresh thread, so it rebuilds the
     frame from the region's current anchor each tick - ticking timers and
     animating the spinner between the producer's polls. Total by contract: a
-    render bug degrades to an empty frame; the failure is LATCHED for the main
+    render bug degrades to an empty frame. The failure is LATCHED for the main
     thread (never logged here) and never crashes the refresh thread.
     """
 
@@ -120,7 +120,7 @@ class _LiveFrame:
             # at all - the bridge adopts EVERY first-party level now, and hub.emit
             # off this Console-lock-holding thread is an ABBA deadlock. Latch the
             # first failure per Live session (rich retries at 12.5 ticks/s, so a
-            # persistent bug would otherwise spam); WaitRegion reports main-thread.
+            # persistent bug would otherwise spam). WaitRegion reports main-thread.
             if not self._latched:
                 self._latched = True
                 self._failure = exc
@@ -142,9 +142,9 @@ class WaitRegion(LiveRegion):
     """
 
     # The frame snapshot the refresh thread reads: caps/layout are set once at
-    # Live start (a null-probe placeholder until then; the anchor guard means a
+    # Live start (a null-probe placeholder until then. The anchor guard means a
     # frame never builds before the first live progress). Declared here, seeded
-    # by _reset_frame — __init__ and the per-pass/per-cycle resets share ONE
+    # by _reset_frame - __init__ and the per-pass/per-cycle resets share ONE
     # null-frame initializer, so the two states can never drift.
     _caps: Capabilities
     _layout: _TableLayout
@@ -177,7 +177,7 @@ class WaitRegion(LiveRegion):
         match event:
             case WaitStarted():
                 # Do NOT start the Live here (it starts on the first live
-                # snapshot); just arm the digest cadence and print the start line.
+                # snapshot). Just arm the digest cadence and print the start line.
                 self._reset_frame()
                 self._throttle.arm(event.pulse_s)
                 if not caps.live:
@@ -212,14 +212,14 @@ class WaitRegion(LiveRegion):
         # torn one (single attribute assignment under the GIL).
         self._anchor = _FrameAnchor(snapshot, self._time_source())
         if self._live is None:
-            # Snapshot caps/layout/spinner once at Live start; the refresh thread
+            # Snapshot caps/layout/spinner once at Live start. The refresh thread
             # reads these + the anchor, never the caps cache or the console source.
             self._caps = caps
             self._layout = _TableLayout.for_width(caps.width)
             self._spinner = Spinner(spinner_name(caps), style="yellow")
             self._live = make_live(console)
             self._live.start()
-            # One persistent self-recomputing renderable; the producer only swaps the
+            # One persistent self-recomputing renderable. The producer only swaps the
             # anchor from here on, rich's thread re-renders this between polls.
             self._live_frame = _LiveFrame(self._current_group)
             self._live.update(self._live_frame, refresh=True)
@@ -235,7 +235,7 @@ class WaitRegion(LiveRegion):
         """Report a latched refresh-thread render failure, from the MAIN thread.
 
         A file-only WARNING through the hub (`_report_contained`): mid-dispatch
-        it enqueues under the baton and lands in the file — never the refresh
+        it enqueues under the baton and lands in the file - never the refresh
         thread, and never silently dropped at a logger level gate.
         """
 
@@ -262,7 +262,7 @@ class WaitRegion(LiveRegion):
 
         Called on each of rich's refresh ticks (via `_LiveFrame`). Rolls the
         last pushed snapshot's elapsed clocks forward by the time since it was
-        pushed, so the timers advance between polls; the pure `live_model`
+        pushed, so the timers advance between polls. The pure `live_model`
         reducer still sees explicit elapsed values (no clock of its own).
         """
 
@@ -330,7 +330,7 @@ class WaitRegion(LiveRegion):
 
     def _row_cells(self, row: RowModel) -> list[Text | Spinner]:
         layout = self._layout
-        # One shared spinner animates every importing row in sync; the static glyph
+        # One shared spinner animates every importing row in sync. The static glyph
         # is the fallback (no live region, or any other phase). Read once: the main
         # thread's _stop_live clears the attribute mid-teardown.
         spinner = self._spinner

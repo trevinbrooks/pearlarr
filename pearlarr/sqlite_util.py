@@ -10,7 +10,7 @@ pin (which gates the cache's preview-write semantics) can't land in one store an
 silently diverge in the other.
 
 The store *classes* stay separate on purpose: their write models genuinely differ
-(the cache stages writes behind a preview gate and promotes an in-memory db; the
+(the cache stages writes behind a preview gate and promotes an in-memory db. The
 mapping store does atomic per-source digest-gated replaces with a rebuild-on-format
 -change). Only the connection/corruption plumbing is shared.
 """
@@ -47,7 +47,7 @@ def connect(path: str, *, ensure_wal: bool = True, foreign_keys: bool = False) -
     NOT set `isolation_level=None` / real autocommit. (Both attributes are set
     post-connect, before any transaction is open, so this is pure configuration.)
 
-    A non-db / corrupt file raises on the WAL switch; the handle is closed so it
+    A non-db / corrupt file raises on the WAL switch. The handle is closed so it
     doesn't leak before the caller decides whether to quarantine.
 
     Args:

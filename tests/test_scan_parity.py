@@ -6,7 +6,7 @@
 Every constant below was captured by RUNNING the current `RunReporter` (not
 hand-derived): each scenario pins the exact `(level, message, payload)` records
 the reporter emits today. The harness tests in this file re-drive the real
-reporter and assert byte/payload equality, so the goldens stay honest; the
+reporter and assert byte/payload equality, so the goldens stay honest. The
 builder/console tests in `test_output_scan_render` reuse the same data,
 pinning the new event-driven rendering layer to this grammar. The producer
 rewrite (a later band) must keep every one of these green.
@@ -394,7 +394,7 @@ ACTION_DOWNLOADING_NO_WAIT_LINES: tuple[Line, ...] = (
 )
 
 # Mixed outcomes render grouped - all added, then all downloading - regardless
-# of results order (accepted Band-D delta; OLD interleaved in results order).
+# of results order (accepted Band-D delta, OLD interleaved in results order).
 ACTION_MIXED = GrabAction(
     status=GrabStatus.ADDING,
     groups=_FRESH_GROUPS,
@@ -595,7 +595,7 @@ SUMMARY_DRY_HAS_CLIENT = RunSummaryReady(
 )
 SUMMARY_DRY_HAS_CLIENT_LINES: tuple[Line, ...] = (
     _blank(),
-    # The DRY RUN note rides the console title only; the file keeps the plain title.
+    # The DRY RUN note rides the console title only. The file keeps the plain title.
     _titled(
         "Pearlarr (Sonarr) run complete",
         title="Pearlarr (Sonarr) run complete   (DRY RUN - nothing grabbed)",
@@ -804,7 +804,7 @@ class _Harness:
     """A real RunReporter (real gateway, faked leaves) recording emitted events."""
 
     def __init__(self, store: AbstractCacheStore | None = None, title: str | None = None) -> None:
-        # NullHandler: the logger only serves the gateway/scripted client; the
+        # NullHandler: the logger only serves the gateway/scripted client. The
         # parity lines come from the recorded EVENTS below, never from records.
         self.logger = _fresh_logger()
         self.logger.addHandler(logging.NullHandler())
@@ -986,9 +986,9 @@ class TestExternalDetailParity:
     """The external producer sites: grab pipeline, release filter, episode mapper.
 
     Each golden was captured by running the pre-migration `LogFormatter.detail` with the site's literal args at
-    fc58aef; the reporter must reproduce every line byte-identically through the shipped `scan_lines` builders (the
+    fc58aef. The reporter must reproduce every line byte-identically through the shipped `scan_lines` builders (the
     grammar every rendering surface consumes). The four grab-pipeline sites emit typed `reporter.post` facts - the
-    golden `Line` tuples stay verbatim; the planner notice / missing / status sites stay `reporter.detail`-driven.
+    golden `Line` tuples stay verbatim. The planner notice / missing / status sites stay `reporter.detail`-driven.
     """
 
     FACT_SITES: tuple[_FactSite, ...] = (
@@ -1003,7 +1003,7 @@ class TestExternalDetailParity:
                 "yellow",
             ),
         ),
-        # grab_pipeline._add_one_url: a tracker outside the user's selected list.
+        # grab_pipeline._add_one_url: a tracker outside the configured tracker list.
         _FactSite(
             ReleaseSkipped(group="GroupA", tracker="Nyaa", reason=SkipReason.TRACKER_NOT_SELECTED, url="https://x/1"),
             _xdetail(
@@ -1081,7 +1081,7 @@ class TestExternalDetailParity:
     )
 
     def test_reporter_post_reproduces_the_goldens(self) -> None:
-        # The flipped sites post typed facts; the shipped builders re-derive the
+        # The flipped sites post typed facts. The shipped builders re-derive the
         # exact (level, message, payload) lines the detail-era sites pinned.
         harness = _Harness()
 
@@ -1091,7 +1091,7 @@ class TestExternalDetailParity:
         assert harness.lines() == tuple(site.golden for site in self.FACT_SITES)
 
     def test_reporter_detail_reproduces_the_goldens(self) -> None:
-        # The real reporter emits EntryDetail events; the shipped builders
+        # The real reporter emits EntryDetail events. The shipped builders
         # re-derive the exact (level, message, payload) lines the sites pinned.
         harness = _Harness()
 
@@ -1101,7 +1101,7 @@ class TestExternalDetailParity:
         assert harness.lines() == tuple(site.golden for site in self.SITES)
 
     def test_post_rides_the_open_entry_then_emits_scope_free(self) -> None:
-        # Inside an open entry the fact carries the entry scope; after a boundary
+        # Inside an open entry the fact carries the entry scope. After a boundary
         # closes it, a post emits scope-free (col-0 by design, like _post).
         harness = _Harness()
         ctx = RunContext(arr=Arr.SONARR)
@@ -1188,8 +1188,8 @@ def _summary_lines(
     # Production shape: run start stamps the mark (bound to the harness counter),
     # then the run's issues accrue on it.
     ctx.counts_mark = harness.reporter.counts_mark()
-    # Scripted issues ride the bound counter directly (the issues-row delta);
-    # they produce no events, so only the summary's feed the re-derived lines.
+    # Scripted issues ride the bound counter directly (the issues-row delta).
+    # They produce no events, so only the summary's feed the re-derived lines.
     for _ in range(warnings):
         harness.counts.record(Severity.WARNING)
     for _ in range(errors):
@@ -1376,7 +1376,7 @@ def test_scan_event_types_match_the_alias() -> None:
 def test_tip_precedence_covers_exactly_the_tip_texts() -> None:
     """Producer precedence (`_TIP_PRECEDENCE`) and builder texts (`_TIP_TEXTS`) are hand-maintained twins.
 
-    An entry in one without the other silently drops the tip line (unranked -> tip=None; unmapped -> no text).
+    An entry in one without the other silently drops the tip line (unranked -> tip=None, unmapped -> no text).
     """
 
     assert set(_TIP_PRECEDENCE) == set(_TIP_TEXTS)

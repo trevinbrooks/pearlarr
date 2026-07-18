@@ -1,6 +1,6 @@
 """Discord webhook boundary: the typed embed and the POST that ships it.
 
-`DiscordEmbed` carries a notification as typed data; `to_payload` is
+`DiscordEmbed` carries a notification as typed data. `to_payload` is
 the single JSON-shaped boundary, where Discord's documented hard limits are
 enforced so an oversized notification degrades to a truncated embed instead of
 a 400 from the webhook.
@@ -22,7 +22,7 @@ _SEADEX_ICON = "https://cdn.discordapp.com/icons/771790175591333909/529b324695b6
 
 # Embed accent colors (the strip Discord renders along the embed's left edge).
 # Grab amber follows the *arr ecosystem convention (grabbed = amber "in
-# flight"; green = imported) in the flat-UI shade matching its siblings below.
+# flight" - green = imported) in the flat-UI shade matching its siblings below.
 COLOR_GRAB = 0xF1C40F
 COLOR_SUCCESS = 0x2ECC71
 COLOR_DEFERRED = 0xE67E22
@@ -45,7 +45,7 @@ class EmbedField(NamedTuple):
     value: str
     inline: bool = False
     """When True, the field renders side by side with others (up to three per
-    row); the grab embed pairs its short metadata fields, everything else stays
+    row). The grab embed pairs its short metadata fields, everything else stays
     full-width."""
 
 
@@ -84,7 +84,7 @@ class DiscordEmbed:
         description = _clamp(self.description, _MAX_DESCRIPTION_LEN) if self.description else ""
         footer = f"Pearlarr v{__version__}"
 
-        # Keep fields while the embed total stays under the limit; a grab embed
+        # Keep fields while the embed total stays under the limit. A grab embed
         # has one field per release group, so a fat entry sheds trailing groups
         # instead of 400ing the webhook.
         total = len(author) + len(title) + len(description) + len(footer)
@@ -125,7 +125,7 @@ def discord_push(url: str, embed: DiscordEmbed, *, client: httpx.Client) -> None
     The payload overrides the webhook's display identity (Pearlarr name +
     SeaDex avatar) so posts look the same on any webhook. Raises
     `httpx.HTTPError` (incl. HTTP error statuses) so the caller's containment
-    decides; a webhook failure must never abort a grab. The hung-webhook bound
+    decides. A webhook failure must never abort a grab. The hung-webhook bound
     is the shared web client's default timeout.
     """
 

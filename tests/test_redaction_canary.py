@@ -164,7 +164,7 @@ class TestEnvOverrideSurfaces:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # The env supplies a valid secret while a bad file key drives the error
-        # path; the error names the bad key and never echoes the env secret.
+        # path. The error names the bad key and never echoes the env secret.
         monkeypatch.setenv("PEARLARR_SONARR__API_KEY", self.ENV_KEY)
         self._write_min_config("advanced:\n  sleep_time: not-a-number\n")
         result = CliRunner().invoke(pearlarr_cli, ["config", "validate"])
@@ -178,7 +178,7 @@ class TestArrClientMessages:
 
     def test_connection_error_masks_a_url_login_but_names_the_host(self) -> None:
         # A user:pass@ login in the arr URL is real basic auth (a protected
-        # reverse proxy); the could-not-reach error keeps the host, never the login.
+        # reverse proxy). The could-not-reach error keeps the host, never the login.
         url = f"http://admin:{CANARIES['url-embedded login']}@sonarr.local:8989"
         with respx.mock:
             respx.route().mock(side_effect=httpx.ConnectError("blocked"))

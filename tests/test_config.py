@@ -1,7 +1,7 @@
 # pyright: strict
 # pyright: reportPrivateUsage=false
 # TestSelectionDigest reaches the private `_digest_canonical` (its set-order
-# guarantee is unobservable through the opaque hex digest); strict re-flags that
+# guarantee is unobservable through the opaque hex digest). Strict re-flags that
 # and the repo disables reportPrivateUsage for tests.
 """Characterization tests for the Pydantic `AppConfig` model tree.
 
@@ -50,15 +50,15 @@ class TestFileLifecycle:
     def test_missing_config_copies_template_and_raises(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "config.yml"
         # The message reflects that the copy already happened and says what to
-        # do next (standalone callers see it raw; the CLI logs its own version).
+        # do next (standalone callers see it raw, the CLI logs its own version).
         with pytest.raises(FileNotFoundError, match="starter template was written"):
             AppConfig.load(str(cfg_path))
-        # The bundled (nested) template was copied into place for the user to edit.
+        # The bundled (nested) template was copied into place for editing.
         assert cfg_path.exists()
         assert "sonarr" in yaml.safe_load(cfg_path.read_text())
 
     def test_starter_copy_drops_generated_banner(self, tmp_path: Path) -> None:
-        # The template is a generated artifact; the copy is the user's file to
+        # The template is a generated artifact. The copy is now the operator's file to
         # edit, so the banner goes while the editor-schema pointer survives.
         cfg_path = tmp_path / "config.yml"
         with pytest.raises(FileNotFoundError):
@@ -130,7 +130,7 @@ class TestSchemaMigration:
 
     A file without `config_version` is pre-versioning (v0): its removed keys and
     values are folded forward, the outcome is reported via `migration()`, and
-    the file on disk stays byte-identical. A current file migrates nothing; a
+    the file on disk stays byte-identical. A current file migrates nothing. A
     newer one is refused by name.
     """
 
@@ -154,7 +154,7 @@ class TestSchemaMigration:
         assert any("public_only" in note for note in outcome.notes)
 
     def test_typos_stay_loud_in_a_version_less_file(self, tmp_path: Path) -> None:
-        # Only removed schema folds; a never-valid value is a typo and must
+        # Only removed schema folds. A never-valid value is a typo and must
         # reject by name even without a config_version key - a version-less
         # file may just as well be a new hand-written config.
         with pytest.raises(ValidationError, match="log_level"):
@@ -203,7 +203,7 @@ class TestSchemaMigration:
     def test_migration_never_touches_the_file(self, tmp_path: Path) -> None:
         cfg_path = tmp_path / "config.yml"
         text = "seadex:\n  private_releases: allow\n"
-        cfg_path.write_bytes(text.encode())  # LF bytes exactly; the checksum assert hashes them
+        cfg_path.write_bytes(text.encode())  # LF bytes exactly, the checksum assert hashes them
         cfg = AppConfig.load(str(cfg_path))
         assert cfg_path.read_text(encoding="utf-8") == text
         # The checksum (the cache descriptor) hashes the on-disk bytes, so an
@@ -271,7 +271,7 @@ class TestDefaults:
             ImportsSettings.model_validate({"poll_interval": 0})
 
     def test_progress_poll_interval_bounds(self) -> None:
-        # 0 stays valid (the documented disable, pinned separately); negatives reject.
+        # 0 stays valid (the documented disable, pinned separately). Negatives reject.
         with pytest.raises(ValidationError):
             ImportsSettings.model_validate({"progress_poll_interval": -1})
 
@@ -287,7 +287,7 @@ class TestDefaults:
             ImportsSettings.model_validate({"digest_interval": 0})
 
     def test_sleep_time_bounds(self) -> None:
-        # 0 disables rate limiting (valid); a negative would crash time.sleep mid-run.
+        # 0 disables rate limiting (valid). A negative would crash time.sleep mid-run.
         assert AdvancedSettings.model_validate({"sleep_time": 0}).sleep_time == 0
         with pytest.raises(ValidationError):
             AdvancedSettings.model_validate({"sleep_time": -1})
@@ -298,8 +298,8 @@ class TestDefaults:
             AdvancedSettings.model_validate({"cache_time": -1})
 
     def test_max_torrents_to_add_bounds(self) -> None:
-        # 0 removes the cap (the download-tool convention); blank falls back to
-        # the default like any blank key; a negative is nonsense and rejected.
+        # 0 removes the cap (the download-tool convention). Blank falls back to
+        # the default like any blank key. A negative is nonsense and rejected.
         assert AdvancedSettings.model_validate({"max_torrents_to_add": 1}).max_torrents_to_add == 1
         assert AdvancedSettings.model_validate({"max_torrents_to_add": 0}).max_torrents_to_add == 0
         assert AdvancedSettings.model_validate({"max_torrents_to_add": None}).max_torrents_to_add == 10
@@ -343,7 +343,7 @@ class TestBlankCoalescing:
     """A present-but-blank YAML value (None, or an explicit empty list/group) coalesces to its default."""
 
     def test_blank_scalar_knobs_fall_back_to_defaults(self) -> None:
-        # A present-but-blank YAML value parses to None; without coalescing it would
+        # A present-but-blank YAML value parses to None. Without coalescing it would
         # flow into time.sleep(None) / be rejected by the int field.
         imp = ImportsSettings.model_validate(
             {
@@ -383,7 +383,7 @@ class TestBlankCoalescing:
 class TestStrictValidation:
     """`extra="forbid"` and strict enums reject unknown/wrong-group keys and bad or invalid enum values.
 
-    Only the documented strings coerce; a removed key stays rejected too.
+    Only the documented strings coerce. A removed key stays rejected too.
     """
 
     def test_unknown_key_with_value_is_rejected(self) -> None:
@@ -422,7 +422,7 @@ class TestStrictValidation:
             SeadexSettings.model_validate({"private_releases": "maybe"})
 
     def test_removed_public_only_key_is_rejected(self) -> None:
-        # public_only was folded into private_releases (warn/fallback); an
+        # public_only was folded into private_releases (warn/fallback). An
         # old config still setting it must fail loudly, not be silently ignored.
         with pytest.raises(ValidationError):
             SeadexSettings.model_validate({"public_only": True})
@@ -449,7 +449,7 @@ class TestStrictValidation:
 
     def test_wait_mode_unquoted_yaml_off_maps_to_off(self) -> None:
         # YAML 1.1 parses a bare `off` (the documented disabled value) as the bool
-        # False; it must still resolve to OFF rather than failing enum validation and
+        # False. It must still resolve to OFF rather than failing enum validation and
         # skipping the whole run.
         parsed = yaml.safe_load("wait_mode: off")
         assert parsed == {"wait_mode": False}
@@ -463,7 +463,7 @@ class TestStrictValidation:
 
 
 class TestNormalization:
-    """Field normalizers coerce/casefold tags, ids, trackers; log_level/log_format case-fold and reject typos."""
+    """Field normalizers coerce/casefold tags, ids, trackers. log_level/log_format case-fold and reject typos."""
 
     def test_ignore_tags_none_becomes_empty_list(self) -> None:
         assert SeadexSettings().ignore_tags == []
@@ -495,7 +495,7 @@ class TestNormalization:
 
     def test_known_trackers_matches_the_installed_seadex_enum(self) -> None:
         # KNOWN_TRACKERS is spelled as literals (config.py must not import seadex -
-        # boot depends on it staying light); pin them to the real enum so a seadex
+        # boot depends on it staying light). Pin them to the real enum so a seadex
         # upgrade that adds/renames a tracker can't drift silently.
         assert KNOWN_TRACKERS == {tracker.value.casefold() for tracker in Tracker}
 
@@ -509,7 +509,7 @@ class TestNormalization:
         assert AdvancedSettings.model_validate({"log_level": "debug"}).log_level == "DEBUG"
 
     def test_log_level_error_is_accepted(self) -> None:
-        # ERROR is a real level now (log.py honors it); it must validate like the rest.
+        # ERROR is a real level now (log.py honors it). It must validate like the rest.
         assert AdvancedSettings.model_validate({"log_level": "error"}).log_level == "ERROR"
 
     def test_log_level_typo_raises_validation_error(self) -> None:
@@ -643,7 +643,7 @@ class TestSecrets:
         assert "hunter2" not in str(excinfo.value)
 
     def test_points_of_use_unwrap_to_plain_strings(self) -> None:
-        # require_connection / credentials() are the sanctioned unwrap points;
+        # require_connection / credentials() are the sanctioned unwrap points.
         # their callers (client construction, qbit login) get plain strings.
         cfg = AppConfig.model_validate(self._RAW)
         assert cfg.require_connection(Arr.SONARR) == ("http://s", "sonarr-key")
@@ -654,7 +654,7 @@ class TestSecrets:
         assert secret_value(None) is None
 
     def test_empty_secret_reads_as_unset(self) -> None:
-        # missing_arr_keys / credentials() gate on truthiness; an empty SecretStr
+        # missing_arr_keys / credentials() gate on truthiness. An empty SecretStr
         # (a blank quoted value) must read as unset, like an empty plain string.
         cfg = AppConfig.model_validate({"sonarr": {"url": "http://s", "api_key": ""}})
         assert cfg.missing_arr_keys(Arr.SONARR) == ("sonarr.api_key",)
@@ -688,7 +688,7 @@ class TestSelectionDigest:
         assert make_config(max_torrents_to_add=1).selection_digest() == base
 
     def test_sets_canonicalize_sorted_not_iteration_ordered(self) -> None:
-        # Set iteration order is hash-seed dependent (it differs across processes);
+        # Set iteration order is hash-seed dependent (it differs across processes).
         # without sorting, the digest would move between container restarts and
         # trigger phantom re-checks.
         assert _digest_canonical({"b", "c", "a"}) == ["a", "b", "c"]

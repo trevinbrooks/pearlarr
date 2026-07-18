@@ -14,7 +14,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DOC = _REPO_ROOT / "docs" / "troubleshooting.md"
 
-# Shorter fragments ("at ...", "is not") are connectors, not anchors; only
+# Shorter fragments ("at ...", "is not") are connectors, not anchors. Only
 # distinctive spans are grepped.
 _MIN_FRAGMENT = 8
 
@@ -31,7 +31,7 @@ def _anchor_fragments() -> list[str]:
 
 
 def test_the_doc_still_carries_anchor_blocks() -> None:
-    # The mechanism only guards what is quoted; a doc rewritten into pure prose
+    # The mechanism only guards what is quoted. A doc rewritten into pure prose
     # would pass the grep vacuously, so a floor keeps the convention in use.
     assert len(_anchor_fragments()) >= 15
 

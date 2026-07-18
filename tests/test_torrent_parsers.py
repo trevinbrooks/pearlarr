@@ -4,9 +4,9 @@
 The three `get_*_torrent` helpers scrape a release page (and, for AnimeTosho,
 a JSON feed) into `(download_url, title)`. AnimeTosho and RuTracker take an
 `httpx.Client`, so they are driven with saved HTML fixtures over a
-`respx`-mocked boundary; Nyaa uses `pynyaa` (its own httpx client), so its
+`respx`-mocked boundary. Nyaa uses `pynyaa` (its own httpx client), so its
 module-level session is swapped for a typed stub. The documented error raises
-are exercised alongside the success paths; the 5xx paths stub the retry
+are exercised alongside the success paths. The 5xx paths stub the retry
 helper's backoff sleep so retry exhaustion doesn't wait for real.
 """
 
@@ -44,7 +44,7 @@ def _stub_retry_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     """Re-point the parsers' retry helper at a no-sleep twin.
 
     A 5xx response is transient, so `get_with_retries` retries it with real
-    backoff sleeps; the retry policy itself is pinned in `test_web_client`,
+    backoff sleeps. The retry policy itself is pinned in `test_web_client`,
     so these tests only need the exhausted response, not the waits.
     """
 
@@ -224,7 +224,7 @@ def test_get_rutracker_torrent_builds_magnet() -> None:
     magnet, title = get_rutracker_torrent(url, infohash, client=httpx.Client())
 
     assert title == _RUTRACKER_TITLE
-    # RuTracker always builds a magnet (never a None link); narrow for the checks below.
+    # RuTracker always builds a magnet (never a None link). Narrow for the checks below.
     assert magnet is not None
     assert magnet.startswith(f"magnet:?xt=urn%3Abtih%3A{infohash}")
     assert "tr=http" in magnet

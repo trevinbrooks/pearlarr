@@ -18,10 +18,10 @@ Four scenarios pin the dead-loop cure end to end:
   IMPORTED, because the episode FILES are the source of truth (the poisoned
   Execute tail in real Sonarr fails the command AFTER the per-file imports
   land). The POSTed entries omit `downloadId` and force `importMode: copy`.
-* TRANSIENT: the downloadId scan fails once and heals; the folder scan's one
+* TRANSIENT: the downloadId scan fails once and heals. The folder scan's one
   activation returns `[]`, which must NOT pin folder mode - the next poll goes
   back to the downloadId scan and imports through the normal tracked shape.
-* UNSCANNABLE: both scans fail every poll; the record defers (never drops)
+* UNSCANNABLE: both scans fail every poll. The record defers (never drops)
   and the folder-scan warn template fires.
 * ABSOLUTE-BATCH: dead-tracked with the real Thighs incident's file shape - an
   empty grab-time map, absolute-only names resolved through Sonarr's
@@ -92,7 +92,7 @@ class _Scenario:
 
     heal_download_scan: bool
     """Whether the downloadId scan heals (200 + candidates) once the folder
-    scan has been consulted - the transient-blip timeline; False keeps it a
+    scan has been consulted - the transient-blip timeline. False keeps it a
     permanent 500 (the dead-tracked NRE)."""
 
     folder_scan: Literal["candidates", "empty", "error"]
@@ -104,7 +104,7 @@ class _Scenario:
     verdict: `downloadFolderImported` -> dead-tracked, `grabbed` -> clean)."""
 
     ready_timeout: int = 30
-    """The run's `imports.ready_timeout`; small for the deadline scenario."""
+    """The run's `imports.ready_timeout`. Small for the deadline scenario."""
 
     absolute_batch: bool = False
     """Replay the real Thighs incident shape: an EMPTY grab-time map,
@@ -161,7 +161,7 @@ class _World:
             return [r for r in self.requests if r.path == path]
 
     def next_command(self, name: str, body: dict[str, Json]) -> int:
-        """Allocate a command id; a ManualImport also lands the files.
+        """Allocate a command id. A ManualImport also lands the files.
 
         Landing on POST is the real timeline the dead-tracked pin relies on:
         Sonarr's per-file imports land BEFORE the poisoned Execute tail fails
@@ -250,7 +250,7 @@ class _World:
         """The paged `/api/v3/history` envelope, date-descending.
 
         The newest row is an irrelevant `episodeFileDeleted` the classifier
-        must skip; the scenario's event decides the verdict beneath it.
+        must skip. The scenario's event decides the verdict beneath it.
         """
 
         return {
@@ -284,8 +284,8 @@ class _World:
 def _parse_payload(title: str) -> Json:
     """Sonarr's `/parse` for the absolute batch, mirroring the live wire.
 
-    `parsedEpisodeInfo` carries the absolute number with NO (season, episode);
-    the series-MATCHED `episodes` array resolves it to a concrete pair (with
+    `parsedEpisodeInfo` carries the absolute number with NO (season, episode).
+    The series-MATCHED `episodes` array resolves it to a concrete pair (with
     Sonarr's episode id, so the id-consistency check runs end to end). A name
     without a two-digit absolute folds to a null object and no episodes - the
     live NC-extra shape, though the video filter keeps such files from ever
@@ -485,7 +485,7 @@ class _QbitHandler(_JsonHandler):
         ]
 
     def do_HEAD(self) -> None:
-        # qbittorrentapi probes reachability with a bare HEAD; 200 it quietly.
+        # qbittorrentapi probes reachability with a bare HEAD. 200 it quietly.
         _ = self._record()
         self.send_response(200)
         self.end_headers()
@@ -542,8 +542,8 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
     """Plant the carried-over record a prior run's grab would have left behind.
 
     The absolute-batch scenario's record carries an EMPTY grab-time map (the
-    incident state: grab time resolved nothing, import time must self-heal);
-    its `seadex_files` still name the episode files - never the extra, which
+    incident state: grab time resolved nothing, import time must self-heal).
+    Its `seadex_files` still name the episode files - never the extra, which
     only exists on disk.
     """
 
@@ -601,7 +601,7 @@ def _drive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scenario: _Scenario)
     world = _World(scenario)
     with _serve(world) as (sonarr_url, qbit_url):
         # qBittorrent configured -> a real (non-preview) run whose blocking
-        # monitor drives the carried-over record; 1s polls keep it quick.
+        # monitor drives the carried-over record. 1s polls keep it quick.
         config = make_config(
             url=sonarr_url,
             api_key="testkey",
@@ -753,7 +753,7 @@ def test_absolute_batch_empty_seed_self_heals_and_sibling_is_skipped(
     out = _flat(capsys.readouterr().out)
 
     # The real Thighs incident shape: the entry's own files place exactly and
-    # import; the out-of-entry sibling is skipped + warned, never a veto.
+    # import. The out-of-entry sibling is skipped + warned, never a veto.
     assert outcome.ok is True
     assert outcome.pending_after == frozenset()
     assert 'imported title="Demo Batch · Thighs" files=2' in out
@@ -764,7 +764,7 @@ def test_absolute_batch_empty_seed_self_heals_and_sibling_is_skipped(
     assert out.count("1 file could not be matched to an episode and was not imported") == 1
 
     # ONE ManualImport carrying exactly the two episode files on their matched
-    # ids; neither the sibling nor the extra ever reached the wire.
+    # ids. Neither the sibling nor the extra ever reached the wire.
     commands = outcome.world.manual_commands
     assert len(commands) == 1
     files = _body_files(commands[0][1])

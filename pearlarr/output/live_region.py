@@ -33,7 +33,7 @@ class LiveRegion:
     ) -> None:
         self._console_source = console_source
         # Production wiring (cli) shares ONE cache across the console seat's
-        # regions so they branch on the same probe; None builds a private cache.
+        # regions so they branch on the same probe. None builds a private cache.
         self._caps_cache = caps_cache if caps_cache is not None else CapsCache()
         # The RichRenderer's level store, read live (no duplicate _level here).
         self._level_source = level_source
@@ -57,12 +57,12 @@ class LiveRegion:
         self._stop_live()
 
     def _reset(self) -> None:
-        """Drop the live slot; subclasses extend with their per-cycle frame state."""
+        """Drop the live slot. Subclasses extend with their per-cycle frame state."""
 
         self._stop_live()
 
     def _stop_live(self) -> None:
-        # Take-and-clear; the stop() raise is contained so a failed stop can't
+        # Take-and-clear. The stop() raise is contained so a failed stop can't
         # eat the durable print that follows (the boot capstone, the wait tally).
         live, self._live, self._spinner = self._live, None, None
         if live is not None:
@@ -78,9 +78,9 @@ class LiveRegion:
         at the logger's level gate on any config above DEBUG, leaving a
         persistently broken cockpit with zero forensics. `file_only` keeps it
         off the console and out of the counts (forensic, like the hub's own
-        containment notes); emitting from inside dispatch is the documented
+        containment notes). Emitting from inside dispatch is the documented
         re-entrant path (it enqueues under the baton). The refresh thread must
-        still never call this — `_LiveFrame` latches instead (the ABBA pin).
+        still never call this - `_LiveFrame` latches instead (the ABBA pin).
         """
 
         emit_to_hub(

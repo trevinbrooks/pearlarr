@@ -131,7 +131,7 @@ def test_command_resource_junk_file_entry_skips_without_dropping_the_command() -
 
 
 def test_parsed_file_info_null_number_arrays_fold_to_empty() -> None:
-    """Sonarr nulls empty number arrays; they fold to () like the absent case."""
+    """Sonarr nulls empty number arrays. They fold to () like the absent case."""
 
     info = ParsedFileInfo.model_validate(
         {"parsedEpisodeInfo": {"seasonNumber": 1, "episodeNumbers": None, "absoluteEpisodeNumbers": None}},

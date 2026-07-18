@@ -66,7 +66,7 @@ class _FakeQbit:
     """A typed recording stand-in for `qbittorrentapi.Client`.
 
     Models qBittorrent's dedup-by-hash: `torrents_info` reports whichever hashes
-    are `present`; `torrents_add` records its call and (optionally) registers a
+    are `present`. `torrents_add` records its call and (optionally) registers a
     hash->name as now-present, so the post-add name read-back finds it.
     """
 
@@ -306,7 +306,7 @@ def test_grab_failures_covers_every_expected_boundary_error() -> None:
 
 
 def test_qbit_login_failure_maps_to_qbit_connection_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A qBittorrent `APIConnectionError` at login is remapped to the user-facing `QbitConnectionError` by `RunDeps.build`."""
+    """A qBittorrent `APIConnectionError` at login is remapped to the operator-facing `QbitConnectionError` by `RunDeps.build`."""
 
     class _FailingClient:
         def __init__(self, **kwargs: object) -> None:

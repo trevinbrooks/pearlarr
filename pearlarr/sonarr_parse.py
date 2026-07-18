@@ -89,12 +89,12 @@ NON_VIDEO_EXTENSIONS = {
 # How long a persisted Sonarr /parse result stays usable before it's re-queried.
 # A filename's season/episode mapping is stable, but Sonarr's /parse depends on
 # the current library, so a wrong-but-non-empty match could otherwise be trusted
-# forever; re-validate monthly so such an entry self-heals.
+# forever. Re-validate monthly so such an entry self-heals.
 SONARR_PARSE_CACHE_TTL_DAYS = 30
 
 # How long a NEGATIVE (confirmed empty) parse result stays usable. Pinned to the
 # series-id set (see sonarr_episodes.sonarr_series_fingerprint) so adding the
-# series self-heals it; this TTL is only a backstop, so it is short.
+# series self-heals it. This TTL is only a backstop, so it is short.
 SONARR_PARSE_NEG_CACHE_TTL_DAYS = 7
 
 
@@ -115,7 +115,7 @@ def video_file_entries(files: Sequence[str]) -> Iterator[tuple[int, str]]:
     """Yield `(index, basename)` for each importable video file in `files`.
 
     The one basename+skip iteration the warm pass, the parse loop, and the seed
-    builder share; the index survives so an index-aligned size list stays usable.
+    builder share. The index survives so an index-aligned size list stays usable.
     """
 
     for idx, name in enumerate(files):
@@ -246,7 +246,7 @@ class SonarrParseCache:
         """Upsert a Sonarr parse-cache record (one builder for both shapes).
 
         A NEGATIVE record (empty `episodes`) carries the series fingerprint so
-        it self-heals when the library changes; a POSITIVE one never does - the
+        it self-heals when the library changes. A POSITIVE one never does - the
         freshness reader dispatches on exactly that presence. The episodes are
         serialized to `{"season", "episode"}` JSON objects at this seam.
         """
@@ -289,7 +289,7 @@ class SonarrParseCache:
         Cold-cache pre-pass: collapses the per-file `/parse` latency the same
         way `prefetch_episodes` does for episodes, deduping repeats across
         overlapping release groups. The mapping loop then reads from the warm
-        cache. Only `sonarr.parse` runs in the pool; cache reads/writes stay on
+        cache. Only `sonarr.parse` runs in the pool. Cache reads/writes stay on
         the main thread. No-op when sequential (`sleep_time > 0`) or warm.
         """
 
@@ -344,11 +344,11 @@ class SonarrParseCache:
         filename is only ever sent to Sonarr once - both within a run, where
         the same file can appear across overlapping release groups, and across
         runs. The mapping is deterministic for a SeaDex release name, so this is
-        safe; only successful parses are cached, so a file becomes parseable as
+        safe. Only successful parses are cached, so a file becomes parseable as
         soon as its series is added to Sonarr.
 
         Args:
-            seadex_dict: The releases to parse; episode lists are attached to
+            seadex_dict: The releases to parse. Episode lists are attached to
                 its items in place, and it is returned.
             series_fp: The run's series-id fingerprint, pinning negative
                 records (from the episode collaborator).
@@ -365,7 +365,7 @@ class SonarrParseCache:
 
         # Evict parse records aged past that same cutoff so the block stops growing
         # without bound. Staged like the writes below (committed at the run's save
-        # point, discarded in a preview); only the first call per run finds stale
+        # point, discarded in a preview). Only the first call per run finds stale
         # rows, later calls evict nothing.
         evicted = self.cache_store.evict_sonarr_parse(window.cutoff)
         if evicted:
@@ -388,7 +388,7 @@ class SonarrParseCache:
                 sizes = url_item.size
 
                 # Video files only (NCED/NCOP, subs, fonts, audio dropped) - the
-                # same rule the warm pass uses; the index keys the size list.
+                # same rule the warm pass uses. The index keys the size list.
                 for sd_file_idx, f in video_file_entries(url_item.files):
                     # Fresh cache hit, or query Sonarr and cache the result so it
                     # expires (re-validates) rather than being trusted forever.

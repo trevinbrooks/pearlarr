@@ -2,7 +2,7 @@
 # Re-record docs/assets/demo_run.gif in one command (maintainer tooling).
 #
 # Pipeline: fixtures -> fresh demo data dir -> mock Sonarr/qBittorrent -> vhs -> ffmpeg.
-# VHS ignores `Set Framerate` for GIF output (the raw gif comes out 25fps); the ffmpeg
+# VHS ignores `Set Framerate` for GIF output (the raw gif comes out 25fps). The ffmpeg
 # 10fps pass is what keeps the GitHub iOS app's inline renderer happy - it decodes
 # every frame to a raw bitmap and gives up past ~600 frames (1432 broke, 573 works).
 #
@@ -24,7 +24,7 @@ command -v vhs >/dev/null || { echo "vhs not installed (brew install vhs)" >&2; 
 command -v ffmpeg >/dev/null || { echo "ffmpeg not installed (brew install ffmpeg)" >&2; exit 1; }
 [ -x "$PY" ] || { echo "repo venv missing: $PY (run: uv sync)" >&2; exit 1; }
 
-# The fixtures are committed; regenerate only if lost (needs network).
+# The fixtures are committed. Regenerate only if lost (needs network).
 if [ ! -f "$HARNESS/fixtures/series_demo.json" ]; then
   echo "== regenerating fixtures"
   "$PY" "$HARNESS/make_fixtures.py"
@@ -77,5 +77,5 @@ if [ "$frames" -gt "$MAX_FRAMES" ]; then
   exit 1
 fi
 echo "== done: $FINAL ($frames frames, $(du -h "$FINAL" | cut -f1 | tr -d ' '))"
-# The GIF is never committed to main (gitignored); the Release workflow runs this
+# The GIF is never committed to main (gitignored). The Release workflow runs this
 # script itself and publishes the result - run by hand only to iterate.

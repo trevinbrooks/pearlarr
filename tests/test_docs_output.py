@@ -1,7 +1,7 @@
 # pyright: strict
 """Output-contract documentation: docs/output.md stays true to the wire.
 
-The generated event catalog is byte-gated by gen_docs `--check`; these tests
+The generated event catalog is byte-gated by gen_docs `--check`. These tests
 pin the hand-authored claims: the wait-summary webhook example's shape against
 a real captured POST, and the stated `schema_version` against the constant.
 """

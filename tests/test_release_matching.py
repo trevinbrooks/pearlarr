@@ -1,7 +1,7 @@
 # pyright: strict
 """Characterization tests for the pure release-matching helpers.
 
-These functions move to `planner.py` in Phase 1; pinning them here proves the
+These functions move to `planner.py` in Phase 1. Pinning them here proves the
 relocation is behavior-preserving.
 """
 
@@ -22,7 +22,7 @@ from .builders import sonarr_ep
 
 
 class TestNormalizeRg:
-    """`normalize_rg` casefolds and strips whitespace/leading-trailing dashes; blank or `None` in yields `None`."""
+    """`normalize_rg` casefolds and strips whitespace/leading-trailing dashes. Blank or `None` in yields `None`."""
 
     def test_none_and_blank_return_none(self) -> None:
         assert normalize_rg(None) is None
@@ -69,8 +69,8 @@ class TestGetEpisodeKeys:
 class TestGetSameFilesGroups:
     """`get_same_files_groups` groups release names by identical episode coverage.
 
-    Unset (`None`) coverage collapses every group into one; an empty list keeps
-    each group apart (coverage unverifiable); matching/differing coverage sets
+    Unset (`None`) coverage collapses every group into one. An empty list keeps
+    each group apart (coverage unverifiable). Matching/differing coverage sets
     group or separate accordingly.
     """
 
@@ -105,7 +105,7 @@ class TestGetSameFilesGroups:
 class TestGetAllSeadexRgsPerEpisode:
     """`get_all_seadex_rgs_per_episode` maps each Sonarr-known episode to its casefolded release-group names.
 
-    A dict of one group short-circuits to just the empty `all` bucket; a group
+    A dict of one group short-circuits to just the empty `all` bucket. A group
     with no matched episodes falls into `all` instead of a per-episode key.
     """
 

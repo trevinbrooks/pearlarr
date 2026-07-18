@@ -64,7 +64,7 @@ dependencies = [
     "seadex == 0.7.2",
     "truststore == 0.10.4",
     "typer == 0.27.0",
-    # Transitive (qbittorrent-api -> requests -> urllib3); floored for CVE currency.
+    # Transitive (qbittorrent-api -> requests -> urllib3). Floored for CVE currency.
     "urllib3>=2.7.0",
 ]
 
@@ -100,7 +100,7 @@ test = [
     "respx>=0.23.1",
 ]
 # Maintainer asset tooling (scripts/sample_grab_post.py renders the README
-# screenshot headlessly); the browser itself is a one-time
+# screenshot headlessly). The browser itself is a one-time
 # `uv run playwright install chromium`. In dev so the type gates over scripts/
 # resolve the import.
 assets = [
@@ -120,10 +120,10 @@ dev = [
 #      version's page keeps its own release's media forever.
 #   2. Repo-relative links (docs/*.md, LICENSE, CHANGELOG.md, ...) become
 #      absolute github.com/blob URLs pinned to the same tag. GitHub resolves
-#      them relative to the repo root; PyPI has no such root, so unrewritten
+#      them relative to the repo root. PyPI has no such root, so unrewritten
 #      they are dead links on the project page.
 # Preview: `uvx hatch-fancy-pypi-readme pyproject.toml` (interpolates a dummy
-# version); release.yaml's build job asserts both pins landed.
+# version). release.yaml's build job asserts both pins landed.
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
 content-type = "text/markdown"
 
@@ -172,8 +172,8 @@ testpaths = ["tests"]
 # marker or a typo'd config key rather than silently ignoring it.
 addopts = ["--strict-markers", "--strict-config", "--import-mode=importlib"]
 markers = [
-    "realdata: exercises gitignored real mapping/data files; skipped unless present",
-    "real_data_dir: opts out of the autouse tmp data-dir isolation; reads/manages the real PEARLARR_DATA_DIR",
+    "realdata: exercises gitignored real mapping/data files. Skipped unless present",
+    "real_data_dir: opts out of the autouse tmp data-dir isolation. Reads/manages the real PEARLARR_DATA_DIR",
 ]
 # Warnings are errors: a silent resource leak (unclosed sqlite/log handle) or a
 # dependency deprecation must fail the suite, not scroll past. The autouse
@@ -183,7 +183,7 @@ markers = [
 filterwarnings = ["error"]
 
 # Branch coverage with a ratcheting floor pinned just under the current total
-# (~78.8%); raise it as the untested I/O adapters / composition root get covered.
+# (~78.8%). Raise it as the untested I/O adapters / composition root get covered.
 [tool.coverage.run]
 branch = true
 source = ["pearlarr"]
@@ -205,8 +205,8 @@ exclude_also = [
 # tests/fixtures holds captured arr payloads - real-world text stays byte-accurate.
 [tool.codespell]
 skip = "./.git,./.venv,./uv.lock,./tests/fixtures,./docs/assets,./htmlcov"
-# strat = the hypothesis-strategy naming convention; unparseable = the house
-# spelling (matches PARSEABLE_TRACKERS); disjointness = the set-theory term.
+# strat = the hypothesis-strategy naming convention. unparseable = the house
+# spelling (matches PARSEABLE_TRACKERS). disjointness = the set-theory term.
 ignore-words-list = "strat,unparseable,disjointness"
 
 [tool.ruff]
@@ -214,7 +214,7 @@ line-length = 120
 
 [tool.ruff.lint]
 # Preview is on ONLY to reach explicitly-selected preview rules (currently
-# PLW1514); explicit-preview-rules keeps the letter-prefix selects from
+# PLW1514). explicit-preview-rules keeps the letter-prefix selects from
 # pulling in the whole unstable preview set.
 preview = true
 explicit-preview-rules = true
@@ -249,7 +249,7 @@ ignore = [
     "TD002",   # missing-todo-author
     "TD003",   # missing-todo-link
     # Docstring presence floor is modules/packages/classes only: leaf-function
-    # gates under zero-suppressions manufacture ceremony; the rubric owns leaves.
+    # gates under zero-suppressions manufacture ceremony. The rubric owns leaves.
     "D202",   # blank-line-after-function: the house style separates docstring from body
     "D102",    # undocumented-public-method
     "D103",    # undocumented-public-function
@@ -267,7 +267,7 @@ ignore = [
     "RUF012",  # mutable-class-default
     # Owned by `ruff format` (it adds trailing commas and normalises implicit string
     # concatenation), so enforcing them as lint rules fights the formatter. ruff's own
-    # `format` conflict warning names exactly these two; the rest of COM/ISC stays on.
+    # `format` conflict warning names exactly these two. The rest of COM/ISC stays on.
     "COM812",  # missing-trailing-comma
     "ISC001",  # single-line-implicit-string-concatenation
 ]
@@ -284,14 +284,14 @@ select = [
     "A",      # flake8-builtins
     "COM",    # flake8-commas
     "C4",     # flake8-comprehensions
-    "D",      # pydocstyle (google convention; presence floor D100/D101/D104)
+    "D",      # pydocstyle (google convention. Presence floor D100/D101/D104)
     "DOC202", # docstring-extraneous-returns (preview): Returns section with no return
     "DOC403", # docstring-extraneous-yields (preview): Yields section with no yield
     "DOC502", # docstring-extraneous-exception (preview): Raises names an unraised type
     "FA",     # flake8-future-annotations
     "ISC",    # flake8-implicit-str-concat
     "ICN003", # banned-import-from
-    "LOG015", # root-logger-call: raw logging.* calls; tests/test_logging_ban.py owns the instance-call arm
+    "LOG015", # root-logger-call: raw logging.* calls. tests/test_logging_ban.py owns the instance-call arm
     "PIE",    # flake8-pie
     "T20",    # flake8-print
     "RSE",    # flake8-raise
@@ -306,7 +306,7 @@ select = [
     "RUF",    # Ruff-specific rules
 ]
 
-# Owned HTTP rides the two shared httpx clients (arr_http / web_client); a
+# Owned HTTP rides the two shared httpx clients (arr_http / web_client). A
 # fresh requests or urllib.request import would silently fork the stack again.
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "requests" = { msg = "owned HTTP is httpx-only via the shared clients (Tier 2.6)" }

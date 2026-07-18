@@ -4,8 +4,8 @@
 """Parity + edge tests for the SQL-backed `MappingResolver` / `AniBridge`.
 
 The SQL backings must reproduce the in-memory implementations exactly. AniBridge's
-graph-backed view is used directly as the oracle (the unchanged parser); anime_ids
-is checked against an inline reconstruction of the former reverse-index merge; and
+graph-backed view is used directly as the oracle (the unchanged parser). anime_ids
+is checked against an inline reconstruction of the former reverse-index merge, and
 the anidb + digest-gate behaviors are pinned. These are the safety net for the
 "parse once, serve from SQL" migration - the resolver lookups had no direct
 coverage before.
@@ -122,7 +122,7 @@ class TestAniBridgeParity:
 
     def test_present_but_empty_season_roundtrips(self) -> None:
         # The {season: []} ("whole season covered") vs {} ("not covered") distinction
-        # is opposite behavior downstream; it must survive the SQL round-trip.
+        # is opposite behavior downstream. It must survive the SQL round-trip.
         graph_ab, sql_ab, store = _ab_pair(GRAPH)
         try:
             assert graph_ab.lookup_by_tvdb(74796)[270]["tvdb_mappings"] == {1: []}
@@ -142,7 +142,7 @@ class TestAniBridgeParity:
 # --------------------------------------------------------------------------- #
 # Property-based: the invariants the example tables above sample only a few
 # points of. TestRealDataParity proves graph<->SQL parity over the real files
-# (gitignored, skipped in CI); these Hypothesis properties make the SAME parity
+# (gitignored, skipped in CI). These Hypothesis properties make the SAME parity
 # CI-enforced over generated graphs, and pin the range-containment boundaries
 # a `<=`->`<` off-by-one would silently drop.
 # --------------------------------------------------------------------------- #
@@ -190,7 +190,7 @@ def _anibridge_graph(draw: DrawFn) -> AniBridgeGraph:
             ep_map: dict[str, str] = {} if draw(st.booleans()) else {"1-99": draw(_tgt_range())}
             targets[f"tvdb_show:{draw(_SMALL_ID)}:s{season}"] = ep_map
         if draw(st.booleans()):
-            # Ignored provider (like mal below): real graphs carry it; parity must hold.
+            # Ignored provider (like mal below): real graphs carry it. Parity must hold.
             targets[f"tmdb_show:{draw(_SMALL_ID)}:s1"] = {}
         if draw(st.booleans()):
             targets[f"tmdb_movie:{draw(_SMALL_ID)}"] = {}
@@ -207,7 +207,7 @@ def _anibridge_graph(draw: DrawFn) -> AniBridgeGraph:
 
 
 # The autouse data-dir / store-closing fixtures (conftest) are function-scoped, so
-# @given tests trip Hypothesis's function-scoped-fixture health check; suppress it
+# @given tests trip Hypothesis's function-scoped-fixture health check. Suppress it
 # (these :memory: cases never touch the data dir the fixture guards).
 _ALLOW_FIXTURES = settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
 
@@ -247,7 +247,7 @@ class TestAniBridgeRangeContainment:
     """`_parse_ranges` -> `check_ep_by_anibridge` boundary classification.
 
     `_parse_ranges` has no direct test and `check_ep_by_anibridge` only trivial
-    ones; a `<=`->`<` regression drops the last episode of every closed cour and
+    ones. A `<=`->`<` regression drops the last episode of every closed cour and
     passes the example suite. These pin the boundary set for both range shapes.
     """
 
@@ -259,7 +259,7 @@ class TestAniBridgeRangeContainment:
         assert ranges == [(start, end)]  # _parse_ranges pins the closed-range parse
         mappings: TvdbMappings = {season: ranges}
 
-        # start and end included; the immediate neighbours excluded (catches <=/<).
+        # start and end included. The immediate neighbours excluded (catches <=/<).
         assert check_ep_by_anibridge(ep=sonarr_ep(season, start), tvdb_mappings=mappings) is True
         assert check_ep_by_anibridge(ep=sonarr_ep(season, end), tvdb_mappings=mappings) is True
         assert check_ep_by_anibridge(ep=sonarr_ep(season, start - 1), tvdb_mappings=mappings) is False
@@ -357,7 +357,7 @@ class TestAnimeIdsParity:
 
     def test_explicit_null_season_coalesces_to_sentinel(self) -> None:
         # A present-but-null tvdb_season / tvdb_epoffset (an explicit JSON null, not
-        # an absent key) must not abort the populate against the NOT NULL columns; it
+        # an absent key) must not abort the populate against the NOT NULL columns. It
         # coalesces to the same -1 / 0 sentinel an absent key gets, so the run still
         # works exactly as the pre-SQL code (which carried the None through harmlessly).
         amap = {"N": {"anilist_id": 500, "tvdb_id": 5000, "tvdb_season": None, "tvdb_epoffset": None}}
@@ -404,8 +404,8 @@ class TestGetAnilistIdsMerge:
     """`get_anilist_ids` merges AniBridge (winning) with anime-ids fallback, drops ignored ids, and sorts by id."""
 
     def test_anibridge_wins_then_anime_fills_then_drop_and_sort(self) -> None:
-        # 269 resolves in both sources for tvdb 74796; AniBridge must win (it is
-        # queried first). 270 is AniBridge-only. Ignored ids are dropped; result
+        # 269 resolves in both sources for tvdb 74796. AniBridge must win (it is
+        # queried first). 270 is AniBridge-only. Ignored ids are dropped. The result
         # is sorted by AniList id.
         amap = {"x": {"anilist_id": 269, "tvdb_id": 74796, "tvdb_season": 7}}
         resolver = MappingResolver(
@@ -421,7 +421,7 @@ class TestGetAnilistIdsMerge:
         try:
             mappings, dropped = resolver.get_anilist_ids(ExternalIds(tvdb=74796))
             assert dropped == [270]
-            assert list(mappings) == [269]  # 270 dropped; sorted
+            assert list(mappings) == [269]  # 270 dropped, sorted
             # AniBridge won for 269 -> ANIBRIDGE mode (not the anime-ids season 7).
             assert mappings[269].mode is MappingMode.ANIBRIDGE
             assert mappings[269].tvdb_mappings == {2: [(1, 21)], 3: [(1, 9), (11, 12)]}
@@ -632,7 +632,7 @@ class TestAnidbSkipTallies:
     """`_anidb_rows` tallies what it skips, split by kind.
 
     Id-level drops (missing/non-int anidbid) are *malformed* - 0 on healthy
-    upstream data; mapping-level drops are *unsupported* forms the parser
+    upstream data. Mapping-level drops are *unsupported* forms the parser
     deliberately doesn't consume (the offset form's empty text, multi-episode
     spans) - present in the hundreds on a healthy file. A healthy sibling anime
     rides along in every case to pin that its rows survive the skip.
@@ -729,7 +729,7 @@ class TestDigestGate:
         source.write_text(json.dumps({"A": {"anilist_id": 1, "tvdb_id": 10}}))
         db = str(tmp_path / "mappings.db")
 
-        # Point the resolver at the temp file; it already exists and is fresh, so
+        # Point the resolver at the temp file. It already exists and is fresh, so
         # _maybe_download never fetches (no network).
         monkeypatch.setattr(m, "ANIME_IDS_FILE", str(source))
 
@@ -813,7 +813,7 @@ class TestUnwritableDbFallback:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # The first store write (the file-backed db) raises; the :memory: retry
+        # The first store write (the file-backed db) raises. The :memory: retry
         # runs the same _build and must serve the mappings as if nothing failed.
         real_replace = MappingStore.replace_anime_ids
         calls = {"n": 0}
@@ -881,7 +881,7 @@ def _real_source_paths() -> _RealSources:
 
     `TestRealDataParity` carries `@pytest.mark.real_data_dir` so the autouse tmp
     data-dir override is off for it and `resolve_paths()` sees the developer's
-    real `PEARLARR_DATA_DIR`; evaluating this at import would instead capture
+    real `PEARLARR_DATA_DIR`. Evaluating this at import would instead capture
     whatever dir was active before the fixtures ran.
     """
 
@@ -1021,7 +1021,7 @@ def _boom(*_a: object, **_k: object) -> None:
 
 
 class TestMaybeDownloadFailOpen:
-    """A refresh blip falls open to the cached file; a first-ever download stays fatal."""
+    """A refresh blip falls open to the cached file. A first-ever download stays fatal."""
 
     def test_refresh_failure_falls_open_to_cached_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # A stale-but-valid cached source whose refresh download fails on a transient
@@ -1093,7 +1093,7 @@ class TestDownloadFile:
         """A 500 raises OSError carrying only the status - never the URL - and writes no file.
 
         `raise_for_status` fires before the `.part` open, so nothing lands on
-        disk; the exact-message assert pins the containment contract (the httpx
+        disk. The exact-message assert pins the containment contract (the httpx
         message embeds the URL, ours must not).
         """
 
@@ -1115,7 +1115,7 @@ class TestDownloadFile:
         Pins the atomicity contract `_maybe_download`'s fall-open relies on: a
         failed refresh writes only the temp (one chunk lands before the wire dies,
         verified live: respx streams the generator lazily), never the dest it
-        falls back to; the `finally` sweeps the temp.
+        falls back to. The `finally` sweeps the temp.
         """
 
         def _chunks() -> Iterator[bytes]:

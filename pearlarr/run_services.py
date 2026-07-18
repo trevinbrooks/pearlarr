@@ -1,7 +1,7 @@
 """The per-run dependency bundle and the per-AniList-id services hub.
 
 `RunDeps` is the shared leaf-collaborator bundle the composition root builds
-once per arr run; `RunServices` is the services hub the Arr strategies hold
+once per arr run. `RunServices` is the services hub the Arr strategies hold
 as `self._services` and call the shared per-id pipeline through. The run
 loop (`RunLoop`) adopts the hub's placeholder context and pushes each run's
 fresh context down via `RunServices.begin_run`, so the strategies depend on
@@ -99,7 +99,7 @@ class RunDeps:
         """Construct the shared collaborators in dependency order.
 
         Args:
-            arr: Which Arr is being run; selects the per-arr config submodel.
+            arr: Which Arr is being run. Selects the per-arr config submodel.
             cache: Path to the cache database.
             logger: Logger to use (the CLI builds it before the
                 config file can even be read, so config errors are loggable).
@@ -111,7 +111,7 @@ class RunDeps:
             web: The shared non-arr web client (tracker scrapes,
                 AniList, webhooks), built once by the CLI per cycle and owned
                 there - `close` deliberately leaves it open.
-            boot: The startup cockpit's producer facade; the
+            boot: The startup cockpit's producer facade. The
                 qBittorrent login and cache open graduate into it as steps
                 (a no-op unless a hub renders).
         """
@@ -121,11 +121,11 @@ class RunDeps:
         arr_config = app_config.for_arr(arr)
 
         # The httpx client every raw arr endpoint rides (ArrHttp binds it per
-        # arr); pinned timeouts / no-redirects / pool sizing live in its factory.
+        # arr). Pinned timeouts / no-redirects / pool sizing live in its factory.
         # Verification follows THIS arr's knob (the client is per-run, per-arr).
         http = make_httpx_client(verify=arr_config.verify_ssl)
 
-        # qbit. None unless host/username/password are all set; with any unset, no
+        # qbit. None unless host/username/password are all set. With any unset, no
         # client is created and the app treats `qbit is None` as "no client ->
         # perpetual preview".
         qbit: qbittorrentapi.Client | None = None
@@ -133,9 +133,9 @@ class RunDeps:
         if credentials is not None:
             host, username, password = credentials
             # `options` forwards any extra qbittorrentapi.Client kwargs (e.g.
-            # VERIFY_WEBUI_CERTIFICATE for a self-signed WebUI); empty by default.
+            # VERIFY_WEBUI_CERTIFICATE for a self-signed WebUI). Empty by default.
             # Every request gets the shared Arr timeout so a wedged qBittorrent
-            # socket can't hang a poll; a user REQUESTS_ARGS in `options` wins.
+            # socket can't hang a poll. A user REQUESTS_ARGS in `options` wins.
             options = dict(app_config.qbittorrent.options)
             options.setdefault("REQUESTS_ARGS", {"timeout": ARR_REQUEST_TIMEOUT_S})
             client = qbittorrentapi.Client(
@@ -202,7 +202,7 @@ class RunDeps:
             cache_store=cache_store,
             anilist=anilist,
             torrents=torrents,
-            # Discord notifier; a no-op when no webhook is configured. The
+            # Discord notifier, a no-op when no webhook is configured. The
             # SecretStr urls are unwrapped here, at their point of use.
             notifier=Notifier(
                 discord_url=secret_value(app_config.notifications.discord_url),
@@ -248,7 +248,7 @@ class RunServices:
     pipeline the Arr strategies reach through `self._services`: the release
     filter, the grab tail, the cache checks, and the strategy-facing log
     delegates. `arr` is THE authority for which Arr is being run (`ctx.arr`
-    is the per-run copy); the `RunLoop` run loop adopts
+    is the per-run copy). The `RunLoop` run loop adopts
     the placeholder context minted here and pushes each run's fresh context
     down via `begin_run`, so the strategies never see the loop type.
     """
@@ -256,7 +256,7 @@ class RunServices:
     def __init__(self, deps: RunDeps, arr: Arr) -> None:
         """Receive the shared collaborators and set up the per-id pipeline.
 
-        `arr` is the authority for the run's arr; every fresh run context
+        `arr` is the authority for the run's arr. Every fresh run context
         carries a per-run copy of it.
         """
 
@@ -278,7 +278,7 @@ class RunServices:
         self.arr = arr
 
         # Whether matching preferences moved since a prior full pass vouched for
-        # this arr's cached verdicts; `_skippable_entry` then re-checks every
+        # this arr's cached verdicts. `_skippable_entry` then re-checks every
         # cached entry, and the run loop re-vouches once a full sweep finishes.
         self._selection_stale = deps.cache_store.selection_stale(arr, deps.config.selection_digest())
 
@@ -288,11 +288,11 @@ class RunServices:
         # fresh at the start of each run by the loop's reset_run_stats. The single
         # placeholder is minted here - its dry_run=False + OFF wait mode keep every
         # preview / pending-import path a safe no-op - so the object is usable
-        # before run_sync; the run loop ADOPTS it (via `ctx`) at construction.
+        # before run_sync. The run loop ADOPTS it (via `ctx`) at construction.
         self._ctx = RunContext(arr=arr)
 
         # AniList ids whose arr-side files changed since the last pass (fed by the
-        # run loop's activity scan); they bypass the cached-entry skip once.
+        # run loop's activity scan). They bypass the cached-entry skip once.
         self._dirty_al_ids: set[int] = set()
 
         # The shared per-id collaborators, built from the deps hub + the
@@ -361,15 +361,15 @@ class RunServices:
         return self._skippable_entry(al_id, sd_entry) is None
 
     def _skippable_entry(self, al_id: int, sd_entry: EntryRecord) -> CachedEntry | None:
-        """The cached row iff the per-id loop may skip this id; None re-processes.
+        """The cached row iff the per-id loop may skip this id. None re-processes.
 
         The single decision BOTH cache gates share: `al_id_needs_scan` picks
         what prefetch warms and `cached_entry_skip` what the loop skips, and
         the two must agree or un-warmed ids hit AniList one at a time. Run-wide
         bypasses come first (no db read): the ignore flag, a selection-digest
         change (matching preferences moved, so every cached verdict is suspect),
-        or a dirty id; then the SeaDex-timestamp compare
-        (mirrors `check_al_id_in_cache`); then warn mode re-processes
+        or a dirty id. Then the SeaDex-timestamp compare
+        (mirrors `check_al_id_in_cache`), then warn mode re-processes
         fallback-satisfied entries, so their private-only warning resurfaces
         after a switch back from fallback mode.
         """
@@ -386,7 +386,7 @@ class RunServices:
     def mark_dirty(self, al_ids: Iterable[int]) -> None:
         """Record AniList ids whose arr-side file state changed since the last pass.
 
-        Fed by the run loop's `ArrActivityMonitor` scan;
+        Fed by the run loop's `ArrActivityMonitor` scan.
         `al_id_needs_scan` and `cached_entry_skip` bypass the cached-entry
         short-circuit for exactly these ids.
         """
@@ -401,7 +401,7 @@ class RunServices:
         """Resolve external Arr ids to a {AniList id -> mapping} dict.
 
         The resolver does the mapping computation and reports which ids it
-        dropped (the user's ignore list); the logging stays here so the
+        dropped (the configured ignore list). The logging stays here so the
         presentation concern doesn't leak into the resolver.
 
         Args:
@@ -427,7 +427,7 @@ class RunServices:
     ) -> str:
         """Resolve and remember the AniList title for an ID (no logging).
 
-        The gateway resolves the raw title (no side-effects); the empty-result
+        The gateway resolves the raw title (no side-effects). The empty-result
         fallback and the transitional `current_title` attribution live here so
         later steps can attribute grabs to the active entry. The entry header is
         logged separately by log_al_title, once episodes are known.
@@ -478,7 +478,7 @@ class RunServices:
     def import_wait_mode(self) -> ImportWaitMode:
         """The wait mode resolved for the current run (cli > config > default).
 
-        Set at the top of `run_sync`; the active strategy reads this (not the
+        Set at the top of `run_sync`. The active strategy reads this (not the
         raw `config.imports.wait_mode`) so its seed-building gate agrees with the
         run loop's persist/reconcile/blocking gates - otherwise a CLI override that
         turns the feature on over an `off` config would build no seeds and the
@@ -494,7 +494,7 @@ class RunServices:
     ) -> None:
         """Merge `cache_details` into an entry's cache record (in-memory only).
 
-        The run's save points flush it; see `CacheStore.update_cache`.
+        The run's save points flush it. See `CacheStore.update_cache`.
         """
 
         self.cache_store.update_cache(self._ctx.arr, al_id, cache_details)
@@ -526,9 +526,9 @@ class RunServices:
         """Shared tail for an interactive pick that left zero valid selections.
 
         Unlike `no_releases_skip` this deliberately persists NOTHING: caching
-        the title as done would suppress it forever, when the user only fumbled the
-        input - it must re-prompt on the next run. The picker already warned about
-        the empty selection; this just throttles and reports "not grabbed".
+        the title as done would suppress it forever, when the input was only
+        fumbled - it must re-prompt on the next run. The picker already warned about
+        the empty selection. This just throttles and reports "not grabbed".
 
         Returns:
             Always `False` (nothing was grabbed).
@@ -543,7 +543,7 @@ class RunServices:
         Returns the SeaDex entry to process, or None when there's nothing to do -
         either the id has no SeaDex entry, or the lookup was skipped because
         SeaDex is unreachable this run. The two misses are reported distinctly
-        (an outage skip must never read as "no entry"); the caller moves to the
+        (an outage skip must never read as "no entry"). The caller moves to the
         next id either way.
         """
 
@@ -577,11 +577,11 @@ class RunServices:
         log the cached entry, and return True so the caller skips it. `coverage`
         is a zero-arg callable so the (for Sonarr, episode-fetching) coverage
         lookup runs only on the one-time backfill, never on the common
-        already-backfilled path; it builds "" for a movie, a season/episode
+        already-backfilled path. It builds "" for a movie, a season/episode
         range for a series.
         """
 
-        # The shared skip decision; its one row read also serves the url-backfill
+        # The shared skip decision. Its one row read also serves the url-backfill
         # check below.
         entry = self._skippable_entry(al_id, sd_entry)
         if entry is None:
@@ -602,7 +602,7 @@ class RunServices:
         """Shared per-id tail: add torrents, notify, cache the outcome (delegates).
 
         Both strategies build a `GrabRequest` and call this through their
-        services; the produce mechanics live on `GrabPipeline`. Returns True
+        services. The produce mechanics live on `GrabPipeline`. Returns True
         only when max_torrents_to_add was reached (the caller stops the whole run).
         """
 
@@ -613,7 +613,7 @@ class RunServices:
     # The run loop logs through the reporter directly (threading its ctx and the
     # preview/client facts so the reporter stays free of orchestrator state). The
     # only log_* methods kept here are the ones the Sonarr/Radarr strategies
-    # invoke through their services view; each delegates the same way.
+    # invoke through their services view. Each delegates the same way.
 
     def log_entry_status(self, state: EntryState, label: str) -> None:
         """Log a one-line entry status row (delegates to RunReporter)."""

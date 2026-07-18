@@ -10,7 +10,7 @@ You will need:
 - qBittorrent with the WebUI enabled (not needed until step 6).
 - Python 3.13 or newer (or Docker, see below).
 
-The steps use Sonarr; Radarr works the same with `radarr.*` keys.
+The steps use Sonarr. Radarr works the same with `radarr.*` keys.
 
 ## 1. Install
 
@@ -19,7 +19,7 @@ $ uv tool install pearlarr    # or: pipx install pearlarr
 ```
 
 Running under Docker instead?
-Follow the [Docker Compose](../README.md#docker-compose) setup in the README first; every command below then runs as `docker compose run --rm pearlarr <command>`, and the container writes the starter config into the mounted `config` directory for you (skip step 2, and edit that file on the host).
+Follow the [Docker Compose](../README.md#docker-compose) setup in the README first. Every command below then runs as `docker compose run --rm pearlarr <command>`, and the container writes the starter config into the mounted `config` directory for you (skip step 2, and edit that file on the host).
 One catch: inside the container `localhost` is Pearlarr itself, so point `sonarr.url` and `qbittorrent.host` at the compose service name (`http://sonarr:8989`) or the host's IP, never `localhost`.
 
 ## 2. Create the config
@@ -29,7 +29,7 @@ $ pearlarr config init
 Wrote a starter config to /home/you/.local/share/pearlarr/config.yml
 ```
 
-The path varies by OS; `pearlarr paths` prints where everything lives:
+The path varies by OS. `pearlarr paths` prints where everything lives:
 
 ```console
 $ pearlarr paths
@@ -53,7 +53,7 @@ sonarr:
   api_key: your-sonarr-api-key
 ```
 
-Leave everything else blank; blank keys take the built-in defaults.
+Leave everything else blank. Blank keys take the built-in defaults.
 
 ## 4. Validate
 
@@ -78,7 +78,7 @@ $ pearlarr run single
 Watch it work, top to bottom:
 
 - A **boot ledger** first: one line per startup step (reading the config, refreshing the ID mappings, fetching your library, fetching the SeaDex entries).
-  The first run downloads and parses the mapping sources, so it is the slowest; later runs reuse them.
+  The first run downloads and parses the mapping sources, so it is the slowest. Later runs reuse them.
 - Then a **block per library title**: the SeaDex entry it resolved to, what your library already has, and what Pearlarr would do about it.
 - Finally a **summary scoreboard**: how many titles were checked, what it *would grab*, what is already up to date, and what needs your attention.
   Each "added" line names its release, and each "needs action" line names the title and why Pearlarr stopped.
@@ -110,7 +110,7 @@ A real run adds at most `advanced.max_torrents_to_add` torrents (default 10). Th
 
 ## 7. Confirm the grab
 
-The summary's "added" lines name each grabbed release; you will find torrents with those names in qBittorrent.
+The summary's "added" lines name each grabbed release. You will find torrents with those names in qBittorrent.
 From there the usual arr flow takes over: Sonarr sees the finished download and imports it like any other.
 Set `sonarr.torrent_category` if you want Pearlarr's grabs grouped under their own qBittorrent category, and `notifications.discord_url` if you want each grab posted to Discord.
 
@@ -118,8 +118,8 @@ Set `sonarr.torrent_category` if you want Pearlarr's grabs grouped under their o
 
 One run every few hours is all Pearlarr needs:
 
-- **Bare metal**: bare `pearlarr` runs the scheduled loop, one cycle every `schedule.interval_hours`; keep it alive under a process supervisor, or wire `pearlarr run single` into cron or a systemd timer if you prefer your own scheduler ([deployment.md](deployment.md#bare-metal-scheduling)).
-- **Docker**: the container schedules itself; set `PEARLARR_CRON` to change the cadence ([deployment.md](deployment.md#scheduling-and-tz)).
+- **Bare metal**: bare `pearlarr` runs the scheduled loop, one cycle every `schedule.interval_hours`. Keep it alive under a process supervisor, or wire `pearlarr run single` into cron or a systemd timer if you prefer your own scheduler ([deployment.md](deployment.md#bare-metal-scheduling)).
+- **Docker**: the container schedules itself. Set `PEARLARR_CRON` to change the cadence ([deployment.md](deployment.md#scheduling-and-tz)).
 
 From here:
 

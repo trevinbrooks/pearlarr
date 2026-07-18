@@ -1,7 +1,8 @@
 # Don't run this tape directly - use ./record.sh, which seeds the data dir, starts
 # the mocks, records, and post-processes to 10fps. VHS ignores `Set Framerate` for
-# GIF output (comes out 25fps; 1432 frames made the GitHub iOS app inline renderer
-# show "?"; ~570 frames is known-good), so the ffmpeg pass in record.sh is mandatory.
+# GIF output. The raw GIF comes out at 25fps, and 1432 frames made the GitHub iOS
+# app's inline renderer show "?" (~570 frames is known-good). The ffmpeg pass in
+# record.sh is mandatory.
 # The PEARLARR_DATA_DIR below is rendered in the boot header - keep it in sync with
 # record.sh and keep it presentable.
 Output demo.gif
