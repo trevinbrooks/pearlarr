@@ -1,18 +1,41 @@
 """The Radarr strategy: movie matching and per-AniList-id processing over the services hub."""
 
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import override
 
-from .cache import CacheRecord
+from .arr_activity import IMPORT_EVENTS, format_history_date
+from .cache import UPDATED_AT_STR_FORMAT, CacheRecord
 from .config import Arr
 from .grab_pipeline import GrabRequest, clean_replaced_groups
 from .log import pluralize
-from .manual_import import ImportProbe, ImportProgress, ImportReadiness, PendingImport
+from .manual_import import ImportProbe, ImportProgress, ImportReadiness, ImportWaitMode, PendingImport
 from .mappings import ExternalIds, MappingEntry
 from .output import hub_warn
 from .protocols import ArrSync
 from .radarr_client import AbstractRadarrClient, collect_anime_movies, make_radarr_client
 from .run_services import RunDeps, RunServices
 from .seadex_types import ArrReleaseDict, HistoryRecord, ProgressSink, RadarrItem
+
+# Clock-skew cushion subtracted from the oldest pending record's grab time before
+# querying Radarr import history. The added_at stamps are converted local-naive ->
+# UTC first, so this only has to absorb genuine NTP drift between us and Radarr,
+# never a timezone gap - a query window that started after a real import event
+# would miss its evidence and strand the record until TTL.
+_HISTORY_SKEW_HOURS = 2
+
+
+@dataclass(frozen=True, slots=True)
+class _ImportEvidence:
+    """One reconcile pass's Radarr import-history evidence, fetched once and memoized.
+
+    `imported_hashes` are the casefolded `downloadId`s of the import events in the
+    query window. `readable` is False when `history_since` failed (a Radarr
+    outage), so the reconcile waits and NEVER moves a torrent on missing evidence.
+    """
+
+    imported_hashes: frozenset[str]
+    readable: bool
 
 
 class RadarrSync(ArrSync[RadarrItem]):
@@ -41,6 +64,11 @@ class RadarrSync(ArrSync[RadarrItem]):
         self._services = services
         self._config = deps.config
         self.logger = deps.logger
+        # Read directly for the reconcile's oldest-pending lookup + import-history match.
+        self.cache_store = deps.cache_store
+        # The reconcile pass's Radarr import history, fetched once then memoized.
+        # None = not yet fetched; reset at run start (get_items) so it can't stale.
+        self._evidence: _ImportEvidence | None = None
         # The resolver supplies the Anime-IDs candidate id-sets (from SQL) that
         # `collect_anime_movies` filters with. The AniBridge view supplies its own.
         self._mappings = deps.mappings
@@ -62,8 +90,13 @@ class RadarrSync(ArrSync[RadarrItem]):
 
     @override
     def get_items(self) -> list[RadarrItem]:
-        """Every Radarr movie that has an associated AniList ID."""
+        """Every Radarr movie that has an associated AniList ID.
 
+        Also the run-start hook: clears the per-run import-history memo so a stale
+        window never carries into this run's reconcile.
+        """
+
+        self._evidence = None
         return self.get_all_radarr_movies()
 
     @override
@@ -187,6 +220,37 @@ class RadarrSync(ArrSync[RadarrItem]):
             arr_release_dict=radarr_release_dict,
         )
 
+        # Seed a pending-import record per grabbed torrent so the engine's
+        # data-driven gate persists it. The post-import category move then defers
+        # until Radarr's own completed-download handling imports the movie - and,
+        # for a torrent shared with a Sonarr grab, until both arrs' records clear.
+        # Only the Sonarr-domain fields stay empty (a Radarr record tracks no
+        # episode mapping). Gated on the resolved wait mode so an off run seeds
+        # nothing (the pipeline's own gate would skip them regardless).
+        pending_seeds: dict[str, PendingImport] | None = None
+        if run.import_wait_mode is not ImportWaitMode.OFF:
+            added_at = datetime.now().strftime(UPDATED_AT_STR_FORMAT)
+            pending_seeds = {
+                url_item.infohash: PendingImport(
+                    infohash=url_item.infohash,
+                    al_id=al_id,
+                    title=anilist_title,
+                    release_group=srg,
+                    url=sd_url,
+                    added_at=added_at,
+                    series_id=0,
+                    file_episode_map={},
+                    episode_ids=[],
+                    is_dual_audio=False,
+                    seadex_files=[],
+                    coverage=None,
+                    ordered_episode_ids=[],
+                )
+                for srg, srg_item in seadex_dict.items()
+                for url_item in srg_item.urls.values()
+                if url_item.download and url_item.infohash
+            }
+
         return run.grab_and_cache(
             GrabRequest(
                 al_id=al_id,
@@ -199,15 +263,17 @@ class RadarrSync(ArrSync[RadarrItem]):
                 # Every edition's group (not just the first file's). The helper drops
                 # the {None:[None]} placeholder and any real-file null key.
                 replaced_groups=clean_replaced_groups(radarr_release_dict),
+                pending_seeds=pending_seeds,
             ),
         )
 
     @override
     def pending_import_series_id(self, item: RadarrItem) -> int | None:
-        """No-op: Radarr movies record no pending imports (out of scope).
+        """No series id: a Radarr record is not keyed by series, so no inline snapshot.
 
-        Returns `None` so the engine's per-item snapshot hook short-circuits for
-        every Radarr movie - there are no carried-over import records to report.
+        Radarr DOES record pending imports now, but they carry `series_id=0` and
+        reconcile in `_finalize_run` (never the per-item snapshot). Returning
+        `None` short-circuits the engine's per-item snapshot hook for every movie.
         """
 
         del item
@@ -222,27 +288,98 @@ class RadarrSync(ArrSync[RadarrItem]):
         force: bool = False,
         at_deadline: bool = False,
     ) -> ImportProbe:
-        """No-op: the series-pinned manual import is Sonarr-only (out of scope).
+        """Reconcile one completed Radarr download against Radarr's import history.
 
-        Radarr never records a pending import (`grab_and_cache` passes no
-        `pending_seeds`), so this is never reached in practice. It returns a
-        `LEAVE` probe (the safest terminal value - never drops a record, no files
-        verified) to satisfy the `ArrSync` contract.
+        Radarr imports its own completed downloads (completed-download handling),
+        so this never drives an import - it only reads evidence. The history
+        window is fetched ONCE per reconcile pass (memoized, reset at run start)
+        and matched by casefolded `downloadId`:
+
+          * a matching import event -> `files_present` (the reconcile drops the
+            record and runs the gated category move),
+          * no event yet -> leave the record pending (the category stays deferred),
+          * a history outage (`history_since` -> None) -> leave pending, never move.
+
+        `content_path` / `force` / `at_deadline` are unused - there is no local
+        import to drive or defer, only the yes/no history check.
         """
 
-        del pending, content_path, force, at_deadline
-        return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
+        del content_path, force, at_deadline
+        evidence = self._import_evidence()
+        if not evidence.readable:
+            # Outage: no evidence, so wait - never move a torrent on a missing read.
+            return ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
+        imported = pending.infohash.casefold() in evidence.imported_hashes
+        return ImportProbe(
+            ImportReadiness.IMPORTED if imported else ImportReadiness.LEAVE,
+            files_present=imported,
+            command_issued=False,
+        )
 
     @override
     def import_progress(self, pending: PendingImport) -> ImportProgress:
-        """No-op: Radarr records no pending imports, so this is never reached.
+        """Indeterminate zero: Radarr never enters the blocking monitor (the only caller).
 
-        Returns an indeterminate zero (the safest value - shows no bar, promotes
-        nothing) to satisfy the `ArrSync` contract.
+        Radarr records reconcile off import history, never through the wait
+        cockpit's fast-lane bar, so this returns the safe "no bar, promote
+        nothing" value to satisfy the `ArrSync` contract.
         """
 
         del pending
         return ImportProgress(0, 0, determinate=False)
+
+    @property
+    @override
+    def supports_blocking_monitor(self) -> bool:
+        """No blocking monitor: Radarr records reconcile off import history in every mode."""
+
+        return False
+
+    def _import_evidence(self) -> _ImportEvidence:
+        """The reconcile pass's Radarr import history, fetched once then memoized.
+
+        Reset to None at run start (`get_items`), so a stale window never carries
+        into the next run. Radarr runs exactly one reconcile pass per run, so this
+        one memo IS the per-pass fetch the reconcile needs.
+        """
+
+        if self._evidence is None:
+            self._evidence = self._fetch_import_evidence()
+        return self._evidence
+
+    def _fetch_import_evidence(self) -> _ImportEvidence:
+        """Query Radarr history since the oldest pending grab and index the import events."""
+
+        records = self.radarr.history_since(format_history_date(self._history_query_start()))
+        if records is None:
+            return _ImportEvidence(frozenset(), readable=False)
+        imported = frozenset(
+            record.download_id.casefold()
+            for record in records
+            if record.download_id and record.event_type.casefold() in IMPORT_EVENTS
+        )
+        return _ImportEvidence(imported, readable=True)
+
+    def _history_query_start(self) -> datetime:
+        """Aware-UTC lower bound for the import-history query: oldest pending grab, minus skew.
+
+        The `added_at` stamps are local-naive grab times; `.astimezone(UTC)` reads
+        them as local and converts, so the skew cushion only covers real clock
+        drift. No pending record outlives its TTL, so that age is the floor when
+        no stamp parses.
+        """
+
+        floor = datetime.now(UTC) - timedelta(days=self._config.imports.pending_max_age_days)
+        stamps: list[datetime] = []
+        for raw in self.cache_store.get_pending(Arr.RADARR).values():
+            try:
+                stamps.append(
+                    datetime.strptime(PendingImport.from_json(raw).added_at, UPDATED_AT_STR_FORMAT).astimezone(UTC)
+                )
+            except (TypeError, ValueError):
+                continue
+        oldest = min(stamps) if stamps else floor
+        return oldest - timedelta(hours=_HISTORY_SKEW_HOURS)
 
     # --- Radarr domain logic ------------------------------------------------
 

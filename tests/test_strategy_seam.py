@@ -36,6 +36,7 @@ from pearlarr.seadex_types import (
     ArrReleaseDict,
     CommandResource,
     HistoryPage,
+    HistoryRecord,
     Language,
     ManualImportCandidate,
     MovieFile,
@@ -52,11 +53,13 @@ from pearlarr.sonarr_episodes import sonarr_series_fingerprint
 from pearlarr.sonarr_import_plan import resolve_language_objects
 
 from .builders import (
+    SEP,
     FakeCacheStore,
     make_bare_instance,
     make_config,
     make_entry_record,
     make_logger,
+    make_radarr_sync,
     make_sonarr_sync,
     manual_candidate,
     pending_import,
@@ -64,7 +67,7 @@ from .builders import (
     sonarr_ep,
     url_item,
 )
-from .fakes import FakeSonarrClient, diagnostic_messages, install_recording_hub
+from .fakes import FakeRadarrClient, FakeSonarrClient, diagnostic_messages, install_recording_hub
 
 
 class _Item:
@@ -1246,29 +1249,159 @@ class TestImportCompletedPayload:
         assert strat._executor._languages_cache == langs_a
 
 
-class TestRadarrImportCompletedNoOp:
-    """Radarr is out of scope: its import_completed is a no-op returning LEAVE."""
+def _import_history(download_id: str, *, event: str = "movieFolderImported") -> HistoryRecord:
+    """One Radarr `/history/since` record, as the import-evidence match reads it."""
 
-    def test_returns_leave(self) -> None:
-        strat = make_bare_instance(RadarrSync, logger=make_logger())
+    return HistoryRecord.model_validate({"eventType": event, "downloadId": download_id, "movieId": 5})
 
-        probe = strat.import_completed(pending_import(), "/d")
+
+class TestRadarrImportCompletedHistory:
+    """Radarr reconciles a completed download off its OWN import history (evidence, never action).
+
+    Radarr's completed-download handling does the import; `import_completed` only
+    reads history as proof so the record can drop and the category gate release.
+    """
+
+    def test_matching_import_event_verifies_files(self) -> None:
+        strat = make_radarr_sync(radarr=FakeRadarrClient(history_since=[_import_history("h")]))
+
+        probe = strat.import_completed(pending_import(infohash="h"), "/d")
+
+        assert probe.files_present is True
+        assert probe.readiness is ImportReadiness.IMPORTED
+
+    def test_no_import_event_leaves_record_pending(self) -> None:
+        # History readable but no event for this hash yet: wait, category deferred.
+        strat = make_radarr_sync(radarr=FakeRadarrClient(history_since=[]))
+
+        probe = strat.import_completed(pending_import(infohash="h"), "/d")
+
+        assert probe.files_present is False
         assert probe.readiness is ImportReadiness.LEAVE
+
+    def test_non_import_event_is_not_proof(self) -> None:
+        # A grabbed/other event for the hash is not evidence the movie imported.
+        strat = make_radarr_sync(radarr=FakeRadarrClient(history_since=[_import_history("h", event="grabbed")]))
+
+        probe = strat.import_completed(pending_import(infohash="h"), "/d")
+
         assert probe.files_present is False
 
+    def test_history_outage_leaves_record_and_never_verifies(self) -> None:
+        # history_since -> None (Radarr down): fail-open, never move on missing evidence.
+        radarr = FakeRadarrClient()
+        radarr.history_since_return = None
+        strat = make_radarr_sync(radarr=radarr)
+
+        probe = strat.import_completed(pending_import(infohash="h"), "/d")
+
+        assert probe.files_present is False
+        assert probe.readiness is ImportReadiness.LEAVE
+
+    def test_matches_download_id_case_insensitively(self) -> None:
+        # Radarr uppercases the stored downloadId; our infohash is lowercase.
+        strat = make_radarr_sync(radarr=FakeRadarrClient(history_since=[_import_history("ABCDEF")]))
+
+        probe = strat.import_completed(pending_import(infohash="abcdef"), "/d")
+
+        assert probe.files_present is True
+
+    def test_history_fetched_once_per_pass(self) -> None:
+        # Two records in one reconcile pass share ONE history fetch (memoized).
+        radarr = FakeRadarrClient(history_since=[_import_history("h")])
+        strat = make_radarr_sync(radarr=radarr)
+
+        strat.import_completed(pending_import(infohash="h"), "/d")
+        strat.import_completed(pending_import(infohash="other"), "/d")
+
+        assert len(radarr.history_calls) == 1
+
+    def test_run_start_resets_the_memo(self) -> None:
+        # get_items (the run-start hook) clears the memo so a stale window can't
+        # carry into the next run's reconcile.
+        radarr = FakeRadarrClient(history_since=[_import_history("h")])
+        strat = make_radarr_sync(radarr=radarr)
+
+        strat.import_completed(pending_import(infohash="h"), "/d")
+        strat.get_items()
+        strat.import_completed(pending_import(infohash="h"), "/d")
+
+        assert len(radarr.history_calls) == 2
+
     def test_pending_import_series_id_is_none(self) -> None:
-        # Radarr movies record no pending imports, so the snapshot hook key is None
-        # (short-circuits the per-item snapshot entirely).
+        # Radarr records carry series_id=0, so the per-item snapshot hook key is
+        # None (short-circuits the per-item snapshot - reconcile runs in the tail).
         strat = make_bare_instance(RadarrSync, logger=make_logger())
 
         assert strat.pending_import_series_id(_Item(id=5)) is None
 
     def test_import_progress_is_indeterminate_zero(self) -> None:
-        # Radarr records no pending imports. The progress hook returns the safe
-        # "no bar, promote nothing" value.
+        # Radarr never enters the blocking monitor, so the fast-lane bar hook
+        # returns the safe "no bar, promote nothing" value.
         strat = make_bare_instance(RadarrSync, logger=make_logger())
 
         assert strat.import_progress(pending_import()) == ImportProgress(0, 0, determinate=False)
+
+    def test_does_not_support_the_blocking_monitor(self) -> None:
+        strat = make_bare_instance(RadarrSync, logger=make_logger())
+
+        assert strat.supports_blocking_monitor is False
+
+
+class TestRadarrProcessAlIdSeeds:
+    """A Radarr grab seeds a `{infohash -> PendingImport}` per download+hash, gated on wait mode."""
+
+    @staticmethod
+    def _run_process(mode: ImportWaitMode) -> _FakeRunServices:
+        """Drive `process_al_id` to grab_and_cache and return the recording services hub."""
+
+        seadex: SeadexDict = {
+            "NAN0": rg_group({"https://nyaa.si/1": url_item(url="https://nyaa.si/1", infohash="h1", download=True)}),
+        }
+        run = _FakeRunServices(
+            prologue_entry=make_entry_record(url="https://releases.moe/9"),
+            anilist_title="A Movie",
+            seadex_dict=seadex,
+            filter_downloads_result=FilterResult(["h1"], seadex),
+            import_wait_mode=mode,
+        )
+        strat = make_bare_instance(
+            RadarrSync,
+            _services=run,
+            radarr=FakeRadarrClient(),
+            logger=make_logger(),
+            _config=make_config(),
+        )
+        strat.process_al_id(_Item(id=5, title="Movie"), 42, MappingEntry(anilist_id=42))
+        return run
+
+    def test_seeds_the_record_with_empty_sonarr_fields(self) -> None:
+        run = self._run_process(ImportWaitMode.BLOCKING)
+
+        (req,) = run.grab_requests
+        assert req.pending_seeds is not None
+        (seed,) = req.pending_seeds.values()
+        # Carried fields: the real torrent identity + anilist display context.
+        assert seed.infohash == "h1"
+        assert seed.al_id == 42
+        assert seed.title == "A Movie"
+        assert seed.url == "https://releases.moe/9"
+        assert seed.release_group == "NAN0"
+        # display_label renders sensibly from these (title · group).
+        assert seed.display_label == f"A Movie{SEP}NAN0"
+        # Sonarr-domain fields deliberately stay empty for a Radarr record.
+        assert seed.series_id == 0
+        assert seed.file_episode_map == {}
+        assert seed.episode_ids == []
+        assert seed.seadex_files == []
+        assert seed.ordered_episode_ids == []
+        assert seed.coverage is None
+
+    def test_no_seeds_when_wait_mode_off(self) -> None:
+        run = self._run_process(ImportWaitMode.OFF)
+
+        (req,) = run.grab_requests
+        assert req.pending_seeds is None
 
 
 class TestManualImportWarningGating:

@@ -449,11 +449,18 @@ class RunLoop:
 
         preview = self._services.is_preview()
 
+        # Whether this strategy runs the interleaved end-of-run blocking monitor
+        # (Sonarr) or reconciles its records off evidence instead (Radarr). A
+        # non-monitor strategy reconciles pre-summary in EVERY active mode - the
+        # monitor is what would otherwise reconcile its BLOCKING/HYBRID records
+        # inline - so its records never strand until TTL.
+        supports_monitor = self._active_strategy is not None and self._active_strategy.supports_blocking_monitor
+
         # The finally guards the whole tail: a raise in reconcile/tally/summary/
         # monitor must not let bootstrap's close roll back the run's staged
         # writes. The save trails the monitor to also capture its drops.
         try:
-            if self._wait_active and self._ctx.import_wait_mode is ImportWaitMode.DEFERRED:
+            if self._wait_active and (self._ctx.import_wait_mode is ImportWaitMode.DEFERRED or not supports_monitor):
                 self._wait_manager.reconcile_remaining()
             if self._wait_active:
                 self._wait_manager.tally_carried_over_into_stats()
@@ -464,9 +471,10 @@ class RunLoop:
                 has_client=self.qbit is not None,
             )
 
-            if self._wait_active and self._ctx.import_wait_mode in (
-                ImportWaitMode.BLOCKING,
-                ImportWaitMode.HYBRID,
+            if (
+                self._wait_active
+                and supports_monitor
+                and self._ctx.import_wait_mode in (ImportWaitMode.BLOCKING, ImportWaitMode.HYBRID)
             ):
                 result = self._wait_manager.run_monitor()
                 # Best-effort walk-away graft, run only when something actually

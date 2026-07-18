@@ -530,3 +530,10 @@ class SonarrSync(ArrSync[SonarrItem]):
         """Cheap read-only files-landed count for the wait bar (delegated)."""
 
         return self._reconciler.import_progress(pending)
+
+    @property
+    @override
+    def supports_blocking_monitor(self) -> bool:
+        """Sonarr owns the interleaved end-of-run wait/import monitor cockpit."""
+
+        return True

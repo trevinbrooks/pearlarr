@@ -182,11 +182,13 @@ class FakeStrategy(ArrSync[FakeArrItem]):
         process_returns: bool = False,
         process_raises_on: int | None = None,
         history: list[HistoryRecord] | None = None,
+        supports_blocking_monitor: bool = True,
     ) -> None:
         self._items = items
         self._anilist_ids = anilist_ids
         self._process_returns = process_returns
         self._process_raises_on = process_raises_on
+        self._supports_blocking_monitor = supports_blocking_monitor
         self.process_calls: list[int] = []
         # Scripted history. Reassign to None mid-test to script the failure path.
         self.history: list[HistoryRecord] | None = [] if history is None else history
@@ -243,6 +245,11 @@ class FakeStrategy(ArrSync[FakeArrItem]):
     @override
     def import_progress(self, pending: PendingImport) -> ImportProgress:
         raise NotImplementedError  # override in a test that drives the import hook
+
+    @property
+    @override
+    def supports_blocking_monitor(self) -> bool:
+        return self._supports_blocking_monitor
 
 
 class FakeSonarrClient(AbstractSonarrClient):

@@ -28,8 +28,9 @@ HISTORY_MAX_LOOKBACK_DAYS = 30
 
 # File-state-changing events (casefolded). Deletes are checked against the
 # upgrade reason (an upgrade-delete always pairs with an import event).
-# Grabbed/renamed/failed/ignored change no file state and are excluded.
-_IMPORT_EVENTS = frozenset({"downloadfolderimported", "seriesfolderimported", "moviefolderimported"})
+# Grabbed/renamed/failed/ignored change no file state and are excluded. Public so
+# the Radarr reconcile matches import history off the same vocabulary.
+IMPORT_EVENTS = frozenset({"downloadfolderimported", "seriesfolderimported", "moviefolderimported"})
 _DELETE_EVENTS = frozenset({"episodefiledeleted", "moviefiledeleted"})
 
 _HISTORY_DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -180,7 +181,7 @@ def _is_file_change(record: HistoryRecord) -> bool:
     """Whether a history record changed arr file state (import / real delete)."""
 
     event = record.event_type.casefold()
-    if event in _IMPORT_EVENTS:
+    if event in IMPORT_EVENTS:
         return True
     if event in _DELETE_EVENTS:
         return (record.reason or "").casefold() != "upgrade"

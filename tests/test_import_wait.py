@@ -48,6 +48,7 @@ from pearlarr.manual_import import (
 from pearlarr.output import SPARK_SAMPLES, Diagnostic, Phase, Severity, TorrentView, WaitSnapshot
 from pearlarr.reporter import RunContext
 from pearlarr.run_loop import RunLoop
+from pearlarr.seadex_types import HistoryRecord
 from pearlarr.torrents import AddOutcome
 from pearlarr.wait_view import WaitResult, WaitView
 
@@ -63,11 +64,12 @@ from .builders import (
     make_grab_pipeline,
     make_import_wait_manager,
     make_logger,
+    make_radarr_sync,
     make_services,
     one_release_dict,
     pending_import,
 )
-from .fakes import CaptureHandler, FakeStrategy, install_recording_hub
+from .fakes import CaptureHandler, FakeRadarrClient, FakeStrategy, install_recording_hub
 
 
 def pk(infohash: str, al_id: int = PENDING_AL_ID) -> PendingKey:
@@ -1646,6 +1648,7 @@ def _finalize_engine(
     qbit: object,
     mode: ImportWaitMode,
     raise_on: str | None = None,
+    supports_monitor: bool = True,
 ) -> RunLoop:
     """A bare engine whose every run-tail step appends a marker to `calls`.
 
@@ -1654,7 +1657,9 @@ def _finalize_engine(
     `_finalize_run`'s ordering is asserted on the recorded `calls` list without a
     live Sonarr/qBittorrent. The finalize's preview fact comes off the services hub,
     so a bare one shares the engine's ctx (and the `qbit` that decides preview).
-    `raise_on` names the wait-manager pass that should blow up.
+    `raise_on` names the wait-manager pass that should blow up. `supports_monitor`
+    scripts the active strategy's blocking-monitor flag - True is a Sonarr-shaped
+    strategy, False a Radarr one (reconciles pre-summary, never monitors).
     """
 
     ctx = RunContext(arr=Arr.SONARR, import_wait_mode=mode)
@@ -1671,6 +1676,7 @@ def _finalize_engine(
         cache_store=_RecordingCacheStore(calls),
         _wait_manager=_FinalizeWaitManager(calls, raise_on=raise_on),
         _services=make_services(qbit=qbit, _ctx=ctx),
+        _active_strategy=FakeStrategy(items=[], anilist_ids={}, supports_blocking_monitor=supports_monitor),
         _ctx=ctx,
     )
 
@@ -1721,6 +1727,38 @@ class TestFinalizeRunOrdering:
         assert "monitor" not in calls
         # Even short-circuited, the summary still prints and the save still runs last.
         assert calls == ["scan_finished", "summary", "save", "run_finished"]
+
+    def test_non_monitor_strategy_reconciles_in_blocking_without_monitoring(self) -> None:
+        # A Radarr-shaped strategy (no blocking monitor) reconciles pre-summary in
+        # BLOCKING too - the monitor would otherwise be its only reconcile - and
+        # never enters the monitor cockpit.
+        calls: list[str] = []
+        engine = _finalize_engine(
+            calls,
+            qbit=CLIENT_SENTINEL,
+            mode=ImportWaitMode.BLOCKING,
+            supports_monitor=False,
+        )
+
+        engine._finalize_run()
+
+        assert "monitor" not in calls
+        assert calls == ["scan_finished", "reconcile", "tally", "summary", "save", "run_finished"]
+
+    def test_non_monitor_strategy_reconciles_in_hybrid_without_monitoring(self) -> None:
+        # HYBRID gets the same treatment for a non-monitor strategy: reconcile, no monitor.
+        calls: list[str] = []
+        engine = _finalize_engine(
+            calls,
+            qbit=CLIENT_SENTINEL,
+            mode=ImportWaitMode.HYBRID,
+            supports_monitor=False,
+        )
+
+        engine._finalize_run()
+
+        assert "monitor" not in calls
+        assert calls == ["scan_finished", "reconcile", "tally", "summary", "save", "run_finished"]
 
 
 class TestFinalizeRunUnwind:
@@ -2177,6 +2215,181 @@ class TestPostImportCategorySiblingGate:
 
         assert qbit.set_category_calls == [("pearlarr-done", "h")] * 2
         assert run2._pending_records() == {}
+
+
+def _movie_import(download_id: str, *, event: str = "movieFolderImported") -> HistoryRecord:
+    """One Radarr `/history/since` import record keyed by the torrent's downloadId."""
+
+    return HistoryRecord.model_validate({"eventType": event, "downloadId": download_id, "movieId": 5})
+
+
+def _radarr_reconcile_manager(
+    *,
+    qbit: CategoryQbit | None,
+    history: list[HistoryRecord] | None,
+    radarr_records: list[PendingImport] | None = None,
+    sonarr_records: list[PendingImport] | None = None,
+    store: FakeCacheStore | None = None,
+    post_import_category: str | None = None,
+) -> tuple[ImportWaitManager, FakeCacheStore]:
+    """A manager wired for a Radarr run: a real `RadarrSync` reconciling off scripted history.
+
+    The manager and the strategy share one durable store, so a record the
+    reconcile drops is gone for the cross-arr category count. `history` is set on
+    the client directly (None = a Radarr outage; `[]` = readable-but-empty). The
+    `_ctx.arr` is RADARR, so the arr-scoped passes read the Radarr records.
+    """
+
+    store = store if store is not None else FakeCacheStore()
+    config = make_config(post_import_category=post_import_category)
+    radarr = FakeRadarrClient()
+    radarr.history_since_return = history
+    strat = make_radarr_sync(radarr=radarr, config=config, cache_store=store)
+    mgr = make_bare_instance(
+        ImportWaitManager,
+        qbit=qbit,
+        logger=make_logger(),
+        _config=config,
+        _active_strategy=strat,
+        _reporter=_RecordingReporter(),
+        cache_store=store,
+    )
+    mgr._ctx = RunContext(arr=Arr.RADARR)
+    for record in radarr_records or []:
+        store.put_pending(Arr.RADARR, record.key, record.to_json())
+    for record in sonarr_records or []:
+        store.put_pending(Arr.SONARR, record.key, record.to_json())
+    return mgr, store
+
+
+class TestRadarrReconcile:
+    """Radarr records reconcile off import history: a matching event imports, else they wait."""
+
+    def test_matching_event_drops_and_moves_category(self) -> None:
+        # The torrent is complete in qBittorrent and Radarr's history shows the
+        # import -> the record drops and the category move fires through the gate.
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr, _ = _radarr_reconcile_manager(
+            qbit=qbit,
+            history=[_movie_import("h")],
+            radarr_records=[pending_import(infohash="h", series_id=0, added_at=_FRESH)],
+            post_import_category="pearlarr-done",
+        )
+
+        mgr.reconcile_remaining()
+
+        assert mgr._pending_records() == {}
+        assert mgr._ctx.stats.imported == 1
+        assert qbit.set_category_calls == [("pearlarr-done", "h")]
+
+    def test_no_event_keeps_record_and_defers_category(self) -> None:
+        # Complete download, but Radarr hasn't imported it yet (empty history):
+        # the record stays and the category is NOT moved.
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr, _ = _radarr_reconcile_manager(
+            qbit=qbit,
+            history=[],
+            radarr_records=[pending_import(infohash="h", series_id=0, added_at=_FRESH)],
+            post_import_category="pearlarr-done",
+        )
+
+        mgr.reconcile_remaining()
+
+        assert set(mgr._pending_records()) == {pk("h")}
+        assert qbit.set_category_calls == []
+        assert mgr._ctx.stats.imported == 0
+
+    def test_history_outage_keeps_record_and_never_moves(self) -> None:
+        # history_since -> None (Radarr down): fail-open, never move on no evidence.
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr, _ = _radarr_reconcile_manager(
+            qbit=qbit,
+            history=None,
+            radarr_records=[pending_import(infohash="h", series_id=0, added_at=_FRESH)],
+            post_import_category="pearlarr-done",
+        )
+
+        mgr.reconcile_remaining()
+
+        assert set(mgr._pending_records()) == {pk("h")}
+        assert qbit.set_category_calls == []
+
+    def test_ttl_expiry_of_a_radarr_record_releases_the_gate(self) -> None:
+        # Two Radarr records share one torrent; one aged out. Prune drops the
+        # corpse, so the survivor's verified import still moves the category.
+        survivor = pending_import(infohash="h", al_id=11, series_id=0, added_at=_FRESH)
+        expired = pending_import(infohash="h", al_id=22, series_id=0, added_at=_EXPIRED)
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr, _ = _radarr_reconcile_manager(
+            qbit=qbit,
+            history=[_movie_import("h")],
+            radarr_records=[survivor, expired],
+            post_import_category="pearlarr-done",
+        )
+
+        mgr.prune_expired_pending()
+        mgr.reconcile_remaining()
+
+        assert mgr._pending_records() == {}
+        assert qbit.set_category_calls == [("pearlarr-done", "h")]
+
+    def test_tally_counts_a_carried_over_radarr_record(self) -> None:
+        # A complete-but-not-yet-imported Radarr record reconciles to IMPORTING and
+        # the pre-summary tally folds it into the importing counter (no double poll).
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+        mgr, _ = _radarr_reconcile_manager(
+            qbit=qbit,
+            history=[],
+            radarr_records=[pending_import(infohash="h", series_id=0, added_at=_FRESH)],
+        )
+
+        mgr.reconcile_remaining()
+        mgr.tally_carried_over_into_stats()
+
+        assert mgr._ctx.stats.importing == 1
+        assert mgr._ctx.stats.queued == 0
+
+
+class TestCrossArrCategoryGate:
+    """A torrent shared by a Sonarr grab and a Radarr grab moves only after BOTH import."""
+
+    def test_sonarr_import_defers_until_radarr_reconciles(self) -> None:
+        # One torrent, two records: a Sonarr slice (imports first) and a Radarr
+        # movie. The Sonarr import must NOT move the category while the Radarr
+        # record still claims the hash; the later Radarr reconcile fires the move.
+        store = FakeCacheStore()
+        sonarr_record = pending_import(infohash="h", al_id=11, series_id=7, title="Series", added_at=_FRESH)
+        radarr_record = pending_import(infohash="h", al_id=22, series_id=0, title="Movie", added_at=_FRESH)
+        qbit = CategoryQbit({"h": [FakeTorrent(is_complete=True, content_path="/d")]})
+
+        # Sonarr run: its slice verifies and drops, but the Radarr record still
+        # claims the hash cross-arr -> the move is deferred.
+        sonarr_mgr = make_orchestration_manager(
+            qbit=qbit,
+            strategy=_RecordingStrategy(completed=import_probe(ImportReadiness.IMPORTED, files_present=True)),
+            post_import_category="pearlarr-done",
+        )
+        sonarr_mgr.cache_store = store
+        store.put_pending(Arr.SONARR, sonarr_record.key, sonarr_record.to_json())
+        store.put_pending(Arr.RADARR, radarr_record.key, radarr_record.to_json())
+
+        sonarr_mgr.snapshot_pending_for_series(7)
+
+        assert qbit.set_category_calls == []  # the Radarr record still claims the hash
+        assert set(store.get_pending(Arr.RADARR)) == {pk("h", 22)}
+
+        # Radarr run: the movie import verifies -> no claim remains -> the move fires.
+        radarr_mgr, _ = _radarr_reconcile_manager(
+            qbit=qbit,
+            history=[_movie_import("h")],
+            store=store,
+            post_import_category="pearlarr-done",
+        )
+
+        radarr_mgr.reconcile_remaining()
+
+        assert qbit.set_category_calls == [("pearlarr-done", "h")]
+        assert store.get_pending(Arr.RADARR) == {}
 
 
 def make_add_engine(

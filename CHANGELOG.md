@@ -7,8 +7,13 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr).
 
 ## [Unreleased]
 
+### Changed
+
+- `imports.post_import_category` now also applies to Radarr grabs: a movie's torrent is moved to the configured category once Radarr's own completed-download handling has imported it, where previously the setting only affected Sonarr grabs.
+
 ### Fixed
 
+- A torrent that SeaDex lists on both a Sonarr entry and a Radarr movie is no longer moved out of Radarr's qBittorrent category before Radarr imports it. Radarr grabs now register a pending-import record like Sonarr grabs, so the `imports.post_import_category` move waits until every arr sharing the torrent has finished importing. Previously the Sonarr side's import could recategorize the shared torrent while Radarr still needed it, and because Radarr filters its download-client view by category the movie would disappear from Radarr's queue and never import.
 - Torrents that SeaDex lists on several AniList entries (multi-cour batches) now import every entry's episodes: each entry keeps its own pending-import record, where previously one entry's registration silently replaced the other's and that slice was never imported.
 - `imports.post_import_category` is now applied only after ALL entries sharing a torrent have finished importing, so cleanup scripts keyed on the category can no longer delete a torrent whose other entries' episodes are still waiting.
 - Absolute-numbered batches now import even when the grab-time file mapping is missing and the folder holds files outside the entry (a sibling cour, a special, an NC extra). The import consults Sonarr's series-matched resolution of each absolute-only name - still strictly scoped to the entry's own episodes, and cross-checked against Sonarr's episode ids - so its files place exactly instead of relying on an all-or-nothing positional count that a single unmatchable file could veto ("N files could not be matched to an episode" repeating forever). Ambiguous names (a full-season parse, a match spanning several episodes, a half-resolved multi-episode name) are refused and retried rather than guessed.
