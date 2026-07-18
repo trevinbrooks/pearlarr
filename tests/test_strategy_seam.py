@@ -1542,6 +1542,35 @@ class TestFolderScanFallback:
         assert len(sonarr.folder_candidate_calls) == 1
         assert sonarr.execute_calls[0][0][0].downloadId == "abc123"
 
+    def test_dead_tracked_empty_folder_warns_once_per_run(self) -> None:
+        # The genuinely stuck shape (by-id never works, folder empty): warned
+        # once a run, re-armed by reset.
+        recording = install_recording_hub()
+        strat, _ = self._strat(history=_dead_history(), folder_candidates=[])
+        pending = pending_import()
+
+        strat.import_completed(pending, "/d/Show")
+        strat.import_completed(pending, "/d/Show")
+
+        warnings = [w for w in diagnostic_messages(recording, Severity.WARNING) if "found no files" in w]
+        assert len(warnings) == 1
+        assert "/d/Show" in warnings[0]
+
+        strat._executor.reset()
+        strat.import_completed(pending, "/d/Show")
+        warnings = [w for w in diagnostic_messages(recording, Severity.WARNING) if "found no files" in w]
+        assert len(warnings) == 2
+
+    def test_clean_verdict_empty_folder_stays_quiet(self) -> None:
+        # A transient by-id blip self-heals next poll, so no warning fires at
+        # all (the by-id client read is quiet; the executor owns the noise).
+        recording = install_recording_hub()
+        strat, _ = self._strat(history=_clean_history(), folder_candidates=[])
+
+        strat.import_completed(pending_import(), "/d/Show")
+
+        assert diagnostic_messages(recording, Severity.WARNING) == []
+
     def test_nonempty_folder_scan_pins_for_the_run_and_reset_unpins(self) -> None:
         strat, sonarr = self._strat(
             history=_dead_history(),

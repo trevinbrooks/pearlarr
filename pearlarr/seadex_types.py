@@ -910,7 +910,7 @@ class ParsedEpisode(NamedTuple):
 
     The element type `SonarrClient.parse` yields, produced from the validated
     boundary model. Distinct from `EpisodeRecord` (which also carries a size)
-    and `ParsedFileInfo` (the series-agnostic name parse). Persisted as a
+    and `ParsedFileInfo` (the per-file parse assignment reads). Persisted as a
     `{"season", "episode"}` JSON object at the parse-cache seam.
     """
 
@@ -924,17 +924,33 @@ def _tuple_or_empty(value: object) -> object:
     return value or ()
 
 
-class ParsedFileInfo(_ApiModel):
-    """Sonarr's series-AGNOSTIC parse of one filename, narrowed to what assignment reads.
+class MatchedEpisode(_ApiModel):
+    """One series-matched episode from a `/parse` response's `episodes` array.
 
-    Validated from a raw `/api/v3/parse` response body: every field reads
-    through an `AliasPath` into the nested `parsedEpisodeInfo` object - NOT
-    the response's `episodes` array (Sonarr's *series-matched* episodes,
-    which is empty whenever the release title can't be matched to a series in
-    the library). The numbers are read straight from the release name, so
-    they are populated even when Sonarr can't match the title to a series -
-    exactly the cases (specials, alias titles) a series-matched parse cannot
-    handle.
+    Both numbers are required: an entry Sonarr couldn't fully resolve is junk
+    and `ParsedFileInfo`'s lenient validator skips it.
+    """
+
+    season_number: int = Field(validation_alias="seasonNumber")
+    episode_number: int = Field(validation_alias="episodeNumber")
+    id: int | None = None
+    """Sonarr's episode id, when present - cross-checked against OUR map so a
+    wrong-series title match whose numbers coincide with ours is refused."""
+
+
+class ParsedFileInfo(_ApiModel):
+    """Sonarr's parse of one filename, narrowed to what assignment reads.
+
+    Validated from a raw `/api/v3/parse` response body. The
+    season/episode/absolute numbers read through an `AliasPath` into the
+    nested `parsedEpisodeInfo` object - the series-AGNOSTIC numbers lifted
+    straight from the release name, populated even when Sonarr can't match
+    the title to a library series (specials, alias titles).
+    `matched_episodes` carries the response's `episodes` array - Sonarr's
+    series-MATCHED resolution, the only place an absolute-only name gets a
+    concrete `(season, episode)`. Assignment prefers the agnostic numbers and
+    consults the matched pairs strictly inside OUR resolved set, so Sonarr's
+    series match never decides identity on its own.
     """
 
     season_number: int | None = Field(
@@ -957,3 +973,36 @@ class ParsedFileInfo(_ApiModel):
         default=False,
         validation_alias=AliasPath("parsedEpisodeInfo", "special"),
     )
+    full_season: Annotated[bool, BeforeValidator(bool)] = Field(
+        default=False,
+        validation_alias=AliasPath("parsedEpisodeInfo", "fullSeason"),
+    )
+    """A season-pack-shaped name (bare "S01"): its matched pairs span the whole
+    season and must never be borrowed as one file's claims."""
+    offline: bool = False
+    """Built by the offline SxxExx regex fallback rather than Sonarr's parser
+    (ParseResource has no such property - test_schema_drift pins the
+    exemption). Such a parse carries no absolute-number knowledge, so the
+    positional leg's duplicate tell treats it as unknown."""
+    matched_episodes: tuple[MatchedEpisode, ...] = Field(default=(), validation_alias="episodes")
+    """Sonarr's series-matched pairs; the exact leg's fallback when the name carries no `(season, episode)`."""
+
+    @field_validator("matched_episodes", mode="before")
+    @classmethod
+    def _lenient_matched(cls, value: object) -> object:
+        """Fold a junk `episodes[]` - or ANY junk entry in it - to ().
+
+        All-or-nothing on purpose: dropping just the bad entry would shorten a
+        span and slip the exact leg's every-pair check as a partial placement.
+        """
+
+        # tuple included: direct construction passes the field's own type.
+        if not isinstance(value, (list, tuple)):
+            return ()
+        kept: list[MatchedEpisode] = []
+        for entry in cast("Sequence[object]", value):
+            try:
+                kept.append(MatchedEpisode.model_validate(entry))
+            except ValidationError:
+                return ()
+        return kept

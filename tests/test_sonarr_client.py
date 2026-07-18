@@ -29,6 +29,7 @@ from pearlarr.seadex_types import (
     HistoryRecord,
     Language,
     ManualImportFile,
+    MatchedEpisode,
     ParsedEpisode,
     ParsedFileInfo,
     Quality,
@@ -432,6 +433,7 @@ def test_parse_episode_info_decodes_season_episode() -> None:
         episode_numbers=(1,),
         absolute_episode_numbers=(),
         special=False,
+        matched_episodes=(MatchedEpisode(season_number=1, episode_number=1, id=8476),),
     )
     request = route.calls.last.request
     url = str(request.url)
@@ -447,7 +449,9 @@ def test_parse_episode_info_decodes_season_episode() -> None:
 def test_parse_episode_info_decodes_absolute() -> None:
     """An absolute-numbered release decodes to its absolute numbers (season 0, no SxxExx episode numbers).
 
-    This is the case Sonarr's series-matched parse misses.
+    The name alone carries no `(season, episode)`; Sonarr's series-matched
+    `episodes` array rides along as `matched_episodes` - the exact leg's
+    in-set fallback for exactly this shape.
     """
 
     respx.get(f"{_BASE}/parse").respond(json=sonarr_fixture("parse_toloveru_abs14.json"))
@@ -458,6 +462,7 @@ def test_parse_episode_info_decodes_absolute() -> None:
         episode_numbers=(),
         absolute_episode_numbers=(14,),
         special=False,
+        matched_episodes=(MatchedEpisode(season_number=1, episode_number=14, id=2886),),
     )
 
 
@@ -512,12 +517,19 @@ def test_manual_import_candidates_decodes_and_uppercases_downloadid() -> None:
 
 
 @respx.mock
-def test_manual_import_candidates_non_200_returns_none() -> None:
-    """A non-200 scan returns None (caller keeps waiting / re-asks)."""
+def test_manual_import_candidates_non_200_returns_none_silently() -> None:
+    """A non-200 scan returns None with NO warning.
 
+    The executor owns the fallback's messaging - a warn here would brand every
+    dead-tracked poll with a misleading "will retry" right before the folder
+    scan handles it.
+    """
+
+    recording = install_recording_hub()
     pending = _make_pending(infohash="a" * 40, title="Yamada-kun")
     respx.get(f"{_BASE}/manualimport").respond(status_code=500)
     assert _make_client().manual_import_candidates(pending=pending) is None
+    assert diagnostic_messages(recording, Severity.WARNING) == []
 
 
 @respx.mock
