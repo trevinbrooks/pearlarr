@@ -7,6 +7,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr);
 
 ## [Unreleased]
 
+### Fixed
+
+- A run during a SeaDex outage no longer advances the Arr-activity checkpoint, so file changes it detected but could not act on (every lookup is skipped during an outage) are re-detected and handled by the next healthy run instead of being silently consumed. Previously such changes were only picked up if some later, unrelated event touched the same series.
+
 ## [1.0.4] - 2026-07-14
 
 ### Changed

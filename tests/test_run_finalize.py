@@ -97,6 +97,7 @@ def _engine(
     *,
     config: AppConfig | None = None,
     seadex: _FakeGateway | None = None,
+    cache_store: FakeCacheStore | None = None,
 ) -> RunLoop:
     """A bare `RunLoop` wired with typed fakes for the run-loop collaborators.
 
@@ -106,7 +107,8 @@ def _engine(
     `_services` hub is a bare real `RunServices` (the loop reads its `arr`,
     `begin_run`, `mark_dirty` and `is_preview`) whose per-id collaborators are
     ctx-bind fakes; the `cache_store` backs the activity scan's checkpoint.
-    `config` overrides the loop's config (the activity-scan toggle tests).
+    `config` overrides the loop's config (the activity-scan toggle tests);
+    `cache_store` shares one store across engines (the checkpoint replay tests).
     """
 
     config = config if config is not None else make_config()
@@ -127,7 +129,7 @@ def _engine(
         _services=services,
         _wait_manager=_FakeBound(),
         _finalize_run=finalize,
-        cache_store=FakeCacheStore(),
+        cache_store=cache_store if cache_store is not None else FakeCacheStore(),
     )
 
 

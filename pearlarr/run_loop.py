@@ -311,21 +311,25 @@ class RunLoop:
                 hub_error(f"{title}: unexpected error ({e}) - skipping this title", exc=e)
                 continue
 
-        # Advance the history checkpoint only when the pass covered the whole
-        # library (a single-item or capped run leaves later activity unseen); the
-        # staged write persists only at _finalize_run's non-preview save.
-        if monitor is not None and item_id is None and not cap_reached:
+        # ONE full-coverage predicate for both gates below - they drifted apart
+        # once (an outage run committed the checkpoint, consuming drift events it
+        # never acted on): a single-item or capped run leaves later activity
+        # unseen, and an outage run skipped whatever SeaDex never served.
+        full_pass = item_id is None and not cap_reached and not self._seadex.outage
+
+        # Advance the history checkpoint only on a full pass; held on outage so
+        # the next healthy run re-derives the same dirty ids (the query overlap +
+        # id dedup absorb the replay). The staged write persists only at
+        # _finalize_run's non-preview save.
+        if monitor is not None and full_pass:
             monitor.commit_checkpoint()
 
-        # Same full-coverage rule for the selection digest: an un-capped whole-
-        # library pass re-checked every cached verdict under the current matching
-        # settings, so vouch for them (also seeds the digest on a first run). An
-        # outage run skipped whatever SeaDex never served, so it cannot vouch.
-        # A per-id error contained mid-scan leaves that one title on its prior
-        # verdict (retried on its next SeaDex update / dirty mark); we vouch anyway
-        # - blocking on any flaky title would re-scan the whole library every run,
+        # Same full-pass rule for the selection digest (also seeds it on a first
+        # run). A per-id error contained mid-scan leaves that one title on its
+        # prior verdict AND consumes its dirty mark; we vouch/commit anyway -
+        # blocking on any flaky title would re-scan the whole library every run,
         # and dropping its entry to force a re-check could re-grab.
-        if item_id is None and not cap_reached and not self._seadex.outage:
+        if full_pass:
             self.cache_store.vouch_selection(arr, self._config.selection_digest())
 
         # Run the end-of-run blocking pass (blocking/hybrid only), then persist
