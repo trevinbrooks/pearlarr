@@ -19,6 +19,7 @@ import time
 from dataclasses import replace
 from datetime import datetime
 from typing import Any, NamedTuple
+from urllib.parse import urlsplit
 
 from .cache import UPDATED_AT_STR_FORMAT
 from .config import Arr
@@ -31,20 +32,24 @@ from .manual_import import (
     normalize_basename,
     normalize_group,
 )
-from .output import hub_warn
+from .output import hub_note, hub_warn
 from .run_services import RunDeps
 from .seadex_types import (
     CommandResource,
     Language,
+    ManualImportCandidate,
     ManualImportFile,
     QualityDefinition,
     QualitySource,
+    RemotePathMapping,
     SeadexDict,
     SonarrEpisode,
 )
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import SonarrEpisodes
 from .sonarr_import_plan import (
+    ContentPaths,
+    DownloadHistoryVerdict,
     EpisodeFileStatus,
     EpisodeSnapshot,
     ImportAction,
@@ -53,6 +58,7 @@ from .sonarr_import_plan import (
     QueueVerdict,
     all_targets_done,
     build_episode_id_map,
+    classify_download_history,
     classify_queue,
     derive_languages,
     episode_file_statuses,
@@ -65,6 +71,7 @@ from .sonarr_import_plan import (
     resolve_language_objects,
     resolve_quality,
     targets_needing_import,
+    translate_download_path,
 )
 from .sonarr_mapper import FileEpisodeMapper
 from .sonarr_parse import parsed_episodes, video_file_entries
@@ -76,6 +83,36 @@ from .sonarr_parse import parsed_episodes, video_file_entries
 _REFRESH_COMMAND_MAX_POLLS = 30
 _REFRESH_COMMAND_POLL_S = 1
 _COMMAND_TERMINAL_STATES = frozenset({"completed", "failed", "aborted", "cancelled"})
+
+
+def _hostname(url: str | None) -> str | None:
+    """The bare hostname of a configured URL (tolerates a scheme-less `host:port`)."""
+
+    if not url:
+        return None
+    return urlsplit(url).hostname or urlsplit(f"//{url}").hostname
+
+
+class _CandidateScan(NamedTuple):
+    """One poll's candidate fetch plus the entry shape it implies.
+
+    The shape is uniform across every file of the resulting command - which is
+    also what keeps the in-flight guard's no-downloadId arm applicable (its
+    `file_hashes` gate requires ALL entries of a command to omit the id).
+    """
+
+    candidates: list[ManualImportCandidate]
+    omit_download_id: bool
+    """True only for a dead-tracked folder scan: the entries must not carry a
+    downloadId (Sonarr's Execute tail NREs on the poisoned tracked download)."""
+
+
+class _EntryContext(NamedTuple):
+    """Per-command context for building file entries (uniform across the command)."""
+
+    pending: PendingImport
+    content_path: str
+    omit_download_id: bool
 
 
 class ImportExecutor:
@@ -129,6 +166,17 @@ class ImportExecutor:
         # every call. None means "not refreshed yet this run" (reset in reset).
         self._last_refresh_monotonic: float | None = None
 
+        # Folder-scan fallback scratch (all per-run, cleared in reset):
+        # infohashes pinned to folder mode after a NONEMPTY folder scan; the
+        # memoized history verdicts (VERDICTS only - a probe failure is never
+        # stored, so the next fallback activation re-probes); the lazy
+        # remote-path-mapping list (None = not fetched yet); and the computed
+        # content_path translations the in-flight guard reads back.
+        self._folder_pinned: set[str] = set()
+        self._history_verdicts: dict[str, DownloadHistoryVerdict] = {}
+        self._path_mappings: list[RemotePathMapping] | None = None
+        self._translated_paths: dict[str, str] = {}
+
     def reset(self) -> None:
         """Drop the per-run import scratch (run-start, via get_items)."""
 
@@ -137,6 +185,10 @@ class ImportExecutor:
         self._warned_unplaceable = set()
         self._warned_default_quality = False
         self._last_refresh_monotonic = None
+        self._folder_pinned = set()
+        self._history_verdicts = {}
+        self._path_mappings = None
+        self._translated_paths = {}
 
     def refresh_downloads(self) -> None:
         """Queue RefreshMonitoredDownloads (throttled) and wait for it, best-effort.
@@ -198,6 +250,110 @@ class ImportExecutor:
 
         return self.sonarr.list_commands()
 
+    def content_paths(self, content_path: str) -> ContentPaths:
+        """The raw + Sonarr-visible path pair the in-flight guard matches against.
+
+        Read-only over the memoized translations (never fetches): before the
+        first fallback activation both views are the raw path, which is the
+        pre-fallback status quo the episode-id guard arm already covers.
+        """
+
+        return ContentPaths(
+            raw=content_path,
+            sonarr_visible=self._translated_paths.get(content_path, content_path),
+        )
+
+    def _remote_path_mappings(self) -> list[RemotePathMapping]:
+        """Sonarr's remote path mappings, fetched once per run on first fallback use.
+
+        A failed fetch caches [] - the client's warning fires once, translation
+        degrades to a no-op for the rest of the run (bounded: an untranslatable
+        folder scans empty, so nothing pins and the downloadId scan is retried
+        next poll; the next run re-fetches).
+        """
+
+        if self._path_mappings is None:
+            self._path_mappings = self.sonarr.remote_path_mappings() or []
+        return self._path_mappings
+
+    def _sonarr_visible_path(self, content_path: str) -> str:
+        """Translate (and memoize) a download path into Sonarr's filesystem view."""
+
+        translated = self._translated_paths.get(content_path)
+        if translated is None:
+            translated = translate_download_path(
+                content_path,
+                self._remote_path_mappings(),
+                _hostname(self._config.qbittorrent.host),
+            )
+            self._translated_paths[content_path] = translated
+        return translated
+
+    def _probe_history(self, pending: PendingImport) -> DownloadHistoryVerdict | None:
+        """Classify a download's Sonarr history (memoized), or None on probe failure.
+
+        Verdicts are memoized for the run; a FAILED probe is never stored, so
+        the next fallback activation re-probes instead of locking the record
+        into one branch. The first dead-tracked classification notes the state
+        on the hub, once per record per run (the verdict memo gates it).
+        """
+
+        verdict = self._history_verdicts.get(pending.infohash)
+        if verdict is not None:
+            return verdict
+        page = self.sonarr.history_for_download(download_id=pending.infohash)
+        if page is None:
+            return None
+        verdict = classify_download_history(page.records)
+        self._history_verdicts[pending.infohash] = verdict
+        if verdict.dead_tracked:
+            when = f" on {verdict.date.split('T')[0]}" if verdict.date else ""
+            hub_note(
+                f"{pending.display_label}: Sonarr recorded this download as {verdict.event}{when} "
+                "and won't serve it by id - importing from its folder instead"
+            )
+        return verdict
+
+    def _scan_candidates(self, pending: PendingImport, content_path: str) -> _CandidateScan | None:
+        """The candidates for one poll: the downloadId scan, with the folder fallback.
+
+        DESIGN PRINCIPLE: the folder FALLBACK is what kills the dead loop (a
+        download whose prior imported/failed/ignored history makes the
+        downloadId scan 500 forever); the history probe only decides how much
+        noise the import allocates. Every probe misclassification degrades to
+        bounded one-command noise - never a loop - which is why probe failure
+        defaults to the status-quo entry shape (keep the downloadId).
+
+        The fallback trigger is deliberately loose (ANY downloadId-scan
+        failure): the folder scan is equal-fidelity, so a false activation
+        costs one extra GET. A downloadId scan answering `[]` is NOT a trigger
+        (Sonarr answered "no files visible yet"; the existing retry semantics
+        apply). Returns None only when the active scan(s) failed outright.
+        """
+
+        if pending.infohash not in self._folder_pinned:
+            candidates = self.sonarr.manual_import_candidates(pending=pending)
+            if candidates is not None:
+                return _CandidateScan(candidates, omit_download_id=False)
+
+        verdict = self._probe_history(pending)
+        folder_candidates = self.sonarr.manual_import_candidates_by_folder(
+            folder=self._sonarr_visible_path(content_path),
+            title=pending.display_label,
+        )
+        if folder_candidates is None:
+            return None
+        if folder_candidates:
+            # INVARIANT: pin folder mode on NONEMPTY success only - 200 `[]` is
+            # exactly what an invisible/untranslated folder returns, and pinning
+            # on it would wedge the record in a mode that can never see files
+            # while the recoverable downloadId scan goes unretried.
+            self._folder_pinned.add(pending.infohash)
+        return _CandidateScan(
+            folder_candidates,
+            omit_download_id=verdict is not None and verdict.dead_tracked,
+        )
+
     def run_manual_import(
         self,
         pending: PendingImport,
@@ -208,8 +364,10 @@ class ImportExecutor:
     ) -> ImportProbe:
         """Drive our authoritative series-pinned manual import for one download.
 
-        Scans `content_path` for candidates (pinned to `pending.series_id`),
-        repairs our file->episode map from the actual on-disk files (re-parsing
+        Scans for candidates by downloadId - falling back to a folder scan of
+        the (remote-path-translated) `content_path` when Sonarr won't serve the
+        download by id (see `_scan_candidates`) - then repairs our
+        file->episode map from the actual on-disk files (re-parsing
         whatever the seed didn't cover, mapped through OUR `(season, episode) ->
         id` index - never Sonarr's candidate episode assignment), then imports
         EXACTLY the files our map intends: each file's episodes that don't already
@@ -235,12 +393,12 @@ class ImportExecutor:
                 gap and only logged at debug.
         """
 
-        candidates = self.sonarr.manual_import_candidates(pending=pending)
-        if candidates is None:
+        scan = self._scan_candidates(pending, content_path)
+        if scan is None:
             # Transient (timeout / non-200); the client already warned. Ask again.
             return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
 
-        candidates_by_basename = self._mapper.candidate_files(candidates)
+        candidates_by_basename = self._mapper.candidate_files(scan.candidates)
         ep_id_map = build_episode_id_map(list(snapshot.episodes_by_id.values()))
         authoritative_map, unplaceable = self._mapper.assign(
             pending,
@@ -264,6 +422,7 @@ class ImportExecutor:
         needing = targets_needing_import(statuses)
         decisions = plan_import_files(authoritative_map, candidates_by_basename, needing)
 
+        entry_context = _EntryContext(pending, content_path, scan.omit_download_id)
         files: list[ManualImportFile] = []
         missing: list[str] = []
         for decision in decisions:
@@ -271,7 +430,7 @@ class ImportExecutor:
                 case ImportAction.MISSING:
                     missing.append(decision.basename)
                 case ImportAction.IMPORT:
-                    files.append(self._build_file_entry(decision, pending, content_path))
+                    files.append(self._build_file_entry(decision, entry_context))
                 case _:
                     # SAMPLE / ALREADY / SKIP_DONE -> nothing to import for this
                     # file; surface the distinct vocabulary at debug.
@@ -299,9 +458,16 @@ class ImportExecutor:
                 return ImportProbe(ImportReadiness.RETRY, files_present=False, command_issued=False)
             return ImportProbe(ImportReadiness.IMPORTED, files_present=True, command_issued=False)
 
+        import_mode = self._config.imports.mode
+        if scan.omit_download_id and import_mode == "auto":
+            # The untracked Execute branch with Auto resolves to MOVE (no
+            # DownloadClientItem to report CanMoveFiles), which would rip the
+            # files out from under the seeding torrent; an explicitly configured
+            # move/copy stays the user's choice.
+            import_mode = "copy"
         cmd_id = self.sonarr.manual_import_execute(
             files=files,
-            import_mode=self._config.imports.mode,
+            import_mode=import_mode,
         )
         if cmd_id is None:
             self.logger.debug(f"{content_path}: Sonarr rejected the import command; will retry")
@@ -359,8 +525,7 @@ class ImportExecutor:
     def _build_file_entry(
         self,
         decision: ImportDecision,
-        pending: PendingImport,
-        content_path: str,
+        context: _EntryContext,
     ) -> ManualImportFile:
         """Build one ManualImport file payload from a planned `import` decision.
 
@@ -375,6 +540,8 @@ class ImportExecutor:
         payload `path` a non-null `str` for the type.
         """
 
+        pending = context.pending
+        content_path = context.content_path
         lang_objs = self._import_language_objects(pending)
         quality_defs = self._quality_definitions()
 
@@ -404,15 +571,22 @@ class ImportExecutor:
                 f"{content_path}: could not confidently resolve quality for {base} - importing as Unknown "
                 "(re-grab risk)"
             )
-        return ManualImportFile(
+        entry = ManualImportFile(
             path=path,
             seriesId=pending.series_id,
             episodeIds=decision.episode_ids,
             releaseGroup=pending.release_group,
-            downloadId=pending.infohash,
             languages=lang_objs,
             quality=quality,
         )
+        if context.omit_download_id:
+            # Dead-tracked shape: the downloadId stays UNSET so the
+            # exclude_unset wire dump omits the key entirely (never null) and
+            # Sonarr's Execute takes the untracked branch - the tracked tail
+            # dereferences the poisoned download's null ImportItem.
+            return entry
+        # model_copy(update=...) marks downloadId as set, so it reaches the wire.
+        return entry.model_copy(update={"downloadId": pending.infohash})
 
 
 class _SeedStatuses(NamedTuple):
@@ -632,7 +806,7 @@ class ImportReconciler:
         if manual_import_in_flight(
             self._executor.list_commands(),
             pending.infohash,
-            content_path,
+            self._executor.content_paths(content_path),
             set(seeded_targets),
         ):
             self.logger.debug(f"{label}: a ManualImport is already in flight; waiting")

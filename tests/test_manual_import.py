@@ -32,22 +32,26 @@ from pearlarr.planner import normalize_rg
 from pearlarr.seadex_types import (
     SONARR_MISSING_KEY,
     CommandResource,
+    HistoryRecord,
     ParsedEpisode,
     Quality,
     QualityDefinition,
     QualityModel,
     QualitySource,
+    RemotePathMapping,
     Revision,
     SonarrEpisode,
 )
 from pearlarr.sonarr_import_plan import (
     CandidateFile,
+    ContentPaths,
     EpisodeFileStatus,
     EpisodeSnapshot,
     ParsedQuality,
     QueueVerdict,
     all_targets_done,
     build_episode_id_map,
+    classify_download_history,
     classify_queue,
     derive_languages,
     episode_file_statuses,
@@ -59,6 +63,7 @@ from pearlarr.sonarr_import_plan import (
     quality_axes_from_name,
     resolve_quality,
     targets_needing_import,
+    translate_download_path,
 )
 
 from .builders import SEP
@@ -301,47 +306,212 @@ def _command(
     )
 
 
+def _paths(raw: str, sonarr_visible: str | None = None) -> ContentPaths:
+    """A `ContentPaths` pair; the Sonarr view defaults to the raw path (untranslated)."""
+
+    return ContentPaths(raw=raw, sonarr_visible=sonarr_visible if sonarr_visible is not None else raw)
+
+
 class TestManualImportInFlight:
     """The pure in-flight guard over the /api/v3/command list."""
 
     def test_matching_download_id_is_in_flight(self) -> None:
         cmds = [_command(files=[{"downloadId": "ABC", "episodeIds": [1]}])]
         # Case-insensitive match on the infohash.
-        assert manual_import_in_flight(cmds, "abc", "/d", set())
+        assert manual_import_in_flight(cmds, "abc", _paths("/d"), set())
 
     def test_completed_command_is_not_in_flight(self) -> None:
         cmds = [_command(status="completed", files=[{"downloadId": "ABC"}])]
-        assert not manual_import_in_flight(cmds, "abc", "/d", set())
+        assert not manual_import_in_flight(cmds, "abc", _paths("/d"), set())
 
     def test_non_manual_import_command_ignored(self) -> None:
         cmds = [_command(name="ProcessMonitoredDownloads", files=[{"downloadId": "ABC"}])]
-        assert not manual_import_in_flight(cmds, "abc", "/d", set())
+        assert not manual_import_in_flight(cmds, "abc", _paths("/d"), set())
 
     def test_unrelated_download_id_not_in_flight(self) -> None:
         cmds = [_command(files=[{"downloadId": "OTHER"}])]
-        assert not manual_import_in_flight(cmds, "abc", "/d", set())
+        assert not manual_import_in_flight(cmds, "abc", _paths("/d"), set())
 
     def test_queued_status_counts_as_in_flight(self) -> None:
         cmds = [_command(status="queued", files=[{"downloadId": "ABC"}])]
-        assert manual_import_in_flight(cmds, "abc", "/d", set())
+        assert manual_import_in_flight(cmds, "abc", _paths("/d"), set())
 
     def test_folder_import_matches_by_path_prefix(self) -> None:
         # No downloadId on the files -> fall back to the content_path prefix.
         cmds = [_command(files=[{"path": "/d/folder/ep.mkv", "episodeIds": [9]}])]
-        assert manual_import_in_flight(cmds, "no-hash", "/d/folder", set())
+        assert manual_import_in_flight(cmds, "no-hash", _paths("/d/folder"), set())
+
+    def test_folder_import_matches_by_translated_prefix(self) -> None:
+        # A dead-tracked folder import POSTs the TRANSLATED path; the raw
+        # qBittorrent prefix matches nothing, the Sonarr-visible one must.
+        cmds = [_command(files=[{"path": "/remote/tv/folder/ep.mkv", "episodeIds": []}])]
+        assert manual_import_in_flight(
+            cmds,
+            "no-hash",
+            _paths("/home/u/torrents/tv/folder", "/remote/tv/folder"),
+            set(),
+        )
 
     def test_folder_import_matches_by_episode_overlap(self) -> None:
         cmds = [_command(files=[{"path": "/elsewhere/ep.mkv", "episodeIds": [9]}])]
-        assert manual_import_in_flight(cmds, "no-hash", "/other", {9})
+        assert manual_import_in_flight(cmds, "no-hash", _paths("/other"), {9})
+
+    def test_translated_command_with_empty_seed_matches_by_episode_arm(self) -> None:
+        # The empty-seed edge: nothing to match by path (both views miss), the
+        # episode-id arm still guards - it is translation-immune.
+        cmds = [_command(files=[{"path": "/remote/tv/folder/ep.mkv", "episodeIds": [9]}])]
+        assert manual_import_in_flight(cmds, "no-hash", _paths("/nowhere"), {9})
 
     def test_download_id_command_not_swept_by_path_overlap(self) -> None:
         # A command that DOES carry a (different) downloadId is never matched by
         # path/episode overlap - only the no-downloadId folder case falls back.
         cmds = [_command(files=[{"downloadId": "OTHER", "path": "/d/x.mkv", "episodeIds": [9]}])]
-        assert not manual_import_in_flight(cmds, "abc", "/d", {9})
+        assert not manual_import_in_flight(cmds, "abc", _paths("/d"), {9})
 
     def test_empty_command_list_not_in_flight(self) -> None:
-        assert not manual_import_in_flight([], "abc", "/d", {9})
+        assert not manual_import_in_flight([], "abc", _paths("/d"), {9})
+
+
+def _history(*events: tuple[str, str]) -> list[HistoryRecord]:
+    """History records from `(eventType, date)` pairs, newest first (as the probe reads)."""
+
+    return [
+        HistoryRecord.model_validate({"eventType": event, "date": date, "id": len(events) - index})
+        for index, (event, date) in enumerate(events)
+    ]
+
+
+class TestClassifyDownloadHistory:
+    """The dead-tracked probe: the newest relevant event decides, others are skipped."""
+
+    def test_newest_imported_is_dead_tracked(self) -> None:
+        verdict = classify_download_history(
+            _history(("downloadFolderImported", "2026-06-20T06:15:30Z"), ("grabbed", "2026-06-19T00:00:00Z")),
+        )
+        assert verdict.dead_tracked
+        assert verdict.event == "imported"
+        assert verdict.date == "2026-06-20T06:15:30Z"
+
+    def test_newest_failed_is_dead_tracked(self) -> None:
+        verdict = classify_download_history(_history(("downloadFailed", "2026-01-01T00:00:00Z")))
+        assert verdict.dead_tracked
+        assert verdict.event == "failed"
+
+    def test_newest_ignored_is_dead_tracked(self) -> None:
+        verdict = classify_download_history(_history(("downloadIgnored", "2026-01-01T00:00:00Z")))
+        assert verdict.dead_tracked
+        assert verdict.event == "ignored"
+
+    def test_grabbed_after_old_failure_is_clean(self) -> None:
+        # Sonarr itself re-grabbed the hash after an old failure: genuinely
+        # Downloading - the noisy branch must not claim it.
+        verdict = classify_download_history(
+            _history(("grabbed", "2026-07-01T00:00:00Z"), ("downloadFailed", "2026-01-01T00:00:00Z")),
+        )
+        assert not verdict.dead_tracked
+        assert verdict.event is None
+
+    def test_irrelevant_events_are_skipped_not_decided_on(self) -> None:
+        # episodeFileDeleted is newer than the import but is NOT one of the four
+        # tracked-state events - the verdict must come from the import below it.
+        verdict = classify_download_history(
+            _history(
+                ("episodeFileDeleted", "2026-07-15T00:00:00Z"),
+                ("downloadFolderImported", "2026-06-20T00:00:00Z"),
+            ),
+        )
+        assert verdict.dead_tracked
+        assert verdict.event == "imported"
+
+    def test_none_of_the_four_is_clean(self) -> None:
+        verdict = classify_download_history(_history(("episodeFileDeleted", "2026-07-15T00:00:00Z")))
+        assert not verdict.dead_tracked
+
+    def test_empty_history_is_clean(self) -> None:
+        assert not classify_download_history([]).dead_tracked
+
+    def test_event_type_matches_casefolded(self) -> None:
+        assert classify_download_history(_history(("DOWNLOADFOLDERIMPORTED", "d"))).dead_tracked
+
+
+def _mapping(remote: str, local: str, *, host: str | None = None) -> RemotePathMapping:
+    """One remote path mapping from the raw API field names."""
+
+    return RemotePathMapping.model_validate({"host": host, "remotePath": remote, "localPath": local})
+
+
+class TestTranslateDownloadPath:
+    """The remote-path translation behind the folder-scan fallback."""
+
+    def test_no_mappings_is_a_no_op(self) -> None:
+        assert translate_download_path("/d/folder", [], "qbit") == "/d/folder"
+
+    def test_prefix_translates_and_suffix_survives(self) -> None:
+        # The live incident mapping: trailing slash on both stored paths.
+        mappings = [_mapping("/home/u/torrents/4k-tv/", "/remote/torrents/4k-tv/")]
+        assert (
+            translate_download_path("/home/u/torrents/4k-tv/Show S01", mappings, None)
+            == "/remote/torrents/4k-tv/Show S01"
+        )
+
+    def test_exact_match_translates_to_local_root(self) -> None:
+        mappings = [_mapping("/downloads", "/data")]
+        assert translate_download_path("/downloads", mappings, None) == "/data"
+
+    def test_separator_boundary_is_respected(self) -> None:
+        # /downloads must NOT prefix-match /downloads-x/f.
+        mappings = [_mapping("/downloads", "/data")]
+        assert translate_download_path("/downloads-x/f", mappings, None) == "/downloads-x/f"
+
+    def test_trailing_slash_tolerated_on_either_side(self) -> None:
+        assert translate_download_path("/d/f", [_mapping("/d/", "/l")], None) == "/l/f"
+        assert translate_download_path("/d/f", [_mapping("/d", "/l/")], None) == "/l/f"
+
+    def test_suffix_case_is_preserved(self) -> None:
+        # Compare case-insensitively but never fold the suffix - POSIX targets
+        # are case-sensitive.
+        mappings = [_mapping("/Downloads", "/data")]
+        assert translate_download_path("/downloads/Show S01/Ep.MKV", mappings, None) == "/data/Show S01/Ep.MKV"
+
+    def test_windows_backslash_remote_path(self) -> None:
+        mappings = [_mapping("C:\\torrents\\", "/data/torrents")]
+        assert translate_download_path("C:\\torrents\\Show\\ep.mkv", mappings, None) == "/data/torrents/Show/ep.mkv"
+
+    def test_longest_prefix_wins(self) -> None:
+        mappings = [
+            _mapping("/d", "/short"),
+            _mapping("/d/tv", "/long"),
+        ]
+        assert translate_download_path("/d/tv/Show", mappings, None) == "/long/Show"
+
+    def test_host_equality_tiebreaks_equal_prefixes(self) -> None:
+        mappings = [
+            _mapping("/d", "/other-client", host="other"),
+            _mapping("/d", "/ours", host="qbit.local"),
+        ]
+        assert translate_download_path("/d/Show", mappings, "QBIT.LOCAL") == "/ours/Show"
+
+    def test_host_mismatch_never_excludes(self) -> None:
+        # Sonarr's host is the download-client host as SONARR knows it -
+        # routinely a different string from our qBittorrent host.
+        mappings = [_mapping("/d", "/data", host="sonarr-view-of-qbit")]
+        assert translate_download_path("/d/Show", mappings, "localhost") == "/data/Show"
+
+    def test_longer_prefix_beats_host_match(self) -> None:
+        mappings = [
+            _mapping("/d", "/host-matched", host="qbit"),
+            _mapping("/d/tv", "/longer", host="other"),
+        ]
+        assert translate_download_path("/d/tv/Show", mappings, "qbit") == "/longer/Show"
+
+    def test_mapping_missing_either_path_is_skipped(self) -> None:
+        mappings = [_mapping("", "/data"), _mapping("/d", "")]
+        assert translate_download_path("/d/Show", mappings, None) == "/d/Show"
+
+    def test_single_file_content_path_translates(self) -> None:
+        # A single-FILE torrent's content_path is the file itself.
+        mappings = [_mapping("/d/", "/data/")]
+        assert translate_download_path("/d/Show - 01.mkv", mappings, None) == "/data/Show - 01.mkv"
 
 
 # A realistic subset of Sonarr's /api/v3/qualitydefinition, matched on the

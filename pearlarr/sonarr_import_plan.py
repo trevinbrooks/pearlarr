@@ -20,6 +20,7 @@ from typing import NamedTuple
 from .manual_import import normalize_group
 from .seadex_types import (
     CommandResource,
+    HistoryRecord,
     Language,
     ParsedEpisode,
     ParsedFileInfo,
@@ -27,6 +28,7 @@ from .seadex_types import (
     QualityDefinition,
     QualityModel,
     QualitySource,
+    RemotePathMapping,
     Revision,
     SonarrEpisode,
     season_episode_key,
@@ -129,10 +131,26 @@ def _norm_path(path: str) -> str:
     return path.replace("\\", "/").casefold()
 
 
+class ContentPaths(NamedTuple):
+    """One download's import folder in both filesystem views the guard must match.
+
+    A dead-tracked folder import POSTs the TRANSLATED (Sonarr-visible) path, so
+    a command read back carries that form while the durable record carries the
+    raw qBittorrent one - the guard needs both prefixes.
+    """
+
+    raw: str
+    """The qBittorrent `content_path`."""
+
+    sonarr_visible: str
+    """The remote-path-mapped view (equal to `raw` when no translation was
+    computed or none applies)."""
+
+
 def manual_import_in_flight(
     commands: list[CommandResource],
     infohash: str,
-    content_path: str,
+    content_paths: ContentPaths,
     target_ep_ids: set[int],
 ) -> bool:
     """Whether a ManualImport already in flight covers THIS download.
@@ -154,17 +172,18 @@ def manual_import_in_flight(
       * PRIMARY: any of its files' `download_id` equals `infohash`
         (case-insensitively) - the infohash a queue-driven import carries; this is
         the common, robust case.
-      * FALLBACK (a folder / season-pack import whose files carry NO download id):
-        any file path sits under `content_path`, OR any file's episode id is one
-        of `target_ep_ids` (our intended set). This is deliberately broad: a
-        false positive only makes us WAIT (bounded by the import deadline, which
-        forces through), whereas a missed match re-opens the duplicate-import loop.
+      * FALLBACK (a folder / dead-tracked import whose files carry NO download
+        id): any file path sits under either `content_paths` prefix, OR any
+        file's episode id is one of `target_ep_ids` (our intended set). This is
+        deliberately broad: a false positive only makes us WAIT (bounded by the
+        import deadline, which forces through), whereas a missed match re-opens
+        the duplicate-import loop.
 
     Args:
         commands: The parsed `/api/v3/command` list.
         infohash: This download's infohash (the Sonarr download id).
-        content_path: The qBittorrent `content_path` we import from, used
-            for the no-download-id folder-import fallback.
+        content_paths: The import folder's raw + Sonarr-visible views, for
+            the no-download-id fallback arm.
         target_ep_ids: Our intended episode ids, for the same fallback.
 
     Returns:
@@ -172,7 +191,7 @@ def manual_import_in_flight(
     """
 
     target_hash = infohash.casefold()
-    content_prefix = _norm_path(content_path)
+    content_prefixes = {_norm_path(content_paths.raw), _norm_path(content_paths.sonarr_visible)}
     for command in commands:
         name = (command.name or "").casefold()
         status = (command.status or "").casefold()
@@ -187,11 +206,129 @@ def manual_import_in_flight(
         if file_hashes:
             continue
         for file in command.files:
-            if file.path is not None and _norm_path(file.path).startswith(content_prefix):
+            if file.path is not None and any(_norm_path(file.path).startswith(p) for p in content_prefixes):
                 return True
             if any(ep_id in target_ep_ids for ep_id in file.episode_ids):
                 return True
     return False
+
+
+# The episode-history events that map a re-appeared download to a queue-hidden
+# tracked state (Imported / Failed / Ignored) - states Sonarr never runs its
+# completed-download Check on, so `manualimport?downloadId=` NREs (HTTP 500)
+# forever. Keyed by casefolded eventType, valued by the human label the hub
+# note renders. `grabbed` (or none of the four) means genuinely Downloading.
+_DEAD_TRACKED_HISTORY_EVENTS = {
+    "downloadfolderimported": "imported",
+    "downloadfailed": "failed",
+    "downloadignored": "ignored",
+}
+_GRABBED_HISTORY_EVENT = "grabbed"
+
+
+@dataclass(frozen=True, slots=True)
+class DownloadHistoryVerdict:
+    """What a download's newest relevant Sonarr history event says about its state."""
+
+    dead_tracked: bool
+    """True when Sonarr's history maps the download to a queue-hidden state it
+    will never serve by id - import from its folder instead."""
+
+    event: str | None = None
+    """The dead-tracked event label (`imported`/`failed`/`ignored`), for the
+    hub note; None when clean."""
+
+    date: str | None = None
+    """The dead-tracked event's raw ISO date, for the hub note."""
+
+
+def classify_download_history(records: Sequence[HistoryRecord]) -> DownloadHistoryVerdict:
+    """Classify a download's tracked state from its newest relevant history event.
+
+    The episode-history mirror of Sonarr's own `GetStateFromHistory`
+    latest-event rule: walk `records` (page 1, date-DESCENDING, as
+    `history_for_download` returns them) and decide on the first event among
+    `grabbed` / `downloadFolderImported` / `downloadFailed` /
+    `downloadIgnored`, skipping every other type (e.g. `episodeFileDeleted`).
+    Imported/failed/ignored -> dead-tracked; `grabbed` -> clean (a hash Sonarr
+    itself re-grabbed after an old failure is genuinely Downloading); none of
+    the four found -> clean. Probing only for prior imports would misroute
+    re-grabs of previously-FAILED/IGNORED hashes - the same NREs apply there.
+    """
+
+    for record in records:
+        event = record.event_type.casefold()
+        if event == _GRABBED_HISTORY_EVENT:
+            return DownloadHistoryVerdict(dead_tracked=False)
+        label = _DEAD_TRACKED_HISTORY_EVENTS.get(event)
+        if label is not None:
+            return DownloadHistoryVerdict(dead_tracked=True, event=label, date=record.date)
+    return DownloadHistoryVerdict(dead_tracked=False)
+
+
+def _path_segments(path: str) -> list[str]:
+    r"""Split a path into non-empty segments for the boundary-aware compare (`\` -> `/`)."""
+
+    return [segment for segment in path.replace("\\", "/").split("/") if segment]
+
+
+def translate_download_path(
+    content_path: str,
+    mappings: Sequence[RemotePathMapping],
+    qbit_host: str | None,
+) -> str:
+    """Map a download-client path into Sonarr's filesystem view.
+
+    Longest-`remotePath`-prefix match is the PRIMARY rule; host equality only
+    tiebreaks equally-long prefixes, and host inequality never excludes a
+    mapping (Sonarr's `host` is the download-client host as SONARR configured
+    it - routinely a different string from our qBittorrent host: localhost vs
+    container name vs IP). Matching is per path segment, so it is
+    separator-boundary-aware (`/downloads` never matches `/downloads-x/f`),
+    tolerant of trailing slashes and Windows backslashes on either side, and
+    case-insensitive - while the suffix keeps its ORIGINAL case (POSIX targets
+    are case-sensitive). No match returns the path untranslated (the
+    same-filesystem no-op).
+
+    Args:
+        content_path: The qBittorrent `content_path` (a folder or a single
+            file).
+        mappings: Sonarr's remote path mappings.
+        qbit_host: Our qBittorrent hostname (casefolded upstream or not -
+            folded here), for the tiebreak only.
+
+    Returns:
+        The Sonarr-visible path, or `content_path` unchanged.
+    """
+
+    content_segments = _path_segments(content_path)
+    folded = [segment.casefold() for segment in content_segments]
+    target_host = qbit_host.casefold() if qbit_host else None
+
+    best_rank: tuple[int, bool] | None = None
+    best_local = ""
+    best_length = 0
+    for mapping in mappings:
+        if not mapping.remote_path or not mapping.local_path:
+            continue
+        remote = [segment.casefold() for segment in _path_segments(mapping.remote_path)]
+        if not remote or folded[: len(remote)] != remote:
+            continue
+        host_matches = target_host is not None and (mapping.host or "").casefold() == target_host
+        rank = (len(remote), host_matches)
+        if best_rank is None or rank > best_rank:
+            best_rank = rank
+            best_local = mapping.local_path
+            best_length = len(remote)
+
+    if best_rank is None:
+        return content_path
+    base = best_local.rstrip("/\\") or "/"
+    suffix = content_segments[best_length:]
+    if not suffix:
+        return base
+    joined = "/".join(suffix)
+    return f"/{joined}" if base == "/" else f"{base}/{joined}"
 
 
 def build_episode_id_map(ep_list: list[SonarrEpisode]) -> dict[tuple[int, int], int]:

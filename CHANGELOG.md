@@ -9,6 +9,7 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr);
 
 ### Fixed
 
+- Re-grabs of a release Sonarr has previously imported (or failed/ignored) now import instead of deferring "for a later run" forever. Sonarr hides such a re-added download from its queue and its manual-import scan returns HTTP 500 on every poll (an unpatched Sonarr bug: the tracked download's import state is never re-initialized), so Pearlarr could neither import nor ever finish - the pending record was eventually dropped silently. Pearlarr now detects the state from Sonarr's download history and imports the files by scanning the download folder directly (translated through Sonarr's remote path mappings), copying rather than moving so the torrent keeps seeding.
 - A run during a SeaDex outage no longer advances the Arr-activity checkpoint, so file changes it detected but could not act on (every lookup is skipped during an outage) are re-detected and handled by the next healthy run instead of being silently consumed. Previously such changes were only picked up if some later, unrelated event touched the same series.
 
 ## [1.0.4] - 2026-07-14
