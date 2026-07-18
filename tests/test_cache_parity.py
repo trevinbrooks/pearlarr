@@ -18,6 +18,7 @@ from typing import Any
 
 from pearlarr.cache import AbstractCacheStore, CacheRecord, CacheStore, HistoryCheckpoint
 from pearlarr.config import Arr
+from pearlarr.manual_import import PendingKey
 
 from .builders import FakeCacheStore, make_entry_record
 
@@ -71,8 +72,11 @@ def _apply_ops(store: AbstractCacheStore) -> None:
     store.put_sonarr_parse("fresh.mkv", {"fetched_at": _NEW, "episodes": [1]})
     store.put_sonarr_parse("stale.mkv", {"fetched_at": _OLD, "episodes": [2]})
 
-    store.put_pending(Arr.SONARR, "hashA", {"series_id": 7, "title": "A"})
-    store.put_pending(Arr.SONARR, "hashB", {"series_id": 8, "title": "B"})
+    store.put_pending(Arr.SONARR, PendingKey("hashA", 7), {"series_id": 7, "title": "A"})
+    store.put_pending(Arr.SONARR, PendingKey("hashB", 8), {"series_id": 8, "title": "B"})
+    # A sibling record on hashA (another entry claiming the same torrent): the
+    # composite key must keep BOTH, in the fake exactly as in SQLite.
+    store.put_pending(Arr.SONARR, PendingKey("hashA", 9), {"series_id": 7, "title": "A2"})
 
     # History checkpoint: an initial write then an upsert (only the last survives).
     store.put_history_checkpoint(Arr.SONARR, HistoryCheckpoint("2026-07-01T00:00:00Z", 5))
@@ -102,6 +106,9 @@ def _observe(store: AbstractCacheStore) -> dict[str, object]:
         "sonarr_parse_stale": store.get_sonarr_parse("stale.mkv"),
         "pending_sonarr": store.get_pending(Arr.SONARR),
         "pending_series7": store.get_pending_for_series(Arr.SONARR, 7),
+        "pending_count_shared": store.count_pending_for_infohash("hashA"),
+        "pending_count_single": store.count_pending_for_infohash("hashB"),
+        "pending_count_missing": store.count_pending_for_infohash("nope"),
         "checkpoint_sonarr": store.get_history_checkpoint(Arr.SONARR),
         "checkpoint_radarr": store.get_history_checkpoint(Arr.RADARR),
         "selection_current": store.selection_stale(Arr.SONARR, "digest-new"),
@@ -129,7 +136,7 @@ class _JsonbBlock:
     iter_records: Callable[[AbstractCacheStore], list[dict[str, Any]]]
 
 
-_ISO_IH = "hiso"
+_ISO_KEY = PendingKey("hiso", 4242)
 _ISO_AL = 4242
 _ISO_FILE = "iso.mkv"
 _ISO_SID = 7
@@ -147,8 +154,8 @@ def _sonarr_parse_records(store: AbstractCacheStore) -> list[dict[str, Any]]:
 _JSONB_BLOCKS: tuple[_JsonbBlock, ...] = (
     _JsonbBlock(
         "pending",
-        put=lambda s, r: s.put_pending(Arr.SONARR, _ISO_IH, r),
-        get=lambda s: s.get_pending(Arr.SONARR).get(_ISO_IH),
+        put=lambda s, r: s.put_pending(Arr.SONARR, _ISO_KEY, r),
+        get=lambda s: s.get_pending(Arr.SONARR).get(_ISO_KEY),
         iter_records=lambda s: [
             *s.get_pending(Arr.SONARR).values(),
             *s.get_pending_for_series(Arr.SONARR, _ISO_SID).values(),
@@ -237,8 +244,8 @@ def test_fake_cache_store_observably_matches_real(tmp_path: Path) -> None:
         assert fake.evict_anilist_meta(_CUTOFF) == real.evict_anilist_meta(_CUTOFF) == 2
         assert fake.evict_sonarr_parse(_CUTOFF) == real.evict_sonarr_parse(_CUTOFF) == 1
 
-        fake.drop_pending(Arr.SONARR, "hashA")
-        real.drop_pending(Arr.SONARR, "hashA")
+        fake.drop_pending(Arr.SONARR, PendingKey("hashA", 7))
+        real.drop_pending(Arr.SONARR, PendingKey("hashA", 7))
 
         # save is a no-op for the fake and stages+promotes for the real. Neither must
         # disturb the observable reads that follow.

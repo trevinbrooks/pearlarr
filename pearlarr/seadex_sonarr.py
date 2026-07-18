@@ -35,7 +35,7 @@ from .seadex_types import (
 )
 from .sonarr_client import AbstractSonarrClient, SonarrClient
 from .sonarr_episodes import SonarrEpisodes
-from .sonarr_import import ImportExecutor, ImportReconciler
+from .sonarr_import import ImportExecutor, ImportReconciler, PendingSeedContext
 from .sonarr_mapper import FileEpisodeMapper
 from .sonarr_parse import SonarrParseCache
 
@@ -469,10 +469,13 @@ class SonarrSync(ArrSync[SonarrItem]):
             pending_seeds = self._reconciler.build_pending_seeds(
                 seadex_dict=seadex_dict,
                 ep_list=ep_list,
-                sonarr_series_id=sonarr_series_id,
-                anilist_title=anilist_title,
-                coverage=coverage,
-                url=sd_url,
+                entry=PendingSeedContext(
+                    al_id=al_id,
+                    series_id=sonarr_series_id,
+                    title=anilist_title,
+                    coverage=coverage,
+                    url=sd_url,
+                ),
             )
 
         return run.grab_and_cache(

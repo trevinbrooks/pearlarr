@@ -61,6 +61,7 @@ _COMMAND_ID = re.compile(r"/api/v3/command/(\d+)")
 
 _INFOHASH = "ab12" * 10
 _SERIES_ID = 301
+_AL_ID = 30100
 _GROUP = "Thighs"
 _TITLE = "Demo Batch"
 _CONTENT_PATH = "/downloads/Demo Batch S01 [Thighs]"
@@ -551,6 +552,7 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
     record = PendingImport(
         infohash=_INFOHASH,
         series_id=_SERIES_ID,
+        al_id=_AL_ID,
         file_episode_map={}
         if scenario.absolute_batch
         else {normalize_basename(name): [ep_id] for ep_id, name in named},
@@ -566,7 +568,7 @@ def _seed_pending(cache_path: Path, checksum: str, scenario: _Scenario) -> None:
     )
     store = CacheStore.load(str(cache_path), config_checksum=checksum)
     try:
-        store.put_pending(Arr.SONARR, _INFOHASH, record.to_json())
+        store.put_pending(Arr.SONARR, record.key, record.to_json())
         store.save(preview=False)
     finally:
         store.close()
@@ -577,7 +579,7 @@ def _pending_after(cache_path: Path, checksum: str) -> frozenset[str]:
 
     store = CacheStore.load(str(cache_path), config_checksum=checksum)
     try:
-        return frozenset(store.get_pending(Arr.SONARR))
+        return frozenset(key.infohash for key in store.get_pending(Arr.SONARR))
     finally:
         store.close()
 

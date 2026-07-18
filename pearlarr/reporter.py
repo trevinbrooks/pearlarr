@@ -12,7 +12,7 @@ from .anilist_gateway import AniListGateway
 from .cache import AbstractCacheStore
 from .config import Arr
 from .log import EntryState
-from .manual_import import ImportWaitMode, PendingImport, PendingState
+from .manual_import import ImportWaitMode, PendingImport, PendingKey, PendingState
 from .output import (
     Accent,
     CapReached,
@@ -209,13 +209,14 @@ class RunContext:
     """`PendingImport` records written THIS run (on a successful add), for the end-of-run
     blocking pass. The durable copies live in `cache_store` under `pending_imports`, so this
     is just the fast in-memory list to wait on."""
-    pending_states: dict[str, PendingState] = field(
-        default_factory=dict[str, PendingState],
+    pending_states: dict[PendingKey, PendingState] = field(
+        default_factory=dict[PendingKey, PendingState],
     )
     """The classified status of each CARRIED-OVER record touched this run (by the per-series
-    inline snapshot or the deferred reconcile), keyed by infohash. Read by the pre-summary tally
-    so each carried-over record is counted exactly once by its known status (un-touched store
-    records default to `QUEUED`). Never holds a this-run grab (those stay `added`)."""
+    inline snapshot or the deferred reconcile), keyed per record (`PendingKey` - siblings
+    sharing a torrent track separately). Read by the pre-summary tally so each carried-over
+    record is counted exactly once by its known status (un-touched store records default to
+    `QUEUED`). Never holds a this-run grab (those stay `added`)."""
 
 
 def is_preview(ctx: RunContext, qbit: qbittorrentapi.Client | None) -> bool:

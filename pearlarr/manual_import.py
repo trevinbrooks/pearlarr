@@ -416,14 +416,34 @@ def _as_float(value: object) -> float | None:
     return None
 
 
+class PendingKey(NamedTuple):
+    """One pending record's composite identity: the torrent plus the entry claiming it.
+
+    SeaDex can list one torrent on several AniList entries (a multi-cour batch),
+    each with its own `PendingImport` for its own episode slice, so the
+    bare infohash cannot identify a record. This pair is the durable store's key
+    (`pending_imports` PK tail) and the in-memory dedup/tracking key everywhere
+    a record - not a torrent - is meant.
+    """
+
+    infohash: str
+    al_id: int
+
+    @property
+    def row_key(self) -> str:
+        """The per-record string key snapshot rows carry (`TorrentView.key`)."""
+
+        return f"{self.infohash}:{self.al_id}"
+
+
 @dataclass(frozen=True)
 class PendingImport:
     """A durable record of one added torrent awaiting a series-pinned import.
 
-    Written at the add site through the cache facade (keyed by `infohash` via
-    `cache_store.put_pending`/`get_pending`/`drop_pending`) and read back to
-    drive the manual import. It carries every field we have *authoritative* data
-    for - the
+    Written at the add site through the cache facade (keyed per record by
+    `PendingKey` via `cache_store.put_pending`/`get_pending`/`drop_pending`)
+    and read back to drive the manual import. It carries every field we have
+    *authoritative* data for - the
     Sonarr `series_id`, our own `(basename -> episode ids)` mapping, the
     SeaDex release group, dual-audio flag and coverage - so the import never has
     to trust Sonarr's blind title parse.
@@ -434,6 +454,12 @@ class PendingImport:
 
     series_id: int
     """The Sonarr series id the files belong to."""
+
+    al_id: int
+    """The AniList entry this record's episode slice belongs to. Together with `infohash` it identifies
+    the record, so two entries sharing one torrent keep separate records. `0` is the sentinel for a
+    legacy record persisted before the field existed (the cache migration backfills it) - such a
+    record acts as its hash's singleton."""
 
     file_episode_map: dict[str, list[int]]
     """Basename -> authoritative Sonarr episode ids. The primary file->episode mapping. Repaired and extended
@@ -474,6 +500,12 @@ class PendingImport:
     `file_episode_map`)."""
 
     @property
+    def key(self) -> PendingKey:
+        """The record's composite store/tracking key (see `PendingKey`)."""
+
+        return PendingKey(self.infohash, self.al_id)
+
+    @property
     def display_label(self) -> str:
         """The cockpit/ledger/report row label: `title · group`.
 
@@ -507,6 +539,7 @@ class PendingImport:
         return cls(
             infohash=raw.get("infohash", ""),
             series_id=raw.get("series_id", 0),
+            al_id=raw.get("al_id", 0),
             file_episode_map=raw.get("file_episode_map", {}),
             episode_ids=raw.get("episode_ids", []),
             release_group=raw.get("release_group", ""),

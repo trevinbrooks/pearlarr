@@ -14,6 +14,7 @@ cached `/parse` results and the `(season, episode) -> id` index. Built bare
 from pearlarr.manual_import import normalize_basename
 from pearlarr.seadex_sonarr import SonarrSync
 from pearlarr.seadex_types import ParsedEpisode, SonarrEpisode
+from pearlarr.sonarr_import import PendingSeedContext
 
 from .builders import FakeCacheStore, make_config, make_sonarr_sync, rg_group, url_item
 from .fakes import FakeSonarrClient
@@ -59,14 +60,14 @@ class TestBuildPendingSeeds:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            sonarr_series_id=7,
-            anilist_title="Show",
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
         )
 
         # Only the download+hash url is seeded (no download / no hash are skipped).
         assert set(seeds) == {"h1"}
         seed = seeds["h1"]
         assert seed.series_id == 7
+        assert seed.al_id == 1  # part of the record's PendingKey
         assert seed.title == "Show"
         assert seed.file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
         assert seed.seadex_files == ["Show - 01.mkv"]
@@ -95,8 +96,7 @@ class TestBuildPendingSeeds:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            sonarr_series_id=7,
-            anilist_title="Show",
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
         )
 
         seed = seeds["h1"]
@@ -123,8 +123,7 @@ class TestBuildPendingSeeds:
         seeds = _strat({})._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            sonarr_series_id=7,
-            anilist_title="Show",
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
         )
 
         assert set(seeds) == {"h1"}
@@ -145,8 +144,7 @@ class TestBuildPendingSeeds:
         seeds = _strat({})._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            sonarr_series_id=7,
-            anilist_title="Show",
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
         )
 
         assert seeds == {}
@@ -178,8 +176,7 @@ class TestSeedGuards:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            sonarr_series_id=7,
-            anilist_title="Show",
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
         )
 
         # Still tracked (it carries a video file), just never pre-assigned.
@@ -201,8 +198,7 @@ class TestSeedGuards:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            sonarr_series_id=7,
-            anilist_title="Show",
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
         )
 
         assert seeds["h1"].file_episode_map == {normalize_basename("Show - 01-02.mkv"): [101, 102]}
@@ -223,8 +219,7 @@ class TestSeedGuards:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            sonarr_series_id=7,
-            anilist_title="Show",
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
         )
 
         assert seeds["h1"].file_episode_map == {}
@@ -254,8 +249,7 @@ class TestSeedGuards:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            sonarr_series_id=7,
-            anilist_title="Show",
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
         )
 
         assert seeds["h1"].file_episode_map == {normalize_basename("Show - 13.mkv"): [213]}
@@ -285,8 +279,7 @@ class TestSeedGuards:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            sonarr_series_id=7,
-            anilist_title="Show",
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
         )
 
         assert seeds["h1"].file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
@@ -313,8 +306,7 @@ class TestSeedGuards:
         seeds = _strat(parse_cache)._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            sonarr_series_id=7,
-            anilist_title="Show",
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
         )
 
         assert seeds["h1"].file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}
@@ -350,8 +342,7 @@ class TestParseWriteVisibleToSeeds:
         seeds = strat._reconciler.build_pending_seeds(
             seadex_dict=seadex_dict,
             ep_list=ep_list,
-            sonarr_series_id=7,
-            anilist_title="Show",
+            entry=PendingSeedContext(al_id=1, series_id=7, title="Show"),
         )
 
         assert seeds["h1"].file_episode_map == {normalize_basename("Show - 01.mkv"): [101]}

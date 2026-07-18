@@ -22,7 +22,7 @@ from pearlarr import notify
 from pearlarr.config import Arr
 from pearlarr.discord import DiscordEmbed
 from pearlarr.grab_pipeline import GrabPipeline, GrabRequest
-from pearlarr.manual_import import ImportWaitMode, PendingImport
+from pearlarr.manual_import import ImportWaitMode, PendingImport, PendingKey
 from pearlarr.notify import Notifier
 from pearlarr.output import GrabFailed, Severity, install_hub, severity_of
 from pearlarr.output.recording import RecordingHub
@@ -77,7 +77,7 @@ def _pipeline(
     )
 
 
-def _pending(pipeline: GrabPipeline) -> Mapping[str, object]:
+def _pending(pipeline: GrabPipeline) -> Mapping[PendingKey, object]:
     """The pipeline's durable per-arr pending store (what the engine reads back)."""
 
     return pipeline.cache_store.get_pending(Arr.SONARR)
@@ -239,7 +239,7 @@ class TestAddOneUrlRegistersPending:
             pending_seeds=seeds,
         )
 
-        assert set(_pending(pipeline)) == {"h1"}
+        assert {k.infohash for k in _pending(pipeline)} == {"h1"}
         assert [p.infohash for p in pipeline._ctx.pending_imports] == ["h1"]
         assert n_added == 0
         assert pipeline._ctx.torrents_added == 0
@@ -256,7 +256,7 @@ class TestAddOneUrlRegistersPending:
             pending_seeds=seeds,
         )
 
-        assert set(_pending(pipeline)) == {"h1"}
+        assert {k.infohash for k in _pending(pipeline)} == {"h1"}
         assert [p.infohash for p in pipeline._ctx.pending_imports] == ["h1"]
         assert n_added == 1
         assert pipeline._ctx.torrents_added == 1
@@ -284,6 +284,22 @@ class TestAddOneUrlRegistersPending:
 
         assert n_added == 1
         assert pipeline._ctx.torrents_added == 1
+
+    def test_already_added_sibling_registration_does_not_overwrite(self) -> None:
+        # REGRESSION: two AniList entries share one torrent. Entry A grabs it,
+        # entry B's add dedups to ALREADY_ADDED and registers its OWN record.
+        # The old (arr, infohash) store key let B's registration destroy A's
+        # record (and with it A's episode-slice claim). Both must persist.
+        torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "Show")})
+        pipeline = _pipeline(torrents=torrents)
+        first = pending_import(infohash="h1", al_id=11, series_id=7, title="Cour 1")
+        second = pending_import(infohash="h1", al_id=22, series_id=7, title="Cour 2")
+
+        pipeline.add_torrent(one_release_dict(srg="NAN0", infohash="h1"), pending_seeds={"h1": first})
+        pipeline.add_torrent(one_release_dict(srg="NAN0", infohash="h1"), pending_seeds={"h1": second})
+
+        assert set(_pending(pipeline)) == {PendingKey("h1", 11), PendingKey("h1", 22)}
+        assert [p.title for p in pipeline._ctx.pending_imports] == ["Cour 1", "Cour 2"]
 
     def test_no_seed_does_not_register(self) -> None:
         torrents = FakeTorrents({"h1": (AddOutcome.ALREADY_ADDED, "x")})

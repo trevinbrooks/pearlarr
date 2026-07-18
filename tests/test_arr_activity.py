@@ -27,6 +27,7 @@ from pearlarr.arr_activity import (
 from pearlarr.boot_flow import BootFlow
 from pearlarr.cache import HistoryCheckpoint
 from pearlarr.config import AppConfig, Arr
+from pearlarr.manual_import import PendingKey
 from pearlarr.mappings import MappingEntry
 from pearlarr.run_loop import RunLoop
 from pearlarr.seadex_types import HistoryRecord
@@ -212,7 +213,7 @@ class TestScan:
     def test_own_hash_suppression_is_case_insensitive(self) -> None:
         cache = FakeCacheStore()
         cache.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["ABCDEF", None]})
-        cache.put_pending(Arr.SONARR, "beef01", {"series_id": 7})
+        cache.put_pending(Arr.SONARR, PendingKey("beef01", 7), {"series_id": 7})
         monitor, _ = _monitor(cache)
         fetch = _Fetch(
             [
