@@ -45,6 +45,8 @@ NON_VIDEO_EXTENSIONS = {
     ".idx",
     ".sup",
     ".vtt",
+    # Matroska SUBTITLES (often SxxExx-named, so they'd parse) - .mkv is kept.
+    ".mks",
     ".nfo",
     ".txt",
     ".md",
@@ -57,6 +59,7 @@ NON_VIDEO_EXTENSIONS = {
     ".bmp",
     ".gif",
     ".webp",
+    ".tif",
     ".ttf",
     ".otf",
     ".woff",
@@ -84,6 +87,13 @@ NON_VIDEO_EXTENSIONS = {
     ".ape",
     ".cue",
     ".log",
+    ".m3u8",
+    # Checksum sidecars: Sonarr's manual-import scan never offers them, so a
+    # seeded one sticks a record on "intended file missing" until the deadline.
+    ".blake3",
+    ".md5",
+    ".sha2",
+    ".sha256",
 }
 
 # How long a persisted Sonarr /parse result stays usable before it's re-queried.

@@ -673,6 +673,11 @@ class ImportReconciler:
         is seeded for every grabbed torrent that carries at least one video file -
         not only the ones already fully mapped.
 
+        Seeds honor the used-once discipline assignment enforces: the first
+        file in SeaDex order claiming an episode id wins, and a later claimant
+        (a v2, or a duplicate leaf from a second folder) is left unseeded for
+        import-time assignment, which defers the colliding file the same way.
+
         Args:
             seadex_dict: The filtered releases. `url_item.download`
                 marks the ones the engine will add.
@@ -721,13 +726,17 @@ class ImportReconciler:
                 # Best-effort grab-time mapping, keyed by NORMALIZED basename so it
                 # matches the on-disk leaves at import time (NFC/NFD-safe).
                 file_episode_map: dict[str, list[int]] = {}
+                claimed: set[int] = set()
                 for base in video_files:
                     record = self.cache_store.get_sonarr_parse(base)
                     if not record:
                         continue
                     file_ids = episode_ids_for_parsed(parsed_episodes(record), ep_id_map)
-                    if file_ids:
+                    # First claim in file order wins: assignment defers a later
+                    # file whose ids collide, so the seed refuses it the same way.
+                    if file_ids and not any(i in claimed for i in file_ids):
                         file_episode_map[normalize_basename(base)] = file_ids
+                        claimed.update(file_ids)
 
                 pending_seeds[url_item.infohash] = PendingImport(
                     infohash=url_item.infohash,

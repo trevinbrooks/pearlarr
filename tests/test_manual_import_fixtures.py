@@ -961,6 +961,53 @@ class TestAssignScopeGate:
         assert result.skipped == []
 
 
+class TestAssignDuplicateLeaves:
+    """One basename in two folders collapses in the basename-keyed pool.
+
+    Only one physical file can ever import, so the unmatched warning must
+    follow the map: a placed name is never also reported skipped, and an
+    unplaced one is reported once.
+    """
+
+    def test_placed_duplicate_leaf_is_not_reported_skipped(self) -> None:
+        # The second occurrence of a placed name defers off the used-set and
+        # used to land in skipped - the warning named a file that imported.
+        name = "Show - 01 [1080p].mkv"
+        sonarr = FakeSonarrClient(parse_episode_info_fn=lambda _f: _pinfo(season=1, episodes=(1,)))
+        mapper = make_sonarr_mapper(sonarr=sonarr)
+        pending = pending_import(
+            file_episode_map={},
+            episode_ids=[101],
+            ordered_episode_ids=[101],
+            seadex_files=[name, name],
+        )
+        candidates = {normalize_basename(name): _cand(name)}
+
+        merged, skipped = mapper.assign(pending, candidates, {(1, 1): 101})
+
+        assert merged == {normalize_basename(name): [101]}
+        assert skipped == []
+
+    def test_unplaced_duplicate_leaf_is_reported_once(self) -> None:
+        # Both occurrences of an unplaceable duplicate refuse - the warning
+        # names the leaf once, not once per folder.
+        name = "Extra.mkv"
+        sonarr = FakeSonarrClient(parse_episode_info_fn=lambda _f: _pinfo())
+        mapper = make_sonarr_mapper(sonarr=sonarr)
+        pending = pending_import(
+            file_episode_map={},
+            episode_ids=[101, 102],
+            ordered_episode_ids=[101, 102],
+            seadex_files=[name, name],
+        )
+        candidates = {normalize_basename(name): _cand(name)}
+
+        merged, skipped = mapper.assign(pending, candidates, {})
+
+        assert merged == {}
+        assert skipped == [normalize_basename(name)]
+
+
 class TestAssignBogusKeyDowngrade:
     """A name key that exists nowhere in the series is noise, not identity.
 

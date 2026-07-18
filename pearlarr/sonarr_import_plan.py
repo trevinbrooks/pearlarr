@@ -449,6 +449,10 @@ def targets_needing_import(statuses: dict[int, EpisodeFileStatus]) -> set[int]:
     return {ep_id for ep_id, status in statuses.items() if status is not EpisodeFileStatus.RECOMMENDED}
 
 
+# One file plausibly spans a double or triple episode, never more.
+_MATCHED_SPAN_CAP = 3
+
+
 def episode_ids_for_parsed(
     parsed: list[ParsedEpisode],
     ep_id_map: dict[tuple[int, int], int],
@@ -457,16 +461,33 @@ def episode_ids_for_parsed(
 
     The season/episode numbers come from Sonarr `/parse` (an internal tool of
     our pipeline), but the assignment stays ours: the `(season, episode) -> id`
-    index is built from the episode list OUR mapping selected. Numbers that don't
-    resolve (or resolve to a 0 id) are dropped.
+    index is built from the episode list OUR mapping selected.
+
+    The pairs are Sonarr's series-MATCHED resolution (the persisted parse
+    record keeps nothing else), so the grab-time seed honors the same borrow
+    limits `_exact_episode_ids` enforces at import time: duplicate pairs
+    collapse to one claim, a span of more than `_MATCHED_SPAN_CAP` distinct
+    pairs is refused whole (Sonarr matches a bare "S05" extra to the WHOLE
+    season, and seeding that would import one OP/ED file as every episode),
+    and a pair that does not resolve (or resolves to a 0 id) refuses the file
+    rather than seeding the resolved half of a multi-episode span. A refused
+    file is simply not seeded - import-time assignment places or refuses it
+    under the full guard set.
     """
 
+    pairs = list(dict.fromkeys((ep.season, ep.episode) for ep in parsed))
+    if not pairs or len(pairs) > _MATCHED_SPAN_CAP:
+        return []
     ids: list[int] = []
-    for ep in parsed:
-        ep_id = ep_id_map.get((ep.season, ep.episode))
+    for season, episode in pairs:
+        ep_id = ep_id_map.get((season, episode))
         if ep_id:
             ids.append(ep_id)
-    return ids
+    # Every pair must resolve, mirroring the import-time all-or-nothing check.
+    if len(ids) != len(pairs):
+        return []
+    # Distinct pairs cannot share an id, but mirror the final collapse anyway.
+    return list(dict.fromkeys(ids))
 
 
 _SXXEXX: re.Pattern[str] = re.compile(r"[Ss](\d{1,2})[\s._-]*[Ee](\d{1,3})")
@@ -492,10 +513,6 @@ def parse_se_from_filename(name: str) -> ParsedFileInfo | None:
         episode_numbers=(int(m.group(2)),),
         offline=True,
     )
-
-
-# One file plausibly spans a double or triple episode, never more.
-_MATCHED_SPAN_CAP = 3
 
 
 @dataclass(frozen=True)
