@@ -1,19 +1,19 @@
 {
-    "title": "[Group] To Crush-Ru - 14 [BDRip 1920x1080].mkv",
+    "title": "[Group] To Glimmer-Zu Eclipse - 01 [BDRip].mkv",
     "parsedEpisodeInfo": {
-        "releaseTitle": "[Group] To Crush-Ru - 14 [BDRip 1920x1080]",
-        "seriesTitle": "To Crush-Ru",
+        "releaseTitle": "[Group] To Glimmer-Zu Eclipse - 01 [BDRip]",
+        "seriesTitle": "To Glimmer-Zu Eclipse",
         "seriesTitleInfo": {
-            "title": "To Crush-Ru",
-            "titleWithoutYear": "To Crush-Ru",
+            "title": "To Glimmer-Zu Eclipse",
+            "titleWithoutYear": "To Glimmer-Zu Eclipse",
             "year": 0
         },
         "quality": {
             "quality": {
-                "id": 7,
-                "name": "Bluray-1080p",
+                "id": 13,
+                "name": "Bluray-480p",
                 "source": "bluray",
-                "resolution": 1080
+                "resolution": 480
             },
             "revision": {
                 "version": 1,
@@ -24,7 +24,7 @@
         "seasonNumber": 0,
         "episodeNumbers": [],
         "absoluteEpisodeNumbers": [
-            14
+            1
         ],
         "specialAbsoluteEpisodeNumbers": [],
         "languages": [
@@ -43,7 +43,7 @@
         "releaseGroup": "Group",
         "releaseHash": "",
         "seasonPart": 0,
-        "releaseTokens": " [BDRip 1920x1080]",
+        "releaseTokens": " [BDRip]",
         "isDaily": false,
         "isAbsoluteNumbering": true,
         "isPossibleSpecialEpisode": false,
@@ -51,29 +51,29 @@
         "releaseType": "singleEpisode"
     },
     "series": {
-        "title": "To CRUSH-Ru",
-        "sortTitle": "to crushru",
+        "title": "To GLIMMER-Zu",
+        "sortTitle": "to glimmerzu",
         "status": "ended",
         "ended": true,
-        "overview": "When an alien from the planet Deviluke runs away and goes into hiding on earth, she meets a human named Yuuki Rito. Watch as she wants to get married to him while he wants no part of it",
+        "overview": "In a seaside town where every lantern holds a stored memory, restoration student Kana discovers that lighting one replays it for everyone nearby. Together with a rival glassblower named Rui, she sets out to catalog every lantern before the memories fade for good.",
         "network": "Tokyo MX",
         "airTime": "00:00",
         "images": [
             {
                 "coverType": "banner",
-                "remoteUrl": "https://artworks.thetvdb.com/banners/graphical/81831-g2.jpg"
+                "remoteUrl": "https://artworks.example.com/banners/graphical/990001-g2.jpg"
             },
             {
                 "coverType": "poster",
-                "remoteUrl": "https://artworks.thetvdb.com/banners/posters/81831-4.jpg"
+                "remoteUrl": "https://artworks.example.com/banners/posters/990001-4.jpg"
             },
             {
                 "coverType": "fanart",
-                "remoteUrl": "https://artworks.thetvdb.com/banners/fanart/original/81831-11.jpg"
+                "remoteUrl": "https://artworks.example.com/banners/fanart/original/990001-11.jpg"
             },
             {
                 "coverType": "clearlogo",
-                "remoteUrl": "https://artworks.thetvdb.com/banners/v4/series/81831/clearlogo/611bc324bac7c.png"
+                "remoteUrl": "https://artworks.example.com/banners/v4/series/990001/clearlogo/aaaa0000bbbb1.png"
             }
         ],
         "originalLanguage": {
@@ -103,23 +103,23 @@
             }
         ],
         "year": 2008,
-        "path": "/tv/To CRUSH-Ru (2008)",
+        "path": "/tv/To GLIMMER-Zu (2008)",
         "qualityProfileId": 6,
         "seasonFolder": true,
         "monitored": true,
         "monitorNewItems": "all",
         "useSceneNumbering": true,
         "runtime": 25,
-        "tvdbId": 81831,
-        "tvRageId": 18569,
-        "tvMazeId": 5196,
-        "tmdbId": 34742,
+        "tvdbId": 990001,
+        "tvRageId": 990002,
+        "tvMazeId": 990003,
+        "tmdbId": 990004,
         "firstAired": "2008-04-04T00:00:00Z",
         "lastAired": "2015-10-29T00:00:00Z",
         "seriesType": "standard",
-        "cleanTitle": "tocrushru",
-        "imdbId": "tt1216222",
-        "titleSlug": "to-crush-ru",
+        "cleanTitle": "toglimmerzu",
+        "imdbId": "tt9900123",
+        "titleSlug": "to-glimmer-zu",
         "certification": "TV-MA",
         "genres": [
             "Action",
@@ -143,23 +143,23 @@
     "episodes": [
         {
             "seriesId": 72,
-            "tvdbId": 381150,
-            "episodeFileId": 14402,
-            "seasonNumber": 1,
-            "episodeNumber": 14,
-            "title": "A Secret Between the Two of Us",
-            "airDate": "2008-07-04",
-            "airDateUtc": "2008-07-03T15:00:00Z",
+            "tvdbId": 9900301,
+            "episodeFileId": 14429,
+            "seasonNumber": 3,
+            "episodeNumber": 1,
+            "title": "Relight",
+            "airDate": "2012-10-06",
+            "airDateUtc": "2012-10-05T15:00:00Z",
             "runtime": 25,
-            "overview": "After thinking about what Lala's father said to him, and the challenge that lies ahead, he brainstorms ideas on how to become the number one man in the universe. He starts training and meets Haruna, walking her dog, Maron, during his first run. After explaining to Haruna that he must change, she decides to cheer him on, meeting everyday during his runs. His goal to change also affects Haruna, who eventually asks him on date to eat lunch together at the river bank. During that time, Haruna's dog chased a bird and eventually lands into the river. After Rito saves him, the two go to Haruna's house to clean Rito's wet clothes. While waiting for his clothes to dry (Rito ended up wearing a towel), the two talked about their middle school days. When Haruna was about to go to check if Rito's clothes were dry, she trips. They almost kiss, only to have Haruna's older sister walk in on them, and it turns into another awkward situation when Rito's towel falls off.",
+            "overview": "The catalog reopens after the winter storm: half the harbor lanterns have gone dark, and a stranger claiming to represent the mainland registry starts buying them up.\r\nKana and Rui race to relight what they can before the collection is shipped out.",
             "hasFile": true,
             "monitored": false,
-            "absoluteEpisodeNumber": 14,
-            "sceneAbsoluteEpisodeNumber": 14,
-            "sceneEpisodeNumber": 14,
-            "sceneSeasonNumber": 1,
+            "absoluteEpisodeNumber": 46,
+            "sceneAbsoluteEpisodeNumber": 1,
+            "sceneEpisodeNumber": 1,
+            "sceneSeasonNumber": 3,
             "unverifiedSceneNumbering": false,
-            "id": 2886
+            "id": 2911
         }
     ],
     "languages": [
@@ -168,11 +168,6 @@
             "name": "Japanese"
         }
     ],
-    "customFormats": [
-        {
-            "id": 222,
-            "name": "1080p"
-        }
-    ],
-    "customFormatScore": 50
+    "customFormats": [],
+    "customFormatScore": 0
 }

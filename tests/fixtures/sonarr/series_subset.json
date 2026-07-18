@@ -1,44 +1,44 @@
 [
   {
-    "title": "To CRUSH-Ru",
+    "title": "To GLIMMER-Zu",
     "alternateTitles": [
       {
-        "title": "To Crush-Ru",
+        "title": "To Glimmer-Zu",
         "sceneSeasonNumber": -1
       },
       {
-        "title": "Motto To Crush-Ru",
+        "title": "Shin To Glimmer-Zu",
         "sceneSeasonNumber": 2
       },
       {
-        "title": "Motto To Crush-Ru Trouble",
+        "title": "Shin To Glimmer-Zu Havoc",
         "sceneSeasonNumber": 2
       },
       {
-        "title": "To Crush-Ru Darkness",
+        "title": "To Glimmer-Zu Eclipse",
         "sceneSeasonNumber": 3
       },
       {
-        "title": "To Crush Ru",
+        "title": "To Glimmer Zu",
         "sceneSeasonNumber": 1
       },
       {
-        "title": "To Crush-Ru Trouble Darkness",
+        "title": "To Glimmer-Zu Havoc Eclipse",
         "sceneSeasonNumber": 3
       },
       {
-        "title": "To Crush-Ru Darkness 2nd",
+        "title": "To Glimmer-Zu Eclipse 2nd",
         "sceneSeasonNumber": 4
       },
       {
-        "title": "To Crush-Ru Trouble Darkness 2nd",
+        "title": "To Glimmer-Zu Havoc Eclipse 2nd",
         "sceneSeasonNumber": 4
       }
     ],
-    "sortTitle": "to crushru",
+    "sortTitle": "to glimmerzu",
     "status": "ended",
     "ended": true,
-    "overview": "When an alien from the planet Deviluke runs away and goes into hiding on earth, she meets a human named Yuuki Rito. Watch as she wants to get married to him while he wants no part of it",
+    "overview": "In a seaside town where every lantern holds a stored memory, restoration student Kana discovers that lighting one replays it for everyone nearby. Together with a rival glassblower named Rui, she sets out to catalog every lantern before the memories fade for good.",
     "network": "Tokyo MX",
     "airTime": "00:00",
     "originalLanguage": {
@@ -119,23 +119,23 @@
       }
     ],
     "year": 2008,
-    "path": "/tv/To CRUSH-Ru (2008)",
+    "path": "/tv/To GLIMMER-Zu (2008)",
     "qualityProfileId": 6,
     "seasonFolder": true,
     "monitored": true,
     "monitorNewItems": "all",
     "useSceneNumbering": true,
     "runtime": 25,
-    "tvdbId": 81831,
-    "tvRageId": 18569,
-    "tvMazeId": 5196,
-    "tmdbId": 34742,
+    "tvdbId": 990001,
+    "tvRageId": 990002,
+    "tvMazeId": 990003,
+    "tmdbId": 990004,
     "firstAired": "2008-04-04T00:00:00Z",
     "lastAired": "2015-10-29T00:00:00Z",
     "seriesType": "standard",
-    "cleanTitle": "tocrushru",
-    "imdbId": "tt1216222",
-    "titleSlug": "to-crush-ru",
+    "cleanTitle": "toglimmerzu",
+    "imdbId": "tt9900123",
+    "titleSlug": "to-glimmer-zu",
     "rootFolderPath": "/tv",
     "certification": "TV-MA",
     "genres": [

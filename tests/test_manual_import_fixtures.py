@@ -11,7 +11,7 @@ resolved episode set - identity comes from the same mapping the add flow
 already trusts. Sonarr's title match only informs, in-set (`matched_episodes`).
 
 The pure `assign_episode_ids` tests encode the three cases raised during triage
-(correctly-named specials, mis-numbered specials, multi-season "To Crush-Ru").
+(correctly-named specials, mis-numbered specials, multi-season "To Glimmer-Zu").
 The end-to-end test drives the real Yamada fixtures through `import_completed`.
 """
 
@@ -184,7 +184,7 @@ class TestParsedFileInfoFromRealBodies:
         assert info.absolute_episode_numbers == ()
 
     def test_absolute_numbered_file_reports_absolute_not_season_episode(self) -> None:
-        body: dict[str, object] = load_fixture("parse_crushru_abs14.json")
+        body: dict[str, object] = load_fixture("parse_glimmerzu_abs14.json")
         info = ParsedFileInfo.model_validate(body)
         assert info.episode_numbers == ()
         assert info.absolute_episode_numbers == (14,)
@@ -597,13 +597,13 @@ class TestAssignMatchedPairs:
 class TestAssignGuards:
     """Leg 3: refuse to guess - skip + warn instead."""
 
-    def test_crushru_per_title_restart_is_refused(self) -> None:
+    def test_glimmerzu_per_title_restart_is_refused(self) -> None:
         # One torrent spanning two sub-series whose numbering BOTH restart at 1:
         # the shared absolutes are the tell of a season-boundary scramble, so the
         # whole absolute leg is refused rather than mis-assigned.
         main = {f"main-{i:02d}.mkv": _pinfo(absolutes=(i,)) for i in range(1, 4)}
-        dark = {f"dark-{i:02d}.mkv": _pinfo(absolutes=(i,)) for i in range(1, 4)}
-        parsed = {**main, **dark}
+        eclipse = {f"eclipse-{i:02d}.mkv": _pinfo(absolutes=(i,)) for i in range(1, 4)}
+        parsed = {**main, **eclipse}
         files = list(parsed)
         resolved = [501, 502, 503, 601, 602, 603]
 
@@ -913,7 +913,7 @@ class TestAssignScopeGate:
         # With NO resolved set, the absolute leg has nothing to index into, so an
         # absolute-only pack (Overlord-style "- 01".."- 03") is left for manual
         # placement rather than guessed - absolute numbers are never trusted to
-        # decide identity on their own (the To Crush-Ru safety posture).
+        # decide identity on their own (the To Glimmer-Zu safety posture).
         files = [f"{n:02d}.mkv" for n in range(1, 4)]
         parsed = {name: _pinfo(season=0, absolutes=(i + 1,)) for i, name in enumerate(files)}
 

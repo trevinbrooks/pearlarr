@@ -1,0 +1,178 @@
+{
+    "title": "[Group] To Glimmer-Zu - 14 [BDRip 1920x1080].mkv",
+    "parsedEpisodeInfo": {
+        "releaseTitle": "[Group] To Glimmer-Zu - 14 [BDRip 1920x1080]",
+        "seriesTitle": "To Glimmer-Zu",
+        "seriesTitleInfo": {
+            "title": "To Glimmer-Zu",
+            "titleWithoutYear": "To Glimmer-Zu",
+            "year": 0
+        },
+        "quality": {
+            "quality": {
+                "id": 7,
+                "name": "Bluray-1080p",
+                "source": "bluray",
+                "resolution": 1080
+            },
+            "revision": {
+                "version": 1,
+                "real": 0,
+                "isRepack": false
+            }
+        },
+        "seasonNumber": 0,
+        "episodeNumbers": [],
+        "absoluteEpisodeNumbers": [
+            14
+        ],
+        "specialAbsoluteEpisodeNumbers": [],
+        "languages": [
+            {
+                "id": 0,
+                "name": "Unknown"
+            }
+        ],
+        "fullSeason": false,
+        "isPartialSeason": false,
+        "isMultiSeason": false,
+        "isSeasonExtra": false,
+        "isSplitEpisode": false,
+        "isMiniSeries": false,
+        "special": false,
+        "releaseGroup": "Group",
+        "releaseHash": "",
+        "seasonPart": 0,
+        "releaseTokens": " [BDRip 1920x1080]",
+        "isDaily": false,
+        "isAbsoluteNumbering": true,
+        "isPossibleSpecialEpisode": false,
+        "isPossibleSceneSeasonSpecial": false,
+        "releaseType": "singleEpisode"
+    },
+    "series": {
+        "title": "To GLIMMER-Zu",
+        "sortTitle": "to glimmerzu",
+        "status": "ended",
+        "ended": true,
+        "overview": "In a seaside town where every lantern holds a stored memory, restoration student Kana discovers that lighting one replays it for everyone nearby. Together with a rival glassblower named Rui, she sets out to catalog every lantern before the memories fade for good.",
+        "network": "Tokyo MX",
+        "airTime": "00:00",
+        "images": [
+            {
+                "coverType": "banner",
+                "remoteUrl": "https://artworks.example.com/banners/graphical/990001-g2.jpg"
+            },
+            {
+                "coverType": "poster",
+                "remoteUrl": "https://artworks.example.com/banners/posters/990001-4.jpg"
+            },
+            {
+                "coverType": "fanart",
+                "remoteUrl": "https://artworks.example.com/banners/fanart/original/990001-11.jpg"
+            },
+            {
+                "coverType": "clearlogo",
+                "remoteUrl": "https://artworks.example.com/banners/v4/series/990001/clearlogo/aaaa0000bbbb1.png"
+            }
+        ],
+        "originalLanguage": {
+            "id": 8,
+            "name": "Japanese"
+        },
+        "seasons": [
+            {
+                "seasonNumber": 0,
+                "monitored": false
+            },
+            {
+                "seasonNumber": 1,
+                "monitored": false
+            },
+            {
+                "seasonNumber": 2,
+                "monitored": true
+            },
+            {
+                "seasonNumber": 3,
+                "monitored": false
+            },
+            {
+                "seasonNumber": 4,
+                "monitored": false
+            }
+        ],
+        "year": 2008,
+        "path": "/tv/To GLIMMER-Zu (2008)",
+        "qualityProfileId": 6,
+        "seasonFolder": true,
+        "monitored": true,
+        "monitorNewItems": "all",
+        "useSceneNumbering": true,
+        "runtime": 25,
+        "tvdbId": 990001,
+        "tvRageId": 990002,
+        "tvMazeId": 990003,
+        "tmdbId": 990004,
+        "firstAired": "2008-04-04T00:00:00Z",
+        "lastAired": "2015-10-29T00:00:00Z",
+        "seriesType": "standard",
+        "cleanTitle": "toglimmerzu",
+        "imdbId": "tt9900123",
+        "titleSlug": "to-glimmer-zu",
+        "certification": "TV-MA",
+        "genres": [
+            "Action",
+            "Animation",
+            "Anime",
+            "Comedy",
+            "Fantasy",
+            "Romance"
+        ],
+        "tags": [
+            2
+        ],
+        "added": "2023-03-07T02:47:09Z",
+        "ratings": {
+            "votes": 2117,
+            "value": 6.5
+        },
+        "languageProfileId": 1,
+        "id": 72
+    },
+    "episodes": [
+        {
+            "seriesId": 72,
+            "tvdbId": 9900114,
+            "episodeFileId": 14402,
+            "seasonNumber": 1,
+            "episodeNumber": 14,
+            "title": "The Harbor Ledger",
+            "airDate": "2008-07-04",
+            "airDateUtc": "2008-07-03T15:00:00Z",
+            "runtime": 25,
+            "overview": "Kana traces a mislabeled lantern to the old harbor office and finds a ledger of lights that were never entered in the town catalog. Rui bets her he can restore one before the festival, and neither of them is ready for whose memory it turns out to hold.",
+            "hasFile": true,
+            "monitored": false,
+            "absoluteEpisodeNumber": 14,
+            "sceneAbsoluteEpisodeNumber": 14,
+            "sceneEpisodeNumber": 14,
+            "sceneSeasonNumber": 1,
+            "unverifiedSceneNumbering": false,
+            "id": 2886
+        }
+    ],
+    "languages": [
+        {
+            "id": 8,
+            "name": "Japanese"
+        }
+    ],
+    "customFormats": [
+        {
+            "id": 222,
+            "name": "1080p"
+        }
+    ],
+    "customFormatScore": 50
+}
