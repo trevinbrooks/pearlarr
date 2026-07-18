@@ -72,6 +72,7 @@ def _make_pending(*, infohash: str, title: str) -> PendingImport:
     return PendingImport(
         infohash=infohash,
         series_id=1,
+        al_id=1,
         file_episode_map={},
         episode_ids=[],
         release_group="",

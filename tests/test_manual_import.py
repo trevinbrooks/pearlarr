@@ -19,6 +19,7 @@ from pearlarr.manual_import import (
     ImportReadiness,
     ImportWaitMode,
     PendingImport,
+    PendingKey,
     PendingState,
     TorrentTelemetry,
     WaitOutcome,
@@ -776,6 +777,7 @@ class TestPendingImportRoundTrip:
         pending = PendingImport(
             infohash="abc123",
             series_id=55,
+            al_id=990,
             file_episode_map={"ep1.mkv": [11], "ep2.mkv": [12]},
             episode_ids=[11, 12],
             release_group="Era-Raws",
@@ -793,6 +795,10 @@ class TestPendingImportRoundTrip:
         assert rebuilt.infohash == "h"
         assert rebuilt.file_episode_map == {}
         assert rebuilt.title is None
+        # A legacy record with no al_id rehydrates under the 0 sentinel and keys
+        # as its hash's singleton.
+        assert rebuilt.al_id == 0
+        assert rebuilt.key == PendingKey("h", 0)
 
     def test_display_label_is_title_dot_group_with_fallbacks(self) -> None:
         # The group disambiguates a series that grabbed several torrents. A
@@ -837,6 +843,7 @@ class TestPendingImportRoundTrip:
         pending = PendingImport(
             infohash="h",
             series_id=1,
+            al_id=1,
             file_episode_map={},
             episode_ids=[],
             release_group="RG",

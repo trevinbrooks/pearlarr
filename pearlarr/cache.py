@@ -49,6 +49,7 @@ from seadex import EntryRecord
 
 from . import __version__
 from .config import Arr
+from .manual_import import PendingKey
 from .output import hub_note
 from .sqlite_util import connect as _sqlite_connect
 from .sqlite_util import open_or_quarantine, rollback_and_close
@@ -115,8 +116,13 @@ CREATE INDEX IF NOT EXISTS ix_sonarr_parse_fetched ON sonarr_parse (fetched_at);
 CREATE TABLE IF NOT EXISTS pending_imports (
     arr      TEXT NOT NULL,
     infohash TEXT NOT NULL,
+    -- One torrent can be listed on several AniList entries, each with its own
+    -- pending record for its own episode slice, so al_id is part of the key.
+    -- 0 is the legacy sentinel (a record persisted before the column existed,
+    -- backfilled by the v1 -> v2 rebuild; it acts as its hash's singleton).
+    al_id    INTEGER NOT NULL DEFAULT 0,
     record   BLOB NOT NULL,
-    PRIMARY KEY (arr, infohash)
+    PRIMARY KEY (arr, infohash, al_id)
 );
 
 CREATE TABLE IF NOT EXISTS history_checkpoints (
@@ -130,7 +136,7 @@ CREATE TABLE IF NOT EXISTS history_checkpoints (
 # stamped at this version on create (the :memory: db carries the stamp through the
 # promote backup). An older db is walked up through `_MIGRATIONS` one step at a
 # time. Bump it (and append a step) whenever a shipped table changes shape.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class CacheSchemaError(RuntimeError):
@@ -154,10 +160,39 @@ def _migrate_0_to_1(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE entries ADD COLUMN fallback_satisfied INTEGER NOT NULL DEFAULT 0")
 
 
+def _migrate_1_to_2(conn: sqlite3.Connection) -> None:
+    """Rebuild `pending_imports` with `al_id` in the PK (SQLite cannot alter a PK).
+
+    A torrent listed on several AniList entries needs one pending record per
+    entry, so the key grows from `(arr, infohash)` to `(arr, infohash, al_id)`.
+    Legacy rows backfill `al_id` from the record JSON when present, else the 0
+    sentinel (the record keeps working as its hash's singleton). Guarded on the
+    column: a db whose table already carries `al_id` (created fresh by `_SCHEMA`
+    just before the walk) is left alone.
+    """
+
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(pending_imports)")}
+    if "al_id" in cols:
+        return
+    conn.execute(
+        "CREATE TABLE pending_imports_v2 ("
+        "arr TEXT NOT NULL, infohash TEXT NOT NULL, "
+        "al_id INTEGER NOT NULL DEFAULT 0, record BLOB NOT NULL, "
+        "PRIMARY KEY (arr, infohash, al_id))",
+    )
+    conn.execute(
+        "INSERT INTO pending_imports_v2 (arr, infohash, al_id, record) "
+        "SELECT arr, infohash, COALESCE(record ->> 'al_id', 0), record FROM pending_imports",
+    )
+    conn.execute("DROP TABLE pending_imports")
+    conn.execute("ALTER TABLE pending_imports_v2 RENAME TO pending_imports")
+
+
 # Step `n` brings a version-n db to version n+1. `_ensure_schema` applies the
 # steps in order, one transaction per step, until SCHEMA_VERSION is reached.
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     0: _migrate_0_to_1,
+    1: _migrate_1_to_2,
 }
 
 
@@ -307,7 +342,7 @@ class _JsonBlock(NamedTuple):
 
 _ANILIST_META = _JsonBlock("anilist_meta", ("al_id",))
 _SONARR_PARSE = _JsonBlock("sonarr_parse", ("filename",))
-_PENDING_IMPORTS = _JsonBlock("pending_imports", ("arr", "infohash"))
+_PENDING_IMPORTS = _JsonBlock("pending_imports", ("arr", "infohash", "al_id"))
 
 
 class CacheStats(NamedTuple):
@@ -397,13 +432,15 @@ class AbstractCacheStore(ABC):
     @abstractmethod
     def evict_sonarr_parse(self, cutoff: datetime) -> int: ...
     @abstractmethod
-    def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]: ...
+    def get_pending(self, arr: Arr) -> dict[PendingKey, dict[str, Any]]: ...
     @abstractmethod
-    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]: ...
+    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[PendingKey, dict[str, Any]]: ...
     @abstractmethod
-    def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None: ...
+    def put_pending(self, arr: Arr, key: PendingKey, record: dict[str, Any]) -> None: ...
     @abstractmethod
-    def drop_pending(self, arr: Arr, infohash: str) -> None: ...
+    def drop_pending(self, arr: Arr, key: PendingKey) -> None: ...
+    @abstractmethod
+    def count_pending_for_infohash(self, infohash: str) -> int: ...
     @abstractmethod
     def get_history_checkpoint(self, arr: Arr) -> HistoryCheckpoint | None: ...
     @abstractmethod
@@ -727,12 +764,12 @@ class CacheStore(AbstractCacheStore):
             (*key, json.dumps(record)),
         )
 
-    def _pending_rows(self, sql: str, params: tuple[int | str, ...]) -> dict[str, dict[str, Any]]:
-        """Deserialize a `SELECT infohash, json(record)` pending-imports query, keyed by infohash."""
+    def _pending_rows(self, sql: str, params: tuple[int | str, ...]) -> dict[PendingKey, dict[str, Any]]:
+        """Deserialize a `SELECT infohash, al_id, json(record)` pending-imports query, keyed per record."""
 
-        out: dict[str, dict[str, Any]] = {}
-        for infohash, rec_json in self._conn.execute(sql, params):
-            out[infohash] = json.loads(rec_json)
+        out: dict[PendingKey, dict[str, Any]] = {}
+        for infohash, al_id, rec_json in self._conn.execute(sql, params):
+            out[PendingKey(infohash, al_id)] = json.loads(rec_json)
         return out
 
     def _evict_stale_json(self, block: _JsonBlock, cutoff: datetime) -> int:
@@ -795,21 +832,22 @@ class CacheStore(AbstractCacheStore):
     # -- pending imports -----------------------------------------------------
 
     @override
-    def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]:
-        """All pending-import records for an arr, keyed by infohash (snapshot).
+    def get_pending(self, arr: Arr) -> dict[PendingKey, dict[str, Any]]:
+        """All pending-import records for an arr, keyed per record (snapshot).
 
-        Returns a plain dict copy. Mutating it does not touch the store (use
-        `put_pending` / `drop_pending`).
+        Keyed by `PendingKey` - one torrent shared by several AniList
+        entries holds one record per entry. Returns a plain dict copy. Mutating
+        it does not touch the store (use `put_pending` / `drop_pending`).
         """
 
         return self._pending_rows(
-            "SELECT infohash, json(record) FROM pending_imports WHERE arr = ?",
+            "SELECT infohash, al_id, json(record) FROM pending_imports WHERE arr = ?",
             (_arr_key(arr),),
         )
 
     @override
-    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
-        """Pending-import records for one Sonarr `series_id`, keyed by infohash.
+    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[PendingKey, dict[str, Any]]:
+        """Pending-import records for one Sonarr `series_id`, keyed per record.
 
         Same fresh-per-call snapshot as `get_pending` (a record dropped earlier
         this run is already absent), but the `series_id` filter is pushed into SQL
@@ -820,24 +858,48 @@ class CacheStore(AbstractCacheStore):
         """
 
         return self._pending_rows(
-            "SELECT infohash, json(record) FROM pending_imports WHERE arr = ? AND record ->> 'series_id' = ?",
+            "SELECT infohash, al_id, json(record) FROM pending_imports WHERE arr = ? AND record ->> 'series_id' = ?",
             (_arr_key(arr), series_id),
         )
 
     @override
-    def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
-        """Upsert a pending-import record (staged, persisted at a save point)."""
+    def put_pending(self, arr: Arr, key: PendingKey, record: dict[str, Any]) -> None:
+        """Upsert one record under its `PendingKey` (staged, persisted at a save point).
 
-        self._json_put(_PENDING_IMPORTS, (_arr_key(arr), infohash), record)
+        The composite key means a re-registration of the SAME record (same
+        torrent, same entry) overwrites, while a sibling entry's record for the
+        same torrent lands beside it.
+        """
+
+        self._json_put(_PENDING_IMPORTS, (_arr_key(arr), key.infohash, key.al_id), record)
 
     @override
-    def drop_pending(self, arr: Arr, infohash: str) -> None:
-        """Delete a pending-import record (staged, persisted at a save point)."""
+    def drop_pending(self, arr: Arr, key: PendingKey) -> None:
+        """Delete ONE pending record - never its siblings on the same torrent."""
 
         self._conn.execute(
-            "DELETE FROM pending_imports WHERE arr = ? AND infohash = ?",
-            (_arr_key(arr), infohash),
+            "DELETE FROM pending_imports WHERE arr = ? AND infohash = ? AND al_id = ?",
+            (_arr_key(arr), key.infohash, key.al_id),
         )
+
+    @override
+    def count_pending_for_infohash(self, infohash: str) -> int:
+        """How many pending records - across BOTH arrs - still reference `infohash`.
+
+        The post-import category gate: the mover may only flag a torrent once no
+        record still claims a slice of it. Deliberately cross-arr-wide (no arr
+        param): the category is a property of the torrent, not of one arr's run,
+        so the gate stays correct if the other arr ever grows pending records.
+        The per-arr dedup helpers (`check_al_id_in_cache` and friends) keep their
+        explicit arr params - they answer per-arr questions - so do not fold this
+        into them.
+        """
+
+        row = self._conn.execute(
+            "SELECT count(*) FROM pending_imports WHERE infohash = ?",
+            (infohash,),
+        ).fetchone()
+        return int(row[0]) if row else 0
 
     # -- history checkpoints --------------------------------------------------
 

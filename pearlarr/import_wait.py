@@ -29,6 +29,7 @@ from .manual_import import (
     Outcome,
     OutcomeCategory,
     PendingImport,
+    PendingKey,
     PendingState,
     TorrentProbe,
     TorrentTelemetry,
@@ -96,21 +97,19 @@ class ImportWaitManager:
         self._ctx = ctx
         self._active_strategy = strategy
 
-    def _pending_records(self) -> dict[str, PendingImport]:
-        """A rehydrated snapshot of the per-Arr `{infohash -> PendingImport}` store.
+    def _pending_records(self) -> dict[PendingKey, PendingImport]:
+        """A rehydrated snapshot of the per-Arr `{PendingKey -> PendingImport}` store.
 
         Thin read wrapper over `CacheStore.get_pending` (the raw-JSON SQLite
         boundary): a fresh copy each call, with every value rehydrated ONCE via
         `PendingImport.from_json` so the wait passes only ever handle typed
-        records. Read-only - the two mutators go straight through the facade
+        records. Keyed per record, so siblings sharing one torrent all surface.
+        Read-only - the two mutators go straight through the facade
         (`CacheStore.put_pending` in `_register_pending_import` and
         `CacheStore.drop_pending` in `drop_pending`).
         """
 
-        return {
-            infohash: PendingImport.from_json(raw)
-            for infohash, raw in self.cache_store.get_pending(self._ctx.arr).items()
-        }
+        return {key: PendingImport.from_json(raw) for key, raw in self.cache_store.get_pending(self._ctx.arr).items()}
 
     def poll_torrent(self, infohash: str) -> TorrentProbe:
         """Poll qBittorrent once for a torrent's terminal/in-progress state.
@@ -221,32 +220,31 @@ class ImportWaitManager:
             return ImportProgress(0, 0, determinate=False)
         return self._active_strategy.import_progress(pending)
 
-    def _this_run_infohashes(self) -> set[str]:
-        """Infohashes grabbed THIS run - excluded from the carried-over passes.
+    def _this_run_keys(self) -> set[PendingKey]:
+        """Record keys grabbed THIS run - excluded from the carried-over passes.
 
         A this-run grab is reported as `added`. The snapshot / reconcile / tally
         skip these so a record is never double-reported as queued/importing/imported.
+        Keyed per record, not per hash: a carried-over sibling on the same torrent
+        (a prior run's record for another entry) must still be reconciled.
         """
 
-        return {p.infohash for p in self._ctx.pending_imports}
+        return {p.key for p in self._ctx.pending_imports}
 
-    def _reconcile_one(
-        self,
-        infohash: str,
-        pending: PendingImport,
-    ) -> PendingState:
+    def _reconcile_one(self, pending: PendingImport) -> PendingState:
         """Poll one carried-over record once and fold it to a `PendingState`.
 
         Shared by the inline snapshot and the deferred reconcile: one non-blocking
         `poll_torrent`, then on COMPLETE drive one forced (CDH-off safe),
         non-deadline import attempt (so a still-missing file never warns). The
         outcome + the probe's verified-files flag fold through
-        `classify_pending` into one state, stashed per infohash for the
-        pre-summary tally. A terminal IMPORTED is dropped + counted, a MISSING is
+        `classify_pending` into one state, stashed per record key for the
+        pre-summary tally. A terminal IMPORTED is dropped + counted (drop FIRST,
+        so the category gate sees only genuinely-remaining records), a MISSING is
         dropped. Returns the classified state.
         """
 
-        poll = self.poll_torrent(infohash)
+        poll = self.poll_torrent(pending.infohash)
         probe = ImportProbe(ImportReadiness.LEAVE, files_present=False, command_issued=False)
         if poll.outcome is WaitOutcome.COMPLETE and poll.content_path:
             probe = self.try_import_completed(
@@ -257,13 +255,13 @@ class ImportWaitManager:
             )
 
         state = classify_pending(poll.outcome, probe.files_present)
-        self._ctx.pending_states[infohash] = state
+        self._ctx.pending_states[pending.key] = state
         if state is PendingState.IMPORTED:
-            self.apply_post_import_category(infohash, pending.display_label)
-            self.drop_pending(infohash)
+            self.drop_pending(pending)
+            self.apply_post_import_category(pending)
             self._ctx.stats.imported += 1
         elif state is PendingState.MISSING:
-            self.drop_pending(infohash)
+            self.drop_pending(pending)
         return state
 
     def snapshot_pending_for_series(self, series_id: int) -> None:
@@ -278,25 +276,25 @@ class ImportWaitManager:
         if self._active_strategy is None:
             return
 
-        run_grabs = self._this_run_infohashes()
+        run_grabs = self._this_run_keys()
         # Fresh per call and SQL-filtered to this series (so a record dropped earlier
         # this run is already absent) - replaces a full get_pending scan + Python
         # series filter once per series. The `record ->> 'series_id'` match only
         # returns JSON objects, rehydrated here (the series-scoped raw boundary).
-        for infohash, raw in self.cache_store.get_pending_for_series(self._ctx.arr, series_id).items():
+        for key, raw in self.cache_store.get_pending_for_series(self._ctx.arr, series_id).items():
             # Skip this-run grabs: they're already reported as `added`, so a
             # `queued`/`importing`/`imported` row here would be a double report.
-            if infohash in run_grabs:
+            if key in run_grabs:
                 continue
             pending = PendingImport.from_json(raw)
-            state = self._reconcile_one(infohash, pending)
+            state = self._reconcile_one(pending)
             self._reporter.log_pending_snapshot(state, pending)
 
     def reconcile_remaining(self) -> None:
         """Non-blocking force-poll of carried-over records NOT snapshotted this run.
 
         The deferred-mode pre-summary step: reconciles, via `_reconcile_one`,
-        every durable record whose infohash wasn't already touched by the
+        every durable record whose key wasn't already touched by the
         per-series inline snapshot and isn't a this-run grab (those stay
         `added`). Quiet (no live region, deferred never blocks).
         """
@@ -304,13 +302,13 @@ class ImportWaitManager:
         if self._active_strategy is None:
             return
 
-        run_grabs = self._this_run_infohashes()
-        for infohash, pending in self._pending_records().items():
-            if infohash in self._ctx.pending_states:
+        run_grabs = self._this_run_keys()
+        for key, pending in self._pending_records().items():
+            if key in self._ctx.pending_states:
                 continue
-            if infohash in run_grabs:
+            if key in run_grabs:
                 continue
-            self._reconcile_one(infohash, pending)
+            self._reconcile_one(pending)
 
     def tally_carried_over_into_stats(self) -> None:
         """Bump queued/importing from each carried-over record's known status.
@@ -324,14 +322,14 @@ class ImportWaitManager:
         no record is ever double-counted.
         """
 
-        run_grabs = self._this_run_infohashes()
+        run_grabs = self._this_run_keys()
         # Iterate the raw stored keys, not `_pending_records()`: the loop reads only
-        # the infohash + `pending_states`, so rehydrating each record via
+        # the key + `pending_states`, so rehydrating each record via
         # `PendingImport.from_json` would build a full map only to discard it.
-        for infohash in self.cache_store.get_pending(self._ctx.arr):
-            if infohash in run_grabs:
+        for key in self.cache_store.get_pending(self._ctx.arr):
+            if key in run_grabs:
                 continue
-            state = self._ctx.pending_states.get(infohash, PendingState.QUEUED)
+            state = self._ctx.pending_states.get(key, PendingState.QUEUED)
             if state is PendingState.IMPORTING:
                 self._ctx.stats.importing += 1
             elif state is PendingState.QUEUED:
@@ -348,11 +346,12 @@ class ImportWaitManager:
 
         The blocking/hybrid end-of-run pass, run dead last (after the scoreboard is
         printed). The working set is every pending record - this run's grabs
-        (`_ctx.pending_imports`) AND carried-over store records, deduped by
-        infohash - so a single-series run still finishes other-series carried-over
+        (`_ctx.pending_imports`) AND carried-over store records, deduped per
+        record (`PendingKey`, so siblings sharing one torrent each get a row) - so
+        a single-series run still finishes other-series carried-over
         downloads (the configured "monitor ALL" choice). Each cycle advances every
-        active torrent once (so a fast torrent isn't stuck behind a slow one) into a
-        `dict[infohash -> TorrentView]`, then pushes ONE `WaitSnapshot` to
+        active record once (so a fast torrent isn't stuck behind a slow one) into a
+        `dict[row_key -> TorrentView]`, then pushes ONE `WaitSnapshot` to
         the view (which emits a graduation per newly-terminal torrent, and the
         renderers scroll it back).
         `imported` is reported ONLY when the episode files are verified present
@@ -398,8 +397,9 @@ class ImportWaitManager:
             view.update(mp.snapshot())
             while mp.active:
                 try:
+                    mp.begin_cycle()
                     for record in mp.records:
-                        if record.infohash not in mp.active:
+                        if record.key.row_key not in mp.active:
                             continue
                         mp.advance(record)
                     view.update(mp.snapshot())
@@ -460,23 +460,25 @@ class ImportWaitManager:
                 view.update(mp.snapshot())
 
     def _monitor_working_set(self) -> list[PendingImport]:
-        """Dedup `_ctx.pending_imports` + rehydrated store records by infohash.
+        """Dedup `_ctx.pending_imports` + rehydrated store records per record key.
 
         This-run grabs first (so their richer in-memory record wins a collision),
         then every durable store record not already present - the union the monitor
-        waits on so ALL pending (this run's + carried-over) is monitored.
+        waits on so ALL pending (this run's + carried-over) is monitored. Deduped
+        by `PendingKey`, never bare infohash: two entries sharing one torrent are
+        two records, each waited on for its own episode slice.
         """
 
         records: list[PendingImport] = []
-        seen: set[str] = set()
+        seen: set[PendingKey] = set()
         for pending in self._ctx.pending_imports:
-            if pending.infohash and pending.infohash not in seen:
-                seen.add(pending.infohash)
+            if pending.infohash and pending.key not in seen:
+                seen.add(pending.key)
                 records.append(pending)
-        for infohash, pending in self._pending_records().items():
-            if infohash in seen:
+        for key, pending in self._pending_records().items():
+            if key in seen:
                 continue
-            seen.add(infohash)
+            seen.add(key)
             records.append(pending)
         return records
 
@@ -494,41 +496,60 @@ class ImportWaitManager:
             days=self._config.imports.pending_max_age_days,
         )
 
-        for infohash, pending in self._pending_records().items():
+        for pending in self._pending_records().values():
             try:
                 added_at = datetime.strptime(pending.added_at, UPDATED_AT_STR_FORMAT)
             except (TypeError, ValueError):
                 self.logger.debug(
-                    f"Pending import {infohash} has an unparseable timestamp; dropping as expired",
+                    f"Pending import {pending.infohash} has an unparseable timestamp; dropping as expired",
                 )
-                self.drop_pending(infohash)
+                self.drop_pending(pending)
                 continue
             if added_at < cutoff:
                 hub_note(
                     f"Pending import {pending.display_label} is older than "
                     f"{count_noun(self._config.imports.pending_max_age_days, 'day')} - giving up on it",
                 )
-                self.drop_pending(infohash)
+                self.drop_pending(pending)
 
-    def drop_pending(self, infohash: str) -> None:
-        """Remove a pending record from both the durable store and the run list."""
+    def drop_pending(self, pending: PendingImport) -> None:
+        """Remove ONE record from both the durable store and the run list.
 
-        self.cache_store.drop_pending(self._ctx.arr, infohash)
-        self._ctx.pending_imports = [p for p in self._ctx.pending_imports if p.infohash != infohash]
+        Record-scoped (`PendingKey`): a sibling record on the same torrent -
+        another entry's still-waiting episode slice - is never dropped with it.
+        """
 
-    def apply_post_import_category(self, infohash: str, label: str) -> None:
+        self.cache_store.drop_pending(self._ctx.arr, pending.key)
+        self._ctx.pending_imports = [p for p in self._ctx.pending_imports if p.key != pending.key]
+
+    def apply_post_import_category(self, pending: PendingImport) -> None:
         """Move a verified-imported torrent to `imports.post_import_category`.
 
         Called at the two confirmed-import sites (the reconcile passes and the
-        monitor's IMPORTED terminal) - never for MISSING or a TTL drop. Creates
-        the category on first use (qBittorrent 409s an unknown one). Best-effort:
-        the import already succeeded, so a client error only warns - naming the
-        record by its `label` (display label), not the bare infohash.
+        monitor's IMPORTED terminal), AFTER the finished record is dropped -
+        never for MISSING or a TTL drop. Gated on the whole torrent being done:
+        SeaDex can list one torrent on several AniList entries, each with its own
+        record for its own episode slice, and users key delete-with-data cleanup
+        off this category - so the move happens only once NO pending record (in
+        either arr - see `CacheStore.count_pending_for_infohash`) still claims
+        the hash. The last record to verify makes the move. Creates the category
+        on first use (qBittorrent 409s an unknown one). Best-effort: the import
+        already succeeded, so a client error only warns - naming the record by
+        its display label, not the bare infohash.
         """
 
         category = self._config.imports.post_import_category
         if not category or self.qbit is None:
             return
+        remaining = self.cache_store.count_pending_for_infohash(pending.infohash)
+        if remaining:
+            self.logger.debug(
+                f"{pending.display_label}: {count_noun(remaining, 'sibling record')} still pending on "
+                "this torrent - deferring the category move",
+            )
+            return
+        label = pending.display_label
+        infohash = pending.infohash
         try:
             try:
                 self.qbit.torrents_set_category(category=category, torrent_hashes=infohash)
@@ -554,15 +575,16 @@ class MonitorPass:
     """
 
     views: dict[str, TorrentView]
-    """The current frame the manager snapshots: each infohash's `TorrentView`."""
+    """The current frame the manager snapshots: each record's `TorrentView`, keyed by the
+    record's `PendingKey.row_key` (siblings sharing a torrent are separate rows)."""
     results: list[WaitOutcomeRow]
-    """Terminal rows, one per torrent that reached a terminal outcome."""
+    """Terminal rows, one per record that reached a terminal outcome."""
     active: set[str]
-    """Infohashes still running (not yet terminal)."""
+    """Record row keys still running (not yet terminal)."""
     dl_start: dict[str, float]
-    """Per-torrent download-phase clock, stamped at construction."""
+    """Per-record download-phase clock, stamped at construction."""
     import_start: dict[str, float]
-    """Per-torrent import-phase clock, stamped on the first COMPLETE poll."""
+    """Per-record import-phase clock, stamped on the first COMPLETE poll."""
 
     def __init__(
         self,
@@ -581,18 +603,37 @@ class MonitorPass:
         # Sampled once here. The download clock for every record starts now and
         # `elapsed` measures from it.
         self.start = now()
-        self.dl_start = {r.infohash: self.start for r in records}
+        self.dl_start = {r.key.row_key: self.start for r in records}
         self.import_start = {}
-        self.active = {r.infohash for r in records}
+        self.active = {r.key.row_key for r in records}
         self.views = {
-            r.infohash: TorrentView(
-                key=r.infohash,
+            r.key.row_key: TorrentView(
+                key=r.key.row_key,
                 label=r.display_label,
                 phase=Phase.QUEUED,
             )
             for r in records
         }
+        # Each row's underlying torrent, for the telemetry batch (siblings share one).
+        self._hash_of = {r.key.row_key: r.infohash for r in records}
+        # Per-cycle heavy-poll memo: sibling records share ONE qBittorrent read
+        # per cycle (and see the same reading). Cleared by `begin_cycle`.
+        self._cycle_polls: dict[str, TorrentProbe] = {}
         self.results = []
+
+    def begin_cycle(self) -> None:
+        """Start a heavy-poll cycle: clear the shared per-hash poll memo."""
+
+        self._cycle_polls.clear()
+
+    def _poll(self, infohash: str) -> TorrentProbe:
+        """The hash's heavy poll for this cycle - read once, shared by siblings."""
+
+        probe = self._cycle_polls.get(infohash)
+        if probe is None:
+            probe = self._mgr.poll_torrent(infohash)
+            self._cycle_polls[infohash] = probe
+        return probe
 
     def elapsed(self) -> float:
         """Seconds since the pass started (off the injected clock)."""
@@ -610,28 +651,29 @@ class MonitorPass:
         Drops the durable record when (and only when) `outcome.dropped` - True for
         exactly IMPORTED and MISSING, so the displayed word and the store mutation
         can't diverge. A SUCCESS-class outcome additionally gets the post-import
-        category, keyed off the same pinned enum vocabulary. The terminal row
-        carries the pass-elapsed clock and (for an import) the verified files
-        count, so the graduation ledger can state them.
+        category, keyed off the same pinned enum vocabulary - the drop runs FIRST
+        so the category gate counts only genuinely-remaining sibling records. The
+        terminal row carries the pass-elapsed clock and (for an import) the
+        verified files count, so the graduation ledger can state them.
         """
 
-        h = record.infohash
+        k = record.key.row_key
         label = record.display_label
-        self.views[h] = TorrentView(
-            key=h,
+        self.views[k] = TorrentView(
+            key=k,
             label=label,
             phase=Phase.TERMINAL,
             outcome=outcome,
             import_done=files,
             import_total=files,
-            phase_elapsed_s=self.now() - self.dl_start[h],
+            phase_elapsed_s=self.now() - self.dl_start[k],
         )
         self.results.append(WaitOutcomeRow(label=label, outcome=outcome))
-        if outcome.category is OutcomeCategory.SUCCESS:
-            self._mgr.apply_post_import_category(h, label)
         if outcome.dropped:
-            self._mgr.drop_pending(h)
-        self.active.discard(h)
+            self._mgr.drop_pending(record)
+        if outcome.category is OutcomeCategory.SUCCESS:
+            self._mgr.apply_post_import_category(record)
+        self.active.discard(k)
 
     def advance(self, record: PendingImport) -> None:
         """Advance one torrent one monitor cycle (download or drive/verify import).
@@ -645,29 +687,30 @@ class MonitorPass:
         """
 
         h = record.infohash
+        k = record.key.row_key
         label = record.display_label
 
-        poll = self._mgr.poll_torrent(h)
+        poll = self._poll(h)
 
         if poll.outcome is None:
-            if self.now() - self.dl_start[h] >= self.dl_timeout:
+            if self.now() - self.dl_start[k] >= self.dl_timeout:
                 self._terminal(Outcome.DOWNLOAD_TIMED_OUT, record)
                 return
-            prior = self.views.get(h)
+            prior = self.views.get(k)
             if not poll.observed:
                 # Transient qBittorrent error: the zeroed probe is a placeholder,
                 # not a reading - keep the row's last real state (no 0% bar flash,
                 # no fake stall sample, an importing row stays importing) and let
                 # its clock tick.
                 if prior is not None and prior.phase is Phase.DOWNLOADING:
-                    self.views[h] = replace(prior, phase_elapsed_s=self.now() - self.dl_start[h])
+                    self.views[k] = replace(prior, phase_elapsed_s=self.now() - self.dl_start[k])
                 return
             # Speed history advances once per heavy poll (stalled/None -> 0),
             # bounded to the sparkline window. The fast telemetry refresh
             # deliberately never samples it, so the window stays minutes wide.
             history = prior.speed_history if prior is not None and prior.phase is Phase.DOWNLOADING else ()
-            self.views[h] = TorrentView(
-                key=h,
+            self.views[k] = TorrentView(
+                key=k,
                 label=label,
                 phase=Phase.DOWNLOADING,
                 fraction=poll.progress,
@@ -675,7 +718,7 @@ class MonitorPass:
                 eta_s=poll.eta_s,
                 bytes_done=poll.bytes_done,
                 bytes_total=poll.bytes_total,
-                phase_elapsed_s=self.now() - self.dl_start[h],
+                phase_elapsed_s=self.now() - self.dl_start[k],
                 speed_history=(*history, poll.speed_bps or 0)[-SPARK_SAMPLES:],
             )
             return
@@ -692,8 +735,8 @@ class MonitorPass:
             return
 
         # COMPLETE: drive / verify our import, gating `imported` on verified files.
-        self.import_start.setdefault(h, self.now())
-        at_deadline = self.now() - self.import_start[h] >= self.import_timeout
+        self.import_start.setdefault(k, self.now())
+        at_deadline = self.now() - self.import_start[k] >= self.import_timeout
         probe = self._mgr.try_import_completed(
             record,
             poll.content_path,
@@ -716,14 +759,14 @@ class MonitorPass:
             # map is whole (target_count > 0). Otherwise an indeterminate row.
             total = probe.target_count
             done = probe.imported_count
-            self.views[h] = TorrentView(
-                key=h,
+            self.views[k] = TorrentView(
+                key=k,
                 label=label,
                 phase=Phase.IMPORTING,
                 fraction=(done / total if total else 1.0),
                 import_done=(done if total else None),
                 import_total=(total if total else None),
-                phase_elapsed_s=self.now() - self.import_start[h],
+                phase_elapsed_s=self.now() - self.import_start[k],
                 command_issued=probe.command_issued,
             )
 
@@ -742,16 +785,16 @@ class MonitorPass:
 
         changed = False
         for record in self.records:
-            h = record.infohash
-            if h not in self.active:
+            k = record.key.row_key
+            if k not in self.active:
                 continue
-            view = self.views.get(h)
+            view = self.views.get(k)
             if view is None or view.phase is not Phase.IMPORTING:
                 continue
             try:
                 progress = self._mgr.import_progress(record)
             except Exception:
-                self._mgr.logger.debug(f"import progress poll for {h} failed", exc_info=True)
+                self._mgr.logger.debug(f"import progress poll for {k} failed", exc_info=True)
                 continue
             # Indeterminate (partial seed map) -> no bar, no promotion. Leave the
             # row to the heavy poll's repaired done-check.
@@ -761,12 +804,12 @@ class MonitorPass:
                 self._terminal(Outcome.IMPORTED, record, files=progress.total)
                 changed = True
             elif (progress.done, progress.total) != (view.import_done, view.import_total):
-                self.views[h] = replace(
+                self.views[k] = replace(
                     view,
                     fraction=progress.done / progress.total,
                     import_done=progress.done,
                     import_total=progress.total,
-                    phase_elapsed_s=self.now() - self.import_start.get(h, self.now()),
+                    phase_elapsed_s=self.now() - self.import_start.get(k, self.now()),
                 )
                 changed = True
         return changed
@@ -783,10 +826,16 @@ class MonitorPass:
         there is something new to draw.
         """
 
-        downloading = [h for h, view in self.views.items() if h in self.active and view.phase is Phase.DOWNLOADING]
+        downloading = [k for k, view in self.views.items() if k in self.active and view.phase is Phase.DOWNLOADING]
+        # One batch read per underlying torrent (sibling rows share the reading).
+        hashes = list(dict.fromkeys(self._hash_of[k] for k in downloading))
+        by_hash = self._mgr.poll_telemetry(hashes)
         changed = False
-        for h, telemetry in self._mgr.poll_telemetry(downloading).items():
-            view = self.views.get(h)
+        for k in downloading:
+            telemetry = by_hash.get(self._hash_of[k])
+            if telemetry is None:
+                continue
+            view = self.views.get(k)
             if view is None or view.phase is not Phase.DOWNLOADING:
                 continue
             current = TorrentTelemetry(
@@ -798,14 +847,14 @@ class MonitorPass:
             )
             if telemetry == current:
                 continue
-            self.views[h] = replace(
+            self.views[k] = replace(
                 view,
                 fraction=telemetry.progress,
                 speed_bps=telemetry.speed_bps,
                 eta_s=telemetry.eta_s,
                 bytes_done=telemetry.bytes_done,
                 bytes_total=telemetry.bytes_total,
-                phase_elapsed_s=self.now() - self.dl_start[h],
+                phase_elapsed_s=self.now() - self.dl_start[k],
             )
             changed = True
         return changed

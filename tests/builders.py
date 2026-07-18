@@ -38,7 +38,7 @@ from pearlarr.cache import (
 from pearlarr.config import AppConfig, Arr
 from pearlarr.grab_pipeline import GrabPipeline
 from pearlarr.import_wait import ImportWaitManager
-from pearlarr.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport
+from pearlarr.manual_import import ImportProbe, ImportReadiness, ImportWaitMode, PendingImport, PendingKey
 from pearlarr.mappings import MappingResolver, MappingSources
 from pearlarr.notify import Notifier
 from pearlarr.output import SeverityCounts, emit_to_hub
@@ -205,10 +205,12 @@ class FakeCacheStore(AbstractCacheStore):
         self,
         *,
         sonarr_parse: dict[str, dict[str, Any]] | None = None,
-        pending: dict[str, dict[str, dict[str, Any]]] | None = None,
+        pending: dict[str, dict[PendingKey, dict[str, Any]]] | None = None,
     ) -> None:
         self._sonarr_parse: dict[str, dict[str, Any]] = dict(sonarr_parse or {})
-        self._pending: dict[str, dict[str, dict[str, Any]]] = {arr: dict(recs) for arr, recs in (pending or {}).items()}
+        self._pending: dict[str, dict[PendingKey, dict[str, Any]]] = {
+            arr: dict(recs) for arr, recs in (pending or {}).items()
+        }
         # Per-entry records: the scalar columns keyed by (arr, al_id), and the
         # entry's torrent-hash set kept separately (the entries / torrent_hashes
         # split). An entry present with an empty scalar dict still "exists" - the
@@ -335,26 +337,32 @@ class FakeCacheStore(AbstractCacheStore):
 
     # -- pending imports --
     @override
-    def get_pending(self, arr: Arr) -> dict[str, dict[str, Any]]:
-        return {ih: deepcopy(rec) for ih, rec in self._pending.get(str(arr), {}).items()}
+    def get_pending(self, arr: Arr) -> dict[PendingKey, dict[str, Any]]:
+        return {key: deepcopy(rec) for key, rec in self._pending.get(str(arr), {}).items()}
 
     @override
-    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[str, dict[str, Any]]:
+    def get_pending_for_series(self, arr: Arr, series_id: int) -> dict[PendingKey, dict[str, Any]]:
         """Fresh deep-copied snapshot filtered to one series (mirrors the SQL `->> 'series_id'`)."""
 
         return {
-            ih: deepcopy(rec)
-            for ih, rec in self._pending.get(str(arr), {}).items()
+            key: deepcopy(rec)
+            for key, rec in self._pending.get(str(arr), {}).items()
             if rec.get("series_id") == series_id
         }
 
     @override
-    def put_pending(self, arr: Arr, infohash: str, record: dict[str, Any]) -> None:
-        self._pending.setdefault(str(arr), {})[infohash] = deepcopy(record)
+    def put_pending(self, arr: Arr, key: PendingKey, record: dict[str, Any]) -> None:
+        self._pending.setdefault(str(arr), {})[key] = deepcopy(record)
 
     @override
-    def drop_pending(self, arr: Arr, infohash: str) -> None:
-        self._pending.get(str(arr), {}).pop(infohash, None)
+    def drop_pending(self, arr: Arr, key: PendingKey) -> None:
+        self._pending.get(str(arr), {}).pop(key, None)
+
+    @override
+    def count_pending_for_infohash(self, infohash: str) -> int:
+        """Cross-arr remaining-record count (mirrors the real store's arr-less SQL count)."""
+
+        return sum(1 for recs in self._pending.values() for key in recs if key.infohash == infohash)
 
     # -- history checkpoints --
     @override
@@ -371,7 +379,7 @@ class FakeCacheStore(AbstractCacheStore):
 
         key = str(arr)
         hashes = {h.casefold() for k, hs in self._entry_hashes.items() if k[0] == key for h in hs if h}
-        hashes |= {ih.casefold() for ih in self._pending.get(key, {})}
+        hashes |= {pending_key.infohash.casefold() for pending_key in self._pending.get(key, {})}
         return frozenset(hashes)
 
     # -- maintenance: stats, integrity --
@@ -886,17 +894,23 @@ def sonarr_ep(
     )
 
 
+# The `al_id` every `pending_import`-built record carries unless overridden.
+# Exported so tests can spell a builder record's composite key without magic ints.
+PENDING_AL_ID = 1
+
+
 def pending_import(**overrides: Any) -> PendingImport:
     """A `PendingImport` carrying sane manual-import defaults.
 
     Defaults wire one mapped file to a single episode id with a matching flat
-    fallback, dual-audio off, and a single season. Pass keyword overrides to vary
-    any field (e.g. `pending_import(is_dual_audio=True)`).
+    fallback, dual-audio off, a single season, and `al_id=PENDING_AL_ID`. Pass
+    keyword overrides to vary any field (e.g. `pending_import(is_dual_audio=True)`).
     """
 
     defaults: dict[str, Any] = {
         "infohash": "abc123",
         "series_id": 7,
+        "al_id": PENDING_AL_ID,
         "file_episode_map": {"Show - 01 [1080p].mkv": [101]},
         "episode_ids": [101],
         "release_group": "SubGroup",

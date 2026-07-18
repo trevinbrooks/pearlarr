@@ -437,9 +437,13 @@ class ImportsSettings(_ConfigBase):
     # Applied by the wait machinery, so it only fires when the run's resolved
     # wait mode is non-off.
     post_import_category: str | None = None
-    """qBittorrent category applied to a torrent once its import is verified complete.
+    """qBittorrent category applied to a torrent once every import that uses it is verified complete.
 
-    Useful to give finished torrents different seeding rules. Blank keeps
+    Useful to give finished torrents different seeding rules. A torrent shared
+    by several AniList entries moves only after ALL of their imports have
+    verified. Cleanup scripts that delete torrents with data should key off
+    this category only: a later SeaDex update can attach a new entry to an
+    already-moved torrent, and deleted data is then re-downloaded. Blank keeps
     the add-time category. Only applies when `wait_mode` is not `off`.
     """
 

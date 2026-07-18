@@ -16,7 +16,7 @@ Two collaborators:
 
 import os
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, NamedTuple
 from urllib.parse import urlsplit
@@ -625,6 +625,27 @@ class _SeedStatuses(NamedTuple):
     statuses: dict[int, EpisodeFileStatus]
 
 
+@dataclass(frozen=True, slots=True)
+class PendingSeedContext:
+    """The per-entry values every seed built for one AniList entry carries.
+
+    One instance per `process_al_id` call, threaded whole into
+    `ImportReconciler.build_pending_seeds` (instead of five loose params) and
+    copied onto each `PendingImport` the entry produces.
+    """
+
+    al_id: int
+    """The AniList entry id - part of each record's `PendingKey`."""
+    series_id: int
+    """The Sonarr series id the entry's files belong to."""
+    title: str
+    """The AniList display title (logging only)."""
+    coverage: str | None = None
+    """The entry's season/episode coverage at grab time (logging only)."""
+    url: str | None = None
+    """The SeaDex entry URL at grab time (logging only)."""
+
+
 class ImportReconciler:
     """Decides a completed download's state and builds the grab-time seeds.
 
@@ -658,10 +679,7 @@ class ImportReconciler:
         *,
         seadex_dict: SeadexDict,
         ep_list: list[SonarrEpisode],
-        sonarr_series_id: int,
-        anilist_title: str,
-        coverage: str | None = None,
-        url: str | None = None,
+        entry: PendingSeedContext,
     ) -> dict[str, PendingImport]:
         """Build `infohash -> PendingImport` for every release marked to grab.
 
@@ -682,17 +700,15 @@ class ImportReconciler:
             seadex_dict: The filtered releases. `url_item.download`
                 marks the ones the engine will add.
             ep_list: The relevant Sonarr episodes (carry ids).
-            sonarr_series_id: The Sonarr series id the files belong to.
-            anilist_title: Display title for the record (logging only).
-            coverage: The entry's season/episode coverage, persisted
-                so a carried-over record can render its inline `files` line next
-                run without re-deriving it.
-            url: The SeaDex entry URL, persisted for the carried-over
-                record's inline `link` line.
+            entry: The per-entry context (al_id, series id, title,
+                coverage, url) copied onto every seed. The coverage/url ride the
+                record so a carried-over record can render its inline
+                `files`/`link` lines next run without re-deriving them.
 
         Returns:
             Seeds keyed by infohash (empty when nothing downloadable carries a
-            video file).
+            video file). Per-entry: a sibling entry sharing a torrent builds its
+            own seed with its own `al_id`, so the records coexist in the store.
         """
 
         ep_id_map = build_episode_id_map(ep_list)
@@ -740,7 +756,8 @@ class ImportReconciler:
 
                 pending_seeds[url_item.infohash] = PendingImport(
                     infohash=url_item.infohash,
-                    series_id=sonarr_series_id,
+                    series_id=entry.series_id,
+                    al_id=entry.al_id,
                     file_episode_map=file_episode_map,
                     # episode_ids is a legacy read-only fallback: never seeded (any
                     # value here would only duplicate the map, which readers dedupe).
@@ -748,10 +765,10 @@ class ImportReconciler:
                     release_group=srg,
                     is_dual_audio=url_item.is_dual_audio,
                     seadex_files=video_files,
-                    title=anilist_title,
+                    title=entry.title,
                     added_at=added_at,
-                    coverage=coverage,
-                    url=url,
+                    coverage=entry.coverage,
+                    url=entry.url,
                     ordered_episode_ids=ordered_episode_ids,
                 )
 

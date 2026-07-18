@@ -18,6 +18,7 @@ import pearlarr
 from pearlarr.cache import SCHEMA_VERSION, CacheSchemaError, CacheStore, HistoryCheckpoint
 from pearlarr.config import Arr
 from pearlarr.log import LOG_NAME
+from pearlarr.manual_import import PendingImport, PendingKey
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
 from pearlarr.sqlite_util import is_corruption
@@ -97,6 +98,19 @@ CREATE TABLE torrent_hashes (
 """
 
 
+# The v1 shape of `pending_imports` (PK without al_id), as shipped through 1.0.x.
+# Only the table the v1 -> v2 step rebuilds is declared: `_ensure_schema` creates
+# the rest fresh, and the step must leave them alone.
+_V1_PENDING_SCHEMA = """
+CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE pending_imports (
+    arr      TEXT NOT NULL,
+    infohash TEXT NOT NULL,
+    record   BLOB NOT NULL,
+    PRIMARY KEY (arr, infohash));
+"""
+
+
 def _user_version(db: Path) -> int:
     raw = sqlite3.connect(str(db))
     try:
@@ -138,11 +152,13 @@ class TestSchemaVersionGate:
         # The upgrade committed at load time - durable even though the run's own
         # staged writes were rolled back by close().
         assert _user_version(db) == SCHEMA_VERSION
-        # Each step announces itself as an INFO hub Diagnostic.
-        (upgraded,) = recording.of_type(Diagnostic)
-        assert upgraded.severity is Severity.INFO
-        assert upgraded.message == "Upgraded cache database schema v0 -> v1"
-        assert upgraded.origin == LOG_NAME
+        # Each step announces itself as an INFO hub Diagnostic, one per step walked.
+        steps = recording.of_type(Diagnostic)
+        assert [s.message for s in steps] == [
+            "Upgraded cache database schema v0 -> v1",
+            "Upgraded cache database schema v1 -> v2",
+        ]
+        assert all(s.severity is Severity.INFO and s.origin == LOG_NAME for s in steps)
 
     def test_manually_altered_v0_db_upgrades_cleanly(self, tmp_path: Path) -> None:
         # A v0 db that already got the ALTER by hand (the pre-gate bridge): the
@@ -156,6 +172,42 @@ class TestSchemaVersionGate:
 
         store = CacheStore.load(str(db), config_checksum=CHECKSUM)
         assert store.get_entry(Arr.SONARR, 7) is None  # reads work post-upgrade
+        store.close()
+        assert _user_version(db) == SCHEMA_VERSION
+
+    def test_v1_pending_imports_rebuild_to_the_composite_key(self, tmp_path: Path) -> None:
+        # The v1 -> v2 step: the (arr, infohash) PK grows to (arr, infohash, al_id)
+        # via a table rebuild. A legacy row with no al_id in its JSON lands under
+        # the 0 sentinel and still round-trips as its hash's singleton. A row that
+        # DOES carry al_id in its JSON backfills the key from it.
+        db = tmp_path / "cache.db"
+        raw = sqlite3.connect(str(db))
+        raw.executescript(_V1_PENDING_SCHEMA)
+        raw.execute(
+            "INSERT INTO pending_imports (arr, infohash, record) VALUES ('sonarr', 'legacy', jsonb(?))",
+            ('{"infohash": "legacy", "series_id": 5, "title": "Old Show"}',),
+        )
+        raw.execute(
+            "INSERT INTO pending_imports (arr, infohash, record) VALUES ('sonarr', 'tagged', jsonb(?))",
+            ('{"infohash": "tagged", "series_id": 6, "al_id": 9}',),
+        )
+        raw.execute("PRAGMA user_version=1")
+        raw.commit()
+        raw.close()
+
+        store = CacheStore.load(str(db), config_checksum=CHECKSUM)
+        pending = store.get_pending(Arr.SONARR)
+        assert set(pending) == {PendingKey("legacy", 0), PendingKey("tagged", 9)}
+        # The sentinel-keyed legacy record rehydrates with the matching al_id=0.
+        rebuilt = PendingImport.from_json(pending[PendingKey("legacy", 0)])
+        assert rebuilt.al_id == 0
+        assert rebuilt.title == "Old Show"
+        # It still round-trips: a sibling coexists beside it, and its own drop is
+        # record-scoped (the singleton behaves exactly like a modern record).
+        store.put_pending(Arr.SONARR, PendingKey("legacy", 44), {"infohash": "legacy", "al_id": 44})
+        assert store.count_pending_for_infohash("legacy") == 2
+        store.drop_pending(Arr.SONARR, PendingKey("legacy", 0))
+        assert set(store.get_pending(Arr.SONARR)) == {PendingKey("legacy", 44), PendingKey("tagged", 9)}
         store.close()
         assert _user_version(db) == SCHEMA_VERSION
 
@@ -465,39 +517,74 @@ class TestSonarrParse:
 
 
 class TestPendingImports:
-    """Pending imports are tracked per arr+infohash, droppable, and filterable by series id in SQL."""
+    """Pending imports are tracked per (arr, infohash, al_id), droppable, and filterable by series id in SQL."""
 
     def test_roundtrip_drop_and_arr_isolation(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
-        rec = {"infohash": "h1", "series_id": 5, "episode_ids": [1, 2]}
-        store.put_pending(Arr.SONARR, "h1", rec)
-        store.put_pending(Arr.RADARR, "h2", {"infohash": "h2"})
-        assert store.get_pending(Arr.SONARR) == {"h1": rec}
-        assert store.get_pending(Arr.RADARR) == {"h2": {"infohash": "h2"}}
+        rec = {"infohash": "h1", "series_id": 5, "al_id": 3, "episode_ids": [1, 2]}
+        store.put_pending(Arr.SONARR, PendingKey("h1", 3), rec)
+        store.put_pending(Arr.RADARR, PendingKey("h2", 4), {"infohash": "h2"})
+        assert store.get_pending(Arr.SONARR) == {PendingKey("h1", 3): rec}
+        assert store.get_pending(Arr.RADARR) == {PendingKey("h2", 4): {"infohash": "h2"}}
 
-        store.drop_pending(Arr.SONARR, "h1")
+        store.drop_pending(Arr.SONARR, PendingKey("h1", 3))
         assert store.get_pending(Arr.SONARR) == {}
-        # Dropping a missing infohash is a no-op.
-        store.drop_pending(Arr.SONARR, "nope")
+        # Dropping a missing key is a no-op.
+        store.drop_pending(Arr.SONARR, PendingKey("nope", 0))
+        store.close()
+
+    def test_sibling_records_coexist_per_al_id(self, tmp_path: Path) -> None:
+        # One torrent listed on two AniList entries: both records persist side by
+        # side (the old (arr, infohash) PK let the second overwrite the first),
+        # a same-key re-put overwrites idempotently, and a drop is record-scoped.
+        store = _open(tmp_path)
+        first = {"infohash": "h", "series_id": 5, "al_id": 11, "episode_ids": [1]}
+        second = {"infohash": "h", "series_id": 5, "al_id": 22, "episode_ids": [2]}
+        store.put_pending(Arr.SONARR, PendingKey("h", 11), first)
+        store.put_pending(Arr.SONARR, PendingKey("h", 22), second)
+        assert store.get_pending(Arr.SONARR) == {PendingKey("h", 11): first, PendingKey("h", 22): second}
+        assert store.count_pending_for_infohash("h") == 2
+
+        # Same-record re-registration overwrites, never duplicates.
+        updated = dict(first, episode_ids=[1, 3])
+        store.put_pending(Arr.SONARR, PendingKey("h", 11), updated)
+        assert store.get_pending(Arr.SONARR)[PendingKey("h", 11)] == updated
+        assert store.count_pending_for_infohash("h") == 2
+
+        # Dropping one sibling leaves the other's claim intact.
+        store.drop_pending(Arr.SONARR, PendingKey("h", 11))
+        assert store.get_pending(Arr.SONARR) == {PendingKey("h", 22): second}
+        assert store.count_pending_for_infohash("h") == 1
+        store.close()
+
+    def test_count_pending_for_infohash_is_cross_arr(self, tmp_path: Path) -> None:
+        # The category gate counts BOTH arrs' claims on a hash (the flag is a
+        # property of the torrent, not of one arr's run).
+        store = _open(tmp_path)
+        store.put_pending(Arr.SONARR, PendingKey("h", 11), {"infohash": "h", "al_id": 11})
+        store.put_pending(Arr.RADARR, PendingKey("h", 0), {"infohash": "h"})
+
+        assert store.count_pending_for_infohash("h") == 2
+        assert store.count_pending_for_infohash("other") == 0
         store.close()
 
     def test_get_pending_for_series_filters_in_sql(self, tmp_path: Path) -> None:
         store = _open(tmp_path)
-        a = {"infohash": "a", "series_id": 5}
-        b = {"infohash": "b", "series_id": 5}
-        c = {"infohash": "c", "series_id": 9}
-        d = {"infohash": "d"}  # no series_id key -> excluded (record ->> 'series_id' is NULL)
-        for h, rec in (("a", a), ("b", b), ("c", c), ("d", d)):
-            store.put_pending(Arr.SONARR, h, rec)
+        a = {"infohash": "a", "series_id": 5, "al_id": 1}
+        b = {"infohash": "b", "series_id": 5, "al_id": 2}
+        c = {"infohash": "c", "series_id": 9, "al_id": 3}
+        d = {"infohash": "d", "al_id": 4}  # no series_id key -> excluded (record ->> 'series_id' is NULL)
+        for h, al_id, rec in (("a", 1, a), ("b", 2, b), ("c", 3, c), ("d", 4, d)):
+            store.put_pending(Arr.SONARR, PendingKey(h, al_id), rec)
 
         # Only this series' records come back. The integer series_id binds directly.
-        assert store.get_pending_for_series(Arr.SONARR, 5) == {"a": a, "b": b}
-        assert store.get_pending_for_series(Arr.SONARR, 9) == {"c": c}
+        assert store.get_pending_for_series(Arr.SONARR, 5) == {PendingKey("a", 1): a, PendingKey("b", 2): b}
+        assert store.get_pending_for_series(Arr.SONARR, 9) == {PendingKey("c", 3): c}
         assert store.get_pending_for_series(Arr.SONARR, 404) == {}
 
         # Fresh per call: a drop is reflected immediately (no stale snapshot).
-        store.drop_pending(Arr.SONARR, "a")
-        assert store.get_pending_for_series(Arr.SONARR, 5) == {"b": b}
+        store.drop_pending(Arr.SONARR, PendingKey("a", 1))
+        assert store.get_pending_for_series(Arr.SONARR, 5) == {PendingKey("b", 2): b}
         store.close()
 
 
@@ -539,8 +626,8 @@ class TestHistoryCheckpoints:
         store = _open(tmp_path)
         # Remembered hashes incl. a None marker (stored as the "" sentinel, excluded).
         store.update_cache(Arr.SONARR, 7, {"torrent_hashes": ["ABCDEF", None]})
-        store.put_pending(Arr.SONARR, "FEDCBA", {"series_id": 7})
-        store.put_pending(Arr.RADARR, "other", {})
+        store.put_pending(Arr.SONARR, PendingKey("FEDCBA", 7), {"series_id": 7})
+        store.put_pending(Arr.RADARR, PendingKey("other", 0), {})
 
         assert store.own_download_ids(Arr.SONARR) == frozenset({"abcdef", "fedcba"})
         assert store.own_download_ids(Arr.RADARR) == frozenset({"other"})
@@ -601,7 +688,7 @@ class TestRunLifecycle:
             },
         )
         store.put_anilist_meta(7, {"fetched_at": "2026-06-26 12:00:00", "data": {"id": 7}})
-        store.put_pending(Arr.SONARR, "aaa", {"infohash": "aaa", "series_id": 5})
+        store.put_pending(Arr.SONARR, PendingKey("aaa", 7), {"infohash": "aaa", "series_id": 5, "al_id": 7})
         store.save(preview=False)  # mid/end-of-run commit
         store.close()  # finally: rollback is a no-op (already committed)
 
@@ -609,9 +696,11 @@ class TestRunLifecycle:
         again = CacheStore.load(db, config_checksum=CHECKSUM)
         assert again.check_al_id_in_cache(Arr.SONARR, 7, make_entry_record(updated_at=datetime(2026, 1, 2, 3, 4, 5)))
         assert again.torrent_hashes(Arr.SONARR, 7) == ["aaa", "bbb"]
-        assert again.get_pending(Arr.SONARR) == {"aaa": {"infohash": "aaa", "series_id": 5}}
+        assert again.get_pending(Arr.SONARR) == {
+            PendingKey("aaa", 7): {"infohash": "aaa", "series_id": 5, "al_id": 7},
+        }
         # A completed import is dropped, and that drop persists across a save.
-        again.drop_pending(Arr.SONARR, "aaa")
+        again.drop_pending(Arr.SONARR, PendingKey("aaa", 7))
         again.save(preview=False)
         again.close()
 

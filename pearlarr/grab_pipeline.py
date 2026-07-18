@@ -264,7 +264,7 @@ class GrabPipeline:
         # when the planner flagged a download, and the genuine "you already own it"
         # case is the any_to_download=False branch, which never calls add_torrent.
         # So the end-of-run monitor must wait on it too. Appending to
-        # _ctx.pending_imports marks the infohash a this-run grab, so the per-series
+        # _ctx.pending_imports marks the record a this-run grab, so the per-series
         # snapshot / reconcile / tally skip it (no double-report, no early drop).
         if result.outcome in (AddOutcome.ADDED, AddOutcome.ALREADY_ADDED):
             self._register_pending_import(url_item, pending_seeds)
@@ -280,10 +280,13 @@ class GrabPipeline:
         """Finalize the durable `PendingImport` for a grabbed/present release.
 
         Only on a real (non-preview) add of a release we hold a seed for, keyed by
-        infohash so a re-add overwrites and a verified import deletes. `pending_seeds`
+        `(arr, infohash, al_id)` so a re-registration of the SAME record (this
+        entry re-adding its own grab) overwrites idempotently, a SIBLING AniList
+        entry's record for the same torrent lands beside it, and a verified
+        import deletes only its own record. `pending_seeds`
         is the Sonarr strategy's `infohash -> PendingImport` seeds for this id (None
         for Radarr). The in-memory copy rides the run context for the fast
-        end-of-run blocking pass and marks the infohash a this-run grab (excluded
+        end-of-run blocking pass and marks the record a this-run grab (excluded
         from the carried-over snapshot / reconcile / tally).
         """
 
@@ -297,7 +300,7 @@ class GrabPipeline:
             pending = pending_seeds[url_item.infohash]
             self.cache_store.put_pending(
                 self._ctx.arr,
-                url_item.infohash,
+                pending.key,
                 pending.to_json(),
             )
             self._ctx.pending_imports.append(pending)
