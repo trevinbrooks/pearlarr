@@ -411,6 +411,10 @@ class SonarrHandler(QuietHandler):
             self._send_json(load_json(FIXTURES / "qualitydefinitions.json"))
         elif route == "/api/v3/language":
             self._send_json([])
+        elif route == "/api/v3/remotepathmapping":
+            # No mappings: the folder-scan fallback's once-per-run fetch must
+            # never warn in an offline run.
+            self._send_json([])
         elif route == "/api/v3/parse":
             title = query.get("title", [""])[0]
             self._send_json({"title": title, "episodes": parse_title(title)})
