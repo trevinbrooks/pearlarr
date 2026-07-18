@@ -594,6 +594,21 @@ def _has_no_signal(info: ParsedFileInfo | None) -> bool:
     return info is None or (not info.episode_numbers and not info.absolute_episode_numbers)
 
 
+def _signal_is_bogus(info: ParsedFileInfo, ep_id_map: Mapping[tuple[int, int], int]) -> bool:
+    """Whether the name's numbers provably describe no episode of this series.
+
+    A movie year read as SxxEyy ("Chronicle.2020" parsing S20E20) is a parse
+    artifact, not identity: when EVERY name-parsed key misses the WHOLE series
+    map and the name carries no absolutes, the signal is noise and the file
+    counts as numberless. A key that resolves anywhere in the series is real
+    evidence and is never downgraded.
+    """
+
+    if not info.episode_numbers or info.absolute_episode_numbers:
+        return False
+    return all(not ep_id_map.get(season_episode_key(info.season_number, episode)) for episode in info.episode_numbers)
+
+
 def _spans_multiple(info: ParsedFileInfo) -> bool:
     """Whether Sonarr's evidence says the file holds MORE than one episode.
 
@@ -608,6 +623,12 @@ def _spans_multiple(info: ParsedFileInfo) -> bool:
     return info.full_season or len(pairs) > 1
 
 
+def _natural_key(name: str) -> str:
+    """Digit-aware sort key ("sp10" sorts after "sp2"): zero-pad digit runs."""
+
+    return re.sub(r"\d+", lambda match: match.group().zfill(12), name)
+
+
 def assign_episode_ids(
     ordered_files: Sequence[str],
     parsed_by_file: Mapping[str, ParsedFileInfo | None],
@@ -619,8 +640,8 @@ def assign_episode_ids(
 
     The resolved set (`ordered_episode_ids`, season-sorted, lifted from the
     add-flow `ep_list`) is authoritative. A release's own numbering is only ever
-    used to *index into* it, never to decide identity. Two legs, in strict
-    precedence, then skip:
+    used to *index into* it, never to decide identity. Two legs, then two
+    narrow fallbacks, in strict precedence, then skip:
 
     1. **Exact (season, episode):** a file whose parsed `(season, episode)`
        resolves to an id *inside* the resolved set is placed there (handles
@@ -645,7 +666,16 @@ def assign_episode_ids(
        poll's can hide one sharer from this leg). Handles mis-numbered
        specials and continuous absolute batches. Anything short of that clean
        shape is refused rather than scrambled.
-    3. **Skip:** anything still unplaced is returned in `skipped` for the caller
+    3. **Single-file fallback:** one leftover file onto one leftover id, when
+       the name carries no number at all - or only a provably-bogus key, one
+       missing the WHOLE series map with no absolutes (a movie year read as
+       SxxEyy) - and Sonarr's matched evidence doesn't span multiple episodes.
+    4. **Ordered zip:** a pristine numberless batch (every parse known, real,
+       numberless, and single-span, with the parse map covering EXACTLY the
+       deferred files - so nothing was placed or seeded) zips natural name
+       order onto the leftover ids on a 1:1 count (the "Special 1..N" shape).
+       Any numbered, bogus-keyed, seeded, or ambiguous file refuses it whole.
+    5. **Skip:** anything still unplaced is returned in `skipped` for the caller
        to warn on - never guessed.
 
     Args:
@@ -739,15 +769,35 @@ def assign_episode_ids(
         len(deferred) == 1
         and len(leftover_ids) == 1
         and (single := parsed_by_file.get(deferred[0])) is not None
-        and _has_no_signal(single)
+        and (_has_no_signal(single) or _signal_is_bogus(single, ep_id_map))
         and not _spans_multiple(single)
     ):
         # Degenerate positional: one leftover file, one leftover episode, and
-        # Sonarr SAW the name and found no number - it is that episode (the
+        # Sonarr SAW the name and found no number - or only a provably-bogus
+        # key that exists nowhere in the series - it is that episode (the
         # single-file fallback). A None parse is no evidence at all (a blip
         # heals next poll), and multi-episode matched evidence means placing
         # as one episode would half-import - both refuse instead.
         assigned[deferred[0]] = [leftover_ids[0]]
+    elif (
+        len(deferred) > 1
+        and len(deferred) == len(leftover_ids)
+        and len(deferred) == len(parsed_by_file)
+        and all(
+            (parsed := parsed_by_file.get(name)) is not None
+            and not parsed.offline
+            and _has_no_signal(parsed)
+            and not _spans_multiple(parsed)
+            for name in deferred
+        )
+    ):
+        # Pristine numberless batch: the parse-map equality proves NOTHING in
+        # the batch was placed or seeded (a mixed batch never zips, so an
+        # extra can never fill a missing episode's slot), counts match 1:1,
+        # and every parse is a real numberless one. Order is the only signal
+        # left: zip name order onto airing order (the "Special 1..N" shape).
+        for name, ep_id in zip(sorted(deferred, key=_natural_key), leftover_ids, strict=True):
+            assigned[name] = [ep_id]
     else:
         skipped = list(deferred)
 
