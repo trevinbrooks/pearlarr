@@ -20,7 +20,7 @@ import httpx
 import pytest
 import respx
 
-from pearlarr.arr_http import ArrHttp
+from pearlarr.arr_http import GET_RETRIES, ArrHttp
 from pearlarr.manual_import import PendingImport
 from pearlarr.output import Severity
 from pearlarr.seadex_types import (
@@ -669,6 +669,44 @@ def test_remote_path_mappings_non_200_returns_none() -> None:
 
     respx.get(f"{_BASE}/remotepathmapping").respond(status_code=500)
     assert _make_client().remote_path_mappings() is None
+
+
+# --- wait-path no-retry handle -------------------------------------------------
+
+
+@respx.mock
+def test_wait_path_polls_make_exactly_one_attempt() -> None:
+    """The four wait-path polls ride the no-retry handle: ONE attempt each.
+
+    manual_import_candidates / the folder scan / the history probe /
+    parse_episode_info run inside the import monitor loop, which IS the retry
+    mechanism - in-call retries would only stretch each poll cycle and
+    multiply identical warnings.
+    """
+
+    manualimport = respx.get(f"{_BASE}/manualimport").respond(status_code=500)
+    history = respx.get(f"{_BASE}/history").respond(status_code=500)
+    parse = respx.get(f"{_BASE}/parse").respond(status_code=500)
+    client = _make_client()
+    pending = _make_pending(infohash="a" * 40, title="Yamada-kun")
+
+    assert client.manual_import_candidates(pending=pending) is None
+    assert manualimport.call_count == 1
+    assert client.manual_import_candidates_by_folder(folder="/downloads/x", title="Yamada-kun") is None
+    assert manualimport.call_count == 2
+    assert client.history_for_download(download_id="a" * 40) is None
+    assert history.call_count == 1
+    assert client.parse_episode_info("Bahamut.S01E01.mkv") is None
+    assert parse.call_count == 1
+
+
+@respx.mock
+def test_sweep_reads_keep_the_retry_budget() -> None:
+    """A non-wait read (episodes) still rides the primary retrying handle."""
+
+    route = respx.get(f"{_BASE}/episode").respond(status_code=500)
+    assert _make_client().episodes(1, quiet=True) is None
+    assert route.call_count == GET_RETRIES + 1
 
 
 # --- manual_import_execute() / refresh_monitored_downloads() (POST /command) -

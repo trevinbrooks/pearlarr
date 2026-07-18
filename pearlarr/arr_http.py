@@ -7,16 +7,19 @@ fail-closed library fetch and its typed errors, and the shared history read
 both arr clients delegate to).
 """
 
+import logging
 import random
+import threading
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import cast
 
 import httpx
 
 from .config import strip_userinfo
-from .output import hub_warn
+from .log import LOG_NAME
+from .output import hub_note, hub_warn
 from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord, Json, validate_each
 
 # Transient statuses worth another try on an idempotent GET - shared with the
@@ -24,6 +27,50 @@ from .seadex_types import ARR_REQUEST_TIMEOUT_S, HistoryRecord, Json, validate_e
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 GET_RETRIES = 3
 BACKOFF_BASE_S = 0.5
+# Streak re-warn cadence default; the composition root binds the configured
+# `imports.digest_interval` (same default) at `bind`.
+HEARTBEAT_INTERVAL_S = 300.0
+
+# Coalesced-repeat breadcrumbs ride the stdlib channel (first-party child of
+# the app logger, so the bridge adopts them into the file sink at DEBUG).
+_LOG = logging.getLogger(f"{LOG_NAME}.arr_http")
+
+
+def _streak_age(seconds: float) -> str:
+    """Short streak age for coalesced lines: `"45s"` / `"12m"` / `"1h05m"`."""
+
+    total = max(0, int(seconds))
+    if total >= 3600:
+        hours, minutes = divmod(total // 60, 60)
+        return f"{hours}h{minutes:02d}m"
+    if total >= 60:
+        return f"{total // 60}m"
+    return f"{total}s"
+
+
+@dataclass
+class _Streak:
+    """One (template, detail) key's consecutive-failure run (guard: `FailureStreaks.lock`)."""
+
+    count: int
+    first_at: float
+    last_warned_at: float
+
+
+@dataclass
+class FailureStreaks:
+    """The consecutive-failure ledger an arr's transport handles share.
+
+    Mutable on purpose: `ArrHttp` stays frozen while `_fail`/`_recover`
+    accumulate streak state here, and `dataclasses.replace` handles (the
+    no-retry poll handle) share the one object so a streak spans both -
+    separate ledgers would double-fire heartbeats and recovery notes.
+    `lock` guards `active`: the shared client pool serves concurrent sweep
+    threads (`SONARR_FETCH_WORKERS`).
+    """
+
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    active: dict[tuple[str, str], _Streak] = field(default_factory=dict[tuple[str, str], _Streak])
 
 
 class ArrConnectionError(Exception):
@@ -80,7 +127,10 @@ class ArrHttp:
     idempotent, so `post_json` never retries), EVERY body is parsed
     behind a JSON guard (a 200 HTML proxy page reads as a miss, never an
     abort), and each failure warns once through the caller's `warn` template
-    with the failure detail filled in. The one fail-CLOSED read is
+    with the failure detail filled in - consecutive identical failures
+    coalesce (`_fail`/`_recover`): the first warns, repeats drop to DEBUG,
+    a "still failing" re-warn fires every `heartbeat_s`, and the first
+    success after a streak notes the recovery. The one fail-CLOSED read is
     `get_json_list_strict`, which raises typed errors for the
     load-bearing library fetch.
     """
@@ -92,6 +142,19 @@ class ArrHttp:
     """The arr's name ("Sonarr" / "Radarr"), for warning messages."""
     headers: Mapping[str, str]
     sleep: Callable[[float], None] = time.sleep  # injectable backoff sleep (bypassed in tests)
+    retries: int = GET_RETRIES
+    """In-call GET retry budget. The wait-path poll handle rides `replace(http,
+    retries=0)` - its monitor loop IS the retry mechanism, so in-call backoff
+    would only stretch each poll."""
+    heartbeat_s: float = HEARTBEAT_INTERVAL_S
+    """Seconds between "still failing" re-warns while a streak runs (bound from
+    `imports.digest_interval` at the composition root; ArrHttp knows no config)."""
+    clock: Callable[[], float] = time.monotonic  # injectable streak clock (faked in tests)
+    streaks: FailureStreaks = field(default_factory=FailureStreaks, compare=False)
+    """The failure-streak ledger. MUST stay `init=True`: `dataclasses.replace`
+    re-runs `default_factory` for init=False fields, which would silently
+    un-share the ledger between the primary and no-retry handles.
+    `compare=False` keeps accumulated state out of `__eq__`."""
 
     @property
     def display_url(self) -> str:
@@ -114,11 +177,13 @@ class ArrHttp:
         api_key: str,
         label: str,
         sleep: Callable[[float], None] = time.sleep,
+        heartbeat_s: float = HEARTBEAT_INTERVAL_S,
     ) -> "ArrHttp":
         """Bind the shared client to one arr's url + key.
 
         The key becomes the `X-Api-Key` header (never a query param, so it
-        can't leak through URLs in logs/exceptions).
+        can't leak through URLs in logs/exceptions). `heartbeat_s` is the
+        streak re-warn cadence, wired from config by the composition root.
         """
 
         return cls(
@@ -127,6 +192,7 @@ class ArrHttp:
             label=label,
             headers={"X-Api-Key": api_key},
             sleep=sleep,
+            heartbeat_s=heartbeat_s,
         )
 
     def _get_with_retries(
@@ -139,7 +205,8 @@ class ArrHttp:
         """The retrying GET core the fail-open and strict paths share.
 
         Retries transient failures (connect/read errors, 429/5xx) up to
-        `GET_RETRIES` times with jittered exponential backoff - GETs only, so
+        `retries` times (the bind-time budget; the wait-path poll handle rides
+        0) with jittered exponential backoff - GETs only, so
         this stays safe for idempotent reads. `timeout` overrides the
         client-level timeout per request (the 120s manual-import scans);
         None rides the client default. Returns the final response (a 200, or
@@ -150,7 +217,7 @@ class ArrHttp:
         request_timeout = httpx.USE_CLIENT_DEFAULT if timeout is None else httpx.Timeout(timeout)
         response: httpx.Response | None = None
         detail = "request failed"
-        for attempt in range(GET_RETRIES + 1):
+        for attempt in range(self.retries + 1):
             try:
                 response = self.client.get(
                     f"{self.base_url}{path}",
@@ -170,9 +237,32 @@ class ArrHttp:
                 detail = f"status code {response.status_code}"
                 if response.status_code not in RETRYABLE_STATUS:
                     return response, detail
-            if attempt < GET_RETRIES:
+            if attempt < self.retries:
                 self.sleep(BACKOFF_BASE_S * 2**attempt + random.uniform(0, 0.25))
         return response, detail
+
+    def _fetch_json(
+        self,
+        path: str,
+        params: Mapping[str, str] | None,
+        *,
+        warn: str | None,
+        timeout: float | None,
+    ) -> object | None:
+        """GET + JSON-parse core: the failure side of the streak ledger only.
+
+        The public reads layer their shape checks and the `_recover` success
+        hook on top - recovery must fire only when the WHOLE read succeeds, or
+        a persistent wrong-shape response would flap recovery/warn each call.
+        """
+
+        response, detail = self._get_with_retries(path, params, timeout=timeout)
+        if response is None or response.status_code != 200:
+            return self._fail(warn, detail)
+        try:
+            return cast("object", response.json())
+        except ValueError:
+            return self._fail(warn, "non-JSON body")
 
     def get_json(
         self,
@@ -185,20 +275,19 @@ class ArrHttp:
         """GET `path` and parse the JSON body; fail open to None with one warning.
 
         Rides `_get_with_retries` (transient failures retry with jittered
-        backoff). Any terminal failure (request error, non-200, non-JSON body)
+        backoff, up to the handle's `retries`). Any terminal failure (request
+        error, non-200, non-JSON body)
         warns via `warn` - a template whose `{detail}` names the cause - and
         returns None; `warn=None` keeps a deliberate quiet path silent.
         `timeout` overrides the client-level timeout per request (seconds);
         None rides the client default.
         """
 
-        response, detail = self._get_with_retries(path, params, timeout=timeout)
-        if response is None or response.status_code != 200:
-            return self._fail(warn, detail)
-        try:
-            return cast("object", response.json())
-        except ValueError:
-            return self._fail(warn, "non-JSON body")
+        payload = self._fetch_json(path, params, warn=warn, timeout=timeout)
+        if payload is None:
+            return None
+        self._recover(warn)
+        return payload
 
     def get_json_list(
         self,
@@ -210,11 +299,12 @@ class ArrHttp:
     ) -> list[object] | None:
         """`get_json` narrowed to a JSON array (fails open on any other shape)."""
 
-        payload = self.get_json(path, params=params, warn=warn, timeout=timeout)
+        payload = self._fetch_json(path, params, warn=warn, timeout=timeout)
         if payload is None:
             return None
         if not isinstance(payload, list):
             return self._fail(warn, "unexpected payload")
+        self._recover(warn)
         return cast("list[object]", payload)
 
     def get_json_dict(
@@ -227,11 +317,12 @@ class ArrHttp:
     ) -> dict[str, object] | None:
         """`get_json` narrowed to a JSON object (fails open on any other shape)."""
 
-        payload = self.get_json(path, params=params, warn=warn, timeout=timeout)
+        payload = self._fetch_json(path, params, warn=warn, timeout=timeout)
         if payload is None:
             return None
         if not isinstance(payload, dict):
             return self._fail(warn, "unexpected payload")
+        self._recover(warn)
         return cast("dict[str, object]", payload)
 
     def post_json(
@@ -257,9 +348,11 @@ class ArrHttp:
         if response.status_code not in (200, 201):
             return self._fail(warn, f"status code {response.status_code}")
         try:
-            return cast("object", response.json())
+            payload = cast("object", response.json())
         except ValueError:
             return self._fail(warn, "non-JSON body")
+        self._recover(warn)
+        return payload
 
     def get_json_list_strict(
         self,
@@ -333,8 +426,54 @@ class ArrHttp:
 
         Literal replace, NOT str.format: templates will embed filenames/titles
         (which can carry braces), and the fail-open path must never crash.
+
+        Consecutive identical failures coalesce per (template, detail): the
+        first warns as before, repeats drop to a DEBUG breadcrumb with the
+        running count, and a "still failing" re-warn fires every
+        `heartbeat_s`. `_recover` closes the streak on the next success.
         """
 
-        if warn is not None:
+        if warn is None:
+            return None
+        now = self.clock()
+        with self.streaks.lock:
+            streak = self.streaks.active.get((warn, detail))
+            if streak is None:
+                self.streaks.active[(warn, detail)] = _Streak(count=1, first_at=now, last_warned_at=now)
+                count, age, heartbeat_due = 1, 0.0, False
+            else:
+                streak.count += 1
+                count = streak.count
+                age = now - streak.first_at
+                heartbeat_due = now - streak.last_warned_at >= self.heartbeat_s
+                if heartbeat_due:
+                    streak.last_warned_at = now
+        # Emit OUTSIDE the lock: hub/render work must not serialize sweep threads.
+        if count == 1:
             hub_warn(warn.replace("{detail}", detail))
+        elif heartbeat_due:
+            hub_warn(warn.replace("{detail}", f"{detail}; still failing - attempt {count}, {_streak_age(age)}"))
+        else:
+            _LOG.debug(f"{warn.replace('{detail}', detail)} - failure {count} in a row")
         return None
+
+    def _recover(self, warn: str | None) -> None:
+        """Close any failure streaks under `warn` on the first success after them.
+
+        The success side of `_fail`'s coalescing, called from each public
+        read's success tail. Keyed by template alone so a streak whose detail
+        shifted mid-outage (500 -> ConnectError) still closes as ONE note
+        carrying the combined total.
+        """
+
+        if warn is None:
+            return
+        now = self.clock()
+        with self.streaks.lock:
+            ended = [self.streaks.active.pop(key) for key in list(self.streaks.active) if key[0] == warn]
+        if not ended:
+            return
+        total = sum(streak.count for streak in ended)
+        age = _streak_age(now - min(streak.first_at for streak in ended))
+        noun = "failure" if total == 1 else "failures"
+        hub_note(f"{warn.partition(' ({detail})')[0]} - recovered after {total} {noun} ({age})")

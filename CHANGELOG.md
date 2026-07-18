@@ -7,6 +7,10 @@ Pearlarr is a fork of [bbtufty/seadexarr](https://github.com/bbtufty/seadexarr);
 
 ## [Unreleased]
 
+### Changed
+
+- Repeated identical Sonarr/Radarr connection warnings now coalesce: the first failure warns as before, repeats drop to the debug log with a running count, a "still failing - attempt N" reminder fires about every `imports.digest_interval` seconds, and a note reports when the call recovers. Import-wait polls (manual-import scans, the download-history probe, the import-time filename parse) also no longer retry inside each call - the poll loop itself is the retry - so a failing poll cycle emits one connection line instead of four and skips several seconds of backoff sleep.
+
 ### Fixed
 
 - Re-grabs of a release Sonarr has previously imported (or failed/ignored) now import instead of deferring "for a later run" forever. Sonarr hides such a re-added download from its queue and its manual-import scan returns HTTP 500 on every poll (an unpatched Sonarr bug: the tracked download's import state is never re-initialized), so Pearlarr could neither import nor ever finish - the pending record was eventually dropped silently. Pearlarr now detects the state from Sonarr's download history and imports the files by scanning the download folder directly (translated through Sonarr's remote path mappings), copying rather than moving so the torrent keeps seeding.

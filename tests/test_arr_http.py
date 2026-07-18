@@ -5,7 +5,9 @@ The httpx-native transport the raw arr endpoints share. Pins the fail-open
 matrix (request error / non-200 / non-JSON / wrong shape -> None + ONE warning
 naming the cause), the strict library-fetch matrix (the same failures RAISE
 typed `ArrConnectionError`/`ArrAuthError` instead), the GET retry policy
-(transient statuses retry with backoff, terminal ones don't), the POST policy
+(transient statuses retry with backoff, terminal ones don't; the `retries=0`
+poll handle never retries), the consecutive-failure coalescing (streak dict,
+heartbeat re-warns, recovery notes, shared ledger), the POST policy
 (`post_json` NEVER retries - not idempotent), the per-request GET timeout
 override, and the two
 security invariants: the API key rides the `X-Api-Key` header (never the
@@ -14,7 +16,12 @@ location).
 """
 
 import json
-from typing import cast
+import logging
+import threading
+from collections.abc import Generator
+from contextlib import contextmanager
+from dataclasses import replace
+from typing import cast, override
 
 import httpx
 import pytest
@@ -27,6 +34,7 @@ from pearlarr.arr_http import (
     ArrHttp,
     make_httpx_client,
 )
+from pearlarr.log import LOG_NAME
 from pearlarr.output import Diagnostic, Severity, install_hub
 from pearlarr.output.recording import RecordingHub
 
@@ -185,6 +193,181 @@ def test_get_timeout_override_rides_the_request() -> None:
     assert http.get_json("/api/v3/manualimport", warn=None) == []
     assert seen[0] == {"connect": 120, "read": 120, "write": 120, "pool": 120}
     assert seen[1] == {"connect": 5.0, "read": 5.0, "write": 5.0, "pool": 5.0}
+
+
+# --- retries=0 poll handle + failure coalescing --------------------------------
+
+
+class _RecordingHandler(logging.Handler):
+    """Captures the module logger's records directly (propagation-independent).
+
+    `caplog` listens on the root logger, but the app logger tree carries
+    `propagate=False` once any test has run `setup_logger`.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.records: list[logging.LogRecord] = []
+
+    @override
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+@contextmanager
+def _debug_records() -> Generator[list[logging.LogRecord]]:
+    """Capture the arr_http module logger's DEBUG breadcrumbs for one test."""
+
+    logger = logging.getLogger(f"{LOG_NAME}.arr_http")
+    handler = _RecordingHandler()
+    old_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    try:
+        yield handler.records
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
+
+
+class _ManualClock:
+    """A hand-advanced monotonic clock for streak-cadence tests."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def read(self) -> float:
+        return self.now
+
+
+@respx.mock
+def test_no_retry_handle_attempts_once_primary_keeps_the_budget() -> None:
+    """`replace(http, retries=0)` makes exactly ONE attempt; the primary still retries.
+
+    The wait-path poll handle: its monitor loop IS the retry mechanism.
+    """
+
+    route = respx.get(f"{_URL}/api/v3/thing").respond(status_code=500)
+    http, recording = _bind()
+
+    assert replace(http, retries=0).get_json("/api/v3/thing", warn="poll ({detail})") is None
+    assert route.call_count == 1
+    assert http.get_json("/api/v3/thing", warn="sweep ({detail})") is None
+    assert route.call_count == 1 + GET_RETRIES + 1
+    assert [note.message for note in recording.of_type(Diagnostic)] == [
+        "poll (status code 500)",
+        "sweep (status code 500)",
+    ]
+
+
+def test_replace_shares_the_streak_ledger() -> None:
+    """The no-retry handle and the primary share ONE streak ledger (`is`).
+
+    Guards the init=False trap: `dataclasses.replace` re-runs `default_factory`
+    for init=False fields, silently un-sharing the ledger (which would
+    double-fire heartbeats and recovery notes across the two handles).
+    """
+
+    http, _ = _bind()
+    assert replace(http, retries=0).streaks is http.streaks
+
+
+@respx.mock
+def test_repeat_failures_coalesce_then_recover() -> None:
+    """fail/fail/recover: one warning, a DEBUG repeat, one recovery note with the total."""
+
+    route = respx.get(f"{_URL}/api/v3/thing")
+    route.side_effect = [httpx.Response(404), httpx.Response(404), httpx.Response(200, json=[1])]
+    http, recording = _bind()
+
+    with _debug_records() as records:
+        assert http.get_json("/api/v3/thing", warn="miss ({detail})") is None
+        assert http.get_json("/api/v3/thing", warn="miss ({detail})") is None
+        assert http.get_json("/api/v3/thing", warn="miss ({detail})") == [1]
+
+    assert [(note.severity, note.message) for note in recording.of_type(Diagnostic)] == [
+        (Severity.WARNING, "miss (status code 404)"),
+        (Severity.INFO, "miss - recovered after 2 failures (0s)"),
+    ]
+    assert [record.getMessage() for record in records] == ["miss (status code 404) - failure 2 in a row"]
+    assert http.streaks.active == {}  # the streak closed with the recovery
+
+
+@respx.mock
+def test_interleaved_keys_keep_independent_streaks() -> None:
+    """Two alternating failing templates never share a streak; recovery is per-template."""
+
+    route_a = respx.get(f"{_URL}/api/v3/a")
+    route_a.side_effect = [httpx.Response(404), httpx.Response(404), httpx.Response(200, json=[])]
+    respx.get(f"{_URL}/api/v3/b").respond(status_code=404)
+    http, recording = _bind()
+
+    assert http.get_json("/api/v3/a", warn="a-broke ({detail})") is None
+    assert http.get_json("/api/v3/b", warn="b-broke ({detail})") is None
+    assert http.get_json("/api/v3/a", warn="a-broke ({detail})") is None
+    assert http.get_json("/api/v3/b", warn="b-broke ({detail})") is None
+    assert http.get_json("/api/v3/a", warn="a-broke ({detail})") == []
+    assert http.get_json("/api/v3/b", warn="b-broke ({detail})") is None
+
+    assert [note.message for note in recording.of_type(Diagnostic)] == [
+        "a-broke (status code 404)",
+        "b-broke (status code 404)",
+        "a-broke - recovered after 2 failures (0s)",
+    ]
+    # b's streak stays open and coalescing: three failures, ONE warning.
+    assert http.streaks.active[("b-broke ({detail})", "status code 404")].count == 3
+
+
+@respx.mock
+def test_heartbeat_rewarns_at_the_bound_cadence() -> None:
+    """A long streak re-warns ("still failing") once per heartbeat interval."""
+
+    respx.get(f"{_URL}/api/v3/thing").respond(status_code=404)
+    primary, recording = _bind()
+    clock = _ManualClock()
+    http = replace(primary, clock=clock.read, heartbeat_s=60.0)
+
+    for at in (0.0, 30.0, 59.0, 60.0, 90.0, 125.0):
+        clock.now = at
+        assert http.get_json("/api/v3/thing", warn="down ({detail})") is None
+
+    notes = recording.of_type(Diagnostic)
+    assert all(note.severity is Severity.WARNING for note in notes)
+    assert [note.message for note in notes] == [
+        "down (status code 404)",
+        "down (status code 404; still failing - attempt 4, 1m)",
+        "down (status code 404; still failing - attempt 6, 2m)",
+    ]
+
+
+@respx.mock
+def test_concurrent_failures_keep_an_exact_streak_count() -> None:
+    """Concurrent sweep threads hammer one failing key; the count stays exact.
+
+    Pins the ledger lock: `streak.count += 1` is a read-modify-write that
+    would drop increments unlocked (the shared client pool serves
+    `SONARR_FETCH_WORKERS` threads).
+    """
+
+    respx.get(f"{_URL}/api/v3/thing").respond(status_code=404)
+    http, recording = _bind()
+    workers, per_worker = 8, 25
+    barrier = threading.Barrier(workers)
+
+    def hammer() -> None:
+        barrier.wait()
+        for _ in range(per_worker):
+            assert http.get_json("/api/v3/thing", warn="down ({detail})") is None
+
+    threads = [threading.Thread(target=hammer) for _ in range(workers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert http.streaks.active[("down ({detail})", "status code 404")].count == workers * per_worker
+    # Exactly ONE first-failure warning; every repeat coalesced away.
+    assert [note.message for note in recording.of_type(Diagnostic)] == ["down (status code 404)"]
 
 
 # --- post_json() (single attempt, never retried) ------------------------------
