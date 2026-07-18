@@ -300,6 +300,20 @@ type _BlankStr = Annotated[str, BeforeValidator(_str_or_blank)]
 type _ZeroInt = Annotated[int, BeforeValidator(_int_or_zero)]
 
 
+def _validate_skipping_junk[ModelT: _ApiModel](model: type[ModelT], value: object) -> object:
+    """Nested-array before-validator: validate each entry into `model`, skipping junk without failing the array."""
+
+    if not isinstance(value, list):
+        return ()
+    kept: list[ModelT] = []
+    for entry in cast("list[object]", value):
+        try:
+            kept.append(model.model_validate(entry))
+        except ValidationError:
+            continue
+    return kept
+
+
 # --- shared progress sink ----------------------------------------------------
 
 
@@ -742,15 +756,7 @@ class HistoryPage(_ApiModel):
     def _lenient_records(cls, value: object) -> object:
         """Skip junk `records[]` entries, never failing the whole page over one."""
 
-        if not isinstance(value, list):
-            return ()
-        kept: list[HistoryRecord] = []
-        for entry in cast("list[object]", value):
-            try:
-                kept.append(HistoryRecord.model_validate(entry))
-            except ValidationError:
-                continue
-        return kept
+        return _validate_skipping_junk(HistoryRecord, value)
 
 
 # --- Sonarr remote path mappings (`/api/v3/remotepathmapping`) --------------
@@ -870,15 +876,7 @@ class CommandResource(_ApiModel):
     def _lenient_files(cls, value: object) -> object:
         """Skip junk `files[]` entries, never failing the whole command over one."""
 
-        if not isinstance(value, list):
-            return ()
-        kept: list[CommandFile] = []
-        for entry in cast("list[object]", value):
-            try:
-                kept.append(CommandFile.model_validate(entry))
-            except ValidationError:
-                continue
-        return kept
+        return _validate_skipping_junk(CommandFile, value)
 
 
 # --- Radarr movie files (`/api/v3/moviefile` records) ----------------------
