@@ -35,6 +35,7 @@ from pearlarr.seadex_types import (
     Quality,
     QueueRecord,
     SonarrItem,
+    SonarrParse,
 )
 from pearlarr.sonarr_client import SonarrClient
 
@@ -360,12 +361,41 @@ def test_parse_skips_entries_missing_season_or_episode() -> None:
     }
     respx.get(f"{_BASE}/parse").respond(json=body)
 
-    assert _make_client().parse("Cool.Anime.S01E01.mkv") == [ParsedEpisode(season=1, episode=1)]
+    assert _make_client().parse("Cool.Anime.S01E01.mkv") == SonarrParse(
+        episodes=[ParsedEpisode(season=1, episode=1)],
+    )
+
+
+@respx.mock
+def test_parse_reads_full_season_flag() -> None:
+    """`parse()` lifts `parsedEpisodeInfo.fullSeason` onto the result.
+
+    A bare-"S05" name Sonarr matches to a whole season carries the flag the
+    grab-time seed refuses on - even when the season is small enough to slip
+    under the span cap. Absent/false reads False.
+    """
+
+    respx.get(f"{_BASE}/parse").mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json={
+                    "episodes": [{"seasonNumber": 5, "episodeNumber": 1}],
+                    "parsedEpisodeInfo": {"fullSeason": True},
+                },
+            ),
+            httpx.Response(200, json={"episodes": [{"seasonNumber": 1, "episodeNumber": 1}]}),
+        ],
+    )
+    flagged = _make_client().parse("Show.S05.mkv")
+    assert flagged is not None and flagged.full_season is True
+    plain = _make_client().parse("Show.S01E01.mkv")
+    assert plain is not None and plain.full_season is False
 
 
 @respx.mock
 def test_parse_clean_no_match_returns_empty_list() -> None:
-    """A clean 200 where Sonarr matched no episode returns `[]`.
+    """A clean 200 where Sonarr matched no episode returns empty episodes.
 
     This is a *confirmed* no-match the caller may negative-cache, distinct
     from a failure's None. A missing `episodes` key is the same clean
@@ -378,8 +408,8 @@ def test_parse_clean_no_match_returns_empty_list() -> None:
             httpx.Response(200, json={}),
         ],
     )
-    assert _make_client().parse("Unmatched.Release.mkv") == []
-    assert _make_client().parse("Unmatched.Release.mkv") == []
+    assert _make_client().parse("Unmatched.Release.mkv") == SonarrParse(episodes=[])
+    assert _make_client().parse("Unmatched.Release.mkv") == SonarrParse(episodes=[])
 
 
 @respx.mock

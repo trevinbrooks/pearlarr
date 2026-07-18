@@ -201,6 +201,20 @@ class TestEpisodeIdsForParsed:
         parsed = [ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=1)]
         assert episode_ids_for_parsed(parsed, idx) == [11]
 
+    def test_small_full_season_refused_by_the_flag(self) -> None:
+        # A whole season of <= _MATCHED_SPAN_CAP episodes slips under the span
+        # cap, so Sonarr's own fullSeason flag is the only thing that refuses it.
+        idx = {(1, 1): 11, (1, 2): 12}
+        parsed = [ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=2)]
+        assert episode_ids_for_parsed(parsed, idx, full_season=True) == []
+
+    def test_same_small_span_without_the_flag_still_seeds(self) -> None:
+        # The pins for legit small multi-episode files: absent the flag, the same
+        # pairs seed exactly as before (mirrors test_triple_span_still_seeds).
+        idx = {(1, 1): 11, (1, 2): 12}
+        parsed = [ParsedEpisode(season=1, episode=1), ParsedEpisode(season=1, episode=2)]
+        assert episode_ids_for_parsed(parsed, idx) == [11, 12]
+
 
 class TestEpisodeFileStatuses:
     """`episode_file_statuses` classifies each episode's file, and the two summary helpers derive from that.

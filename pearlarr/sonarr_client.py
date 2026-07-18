@@ -12,6 +12,7 @@ from typing import cast, override
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .arr_http import ArrHttp
+from .json_narrow import is_json_obj
 from .manual_import import PendingImport
 from .output import hub_warn
 from .seadex_types import (
@@ -29,6 +30,7 @@ from .seadex_types import (
     RemotePathMapping,
     SonarrEpisode,
     SonarrItem,
+    SonarrParse,
     SonarrSeries,
     validate_each,
     validation_summary,
@@ -76,7 +78,7 @@ class AbstractSonarrClient(ABC):
     def episodes(self, series_id: int, *, quiet: bool = False) -> list[SonarrEpisode] | None: ...
 
     @abstractmethod
-    def parse(self, filename: str) -> list[ParsedEpisode] | None: ...
+    def parse(self, filename: str) -> SonarrParse | None: ...
 
     @abstractmethod
     def parse_episode_info(self, filename: str) -> ParsedFileInfo | None: ...
@@ -211,24 +213,28 @@ class SonarrClient(AbstractSonarrClient):
         return episodes
 
     @override
-    def parse(self, filename: str) -> list[ParsedEpisode] | None:
+    def parse(self, filename: str) -> SonarrParse | None:
         """Ask Sonarr to parse a single filename into season/episode numbers.
 
-        Only the season/episode mapping is returned - the file size is filled in
-        by the caller, since it comes from the SeaDex file list rather than from
-        Sonarr.
+        Only the season/episode mapping and the parse-level `fullSeason` flag are
+        returned - the file size is filled in by the caller, since it comes from
+        the SeaDex file list rather than from Sonarr.
 
         Distinguishes a clean response from a transient failure so the caller can
         safely negative-cache the former without poisoning the latter: an empty
-        list is a *confirmed* "Sonarr matched no episode" (200, cacheable),
-        whereas None is a request failure (non-200 / connection error after
-        ArrHttp's retries) that must NOT be cached.
+        episode list is a *confirmed* "Sonarr matched no episode" (200,
+        cacheable), whereas None is a request failure (non-200 / connection
+        error after ArrHttp's retries) that must NOT be cached.
+
+        `parsedEpisodeInfo.fullSeason` rides along so the grab-time seed can
+        refuse a bare "S0X" name Sonarr matched to a whole season - even a season
+        of few enough episodes to slip under the seed's span cap.
 
         Args:
             filename: Filename to parse (basename, not full path).
 
         Returns:
-            `ParsedEpisode` records on a clean 200 (empty when Sonarr genuinely
+            A `SonarrParse` on a clean 200 (empty episodes when Sonarr genuinely
             matched nothing), or None when the request failed.
         """
 
@@ -263,7 +269,12 @@ class SonarrClient(AbstractSonarrClient):
 
             parsed.append(ParsedEpisode(season=record.seasonNumber, episode=record.episodeNumber))
 
-        return parsed
+        # The parse-level fullSeason flag lives on parsedEpisodeInfo. Narrow that
+        # nested object the same way as "episodes" and coerce truthy (matching
+        # ParsedFileInfo's BeforeValidator(bool)); absent/malformed reads False.
+        info = payload.get("parsedEpisodeInfo")
+        full_season = bool(info.get("fullSeason")) if is_json_obj(info) else False
+        return SonarrParse(episodes=parsed, full_season=full_season)
 
     @override
     def parse_episode_info(self, filename: str) -> ParsedFileInfo | None:

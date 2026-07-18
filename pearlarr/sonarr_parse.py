@@ -18,7 +18,7 @@ from .cache import UPDATED_AT_STR_FORMAT, record_is_fresh
 from .json_narrow import is_json_list, is_json_obj
 from .log import count_noun
 from .run_services import RunDeps
-from .seadex_types import EpisodeRecord, ParsedEpisode, SeadexDict
+from .seadex_types import EpisodeRecord, ParsedEpisode, SeadexDict, SonarrParse
 from .sonarr_client import AbstractSonarrClient
 from .sonarr_episodes import fetch_workers
 
@@ -168,6 +168,10 @@ class SonarrParseRecord(TypedDict):
     """`NotRequired` because only a negative record carries it (pinning it to the series-id set) - the
     freshness reader dispatches on exactly that presence."""
 
+    full_season: NotRequired[bool]
+    """`NotRequired` (mirrors `series_fp`): written only when Sonarr flagged `parsedEpisodeInfo.fullSeason`, so
+    every pre-existing row reads False and ages out on the TTL - never a schema bump."""
+
 
 def parsed_episodes(record: Mapping[str, object]) -> list[ParsedEpisode]:
     """Deserialize a parse record's `episodes` JSON into `ParsedEpisode`s.
@@ -189,6 +193,17 @@ def parsed_episodes(record: Mapping[str, object]) -> list[ParsedEpisode]:
         if isinstance(season, int) and isinstance(episode, int):
             episodes.append(ParsedEpisode(season=season, episode=episode))
     return episodes
+
+
+def parsed_full_season(record: Mapping[str, object]) -> bool:
+    """Whether a parse record marks Sonarr's `parsedEpisodeInfo.fullSeason`.
+
+    Reads the `NotRequired` key at the same cache seam as `parsed_episodes`
+    (absent -> False, today's behavior), so the seed guard can refuse a
+    full-season parse by Sonarr's own flag rather than only the span cap.
+    """
+
+    return bool(record.get("full_season", False))
 
 
 def _serialize_episodes(episodes: list[ParsedEpisode]) -> list[dict[str, int]]:
@@ -252,18 +267,22 @@ class SonarrParseCache:
         except (TypeError, ValueError):
             return False
 
-    def _write_parse_record(self, filename: str, episodes: list[ParsedEpisode], *, window: ParseWindow) -> None:
+    def _write_parse_record(self, filename: str, parse: SonarrParse, *, window: ParseWindow) -> None:
         """Upsert a Sonarr parse-cache record (one builder for both shapes).
 
         A NEGATIVE record (empty `episodes`) carries the series fingerprint so
         it self-heals when the library changes. A POSITIVE one never does - the
-        freshness reader dispatches on exactly that presence. The episodes are
-        serialized to `{"season", "episode"}` JSON objects at this seam.
+        freshness reader dispatches on exactly that presence. `full_season` is
+        written only when set (mirroring `series_fp`), so legacy rows read
+        False. The episodes are serialized to `{"season", "episode"}` JSON
+        objects at this seam.
         """
 
-        record: SonarrParseRecord = {"fetched_at": window.now_str, "episodes": _serialize_episodes(episodes)}
-        if not episodes:
+        record: SonarrParseRecord = {"fetched_at": window.now_str, "episodes": _serialize_episodes(parse.episodes)}
+        if not parse.episodes:
             record["series_fp"] = window.series_fp
+        if parse.full_season:
+            record["full_season"] = True
         self.cache_store.put_sonarr_parse(filename, cast("dict[str, Any]", record))
 
     def _episodes_for(self, f: str, *, window: ParseWindow) -> list[ParsedEpisode]:
@@ -271,7 +290,8 @@ class SonarrParseCache:
 
         Empty means skip: a fresh negative record, a transient parse failure
         (not cached, re-queried on demand), and a fresh parse that found
-        nothing all fold to `[]`.
+        nothing all fold to `[]`. The full-season flag only rides the persisted
+        record (for the seed guard), so this mapping read still yields pairs.
         """
 
         record = self.cache_store.get_sonarr_parse(f)
@@ -284,9 +304,9 @@ class SonarrParseCache:
         # Cache the result (negatives are series-fp pinned so they aren't
         # re-parsed every run) before acting on it.
         self._write_parse_record(f, result, window=window)
-        if not result:
+        if not result.episodes:
             self.logger.debug(f"Sonarr could not parse episode for {f}")
-        return result
+        return result.episodes
 
     def _warm_parse_cache(
         self,
@@ -323,7 +343,7 @@ class SonarrParseCache:
         if len(pending) <= 1:
             return
 
-        def fetch(name: str) -> tuple[str, list[ParsedEpisode] | None]:
+        def fetch(name: str) -> tuple[str, SonarrParse | None]:
             # A RAISE degrades to a transient miss (None: not cached, re-parsed on
             # demand) so one bad file can't abort the concurrent warm sweep.
             try:

@@ -908,7 +908,7 @@ class MovieFile(_ApiModel):
 class ParsedEpisode(NamedTuple):
     """One Sonarr `/parse` series-MATCHED `(season, episode)` pair.
 
-    The element type `SonarrClient.parse` yields, produced from the validated
+    The element type `SonarrParse.episodes` carries, produced from the validated
     boundary model. Distinct from `EpisodeRecord` (which also carries a size)
     and `ParsedFileInfo` (the per-file parse assignment reads). Persisted as a
     `{"season", "episode"}` JSON object at the parse-cache seam.
@@ -916,6 +916,20 @@ class ParsedEpisode(NamedTuple):
 
     season: int
     episode: int
+
+
+class SonarrParse(NamedTuple):
+    """One Sonarr `/parse` result: the matched pairs plus the parse-level flag.
+
+    What `SonarrClient.parse` yields on a clean 200. `episodes` are the
+    series-MATCHED `(season, episode)` pairs; `full_season` is Sonarr's
+    `parsedEpisodeInfo.fullSeason` (a bare "S0X" name matching a whole season),
+    which the grab-time seed refuses whole - `full_season` belongs to the parse,
+    not to any one pair. None (not this) stays the parse-failure signal.
+    """
+
+    episodes: list[ParsedEpisode]
+    full_season: bool = False
 
 
 def _tuple_or_empty(value: object) -> object:
