@@ -1365,13 +1365,6 @@ def _monitor_pass(
     return MonitorPass(mgr, [record], now=clock.now, dl_timeout=3600, import_timeout=600)
 
 
-def _cycle(mp: MonitorPass, record: PendingImport) -> None:
-    """One heavy cycle over one record (mirrors run_monitor's begin_cycle + advance)."""
-
-    mp.begin_cycle()
-    mp.advance(record)
-
-
 class TestMonitorFastTelemetry:
     """refresh_telemetry: the fast-lane download refresh - telemetry only, no verdicts."""
 
@@ -1499,10 +1492,10 @@ class TestMonitorTransientPoll:
         )
         mp = _monitor_pass(qbit, record)
 
-        _cycle(mp, record)
-        _cycle(mp, record)  # the blip cycle
+        mp.run_cycle()
+        mp.run_cycle()  # the blip cycle
         assert mp.views[rk("h")].fraction == 0.3  # last real reading kept, no 0% flash
-        _cycle(mp, record)
+        mp.run_cycle()
 
         view = mp.views[rk("h")]
         assert view.fraction == 0.4
@@ -1528,7 +1521,7 @@ class TestMonitorSpeedHistory:
         mp = _monitor_pass(qbit, record)
 
         for _ in range(3):
-            _cycle(mp, record)
+            mp.run_cycle()
 
         assert mp.views[rk("h")].speed_history == (100, 0, 300)
 
@@ -1537,7 +1530,7 @@ class TestMonitorSpeedHistory:
         mp = _monitor_pass(FakeQbit({"h": [FakeTorrent(progress=0.1, dlspeed=100)]}), record)
 
         for _ in range(SPARK_SAMPLES + 3):
-            _cycle(mp, record)
+            mp.run_cycle()
 
         assert mp.views[rk("h")].speed_history == (100,) * SPARK_SAMPLES
 
