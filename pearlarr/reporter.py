@@ -264,7 +264,8 @@ class RunReporter:
     rides `self._entry`: a CHECKING header opens one and its details stream
     through it (any boundary/sibling closes it, idempotently, first); a COMPLETE
     block (cached / carried-over pending) opens and self-closes via `_block`, so
-    a gap diagnostic keeps col 0 rather than indenting under the finished block.
+    the frontier never carries a finished block - a gap diagnostic attributes
+    to the open item, not to a stale entry (the item indent applies either way).
     """
 
     def __init__(
@@ -304,8 +305,9 @@ class RunReporter:
 
         For COMPLETE blocks (cached / carried-over pending) whose header carries
         the whole row (coverage/url baked in) and that accrue no followers -
-        closing before return keeps a gap diagnostic (e.g. a retry WARNING while
-        resolving the next title) at col 0, not indented under the finished block.
+        closing before return keeps the frontier honest, so a gap diagnostic
+        (e.g. a retry WARNING while resolving the next title) and the breadcrumb
+        path attribute to the open item, never to the finished block.
         """
 
         self._open_entry(header)
@@ -351,8 +353,8 @@ class RunReporter:
 
         The bare titled rows (unmonitored / no-mapping / ignored / no-entry /
         skipped / IN_RADARR / NO_EPISODES) are self-contained: they close the
-        prior entry and never open one, so the row - and any diagnostic beside it -
-        keeps the col-0 punch-through.
+        prior entry and never open one, so the row keeps the col-0 punch-through
+        and a diagnostic beside it attributes to the item, not a stale entry.
         """
 
         self._close_entry()
@@ -535,8 +537,8 @@ class RunReporter:
         if title is None:
             title = "(unknown title)"
 
-        # A complete block (nothing follows it): self-close so a gap diagnostic
-        # rides col 0, not indented under the finished row.
+        # A complete block (nothing follows it): self-close so nothing later
+        # attributes to this finished row.
         self._block(
             EntryHeader(
                 state,
@@ -573,8 +575,8 @@ class RunReporter:
             return False
         # The IMPORTED-green vs dim distinction is renderer policy keyed on state
         # (the builder does it) - the producer passes no style. A complete block
-        # (the next record's reconcile may warn): self-close so that warning rides
-        # col 0, not indented under this finished row.
+        # (the next record's reconcile may warn): self-close so that warning
+        # attributes to the item, not to this finished row.
         self._block(
             EntryHeader(
                 entry_state,

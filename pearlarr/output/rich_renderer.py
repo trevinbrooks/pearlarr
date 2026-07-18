@@ -2,9 +2,10 @@
 
 Diagnostics are position-free; this renderer is the single ambient placement
 authority: its `breadcrumbs.BreadcrumbFold` instance decides where a
-diagnostic lands: indented while a boot section, wait region, or entry block is
-open, column 0 otherwise (RUN/ITEM alone stays column-0 — the producers open
-entry scopes, so a note between entries sits at the run margin). The boot
+diagnostic lands: indented while a boot section, item, wait region, or entry
+block is open, column 0 under RUN alone (before the first item and after the
+scan closes; mid-scan an item stays on the frontier until the next boundary,
+so import-flow notes indent with the listing they land in). The boot
 events (banner / steps / capstone) drive the `boot_region.BootRegion`
 (the live spinner and the durable ledger lines).
 The scan events render through the shared `scan_lines` builders at
@@ -296,10 +297,12 @@ class RichRenderer(Renderer):
         return any(node.kind in wanted for node in self._crumbs.nodes())
 
     def _cockpit_open(self) -> bool:
-        """True while a boot section, wait region, or entry block is open.
+        """True while a boot section, item, wait region, or entry block is open.
 
-        These are the indented contexts a diagnostic folds into (RUN/ITEM alone
-        stays column-0).
+        These are the indented contexts a diagnostic folds into (RUN alone
+        stays column-0). ITEM is included so an import-flow warning fired
+        between a series' entry blocks indents with the listing instead of
+        breaking it at the run margin.
         """
 
-        return self._frontier_has(ScopeKind.BOOT_SECTION, ScopeKind.WAIT_REGION, ScopeKind.ENTRY)
+        return self._frontier_has(ScopeKind.BOOT_SECTION, ScopeKind.ITEM, ScopeKind.WAIT_REGION, ScopeKind.ENTRY)

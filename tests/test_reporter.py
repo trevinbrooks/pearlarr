@@ -284,10 +284,11 @@ class TestCloseBoundaries:
 class TestCompleteBlocksSelfClose:
     """D6: a cached / carried-over-pending block is COMPLETE on return, so it self-closes.
 
-    Nothing follows it - the header carries the whole row. A gap diagnostic
-    (e.g. a retry WARNING while resolving the next title) then rides col 0
-    rather than indenting under the finished block. Contrast a CHECKING entry,
-    which legitimately accrues followers and stays open until a boundary.
+    Nothing follows it - the header carries the whole row. Self-closing keeps
+    the frontier honest: a gap diagnostic (e.g. a retry WARNING while resolving
+    the next title) and the breadcrumb path attribute to the open item, never
+    to the finished block. Contrast a CHECKING entry, which legitimately
+    accrues followers and stays open until a boundary.
     """
 
     def test_cached_entry_emits_scope_closed_before_returning(self) -> None:
