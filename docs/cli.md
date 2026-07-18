@@ -22,7 +22,7 @@ Without a subcommand, runs in scheduled mode (every configured arr, every few ho
 
 | Option | Value | Description |
 | --- | --- | --- |
-| `--data-dir` | `TEXT` | Override the data directory holding config, caches, and logs (otherwise PEARLARR_DATA_DIR or the OS per-user data directory) |
+| `--data-dir` | `STR` | Override the data directory holding config, caches, and logs (otherwise PEARLARR_DATA_DIR or the OS per-user data directory) |
 | `--version`, `-V` |  | Print the installed version and exit |
 | `--install-completion` |  | Install completion for the current shell. |
 | `--show-completion` |  | Show completion for the current shell, to copy it or customize the installation. |
